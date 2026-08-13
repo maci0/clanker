@@ -12,6 +12,9 @@ pub const Mode = enum {
     /// ending without the terminating blank line (as a truncated or
     /// close-delimited stream does).
     anthropic_stream,
+    /// Always 503. Used to exhaust `client.chat`'s same-provider retries so
+    /// a fallback-chain test can assert the next provider is reached.
+    http_503,
 };
 
 pub const Captured = struct {
@@ -175,6 +178,13 @@ pub const MockServer = struct {
                 @as(u16, 200),
                 @as([]const u8, "OK"),
                 @as([]const u8, "text/event-stream"),
+            },
+            .http_503 => .{
+                \\{"error":{"message":"overloaded","type":"overloaded_error"}}
+                ,
+                @as(u16, 503),
+                @as([]const u8, "Service Unavailable"),
+                @as([]const u8, "application/json"),
             },
         };
         const body = pair[0];

@@ -2879,8 +2879,7 @@ const Model = struct {
             return ctx.consumeAndRedraw();
         }
         if (key.matches(vaxis.Key.backspace, .{})) {
-            if (self.search_query.items.len > 0) {
-                _ = self.search_query.pop();
+            if (popUtf8Codepoint(&self.search_query)) {
                 self.refreshSearch();
             }
             return ctx.consumeAndRedraw();
@@ -3092,8 +3091,7 @@ const Model = struct {
             return ctx.consumeAndRedraw();
         }
         if (key.matches(vaxis.Key.backspace, .{})) {
-            if (self.picker_query.items.len > 0) {
-                _ = self.picker_query.pop();
+            if (popUtf8Codepoint(&self.picker_query)) {
                 self.picker_selected = 0;
                 if (self.picker_kind == .theme) self.previewSelectedTheme();
             }
@@ -4346,6 +4344,19 @@ fn searchGuide(buf: []u8, query_empty: bool, hit_index: usize, hit_count: usize,
     return if (width >= width_mod.displayWidth("  Esc back")) "  Esc back" else "";
 }
 
+/// Backspace for modal query buffers. Key events may carry a multi-byte UTF-8
+/// codepoint; removing one byte leaves an invalid query that display-width
+/// and fuzzy matching cannot interpret consistently. A malformed tail is
+/// repaired conservatively one byte at a time.
+fn popUtf8Codepoint(text: *std.ArrayList(u8)) bool {
+    if (text.items.len == 0) return false;
+    var start = text.items.len - 1;
+    while (start > 0 and text.items[start] & 0xc0 == 0x80) start -= 1;
+    const new_len = if (std.unicode.utf8ValidateSlice(text.items[start..])) start else text.items.len - 1;
+    text.shrinkRetainingCapacity(new_len);
+    return true;
+}
+
 fn pickerHeight(count: usize, max_rows: u16) u16 {
     const rows_shown: u16 = @intCast(@min(count, max_rows));
     return @max(rows_shown, 1) + 4;
@@ -4420,6 +4431,27 @@ test "search guides preserve state and recovery at constrained widths" {
     var buf: [96]u8 = undefined;
     try std.testing.expect(std.mem.find(u8, searchGuide(&buf, false, 2, 7, 80), "3/7") != null);
     try std.testing.expect(std.mem.find(u8, searchGuide(&buf, false, 0, 0, 32), "no match") != null);
+}
+
+test "modal query Backspace removes one UTF-8 codepoint" {
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(std.testing.allocator);
+    try text.appendSlice(std.testing.allocator, "aé🙂");
+    try std.testing.expect(popUtf8Codepoint(&text));
+    try std.testing.expectEqualStrings("aé", text.items);
+    try std.testing.expect(popUtf8Codepoint(&text));
+    try std.testing.expectEqualStrings("a", text.items);
+    try std.testing.expect(popUtf8Codepoint(&text));
+    try std.testing.expectEqualStrings("", text.items);
+    try std.testing.expect(!popUtf8Codepoint(&text));
+
+    // Invalid external key text cannot cause Backspace to eat the preceding
+    // valid codepoint; each press removes one malformed trailing byte.
+    try text.appendSlice(std.testing.allocator, "ok\x80\x80");
+    try std.testing.expect(popUtf8Codepoint(&text));
+    try std.testing.expectEqualSlices(u8, "ok\x80", text.items);
+    try std.testing.expect(popUtf8Codepoint(&text));
+    try std.testing.expectEqualStrings("ok", text.items);
 }
 
 test "empty picker reserves separate result and guide rows" {

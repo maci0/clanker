@@ -1659,7 +1659,10 @@ pub const Config = struct {
     /// `agent.tools_dir` is a string or an array of strings. A bare string
     /// becomes a one-element slice so every consumer only ever sees a list.
     fn jsonToolsDir(arena: std.mem.Allocator, v: json.Value) ![]const []const u8 {
-        return jsonNameList(arena, v, "tools_dir") catch error.ToolsDirInvalid;
+        return jsonNameList(arena, v, "tools_dir") catch |err| switch (err) {
+            error.FieldNotString, error.NameListInvalid => error.ToolsDirInvalid,
+            else => err,
+        };
     }
 
     fn jsonInt(v: json.Value, key: []const u8) !i64 {

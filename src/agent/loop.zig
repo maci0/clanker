@@ -5,6 +5,7 @@ const std = @import("std");
 const config = @import("../config.zig");
 const types = @import("../llm/types.zig");
 const client = @import("../llm/client.zig");
+const providers = @import("../llm/providers.zig");
 const registry = @import("../tools/registry.zig");
 const tool_usage = @import("../tools/usage.zig");
 const runtime = @import("../sandbox/runtime.zig");
@@ -556,7 +557,7 @@ pub const Agent = struct {
             const llm_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
             const resp = if (self.on_token) |cb| blk: {
                 if (!self.cfg.modules.streaming) break :blk try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0);
-                break :blk client.chatStream(self.ctx, self.arena, .{
+                break :blk chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
                     .provider = self.provider,
                     .messages = messages.items,
                     .tools = self.tool_defs,
@@ -1314,11 +1315,11 @@ pub const Agent = struct {
 
         const sum_messages = [_]types.Message{.{ .role = .user, .content = prompt }};
         var err_detail: ?[]const u8 = null;
-        const resp = try client.chat(self.ctx, self.arena, .{
+        const resp = try chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
             .provider = self.provider,
             .messages = &sum_messages,
             .max_tokens = 512,
-        }, &err_detail);
+        }, &err_detail, null, null);
         const content = resp.message.content orelse return error.EmptyResponse;
         if (content.len == 0) return error.EmptyResponse;
         // Track the summarization cost.
@@ -1862,11 +1863,11 @@ pub const Agent = struct {
         iteration: u32,
         started: std.Io.Timestamp,
     ) !types.ChatResponse {
-        return client.chat(self.ctx, self.arena, .{
+        return chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
             .provider = self.provider,
             .messages = messages,
             .tools = self.tool_defs,
-        }, err_detail) catch |err| {
+        }, err_detail, null, null) catch |err| {
             try self.recordFailedLlm(g, iteration, started, err, err_detail.*);
             return err;
         };
@@ -2363,6 +2364,118 @@ fn parentAnswerPrompt(
     }
     try buf.appendSlice(arena, "\nAnswer with exactly one of the options, verbatim, and nothing else: the one most consistent with your task and what you already know.");
     return buf.toOwnedSlice(arena);
+}
+
+/// Walks `cfg.agent.fallback_providers` after the current provider's own
+/// retry budget is exhausted. Streaming that already emitted content does
+/// not advance the chain. `current` is updated to whoever actually served
+/// the request so later cost/stats reads stay honest.
+fn chatWithFallbackChain(
+    ctx: *client.Ctx,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    current: *?*const config.Provider,
+    params: providers.RequestParams,
+    err_detail: *?[]const u8,
+    on_delta: ?*const fn ([]const u8) void,
+    stop_flag: ?*std.atomic.Value(bool),
+) !types.ChatResponse {
+    var p = params;
+    if (current.*) |c| p.provider = c;
+    var last_err: anyerror = error.ApiError;
+    var reports: std.ArrayList(u8) = .empty;
+    defer reports.deinit(ctx.gpa);
+
+    const streamed = struct {
+        var n: usize = 0;
+        fn reset() void {
+            n = 0;
+        }
+        fn count(delta: []const u8) void {
+            n += delta.len;
+        }
+    };
+
+    var names_tried: std.ArrayList([]const u8) = .empty;
+    defer names_tried.deinit(ctx.gpa);
+
+    const primary = p.provider.name;
+    try names_tried.append(ctx.gpa, primary);
+
+    var chain_i: usize = 0;
+    while (true) {
+        streamed.reset();
+        const result = if (on_delta) |cb| blk: {
+            const counted = struct {
+                var inner: *const fn ([]const u8) void = undefined;
+                fn wrap(delta: []const u8) void {
+                    streamed.count(delta);
+                    inner(delta);
+                }
+            };
+            counted.inner = cb;
+            break :blk client.chatStream(ctx, arena, p, err_detail, counted.wrap, stop_flag);
+        } else client.chat(ctx, arena, p, err_detail);
+
+        if (result) |resp| {
+            if (!std.mem.eql(u8, p.provider.name, primary)) {
+                log.log(.info, "fallback: '{s}' served after '{s}' failed", .{ p.provider.name, primary });
+            }
+            current.* = p.provider;
+            return resp;
+        } else |err| {
+            last_err = err;
+            if (err == error.Interrupted) return err;
+            if (on_delta != null and streamed.n > 0) return err;
+            if (reports.items.len > 0) try reports.appendSlice(ctx.gpa, "; ");
+            try reports.appendSlice(ctx.gpa, p.provider.name);
+            try reports.appendSlice(ctx.gpa, "=");
+            try reports.appendSlice(ctx.gpa, @errorName(err));
+            if (err_detail.*) |d| {
+                try reports.appendSlice(ctx.gpa, " (");
+                try reports.appendSlice(ctx.gpa, utf8.cap(d, 160));
+                try reports.appendSlice(ctx.gpa, ")");
+            }
+        }
+
+        const next = nextFallbackProvider(cfg, p.provider.name, cfg.agent.fallback_providers, names_tried.items, &chain_i) orelse {
+            if (reports.items.len > 0) {
+                err_detail.* = try std.fmt.allocPrint(arena, "fallback chain exhausted: {s}", .{reports.items});
+            }
+            return last_err;
+        };
+        log.log(.warn, "fallback: '{s}' failed ({s}); trying '{s}'", .{ p.provider.name, @errorName(last_err), next.name });
+        try names_tried.append(ctx.gpa, next.name);
+        p.provider = next;
+    }
+}
+
+/// Next unused, configured name in `chain` after `chain_i`. Unknown names
+/// are skipped with a warning. The current provider is never returned.
+fn nextFallbackProvider(
+    cfg: *const config.Config,
+    current_name: []const u8,
+    chain: []const []const u8,
+    already: []const []const u8,
+    chain_i: *usize,
+) ?*const config.Provider {
+    while (chain_i.* < chain.len) {
+        const name = chain[chain_i.*];
+        chain_i.* += 1;
+        if (name.len == 0) continue;
+        if (std.mem.eql(u8, name, current_name)) continue;
+        var seen = false;
+        for (already) |a| {
+            if (std.mem.eql(u8, a, name)) {
+                seen = true;
+                break;
+            }
+        }
+        if (seen) continue;
+        if (cfg.providers.getPtr(name)) |p| return p;
+        log.log(.warn, "fallback: '{s}' is not a configured provider; skipping", .{name});
+    }
+    return null;
 }
 
 /// Answers a sub-agent's question with one bounded completion on the parent's
