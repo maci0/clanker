@@ -162,6 +162,33 @@ A guest is single-threaded, so anything a tool wants to do concurrently has to b
 
 The tool target is `wasm32-freestanding` (not `wasip1`).
 
+### Isolating a run
+
+Every path a tool touches resolves under one directory, the run's root: `ck_fs_*`
+paths are joined onto `agent.sandbox_root`, and `ck_exec` children run there too,
+so `git status`, `gate` and `edit_file` all describe the same tree. That single
+root is what makes isolation work, and it is the reason the agent is never asked
+to keep track of two trees at once.
+
+`clanker run --worktree` isolates a run by moving it: it creates a worktree on a
+fresh branch cut from the current one, chdirs into it, and runs there. The
+worktree becomes the root, so cwd-relative paths need no prefix and
+`git rev-parse --show-toplevel` reports the worktree. `improve-self` takes the
+same isolation by default (`src/improve/worktree.zig`). Worktrees live in
+`.clanker-worktrees/<id>`, which is gitignored.
+
+The worktree and its branch are **kept** when the run ends — the commits are the
+deliverable, and an isolated run's session state lives under the worktree too.
+Remove it with `git worktree remove` once the work has landed. (`improve-self`
+differs: it merges its branch back at the ref level and only then removes the
+worktree.)
+
+What does *not* work is an agent isolating itself: adding a worktree from inside
+a run relocates nothing, because the run's root does not move with it. Edits keep
+landing in the root while `git -C <worktree> status` reports that worktree clean,
+and both halves look like they succeeded. Isolation is a property of how the run
+was started, not something the agent can opt into mid-run.
+
 ### Self-improvement engine (`src/improve/`)
 
 `clanker improve-self "<instruction>"` runs a gated loop:
@@ -359,7 +386,7 @@ changes as tools are added.
 | `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
 | `fetch_web` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
 | `web_search` | none | No-key web search: tries DuckDuckGo Lite first, transparently falls back to Bing Search RSS when DDG is unreachable, bot-challenged, or empty. Input: `{"query", "max_results" (1-20, default 8), "region"}`; returns `{ok, backend, query, count, results:[{title,url,snippet}]}` |
-| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored, so per-worktree work runs as `git -C .local/worktrees/<wt> add/commit/push <branch>` |
+| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Runs at the run's root, the directory the file tools resolve against, so plain `add`/`commit` stage what the agent edited. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored for inspecting another worktree, but they do not relocate the agent's work: see [Isolating a run](#isolating-a-run) |
 | `docker` | none | Query the local Docker daemon over its Unix socket |
 | `peers` | none — reads clanker's own config through the host (ck_harness_config) | Scan peer agent cards (up/down) or post a message to one peer |
 | `opencv` | none | Image analysis: size/brightness/sharpness, Canny edges, contours, faces, grayscale, resize |
@@ -712,7 +739,9 @@ Fields:
   - `max_tokens_per_turn`, `max_history_tokens`: per-turn input cap and total history budget before compaction kicks in.
   - `tools_dir`, `skills_dir`, `system_prompt_file`, `learnings_file`, `state_dir`: paths the agent reads/writes at runtime.
   - `global_instructions_file`: optional path to device-global operator instructions. When empty (default), clanker loads `$HOME/.agents/AGENTS.md` if present. Missing or empty files are skipped.
-  - `sandbox_root`: base directory for file operations in tools.
+  - `sandbox_root`: the run's root. `ck_fs_*` paths resolve under it and `ck_exec`
+    children run in it, so the file tools and the commands agree on one tree
+    (see [Isolating a run](#isolating-a-run)).
   - `git_commit`: commit promoted improvements with git (default true).
   - `git_remote_ops`: when true, let the `git` tool run the PR-lifecycle verbs it otherwise cannot — `push`, `merge`, `checkout` (default false). Scoped to the `git` command only; `reset`, `rebase`, `clean`, `rm`, `fetch`, `-f`, … stay denied. This is the machine-local flip that lets the agent open and merge PRs unaided; set it in `config.local.toml`, not the committed example.
   - `exec_pattern_allow`: whole-command-line glob patterns a tool may run through `ck_exec`, e.g. `"gh pr create*"` or `"gh pr merge*"`. When a pattern names a command, that command becomes strict: only an argv matching one of its patterns runs, and the match also overrides the deny tokens for the args it grants (`"gh pr merge"` legitimately contains `"merge"`). Commands with no pattern stay under the deny-list check, so a pattern for `gh` does not widen `git` or anything else. `*` matches any run of characters, including across spaces and empty. The `gh` tool refuses to run at all unless a matching pattern is configured.

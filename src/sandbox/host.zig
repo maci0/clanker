@@ -3389,7 +3389,22 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         return Err.denied;
     }
 
-    // Optional cwd: resolve relative to sandbox root via safeJoin.
+    // Optional cwd: resolve relative to sandbox root via safeJoin. With no
+    // cwd given the child runs at the sandbox ROOT, not the process cwd.
+    //
+    // Every ck_fs_* path resolves under root_dir (safeJoin prepends it), so a
+    // child that inherited the process cwd instead saw a different tree than
+    // the file tools the moment sandbox_root was not ".". That is exactly the
+    // configuration per-run worktree isolation needs, and the split was
+    // silent in both directions: `git rev-parse --show-toplevel` and `git
+    // status` reported the main checkout while edit_file wrote into the
+    // worktree, so an agent reading its own git output concluded its edits had
+    // landed in the shared checkout and "recovered" by redoing them there --
+    // which is how they ended up there for real. Nothing in either result
+    // hinted the two disagreed. One root for the whole toolchain instead.
+    //
+    // Unchanged when sandbox_root is "." (the default): same directory either
+    // way, so this only takes effect for a run that asked to be isolated.
     var exec_dir: std.Io.Dir = std.Io.Dir.cwd();
     var exec_dir_opened = false;
     if (obj.get("cwd")) |cwd_val| {
@@ -3399,6 +3414,10 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
             exec_dir = std.Io.Dir.cwd().openDir(h.sandbox.io, full, .{}) catch return Err.not_found;
             exec_dir_opened = true;
         }
+    }
+    if (!exec_dir_opened and !rootIsProcessCwd(h.sandbox.root_dir)) {
+        exec_dir = std.Io.Dir.cwd().openDir(h.sandbox.io, h.sandbox.root_dir, .{}) catch return Err.not_found;
+        exec_dir_opened = true;
     }
     defer if (exec_dir_opened) exec_dir.close(h.sandbox.io);
 
@@ -3558,8 +3577,9 @@ pub const ExecAttempt = union(enum) {
 /// `clanker repl`'s `!` shell escape is the caller. It exists so that escape
 /// is *not* a raw shell: it runs a fixed argv through the same policy a tool
 /// goes through, with no shell interposed to expand globs, variables, pipes or
-/// redirections. There is deliberately no `cwd`, no stdin and no shell here;
-/// the process cwd is the sandbox root the REPL was started in.
+/// redirections. There is deliberately no caller-supplied `cwd`, no stdin and
+/// no shell here; the child runs at the sandbox root, the same directory every
+/// ck_fs_* path resolves under.
 pub fn execUnderPolicy(
     sb: *const Sandbox,
     argv_in: []const []const u8,
@@ -3602,9 +3622,24 @@ pub fn execUnderPolicy(
     defer child_env.deinit();
 
     log.log(.info, "[exec] → {s}", .{cmd});
+    // Same root as ckExec and the ck_fs_* calls: the `!` escape has to see the
+    // tree the tools see, or an isolated run's shell-out reports on the shared
+    // checkout instead.
+    var root_dir: std.Io.Dir = std.Io.Dir.cwd();
+    var root_opened = false;
+    if (!rootIsProcessCwd(sb.root_dir)) {
+        if (std.Io.Dir.cwd().openDir(sb.io, sb.root_dir, .{})) |d| {
+            root_dir = d;
+            root_opened = true;
+        } else |err| {
+            log.log(.warn, "[exec] could not open sandbox root '{s}': {s}", .{ sb.root_dir, @errorName(err) });
+            return .{ .failed = err };
+        }
+    }
+    defer if (root_opened) root_dir.close(sb.io);
     const result = std.process.run(sb.gpa, sb.io, .{
         .argv = argv.items,
-        .cwd = .{ .dir = std.Io.Dir.cwd() },
+        .cwd = .{ .dir = root_dir },
         .environ_map = &child_env,
         .stdout_limit = .limited(stdout_limit),
         .stderr_limit = .limited(stderr_limit),
@@ -3740,6 +3775,16 @@ fn safeJoinSecure(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
         end += 1;
     }
     return full;
+}
+
+/// True when `root_dir` names the process cwd itself, so an exec'd child needs
+/// no explicit directory. Spelled out rather than compared against "." alone
+/// because the config accepts the equivalent forms, and opening a directory we
+/// are already in would only add a failure mode ("" is not a valid path).
+fn rootIsProcessCwd(root_dir: []const u8) bool {
+    return root_dir.len == 0 or
+        std.mem.eql(u8, root_dir, ".") or
+        std.mem.eql(u8, root_dir, "./");
 }
 
 fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
@@ -4077,6 +4122,69 @@ test "execUnderPolicy refuses a command that is not on the allowlist" {
     try std.testing.expect(execUnderPolicy(&sb, &.{ "rm", "-rf", "/" }, 1024, 1024) == .not_allowed);
     try std.testing.expect(execUnderPolicy(&sb, &.{}, 1024, 1024) == .not_allowed);
     try std.testing.expect(execUnderPolicy(&sb, &.{""}, 1024, 1024) == .not_allowed);
+}
+
+test "an exec'd child runs at the sandbox root, not the process cwd" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // A name that exists only inside the sandbox root, so "did the child run
+    // there?" is answerable from its output alone, with no path comparison to
+    // be defeated by /var -> /private/var and friends.
+    const marker = "only-in-the-sandbox-root";
+    try tmp.dir.writeFile(io, .{ .sub_path = marker, .data = "" });
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+
+    var environ_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer environ_map.deinit();
+    try environ_map.put("PATH", "/bin:/usr/bin");
+
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root_buf[0..root_len],
+        .network_allow = &.{},
+        .fs_prefixes = &.{},
+        .environ_map = &environ_map,
+        .exec_allow = &.{"ls"},
+    };
+
+    {
+        const attempt = execUnderPolicy(&sb, &.{"ls"}, 1 << 16, 1 << 16);
+        try std.testing.expect(attempt == .ran);
+        defer std.testing.allocator.free(attempt.ran.stdout);
+        defer std.testing.allocator.free(attempt.ran.stderr);
+        try std.testing.expectEqual(@as(u8, 0), attempt.ran.code);
+        try std.testing.expect(std.mem.containsAtLeast(u8, attempt.ran.stdout, 1, marker));
+    }
+
+    // The regression this guards: with the root ignored the child inherited the
+    // process cwd, so an isolated run's commands reported on the shared
+    // checkout while its file writes went to the root. "." still means the
+    // process cwd, which is what keeps the default configuration unchanged.
+    sb.root_dir = ".";
+    {
+        const attempt = execUnderPolicy(&sb, &.{"ls"}, 1 << 16, 1 << 16);
+        try std.testing.expect(attempt == .ran);
+        defer std.testing.allocator.free(attempt.ran.stdout);
+        defer std.testing.allocator.free(attempt.ran.stderr);
+        try std.testing.expect(!std.mem.containsAtLeast(u8, attempt.ran.stdout, 1, marker));
+    }
+}
+
+test "rootIsProcessCwd treats only the cwd spellings as the process cwd" {
+    try std.testing.expect(rootIsProcessCwd(""));
+    try std.testing.expect(rootIsProcessCwd("."));
+    try std.testing.expect(rootIsProcessCwd("./"));
+    try std.testing.expect(!rootIsProcessCwd(".clanker-worktrees/1234"));
+    try std.testing.expect(!rootIsProcessCwd("state/sandbox"));
+    try std.testing.expect(!rootIsProcessCwd("/tmp/sandbox"));
+    // Not a cwd spelling: ".." is a different directory, and treating it as
+    // "no need to move" would silently run the child one level up.
+    try std.testing.expect(!rootIsProcessCwd(".."));
 }
 
 test "ckFsStat uses safeJoin policy" {

@@ -222,6 +222,31 @@ pub const Registry = struct {
         return std.fmt.allocPrint(arena, "{s}/{s}", .{ std.mem.trimEnd(u8, tools_dir, "/"), wasm });
     }
 
+    /// Pins every relative `wasm` path to `root`, for a run that is about to
+    /// chdir somewhere else.
+    ///
+    /// Guest modules are build artifacts of the harness that is already
+    /// running: `zig-out/tools/*.wasm` is gitignored, so a fresh worktree has
+    /// none, and the paths are read cwd-relative at call time. An isolated run
+    /// therefore lost every WASM tool the moment it moved (observed live:
+    /// "cannot load zig-out/tools/git.wasm: FileNotFound" for all 77 of them,
+    /// with the model reasonably concluding the sandbox was broken and
+    /// refusing to invent results). Which binaries a run uses is a property of
+    /// the harness, not of the tree it edits, so they stay pinned to where the
+    /// run started rather than being copied or rebuilt per worktree.
+    ///
+    /// Absolute paths are left alone, and so is an already-absolute `root`
+    /// requirement: a relative root would defeat the point.
+    pub fn rebaseWasmPaths(self: *Registry, arena: std.mem.Allocator, root: []const u8) !void {
+        if (root.len == 0 or root[0] != '/') return error.RootNotAbsolute;
+        var it = self.tools.iterator();
+        while (it.next()) |entry| {
+            const tool = entry.value_ptr;
+            if (tool.wasm.len == 0 or tool.wasm[0] == '/') continue;
+            tool.wasm = try std.fmt.allocPrint(arena, "{s}/{s}", .{ std.mem.trimEnd(u8, root, "/"), tool.wasm });
+        }
+    }
+
     /// Layers `state/plugin_config.json` over each descriptor's `config`.
     ///
     /// Only keys the descriptor lists in `config_editable` are applied. A

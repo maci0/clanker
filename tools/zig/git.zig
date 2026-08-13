@@ -18,11 +18,21 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 /// inspection and local staging only; anything that mutates remote state or
 /// rewrites history is left to a human via a real terminal.
 ///
-/// `worktree` is allowed because the agent workflow is built on it: each task
-/// runs in its own linked worktree (`.local/worktrees/`), so `git worktree
-/// add/remove` must work through this tool. It is not in the host's deny list,
-/// so this entry only makes the deny message truthful — it never widens the
-/// sandbox, which stays the final word.
+/// `worktree` is allowed so a caller can inspect and manage worktrees, and
+/// because it is not in the host's deny list either: this entry only makes the
+/// deny message truthful, it never widens the sandbox, which stays the final
+/// word.
+///
+/// It is NOT a hook for isolating your own work, and `.local/worktrees/<wt>`,
+/// which earlier versions of this comment and the manifest both described as
+/// where "each task runs", was never created by anything. Isolation is the
+/// harness's job and it works by moving the whole run (`clanker run
+/// --worktree`, improve-self by default): the process chdirs in, so the
+/// worktree is simply where every relative path already points and where this
+/// tool already runs. A worktree the AGENT adds by hand is the case that does
+/// not work, because nothing moves into it — the file tools keep resolving
+/// against the run's root, so edits land there while `git -C <wt> status`
+/// reports on an empty worktree, and both halves look successful.
 const allowed_verbs = [_][]const u8{
     "status", "diff", "log", "show", "add", "commit", "ls-files", "rev-parse", "branch", "worktree",
 };
