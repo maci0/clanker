@@ -80,11 +80,41 @@ because both `clanker run` and the vaxis REPL render through them — one
 markdown streamer, one theme mapping, one width table, not two.
 
 **Control stripping (CWE-150).** Everything rendered here is text clanker
-didn't generate itself — LLM output, tool results. `stripControls` (mirroring
-`transcript.zig`'s `writeSanitized`) drops C0 controls (except `\n`/`\t`) and
-DEL before any of it reaches the terminal, so a raw ESC byte in untrusted
-text can't inject an escape sequence. The common case (no control bytes) is
-alloc-free: it scans first and only copies if it finds something to drop.
+didn't generate itself — LLM output, tool results, clipboard contents. Every
+such path goes through `sanitize.zig` (`clean`, a wrapper over
+`sanitizeAlloc`), which drops C0 controls except `\n`/`\t`, DEL, and the
+UTF-8-encoded C1 range `U+0080..U+009F`, so a raw ESC — or a `\xc2\x9b` that
+a C1-decoding terminal reads as CSI — can't inject an escape sequence. The
+common case (no control bytes) is alloc-free: it scans first and only copies
+if it finds something to drop. On an allocation failure the text is dropped,
+never passed through: rendering unsanitized bytes is the one outcome the
+wrapper exists to prevent, so it is not an acceptable fallback for it.
+
+The seam matters more than the predicate. Stripping used to happen at each
+call site, which meant it could be — and was — missed at several: `onToken`
+stripped each streamed delta, but `finishTurn` renders the provider's whole
+`message.content` whenever there is one (and `chatStream` always assembles
+one), displacing the sanitized streamed copy with text that had never been
+stripped. `runToolJson`'s `text`, the provider's `err_detail`, and OSC 52
+clipboard payloads were never stripped either. All of them now are, and the
+answer path strips inside `appendAnswerLines` — the single function that
+turns a turn's prose into transcript — rather than trusting each caller.
+
+How much of that was reachable depended on the draw branch, which is the
+part worth remembering. Answer lines render through `writeWrappedSegments`,
+which skips graphemes of display width 0; a control byte measures 0, so ESC
+in model prose was being swallowed by a *wrapping* guard rather than by any
+security control. `writeWrapped`, the branch every dim line takes, has no
+such guard. The two untrusted strings that land there — `err_detail` and
+internal-tool `text` — were therefore live injections rather than
+theoretical ones. Sanitizing at the seam makes the guarantee independent of
+which branch a line happens to take.
+
+A local `stripControls` that reused only `sanitize.isControl` — catching
+single bytes but not the two-byte C1 sequences — was deleted as part of this,
+since `sanitize.zig` already documents itself as owning the one definition.
+That gap applied even to paths described as already stripped, `!` escape
+output among them.
 
 **Closing the remaining gaps — widget mapping.** Most open items below have a
 specific `vxfw` shape, not an open-ended "figure it out":
@@ -107,7 +137,7 @@ specific `vxfw` shape, not an open-ended "figure it out":
 | Ctrl-C, mid-stream | Sets the same `stop_flag` `client.chatStream` already checks |
 | `ask_user` invoked here | No `ask_fn` is wired; falls back to the same "nobody attached" default (`not_found`) a headless run gets. No prompt-rendering path exists yet (tracked below) |
 | `confirm_writes = "always"` invoked here | No `confirm_fn` is wired either, so write-capable tool calls run **ungated**, not declined. A one-line warning prints once at startup so the operator isn't left believing they're protected |
-| Control bytes in LLM/tool output | Stripped before render, per Design |
+| Control bytes in LLM/tool output | Stripped before render, per Design. Covers the streamed deltas, the provider's final `message.content`, its `err_detail` on a failed turn, internal `cmd_*` tool `text`, `!` escape output, and clipboard payloads |
 | History exceeds visible height | PgUp/PgDn/Home/End page it (manual scrollback, shipped) |
 
 ## Acceptance criteria
