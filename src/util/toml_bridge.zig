@@ -70,4 +70,6 @@ test "parseToJsonValue rejects date/time values, unused by clanker's config sche
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     try std.testing.expectError(error.UnsupportedTomlType, parseToJsonValue(arena, "d = 2022-07-03"));
+    try std.testing.expectError(error.UnsupportedTomlType, parseToJsonValue(arena, "t = 14:30:00"));
+    try std.testing.expectError(error.UnsupportedTomlType, parseToJsonValue(arena, "dt = 2022-07-03T14:30:00"));
 }

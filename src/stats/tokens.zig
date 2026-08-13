@@ -354,7 +354,10 @@ test "statsJSON serializes stats + totals" {
     try std.testing.expect(parsed.object.get("ok").?.bool);
     try std.testing.expectEqual(@as(usize, 1), parsed.object.get("stats").?.array.items.len);
     try std.testing.expectEqual(@as(i64, 350), parsed.object.get("stats").?.array.items[0].object.get("total_tokens").?.integer);
-    try std.testing.expectEqual(@as(i64, 2), parsed.object.get("totals").?.object.get("calls").?.integer);
+    const totals_obj = parsed.object.get("totals").?.object;
+    try std.testing.expectEqual(@as(i64, 2), totals_obj.get("calls").?.integer);
+    try std.testing.expectEqual(@as(i64, 350), totals_obj.get("total_tokens").?.integer);
+    try std.testing.expect(totals_obj.get("cost") != null);
 }
 
 test "concurrent appends all survive" {
