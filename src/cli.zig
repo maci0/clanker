@@ -2282,7 +2282,7 @@ fn cmdProvidersCatalog(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const query = opts.provider orelse
-        usageExit(io, "providers catalog needs a query: clanker providers catalog <query>  (e.g. \"kimi\", \"deepseek\")", .{});
+        usageExitFor(io, "providers", "providers catalog needs a query: clanker providers catalog <query>  (e.g. \"kimi\", \"deepseek\")", .{});
 
     const body = try fetchModelsDevCached(io, gpa, arena);
     const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
@@ -2346,7 +2346,7 @@ fn cmdProvidersFill(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const provider_name = opts.provider orelse
-        usageExit(io, "providers fill needs a provider: clanker providers fill <name>", .{});
+        usageExitFor(io, "providers", "providers fill needs a provider: clanker providers fill <name>", .{});
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     const p = try cfg.provider(provider_name);
 
@@ -3892,12 +3892,12 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
     const sub = opts.plugins_sub orelse "list";
 
     if (std.mem.eql(u8, sub, "list")) {
-        if (opts.plugin_target != null) usageExit(io, "plugins list takes no arguments", .{});
+        if (opts.plugin_target != null) usageExitFor(io, "plugins", "plugins list takes no arguments", .{});
         return printInternalTool(init, &cfg, "plugins", "");
     }
     if (std.mem.eql(u8, sub, "on") or std.mem.eql(u8, sub, "off")) {
         const name = opts.plugin_target orelse
-            usageExit(io, "plugins {s} needs a plugin name: clanker plugins {s} <name>", .{ sub, sub });
+            usageExitFor(io, "plugins", "plugins {s} needs a plugin name: clanker plugins {s} <name>", .{ sub, sub });
         const args = try std.fmt.allocPrint(arena, "{s} {s}", .{ sub, name });
         const text = try toolText(io, init.gpa, arena, &cfg, init.environ_map, "plugins", args);
         if (pluginToggleFailed(text)) {
@@ -3914,10 +3914,10 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
     }
     if (std.mem.eql(u8, sub, "new")) {
         const name = opts.plugin_target orelse
-            usageExit(io, "plugins new needs a tool name: clanker plugins new word_count", .{});
+            usageExitFor(io, "plugins", "plugins new needs a tool name: clanker plugins new word_count", .{});
         return pluginsNew(init, cfg.agent.tools_dir, name);
     }
-    usageExit(io, "unknown plugins subcommand '{s}' (list, on, off, validate, new)", .{sub});
+    usageExitFor(io, "plugins", "unknown plugins subcommand '{s}' (list, on, off, validate, new)", .{sub});
 }
 
 /// Toggle responses are otherwise ordinary rendered tool text. Keeping the
@@ -3930,9 +3930,9 @@ fn pluginToggleFailed(text: []const u8) bool {
 /// A usage mistake caught after parsing: same message shape and same exit code
 /// (2) `cli.parse`'s own diagnostics use, so a script can still tell "typed it
 /// wrong" from "the machine could not do it".
-fn usageExit(io: std.Io, comptime fmt: []const u8, args: anytype) noreturn {
+fn usageExitFor(io: std.Io, command: []const u8, comptime fmt: []const u8, args: anytype) noreturn {
     printUsageError(io, fmt, args);
-    printUsageHint(io);
+    printUsageHintFor(io, command);
     std.process.exit(2);
 }
 
@@ -3961,7 +3961,7 @@ fn pluginsValidate(init: std.process.Init, path: []const u8) !void {
                 return std.mem.lessThan(u8, a, b);
             }
         }.lt);
-        if (files.items.len == 0) usageExit(io, "no *.tool.json manifests in '{s}'", .{path});
+        if (files.items.len == 0) usageExitFor(io, "plugins", "no *.tool.json manifests in '{s}'", .{path});
     } else |_| {
         // Not a directory: a single manifest, which is what an author editing
         // one file wants to check.
@@ -4068,7 +4068,7 @@ fn pluginsNew(init: std.process.Init, tools_dir: []const u8, name: []const u8) !
     const portable = !in_tree;
 
     const manifest_text = manifest_mod.scaffoldManifest(arena, name, portable) catch
-        usageExit(io, "'{s}' is not a usable tool name (lowercase letters, digits and underscores)", .{name});
+        usageExitFor(io, "plugins", "'{s}' is not a usable tool name (lowercase letters, digits and underscores)", .{name});
     const guest_text = try manifest_mod.scaffoldGuest(arena, name);
 
     const manifest_path = try std.fmt.allocPrint(arena, "{s}/{s}.tool.json", .{ trimmed_dir, name });
@@ -4079,7 +4079,7 @@ fn pluginsNew(init: std.process.Init, tools_dir: []const u8, name: []const u8) !
 
     for ([_][]const u8{ manifest_path, guest_path }) |p| {
         if (std.Io.Dir.cwd().statFile(io, p, .{})) |_| {
-            usageExit(io, "{s} already exists; pick another name or delete it first", .{p});
+            usageExitFor(io, "plugins", "{s} already exists; pick another name or delete it first", .{p});
         } else |_| {}
     }
 
@@ -12764,9 +12764,9 @@ fn cmdAutoresearch(init: std.process.Init, opts: Options) !void {
         return;
     }
     const harness_raw = opts.research_harness orelse
-        usageExit(io, "autoresearch needs --harness \"<cmd>\"", .{});
+        usageExitFor(io, "autoresearch", "autoresearch needs --harness \"<cmd>\"", .{});
     if (targets.items.len == 0)
-        usageExit(io, "autoresearch needs --target <file>", .{});
+        usageExitFor(io, "autoresearch", "autoresearch needs --target <file>", .{});
     var harness_argv: std.ArrayList([]const u8) = .empty;
     defer harness_argv.deinit(gpa);
     {
@@ -12836,7 +12836,7 @@ fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
     }
     if (std.mem.eql(u8, sub, "show")) {
         const name = opts.workflow_name orelse
-            usageExit(io, "workflow show needs a name; run `clanker workflow list` to see names", .{});
+            usageExitFor(io, "workflow", "workflow show needs a name; run `clanker workflow list` to see names", .{});
         const wf = workflows_mod.findByName(wfs, name) orelse {
             printUsageError(io, "no workflow named '{s}'; run `clanker workflow list` to see names", .{name});
             std.process.exit(1);
@@ -12847,7 +12847,7 @@ fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
     }
     if (std.mem.eql(u8, sub, "run")) {
         const name = opts.workflow_name orelse
-            usageExit(io, "workflow run needs a name; run `clanker workflow list` to see names", .{});
+            usageExitFor(io, "workflow", "workflow run needs a name; run `clanker workflow list` to see names", .{});
         const wf = workflows_mod.findByName(wfs, name) orelse {
             printUsageError(io, "no workflow named '{s}'; run `clanker workflow list` to see names", .{name});
             std.process.exit(1);
@@ -12862,7 +12862,7 @@ fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
         try cmdRun(init, run_opts);
         return;
     }
-    usageExit(io, "unknown workflow subcommand '{s}' (list, show, run)", .{sub});
+    usageExitFor(io, "workflow", "unknown workflow subcommand '{s}' (list, show, run)", .{sub});
 }
 
 test "the webui asset route covers every embedded module, arena.js included" {
