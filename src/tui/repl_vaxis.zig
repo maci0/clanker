@@ -645,7 +645,12 @@ const CommandAction = union(enum) {
     /// session (with a name).
     theme,
     /// Runs the named internal `cmd_*` tool via `runInternalTool`.
-    tool: struct { name: []const u8, args: []const u8 },
+    tool: struct {
+        name: []const u8,
+        args: []const u8,
+        /// Forward the slash command's arguments instead of the fixed args.
+        forward_args: bool = false,
+    },
 };
 
 /// One slash command the REPL understands.
@@ -674,7 +679,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/graph", .help = "list recorded runs (same as clanker graph)", .action = .{ .tool = .{ .name = "cmd_graph", .args = "list" } } },
     .{ .name = "/status", .help = "show instance identity and configured peers", .action = .{ .tool = .{ .name = "cmd_status", .args = "" } } },
     .{ .name = "/tools", .help = "list registered tools (same as clanker tools)", .action = .{ .tool = .{ .name = "cmd_tools", .args = "" } } },
-    .{ .name = "/plugins", .aliases = &.{"/plugin"}, .help = "list installed plugins", .action = .{ .tool = .{ .name = "cmd_plugins", .args = "" } } },
+    .{ .name = "/plugins", .aliases = &.{"/plugin"}, .takes_args = true, .arg_hint = "[on|off <name>]", .help = "list plugins or switch an optional one on or off", .action = .{ .tool = .{ .name = "cmd_plugins", .args = "", .forward_args = true } } },
     .{ .name = "/goal", .takes_args = true, .arg_hint = "<intent>", .help = "design and persist a structured goal", .action = .goal },
     .{ .name = "/autoresearch", .takes_args = true, .arg_hint = "...", .help = "measurement loop (see /autoresearch --help)", .action = .autoresearch },
     .{ .name = "/arena", .takes_args = true, .arg_hint = "...", .help = "judged debate between two positions (see /arena --help)", .action = .arena },
@@ -1260,6 +1265,18 @@ test "REPL accepts the CLI aliases for sessions and plugins" {
             .tool => |tool| try std.testing.expectEqualStrings(case.tool, tool.name),
             else => return error.TestExpectedToolCommand,
         }
+    }
+}
+
+test "plugins command forwards its documented toggle arguments" {
+    const pc = parseCommand("/plugins off translate") orelse return error.TestExpectedCommand;
+    try std.testing.expectEqualStrings("off translate", pc.args);
+    switch (pc.spec.action) {
+        .tool => |tool| {
+            try std.testing.expectEqualStrings("cmd_plugins", tool.name);
+            try std.testing.expect(tool.forward_args);
+        },
+        else => return error.TestExpectedToolCommand,
     }
 }
 
@@ -2009,7 +2026,7 @@ const Model = struct {
             // `cmd_*` WASM tools the CLI subcommands invoke, so the REPL is
             // not a walled-off corner of clanker. Output is folded into the
             // transcript as dim lines, exactly like a tool result.
-            .tool => |t| _ = self.runInternalTool(t.name, t.args),
+            .tool => |t| _ = self.runInternalTool(t.name, if (t.forward_args) pc.args else t.args),
         }
     }
 
@@ -2037,7 +2054,7 @@ const Model = struct {
                 appendDimBlock(self.arena, &self.lines, compare_command_help);
             },
             // No fields at all is the compare tool's own listing input.
-            .list => _ = self.runToolJson("compare", "{}"),
+            .list => _ = self.runToolJson("compare", "{}", false),
             .show => |s| {
                 var buf: [1024]u8 = undefined;
                 var w: std.Io.Writer = .fixed(&buf);
@@ -2050,7 +2067,7 @@ const Model = struct {
                     js.write(s.pick) catch return;
                 }
                 js.endObject() catch return;
-                _ = self.runToolJson("compare", buf[0..w.end]);
+                _ = self.runToolJson("compare", buf[0..w.end], false);
             },
             .run => {
                 const prompt = std.fmt.allocPrint(
@@ -2086,7 +2103,7 @@ const Model = struct {
         is.objectField("args") catch return true;
         is.write(args) catch return true;
         is.endObject() catch return true;
-        return self.runToolJson(tool_name, ibuf[0..iw.end]);
+        return self.runToolJson(tool_name, ibuf[0..iw.end], std.mem.eql(u8, tool_name, "cmd_plugins") and args.len > 0);
     }
 
     /// Runs any registered tool on a caller-built JSON input and folds its
@@ -2098,7 +2115,7 @@ const Model = struct {
     /// Returns true so submit treats it as handled. A failure is reported in
     /// the transcript rather than bubbling: a broken tool should not take
     /// down the REPL, just be visible.
-    fn runToolJson(self: *Model, tool_name: []const u8, input: []const u8) bool {
+    fn runToolJson(self: *Model, tool_name: []const u8, input: []const u8, reload_plugins: bool) bool {
         const mod = runtime.loadNamedTool(
             self.gpa,
             self.io,
@@ -2158,6 +2175,22 @@ const Model = struct {
             return true;
         };
         _ = appendInternalToolOutput(self.arena, &self.lines, tool_name, safe);
+        if (reload_plugins) {
+            self.reg = registry.Registry.load(self.io, self.arena, std.Io.Dir.cwd(), self.cfg.agent.tools_dir) catch |err| {
+                self.lines.append(self.arena, .{
+                    .text = std.fmt.allocPrint(self.arena, "error: plugin state changed, but the REPL could not reload tools: {s}; restart `clanker repl`", .{@errorName(err)}) catch "error: plugin state changed, but the REPL could not reload tools; restart `clanker repl`",
+                    .dim = true,
+                }) catch {};
+                return true;
+            };
+            self.tool_defs = self.reg.toToolDefs(self.arena) catch |err| {
+                self.lines.append(self.arena, .{
+                    .text = std.fmt.allocPrint(self.arena, "error: plugin state changed, but the REPL could not rebuild its tool catalog: {s}; restart `clanker repl`", .{@errorName(err)}) catch "error: plugin state changed, but the REPL could not rebuild its tool catalog; restart `clanker repl`",
+                    .dim = true,
+                }) catch {};
+                return true;
+            };
+        }
         return true;
     }
 

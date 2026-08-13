@@ -640,7 +640,7 @@ A line starting with `!` is a shell escape (see below), a line starting with `/`
 | `/graph` | `cmd_graph list` | List recorded runs (same as `clanker graph`) |
 | `/status` | `cmd_status` | Show instance identity and configured peers |
 | `/tools` | `cmd_tools` | List registered tools (same as `clanker tools`) |
-| `/plugins`, `/plugin` | `cmd_plugins` | List installed plugins. Takes no arguments — toggling is `POST /api/plugins` |
+| `/plugins [on\|off <name>]`, `/plugin [on\|off <name>]` | `cmd_plugins` | List plugins or switch an optional one on or off; the REPL reloads its tool catalog after a change |
 | `/theme [name]` | in-process | List or switch the color theme (`mocha`, `latte`, `tokyonight`, …) |
 | `/autoresearch ...` | in-process | Measurement loop (see `/autoresearch --help`) |
 | `/goal <intent>` | in-process | Design and persist a goal (runs the agent) |
