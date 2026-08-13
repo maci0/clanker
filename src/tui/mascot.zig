@@ -9,7 +9,7 @@
 //!     The actual drawing, transmitted once at startup as eleven pngs and then
 //!     placed by id, so a frame change costs one escape sequence.
 //!   - **half-blocks**, everywhere else. `mascot_frames.zig` holds the same
-//!     eleven frames quantized to a 21x10 grid of upper/lower half cells.
+//!     eleven frames quantized to a 10x5 grid of upper/lower half cells.
 //!
 //! Both paths share all the position and frame arithmetic below, which is
 //! deliberately free of any vaxis types so it can be tested without a
@@ -215,6 +215,16 @@ pub fn typeColumn(typed_len: usize, width: u16) i32 {
 /// Whether there is actually room to draw. A terminal too narrow for the
 /// robot, or too short to spare `rows` on top of a usable transcript, gets no
 /// mascot rather than a clipped one shoving the transcript off screen.
+///
+/// `avail_rows` is the height of the **transcript region**, not of the
+/// terminal: the status row and the three-row input box are already spent by
+/// the time this is asked. So the terminal-height equivalent is five rows more
+/// than the figure here (`1 status + 3 box + 1`), which currently works out to
+/// 12 columns by 13 rows -- that is the number the `--mascot` help and
+/// `config.toml` quote, and it is verified by driving a real pty at 12/13/14
+/// rows rather than derived on paper. Quoting `rows + min_transcript_rows`
+/// directly at users is the mistake to avoid; it understates the requirement
+/// by five.
 pub fn fits(width: u16, avail_rows: u16) bool {
     return width >= cols + 2 and avail_rows >= rows + min_transcript_rows;
 }
@@ -443,6 +453,29 @@ test "fits refuses terminals with no room to spare" {
     try std.testing.expect(fits(cols + 2, 40));
 }
 
+test "the documented minimum terminal size is the real one" {
+    // `--mascot`'s help and config.toml both promise "12 columns wide and 13
+    // rows tall". That is a *terminal* size, while `fits` takes the transcript
+    // region, and the gap between the two is exactly the chrome the REPL has
+    // already claimed. Stating it wrongly is the easy mistake -- the first
+    // version of this feature shipped a figure that was five rows short -- so
+    // pin it here, where changing `rows` or the layout breaks the test rather
+    // than silently making the docs lie.
+    const status_row: u16 = 1;
+    const input_box: u16 = 3;
+    const transcript_top: u16 = 1;
+    const chrome = status_row + input_box + transcript_top;
+
+    const doc_cols: u16 = 12;
+    const doc_rows: u16 = 13;
+    try std.testing.expectEqual(doc_cols, cols + 2);
+    try std.testing.expect(fits(doc_cols, doc_rows - chrome));
+    // And one row/column smaller must actually be refused, or the figure is
+    // merely sufficient rather than minimal.
+    try std.testing.expect(!fits(doc_cols - 1, doc_rows - chrome));
+    try std.testing.expect(!fits(doc_cols, doc_rows - 1 - chrome));
+}
+
 test "every baked frame is fully populated and in-palette" {
     for (frames.frames) |frame| {
         try std.testing.expectEqual(@as(usize, rows * cols), frame.len);
@@ -491,8 +524,10 @@ test "drawCells paints inside the surface and leaves transparent cells alone" {
     }
     // The robot is not a solid rectangle, so this is a sanity band rather
     // than an exact count: it must draw something substantial, and it must
-    // leave some of its bounding box see-through.
-    try std.testing.expect(painted > 20);
+    // leave some of its bounding box see-through. The real frames paint 14 to
+    // 19 of the 50 cells, so the floor is well clear of "drew almost nothing"
+    // without pinning the artwork.
+    try std.testing.expect(painted > 8);
     try std.testing.expect(painted < rows * cols);
 }
 
@@ -507,16 +542,21 @@ test "drawCells clipped to the left edge stays in bounds" {
         .buffer = buffer,
         .children = &.{},
     };
-    // Half off the left edge, and low enough that the last rows fall off the
-    // bottom of the surface too.
-    drawCells(surface, 0, -10, 6);
+    // Four columns off the left edge, so six remain visible. Not `-cols`,
+    // which would be entirely off screen and make every assertion below
+    // vacuous.
+    drawCells(surface, 0, -4, 6);
+    var painted: usize = 0;
     for (0..size.height) |r| {
         for (0..size.width) |c| {
             if (surface.readCell(c, r).default) continue;
-            try std.testing.expect(c < cols - 10);
+            painted += 1;
+            try std.testing.expect(c < cols - 4);
             try std.testing.expect(r >= 6);
         }
     }
+    // It really did draw the visible part rather than clipping everything.
+    try std.testing.expect(painted > 0);
 }
 
 test "drawCells off screen paints nothing at all" {
@@ -581,13 +621,13 @@ test "drawKitty clips the source in proportion to the hidden columns" {
     };
     const ids: [frame_count]u32 = [_]u32{7} ** frame_count;
 
-    // Seven of twenty-one columns hidden off the left: a third of the source
-    // pixels are skipped, and the placement is two thirds as wide.
-    drawKitty(surface, ids, 0, -7, 0);
+    // Five of ten columns hidden off the left: half the source pixels are
+    // skipped, and the placement is half as wide.
+    drawKitty(surface, ids, 0, -5, 0);
     const placement = surface.readCell(0, 0).image.?;
-    try std.testing.expectEqual(@as(u16, png_px / 3), placement.options.clip_region.?.x.?);
-    try std.testing.expectEqual(@as(u16, png_px / 3 * 2), placement.options.clip_region.?.width.?);
-    try std.testing.expectEqual(cols - 7, placement.options.size.?.cols.?);
+    try std.testing.expectEqual(@as(u16, png_px / 2), placement.options.clip_region.?.x.?);
+    try std.testing.expectEqual(@as(u16, png_px / 2), placement.options.clip_region.?.width.?);
+    try std.testing.expectEqual(cols - 5, placement.options.size.?.cols.?);
 }
 
 test "draw falls back to half-blocks when graphics are unresolved or refused" {
@@ -609,7 +649,7 @@ test "draw falls back to half-blocks when graphics are unresolved or refused" {
             try std.testing.expect(cell.image == null);
             if (!cell.default) painted += 1;
         }
-        try std.testing.expect(painted > 20);
+        try std.testing.expect(painted > 8);
     }
 }
 
