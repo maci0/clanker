@@ -51,6 +51,11 @@ pub const PromptParts = struct {
     home: []const u8 = "",
     /// Rendered workflow catalog (from workflows.catalogText). Empty omits the section.
     workflows_catalog: []const u8 = "",
+    /// Whether the `git` tool may push to remotes, merge, and checkout
+    /// (config `agent.git_remote_ops`, read at session start). The tool
+    /// catalog only hedges with "lifts when enabled", which does not tell the
+    /// agent which state this session is in, so the build states it plainly.
+    git_remote_ops: bool = false,
 };
 
 /// Prefixed to the Skills and Learnings sections, both of which the agent
@@ -489,6 +494,18 @@ pub fn build(
         try buf.appendSlice(arena, "\nCall a tool when you need information or side effects you cannot produce yourself. Tool results come back as JSON. If a tool reports {\"ok\":false,...}, adapt and retry or answer directly.\n");
     }
 
+    // Capabilities section. The tool catalog describes git's restricted verbs
+    // only as "lifts push/merge/checkout when enabled", which does not tell the
+    // agent which state this session is in, so it tends to assume the verbs are
+    // unavailable and never tries them. State the config value (read at session
+    // start) plainly so the agent always knows its real power.
+    try buf.appendSlice(arena, "\n## Capabilities (read from config at session start)\n\n");
+    if (parts.git_remote_ops) {
+        try buf.appendSlice(arena, "`agent.git_remote_ops` is ENABLED in this session: the `git` tool CAN push to remotes, merge branches, and checkout. When working on a maci0 repository you are expected to complete the full branch -> commit -> push -> PR -> merge lifecycle autonomously. Do not claim these verbs are unavailable -- they are granted.\n");
+    } else {
+        try buf.appendSlice(arena, "`agent.git_remote_ops` is DISABLED in this session: the `git` tool will REFUSE push, merge, and checkout. Do not attempt them; if a task needs a remote operation, say so and stop.\n");
+    }
+    try buf.appendSlice(arena, "\n");
     return buf.toOwnedSlice(arena);
 }
 
