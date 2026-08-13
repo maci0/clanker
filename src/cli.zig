@@ -6822,6 +6822,7 @@ const webui_asset_paths = [_][]const u8{
     "/webui/lib/graph.js",
     "/webui/lib/markdown.js",
     "/webui/features/arena.js",
+    "/webui/features/arena3d.js",
     "/webui/features/board.js",
     "/webui/features/compare.js",
     "/webui/features/fleet.js",
@@ -6878,7 +6879,8 @@ fn handleWebuiAsset(
     // features/arena.js in particular was embedded and routed in webui.zig but
     // reachable from neither list here, so the Arena view's dynamic import
     // 404'd until this line existed.
-    const is_arena_view = std.mem.endsWith(u8, target, "features/arena.js");
+    const is_arena3d_view = std.mem.endsWith(u8, target, "features/arena3d.js");
+    const is_arena_view = !is_arena3d_view and std.mem.endsWith(u8, target, "features/arena.js");
     const is_todos_view = std.mem.endsWith(u8, target, "features/todos.js");
     const is_models_view = std.mem.endsWith(u8, target, "features/models.js");
     const is_schedule_view = std.mem.endsWith(u8, target, "features/schedule.js");
@@ -6912,8 +6914,8 @@ fn handleWebuiAsset(
     const is_modelpicker = std.mem.endsWith(u8, target, "modelpicker.js");
     const is_tools = std.mem.endsWith(u8, target, "tools.js");
     const is_ui = std.mem.endsWith(u8, target, "ui.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_compare_view) &render_compare_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_todos_view) &render_todos_view else if (is_models_view) &render_models_view else if (is_schedule_view) &render_schedule_view else if (is_search_view) &render_search_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_compare_view) &gzip_compare_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_todos_view) &gzip_todos_view else if (is_models_view) &gzip_models_view else if (is_schedule_view) &gzip_schedule_view else if (is_search_view) &gzip_search_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_compare_view) &render_compare_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_arena3d_view) &render_arena3d_view else if (is_todos_view) &render_todos_view else if (is_models_view) &render_models_view else if (is_schedule_view) &render_schedule_view else if (is_search_view) &render_search_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_compare_view) &gzip_compare_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_arena3d_view) &gzip_arena3d_view else if (is_todos_view) &gzip_todos_view else if (is_models_view) &gzip_models_view else if (is_schedule_view) &gzip_schedule_view else if (is_search_view) &gzip_search_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -10545,6 +10547,7 @@ var render_goals_view: RenderCache = .{};
 var render_knowledge_view: RenderCache = .{};
 var render_prompts_view: RenderCache = .{};
 var render_arena_view: RenderCache = .{};
+var render_arena3d_view: RenderCache = .{};
 var render_todos_view: RenderCache = .{};
 var render_models_view: RenderCache = .{};
 var render_schedule_view: RenderCache = .{};
@@ -10586,6 +10589,7 @@ var gzip_goals_view: GzipCache = .{};
 var gzip_knowledge_view: GzipCache = .{};
 var gzip_prompts_view: GzipCache = .{};
 var gzip_arena_view: GzipCache = .{};
+var gzip_arena3d_view: GzipCache = .{};
 var gzip_todos_view: GzipCache = .{};
 var gzip_models_view: GzipCache = .{};
 var gzip_schedule_view: GzipCache = .{};
