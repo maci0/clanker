@@ -5013,7 +5013,10 @@ test "a collapsed fold reserves exactly the rows the draw loop will use" {
     // Both sides now count through `foldShownLines`.
     const lines = [_]Line{
         .{ .text = "clanker> ask" },
-        .{ .text = "a1" }, .{ .text = "a2" }, .{ .text = "a3" }, .{ .text = "a4" },
+        .{ .text = "a1" },
+        .{ .text = "a2" },
+        .{ .text = "a3" },
+        .{ .text = "a4" },
         .{ .text = "receipt" },
     };
     const collapsed = [_]Fold{.{ .start = 1, .count = 4, .expanded = false, .anim = 0 }};
