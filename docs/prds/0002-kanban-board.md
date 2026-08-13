@@ -107,19 +107,12 @@ runs — this one field is not itself an array, unlike the others above).
 
 ## Known issues
 
-- Resolved: `kanban_add` / `kanban_update` used to advertise an `assignee` field
-  that nothing read (`ignore_unknown_fields` silently dropped it). Both now
-  honour `assignee` (and `who` as an alias): create stamps an initial
-  assignment folded with the add itself; update reassigns or clears.
-- Resolved: `kanban_move`'s `position` field was a no-op (no ordering concept
-  exists in `cards.zig` or `board.zig`'s `move` handling). Removed from the
-  manifest; see Open questions for card ordering as future work.
-- Resolved: a room log longer than one history page folded from its newest
-  20 messages only — the host answered history newest-first, so the fold's
-  `ts > after` cursor jumped to the top of the log after page one and every
-  older card silently vanished from `kanban_list`, below the page cap and
-  with no error. The fold now requests oldest-first pages (see Paging bound
-  above).
+None currently known. Previously resolved: `kanban_add`/`kanban_update` now
+honour the `assignee` field they used to silently drop; `kanban_move`'s no-op
+`position` field was removed from the manifest (card ordering stays future
+work, see Open questions); and the newest-first history fold that silently
+lost older cards was fixed by requesting oldest-first pages (see Paging bound
+above).
 
 ## Failure modes
 
@@ -133,7 +126,7 @@ runs — this one field is not itself an array, unlike the others above).
 
 ## Acceptance criteria
 
-- [x] Web UI and `board_*` tools return the same board for the same room.
+- [x] Web UI and `kanban_*` tools return the same board for the same room.
 - [x] A claim race resolves to exactly one holder on every peer.
 - [x] Every write returns the re-derived board, not the writer's assumption.
 - [x] Cost accrues across runs on a card.
@@ -149,5 +142,3 @@ runs — this one field is not itself an array, unlike the others above).
   instead of returning a partial fold, but compaction is the durable answer.
 - Column set is fixed in `cards.zig`; configurable columns would need a
   room-level config action, not a descriptor change.
-- `kanban_add`/`kanban_update`/`kanban_move` manifest fields above: implement
-  or remove.
