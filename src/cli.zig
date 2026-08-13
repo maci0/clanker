@@ -2737,7 +2737,9 @@ const GoalContext = struct {
     id: []const u8,
     objective: []const u8,
     completion_criterion: []const u8,
+    proof: []const u8,
     boundaries: []const u8,
+    stop_rule: []const u8,
     /// Optional per-goal agent-loop iteration budget (the goal's stored
     /// `max_iterations` in state/goals.json). Null means "use the global
     /// cfg.agent.max_iterations fallback" for runs of this goal unless the
@@ -2752,12 +2754,14 @@ fn formatGoalSection(
     arena: std.mem.Allocator,
     objective: []const u8,
     completion: []const u8,
+    proof: []const u8,
     boundaries: []const u8,
+    stop_rule: []const u8,
 ) ![]const u8 {
     return try std.fmt.allocPrint(
         arena,
-        "## Active goal\n\nobjective: {s}\ncompletion_criterion: {s}\nboundaries: {s}\n\n",
-        .{ objective, completion, boundaries },
+        "## Active goal\n\nobjective: {s}\ncompletion_criterion: {s}\nproof: {s}\nboundaries: {s}\nstop_rule: {s}\n\n",
+        .{ objective, completion, proof, boundaries, stop_rule },
     );
 }
 
@@ -2798,14 +2802,18 @@ fn goalFromObject(arena: std.mem.Allocator, obj: std.json.ObjectMap) !?GoalConte
     const objective = goalField(obj, "objective");
     if (objective.len == 0) return null;
     const completion = goalField(obj, "completion_criterion");
+    const proof = goalField(obj, "proof");
     const boundaries = goalField(obj, "boundaries");
+    const stop_rule = goalField(obj, "stop_rule");
     return .{
         .id = idv.string,
         .objective = objective,
         .completion_criterion = completion,
+        .proof = proof,
         .boundaries = boundaries,
+        .stop_rule = stop_rule,
         .max_iterations = goalMaxIterations(obj),
-        .section = try formatGoalSection(arena, objective, completion, boundaries),
+        .section = try formatGoalSection(arena, objective, completion, proof, boundaries, stop_rule),
     };
 }
 
