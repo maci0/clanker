@@ -6408,7 +6408,7 @@ fn writeLiveModels(
     environ_map: *const std.process.Environ.Map,
     s: *std.json.Stringify,
 ) void {
-    const base = std.mem.trimRight(u8, provider.base_url, "/");
+    const base = std.mem.trimEnd(u8, provider.base_url, "/");
     if (base.len == 0) return;
     const url = std.fmt.allocPrint(arena, "{s}/models", .{base}) catch return;
     var bearer: ?[]const u8 = null;
@@ -6433,12 +6433,14 @@ fn writeLiveModels(
         s.beginObject() catch return;
         s.objectField("name") catch return;
         s.write(id) catch return;
-        if (fieldStr(item.object, "context_length")) |ctx| {
-            if (std.fmt.parseInt(u32, ctx, 10)) |n| {
-                s.objectField("context_window") catch return;
-                s.write(n) catch return;
-            } else |_| {}
-        }
+        // `context_length` is a JSON number in every OpenAI-compat listing
+        // (ollama, openrouter, vLLM), which is how the sibling
+        // `/api/providers/models` route already reads it. Reading it as a
+        // string here meant the picker never got a context window at all.
+        if (item.object.get("context_length")) |ctx| if (ctx == .integer and ctx.integer > 0) {
+            s.objectField("context_window") catch return;
+            s.write(@as(u64, @intCast(ctx.integer))) catch return;
+        };
         s.endObject() catch return;
     }
 }
