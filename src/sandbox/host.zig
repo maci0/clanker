@@ -4440,8 +4440,15 @@ test "pathHasWorktreeDir flags descent into another run's worktree" {
     try std.testing.expect(pathHasWorktreeDir(".clanker-worktrees/123/src"));
     try std.testing.expect(pathHasWorktreeDir("state/.clanker-worktrees/456"));
     try std.testing.expect(pathHasWorktreeDir("./.clanker-worktrees/789"));
-    // The container itself and unrelated subdirs stay usable.
-    try std.testing.expect(!pathHasWorktreeDir(".clanker-worktrees"));
+    // The container itself is refused too, not just a descent through it. An
+    // exec'd child gets this path as its cwd and its own arguments are relative
+    // to it, so a cwd of `.clanker-worktrees` reaches `123/src` with no
+    // `.clanker-worktrees` component left for this check to see. The container
+    // holds nothing but sibling runs' trees, so refusing it costs nothing;
+    // `ck_fs_list` can still enumerate it, which is the only use it had.
+    try std.testing.expect(pathHasWorktreeDir(".clanker-worktrees"));
+    try std.testing.expect(pathHasWorktreeDir(".clanker-worktrees/"));
+    // Unrelated subdirs stay usable.
     try std.testing.expect(!pathHasWorktreeDir("src/sandbox"));
     try std.testing.expect(!pathHasWorktreeDir("state/runs"));
     try std.testing.expect(!pathHasWorktreeDir(""));
