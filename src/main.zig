@@ -154,7 +154,10 @@ pub fn main(init: std.process.Init) !void {
                 cli.printUsageError(init.io, "unknown command '{s}'; did you mean `clanker {s}`?", .{ diag, suggestion })
             else
                 cli.printUsageError(init.io, "unknown command '{s}' (see the command list below)", .{diag}),
-            error.UnknownArg => cli.printUsageError(init.io, "unrecognized argument '{s}'", .{diag}),
+            error.UnknownArg => if (cli.suggestFlag(diag)) |suggestion|
+                cli.printUsageError(init.io, "unrecognized argument '{s}'; did you mean `{s}`?", .{ diag, suggestion })
+            else
+                cli.printUsageError(init.io, "unrecognized argument '{s}'", .{diag}),
             error.MissingArg => cli.printUsageError(init.io, "'{s}' needs a value", .{diag}),
             error.BadIters => cli.printUsageError(init.io, "--iters wants a non-negative integer, got '{s}'", .{diag}),
             error.BadBudget => cli.printUsageError(init.io, "--budget wants a non-negative integer, got '{s}'", .{diag}),

@@ -3126,7 +3126,7 @@ const Model = struct {
             }
             if (row < bottom) row += 1;
             if (row < bottom) {
-                writeWrapped(surface, &row, bottom, text_width, "/model to switch  /help for commands  Ctrl-C to quit", dim);
+                writeWrapped(surface, &row, bottom, text_width, "/help for commands  Tab to complete  Ctrl-P palette  Ctrl-C to quit", dim);
             }
         }
         // Transcript layout: the visible block is bottom-aligned, chat-style,

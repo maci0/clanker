@@ -575,7 +575,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 pending_sub = "";
             } else if (std.mem.eql(u8, a, "run")) {
                 opts.command = .run;
-            } else if (std.mem.eql(u8, a, "sessions")) {
+            } else if (std.mem.eql(u8, a, "sessions") or std.mem.eql(u8, a, "history")) {
                 opts.command = .sessions;
             } else if (std.mem.eql(u8, a, "session")) {
                 // Mandatory subcommand, the way `tools list` is: `session`
@@ -961,6 +961,7 @@ fn commandForHelp(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "provide")) return .providers_check;
     if (std.mem.eql(u8, name, "workflows")) return .workflow;
     if (std.mem.eql(u8, name, "plugin")) return .plugins;
+    if (std.mem.eql(u8, name, "history")) return .sessions;
     return null;
 }
 
@@ -1001,6 +1002,40 @@ pub fn suggestCommand(input: []const u8) ?[]const u8 {
         }
     }
     return best;
+}
+
+/// Closest public flag spelling for a mistyped `--flag`.
+/// One-edit typos only, and only on tokens long enough that a nearby
+/// short flag (`--for`, `--yes`) is not a guess.
+pub fn suggestFlag(input: []const u8) ?[]const u8 {
+    if (input.len < 6 or input.len > 32) return null;
+    var best: ?[]const u8 = null;
+    var best_distance: usize = 2;
+    for (std.enums.values(Flag)) |f| {
+        const spelling = primaryFlagName(f);
+        if (spelling.len < 6) continue;
+        const distance = editDistance(input, spelling);
+        if (distance < best_distance) {
+            best = spelling;
+            best_distance = distance;
+        }
+    }
+    for (extra_flag_spellings) |spelling| {
+        if (spelling.len < 6) continue;
+        const distance = editDistance(input, spelling);
+        if (distance < best_distance) {
+            best = spelling;
+            best_distance = distance;
+        }
+    }
+    return best;
+}
+
+const extra_flag_spellings = [_][]const u8{ "--verbose", "--help", "--version", "--no-worktree", "--port" };
+
+fn primaryFlagName(f: Flag) []const u8 {
+    const n = f.name();
+    return if (std.mem.findScalar(u8, n, ',')) |i| n[0..i] else n;
 }
 
 fn editDistance(a: []const u8, b: []const u8) usize {
@@ -1235,7 +1270,7 @@ const specs = [_]Spec{
     .{ .command = .serve, .usage = "serve [--host <addr>] [--serve-as <name>]... [--webui-port <port>]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .webui_port, .host, .serve_as }, .detail = "Binds 127.0.0.1 (loopback) by default.\n\n--host <addr>          interface to bind. Default 127.0.0.1; use 0.0.0.0 (or\n                       ::) to reach the web UI and HTTP API from the LAN.\n                       Binding broadly exposes whatever the server can do\n                       (tool calls, write confirmations) to anyone who can\n                       reach the port, so pair it with a firewall.\n--serve-as <name>      a hostname this server may present itself as, so a\n                       reverse proxy or tailnet name is served. Repeatable.\n--webui-port <port>    port the web UI and its API answer on (default 17921).\n                       Also accepted as --port, the original spelling.\n\nOne interface, named ports: --host is the address the process binds, and\neach surface gets its own port under its own name, so an API port split out\nfrom the web UI later would be --api-port rather than a rename of this one.\n\nWhatever it binds to, a request is served only when its Host header names\nthis listener. An IP literal at this port always passes, so --host 0.0.0.0\nis reachable from the LAN by IP with nothing else set. A hostname is not:\nDNS rebinding needs a name whose resolution an attacker controls, and an IP\nliteral cannot be rebound. Only localhost and the names listed by\n--serve-as pass, so a reverse proxy or a tailnet name has to be named:\n--serve-as clanker.lan.\n\nThe listener can also be set without flags, for a service file or a\ncontainer that cannot pass them. Three layers, weakest first:\n\n  [serve] in config.toml       host, webui_port, serve_as (a TOML array)\n  CLANKER_HOST, CLANKER_WEBUI_PORT\n  --host, --webui-port, --serve-as\n\nEach overrides the one above it, so a flag always wins over the env, which\nalways wins over the file. Only that one port is exposed to the network\neither way: serve opens exactly one socket, and configured [[peers]] are\noutbound URLs this process connects to, never anything it listens on." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
 
-    .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect, .detail = "Lists every conversation in state/sessions, newest last. To resume one:\n  clanker run --session <id> \"continue where we left off\"\n  clanker repl --session <id>\nTo export one as a standalone HTML file:\n  clanker session export <id>" },
+    .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect, .detail = "Also reachable as `clanker history`.\n\nLists every conversation in state/sessions, newest last. To resume one:\n  clanker run --session <id> \"continue where we left off\"\n  clanker repl --session <id>\nTo export one as a standalone HTML file:\n  clanker session export <id>" },
     .{ .command = .session_export, .usage = "session export <id> [path]", .blurb = "write one conversation as a self-contained HTML file", .group = .inspect, .detail = "Writes state/exports/<id>.html unless a path is given. One file, no scripts and\nno external stylesheet, font or image, so it opens straight from file:// with no\nnetwork. Session text is model and tool output, so every field is HTML-escaped\non the way in; markup in a transcript renders as the characters that were typed.\n\nThere is deliberately no upload and no public URL. Sharing is copying the file." },
     .{ .command = .graph, .usage = "graph [run-id]", .blurb = "list runs, or draw one as a timeline", .group = .inspect, .detail = "With no argument, lists recorded runs (newest last). With a run id, renders\nthe execution graph as an ASCII timeline of LLM calls and tool invocations.\nThe web UI (clanker serve) shows the same graph interactively." },
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
@@ -1858,8 +1893,13 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         // default, where it means the provider every unqualified command
         // reaches for cannot answer at all.
         const unusable: ?[]const u8 = blk: {
-            if (p.base_url.len == 0) break :blk "base_url is empty";
-            if (!std.mem.startsWith(u8, p.base_url, "http://") and !std.mem.startsWith(u8, p.base_url, "https://"))
+            // vertex_anthropic mints https://<location>-aiplatform.googleapis.com
+            // from project/location at request time, so an empty base_url is
+            // the usual config, not a missing setup. Doctor already treats
+            // a present service-account file as ok; this check used to
+            // disagree and call the default provider "not configured".
+            if (p.base_url.len == 0 and p.kind != .vertex_anthropic) break :blk "base_url is empty";
+            if (p.base_url.len > 0 and !std.mem.startsWith(u8, p.base_url, "http://") and !std.mem.startsWith(u8, p.base_url, "https://"))
                 break :blk try std.fmt.allocPrint(arena, "base_url '{s}' has no http:// or https:// scheme", .{p.base_url});
             if (p.api_key_env) |env_name| {
                 if (init.environ_map.get(env_name) == null)
@@ -4108,7 +4148,48 @@ fn cmdStats(init: std.process.Init) !void {
     if (!cfg.modules.token_stats) {
         return error.ModuleDisabled;
     }
-    try printInternalTool(init, &cfg, "model_stats", "");
+    // Host-side aggregate, not the model_stats guest: ck_stats ships every
+    // raw record through the WASM result buffer, so a log of a few thousand
+    // lines fails as "too large for one call" even though the table itself
+    // is a handful of rows. /api/stats already takes this path.
+    const stats = try token_stats.aggregate(std.Io.Dir.cwd(), init.io, init.gpa, arena, cfg.agent.state_dir);
+    const text = try renderStatsTable(arena, stats, token_stats.totals(stats));
+    try writeStdOut(init.io, text);
+}
+
+fn renderStatsTable(arena: std.mem.Allocator, stats: []const token_stats.Stat, totals_row: token_stats.Stat) ![]const u8 {
+    if (stats.len == 0) return "no token usage recorded yet (run an agent task first)\n";
+    var text: std.ArrayList(u8) = .empty;
+    try text.appendSlice(arena, "provider        model                          calls  prompt  output   total  cache%  tok/s       cost$  fail\n");
+    for (stats) |stat| try appendStatsRow(arena, &text, stat.provider, stat.model, stat);
+    try appendStatsRow(arena, &text, "totals", "", totals_row);
+    return text.toOwnedSlice(arena);
+}
+
+fn appendStatsRow(arena: std.mem.Allocator, text: *std.ArrayList(u8), provider: []const u8, model: []const u8, stat: token_stats.Stat) !void {
+    const prompt = try compactStatsCount(arena, stat.prompt_tokens);
+    const completion = try compactStatsCount(arena, stat.completion_tokens);
+    const total = try compactStatsCount(arena, stat.total_tokens);
+    const line = try std.fmt.allocPrint(arena, "{s:<15} {s:<30}{d:>5} {s:>7} {s:>7} {s:>7} {d:>5.1} {d:>7.1} {d:>10.4} {d:>5}\n", .{
+        provider,
+        model,
+        stat.calls,
+        prompt,
+        completion,
+        total,
+        stat.cacheHitRate(),
+        stat.tokensPerSec(),
+        stat.cost,
+        stat.error_calls,
+    });
+    try text.appendSlice(arena, line);
+}
+
+fn compactStatsCount(arena: std.mem.Allocator, value: u64) ![]const u8 {
+    if (value < 1_000) return std.fmt.allocPrint(arena, "{d}", .{value});
+    if (value < 1_000_000) return std.fmt.allocPrint(arena, "{d:.1}K", .{@as(f64, @floatFromInt(value)) / 1_000.0});
+    if (value < 1_000_000_000) return std.fmt.allocPrint(arena, "{d:.1}M", .{@as(f64, @floatFromInt(value)) / 1_000_000.0});
+    return std.fmt.allocPrint(arena, "{d:.1}B", .{@as(f64, @floatFromInt(value)) / 1_000_000_000.0});
 }
 
 fn cmdGit(init: std.process.Init, opts: Options) !void {
@@ -11091,6 +11172,48 @@ test "mistyped commands get conservative suggestions" {
     try std.testing.expectEqualStrings("repl", suggestCommand("relp").?);
     try std.testing.expectEqualStrings("doctor", suggestCommand("docter").?);
     try std.testing.expect(suggestCommand("completely-different") == null);
+}
+
+test "mistyped flags get a one-edit suggestion" {
+    try std.testing.expectEqualStrings("--session", suggestFlag("--sesion").?);
+    try std.testing.expectEqualStrings("--model", suggestFlag("--modle").?);
+    try std.testing.expectEqualStrings("--provider", suggestFlag("--provder").?);
+    try std.testing.expect(suggestFlag("--foo") == null);
+    try std.testing.expect(suggestFlag("--bogus") == null);
+}
+
+test "history is the sessions alias people type first" {
+    const opts = try parse(&.{ "clanker", "history" }, null);
+    try std.testing.expectEqual(Command.sessions, opts.command);
+    try std.testing.expectEqual(Command.sessions, commandForHelp("history").?);
+}
+
+test "stats table names the empty case and keeps columns aligned" {
+    const empty = try renderStatsTable(std.testing.allocator, &.{}, .{});
+    try std.testing.expectEqualStrings("no token usage recorded yet (run an agent task first)\n", empty);
+
+    const rows = [_]token_stats.Stat{
+        .{
+            .provider = "kimi-k3",
+            .model = "kimi-k3",
+            .calls = 2,
+            .prompt_tokens = 300,
+            .completion_tokens = 50,
+            .total_tokens = 350,
+            .cache_hit = 280,
+            .cache_miss = 20,
+            .cost = 0.02,
+            .duration_ms = 200,
+            .ok_calls = 2,
+            .error_calls = 0,
+        },
+    };
+    const text = try renderStatsTable(std.testing.allocator, &rows, token_stats.totals(&rows));
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.startsWith(u8, text, "provider        model                          calls"));
+    try std.testing.expect(std.mem.indexOf(u8, text, "kimi-k3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "totals") != null);
+    try std.testing.expect(std.mem.endsWith(u8, text, "\n"));
 }
 
 test "a bare prompt runs, a mistyped command does not" {
