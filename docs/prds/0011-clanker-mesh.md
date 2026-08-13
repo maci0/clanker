@@ -11,7 +11,7 @@ static-peer HTTP plumbing described in `docs/prds/0001-chatrooms.md`.
 ## Problem
 
 Today "peers" means a static, hand-configured list (`config.toml [[peers]]`,
-`Peer{name, url}`, `src/config.zig:343`) that each instance polls or pushes to
+`Peer{name, url}`, `src/config.zig:356`) that each instance polls or pushes to
 over plain HTTP request/response: `POST /api/chat/message` fans a chatroom
 message out to every configured peer one request at a time; `peers` (the
 `phonebook` action) fetches each configured peer's `/.well-known/agent.json`
@@ -26,7 +26,7 @@ cluster of clanker instances, possibly on different machines and different
 networks, that should be able to find each other, join and leave a shared
 mesh at runtime, and share more than chat messages — workspaces (the session
 folders that already exist locally per instance, `Session.workspace`,
-`src/agent/session.zig:19`), arbitrary files, and chatrooms — without an
+`src/agent/session.zig:18`), arbitrary files, and chatrooms — without an
 operator hand-editing every instance's config every time the cluster's
 membership changes.
 
@@ -87,7 +87,7 @@ and the A2A agent card already describe.
 ## Design
 
 **Node identity.** Every instance already has `Instance{name, id}`
-(`src/config.zig:349`, `id` defaulting to a generated stable value). A mesh
+(`src/config.zig:362`, `id` defaulting to a generated stable value). A mesh
 member is addressed by that same `id`, not by `name` (names collide across
 operators; ids are meant to be unique) and not by IP:port alone (an
 instance's address can change; its id should not).
@@ -167,6 +167,55 @@ this is purely which pipe a message travels over.
 timeout defaults). Three missed pongs → the member is marked `unreachable`
 (not removed from membership — it can still catch up when it comes back) and
 its connection is retried with backoff, not torn down and forgotten.
+
+## Usage sketch (once built)
+
+Illustrative only — nothing below exists yet (see Status). Shown so the
+shape of Design reads as something a user would actually type, not just
+mechanism.
+
+**Config.** A new `[mesh]` table, off by default like every other optional
+module (`cfg.modules.*`):
+
+```toml
+[mesh]
+enabled = true
+listen_port = 7420
+ping_interval_seconds = 15
+admission = "allowlist"   # "allowlist" | "prompt" | "open"
+```
+
+`[[peers]]` keeps its existing shape (`docs/prds/0001-chatrooms.md`) and
+becomes the allowlist `admission = "allowlist"` auto-admits from, per
+Design's "membership is a protocol, not a config list".
+
+**CLI**, under the existing `.peers` command group alongside `chat`/`notify`/
+`phonebook` (`src/cli.zig:1235-1237`), following `chat <subcommand> ...`'s own
+style exactly:
+
+```sh
+clanker mesh join <host:port>     # dial a member, JOIN handshake
+clanker mesh leave <peer-id>      # explicit LEAVE, or self-leave with no id
+clanker mesh status               # every known member: id, address, reachable|unreachable
+```
+
+**Guest tools**, following `chat_*`'s op-in-config, thin-guest shape
+(`tools/zig/chat.zig`'s own doc comment: one WASM module, op pinned by the
+descriptor's `config`, all real state and I/O host-side):
+
+```
+mesh_join:   {"address":"10.0.0.4:7420"}
+mesh_leave:  {"peer_id":"a1b2c3"}          # omit peer_id to leave the whole mesh
+mesh_status: {}                            # -> [{"id":"a1b2c3","name":"...","address":"...","state":"reachable"}]
+workspace_share: {"workspace":"research","share":true}
+file_share:  {"path":"reports/summary.md","to":"a1b2c3"}
+```
+
+**Web UI / REPL.** A mesh status panel beside the existing peers/phonebook
+view (`docs/prds/0006-webui.md`), a pending-`JOIN` notification when
+`admission = "prompt"` (reusing the `ask_user` surface, per Design), and
+`mesh_status` reachable from `/mesh` the way `/plugins` reaches
+`cmd_plugins` today.
 
 ## Known issues
 

@@ -1105,8 +1105,8 @@ fn weakensImprove(obj: std.json.ObjectMap) ?GateResult {
         return .{ .ok = false, .label = "config-weakening", .detail = "inert_gate must not be disabled" };
     if (obj.get("max_consecutive_test_only")) |v| {
         switch (v) {
-            .integer => |n| if (n == 0)
-                return .{ .ok = false, .label = "config-weakening", .detail = "max_consecutive_test_only must not be 0" },
+            .integer => |n| if (n <= 0)
+                return .{ .ok = false, .label = "config-weakening", .detail = "max_consecutive_test_only must be positive" },
             else => {},
         }
     }
@@ -1162,6 +1162,18 @@ test "configWeakeningGate rejects zeroing max_consecutive_test_only" {
     const new_texts = [_][]const u8{
         \\[improve]
         \\max_consecutive_test_only = 0
+    };
+    const result = configWeakeningGate(gpa, &files, &new_texts);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("config-weakening", result.label);
+}
+
+test "configWeakeningGate rejects negative max_consecutive_test_only" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.toml"};
+    const new_texts = [_][]const u8{
+        \\[improve]
+        \\max_consecutive_test_only = -1
     };
     const result = configWeakeningGate(gpa, &files, &new_texts);
     try std.testing.expect(!result.ok);
