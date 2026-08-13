@@ -401,6 +401,17 @@ fn isErrorLine(text: []const u8) bool {
     return std.mem.startsWith(u8, text, "error:");
 }
 
+/// Recovery text for failures returned by the REPL's shared internal tools.
+/// A generic "not found" cannot imply sessions: graph, plugin, and tool
+/// failures use the same result envelope and need their own destination.
+fn internalToolFailureHint(tool_name: []const u8, detail: []const u8) []const u8 {
+    if (std.mem.eql(u8, tool_name, "cmd_graph") and std.mem.eql(u8, detail, "no such run"))
+        return "; /graph lists recorded runs";
+    if (std.mem.eql(u8, tool_name, "cmd_sessions") and std.ascii.findIgnoreCase(detail, "not found") != null)
+        return "; /sessions lists saved conversations";
+    return "";
+}
+
 fn appendDimBlock(arena: std.mem.Allocator, lines: *std.ArrayList(Line), text: []const u8) void {
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |line| lines.append(arena, .{ .text = line, .dim = true }) catch {};
@@ -411,6 +422,13 @@ test "TUI error lines use the CLI error prefix" {
     try std.testing.expect(isErrorLine("error: ProviderRefused"));
     try std.testing.expect(!isErrorLine("usage: /model [query]"));
     try std.testing.expect(!isErrorLine("[turn: 12 in / 3 out]"));
+}
+
+test "internal tool recovery hints point to the command that failed" {
+    try std.testing.expectEqualStrings("; /graph lists recorded runs", internalToolFailureHint("cmd_graph", "no such run"));
+    try std.testing.expectEqualStrings("; /sessions lists saved conversations", internalToolFailureHint("cmd_sessions", "conversation not found"));
+    try std.testing.expectEqualStrings("", internalToolFailureHint("cmd_plugins", "manifest not found"));
+    try std.testing.expectEqualStrings("", internalToolFailureHint("cmd_tools", "descriptor not found"));
 }
 
 /// Folds one completed answer into transcript lines: control-stripped, split
@@ -2035,7 +2053,8 @@ const Model = struct {
             tool_name,
             null,
         ) catch |err| {
-            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}", .{ tool_name, @errorName(err) }) catch "error: internal tool failed", .dim = true }) catch {};
+            const hint: []const u8 = if (err == error.ToolWasmMissing) "; run `zig build tools`" else "";
+            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}{s}", .{ tool_name, @errorName(err), hint }) catch "error: internal tool failed", .dim = true }) catch {};
             return true;
         };
         defer mod.deinit();
@@ -2061,12 +2080,7 @@ const Model = struct {
         if (!ok) {
             const raw_detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "unknown") else "unknown";
             const detail = clean(self.arena, raw_detail) orelse "unknown";
-            const extra: []const u8 = if (std.mem.eql(u8, detail, "no such run"))
-                "; /graph lists recorded runs"
-            else if (std.ascii.findIgnoreCase(detail, "not found") != null)
-                "; /sessions lists saved conversations"
-            else
-                "";
+            const extra = internalToolFailureHint(tool_name, detail);
             self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}{s}", .{ tool_name, detail, extra }) catch "error: internal tool failed", .dim = true }) catch {};
             return true;
         }
@@ -5139,8 +5153,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // `log.log` returned early and the operator was told nothing at all,
     // while the comment above it still claimed it was "said once ... so the
     // operator is not left believing they are protected". Config parse
-    // warnings, an invalid `--session` id and a failed session mint were
-    // being dropped the same way.
+    // warnings and a failed session mint were being dropped the same way.
     log.setLevel(.error_);
 
     // Save on every exit path: app.run returns for /quit and for Ctrl-C while
