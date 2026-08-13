@@ -3365,6 +3365,17 @@ pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     return h.writeResult(bytes, buf[0..w.end]);
 }
 
+/// True if `path` (split on '/') descends through a directory named
+/// `.clanker-worktrees`, the per-run improve worktree container. Used to
+/// stop an exec `cwd`/`dir` from landing inside a sibling run's worktree.
+fn pathHasWorktreeDir(path: []const u8) bool {
+    var it = std.mem.splitScalar(u8, path, '/');
+    while (it.next()) |comp| {
+        if (std.mem.eql(u8, comp, ".clanker-worktrees")) return true;
+    }
+    return false;
+}
+
 pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
@@ -3409,6 +3420,18 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     var exec_dir_opened = false;
     if (obj.get("cwd")) |cwd_val| {
         if (cwd_val == .string and cwd_val.string.len > 0) {
+            // Refuse a cwd that lands inside another run's isolated worktree.
+            // `.clanker-worktrees/` is the per-run improve worktree container
+            // under the repo root (src/improve/worktree.zig). The only session
+            // legitimately inside one runs with that worktree as its sandbox
+            // root, where the container sits *above* the root and a relative
+            // cwd can never re-enter it (`..` is already refused below). Any
+            // `.clanker-worktrees` component here is therefore a descent into
+            // a sibling run's tree (e.g. a `gate` `dir` pointed at one).
+            if (pathHasWorktreeDir(cwd_val.string)) {
+                log.log(.warn, "[sandbox] ck_exec denied cwd '{s}': inside another run's worktree", .{cwd_val.string});
+                return Err.denied;
+            }
             const full = safeJoinSecure(h.sandbox, cwd_val.string) catch return Err.denied;
             defer h.sandbox.gpa.free(full);
             exec_dir = std.Io.Dir.cwd().openDir(h.sandbox.io, full, .{}) catch return Err.not_found;
@@ -4407,6 +4430,19 @@ test "safeJoin rejects escapes" {
     defer std.testing.allocator.free(dir);
     try std.testing.expectEqualStrings("/tmp/sandbox/notes", dir);
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "notesx"));
+}
+
+test "pathHasWorktreeDir flags descent into another run's worktree" {
+    // A cwd that re-enters the per-run improve worktree container is refused.
+    try std.testing.expect(pathHasWorktreeDir(".clanker-worktrees/123/src"));
+    try std.testing.expect(pathHasWorktreeDir("state/.clanker-worktrees/456"));
+    try std.testing.expect(pathHasWorktreeDir("./.clanker-worktrees/789"));
+    // The container itself and unrelated subdirs stay usable.
+    try std.testing.expect(!pathHasWorktreeDir(".clanker-worktrees"));
+    try std.testing.expect(!pathHasWorktreeDir("src/sandbox"));
+    try std.testing.expect(!pathHasWorktreeDir("state/runs"));
+    try std.testing.expect(!pathHasWorktreeDir(""));
+    try std.testing.expect(!pathHasWorktreeDir("clanker-worktrees/123")); // sibling name
 }
 
 test "ckHash produces correct SHA-256 hex digest" {
