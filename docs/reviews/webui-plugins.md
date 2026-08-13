@@ -1,7 +1,7 @@
 # Web UI plugins — review log
 
 The plugin surface under `tools/webui-plugins/`: the views that are part of the
-page without being part of `tools/zig/webui/`. `docs/WEBUI_REVIEW.md` covers the
+page without being part of `tools/zig/webui/`. `docs/reviews/webui.md` covers the
 page itself; this file covers the plugins and the host that loads them, because
 they are edited independently and a shared log makes every plugin change collide
 with every page change.

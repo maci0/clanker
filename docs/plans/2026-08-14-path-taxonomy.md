@@ -26,8 +26,8 @@
 
 **Files:**
 - Create: `docs/reviews/`
-- Move: `docs/WEBUI_REVIEW.md` → `docs/reviews/webui.md`
-- Move: `docs/WEBUI_PLUGINS_REVIEW.md` → `docs/reviews/webui-plugins.md`
+- Move: `docs/reviews/webui.md` → `docs/reviews/webui.md`
+- Move: `docs/reviews/webui-plugins.md` → `docs/reviews/webui-plugins.md`
 - Modify: every markdown/code comment referencing the old paths (`docs/ROADMAP.md`, `docs/prds/0006-webui.md`, `docs/prds/0012-surface-plugins.md`, `docs/prompts/delight-review.md`, design plan tables, etc.)
 - Modify: `docs/README.md` if it indexes docs shelves
 
@@ -35,7 +35,7 @@
 - Consumes: design rename table (Docs / scripts / examples)
 - Produces: stable `docs/reviews/*.md` paths for later batches
 
-- [ ] **Step 1:** `mkdir -p docs/reviews && git mv docs/WEBUI_REVIEW.md docs/reviews/webui.md && git mv docs/WEBUI_PLUGINS_REVIEW.md docs/reviews/webui-plugins.md`
+- [ ] **Step 1:** `mkdir -p docs/reviews && git mv docs/reviews/webui.md docs/reviews/webui.md && git mv docs/reviews/webui-plugins.md docs/reviews/webui-plugins.md`
 - [ ] **Step 2:** Rewrite references (`rg WEBUI_REVIEW|WEBUI_PLUGINS_REVIEW`) to new paths; update relative links inside moved files
 - [ ] **Step 3:** Verify `rg 'WEBUI_REVIEW|WEBUI_PLUGINS_REVIEW' --glob '!docs/plans/**'` is empty or only historical changelog if intentionally kept
 - [ ] **Step 4:** Commit + push

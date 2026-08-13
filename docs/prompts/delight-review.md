@@ -36,7 +36,7 @@ this for the first time today, right after using ChatGPT, Claude.ai, an
 OpenWebUI instance, or the Kimi Code CLI — and for the CLI surface, right
 after using `gh`, `cargo`, or `uv`, whose help pages, error voices, and
 did-you-mean hints set the current bar — would they notice clanker feels
-worse-crafted, and at exactly which moment?** `docs/WEBUI_REVIEW.md` already
+worse-crafted, and at exactly which moment?** `docs/reviews/webui.md` already
 uses that same reference bar for the polish work it logs (alive lamps,
 staggered empty-state suggestions, skeleton loaders, mermaid rendering, the
 html/svg preview pane) — read it first so you propose the *next* gap, not one
@@ -46,7 +46,7 @@ already closed.
 
 | Source | Why |
 |---|---|
-| `docs/WEBUI_REVIEW.md` | The polish/animation work already shipped, turn by turn — do not re-propose anything logged here as done |
+| `docs/reviews/webui.md` | The polish/animation work already shipped, turn by turn — do not re-propose anything logged here as done |
 | `docs/prds/0006-webui.md` | Phase plan, the named reference products, what's still marked Open |
 | `docs/prds/0005-repl-tui.md` | TUI acceptance criteria, the widget-mapping table, what's still marked Open |
 | `tools/zig/webui/index.html` | The 11 real views: chat, board, goals, runs, fleet, rooms, knowledge, prompts, tools, system, plus rail/header structure |
@@ -77,7 +77,7 @@ already closed.
   cites a CSS rule or a Zig function without a captured screenshot or
   `capture-pane` transcript to back it is unverified — say so explicitly
   rather than presenting it as observed.
-- **Don't re-litigate what's already logged shipped** in `docs/WEBUI_REVIEW.md`
+- **Don't re-litigate what's already logged shipped** in `docs/reviews/webui.md`
   — cite the entry and move on if a candidate finding turns out to already be
   built.
 - **Reduced-motion and no-JS-crash are floors, not scoring criteria.** If a
@@ -243,7 +243,7 @@ Return these sections in the captured response:
 - [ ] Every finding backed by something actually driven (a screenshot, a
       captured pane, an observed network/console state) — not inferred from
       source alone
-- [ ] Nothing re-proposed that `docs/WEBUI_REVIEW.md` already logs as shipped
+- [ ] Nothing re-proposed that `docs/reviews/webui.md` already logs as shipped
 - [ ] All three surfaces covered, or the scope explicitly narrowed by the
       user's own instruction
 - [ ] At least one cross-surface consistency finding, or an explicit note

@@ -8,7 +8,7 @@ comptime-embedded via `tools/zig/webui.zig`, routed in `src/cli.zig`
 (`handleConnection`/`handleRun`/`handleWebuiAsset`/`handleWebuiPeers`/etc).
 Surface: `clanker serve`, served at `GET /`. Co-equal product surface with
 the CLI. Turn-by-turn audit trail of the module-split and accessibility work
-lives separately in `docs/WEBUI_REVIEW.md` — that document is a working log,
+lives separately in `docs/reviews/webui.md` — that document is a working log,
 this one is the spec. The shipped feature set (Board, Rooms, callgraph
 navigation, ChatGPT/Cursor/Claude theme, Phase 6 chat parity, Compare,
 goals↔board sync) is enumerated in Acceptance criteria below rather than
@@ -117,7 +117,7 @@ because it used to be two: the module gate and the asset route were
 hand-maintained copies of the same set, and `features/arena.js` appeared in
 neither, so the Arena view's dynamic `import()` 404'd against a server that
 held its bytes (hit twice independently in one day — see `644dc37` and
-`docs/WEBUI_REVIEW.md`). A test now walks `tools/zig/webui/{core,lib,features}`
+`docs/reviews/webui.md`). A test now walks `tools/zig/webui/{core,lib,features}`
 and fails on any module the list has never heard of.
 
 **Ask bridge (`ask_user`).** A streaming run writes
@@ -350,7 +350,7 @@ Infrastructure:
 - [x] `lib.out_cap` comptime guard passes with headroom
 - [x] Strict CSP verified live (`curl -si`): no inline script, and inline style only from the vendored mermaid renderer (`style-src 'self' 'unsafe-inline'`, `script-src 'self'` unchanged)
 - [x] Accessibility: Phase 6 + mermaid additions 0 violations across views
-      (axe-core 4.13, live sweep 2026-08-12 — see `docs/WEBUI_REVIEW.md`);
+      (axe-core 4.13, live sweep 2026-08-12 — see `docs/reviews/webui.md`);
       pre-existing composer/rail/board/goals/runs contrast and structure
       items from the concurrent board/run-compare/workspace work logged there
       as the handoff for that surface

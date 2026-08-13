@@ -11,7 +11,7 @@ toggled in System → Web UI plugins, state in `state/webui_plugins.json`. Four
 real plugins ship today: `activity`, `office`, `files`, `health`. No PRD or ADR
 covered the web UI half before this one; its prior documentation was
 `tools/webui-plugins/README.md` plus the review log
-`docs/WEBUI_PLUGINS_REVIEW.md`, which is why its design decisions (CSP-only
+`docs/reviews/webui-plugins.md`, which is why its design decisions (CSP-only
 trust, no declared-capability sandboxing) were never written down where a
 future editor would find them.
 
