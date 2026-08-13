@@ -491,9 +491,10 @@ Suite `608/610 tests passed (2 skipped)`; 169/169 build steps.
 ## Compare view — the blind side-by-side in the browser (2026-08-13)
 
 The web UI half of `clanker compare`, listed as still open on the roadmap since
-the feature shipped. The REPL `/compare` slash command is the other half and is
+the feature shipped. The REPL `/compare` slash command is the other half and was
 deliberately not in this slice: it is a `src/tui/*` change, and that surface was
-being worked concurrently.
+being worked concurrently. (It has since landed in maci0/clanker#149, so the
+comparison surface is complete: CLI, browser and REPL.)
 
 The rendering was the easy part. What this slice is actually about is that the
 `compare` tool's read paths were written for exactly one caller — a person who
@@ -568,14 +569,66 @@ JS content type rather than falling through to the page. Suite
 `613/615 tests passed (2 skipped)`; `169/169` build steps. (Two skips rather
 than one: this ran in a worktree, where `.git` is a file.)
 
+## Schedule view — the last subsystem with no browser surface (2026-08-13)
+
+`clanker schedule` has had a store, a cron parser, a runner, a ledger and eight
+subcommands since it landed, and nothing in the browser: the roadmap carried
+"Not built: a WASM tool or web UI view over the schedule" as its only open item.
+This is the view half.
+
+**Routes.** `GET /api/schedule` returns every entry with a computed `next_run`,
+plus the last 20 ledger records. `POST /api/schedule/<id>` with
+`{"enabled":bool}` pauses or resumes one, through the same `schedule_store`
+session `clanker schedule enable|disable` writes, so the two paths cannot drift.
+Resuming re-dates `last_run` to now, matching `setEnabled` in
+`src/schedule/command.zig`: an entry parked for a month must not come back owing
+a run.
+
+**Scope.** Read-and-toggle, which is the whole surface deliberately. Firing an
+entry is an agent run and this server answers one request per connection, the
+same reason the Arena and Compare views link out rather than starting a match.
+Adding is not here either: `add` has to reject a spec that never fires and say
+which of the spec and the task was wrong, and a form that quietly accepted a
+spec matching nothing would be worse than no form.
+
+**Two things the view had to get right rather than inherit:**
+
+- **Times render at each entry's own fixed UTC offset**, not the browser's
+  locale. The offsets are fixed and never DST-aware (ADR 0009), so a row that
+  says 09:00 has to mean the 09:00 the cron field names; localising it would
+  quietly move it twice a year.
+- **`next_run` is absent, not zero, when an entry can never fire.** Disabled and
+  "the spec parses to nothing" are both "never", and only one of them is
+  something the user chose, so the page separates them: `paused` against
+  `never: check the cron spec`. Folding them together would hide a typo behind
+  a state that looks intentional.
+
+The empty ledger says what an empty ledger nearly always means: nothing is
+calling `run-due`.
+
+### Verified
+
+`clanker serve` still cannot run in this environment (it logs `serve listening`
+and the process dies at `accept`), so there is no browser or curl check here and
+none is claimed. What was run:
+
+- **Zig unit test** over `scheduleNextRun` + `writeScheduleEntry`: the next fire
+  of an every-minute entry, `null` for both disabled and an unparseable spec,
+  and the serialized entry carrying `next_run` in the first case and omitting
+  the field in the second.
+- **The real view module under node**, against canned `/api/schedule` payloads
+  and a minimal DOM: 19 checks covering the ids `index.html` actually defines,
+  an active entry's next fire at a non-UTC offset, `paused` vs the bad-spec
+  wording, Pause/Resume per state, the entry count, a rendered ledger row, both
+  empty states, and a 500 surfacing the server's reason instead of drawing
+  "nothing scheduled".
+- **The CLI end of the same store**: `schedule add` x2, `schedule disable`,
+  `schedule list`, confirming the on-disk shape the route reads.
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
 - Promote `axe-core` into the repo + `clanker gate` so the a11y proof is not `/tmp`-vendored; add narrow-viewport Fleet interaction (hamburger → Fleet) to the screenshot harness so the drawer path is also photographed.
 - Resolve the pre-existing axe items logged in the sweep entry (composer `#task` combobox role, `#rail-list` workspace header structure, board/goals/runs contrast + labels, run-compare B select name) — they sit in the concurrent agent's board/run-compare/workspace surface.
 - If Kimi parity is to extend beyond the documented Phase 6: decompose remaining `app.js` view logic (`features/board.js`, `features/goals.js`), promote `axe-core` into `clanker gate`, and resolve the pre-existing axe handoff items (composer `#task` combobox role, `#rail-list` workspace header structure, board/goals/runs contrast + labels, run-compare B select name) — all already logged in the sweep entry. The composer Research toggle from this slice closes the last named parity candidate.
-- The REPL `/compare` slash command — the other half of the comparison surface,
-  left open on the roadmap. `src/tui/*`, and the browser now covers reading a
-  comparison back, so what is missing is a REPL that can start one and show it
-  in place.
 - Kimi Code **harness** parity (open-source CLI, the corrected target): remaining gaps are MCP **client** configuration (clanker already serves MCP; `/mcp-config`-style client management is new), ACP/IDE integration (`kimi acp` equivalent), and lifecycle hooks surfaced from the page. Video input and the skills catalogue just landed; each remaining item is a bounded slice on its own.

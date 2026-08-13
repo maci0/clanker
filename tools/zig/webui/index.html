@@ -77,6 +77,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
     <p class="rail-group" role="presentation">Set up</p>
     <button type="button" class="rail-tab" role="tab" id="tab-models" aria-controls="view-models" aria-selected="false" tabindex="-1" data-view="models">Models</button>
+    <button type="button" class="rail-tab" role="tab" id="tab-schedule" aria-controls="view-schedule" aria-selected="false" tabindex="-1" data-view="schedule">Schedule</button>
     <button type="button" class="rail-tab" role="tab" id="tab-knowledge" aria-controls="view-knowledge" aria-selected="false" tabindex="-1" data-view="knowledge">Knowledge</button>
     <button type="button" class="rail-tab" role="tab" id="tab-prompts" aria-controls="view-prompts" aria-selected="false" tabindex="-1" data-view="prompts">Prompts</button>
     <button type="button" class="rail-tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
@@ -537,6 +538,20 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
 
   </div>
+  <div class="view" id="view-schedule" role="tabpanel" aria-labelledby="tab-schedule" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Schedule</h2>
+        <button type="button" class="secondary" id="schedule-refresh">Refresh</button>
+      </div>
+      <p class="meta">What <code>clanker schedule</code> has been asked to run, and when each entry fires next. Times are each entry's own fixed UTC offset, never a DST-aware zone. Nothing fires from this page: entries run when the system's own cron calls <code>clanker schedule run-due</code>.</p>
+      <p class="sr-only" id="schedule-status" role="status" aria-live="polite"></p>
+      <div id="schedule-list"></div>
+      <h3 class="detail-head" style="margin-top: var(--space-5);">Recent fires</h3>
+      <ul class="schedule-log" id="schedule-log"></ul>
+    </section>
+  </div>
+
   <div class="view" id="view-models" role="tabpanel" aria-labelledby="tab-models" tabindex="-1" hidden>
     <section>
       <div class="section-head">
@@ -849,6 +864,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 <script type="module" src="/webui/features/prompts.js"></script>
 <script type="module" src="/webui/features/todos.js"></script>
 <script type="module" src="/webui/features/models.js"></script>
+<script type="module" src="/webui/features/schedule.js"></script>
 <script type="module" src="/webui/app.js"></script>
 </body>
 </html>
