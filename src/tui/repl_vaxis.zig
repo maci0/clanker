@@ -246,6 +246,10 @@ fn dupSanitized(bytes: []const u8) ?[]u8 {
 /// the deadline passes, or the turn is abandoned. Returns the picked option
 /// index, null meaning declined. Runs on the run thread.
 fn askOnRunThread(kind: AskKind, question: []const u8, options: []const []const u8) ?usize {
+    // A stop requested before the question was raised means nobody will
+    // answer or cancel it; decline immediately instead of parking until
+    // the timeout.
+    if (bridge_stop_flag.load(.acquire)) return null;
     const q = dupSanitized(question) orelse return null;
     const opts = bridge_gpa.alloc([]const u8, options.len) catch {
         bridge_gpa.free(q);
@@ -2936,6 +2940,9 @@ const Model = struct {
                     bridge_mutex.unlock(bridge_io);
                     if (streaming) {
                         bridge_stop_flag.store(true, .release);
+                        // A worker parked on an unanswered ask never sees the
+                        // stop flag; wake it declined so the stop lands now.
+                        askCancelPending();
                     } else {
                         ctx.quit = true;
                     }
@@ -4918,13 +4925,8 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     bridge_gpa = gpa;
     bridge_io = io;
     var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
-    // `always` has no prompt-rendering path in this REPL yet (see the module
-    // doc comment and docs/ROADMAP.md): write-capable tools run ungated here
-    // regardless of this setting. Said once, before the alt-screen takes
-    // over stderr, so the operator is not left believing they are protected.
-    if (cfg.agent.confirm_writes == .always) {
-        log.log(.warn, "agent.confirm_writes=\"always\" does not gate this REPL yet; write-capable tool calls run without confirmation here. Only `clanker serve` honors it today.", .{});
-    }
+    // The ask/confirm modal's timeout backstop, same knob serve uses.
+    ask_timeout_ns = @as(u64, cfg.agent.ask_timeout_seconds) * std.time.ns_per_s;
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     const tool_defs = try reg.toToolDefs(arena);
@@ -5071,6 +5073,9 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // and join it before touching self.messages or freeing bridge buffers.
     if (model.thread) |t| {
         bridge_stop_flag.store(true, .release);
+        // The worker may be parked on an unanswered ask; wake it declined
+        // or this join waits out the whole ask timeout.
+        askCancelPending();
         t.join();
         model.thread = null;
     }
