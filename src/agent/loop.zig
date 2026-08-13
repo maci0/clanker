@@ -674,7 +674,7 @@ pub const Agent = struct {
                         const tag = try std.fmt.allocPrint(self.arena, "\n[ttsr:{s}]\n{s}\n[/ttsr]\n", .{ rule.name, rule.inject });
                         if (messages.items.len > 0 and messages.items[0].role == .system) {
                             const cur = messages.items[0].content orelse "";
-                            if (std.mem.indexOf(u8, cur, tag) == null) {
+                            if (std.mem.find(u8, cur, tag) == null) {
                                 messages.items[0].content = try std.fmt.allocPrint(self.arena, "{s}{s}", .{ cur, tag });
                             }
                         }

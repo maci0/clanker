@@ -196,15 +196,13 @@ function goalCard(g) {
   var shownKey = (g.status || "active") === "active" && running ? "running" : (g.status || "");
   var worktreeTitle = goalWorktreeTitle(g);
   return T.div({ class: "goal", "data-status": shownKey },
-    T.div({ class: "goal-objective" }, g.objective || "(no objective recorded)"),
+    T.div({ class: "goal-heading" },
+      T.div({ class: "goal-objective" }, g.objective || "(no objective recorded)"),
+      worktreeTitle
+        ? T.span({ class: "goal-worktree-badge", title: worktreeTitle, "aria-label": "This goal runs in a git worktree" }, icon("worktree", 16))
+        : null),
     T.div({ class: "goal-meta" },
       T.span({ class: "goal-status" }, shown),
-      /* Only when the goal actually carries the field. Goals written before it
-         existed have nothing to say, and a marker for "unknown" would be a
-         claim the record does not make. */
-      worktreeTitle
-        ? T.span({ class: "goal-worktree", title: worktreeTitle }, icon("worktree", 14), "worktree")
-        : null,
       g.max_iterations ? T.span("budget ≤ " + g.max_iterations + " iters") : null,
       g.id ? T.span("id " + String(g.id).slice(0, 10)) : null),
     /* A well-specified goal runs to several paragraphs and there are usually
@@ -343,6 +341,7 @@ function renderGoalRunPanel(g) {
       T.textarea({
         "data-goal-steer": gid,
         rows: "2",
+        wrap: "soft",
         placeholder: "Steer this run — tell the agent something mid-flight…",
         maxlength: "8000",
         onkeydown: function (e) {

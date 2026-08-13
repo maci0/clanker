@@ -925,26 +925,26 @@ test "openai chat transcodes to anthropic messages and vertex body" {
     ;
     const anth = try openaiToAnthropic(gpa, &provider, body, false);
     defer gpa.free(anth);
-    try std.testing.expect(std.mem.indexOf(u8, anth, "\"model\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, anth, "\"stream\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, anth, "\"name\":\"read\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, anth, "stream_options") == null);
-    try std.testing.expect(std.mem.indexOf(u8, anth, "be brief") != null);
+    try std.testing.expect(std.mem.find(u8, anth, "\"model\"") != null);
+    try std.testing.expect(std.mem.find(u8, anth, "\"stream\":true") != null);
+    try std.testing.expect(std.mem.find(u8, anth, "\"name\":\"read\"") != null);
+    try std.testing.expect(std.mem.find(u8, anth, "stream_options") == null);
+    try std.testing.expect(std.mem.find(u8, anth, "be brief") != null);
 
     const vtx = try openaiToAnthropic(gpa, &provider, body, true);
     defer gpa.free(vtx);
-    try std.testing.expect(std.mem.indexOf(u8, vtx, "anthropic_version") != null);
-    try std.testing.expect(std.mem.indexOf(u8, vtx, vertex.body_version) != null);
-    try std.testing.expect(std.mem.indexOf(u8, vtx, "\"model\"") == null);
+    try std.testing.expect(std.mem.find(u8, vtx, "anthropic_version") != null);
+    try std.testing.expect(std.mem.find(u8, vtx, vertex.body_version) != null);
+    try std.testing.expect(std.mem.find(u8, vtx, "\"model\"") == null);
 }
 
 test "rewriteVertexBody keeps extra keys and swaps model for anthropic_version" {
     const gpa = std.testing.allocator;
     const out = try rewriteVertexBody(gpa, "{\"model\":\"claude-x\",\"messages\":[],\"foo\":1}");
     defer gpa.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "anthropic_version") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"foo\":1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"model\"") == null);
+    try std.testing.expect(std.mem.find(u8, out, "anthropic_version") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"foo\":1") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"model\"") == null);
 }
 
 test "openaiCompletion maps tool_use to tool_calls" {
@@ -959,9 +959,9 @@ test "openaiCompletion maps tool_use to tool_calls" {
         .usage = .{ .prompt_tokens = 10, .completion_tokens = 4, .total_tokens = 14 },
     });
     defer gpa.free(body);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"tool_calls\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"finish_reason\":\"tool_calls\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "chat.completion") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"tool_calls\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"finish_reason\":\"tool_calls\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "chat.completion") != null);
 }
 
 test "OpenaiStream emits role then content then DONE" {
@@ -969,11 +969,11 @@ test "OpenaiStream emits role then content then DONE" {
     var st = OpenaiStream{ .model = "m" };
     const a = (try st.writeEvent(gpa, .{ .text = "He" })).?;
     defer gpa.free(a);
-    try std.testing.expect(std.mem.indexOf(u8, a, "\"role\":\"assistant\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, a, "\"content\":\"He\"") != null);
+    try std.testing.expect(std.mem.find(u8, a, "\"role\":\"assistant\"") != null);
+    try std.testing.expect(std.mem.find(u8, a, "\"content\":\"He\"") != null);
     const b = (try st.writeEvent(gpa, .{ .text = "llo" })).?;
     defer gpa.free(b);
-    try std.testing.expect(std.mem.indexOf(u8, b, "\"role\"") == null);
+    try std.testing.expect(std.mem.find(u8, b, "\"role\"") == null);
     const d = (try st.writeEvent(gpa, .{ .done = true })).?;
     defer gpa.free(d);
     try std.testing.expectEqualStrings("data: [DONE]\n\n", d);
@@ -984,11 +984,11 @@ test "AnthropicStream emits message_start, text deltas, and message_stop" {
     var st = AnthropicStream{ .model = "claude-sonnet-4" };
     const a = (try st.writeEvent(gpa, .{ .text = "Hi" })).?;
     defer gpa.free(a);
-    try std.testing.expect(std.mem.indexOf(u8, a, "event: message_start") != null);
-    try std.testing.expect(std.mem.indexOf(u8, a, "event: content_block_delta") != null);
-    try std.testing.expect(std.mem.indexOf(u8, a, "text_delta") != null);
+    try std.testing.expect(std.mem.find(u8, a, "event: message_start") != null);
+    try std.testing.expect(std.mem.find(u8, a, "event: content_block_delta") != null);
+    try std.testing.expect(std.mem.find(u8, a, "text_delta") != null);
     const b = (try st.writeEvent(gpa, .{ .done = true })).?;
     defer gpa.free(b);
-    try std.testing.expect(std.mem.indexOf(u8, b, "event: message_stop") != null);
+    try std.testing.expect(std.mem.find(u8, b, "event: message_stop") != null);
     try std.testing.expect(try st.writeEvent(gpa, .{ .done = true }) == null);
 }

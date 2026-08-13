@@ -21,7 +21,7 @@ pub fn parse(url: []const u8) ?Ref {
     else
         return null;
 
-    const qpos = std.mem.indexOfScalar(u8, rest, '?');
+    const qpos = std.mem.findScalar(u8, rest, '?');
     const path = if (qpos) |i| rest[0..i] else rest;
     const query = if (qpos) |i| rest[i + 1 ..] else "";
 

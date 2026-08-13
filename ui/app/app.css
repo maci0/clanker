@@ -3664,3 +3664,11 @@ h2#session-title {
   padding: 0 2px;
 }
 .search-hit-foot { margin-top: 2px; }
+
+/* The worktree glyph belongs beside a goal's title, making its isolated
+   workspace obvious while scanning cards. The branch/path stays in its title
+   tooltip so the badge remains compact. */
+.goal-heading { display: flex; align-items: flex-start; gap: var(--space-2); }
+.goal-heading .goal-objective { min-width: 0; }
+.goal-worktree-badge { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 1.7rem; height: 1.7rem; margin-top: 0.05rem; border: 1px solid var(--accent); border-radius: var(--radius-sm); color: var(--accent-text); background: var(--surface-raised); }
+.goal-worktree-badge svg { display: block; }

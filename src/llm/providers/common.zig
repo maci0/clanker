@@ -132,7 +132,7 @@ test "writeSamplingParams fills the use-case table when nothing is configured" {
     try s.beginObject();
     try writeSamplingParams(&s, .{ .provider = &p, .messages = &.{} });
     try s.endObject();
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"temperature\":0.7") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"temperature\":0.7") != null);
 }
 
 test "writeSamplingParams keeps an explicit model temperature" {
@@ -147,8 +147,8 @@ test "writeSamplingParams keeps an explicit model temperature" {
     try s.beginObject();
     try writeSamplingParams(&s, .{ .provider = &p, .messages = &.{} });
     try s.endObject();
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"temperature\":0.2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"temperature\":0.7") == null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"temperature\":0.2") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"temperature\":0.7") == null);
 }
 
 test "writeSamplingParams sends reasoning_effort for thinking models" {
@@ -165,6 +165,6 @@ test "writeSamplingParams sends reasoning_effort for thinking models" {
     try s.beginObject();
     try writeSamplingParams(&s, .{ .provider = &p, .messages = &.{} });
     try s.endObject();
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"reasoning_effort\":\"medium\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "temperature") == null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"reasoning_effort\":\"medium\"") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "temperature") == null);
 }
