@@ -6092,6 +6092,7 @@ const webui_asset_paths = [_][]const u8{
     "/webui/features/todos.js",
     "/webui/features/models.js",
     "/webui/features/schedule.js",
+    "/webui/features/search.js",
 };
 
 fn isWebuiAssetPath(path: []const u8) bool {
@@ -6142,6 +6143,10 @@ fn handleWebuiAsset(
     const is_todos_view = std.mem.endsWith(u8, target, "features/todos.js");
     const is_models_view = std.mem.endsWith(u8, target, "features/models.js");
     const is_schedule_view = std.mem.endsWith(u8, target, "features/schedule.js");
+    // Carries its directory, and the bare `is_search` below now excludes it:
+    // core/search.js already owns that file name, and a bare endsWith would
+    // alias the two caches and serve one file for the other's path.
+    const is_search_view = std.mem.endsWith(u8, target, "features/search.js");
     const is_vendor = std.mem.endsWith(u8, target, "vendor.js");
     const is_chat = std.mem.endsWith(u8, target, "chat.js");
     const is_labels = std.mem.endsWith(u8, target, "labels.js");
@@ -6149,7 +6154,7 @@ fn handleWebuiAsset(
     const is_stream = std.mem.endsWith(u8, target, "stream.js");
     const is_theme = std.mem.endsWith(u8, target, "theme.js");
     const is_overlay = std.mem.endsWith(u8, target, "overlay.js");
-    const is_search = std.mem.endsWith(u8, target, "search.js");
+    const is_search = !is_search_view and std.mem.endsWith(u8, target, "search.js");
     const is_composer = std.mem.endsWith(u8, target, "composer.js");
     const is_scroll = std.mem.endsWith(u8, target, "scroll.js");
     const is_markdown = std.mem.endsWith(u8, target, "markdown.js");
@@ -6168,8 +6173,8 @@ fn handleWebuiAsset(
     const is_modelpicker = std.mem.endsWith(u8, target, "modelpicker.js");
     const is_tools = std.mem.endsWith(u8, target, "tools.js");
     const is_ui = std.mem.endsWith(u8, target, "ui.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_compare_view) &render_compare_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_todos_view) &render_todos_view else if (is_models_view) &render_models_view else if (is_schedule_view) &render_schedule_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_compare_view) &gzip_compare_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_todos_view) &gzip_todos_view else if (is_models_view) &gzip_models_view else if (is_schedule_view) &gzip_schedule_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_compare_view) &render_compare_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_todos_view) &render_todos_view else if (is_models_view) &render_models_view else if (is_schedule_view) &render_schedule_view else if (is_search_view) &render_search_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_compare_view) &gzip_compare_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_todos_view) &gzip_todos_view else if (is_models_view) &gzip_models_view else if (is_schedule_view) &gzip_schedule_view else if (is_search_view) &gzip_search_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -6263,6 +6268,82 @@ fn handleRuns(
         return;
     };
     respondCompressible(arena, stream, accepts_gzip, body);
+}
+
+/// Shortest query worth running. One or two characters match nearly every
+/// transcript, so the result would be a list of everything, which is the same
+/// as no result and costs a full read of every session to produce.
+const session_search_min_len = 3;
+
+/// Most conversations reported for one query. A search surface is for finding
+/// the conversation, not for paging the archive; past this the answer is to
+/// type more, which is what `truncated` tells the page to say.
+const session_search_limit = 50;
+
+/// `GET /api/sessions/search?q=<text>` — every saved conversation with a
+/// message containing `q`, newest first, one row each with the first match in
+/// context and a count of the rest.
+///
+/// Case-insensitive substring, not the fuzzy match the rail filter uses on
+/// titles: fuzzy over whole transcripts hits almost every conversation, so it
+/// would answer every query with the whole archive.
+fn handleSessionSearch(io: std.Io, arena: std.mem.Allocator, target: []const u8, stream: std.Io.net.Stream) void {
+    const raw_q = queryParam(arena, target, "q") orelse "";
+    const q = std.mem.trim(u8, raw_q, " \t\r\n");
+    if (q.len < session_search_min_len) {
+        // Not an error: an empty box is the normal state of a search view, and
+        // the page shows this as a prompt rather than as a failure.
+        var buf: [128]u8 = undefined;
+        const body = std.fmt.bufPrint(
+            &buf,
+            "{{\"ok\":true,\"query\":\"\",\"hits\":[],\"truncated\":false,\"min_len\":{d}}}",
+            .{session_search_min_len},
+        ) catch return;
+        respond(stream, 200, "OK", body);
+        return;
+    }
+
+    const hits = session.searchSessions(io, arena, std.Io.Dir.cwd(), q, session_search_limit + 1) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not read the sessions\"}");
+        return;
+    };
+    const truncated = hits.len > session_search_limit;
+    const shown = if (truncated) hits[0..session_search_limit] else hits;
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("query") catch return;
+    s.write(q) catch return;
+    s.objectField("truncated") catch return;
+    s.write(truncated) catch return;
+    s.objectField("hits") catch return;
+    s.beginArray() catch return;
+    for (shown) |h| {
+        s.beginObject() catch return;
+        s.objectField("id") catch return;
+        s.write(h.id) catch return;
+        s.objectField("title") catch return;
+        s.write(h.title) catch return;
+        s.objectField("updated") catch return;
+        s.write(h.updated) catch return;
+        s.objectField("archived") catch return;
+        s.write(h.archived) catch return;
+        s.objectField("turn") catch return;
+        s.write(h.turn) catch return;
+        s.objectField("role") catch return;
+        s.write(h.role) catch return;
+        s.objectField("snippet") catch return;
+        s.write(h.snippet) catch return;
+        s.objectField("more") catch return;
+        s.write(h.more) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
 }
 
 /// `GET /api/sessions` lists saved conversations; `GET /api/sessions/<id>`
@@ -7192,6 +7273,17 @@ fn handleSessions(
     const arena = arena_state.allocator();
 
     const rest = target["/api/sessions".len..];
+
+    // `GET /api/sessions/search?q=` — full-text over saved conversations.
+    // Answered before the id branch below, because "search" is not an id and
+    // `validSessionId` would refuse the query string hanging off it anyway.
+    if (std.mem.eql(u8, method, "GET") and
+        (std.mem.eql(u8, rest, "/search") or std.mem.startsWith(u8, rest, "/search?")))
+    {
+        handleSessionSearch(io, arena, target, stream);
+        return;
+    }
+
     if (rest.len > 1 and rest[0] == '/') {
         const id = rest[1..];
         // `POST /api/sessions/<id>/branch/<n>` cuts the conversation at turn
@@ -9610,6 +9702,7 @@ var render_arena_view: RenderCache = .{};
 var render_todos_view: RenderCache = .{};
 var render_models_view: RenderCache = .{};
 var render_schedule_view: RenderCache = .{};
+var render_search_view: RenderCache = .{};
 var render_fleet: RenderCache = .{};
 var render_chat: RenderCache = .{};
 var render_labels: RenderCache = .{};
@@ -9650,6 +9743,7 @@ var gzip_arena_view: GzipCache = .{};
 var gzip_todos_view: GzipCache = .{};
 var gzip_models_view: GzipCache = .{};
 var gzip_schedule_view: GzipCache = .{};
+var gzip_search_view: GzipCache = .{};
 var gzip_fleet: GzipCache = .{};
 var gzip_chat: GzipCache = .{};
 var gzip_labels: GzipCache = .{};

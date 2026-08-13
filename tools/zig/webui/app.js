@@ -29,6 +29,7 @@ import { selectedKnowledge as kbSelected, loadKnowledge as kbLoad, bindKnowledge
 import { loadPromptsView as promptsLoadView, bindPrompts as promptsBind } from "./features/prompts.js";
 import { loadModelsView as modelsLoadView, bindModels as modelsBind } from "./features/models.js";
 import { loadScheduleView as scheduleLoadView, bindSchedule as scheduleBind } from "./features/schedule.js";
+import { loadSearchView as searchLoadView, bindSearch as searchBind, bindSearchDeps as searchDeps } from "./features/search.js";
 import { renderTurnTodos as todosRenderTurn } from "./features/todos.js";
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -4006,7 +4007,7 @@ toolsBind({
 
 // ---- views: one section visible at a time -----------------------------
 
-var VIEWS = ["chat", "board", "runs", "fleet", "arena", "compare", "rooms", "models", "schedule", "knowledge", "prompts", "tools", "system"];
+var VIEWS = ["chat", "board", "runs", "fleet", "arena", "compare", "rooms", "models", "search", "schedule", "knowledge", "prompts", "tools", "system"];
 var arenaModulePromise = null;
 function loadArenaModule() {
   if (!arenaModulePromise) arenaModulePromise = import("./features/arena.js");
@@ -4069,6 +4070,16 @@ var viewLoaders = {
   board: function () { return loadBoardRooms().then(function () { return loadGoals(); }); },
   models: function () { bindOnce("models", modelsBind); return modelsLoadView(); },
   schedule: function () { bindOnce("schedule", scheduleBind); return scheduleLoadView(); },
+  search: function () {
+    bindOnce("search", function () {
+      // Opening a hit is a conversation switch, which app.js owns: switchSession
+      // refuses mid-run and puts the rail back, and the search view has no
+      // business reimplementing that.
+      searchDeps({ openSession: function (id) { switchSession(id); showView("chat", true); } });
+      searchBind();
+    });
+    return searchLoadView();
+  },
   knowledge: function(){ return kbLoad(); },
   prompts: promptsLoadView,
   tools: loadTools,
