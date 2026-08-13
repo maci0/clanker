@@ -323,12 +323,22 @@ the same measurement instead of rebuilding the project to recompute it.
 the worktree's cache at the start of each run.
 
 The history is stored in `state/history/` and can be reverted with `clanker
-revert <id>`. Human reverts are a feedback channel, not just an undo: at
-startup the loop detects promoted improvements that a person later reverted,
-records them as reverted in `state/improvements.jsonl`, and renders them with
-their revert reasons in the planning prompt so the same idea is not proposed
-again. Hand-written `"class": "veto"` records in the same file work the same
-way for features rejected on sight.
+revert <id>`. Human reverts are a feedback channel, not just an undo. The loop
+detects promoted improvements that a person later reverted — both those undone
+by a recognisable revert commit and those simply deleted from the tree — and
+records them in `state/improvements.jsonl` as `"status": "reverted"`, together
+with *why*: the subject line of the reverting commit, or a note that the change
+was removed without one. Both the planning prompt and the patch prompt then
+render that reason under the entry, labelled as a human's refusal rather than a
+gate's, so the next run knows which idea was refused and on what grounds. The
+sync runs at startup and again after each promotion, since merging back is when
+commits made outside the run's worktree — a revert landed on the base branch
+while the run is still going — first become visible to it.
+
+Write a refusal in by hand the same way: append a record with the improvement's
+`id`, `"status": "reverted"` and a `detail` saying what is wrong with it. That
+is the whole contract — the loop reads the status to stop re-proposing the
+change, and the detail to explain itself.
 
 ### Evals and gates (`src/evals/`, `src/gate/checks.zig`)
 

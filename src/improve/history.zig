@@ -4,6 +4,7 @@ const std = @import("std");
 const json = std.json;
 const log = @import("../util/log.zig");
 const filelock = @import("../util/filelock.zig");
+const atomic_write = @import("../util/atomic_write.zig");
 const inert = @import("inert.zig");
 
 pub const Status = enum {
@@ -130,13 +131,35 @@ pub const History = struct {
         return false;
     }
 
-    /// Flips the logged status of the given improvement ids from accepted
-    /// to reverted, in place. The rewrite is surgical, only the status
-    /// field of a matched line changes, every other byte is carried through
-    ///, and idempotent: a line already flipped no longer says accepted and
+    /// One improvement the revert sync convicted, and why.
+    pub const Revert = struct {
+        id: []const u8,
+        /// What the record should say about the refusal: the subject of the
+        /// reverting commit, or the synthetic note the content-based pass
+        /// writes when there is no revert commit to quote. Empty is allowed
+        /// and leaves the entry's existing detail untouched.
+        reason: []const u8,
+    };
+
+    /// Flips the logged status of the given improvements from accepted to
+    /// reverted, in place, and records why alongside the status.
+    ///
+    /// The reason is the entire point. An accepted entry is written with an
+    /// empty `detail` (there is nothing to explain about a success), so a
+    /// flip that touched only the status left `recentSummary` with nothing to
+    /// render past the model's own summary of what it did: the next run was
+    /// told *that* a human refused the change and never *why*. That is one
+    /// bit of feedback on the loop's only post-merge review signal, and it is
+    /// the bit the model can least act on -- it will happily re-propose the
+    /// same idea with different wording, because nothing tells it which part
+    /// was objectionable.
+    ///
+    /// The rewrite stays surgical: only the status and detail fields of a
+    /// matched line change, every other byte is carried through, and it is
+    /// idempotent, since a line already flipped no longer says accepted and
     /// is left alone. Returns how many entries were flipped.
-    pub fn markReverted(self: *History, ids: []const []const u8) !usize {
-        if (ids.len == 0) return 0;
+    pub fn markReverted(self: *History, reverts: []const Revert) !usize {
+        if (reverts.len == 0) return 0;
 
         // Read-modify-write over the same file `append` serialises on, for
         // the same reason: a concurrent writer starting from the pre-flip
@@ -155,36 +178,107 @@ pub const History = struct {
         while (lines.next()) |line| {
             if (!first) try buf.append(self.gpa, '\n');
             first = false;
-            if (statusSplit(line, ids)) |parts| {
-                try buf.appendSlice(self.gpa, parts.before);
-                try buf.appendSlice(self.gpa, "\"status\":\"reverted\"");
-                try buf.appendSlice(self.gpa, parts.after);
-                flipped += 1;
-            } else {
+            const hit = statusSplit(line, reverts) orelse {
                 try buf.appendSlice(self.gpa, line);
-            }
+                continue;
+            };
+            try buf.appendSlice(self.gpa, hit.parts.before);
+            try buf.appendSlice(self.gpa, "\"status\":\"reverted\"");
+            // `detail` is written after `status`, so the reason always lands
+            // in the tail half; rewriting it here keeps the whole edit to one
+            // pass over the line.
+            try appendWithReason(self.gpa, &buf, hit.parts.after, hit.reason);
+            flipped += 1;
         }
         if (flipped == 0) return 0;
-        try self.dir().writeFile(self.io, .{ .sub_path = self.logPath(), .data = buf.items });
+        // Atomic: this is a whole-file rewrite of the loop's entire memory --
+        // every attempt it has ever made, which `alreadyAccepted`, the
+        // planner's dedup and `clanker revert` all read back. A plain
+        // `writeFile` truncates first, so a crash or a kill between the
+        // truncate and the last byte leaves a partial log, and the run that
+        // reads it next sees a history that stops mid-line. Promotion already
+        // writes through `atomic_write` for the same reason; this path was
+        // the one whole-file write in the module that did not.
+        try atomic_write.writeFile(self.io, self.dir(), self.logPath(), buf.items);
         return flipped;
     }
 
-    /// The line split around its accepted-status field, when the line is an
-    /// accepted entry for one of `ids`. Substring matching, not a JSON
-    /// round-trip: re-stringifying would reorder and reformat every entry it
-    /// touches, and the ids and status are written by this file's own
-    /// stringifier in exactly one shape.
-    fn statusSplit(line: []const u8, ids: []const []const u8) ?struct { before: []const u8, after: []const u8 } {
+    /// The line split around its accepted-status field, plus the reason the
+    /// matching revert carried, when the line is an accepted entry for one of
+    /// `reverts`. Substring matching, not a JSON round-trip: re-stringifying
+    /// would reorder and reformat every entry it touches, and the ids and
+    /// status are written by this file's own stringifier in exactly one shape.
+    fn statusSplit(line: []const u8, reverts: []const Revert) ?struct {
+        parts: struct { before: []const u8, after: []const u8 },
+        reason: []const u8,
+    } {
         const needle = "\"status\":\"accepted\"";
         const at = std.mem.find(u8, line, needle) orelse return null;
-        for (ids) |id| {
+        for (reverts) |r| {
             var id_buf: [128]u8 = undefined;
-            const id_field = std.fmt.bufPrint(&id_buf, "\"id\":\"{s}\"", .{id}) catch continue;
+            const id_field = std.fmt.bufPrint(&id_buf, "\"id\":\"{s}\"", .{r.id}) catch continue;
             if (std.mem.find(u8, line, id_field) != null) {
-                return .{ .before = line[0..at], .after = line[at + needle.len ..] };
+                return .{
+                    .parts = .{ .before = line[0..at], .after = line[at + needle.len ..] },
+                    .reason = r.reason,
+                };
             }
         }
         return null;
+    }
+
+    /// Copies `tail` (the part of the entry after its status field) into
+    /// `buf`, replacing the value of its `detail` field with `reason`.
+    ///
+    /// The value is located by scanning for the closing quote rather than by
+    /// assuming `"detail":""`: an entry whose detail is already populated
+    /// must still end up describing the revert, and a run that somehow logged
+    /// a non-empty detail on an accepted entry must not have half of it left
+    /// behind. An empty `reason`, or a tail with no parseable detail field,
+    /// copies through unchanged -- the status flip is the load-bearing half
+    /// and must never be lost to a formatting surprise.
+    fn appendWithReason(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), tail: []const u8, reason: []const u8) !void {
+        if (reason.len == 0) return buf.appendSlice(gpa, tail);
+        const key = "\"detail\":\"";
+        const at = std.mem.find(u8, tail, key) orelse return buf.appendSlice(gpa, tail);
+        const val_start = at + key.len;
+        const end = closingQuote(tail[val_start..]) orelse return buf.appendSlice(gpa, tail);
+
+        try buf.appendSlice(gpa, tail[0..val_start]);
+        try writeJsonStringBody(gpa, buf, reason);
+        try buf.appendSlice(gpa, tail[val_start + end ..]);
+    }
+
+    /// Offset of the quote that ends a JSON string body, skipping escaped
+    /// ones. Null if the string is unterminated.
+    fn closingQuote(s: []const u8) ?usize {
+        var i: usize = 0;
+        while (i < s.len) : (i += 1) {
+            switch (s[i]) {
+                '\\' => i += 1, // the escaped byte cannot end the string
+                '"' => return i,
+                else => {},
+            }
+        }
+        return null;
+    }
+
+    /// Appends `s` escaped as the body of a JSON string (no surrounding
+    /// quotes -- the caller's tail already has them). Commit subjects are
+    /// arbitrary text and routinely contain quotes and backslashes; writing
+    /// one in raw would produce a line the next `loadAll` cannot parse, which
+    /// would silently cost the loop its entire memory.
+    fn writeJsonStringBody(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), s: []const u8) !void {
+        for (s) |c| switch (c) {
+            '"' => try buf.appendSlice(gpa, "\\\""),
+            '\\' => try buf.appendSlice(gpa, "\\\\"),
+            '\n' => try buf.appendSlice(gpa, "\\n"),
+            '\r' => try buf.appendSlice(gpa, "\\r"),
+            '\t' => try buf.appendSlice(gpa, "\\t"),
+            // The rest of the C0 controls have no short escape.
+            0x00...0x08, 0x0b, 0x0c, 0x0e...0x1f => try buf.print(gpa, "\\u{x:0>4}", .{c}),
+            else => try buf.append(gpa, c),
+        };
     }
 
     /// Appends one JSON line describing an attempt.
@@ -469,9 +563,18 @@ pub const History = struct {
             try buf.appendSlice(arena, ": ");
             try buf.appendSlice(arena, firstLine(e.summary, 160));
             // Why it failed is the part worth carrying: the summary alone says
-            // what was attempted, not what went wrong with it.
+            // what was attempted, not what went wrong with it. A revert is
+            // labelled apart from a gate rejection because it is a different
+            // and stronger signal -- the change passed every automated check
+            // and a person removed it anyway, so the objection is to the idea,
+            // not to the code. Told "rejected because", a model reads the note
+            // as something a better patch would satisfy and tries again.
             if (!std.mem.eql(u8, e.status, "accepted") and e.detail.len > 0) {
-                try buf.appendSlice(arena, "\n    rejected because: ");
+                const label = if (std.mem.eql(u8, e.status, "reverted"))
+                    "\n    a human reverted this, saying: "
+                else
+                    "\n    rejected because: ";
+                try buf.appendSlice(arena, label);
                 try buf.appendSlice(arena, firstLine(e.detail, 200));
             }
             try buf.appendSlice(arena, "\n");
@@ -902,15 +1005,28 @@ test "markReverted flips accepted to reverted surgically and idempotently" {
     try std.testing.expectEqualStrings("imp-kept", accepted_before[0]);
     try std.testing.expectEqualStrings("imp-gone", accepted_before[1]);
 
-    try std.testing.expectEqual(@as(usize, 1), try hist.markReverted(&.{ "imp-gone", "imp-unknown" }));
+    // The reason carries a double quote, which a commit subject routinely
+    // does ("Revert \"clanker: ...\""): it has to survive as valid JSON, or
+    // the next loadAll cannot parse the log at all.
+    const reason = "Revert \"clanker: gets reverted [imp-gone]\" - wrong layer";
+    try std.testing.expectEqual(@as(usize, 1), try hist.markReverted(&.{
+        .{ .id = "imp-gone", .reason = reason },
+        .{ .id = "imp-unknown", .reason = "never logged" },
+    }));
 
     const after = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 20));
     defer gpa.free(after);
 
-    // Only the status field of the one matched line changed; the flip is
-    // exactly one byte-range substitution on the whole file.
-    try std.testing.expectEqual(before.len + "reverted".len - "accepted".len, after.len);
     try std.testing.expect(std.mem.find(u8, after, "\"id\":\"imp-gone\",\"ts\"") != null);
+    // The reason landed in the entry's detail, escaped.
+    try std.testing.expect(std.mem.find(u8, after, "\"detail\":\"Revert \\\"clanker: gets reverted [imp-gone]\\\" - wrong layer\"") != null);
+    // And it round-trips: a log this cannot parse is a loop with no memory.
+    const reloaded = try hist.loadAll(arena);
+    for (reloaded) |e| {
+        if (!std.mem.eql(u8, e.id, "imp-gone")) continue;
+        try std.testing.expectEqualStrings("reverted", e.status);
+        try std.testing.expectEqualStrings(reason, e.detail);
+    }
     // The untouched lines survive byte-for-byte: the first, and everything
     // after the one flipped line.
     var before_lines = std.mem.splitScalar(u8, before, '\n');
@@ -930,12 +1046,56 @@ test "markReverted flips accepted to reverted surgically and idempotently" {
 
     // A rejected entry for the id would not flip, and re-running changes
     // nothing: the matched line no longer says accepted.
-    try std.testing.expectEqual(@as(usize, 0), try hist.markReverted(&.{ "imp-gone", "imp-refused" }));
+    try std.testing.expectEqual(@as(usize, 0), try hist.markReverted(&.{
+        .{ .id = "imp-gone", .reason = "second look" },
+        .{ .id = "imp-refused", .reason = "already rejected" },
+    }));
 
-    // The rendered history now tells the next run the truth.
+    // The rendered history now tells the next run the truth -- including why,
+    // which is the half it could previously never see, and labelled as a
+    // human's refusal rather than as a gate's.
     const summary = try hist.recentSummary(arena, 6);
     try std.testing.expect(std.mem.find(u8, summary, "- reverted [behavior]: gets reverted") != null);
+    try std.testing.expect(std.mem.find(u8, summary, "a human reverted this, saying: " ++ reason) != null);
     try std.testing.expect(std.mem.find(u8, summary, "- accepted: stays accepted") != null);
+    // A gate rejection keeps its own wording: the two are different signals.
+    try std.testing.expect(std.mem.find(u8, summary, "rejected because: no") != null);
+}
+
+test "a revert with no reason still flips the status" {
+    // The status flip is what the dedup guards read, so it must never be
+    // lost to a missing or unparseable reason. Belt and braces: the content
+    // pass always supplies one, but markReverted is public.
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    try hist.append("imp-bare", .accepted, "i", "no reason given", &.{"src/a.zig"}, 0, 1, "", &.{}, .behavior);
+    try std.testing.expectEqual(@as(usize, 1), try hist.markReverted(&.{.{ .id = "imp-bare", .reason = "" }}));
+
+    const raw = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 20));
+    defer gpa.free(raw);
+    try std.testing.expect(std.mem.find(u8, raw, "\"status\":\"reverted\"") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"detail\":\"\"") != null);
+
+    // No reason means no "because" line, not a malformed one.
+    const summary = try hist.recentSummary(arena, 6);
+    try std.testing.expect(std.mem.find(u8, summary, "- reverted [behavior]: no reason given") != null);
+    try std.testing.expect(std.mem.find(u8, summary, "a human reverted this, saying:") == null);
 }
 
 test "firstLine trims, takes the first line, and clips to max" {

@@ -425,6 +425,16 @@ pub const Engine = struct {
             }
             if (!attempted) log.log(.warn, "iteration {d}: all attempts failed", .{iter + 1});
 
+            // A promotion merges back into the base branch and resyncs this
+            // worktree onto the result, which is the one moment in a run when
+            // commits made outside it become visible here -- including a human
+            // reverting an earlier promotion while the run is still going. The
+            // startup sync cannot see those: it reads the branch as it was
+            // cut. Without this, a long run keeps building on, and
+            // re-proposing, work that was refused hours ago, and only the
+            // *next* run finds out.
+            if (last_outcome == .accepted) self.syncReverts();
+
             consecutive_no_change = if (last_outcome == .no_change) consecutive_no_change + 1 else 0;
             if (consecutive_no_change >= no_change_stop_threshold) {
                 log.log(.info, "stopping early: {d} consecutive iterations found nothing left to change for this instruction ({d}/{d} iterations used)", .{ consecutive_no_change, iter + 1, opts.iters });
@@ -1330,10 +1340,14 @@ pub const Engine = struct {
             return;
         };
 
-        var ids: std.ArrayList([]const u8) = .empty;
+        var ids: std.ArrayList(history_mod.History.Revert) = .empty;
         defer ids.deinit(self.ctx.gpa);
         for (found) |r| {
-            ids.append(self.ctx.gpa, r.id) catch return;
+            // `r.by` is the reverting commit's subject: the closest thing the
+            // loop ever gets to a human explaining a refusal in its own words.
+            // It used to be logged here and dropped, which left history able
+            // to say only "reverted".
+            ids.append(self.ctx.gpa, .{ .id = r.id, .reason = r.by }) catch return;
             log.log(.debug, "revert sync: {s} was reverted by \"{s}\"", .{ r.id, r.by });
         }
         self.contentReverts(arena, res.stdout, &ids);
@@ -1364,7 +1378,7 @@ pub const Engine = struct {
     /// re-merged the same work a human had just deleted. Appends the ids it
     /// convicts to `ids`; anything inconclusive, re-landed, over budget, or
     /// failing a git spawn is left alone, the safe verdict is "still there".
-    fn contentReverts(self: *Engine, arena: std.mem.Allocator, raw_log: []const u8, ids: *std.ArrayList([]const u8)) void {
+    fn contentReverts(self: *Engine, arena: std.mem.Allocator, raw_log: []const u8, ids: *std.ArrayList(history_mod.History.Revert)) void {
         const imps = reverts_mod.improvementCommits(arena, raw_log) catch return;
         if (imps.len == 0) return;
         const accepted = self.hist.acceptedIds(arena) catch return;
@@ -1389,7 +1403,14 @@ pub const Engine = struct {
                 }
             }
             if (!in_log or alive) continue;
-            ids.append(self.ctx.gpa, id) catch return;
+            // No revert commit to quote -- this pass exists precisely because
+            // the removal was not worded as one. Say what was actually
+            // observed instead, so the entry still carries something the next
+            // run can act on rather than a bare "reverted".
+            ids.append(self.ctx.gpa, .{
+                .id = id,
+                .reason = "removed from the tree without a revert commit: every line this change added is gone",
+            }) catch return;
             log.log(.debug, "revert sync: {s}'s added lines are gone from the tree (content check)", .{id});
         }
     }
@@ -1445,9 +1466,9 @@ pub const Engine = struct {
         return reverts_mod.presence(distinct, Tree{ .io = self.ctx.io, .arena = arena });
     }
 
-    fn containsId(haystack: []const []const u8, id: []const u8) bool {
+    fn containsId(haystack: []const history_mod.History.Revert, id: []const u8) bool {
         for (haystack) |have| {
-            if (std.mem.eql(u8, have, id)) return true;
+            if (std.mem.eql(u8, have.id, id)) return true;
         }
         return false;
     }
