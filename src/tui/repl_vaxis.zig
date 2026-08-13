@@ -3774,12 +3774,6 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     const arena = init.arena.allocator();
     bridge_gpa = gpa;
     bridge_io = io;
-    // log.log writes straight to stderr with no coordination with vaxis's
-    // owned alt-screen buffer, unlike the old REPL where stray stderr text
-    // just scrolled by harmlessly. Any stray write here corrupts the
-    // screen, so raise the threshold for this command's whole lifetime.
-    log.setLevel(.error_);
-
     var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     // `always` has no prompt-rendering path in this REPL yet (see the module
     // doc comment and docs/ROADMAP.md): write-capable tools run ungated here
@@ -3880,6 +3874,23 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     model.context_tokens = stats_mod.historyTokens(model.messages.items);
     model.summary_before = stats_mod.summaryState(model.messages.items);
     defer model.text_field.deinit();
+
+    // From here on, log.log writes straight to stderr with no coordination
+    // with vaxis's owned alt-screen buffer, unlike the old REPL where stray
+    // stderr text just scrolled by harmlessly: any write during the session
+    // corrupts the screen. So the threshold is raised here, at the last
+    // moment before the alt screen exists, rather than at the top of this
+    // function.
+    //
+    // Raising it at the top silenced startup diagnostics that have no screen
+    // to corrupt yet, and had made one of them a lie: the
+    // `confirm_writes = "always"` warning below is logged at `.warn`, so
+    // `log.log` returned early and the operator was told nothing at all,
+    // while the comment above it still claimed it was "said once ... so the
+    // operator is not left believing they are protected". Config parse
+    // warnings, an invalid `--session` id and a failed session mint were
+    // being dropped the same way.
+    log.setLevel(.error_);
 
     // Save on every exit path: app.run returns for /quit and for Ctrl-C while
     // idle alike, so persisting here (rather than in submit) is what makes the
