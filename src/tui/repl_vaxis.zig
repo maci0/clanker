@@ -3549,7 +3549,7 @@ const Model = struct {
                     var tools = self.reg.tools.iterator();
                     while (tools.next()) |entry| {
                         const t = entry.value_ptr;
-                        // cmd_plugins treats internal non-transforms as core.
+                        // plugins treats internal non-transforms as core.
                         if (!t.internal or t.transform != null) names.append(self.arena, t.name) catch break;
                     }
                     std.mem.sort([]const u8, names.items, {}, lessThanCmd);

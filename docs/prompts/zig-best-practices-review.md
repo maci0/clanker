@@ -145,9 +145,9 @@ House table (AGENTS.md + observed style, normative):
 | Functions / methods | `camelCase` | `compactMessages`, `writeStreamEvent`, `replToolCall` |
 | Variables / fields / params | `snake_case` | `tool_call_id`, `max_iterations`, `run_stdout_color` |
 | Types | `PascalCase` | `Agent`, `MdStream`, `RunStats`, `ToolCall`, `ProviderKind` |
-| Files | `snake_case.zig` | `system_prompt.zig`, `cmd_status.zig` |
+| Files | `snake_case.zig` | `system_prompt.zig`, `status.zig` |
 | Constants | `snake_case` module `const` | `max_session_chars`, `parallel_tool_stack_bytes` |
-| WASM tool / descriptor names | Match the `.tool.json` `name` field exactly | `"webui"`, `"search_code"`, `"cmd_status"` |
+| WASM tool / descriptor names | Match the `.tool.json` `name` field exactly | `"webui"`, `"repo_search"`, `"status"` |
 
 Extra rules:
 

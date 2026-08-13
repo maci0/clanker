@@ -39,7 +39,7 @@ pub const default_fuel: u64 = 10_000_000_000;
 ///
 /// `parameters` is OpenAI's spelling of `input_schema`, accepted by
 /// `Registry.normalizedSchema` for compatibility. `category` is read by the
-/// `cmd_tools` and `cmd_plugins` guests (for grouping and the web UI's tool
+/// `tools` and `plugins` guests (for grouping and the web UI's tool
 /// panel), not by the registry, it is honored, just not by the loader.
 pub const known_keys = [_][]const u8{
     "manifest_version",

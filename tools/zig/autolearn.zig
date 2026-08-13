@@ -1,4 +1,4 @@
-//! cmd_autolearn: read state/autolearn.jsonl, aggregate usage observations
+//! autolearn: read state/autolearn.jsonl, aggregate usage observations
 //! into actionable roadmap items, and upsert an "## Autolearn" section into
 //! docs/ROADMAP.md.
 //! Input:  {"reset": bool}

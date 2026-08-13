@@ -1,4 +1,4 @@
-//! search_code: search the project with ripgrep / ast-grep / semcode.
+//! repo_search: search the project with ripgrep / ast-grep / semcode.
 //! Input:  {"engine": "rg"|"ast-grep"|"semcode", "query": "...", "path": "."}
 //! Output: {"ok": bool, "code": int, "stdout": "...", "stderr": "..."}
 

@@ -15,7 +15,7 @@ export function loadLogList(els, readJson, fmtBytes) {
   return fetch("/api/logs")
     .then(readJson)
     .then(function (d) {
-      var logs = (d.logs || []).slice().sort(function (a, b) { return a.name < b.name ? 1 : -1; });
+      var logs = (d.logs || []).slice().sort(function (a, b) { return b.name.localeCompare(a.name); });
       var keep = els.logSelect.value;
       els.logSelect.textContent = "";
       logs.forEach(function (l) {

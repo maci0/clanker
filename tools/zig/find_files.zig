@@ -1,6 +1,6 @@
 //! find_files: locate files by name, anywhere under a directory.
 //!
-//! list_files answers "what is in this directory" and search_code answers
+//! list_files answers "what is in this directory" and repo_search answers
 //! "where does this text appear". Neither answers "where is the file called
 //! something like loop", which is the question an agent asks when it has a name
 //! from a stack trace, an import, or a half-remembered path.

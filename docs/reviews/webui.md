@@ -239,7 +239,7 @@ was never recorded.
   `truncatedArgs(tc.arguments)` on every tool node; a collapsed retry keeps
   the latest arguments; `persistGraphOrErr` writes the field only when
   non-empty, so old runs and non-tool nodes stay byte-identical.
-- **Pass-through:** `tools/zig/cmd_graph.zig` — `GraphNode.arguments`
+- **Pass-through:** `tools/zig/graph.zig` — `GraphNode.arguments`
   (`?[]const u8`, null for old runs) is re-emitted by `json <run-id>` so the
   web UI sees it; `writeGraph` round-trips it.
 - **Rendering:** `app.js` node detail — for a tool node whose arguments parse
@@ -252,7 +252,7 @@ was never recorded.
 - **Verified end-to-end** (playwright against live serve with a synthetic
   run): 3 edit_file nodes → "+3 −3" (with context), "+1 −0" (create), "+40
   −40"; 0 page errors; screenshot `docs/assets/webui/run-diff.png`. New
-  tests: cmd_graph GraphFile arguments round-trip + old-run compat,
+  tests: graph GraphFile arguments round-trip + old-run compat,
   `truncatedArgs` cap/UTF-8. Suite `429 pass, 1 skip (430 total)`.
 
 ## Preview pane — html/svg fences (2026-08-12)
@@ -506,7 +506,7 @@ had already watched the blind view that minted the id, which is what
   being un-blinded, so "the view is careful" is not a mechanism. `"reveal":
   false` on a read or a listing now withholds the key from the tool's *reply*:
   no `provider`, no `model`, not for the answers, not for the verdict.
-  `compare_blind.mayReveal` is the rule, on the host-tested side of the split
+  `compare_logic.mayReveal` is the rule, on the host-tested side of the split
   with the rest of them, and a recorded pick overrides it — being told who you
   picked is the point of having picked blind.
 - **The listing leaked worse than the read did.** `state/compare/log.jsonl`'s

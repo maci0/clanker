@@ -1030,7 +1030,7 @@ pub fn ckConfig(caller: *zwasm.Caller) u32 {
 /// JSON. Guests need this because a wasm32-freestanding module carries no
 /// TOML parser: reading config.toml's raw bytes directly only works for
 /// tools that just display the file (config_view's whole-dump path); a tool
-/// that needs structured fields (peers, providers, cmd_status, ask_user)
+/// that needs structured fields (peers, providers, status, ask_user)
 /// goes through the host, which already parsed it once at startup.
 pub fn ckHarnessConfig(caller: *zwasm.Caller) u32 {
     const h = getHost(caller);
@@ -3208,7 +3208,7 @@ fn runsAShell(cmd: []const u8) bool {
 /// bump when APIs may have changed.  The search is a literal substring match
 /// (not fuzzy), so pass the shortest unambiguous fragment (e.g.
 /// "splitScalar" not "std.mem.splitScalar").  Do NOT use this for non-std
-/// symbols or project-internal code; use search_code / read_file instead.
+/// symbols or project-internal code; use repo_search / read_file instead.
 pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
     const h = getHost(caller);
     if (!std.mem.eql(u8, h.sandbox.tool_self_name, "std_api")) return Err.denied;

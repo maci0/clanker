@@ -101,7 +101,7 @@ itself is.
 | `check` | bool | `false` | This tool answers pass/fail about something (a gate, an eval, a lint). Its verdict is recorded in the run graph as a check |
 | `statusline` | bool | `false` | Contributes a segment to the REPL status line, invoked with empty input after each turn. Pair with `"internal": true` |
 | `turn_hook` | bool | `false` | Runs once after each REPL turn and may print a line into the transcript. Pair with `"internal": true` |
-| `category` | string | `""` | Grouping label for `clanker tools list` and the web UI's tool panel. Read by the `cmd_tools` and `cmd_plugins` guests, not by the registry. Empty is rendered as `other` |
+| `category` | string | `""` | Grouping label for `clanker tools list` and the web UI's tool panel. Read by the `tools` and `plugins` guests, not by the registry. Empty is rendered as `other` |
 
 ## Settings
 

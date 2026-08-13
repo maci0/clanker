@@ -409,8 +409,8 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // engine's History, never by a sandboxed tool. Every path a sandboxed
     // tool traverses is off-limits as a link, because safeJoinSecure's
     // no-follow walk (correctly) refuses symlinked components: linked
-    // state/runs broke cmd_graph's write test in every worktree (baseline
-    // gate 2/3, observed live), linked state/sessions breaks cmd_sessions
+    // state/runs broke graph's write test in every worktree (baseline
+    // gate 2/3, observed live), linked state/sessions breaks sessions
     // the same way, and a linked learnings.md/reasoning.jsonl leaf denies
     // the learnings/reasoning tools. Staged capability evals never catch
     // any of this because staging COPIES (dereferencing links); only the

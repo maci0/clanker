@@ -1,7 +1,7 @@
 {
   "name": "sessions",
   "description": "list saved conversations",
-  "wasm": "zig-out/tools/cmd_sessions.wasm",
+  "wasm": "zig-out/tools/sessions.wasm",
   "input_schema": {
     "type": "object",
     "properties": {

@@ -155,7 +155,7 @@ Review the paths named by the runner or user. If none are named, review
 
 - [ ] `harnessConfigJSON`'s serialized shape matches what every guest
       consumer's local struct (`ConfigFile`/`Provider`/`Model`-shaped types
-      in `tools/zig/peers.zig`, `cmd_status.zig`, `ask_user.zig`,
+      in `tools/zig/peers.zig`, `status.zig`, `ask_user.zig`,
       `providers.zig`) actually expects — a field renamed on the host side
       without updating every guest-side mirror struct parses to a zero
       value on the guest, not a parse error, so this class of drift is

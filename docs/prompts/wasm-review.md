@@ -47,7 +47,7 @@ sandboxed WASM tool.
 | `src/sandbox/host.zig` | The actual `ck_*` implementations: the real ceiling of what a WASM tool can do |
 | `tools/zig/lib.zig` | Guest-side ABI: `scratch`/`host_arena`/`run`, `ck_*` imports |
 | `src/tools/registry.zig` | How tools are discovered and dispatched |
-| A few existing tools as reference shape: `tools/zig/git.zig`, `tools/zig/fetch_web.zig`, `tools/zig/roadmap.zig`, `tools/zig/write_note.zig`, `tools/zig/cmd_status.zig` | What a well-scoped tool already looks like here |
+| A few existing tools as reference shape: `tools/zig/git.zig`, `tools/zig/fetch_web.zig`, `tools/zig/roadmap.zig`, `tools/zig/write_note.zig`, `tools/zig/status.zig` | What a well-scoped tool already looks like here |
 
 ## Non-negotiable
 

@@ -2548,7 +2548,7 @@ fn httpGetTask(
 
 /// `clanker autolearn`, review usage observations, refresh the roadmap
 /// Autolearn section, and print the generated items. The aggregate-and-write
-/// logic lives in the cmd_autolearn tool (fs-scoped archive/read/aggregate/write,
+/// logic lives in the autolearn tool (fs-scoped archive/read/aggregate/write,
 /// same shape as roadmap/history/learnings); this just runs it and reports.
 fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
     const io = init.io;
@@ -3775,7 +3775,7 @@ fn cmdPrune(init: std.process.Init, apply: bool) !void {
 }
 
 /// The worktree half of the janitor, in the harness rather than in
-/// `cmd_janitor`, because removing a worktree means running
+/// `janitor`, because removing a worktree means running
 /// `git worktree remove`: a wasm tool cannot spawn git, and deleting the
 /// directory with the fs tools would leave `.git/worktrees/<id>` behind, so
 /// `git worktree list` would keep reporting a tree that is not there.
@@ -3815,7 +3815,7 @@ fn cmdGraph(init: std.process.Init, opts: Options) !void {
         return error.ModuleDisabled;
     }
     // No run id lists the recorded runs; a run id renders that one. Both are
-    // implemented once, in the cmd_graph plugin.
+    // implemented once, in the graph plugin.
     printInternalTool(init, &cfg, "graph", opts.task orelse "list") catch |err| {
         if (err == error.ToolFailed) {
             printUsageError(init.io, "no such run; run `clanker graph` to list them", .{});
@@ -3835,7 +3835,7 @@ fn cmdToolsList(init: std.process.Init, opts: Options) !void {
 /// `clanker plugins [list|on <name>|off <name>|validate [path]|new <name>]`.
 ///
 /// The third-party half of the plugin surface: `list` is the same view
-/// `/plugins` gives in the REPL (the cmd_plugins guest owns it, so there is one
+/// `/plugins` gives in the REPL (the plugins guest owns it, so there is one
 /// implementation), while `validate` and `new` are what someone packaging a
 /// tool outside this repo needs and had no way to do.
 fn cmdPlugins(init: std.process.Init, opts: Options) !void {
@@ -7024,7 +7024,7 @@ fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
 }
 
 /// `GET /api/runs` lists recorded runs; `GET /api/runs/<id>` returns one whole
-/// graph. Both are answered by the cmd_graph plugin's json modes, so reading
+/// graph. Both are answered by the graph plugin's json modes, so reading
 /// `state/runs/` stays on the plugin side of the split.
 fn handleRuns(
     io: std.Io,
@@ -7158,7 +7158,7 @@ fn handleSessionSearch(io: std.Io, arena: std.mem.Allocator, target: []const u8,
 
 /// `GET /api/sessions` lists saved conversations; `GET /api/sessions/<id>`
 /// returns one whole transcript. Answered natively rather than through a
-/// plugin (the way `/api/runs` reaches cmd_graph) because session.zig already
+/// plugin (the way `/api/runs` reaches graph) because session.zig already
 /// owns this store on the native side, and a long transcript exceeds the
 /// 64 KiB host arena a WASM tool reads through.
 /// Byte weight of a transcript.
@@ -7838,7 +7838,7 @@ fn handleJanitor(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, 
 /// hundred lines of application code in this file, which meant the board was a
 /// thing only this HTTP endpoint could touch: an agent could not read its own
 /// board or move a card on it. Delegating is the same shape /api/runs uses for
-/// cmd_graph, and it leaves one implementation for the page and the agent to
+/// graph, and it leaves one implementation for the page and the agent to
 /// share.
 fn handleBoard(
     io: std.Io,
@@ -8811,7 +8811,7 @@ fn sessionJSON(arena: std.mem.Allocator, s_in: session.Session) ![]const u8 {
 
 /// `GET /api/plugins` lists every WASM tool with its on/off state;
 /// `POST /api/plugins {"name":…,"on":bool}` switches an optional one. Both go
-/// through the cmd_plugins tool, which already owns reading the descriptors and
+/// through the plugins tool, which already owns reading the descriptors and
 /// writing `state/plugins.json`, so the HTTP surface and `/plugins` in the REPL
 /// can never disagree about what is enabled.
 fn handlePlugins(

@@ -890,7 +890,7 @@ test "model_stats wasm tool executes (ck_stats host fn)" {
     try std.testing.expect(std.mem.find(u8, text_out, "totals") != null);
 }
 
-test "cmd_graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_read host fns)" {
+test "graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_read host fns)" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
@@ -898,7 +898,7 @@ test "cmd_graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_r
     var env_map = std.process.Environ.Map.init(std.testing.allocator);
     defer env_map.deinit();
 
-    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/cmd_graph.wasm", std.testing.allocator, .limited(1 << 20));
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/graph.wasm", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(wasm);
 
     const run_id = "test-run-cmd-graph-roundtrip";
@@ -948,7 +948,7 @@ test "cmd_graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_r
     try std.testing.expect(std.mem.find(u8, json_out, "\\\"parent_run_id\\\":\\\"run-parent\\\"") != null);
 }
 
-test "cmd_sessions and cmd_graph report empty when the state dir does not exist" {
+test "sessions and graph report empty when the state dir does not exist" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
@@ -974,8 +974,8 @@ test "cmd_sessions and cmd_graph report empty when the state dir does not exist"
     };
 
     const cases = [_]struct { wasm: []const u8, want: []const u8 }{
-        .{ .wasm = "zig-out/tools/cmd_sessions.wasm", .want = "No saved conversations yet" },
-        .{ .wasm = "zig-out/tools/cmd_graph.wasm", .want = "(no runs yet" },
+        .{ .wasm = "zig-out/tools/sessions.wasm", .want = "No saved conversations yet" },
+        .{ .wasm = "zig-out/tools/graph.wasm", .want = "(no runs yet" },
     };
     for (cases) |c| {
         const wasm = try std.Io.Dir.cwd().readFileAlloc(io, c.wasm, std.testing.allocator, .limited(1 << 20));
@@ -1060,7 +1060,7 @@ test "roadmap wasm tool lists planned items from the real bullet format" {
     try std.testing.expect(std.mem.find(u8, all, "## Done") != null);
 }
 
-test "cmd_autolearn wasm tool reports the newest tool_error detail as 'last:'" {
+test "autolearn wasm tool reports the newest tool_error detail as 'last:'" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
@@ -1100,7 +1100,7 @@ test "cmd_autolearn wasm tool reports the newest tool_error detail as 'last:'" {
         .environ_map = &env_map,
     };
 
-    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/cmd_autolearn.wasm", std.testing.allocator, .limited(1 << 20));
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/autolearn.wasm", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(wasm);
 
     const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
@@ -1116,7 +1116,7 @@ test "cmd_autolearn wasm tool reports the newest tool_error detail as 'last:'" {
     try std.testing.expect(std.mem.find(u8, out, "4 failure(s)") == null);
 }
 
-test "cmd_janitor wasm tool scans and removes only shaped staging directories" {
+test "janitor wasm tool scans and removes only shaped staging directories" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
@@ -1142,7 +1142,7 @@ test "cmd_janitor wasm tool scans and removes only shaped staging directories" {
         .environ_map = &env_map,
     };
 
-    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/cmd_janitor.wasm", std.testing.allocator, .limited(1 << 20));
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/janitor.wasm", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(wasm);
     const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
     defer mod.deinit();

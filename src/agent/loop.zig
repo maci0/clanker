@@ -1893,7 +1893,7 @@ pub const Agent = struct {
         });
     }
 
-    /// Persists a finished run's graph through the sandboxed `cmd_graph`
+    /// Persists a finished run's graph through the sandboxed `graph`
     /// WASM tool (fs_prefixes: ["state/runs/"]) instead of a native
     /// file-write path. Nodes accumulate natively during the run (`g.add`
     /// runs once per LLM/tool step, too hot for a WASM round-trip); this is
@@ -1977,7 +1977,7 @@ pub const Agent = struct {
         const raw = try mod.executeTool(enc.written());
         defer self.ctx.gpa.free(raw);
         const resp = std.json.parseFromSliceLeaky(struct { ok: bool = false, @"error": []const u8 = "" }, self.arena, raw, .{ .ignore_unknown_fields = true }) catch return;
-        if (!resp.ok) log.log(.warn, "cmd_graph write: {s}", .{resp.@"error"});
+        if (!resp.ok) log.log(.warn, "graph write: {s}", .{resp.@"error"});
     }
 
     fn executeTool(self: *Agent, tc: types.ToolCall) ![]const u8 {
@@ -2430,7 +2430,7 @@ fn parentAskTrampoline(
 ///
 /// DO NOT LOWER THIS. The interpreter's native call depth is not shallow: it
 /// recurses per WASM frame, and a host call at the bottom recurses again (the
-/// ck_exec JSON result is parsed there). A `search_code` call segfaulted the
+/// ck_exec JSON result is parsed there). A `repo_search` call segfaulted the
 /// process outright at 2 MiB, a stack overflow, not a catchable trap, and
 /// the reasoning that "the host-side call depth is shallow" was written into
 /// this comment once already and was wrong both times.
@@ -2441,7 +2441,7 @@ comptime {
         "parallel_tool_stack_bytes must stay >= 32 MiB: it is a lazily-mapped " ++
             "reservation (shrinking it frees nothing) and the wasm interpreter " ++
             "recursing into a host JSON parse overflowed a smaller stack, " ++
-            "segfaulting the run. Measure a deep search_code call before changing it.",
+            "segfaulting the run. Measure a deep repo_search call before changing it.",
     );
 }
 
@@ -2528,7 +2528,7 @@ const ToolWorker = struct {
             // make a worker safer, it made it wrong: a tool ran with no
             // commands and no environment on the parallel path and the same
             // tool ran with its descriptor's on the sequential one, so
-            // search_code was refused ripgrep for as long as it ran in
+            // repo_search was refused ripgrep for as long as it ran in
             // parallel with anything.
             .exec_allow = self.tool.exec_allow,
             .git_remote_ops = self.cfg.agent.git_remote_ops,
@@ -2805,7 +2805,7 @@ test "wasmBytes reads each wasm path from disk only once (cached slice)" {
 
 test "the parallel-tool stack reservation stays above the observed crash floor" {
     // Regression: successive "reduce the stack size" changes took this
-    // reservation from 64 MiB down to 2 MiB, and a search_code call, the
+    // reservation from 64 MiB down to 2 MiB, and a repo_search call, the
     // zwasm interpreter recursing, then ck_exec's JSON result parsing on top
     // of it, overflowed the worker stack and segfaulted the whole run. The
     // reservation is lazily mapped, so a smaller number frees no real memory;

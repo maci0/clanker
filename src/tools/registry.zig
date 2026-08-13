@@ -803,20 +803,20 @@ test "plugin toggles disable optional tools but never core ones" {
         ,
     });
     try dir.writeFile(io, .{
-        .sub_path = "tools/cmd_status.tool.json",
+        .sub_path = "tools/status.tool.json",
         .data =
-        \\{ "name": "cmd_status", "description": "status", "wasm": "cmd_status.wasm", "input_schema": {}, "internal": true }
+        \\{ "name": "status", "description": "status", "wasm": "status.wasm", "input_schema": {}, "internal": true }
         ,
     });
     try dir.createDirPath(io, "state");
     try dir.writeFile(io, .{
         .sub_path = plugins_state_path,
-        .data = "{\"disabled\":[\"web_search\",\"cmd_status\"]}",
+        .data = "{\"disabled\":[\"web_search\",\"status\"]}",
     });
 
     const reg = try Registry.load(io, arena, tmp.dir, "tools");
     try std.testing.expect(!reg.get("web_search").?.enabled);
-    try std.testing.expect(reg.get("cmd_status").?.enabled); // core: toggle ignored
+    try std.testing.expect(reg.get("status").?.enabled); // core: toggle ignored
 
     // A disabled plugin leaves the catalog the model sees.
     const defs = try reg.toToolDefs(arena);

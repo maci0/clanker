@@ -3069,7 +3069,7 @@ test "parseFailedEvalNames extracts names from FAIL lines" {
         \\calculator: 1.00 PASS
         \\lsp: 0.00 FAIL
         \\read_file: 0.00 FAIL
-        \\search_code_symbol: 1.00 PASS
+        \\repo_search_symbol: 1.00 PASS
     ;
     const names = try parseFailedEvalNames(arena, output);
     try std.testing.expectEqual(@as(usize, 2), names.len);
@@ -3084,7 +3084,7 @@ test "parseFailedEvalNames returns empty on no FAIL lines" {
 
     const output =
         \\calculator: 1.00 PASS
-        \\search_code_symbol: 1.00 PASS
+        \\repo_search_symbol: 1.00 PASS
     ;
     const names = try parseFailedEvalNames(arena, output);
     try std.testing.expectEqual(@as(usize, 0), names.len);

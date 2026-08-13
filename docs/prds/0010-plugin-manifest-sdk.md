@@ -6,7 +6,7 @@ Shipped. Sources of truth: `src/tools/manifest.zig` (the schema, the validator,
 the scaffold templates) and `src/tools/registry.zig` (the loader, which is what
 the schema is derived from). Surfaces: CLI `clanker plugins list|validate|new`
 (`Command.plugins`, `cmdPlugins` in `src/cli.zig`), REPL `/plugins` and
-`GET/POST /api/plugins` (both unchanged, both still the `cmd_plugins` guest).
+`GET/POST /api/plugins` (both unchanged, both still the `plugins` guest).
 Reference doc: `docs/manifest.md`. Scope decision on distribution:
 `docs/adrs/0007-plugin-manifests-are-declarative-and-unsigned.md`.
 
@@ -147,7 +147,7 @@ for the existing one. It is the whole of the packaging slice: it makes
 
 **The CLI is one noun.** `plugins` was already the name of this surface in the
 REPL (`/plugins`) and over HTTP (`/api/plugins`), so `clanker plugins list`
-delegates to the same `cmd_plugins` guest rather than becoming a second
+delegates to the same `plugins` guest rather than becoming a second
 listing. `validate` and `new` are the new verbs. There is no `clanker manifest`
 or `clanker tool` competing for the same idea.
 
@@ -188,7 +188,7 @@ existing docs:
   bare-filename form now makes the "beside the manifest" reading true for the
   case that wanted it.
 - **`category` was undocumented.** Present in 82 of 93 manifests and read by the
-  `cmd_tools` and `cmd_plugins` guests for grouping, but absent from every
+  `tools` and `plugins` guests for grouping, but absent from every
   reference and from `registry.zig` entirely. Documented, including the part
   that surprises: the registry does not parse it.
 
@@ -237,7 +237,7 @@ existing docs:
 - [x] Pure validator in `src/tools/manifest.zig`, 11 unit tests, no I/O
 - [x] Findings carry the file and the offending key, and say what the key does or fails to do
 - [x] Fuel ceiling, `network_allow`/`fs_prefixes`/`exec_allow` shape, and the model-call declaration rule are all checked
-- [x] `clanker plugins list|validate|new`, with `list` delegating to the existing `cmd_plugins` guest
+- [x] `clanker plugins list|validate|new`, with `list` delegating to the existing `plugins` guest
 - [x] `validate` exits non-zero on errors, zero on warnings
 - [x] `plugins new` output builds under `zig build tools` and validates clean
 - [x] Bare `wasm` resolves beside its manifest; a path with a separator does not move
@@ -249,7 +249,7 @@ existing docs:
 ## Open questions / future work
 
 - **`agent.tools_dir` as a list: Moved to PRD 0022.** No longer an open ask
-  here. Design, acceptance criteria, and the `cmd_plugins` hardcoded-path fix
+  here. Design, acceptance criteria, and the `plugins` hardcoded-path fix
   live in [PRD 0022 (out-of-tree tools)](0022-out-of-tree-tools.md).
 - **Should the validator run as part of `clanker gate`?** It is cheap and the
   tree is clean, so it would stay green — but it would also make the loader's

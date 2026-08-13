@@ -1,7 +1,7 @@
 {
   "name": "tools",
   "description": "list registered tools",
-  "wasm": "zig-out/tools/cmd_tools.wasm",
+  "wasm": "zig-out/tools/tools.wasm",
   "input_schema": {
     "type": "object",
     "properties": {

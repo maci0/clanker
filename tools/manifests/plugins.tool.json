@@ -1,7 +1,7 @@
 {
   "name": "plugins",
   "description": "list plugins and switch the optional ones on or off",
-  "wasm": "zig-out/tools/cmd_plugins.wasm",
+  "wasm": "zig-out/tools/plugins.wasm",
   "input_schema": {
     "type": "object",
     "properties": {

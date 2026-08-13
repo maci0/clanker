@@ -1,4 +1,4 @@
-//! cmd_status: show the instance identity and configured peers from the
+//! status: show the instance identity and configured peers from the
 //! harness's own effective config (config.toml merged with
 //! config.local.toml).
 //! Input:  {"args": "..."}

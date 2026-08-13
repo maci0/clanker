@@ -1,7 +1,7 @@
 {
   "name": "janitor",
   "description": "sweep up what old runs left behind",
-  "wasm": "zig-out/tools/cmd_janitor.wasm",
+  "wasm": "zig-out/tools/janitor.wasm",
   "input_schema": {
     "type": "object",
     "properties": {

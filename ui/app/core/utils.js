@@ -42,8 +42,53 @@ export function fuzzyMatch(query, text) {
   return qi === q.length;
 }
 
+function isCombiningMark(ch) {
+  var c = ch.charCodeAt(0);
+  return c >= 0x0300 && c <= 0x036f;
+}
+
+export function searchFoldWithMap(str) {
+  var s = String(str);
+  var folded = "";
+  var ranges = [];
+  var i = 0;
+  while (i < s.length) {
+    var cp = s.codePointAt(i);
+    var len = cp > 0xffff ? 2 : 1;
+    var chunk = s.slice(i, i + len);
+    var decomposed = Array.from(chunk.normalize("NFD"));
+    var foldedChunk = "";
+    for (var j = 0; j < decomposed.length; j++) {
+      if (isCombiningMark(decomposed[j])) continue;
+      foldedChunk += decomposed[j].toLocaleLowerCase();
+    }
+    for (var k = 0; k < foldedChunk.length; k++) {
+      folded += foldedChunk[k];
+      ranges.push([i, i + len]);
+    }
+    i += len;
+  }
+  return { folded: folded, ranges: ranges };
+}
+
+/* Accent-insensitive substring search with original-string indices for
+   highlighting. `fromFolded` is the folded offset to continue from. */
+export function searchFoldFind(text, needle, fromFolded) {
+  if (!needle) return { start: 0, end: 0, next: fromFolded || 0 };
+  var tm = searchFoldWithMap(text);
+  var nm = searchFoldWithMap(needle);
+  if (!nm.folded) return null;
+  var at = tm.folded.indexOf(nm.folded, fromFolded || 0);
+  if (at === -1) return null;
+  return {
+    start: tm.ranges[at][0],
+    end: tm.ranges[at + nm.folded.length - 1][1],
+    next: at + nm.folded.length
+  };
+}
+
 export function searchFold(value) {
-  return String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase();
+  return searchFoldWithMap(value).folded;
 }
 
 export function escapeHtml(s) {
@@ -90,11 +135,10 @@ export function fmtDeadline(ts) {
   var dd = new Date(d); dd.setHours(0,0,0,0);
   var diffDays = Math.round((dd - now) / 86400000);
   var dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  if (diffDays === 0) return "today · " + dateStr;
-  if (diffDays === 1) return "tomorrow · " + dateStr;
-  if (diffDays === -1) return "yesterday · " + dateStr;
-  if (diffDays > 1 && diffDays <= 7) return "in " + diffDays + " days · " + dateStr;
-  if (diffDays < -1 && diffDays >= -7) return Math.abs(diffDays) + " days ago · " + dateStr;
+  if (diffDays >= -7 && diffDays <= 7) {
+    var rel = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(diffDays, "day");
+    return rel + " \u00b7 " + dateStr;
+  }
   return dateStr;
 }
 
@@ -135,8 +179,9 @@ export function recencyGroup(updated) {
   var day = 24 * 60 * 60;
   var now = Math.floor(Date.now() / 1000);
   var age = now - updated;
-  if (age < day && new Date(updated * 1000).toDateString() === new Date().toDateString()) return "Today";
-  if (age < 2 * day) return "Yesterday";
+  var rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (age < day && new Date(updated * 1000).toDateString() === new Date().toDateString()) return rtf.format(0, "day");
+  if (age < 2 * day) return rtf.format(-1, "day");
   if (age < 7 * day) return "Previous 7 days";
   if (age < 30 * day) return "Previous 30 days";
   return "Older";

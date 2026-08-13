@@ -508,10 +508,10 @@ changes as tools are added.
 | `image` | `.` | Read an image file and return it as a multimodal part, so the model can see it |
 | `ask_user` | none | Put a multiple-choice question to the human, to another clanker instance, or (in a sub-agent run) to the parent agent via `{"parent": true}` |
 | `forget_note` | `state` | Remove learnings matching a substring, with `dry_run` to see what would go |
-| `search_code` | none | Search this project via `{"engine": "rg" \| "ast-grep" \| "semcode", "query", "path"}` |
+| `repo_search` | none | Search this project via `{"engine": "rg" \| "ast-grep" \| "semcode", "query", "path"}` |
 | `symbols` | none | Find the Zig declaration site of a fn, const, struct, enum, or union |
 | `std_api` | none | Look up a Zig 0.16 std signature and docs before writing code against it |
-| `code_search` | none | Search open-source code through Sourcegraph |
+| `sourcegraph_search` | none | Search open-source code through Sourcegraph |
 | `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
 | `fetch_web` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
 | `web_search` | none | No-key web search: tries DuckDuckGo Lite first, transparently falls back to Bing Search RSS when DDG is unreachable, bot-challenged, or empty. Input: `{"query", "max_results" (1-20, default 8), "region"}`; returns `{ok, backend, query, count, results:[{title,url,snippet}]}` |
@@ -531,7 +531,7 @@ changes as tools are added.
 | `subagent` | none | Delegate a task to a nested sub-agent run (own context, bounded iterations, dedicated thread) |
 | `rlm` | none | Recursive Language Model: recursively call a sub-LM over input chunks with bounded depth |
 | `arena` | `state/arena/` | Run a bounded, judged debate between two positions, or a 3-8 way Battle Royale, and return a verdict traceable to the move transcript. Rules live in `tools/zig/arena_match.zig` (host-tested); turns go through `ck_llm`, one bounded completion per move |
-| `compare` | `state/compare/` | Put one prompt to 2-8 configured models at once and show the answers unlabeled, so a winner is picked on the answer rather than the badge. The entrant calls go through `ck_llm_many`, so they run concurrently; the display order is derived from the comparison id and each model's own names are struck out of its own answer. Rules live in `tools/zig/compare_blind.zig` (host-tested) |
+| `compare` | `state/compare/` | Put one prompt to 2-8 configured models at once and show the answers unlabeled, so a winner is picked on the answer rather than the badge. The entrant calls go through `ck_llm_many`, so they run concurrently; the display order is derived from the comparison id and each model's own names are struck out of its own answer. Rules live in `tools/zig/compare_logic.zig` (host-tested) |
 | `reasoning` | `state/` | Read recent reasoning traces recorded from reasoning models (`state/reasoning.jsonl`) |
 | `kanban_add`, `kanban_move`, `kanban_claim`, `kanban_update`, `kanban_log`, `kanban_subtask`, `kanban_depend`, `kanban_cost`, `kanban_list`, `kanban_delete` | none | Work the shared Kanban board (folded from the board room's chat log, not a file): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
 
@@ -539,16 +539,16 @@ Internal tools, never offered to the model:
 
 | Tool | Filesystem | Purpose |
 |------|------------|---------|
-| `cmd_tools` | `tools/manifests/` | List registered tools |
-| `cmd_sessions` | `state/sessions/` | List saved conversations |
-| `cmd_graph` | `state/runs/` | Render the latest execution graph |
-| `cmd_status` | none — reads clanker's own config through the host (ck_harness_config) | Show this instance and its peers |
-| `cmd_plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
-| `cmd_autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`) |
+| `tools` | `tools/manifests/` | List registered tools |
+| `sessions` | `state/sessions/` | List saved conversations |
+| `graph` | `state/runs/` | Render the latest execution graph |
+| `status` | none — reads clanker's own config through the host (ck_harness_config) | Show this instance and its peers |
+| `plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
+| `autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`) |
 | `webui` | none | Serve the web UI at `GET /`. Same-origin only: every script, style and font comes from this server's own `/webui/*` routes, with no CDN and no third-party origin (`script-src 'self'`). Not a single file — the page is many small ES modules, each served on its own route |
 | `translate` | none | Transform plugin, off by default: translates tool results through `ck_llm` |
 | `board` | none | The whole board operation surface behind one entry point, used by `/api/board`; agents use the `kanban_*` tools instead (same wasm, one op each) |
-| `cmd_janitor` | `state/` | Report what old runs left behind, for `/api/janitor` |
+| `janitor` | `state/` | Report what old runs left behind, for `/api/janitor` |
 | `knowledge` | `state/` | Knowledge collections behind `/api/knowledge`: list, create, delete, add or search documents |
 | `prompts` | `state/` | Saved prompt templates behind `/api/prompts` |
 | `session_export` | `state/` | Render one saved session as a self-contained HTML transcript (`clanker session export`) |
@@ -602,7 +602,7 @@ The `opencv` tool is the shape to copy when a capability has no in-process WASM 
 
 The **Runs** panel picks any recorded run and draws its graph: one row per node, grouped by iteration, with a bar whose width is that node's share of the slowest node in the run. LLM rows carry prompt/completion tokens, tool rows the result size, and the closing `final` row the answer size. The `final` node repeats the duration of the LLM call that produced it, so it is deliberately drawn without a bar rather than counting that time twice.
 
-The panel reads `GET /api/runs` and `GET /api/runs/<run-id>`, both answered by the `cmd_graph` plugin's `json` modes. The harness never reads `state/runs/` itself: run ids are validated as `run-<digits>` before they reach the plugin, and the graph is parsed and re-emitted rather than passed through, so a hand-edited file under `state/runs/` cannot become a response body verbatim.
+The panel reads `GET /api/runs` and `GET /api/runs/<run-id>`, both answered by the `graph` plugin's `json` modes. The harness never reads `state/runs/` itself: run ids are validated as `run-<digits>` before they reach the plugin, and the graph is parsed and re-emitted rather than passed through, so a hand-edited file under `state/runs/` cannot become a response body verbatim.
 
 ### Transform chains
 
@@ -668,7 +668,7 @@ The commands it may run are the union of every registered tool's `exec_allow` (`
 
 Every agent run records an execution graph and writes it to `state/runs/run-<timestamp>.json` on exit (`src/agent/graph.zig`), unless `modules.graphs` is `false`.
 
-Bare `/graph` dispatches `cmd_graph` with the `list` argument, so it prints one line per recorded run. `/graph <run-id>` and `clanker graph <run-id>` both render that run as an ASCII timeline. With nothing recorded yet the listing prints `(no runs yet; clanker run creates one)`.
+Bare `/graph` dispatches `graph` with the `list` argument, so it prints one line per recorded run. `/graph <run-id>` and `clanker graph <run-id>` both render that run as an ASCII timeline. With nothing recorded yet the listing prints `(no runs yet; clanker run creates one)`.
 
 The timeline has a header plus one line per node grouped by iteration:
 
@@ -677,7 +677,7 @@ run-1786365428 — summarize the config
   (kimi-k3, 8421ms, prompt=3190 completion=412)
 iter 1
   llm  kimi-k3  3190/180 tok, 5120ms
-  tool search_code  2048 B
+  tool repo_search  2048 B
 iter 2
   llm  kimi-k3  3402/232 tok, 3301ms
   done 512 B, stop
@@ -820,7 +820,7 @@ Each names the provider (or model key) and the fix. All fail at startup rather t
 
 A key that doesn't belong in its section (a typo like `mx_iterations`) doesn't fail the load — it logs `unknown key '<name>' in <section> (ignored — check spelling)` and falls back to that field's default, so a misspelling is visible in the startup log instead of silently taking effect as "unset."
 
-Internally, `Config.load` distributes the top-level `models` table into each `Provider`'s own `models` map at load time (`distributeModels` in `src/config.zig`), so everything downstream — `Provider.activeModel()`, `resolveProvider`, the LLM client, the agent loop's context budgeting — still sees the same per-provider model map it always has. Only the on-disk shape changed; wasm guest tools that need structured config fields (`peers`, `providers`, `cmd_status`, `ask_user`) go through a `ck_harness_config` host function rather than reading `config.toml` themselves, since a `wasm32-freestanding` guest carries no TOML parser. `config_view` is the exception for its whole-file dump (raw bytes). Its `{"section":...}` filter reads the same host JSON, which includes every non-secret top-level section of the merged config (`agent` budgets, `modules`, `models` as the reconstructed flat table, `chatrooms`, `tui`, `improve`, `web`, `serve`, `memory`, `notify`) and still omits `api_key_env` and `service_account_file`.
+Internally, `Config.load` distributes the top-level `models` table into each `Provider`'s own `models` map at load time (`distributeModels` in `src/config.zig`), so everything downstream — `Provider.activeModel()`, `resolveProvider`, the LLM client, the agent loop's context budgeting — still sees the same per-provider model map it always has. Only the on-disk shape changed; wasm guest tools that need structured config fields (`peers`, `providers`, `status`, `ask_user`) go through a `ck_harness_config` host function rather than reading `config.toml` themselves, since a `wasm32-freestanding` guest carries no TOML parser. `config_view` is the exception for its whole-file dump (raw bytes). Its `{"section":...}` filter reads the same host JSON, which includes every non-secret top-level section of the merged config (`agent` budgets, `modules`, `models` as the reconstructed flat table, `chatrooms`, `tui`, `improve`, `web`, `serve`, `memory`, `notify`) and still omits `api_key_env` and `service_account_file`.
 
 Full example:
 

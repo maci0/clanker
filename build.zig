@@ -24,8 +24,11 @@ pub fn build(b: *std.Build) void {
     // The zig the gates shell out to. `zig fmt` and `zig ast-check` run with
     // `cwd` set to a staging or temp directory, so a bare "zig" is resolved
     // against a PATH the spawn does not reliably see; the interpreter running
-    // this build is both the right version and an absolute path.
-    build_options.addOption([]const u8, "zig_exe", b.graph.zig_exe);
+    // this build is both the right version and an absolute path. Release
+    // builds omit it: the path is host-specific, useless on any other machine,
+    // and would make otherwise identical release artifacts byte-different.
+    const zig_exe_for_options: []const u8 = if (optimize == .Debug) b.graph.zig_exe else "";
+    build_options.addOption([]const u8, "zig_exe", zig_exe_for_options);
 
     // The host, with one adjustment: zwasm links libc, and on a glibc host the
     // crt1.o carries SFrame relocations this lld cannot resolve, so linux
@@ -86,9 +89,10 @@ pub fn build(b: *std.Build) void {
             // Debug info embeds the absolute checkout path (DWARF comp-dir
             // and per-file paths), so two clean builds of the same source
             // from differently-named directories produce byte-different
-            // binaries. Debug builds keep symbols for local debugging;
-            // release builds strip them so the shipped artifact does not
-            // encode where it happened to be built.
+            // Debug binaries. Debug builds keep symbols and embed
+            // build_options.zig_exe for local gate runs; release builds strip
+            // symbols and omit zig_exe so shipped artifacts do not encode the
+            // build host.
             .strip = optimize != .Debug,
             .imports = &.{
                 .{ .name = "zwasm", .module = zwasm_mod },
@@ -184,8 +188,7 @@ pub fn build(b: *std.Build) void {
 
     const tools_src_path = b.pathFromRoot("tools/zig");
     var dir = std.Io.Dir.openDirAbsolute(io, tools_src_path, .{ .iterate = true }) catch |err| {
-        std.debug.print("warning: cannot open {s}: {s}\n", .{ tools_src_path, @errorName(err) });
-        return;
+        std.debug.panic("cannot open {s}: {s}", .{ tools_src_path, @errorName(err) });
     };
     defer dir.close(io);
 
@@ -272,8 +275,7 @@ pub fn build(b: *std.Build) void {
     for (c_langs) |lang| {
         const lang_src_path = b.pathFromRoot(lang.dir);
         var lang_dir = std.Io.Dir.openDirAbsolute(io, lang_src_path, .{ .iterate = true }) catch |err| {
-            std.debug.print("warning: cannot open {s}: {s}\n", .{ lang_src_path, @errorName(err) });
-            continue;
+            std.debug.panic("cannot open {s}: {s}", .{ lang_src_path, @errorName(err) });
         };
         defer lang_dir.close(io);
 

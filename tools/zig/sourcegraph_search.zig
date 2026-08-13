@@ -1,4 +1,4 @@
-//! code_search: search open-source code via Sourcegraph's public search API
+//! sourcegraph_search: search open-source code via Sourcegraph's public search API
 //! (grep.app's API is Vercel-blocked for non-browser clients; Sourcegraph is
 //! the working equivalent). Returns matching repo/path/line snippets.
 //! Input:  {"query": "readSliceShort", "lang": "zig", "max": 10}

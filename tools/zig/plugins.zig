@@ -1,4 +1,4 @@
-//! cmd_plugins: list WASM plugins and switch the optional ones on or off.
+//! plugins: list WASM plugins and switch the optional ones on or off.
 //! Input:  {"args": "" | "on <name>" | "off <name>"}
 //! Output: {"ok": true, "text": "<listing or confirmation>"}
 //!
@@ -252,7 +252,7 @@ fn listJson(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plugin) !v
 ///
 /// Serialized into the envelope's `text` field rather than emitted at the top
 /// level, because `toolText` in the harness extracts exactly that field and
-/// hands it back as the HTTP body. cmd_graph's json mode does the same.
+/// hands it back as the HTTP body. graph's json mode does the same.
 fn listStructured(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plugin) !void {
     var doc: std.Io.Writer.Allocating = .init(alloc);
     var s = std.json.Stringify{ .writer = &doc.writer, .options = .{ .emit_null_optional_fields = false } };

@@ -1,4 +1,4 @@
-import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, isSafeLinkUrl as utilIsSafeLinkUrl, splitRow as utilSplitRow, prettyJsonIfPossible as utilPrettyJsonIfPossible, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, view_digit_max } from "./core/utils.js";
+import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, isSafeLinkUrl as utilIsSafeLinkUrl, splitRow as utilSplitRow, prettyJsonIfPossible as utilPrettyJsonIfPossible, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max } from "./core/utils.js";
 import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt } from "./core/ui.js";
 import { icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, reducedMotion as reducedMotionMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
@@ -747,7 +747,7 @@ function jumpToMessage(index, query) {
   if (at === -1 || !turns.length) return null;
   var turn = turns[Math.min(at, turns.length - 1)];
   clearMarks(el.transcript);
-  if (query) markMatches(turn, String(query).toLowerCase());
+  if (query) markMatches(turn, String(query));
   scrollTo(turn, "center");
   // Removed on its own so a later jump to the same turn flags it again, and
   // so the card does not stay singled out for the rest of the conversation.
@@ -4536,7 +4536,8 @@ var clearMarks = searchClear;
 var markMatches = searchMark;
 
 function applyTurnFilter() {
-  var q = el.turnFilter.value.trim().toLowerCase();
+  var q = el.turnFilter.value.trim();
+  var qFold = utilSearchFold(q);
   var turns = el.transcript.querySelectorAll(".turn");
   clearMarks(el.transcript);
   if (!q) {
@@ -4546,7 +4547,7 @@ function applyTurnFilter() {
   }
   var shown = 0, hits = 0;
   Array.prototype.forEach.call(turns, function (t) {
-    var match = t.textContent.toLowerCase().indexOf(q) !== -1;
+    var match = utilSearchFold(t.textContent).indexOf(qFold) !== -1;
     t.hidden = !match;
     if (match) {
       shown += 1;

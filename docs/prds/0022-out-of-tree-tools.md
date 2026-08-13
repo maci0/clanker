@@ -10,7 +10,7 @@ list... is what still stands between the packaging slice and installing a
 third-party plugin *alongside* the built-in ones rather than instead of them."
 This PRD resolves that question with a concrete design. Sources of truth once
 built: `src/tools/registry.zig` (`Registry.load`), `src/config.zig`
-(`Agent.tools_dir`), `tools/zig/cmd_plugins.zig`.
+(`Agent.tools_dir`), `tools/zig/plugins.zig`.
 
 Distribution (fetch/install/signing/a registry index) is not reopened here —
 see [ADR 0007](../adrs/0007-plugin-manifests-are-declarative-and-unsigned.md).
@@ -43,9 +43,9 @@ has no way to keep it in its own directory, separate from clanker's own tree,
 and have both load.
 
 Separately, `clanker plugins list` (and the REPL's `/plugins`, and
-`GET /api/plugins`) goes through the `cmd_plugins` guest, which hardcodes its
+`GET /api/plugins`) goes through the `plugins` guest, which hardcodes its
 own copy of the default — `const tools_dir = "tools/manifests";`
-(`tools/zig/cmd_plugins.zig:13`) — rather than reading `agent.tools_dir` from
+(`tools/zig/plugins.zig:13`) — rather than reading `agent.tools_dir` from
 the harness at all. Today that is a latent bug only for the rare user who
 already changed `tools_dir`; multi-directory support would make it wrong for
 anyone using the feature this PRD adds, since the guest would never see the
@@ -69,7 +69,7 @@ be fixed as part of this work, not filed separately.
 4. Every existing single-directory consumer keeps working with the same
    call-site shape, adjusted mechanically for the new type — no caller grows
    new branching logic to handle "one dir" vs "many".
-5. `cmd_plugins` (`/plugins`, `/api/plugins`, `clanker plugins list`) reads the
+5. `plugins` (`/plugins`, `/api/plugins`, `clanker plugins list`) reads the
    real configured directory list instead of its hardcoded default, so `list`
    shows tools from every configured directory, not just the first.
 6. `clanker plugins new` and `clanker plugins validate` behave sensibly with
@@ -160,8 +160,8 @@ is invisible to it by construction, since the gate operates on the staged tree
 a proposal touches. No special-casing needed there: a proposal cannot touch a
 directory the gate never opens.
 
-**`cmd_plugins` (Goal 5).** The guest's hardcoded
-`const tools_dir = "tools/manifests"` (`tools/zig/cmd_plugins.zig:13`) is
+**`plugins` (Goal 5).** The guest's hardcoded
+`const tools_dir = "tools/manifests"` (`tools/zig/plugins.zig:13`) is
 replaced with the directory list read via `ck_harness_config` (the same
 channel `Tool.config` already uses to hand a guest host-side data, per
 `registry.zig`'s `config_json` field), listing every configured directory in
@@ -204,7 +204,7 @@ behavior). No per-directory `enabled` toggle (remove the entry from
   list as the remaining packaging gap; this PRD is that resolution. PRD 0012
   (CLI Tier 1 / `clanker <name>`) stays out of scope.
 - Existing: `src/config.zig` (`Agent.tools_dir`), `src/tools/registry.zig`,
-  `tools/zig/cmd_plugins.zig` (hardcoded default to replace via
+  `tools/zig/plugins.zig` (hardcoded default to replace via
   `ck_harness_config`), the nine call-site files listed under Design.
 
 **Implementation.**
@@ -220,8 +220,8 @@ behavior). No per-directory `enabled` toggle (remove the entry from
    `src/mcp/server.zig`, `src/research/autoresearch.zig`, `src/doctor.zig`,
    `src/improve/engine.zig` (three sites), `src/gate/checks.zig`: no new
    branching on directory count.
-4. `cmd_plugins` harness_config: replace hardcoded
-   `tools_dir = "tools/manifests"` in `tools/zig/cmd_plugins.zig` with the
+4. `plugins` harness_config: replace hardcoded
+   `tools_dir = "tools/manifests"` in `tools/zig/plugins.zig` with the
    configured list via `ck_harness_config`; list/merge with the same
    last-wins rule as `Registry.load`.
 5. `plugins new` / `validate`: multi-dir `new` writes into the first-listed
@@ -229,11 +229,11 @@ behavior). No per-directory `enabled` toggle (remove the entry from
    and OR's exit status.
 6. Tests: bare-string config; two-entry list loads both; cross-directory
    same-name collision → later wins + warning; missing list entry does not
-   empty the registry; `cmd_plugins` list reflects all configured dirs.
+   empty the registry; `plugins` list reflects all configured dirs.
 
 ## Known issues
 
-- `tools/zig/cmd_plugins.zig:13` hardcodes `tools_dir = "tools/manifests"`
+- `tools/zig/plugins.zig:13` hardcodes `tools_dir = "tools/manifests"`
   instead of reading `agent.tools_dir` from the harness at all. This predates
   this PRD (it is wrong today for anyone who already set a non-default
   `tools_dir`) but must be fixed as part of Goal 5, not filed as a separate
@@ -266,7 +266,7 @@ behavior). No per-directory `enabled` toggle (remove the entry from
       `phonebook.zig`, `mcp/server.zig`, `autoresearch.zig`, `doctor.zig`,
       `improve/engine.zig`, `gate/checks.zig`) compiles against the new
       signature with no added branching on directory count.
-- [ ] `cmd_plugins` reads the configured directory list via
+- [ ] `plugins` reads the configured directory list via
       `ck_harness_config` instead of its hardcoded default; `/plugins list`,
       `/api/plugins`, and `clanker plugins list` (which delegates to the same
       guest per PRD 0010) all show tools from every configured directory.

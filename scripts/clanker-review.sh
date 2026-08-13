@@ -98,7 +98,7 @@ CLANKER_ARGS=()
 # The prompts are written for a tool that is handed the whole repository. The
 # agent instead reads what it needs, so it is told where it is and what shape
 # the answer should take.
-FRAMING='You are reviewing the repository in your current working directory: clanker, a self-improving agent harness written in Zig 0.16. Use your tools (search_code, read_file, roadmap, history) to read the actual source before judging it — do not review from memory or assume a file exists.
+FRAMING='You are reviewing the repository in your current working directory: clanker, a self-improving agent harness written in Zig 0.16. Use your tools (repo_search, read_file, roadmap, history) to read the actual source before judging it — do not review from memory or assume a file exists.
 
 Report findings only, do not patch anything. For each finding give: the file and line, what is wrong, why it matters, and the smallest concrete fix. Order by impact, put the strongest finding first, and say plainly when a section of the review has nothing worth reporting rather than padding it.'
 

@@ -1,4 +1,4 @@
-//! cmd_tools: list what is registered, split into what the model can call and
+//! tools: list what is registered, split into what the model can call and
 //! what it cannot, read from tools/manifests/*.tool.json.
 //!
 //! A tool is callable: the model picks it by name and gets its result. A

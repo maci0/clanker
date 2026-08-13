@@ -1,4 +1,4 @@
-//! cmd_janitor: sweep up what old runs left behind.
+//! janitor: sweep up what old runs left behind.
 //!
 //! Scans state/ for orphaned staging directories, excess run graphs, and
 //! excess improve logs. Returns a summary (scan) or deletes and reports

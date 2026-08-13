@@ -288,7 +288,7 @@ file_share:  {"path":"reports/summary.md","to":"a1b2c3"}
 view (`docs/prds/0006-webui.md`), a pending-`JOIN` notification when
 `admission = "prompt"` (reusing the `ask_user` surface, per Design), and
 `mesh_status` reachable from `/mesh` the way `/plugins` reaches
-`cmd_plugins` today.
+`plugins` today.
 
 ## Failure modes
 

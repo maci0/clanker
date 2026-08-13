@@ -1,4 +1,4 @@
-//! cmd_graph: read and persist execution graphs (state/runs/*.json).
+//! graph: read and persist execution graphs (state/runs/*.json).
 //! Input:  {"args": "" | "list" | "<run-id>" | "json" | "json <run-id>"}
 //!         {"write": {run_id, task, provider, ...}}
 //! Output: {"ok": true, "text": "..."}  |  {"ok": true}
@@ -67,7 +67,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
     }
 
-    // Same as cmd_sessions: state/runs does not exist until the first run
+    // Same as sessions: state/runs does not exist until the first run
     // writes one, so a fresh checkout has no graph rather than a broken one.
     const raw: []const u8 = lib.fsList("state/runs") catch |err| switch (err) {
         error.NotFound => "[]",
