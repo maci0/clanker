@@ -146,6 +146,7 @@ specific `vxfw` shape, not an open-ended "figure it out":
 |---|---|
 | SIGWINCH mid-render | Handled by `vxfw.App`'s own event loop; no self-pipe, no dropped resize |
 | A command that only prints (`/help`, `/status`, `!`) | Repaints on the Enter that ran it, not on the next unrelated keystroke |
+| Enter on a blank or whitespace-only line | Clears the composer and does nothing. It used to reach `submitTask` and spend a real turn on an empty prompt (`isBlankSubmission`) |
 | Ctrl-C, idle prompt | Quits the REPL (`ctx.quit = true`) |
 | Ctrl-C, mid-stream | Sets the same `stop_flag` `client.chatStream` already checks |
 | `ask_user` invoked here | No `ask_fn` is wired; falls back to the same "nobody attached" default (`not_found`) a headless run gets. No prompt-rendering path exists yet (tracked below) |

@@ -705,6 +705,31 @@ const shell_escape_help =
     \\  !                 list the commands the escape may run
 ;
 
+/// True for a submitted line with no content: empty, or only whitespace.
+/// The whitespace set matches the one `steerWhileRunning` uses, so the same
+/// line is refused whether it is typed against an idle prompt or a running
+/// turn, rather than being a task in one case and nothing in the other.
+fn isBlankSubmission(task: []const u8) bool {
+    return std.mem.trim(u8, task, " \t\r\n").len == 0;
+}
+
+test "isBlankSubmission refuses empty and whitespace-only lines" {
+    try std.testing.expect(isBlankSubmission(""));
+    try std.testing.expect(isBlankSubmission(" "));
+    try std.testing.expect(isBlankSubmission("   \t  "));
+    try std.testing.expect(isBlankSubmission("\r\n"));
+
+    // Anything with content is a task, including lines that merely start or
+    // end with whitespace: those still had something typed on them.
+    try std.testing.expect(!isBlankSubmission("hi"));
+    try std.testing.expect(!isBlankSubmission("  indented task  "));
+    try std.testing.expect(!isBlankSubmission("/help"));
+    try std.testing.expect(!isBlankSubmission("!"));
+    // A bare punctuation mark is content, not blank: `!` alone is the shell
+    // escape's own usage listing and must still reach runShellEscape.
+    try std.testing.expect(!isBlankSubmission("  !  "));
+}
+
 /// True for input that was clearly meant as a slash command (leading '/'):
 /// when the registry lookup missed, this is what keeps a typo'd command out
 /// of the LLM conversation. Bare text without the slash stays a task.
@@ -1359,8 +1384,17 @@ const Model = struct {
 
         const task = try self.text_field.toOwnedSlice();
         defer self.gpa.free(task);
-        if (task.len == 0) return;
         self.text_field.reset();
+        // A line with nothing on it is not a task. The idle path only tested
+        // `len == 0`, so whitespace fell through every dispatch below —
+        // `parseShellEscape` and `parseCommand` both trim and decline it —
+        // and reached `submitTask`, which echoed a bare `clanker>` prompt and
+        // spawned a real `Agent.run` on a prompt with no content in it. That
+        // is a billed round trip for a keystroke that should do nothing, and
+        // it is easy to hit: a stray space, an indented paste, or Enter held
+        // a moment too long. `steerWhileRunning` had trimmed all along; this
+        // is the same test on the other branch.
+        if (isBlankSubmission(task)) return;
 
         // `!cmd` is intercepted first: it never reaches the registry (no
         // CommandSpec can match it, see shell_escape_help) and it must never
