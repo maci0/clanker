@@ -3378,9 +3378,17 @@ pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
 /// nothing but sibling runs' trees, so refusing it costs nothing real, and
 /// `ck_fs_list` can still enumerate it, which was its only use.
 ///
-/// Please leave this matching the component wherever it appears. It has been
-/// loosened to "only a descent counts" once already, which put the guard and
-/// its own test in direct contradiction and left main red.
+/// What this does NOT cover, so nobody reads more into it than it does: only
+/// the `cwd`/`dir` field is inspected. An argv naming the path itself,
+/// `git -C .clanker-worktrees/123 status` with no cwd at all, walks straight
+/// past this and reads a sibling run's tree. Closing that means checking the
+/// argv, which is its own change; this function is not the reason that case
+/// is safe, because it is not safe.
+///
+/// Keep this matching the component wherever it appears, and move the test
+/// below in the same commit if it ever has to change. Loosening it to "only a
+/// descent counts" has happened twice now, each time leaving the function and
+/// its own test asserting opposite things, and main red.
 fn pathHasWorktreeDir(path: []const u8) bool {
     var it = std.mem.splitScalar(u8, path, '/');
     while (it.next()) |comp| {
@@ -4446,20 +4454,15 @@ test "safeJoin rejects escapes" {
 }
 
 test "pathHasWorktreeDir flags descent into another run's worktree" {
-    // A cwd that re-enters the per-run improve worktree container is refused.
+    // A cwd inside another run's worktree is refused.
     try std.testing.expect(pathHasWorktreeDir(".clanker-worktrees/123/src"));
     try std.testing.expect(pathHasWorktreeDir("state/.clanker-worktrees/456"));
     try std.testing.expect(pathHasWorktreeDir("./.clanker-worktrees/789"));
-    // "Through", not "at": the container holds every run's worktree and is not
-    // itself any run's, so naming it is allowed however it is spelled and only
-    // going a level deeper is refused.
-    //
-    // Strictness here would not buy the isolation it looks like it buys: this
-    // checks the `cwd` field only, so `git -C .clanker-worktrees/123 status`
-    // with no cwd at all reads a sibling's tree either way. Closing that needs
-    // the argv checked too, which is a bigger change than this guard.
-    try std.testing.expect(!pathHasWorktreeDir(".clanker-worktrees"));
-    try std.testing.expect(!pathHasWorktreeDir(".clanker-worktrees/"));
+    // So is the container itself, however it is spelled, for the reason
+    // written out above the function.
+    try std.testing.expect(pathHasWorktreeDir(".clanker-worktrees"));
+    try std.testing.expect(pathHasWorktreeDir(".clanker-worktrees/"));
+    try std.testing.expect(pathHasWorktreeDir("state/.clanker-worktrees"));
     // Unrelated subdirs stay usable.
     try std.testing.expect(!pathHasWorktreeDir("src/sandbox"));
     try std.testing.expect(!pathHasWorktreeDir("state/runs"));

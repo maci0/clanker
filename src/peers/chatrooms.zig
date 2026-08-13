@@ -683,6 +683,15 @@ fn recordSuccess(io: std.Io, name: []const u8) bool {
     return false;
 }
 
+/// Drops the whole cooldown table. Test-only: the table outlives any one test,
+/// so a test that grows it has to give the memory back itself.
+fn resetCooldowns(io: std.Io, gpa: std.mem.Allocator) void {
+    cooldown_mutex.lockUncancelable(io);
+    defer cooldown_mutex.unlock(io);
+    if (peer_cooldowns) |*l| l.deinit(gpa);
+    peer_cooldowns = null;
+}
+
 /// Exponential backoff window for a down peer: 5s base, doubling per
 /// consecutive failure, capped at 5 minutes, so a recovered peer is retried
 /// promptly while a hard-down one stops being hammered.
@@ -1267,10 +1276,13 @@ test "down-peer backoff grows, caps, and recovers on success" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    // Clear any cooldown state a prior test in this process may have left.
-    cooldown_mutex.lockUncancelable(io);
-    if (peer_cooldowns) |*l| l.clearRetainingCapacity();
-    cooldown_mutex.unlock(io);
+    // Clear any cooldown state a prior test in this process may have left, and
+    // hand the buffer back on the way out. clearRetainingCapacity keeps the
+    // allocation by contract, and this table is a process-wide global, so
+    // whatever it still holds when the test ends is charged to whichever test
+    // grew it.
+    resetCooldowns(io, std.testing.allocator);
+    defer resetCooldowns(io, std.testing.allocator);
 
     const now = std.Io.Timestamp.now(io, .real).nanoseconds;
     try std.testing.expect(!inCooldown(io, "down-peer"));
