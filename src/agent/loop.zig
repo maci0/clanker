@@ -2370,31 +2370,37 @@ fn parentAnswerPrompt(
 /// retry budget is exhausted. Streaming that already emitted content does
 /// not advance the chain. `current` is updated to whoever actually served
 /// the request so later cost/stats reads stay honest.
+const StreamTally = struct {
+    n: usize = 0,
+    inner: ?*const fn ([]const u8) void = null,
+
+    fn wrap(self: *StreamTally, delta: []const u8) void {
+        self.n += delta.len;
+        if (self.inner) |cb| cb(delta);
+    }
+};
+
+threadlocal var stream_tally: StreamTally = .{};
+
+fn streamTallyWrap(delta: []const u8) void {
+    stream_tally.wrap(delta);
+}
+
 fn chatWithFallbackChain(
     ctx: *client.Ctx,
     arena: std.mem.Allocator,
     cfg: *const config.Config,
-    current: *?*const config.Provider,
+    current: **const config.Provider,
     params: providers.RequestParams,
     err_detail: *?[]const u8,
     on_delta: ?*const fn ([]const u8) void,
     stop_flag: ?*std.atomic.Value(bool),
 ) !types.ChatResponse {
     var p = params;
-    if (current.*) |c| p.provider = c;
+    p.provider = current.*;
     var last_err: anyerror = error.ApiError;
     var reports: std.ArrayList(u8) = .empty;
     defer reports.deinit(ctx.gpa);
-
-    const streamed = struct {
-        var n: usize = 0;
-        fn reset() void {
-            n = 0;
-        }
-        fn count(delta: []const u8) void {
-            n += delta.len;
-        }
-    };
 
     var names_tried: std.ArrayList([]const u8) = .empty;
     defer names_tried.deinit(ctx.gpa);
@@ -2404,18 +2410,11 @@ fn chatWithFallbackChain(
 
     var chain_i: usize = 0;
     while (true) {
-        streamed.reset();
-        const result = if (on_delta) |cb| blk: {
-            const counted = struct {
-                var inner: *const fn ([]const u8) void = undefined;
-                fn wrap(delta: []const u8) void {
-                    streamed.count(delta);
-                    inner(delta);
-                }
-            };
-            counted.inner = cb;
-            break :blk client.chatStream(ctx, arena, p, err_detail, counted.wrap, stop_flag);
-        } else client.chat(ctx, arena, p, err_detail);
+        stream_tally = .{ .n = 0, .inner = on_delta };
+        const result = if (on_delta != null)
+            client.chatStream(ctx, arena, p, err_detail, streamTallyWrap, stop_flag)
+        else
+            client.chat(ctx, arena, p, err_detail);
 
         if (result) |resp| {
             if (!std.mem.eql(u8, p.provider.name, primary)) {
@@ -2426,7 +2425,7 @@ fn chatWithFallbackChain(
         } else |err| {
             last_err = err;
             if (err == error.Interrupted) return err;
-            if (on_delta != null and streamed.n > 0) return err;
+            if (on_delta != null and stream_tally.n > 0) return err;
             if (reports.items.len > 0) try reports.appendSlice(ctx.gpa, "; ");
             try reports.appendSlice(ctx.gpa, p.provider.name);
             try reports.appendSlice(ctx.gpa, "=");
@@ -3457,6 +3456,24 @@ test "parentAnswerPrompt clips the transcript to a bounded recent tail" {
     const over = try arena.alloc(u8, parent_answer_max_msg_bytes + 1);
     @memset(over, 'x');
     try std.testing.expect(std.mem.find(u8, prompt, over) == null);
+}
+
+test "nextFallbackProvider skips unknown names and already-tried ones" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var cfg = config.Config{};
+    try cfg.providers.put(arena, "a", try config.Provider.single(arena, "a", "https://a.test", .openai_compat, "ma", .{}));
+    try cfg.providers.put(arena, "b", try config.Provider.single(arena, "b", "https://b.test", .openai_compat, "mb", .{}));
+    try cfg.providers.put(arena, "c", try config.Provider.single(arena, "c", "https://c.test", .openai_compat, "mc", .{}));
+
+    var i: usize = 0;
+    const first = nextFallbackProvider(&cfg, "a", &.{ "missing", "a", "b", "c" }, &.{"a"}, &i).?;
+    try std.testing.expectEqualStrings("b", first.name);
+    const second = nextFallbackProvider(&cfg, "b", &.{ "missing", "a", "b", "c" }, &.{ "a", "b" }, &i).?;
+    try std.testing.expectEqualStrings("c", second.name);
+    try std.testing.expect(nextFallbackProvider(&cfg, "c", &.{ "missing", "a", "b", "c" }, &.{ "a", "b", "c" }, &i) == null);
 }
 
 test "answerAsParent answers through the parent's provider" {
