@@ -23,7 +23,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     _ = parsed;
 
     const alloc = lib.alloc;
-    const raw = lib.fsList("tools/manifests") catch |err| return lib.failErr(out, err, "listing tools/manifests");
+    const tools_dir = lib.toolsDir();
+    const raw = lib.fsList(tools_dir) catch |err| return lib.failErr(out, err, "listing the tools directory");
     const names = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{});
 
     const Entry = struct { name: []const u8, meta: Meta };
@@ -115,8 +116,9 @@ const Meta = struct {
 /// the whole call without resetting (lib.zig), so earlier reads survive
 /// later ones.
 fn describeFull(file_name: []const u8) Meta {
-    var path_buf: [256]u8 = undefined;
-    const path = std.fmt.bufPrint(&path_buf, "tools/manifests/{s}", .{file_name}) catch return .{};
+    const tools_dir = lib.toolsDir();
+    var path_buf: [512]u8 = undefined;
+    const path = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ tools_dir, file_name }) catch return .{};
     const raw = lib.fsRead(path) catch return .{};
     var meta = Meta{};
     if (scan.topLevelString(lib.alloc, raw, "description")) |d| meta.description = d;

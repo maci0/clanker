@@ -941,10 +941,20 @@ pub fn jsonStrField(obj: std.json.ObjectMap, name: []const u8) []const u8 {
 /// providers (arena, compare). Parsed from `harnessConfig()` with
 /// `ignore_unknown_fields`.
 pub const HarnessProvider = struct { default_model: []const u8 = "" };
+pub const HarnessAgent = struct { tools_dir: []const u8 = "" };
 pub const HarnessConfig = struct {
     default_provider: []const u8 = "",
     providers: std.json.ArrayHashMap(HarnessProvider) = .{},
+    agent: HarnessAgent = .{},
 };
+
+/// The configured manifest directory, or the in-tree default when the host
+/// denies ck_harness_config or the key is absent.
+pub fn toolsDir() []const u8 {
+    const cfg = parseHarnessConfig();
+    if (cfg.agent.tools_dir.len > 0) return cfg.agent.tools_dir;
+    return "tools/manifests";
+}
 
 /// Generates a time-and-content-seeded id with the given prefix,
 /// e.g. "arena-1723456789-a1b2c3d4". Two calls in the same second with

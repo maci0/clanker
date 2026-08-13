@@ -11,7 +11,7 @@
     }
   },
   "fs_prefixes": [
-    "tools/manifests/",
+    ".",
     "state/plugins.json",
     "state/plugin_config.json"
   ],

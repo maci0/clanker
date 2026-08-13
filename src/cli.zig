@@ -4041,12 +4041,19 @@ fn pluginsNew(init: std.process.Init, tools_dir: []const u8, name: []const u8) !
     const io = init.io;
     const arena = init.arena.allocator();
 
-    const manifest_text = manifest_mod.scaffoldManifest(arena, name) catch
+    const trimmed_dir = std.mem.trimEnd(u8, tools_dir, "/");
+    const in_tree = std.mem.eql(u8, trimmed_dir, "tools/manifests");
+    const portable = !in_tree;
+
+    const manifest_text = manifest_mod.scaffoldManifest(arena, name, portable) catch
         usageExit(io, "'{s}' is not a usable tool name (lowercase letters, digits and underscores)", .{name});
     const guest_text = try manifest_mod.scaffoldGuest(arena, name);
 
-    const manifest_path = try std.fmt.allocPrint(arena, "{s}/{s}.tool.json", .{ std.mem.trimEnd(u8, tools_dir, "/"), name });
-    const guest_path = try std.fmt.allocPrint(arena, "tools/zig/{s}.zig", .{name});
+    const manifest_path = try std.fmt.allocPrint(arena, "{s}/{s}.tool.json", .{ trimmed_dir, name });
+    const guest_path = if (in_tree)
+        try std.fmt.allocPrint(arena, "tools/zig/{s}.zig", .{name})
+    else
+        try std.fmt.allocPrint(arena, "{s}/{s}.zig", .{ trimmed_dir, name });
 
     for ([_][]const u8{ manifest_path, guest_path }) |p| {
         if (std.Io.Dir.cwd().statFile(io, p, .{})) |_| {
@@ -4057,8 +4064,16 @@ fn pluginsNew(init: std.process.Init, tools_dir: []const u8, name: []const u8) !
     try atomic_write.writeFile(io, std.Io.Dir.cwd(), manifest_path, manifest_text);
     try atomic_write.writeFile(io, std.Io.Dir.cwd(), guest_path, guest_text);
 
-    var buf: [1024]u8 = undefined;
-    const msg = std.fmt.bufPrint(&buf,
+    var buf: [1536]u8 = undefined;
+    const msg = if (portable) std.fmt.bufPrint(&buf,
+        \\wrote {s}
+        \\wrote {s}
+        \\
+        \\Next: fill in the description and the schema, implement tool_main, then
+        \\  compile {s}.zig to {s}.wasm beside the manifest (see docs/manifest.md)
+        \\  and run: clanker plugins validate {s}
+        \\
+    , .{ manifest_path, guest_path, name, name, manifest_path }) catch "scaffolded\n" else std.fmt.bufPrint(&buf,
         \\wrote {s}
         \\wrote {s}
         \\

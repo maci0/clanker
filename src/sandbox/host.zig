@@ -1048,7 +1048,7 @@ pub fn ckHarnessConfig(caller: *zwasm.Caller) u32 {
     return h.writeResult(bytes, json_out);
 }
 
-const HarnessConfigAccess = enum { full, providers, peers, workflows, chains };
+const HarnessConfigAccess = enum { full, providers, peers, workflows, chains, tools_dir };
 
 /// ck_harness_config is a privileged structured view, independent of
 /// fs_prefixes. Grant each shipped caller only the section it consumes and
@@ -1067,6 +1067,7 @@ fn harnessConfigAccess(tool_name: []const u8) ?HarnessConfigAccess {
     if (std.mem.eql(u8, tool_name, "peers") or std.mem.eql(u8, tool_name, "status") or std.mem.eql(u8, tool_name, "ask_user")) return .peers;
     if (std.mem.eql(u8, tool_name, "workflows")) return .workflows;
     if (std.mem.eql(u8, tool_name, "chain")) return .chains;
+    if (std.mem.eql(u8, tool_name, "plugins") or std.mem.eql(u8, tool_name, "tools")) return .tools_dir;
     return null;
 }
 
@@ -1159,7 +1160,7 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
             }
         }
         try s.endObject();
-    } else if (access == .workflows or access == .chains) {
+    } else if (access == .workflows or access == .chains or access == .tools_dir) {
         try s.objectField("agent");
         try s.beginObject();
         if (access == .workflows) {
@@ -1169,6 +1170,10 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
         if (access == .chains) {
             try s.objectField("chains_dir");
             try s.write(cfg.agent.chains_dir);
+        }
+        if (access == .tools_dir) {
+            try s.objectField("tools_dir");
+            try s.write(cfg.agent.tools_dir);
         }
         try s.endObject();
     }
@@ -5419,6 +5424,8 @@ test "harness config access is scoped to each tool's consumed fields" {
     try std.testing.expectEqual(HarnessConfigAccess.peers, harnessConfigAccess("peers").?);
     try std.testing.expectEqual(HarnessConfigAccess.workflows, harnessConfigAccess("workflows").?);
     try std.testing.expectEqual(HarnessConfigAccess.chains, harnessConfigAccess("chain").?);
+    try std.testing.expectEqual(HarnessConfigAccess.tools_dir, harnessConfigAccess("plugins").?);
+    try std.testing.expectEqual(HarnessConfigAccess.tools_dir, harnessConfigAccess("tools").?);
     try std.testing.expect(harnessConfigAccess("unrelated") == null);
 
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -5454,6 +5461,13 @@ test "harness config access is scoped to each tool's consumed fields" {
     try std.testing.expect(std.mem.find(u8, peers, "instance") != null);
     try std.testing.expect(std.mem.find(u8, peers, "providers") == null);
     try std.testing.expect(std.mem.find(u8, peers, "agent") == null);
+
+    cfg.agent.tools_dir = "vendor/my-tools";
+    const tools_dir_json = try harnessConfigJSON(arena, &cfg, .tools_dir);
+    try std.testing.expect(std.mem.find(u8, tools_dir_json, "tools_dir") != null);
+    try std.testing.expect(std.mem.find(u8, tools_dir_json, "vendor/my-tools") != null);
+    try std.testing.expect(std.mem.find(u8, tools_dir_json, "providers") == null);
+    try std.testing.expect(std.mem.find(u8, tools_dir_json, "max_iterations") == null);
 
     const full = try harnessConfigJSON(arena, &cfg, .full);
     try std.testing.expect(std.mem.find(u8, full, "\"modules\"") != null);
