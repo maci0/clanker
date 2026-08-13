@@ -43,7 +43,11 @@ through a gated loop. Follow these conventions when changing this codebase.
   `ck_ask`, `ck_std_api`, `ck_harness_config`) check `tool_self_name`; the
   import existing is not a grant. The agent loop attaches a subagent runner
   to every tool sandbox, so `ck_subagent`/`ck_swarm` would otherwise be
-  callable by any guest.
+  callable by any guest. Structured harness config goes through
+  `ck_harness_config`; `config_view`'s whole-file dump still reads
+  `config.toml` / `config.local.toml` as raw bytes, so those two names must
+  stay on its `fs_prefixes` (emptying them makes every dump fail as
+  "config.toml unreadable").
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   execution graphs, sub-agents, autolearn, workflows.
 - `src/schedule/` — `clanker schedule`: the cron dialect and next-fire

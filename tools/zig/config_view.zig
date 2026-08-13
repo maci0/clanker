@@ -23,14 +23,16 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             if (s == .string) section = s.string;
         }
     }
-    const base = lib.readConfigFile("config") orelse return lib.fail(out, "config.toml unreadable");
-    const local = lib.readConfigFile("config.local");
-
     var text: std.ArrayList(u8) = .empty;
     defer text.deinit(lib.alloc);
 
     if (section.len == 0) {
-        // Show both files; the agent can compare.
+        // Whole-file dump needs the raw TOML bytes (no guest TOML parser).
+        // Section mode goes through ck_harness_config and must not depend on
+        // this read: a missing grant here used to fail every call, including
+        // {"section":"modules"}.
+        const base = lib.readConfigFile("config") orelse return lib.fail(out, "config.toml unreadable");
+        const local = lib.readConfigFile("config.local");
         try text.appendSlice(lib.alloc, "=== ");
         try text.appendSlice(lib.alloc, base.name);
         try text.appendSlice(lib.alloc, " ===\n");
