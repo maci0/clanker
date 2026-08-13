@@ -4050,7 +4050,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_goals) {
             handleGoals(io, gpa, cfg, method, body, stream);
         } else if (is_providers) {
-            handleProviders(cfg, stream);
+            handleProviders(io, gpa, cfg, environ_map, stream);
         } else if (is_janitor) {
             handleJanitor(io, gpa, cfg, environ_map, stream);
         } else if (is_board) {
@@ -5012,6 +5012,13 @@ const RunRequestBody = struct {
     /// null means "use what the config says".
     provider: []const u8 = "",
     model: []const u8 = "",
+    /// Preferred fallback provider (or none, the default) used when a single
+    /// API request to the selected provider fails (for example an image
+    /// upload is rejected on the provider side). Empty or null means "no
+    /// fallback" and disables auto-retry for this run. When set it also
+    /// becomes the preference for pre-emptive vision routing, overriding
+    /// `agent.fallback_provider`.
+    fallback_provider: []const u8 = "",
     temperature: ?f64 = null,
     top_p: ?f64 = null,
     /// Plan mode (webui-plan 2.2): the run researches and proposes but the
@@ -6073,7 +6080,10 @@ test "transcriptBytes counts tool call arguments, like the session listing" {
 
 /// Every configured provider and its models, so the composer can offer the
 /// same choice `--provider` does instead of always running the default.
-fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
+fn handleProviders(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *const std.process.Environ.Map, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
     var buf: [1 << 16]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -6129,12 +6139,67 @@ fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
             }
             s.endObject() catch return;
         }
+        if (prov.models.count() == 0) {
+            writeLiveModels(io, gpa, arena, prov, environ_map, &s);
+        }
         s.endArray() catch return;
         s.endObject() catch return;
     }
     s.endArray() catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", buf[0..w.end]);
+}
+
+/// A configured provider with an empty static `models` map (a locally-run
+/// ollama server, for example) shows nothing in the webui's chat provider
+/// picker. When that happens, ask the provider's OpenAI-compat `/models`
+/// endpoint for its live model list and write each model into the still-open
+/// `models` JSON array. This is why such providers appear only when they are
+/// both configured *and* reachable: an unreachable endpoint (or one without a
+/// `/models` route) yields nothing, which matches how `providers check` treats
+/// a down provider. Failures are swallowed so a cloud provider that is merely
+/// slow never breaks the picker.
+fn writeLiveModels(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    provider: *const config.Provider,
+    environ_map: *const std.process.Environ.Map,
+    s: *std.json.Stringify,
+) void {
+    const base = std.mem.trimRight(u8, provider.base_url, "/");
+    if (base.len == 0) return;
+    const url = std.fmt.allocPrint(arena, "{s}/models", .{base}) catch return;
+    var bearer: ?[]const u8 = null;
+    if (provider.api_key_env) |env_name| {
+        if (environ_map.get(env_name)) |key| {
+            var b = std.ArrayList(u8).empty;
+            b.appendSlice(arena, "Bearer ") catch return;
+            b.appendSlice(arena, key) catch return;
+            bearer = b.items;
+        }
+    }
+    const body = httpGet(io, gpa, arena, url, bearer) catch return;
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return;
+    if (parsed != .object) return;
+    const data = parsed.object.get("data") orelse return;
+    if (data != .array) return;
+    for (data.array.items) |item| {
+        if (item != .object) continue;
+        const id = fieldStr(item.object, "id") orelse continue;
+        if (id.len == 0) continue;
+        if (provider.models.get(id) != null) continue;
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(id) catch return;
+        if (fieldStr(item.object, "context_length")) |ctx| {
+            if (std.fmt.parseInt(u32, ctx, 10)) |n| {
+                s.objectField("context_window") catch return;
+                s.write(n) catch return;
+            } else |_| {}
+        }
+        s.endObject() catch return;
+    }
 }
 
 const webui_plugins_dir = "tools/webui-plugins";
@@ -8051,15 +8116,16 @@ fn providerVisionModel(p: *const config.Provider) ?[]const u8 {
 }
 
 /// A provider copy to route image-bearing work to when the selected provider
-/// cannot take the image. Prefers `cfg.agent.fallback_provider` when it is
-/// configured, exists, differs from `current_name`, and has a vision-capable
-/// model; otherwise the first other configured provider with one. Returns
-/// null when nothing can take the image. The copy's `default_model` is set to
-/// a vision-capable model of that provider.
-fn visionFallbackProvider(cfg: *const config.Config, current_name: []const u8) ?config.Provider {
-    const prefer = cfg.agent.fallback_provider;
-    if (prefer.len > 0 and !std.mem.eql(u8, prefer, current_name)) {
-        if (cfg.providers.getPtr(prefer)) |p| {
+/// cannot take the image. Prefers `prefer` when it is non-null and non-empty
+/// (a per-run `fallback_provider` chosen in the webui), else
+/// `cfg.agent.fallback_provider` when it is configured, exists, differs from
+/// `current_name`, and has a vision-capable model; otherwise the first other
+/// configured provider with one. Returns null when nothing can take the image.
+/// The copy's `default_model` is set to a vision-capable model of that provider.
+fn visionFallbackProvider(cfg: *const config.Config, current_name: []const u8, prefer: ?[]const u8) ?config.Provider {
+    const prefer_name = if (prefer) |p| p else cfg.agent.fallback_provider;
+    if (prefer_name.len > 0 and !std.mem.eql(u8, prefer_name, current_name)) {
+        if (cfg.providers.getPtr(prefer_name)) |p| {
             if (providerVisionModel(p)) |m| {
                 var fb = p.*;
                 fb.default_model = m;
@@ -8265,14 +8331,15 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     }
     // Image attachments need a vision-capable model. If the selected provider
     // cannot take the image, route the run to a fallback provider that can:
-    // the preferred `agent.fallback_provider` if it qualifies, else the first
+    // the preferred fallback (a per-run `fallback_provider` chosen in the
+    // webui, else `agent.fallback_provider`) if it qualifies, else the first
     // other configured provider with a vision model. Chosen here, before the
     // agent is built, because the agent holds the provider pointer. When the
     // fallback itself cannot take the image (or multimodal is off), the gate
     // further down refuses as before.
     var used_fallback: ?[]const u8 = null;
     if (req.images.len > 0 and cfg.modules.multimodal and !imageAttachmentsSupported(provider.activeModel())) {
-        if (visionFallbackProvider(cfg, provider.name)) |fb| {
+        if (visionFallbackProvider(cfg, provider.name, if (req.fallback_provider.len > 0) req.fallback_provider else null)) |fb| {
             used_fallback = fb.name;
             provider_copy = fb;
             provider = &provider_copy;
@@ -9496,22 +9563,27 @@ test "visionFallbackProvider prefers the configured secondary then any other vis
     try cfg.providers.put(arena, "kimi", try config.Provider.single(arena, "kimi", "https://api.moonshot.ai/v1", .openai_compat, "kimi-vl", .{ .capabilities = &.{"image_in"} }));
 
     // The configured fallback provider wins over the first other vision one.
-    const preferred = visionFallbackProvider(&cfg, "deepseek").?;
+    const preferred = visionFallbackProvider(&cfg, "deepseek", null).?;
     try std.testing.expectEqualStrings("kimi", preferred.name);
     try std.testing.expect(imageAttachmentsSupported(preferred.activeModel()));
 
+    // A per-run prefer (webui fallback_provider) overrides the configured one.
+    cfg.agent.fallback_provider = "kimi";
+    const per_run = visionFallbackProvider(&cfg, "deepseek", "ollama").?;
+    try std.testing.expectEqualStrings("ollama", per_run.name);
+
     // Without a configured fallback, the first other vision provider is picked.
     cfg.agent.fallback_provider = "";
-    const first = visionFallbackProvider(&cfg, "deepseek").?;
+    const first = visionFallbackProvider(&cfg, "deepseek", null).?;
     try std.testing.expectEqualStrings("ollama", first.name);
 
     // The current provider is never picked, and the fallback model is vision.
-    try std.testing.expect(!std.mem.eql(u8, visionFallbackProvider(&cfg, "ollama").?.name, "ollama"));
+    try std.testing.expect(!std.mem.eql(u8, visionFallbackProvider(&cfg, "ollama", null).?.name, "ollama"));
 
     // No vision-capable provider anywhere → null.
     var cfg2 = config.Config{ .providers = .empty, .default_provider = "deepseek" };
     try cfg2.providers.put(arena, "deepseek", try config.Provider.single(arena, "deepseek", "https://api.deepseek.com", .openai_compat, "deepseek-v4-flash", .{ .capabilities = &.{"thinking"} }));
-    try std.testing.expect(visionFallbackProvider(&cfg2, "deepseek") == null);
+    try std.testing.expect(visionFallbackProvider(&cfg2, "deepseek", null) == null);
 }
 
 test "run failure detail names the provider and hints at vision when images were attached" {
