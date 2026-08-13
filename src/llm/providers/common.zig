@@ -10,6 +10,7 @@ const json = std.json;
 const api = @import("api.zig");
 const auth = @import("../auth.zig");
 const config = @import("../../config.zig");
+const sampling = @import("../sampling_profiles.zig");
 
 /// The body grows to fit. It used to be capped at 1 MiB, which was ample for
 /// tool schemas and then became a ceiling on how much source the
@@ -47,20 +48,26 @@ pub fn clampedMaxTokens(params: api.RequestParams) u32 {
     return @min(params.max_tokens orelse active.max_tokens, active.context_window / 2);
 }
 
-/// Writes `temperature` and `top_p` when configured. Only sent when
-/// configured: both knobs narrow the same distribution, so a model left at
-/// its provider default is deliberately left there rather than given a value
-/// this harness invented.
+/// Writes `temperature`, `top_p`, and `reasoning_effort`. Precedence is
+/// per-run override, then the model's configured value, then the use-case
+/// table. An explicit config value still wins; the table only fills a gap.
 pub fn writeSamplingParams(s: *json.Stringify, params: api.RequestParams) !void {
-    const temp = params.temperature orelse params.provider.activeModel().temperature;
+    const rec = sampling.forParams(params);
+    const model = params.provider.activeModel();
+    const temp = params.temperature orelse model.temperature orelse rec.temperature;
     if (temp) |t| {
         try s.objectField("temperature");
         try s.print("{d}", .{t});
     }
-    const nucleus = params.top_p orelse params.provider.activeModel().top_p;
+    const nucleus = params.top_p orelse model.top_p orelse rec.top_p;
     if (nucleus) |tp| {
         try s.objectField("top_p");
         try s.print("{d}", .{tp});
+    }
+    const effort = model.reasoning_effort orelse rec.reasoning_effort;
+    if (effort) |re| {
+        try s.objectField("reasoning_effort");
+        try s.write(re);
     }
 }
 

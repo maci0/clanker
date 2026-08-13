@@ -33,6 +33,7 @@ comptime {
     _ = @import("llm/providers.zig");
     _ = @import("llm/providers/api.zig");
     _ = @import("llm/providers/common.zig");
+    _ = @import("llm/sampling_profiles.zig");
     _ = @import("llm/providers/openai.zig");
     _ = @import("llm/providers/anthropic.zig");
     _ = @import("llm/providers/vertex.zig");

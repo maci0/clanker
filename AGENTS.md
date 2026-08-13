@@ -38,7 +38,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   one module for every provider. `agent.fallback_providers` is a list
   walked by `chatWithFallbackChain` in `src/agent/loop.zig` after
   same-provider retries exhaust with no content delivered; the vision
-  swap in `cli.zig` stays pre-emptive and separate. Each provider is a vtable
+  swap in `cli.zig` stays pre-emptive and separate. `[advisor]` is a
+  fail-open post-turn critique (off by default), distinct from
+  `improve.arena_advisory`. Each provider is a vtable
   (`providers/api.zig`) implemented in its own `providers/<name>.zig` and
   listed in the `registry` table in `providers.zig`; `auth.zig` is the
   credential-acquisition axis, `gcp_jwt.zig`/`vertex_token.zig` the Vertex

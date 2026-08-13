@@ -147,10 +147,8 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
         try s.write(true);
         try s.endObject();
     }
-    if (params.provider.activeModel().reasoning_effort) |re| {
-        try s.objectField("reasoning_effort");
-        try s.write(re);
-    }
+    // reasoning_effort is written by writeSamplingParams (config, then the
+    // use-case table). A second write here would duplicate the field.
     if (params.response_format_json) {
         try s.objectField("response_format");
         try s.beginObject();
