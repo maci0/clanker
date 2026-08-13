@@ -361,7 +361,7 @@ fn fsPrefixesFor(
     var out: std.ArrayList([]const u8) = .empty;
     try out.appendSlice(arena, tool.fs_prefixes);
     for (cfg.agent.tools_dir) |dir| {
-        if (dir.len == 0 or dir[0] == '/') continue;
+        if (dir.len == 0) continue;
         var seen = false;
         for (out.items) |have| {
             if (std.mem.eql(u8, have, dir)) {
@@ -4323,7 +4323,7 @@ fn isSecretDotenv(sub_path: []const u8) bool {
 }
 
 fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
-    if (sub_path[0..@min(sub_path.len, 1)].len > 0 and sub_path[0] == '/') return error.PathOutsideSandbox;
+    if (sub_path.len > 0 and sub_path[0] == '/') return safeJoinAbsolute(sb, sub_path);
     // .env is where the process loads API keys. env_allow exists so those
     // values never cross into guest memory via ck_env; reading the file
     // through ck_fs_* with fs_prefixes ["."] was the same leak by another
@@ -4386,6 +4386,34 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
         if (!allowed) return error.PathOutsideSandbox;
     }
     return std.fmt.allocPrint(sb.gpa, "{s}/{s}", .{ std.mem.trimEnd(u8, rootForPath(sb, sub_path), "/"), sub_path });
+}
+
+/// An absolute guest path is allowed only when some `fs_prefixes` entry is
+/// itself absolute and the path sits on or under that prefix. This is how a
+/// plugins/tools guest lists an out-of-tree `agent.tools_dir` without opening
+/// every host-absolute path.
+fn safeJoinAbsolute(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
+    if (isSecretDotenv(sub_path)) return error.PathOutsideSandbox;
+    var it = std.mem.splitScalar(u8, sub_path[1..], '/');
+    while (it.next()) |comp| {
+        if (comp.len == 0) return error.PathOutsideSandbox;
+        if (std.mem.eql(u8, comp, "..") or std.mem.eql(u8, comp, ".")) return error.PathOutsideSandbox;
+    }
+    var allowed = false;
+    for (sb.fs_prefixes) |p| {
+        if (p.len == 0 or p[0] != '/') continue;
+        const prefix = std.mem.trimEnd(u8, p, "/");
+        if (std.mem.eql(u8, sub_path, prefix)) {
+            allowed = true;
+            break;
+        }
+        if (std.mem.startsWith(u8, sub_path, prefix) and sub_path.len > prefix.len and sub_path[prefix.len] == '/') {
+            allowed = true;
+            break;
+        }
+    }
+    if (!allowed) return error.PathOutsideSandbox;
+    return sb.gpa.dupe(u8, sub_path);
 }
 
 test "secure filesystem paths refuse symlink escapes" {
@@ -5059,6 +5087,19 @@ test "safeJoin rejects escapes" {
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "a/../../b"));
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "a//b"));
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "other/foo.txt"));
+
+    var abs = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = "/tmp/sandbox",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"/home/user/.config/clanker/plugins"},
+        .environ_map = undefined,
+    };
+    const abs_ok = try safeJoin(&abs, "/home/user/.config/clanker/plugins/echo.tool.json");
+    defer std.testing.allocator.free(abs_ok);
+    try std.testing.expectEqualStrings("/home/user/.config/clanker/plugins/echo.tool.json", abs_ok);
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&abs, "/home/user/.config/clanker/secrets"));
     const ok = try safeJoin(&sb, "notes/foo.txt");
     defer std.testing.allocator.free(ok);
     try std.testing.expectEqualStrings("/tmp/sandbox/notes/foo.txt", ok);
