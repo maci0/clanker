@@ -9,20 +9,10 @@ Royale mode. Phase 3 (multi-instance over a chatroom) is not: it needs two
 reachable `clanker serve` peers to mean anything, and the PRD's own open
 question about ordering under a partition is unresolved.
 
-Two deviations from what is written below, both deliberate:
-
-- **Combatant turns go through `ck_llm`, not `ck_subagent`.** A debate move is
-  one bounded completion with no tools and no file access, so an agent run
-  would only add an iteration loop nothing uses; and `ck_subagent` returns
-  `NotFound` outside a parent agent run, which would have made `clanker arena`
-  impossible as a plain subcommand. The per-combatant `provider` override that
-  makes "different providers genuinely disagreeing" work is a `ck_llm` feature
-  already (`providers check` uses it).
-- **An untargeted move above two combatants is not refused at the tool
-  boundary** (see Battle Royale mode). A mid-match move has no tool boundary
-  left to be refused at, and dropping it would contradict "never dropped
-  silently", so it retaliates against whoever has damage in flight at it, else
-  aims at the strongest opponent left, and pays the weak-confidence floor.
+Two deliberate deviations from the design as first written (combatant turns
+go through `ck_llm` rather than `ck_subagent`, and an untargeted move above
+two combatants is retargeted rather than refused) are recorded in Known
+issues below and reflected in Design.
 
 Builds on shipped primitives: `ck_subagent`
 and `ck_swarm` (`src/sandbox/host.zig`) for nested bounded agent runs,
@@ -103,9 +93,9 @@ the pixel art.
   false`, no image assets) extended to a battle layout, not a new drawing
   framework or asset pipeline.
 - **Not free-for-all by default.** Strict pairwise (2 combatants) is the
-  shipped shape; Battle Royale mode (Design → Battle Royale mode, Phase 8)
-  is a later, explicitly deferred layer on top, not assumed to fall out for
-  free from the pairwise core.
+  default shape; Battle Royale mode (Design → Battle Royale mode, Phase 8,
+  now shipped) is a layer on top of the pairwise core, asked for explicitly
+  with a `positions` array, never assumed.
 
 ## Design
 
@@ -143,9 +133,10 @@ transcript and the verdict should account for.
 positions' opening `attack` (parallel, no prior moves to react to — this is
 the one point in a match that could reuse `ck_swarm`'s batch shape). From
 round 2 on, combatants move in a fixed order and each one's call includes
-every move so far, not just the opponent's; this is a chain of `ck_subagent`
-calls, not a `ck_swarm` batch, because `ck_swarm` members can't see each
-other and this loop needs them to. A round ends when every combatant
+every move so far, not just the opponent's; this is a chain of `ck_llm`
+completions (see Known issues for why not `ck_subagent`), not a `ck_swarm`
+batch, because `ck_swarm` members can't see each other and this loop needs
+them to. A round ends when every combatant
 has moved once; the match ends when a combatant's HP hits 0, all-but-one
 combatant has conceded, or `max_rounds` is reached (default 4, clamped to a
 ceiling the way the `rlm` tool's `max_depth` config already clamps its
@@ -182,12 +173,15 @@ point, how much damage. Two judge modes, both configurable per match:
   scores the exchange. Costs one extra call per round but removes the
   self-scoring incentive problem entirely.
 
-**Battle Royale mode (deferred, Phase 8).** The 3-8 combatant free-for-all,
-layered on the pairwise core once it has real mileage, not the default (see
-Non-goals). Same move protocol, one addition: `attack`/`block`/`counter`
-carry a `target` naming another combatant's position; a move with no
-`target` when more than 2 combatants are in the match is refused at the tool
-boundary, same as today's duplicate-position refusal. A round with N
+**Battle Royale mode (shipped, Phase 8).** The 3-8 combatant free-for-all,
+layered on the pairwise core, not the default (see Non-goals). Same move
+protocol, one addition: `attack`/`block`/`counter` carry a `target` naming
+another combatant's position. A move with no usable `target` when more than
+2 combatants are in the match is not refused (a mid-match move has no tool
+boundary left to be refused at, and dropping it would contradict "never
+dropped silently"): it is aimed by `defaultTarget` (retaliate against
+whoever has damage in flight at the mover, else the strongest opponent
+left), recorded as `retargeted`, and pays the weak-confidence floor. A round with N
 combatants is N independent judged exchanges (attacker vs. its declared
 target), not one N-way brawl: the judge call shape stays identical to
 pairwise, there are just more of them per round. A combatant at 0 HP is
@@ -195,10 +189,15 @@ eliminated for the rest of the match (no longer a legal target, no longer
 takes a turn) rather than ending the match, so a battle royale plays out
 instead of collapsing at the first knockout. Verdict: last position
 standing, or highest HP at the round cap if more than one survives, the
-same judged-on-points fallback pairwise already has. Still open: whether a
-combatant targeted by more than one attacker in the same round eats
-cumulative damage from each, or the judge scores the round holistically
-(see Open questions).
+same judged-on-points fallback pairwise already has. Multi-attacker
+targeting is resolved cumulatively, per attacker-target pair
+(`arena_match.zig`'s `Board`, a pending-damage matrix): each exchange is
+judged on its own, a combatant's single turn can block or counter only the
+one attack it names, and everything else aimed at it that round lands in
+full. Focus-firing is therefore strong (the honest consequence of "a block
+answers that attack, point by point"), and there is no holistic per-round
+judge call. (The mode's "with cheese" nickname is a nod to the meeting that
+approved it, not part of the spec.)
 
 **State and persistence.** A match gets its own file, `state/arena/<id>.json`
 — append a move + judge result per round, same shape as `state/runs/run-
@@ -328,9 +327,7 @@ way its own non-goal requires.
   pattern, gated like the vaxis REPL's own tick handler: polling only while
   the match status is "running", stopped the moment it reaches a verdict,
   never a background timer left ticking on a finished match. No new socket:
-  `docs/prds/0006-webui.md`'s existing constraint that `/api/run`'s stream
-  is the one long-lived channel and everything else is polling holds here
-  too.
+  the transport constraint is `docs/prds/0006-webui.md`'s, unchanged here.
 - **Reduced motion.** No animation loop scheduled at all
   (`prefers-reduced-motion: reduce` skips `requestAnimationFrame` the same
   way `_floorFrame` already does); the canvas renders one static frame of
@@ -345,12 +342,31 @@ line per move (matching tool-call card style), ending in a verdict block.
 `clanker arena` mirrors it non-interactively for scripting, same pattern as
 `clanker autoresearch` alongside `/autoresearch`.
 
+## Known issues
+
+Two deliberate deviations from this PRD as first written, kept here so a
+reader diffing doc against code knows they are decisions, not drift:
+
+- **Combatant turns go through `ck_llm`, not `ck_subagent`.** A debate move is
+  one bounded completion with no tools and no file access, so an agent run
+  would only add an iteration loop nothing uses; and `ck_subagent` returns
+  `NotFound` outside a parent agent run, which would have made `clanker arena`
+  impossible as a plain subcommand. The per-combatant `provider` override that
+  makes "different providers genuinely disagreeing" work is a `ck_llm` feature
+  already (`providers check` uses it).
+- **An untargeted move above two combatants is not refused at the tool
+  boundary** (see Battle Royale mode). A mid-match move has no tool boundary
+  left to be refused at, and dropping it would contradict "never dropped
+  silently", so `defaultTarget` retaliates against whoever has damage in
+  flight at the mover, else aims at the strongest opponent left, records the
+  move as `retargeted`, and pays the weak-confidence floor.
+
 ## Failure modes
 
 | Condition | Behaviour |
 |---|---|
 | A combatant's reply doesn't parse as a valid move | Scored as a weak `attack`, never dropped (see Move protocol) |
-| A subagent call errors or times out mid-match | That combatant forfeits the round (treated as a no-op move, 0 damage dealt or blocked); match continues for the remaining combatants |
+| A combatant's `ck_llm` call errors, times out, or returns empty mid-match | That combatant forfeits the round (treated as a no-op move, 0 damage dealt or blocked); match continues for the remaining combatants |
 | `max_rounds` reached with no knockout | Judged on points: higher HP wins, verdict synthesizes both surviving positions weighted by HP |
 | A peer goes unreachable mid-match (room-backed mode) | That combatant forfeits remaining rounds the same as a timeout; the match file records it explicitly rather than hanging |
 | Third-party judge configured but no extra provider available | Falls back to self-reported judging, logged as a downgrade so the verdict's confidence can be read accordingly |
@@ -360,8 +376,9 @@ line per move (matching tool-call card style), ending in a verdict block.
 
 Phase 1 — single-process core:
 
-- [x] `arena` WASM tool: match setup, round loop over `ck_subagent`, move
-      parsing with the weak-attack fallback, self-reported judging
+- [x] `arena` WASM tool: match setup, round loop over `ck_llm` (see Known
+      issues), move parsing with the weak-attack fallback, self-reported
+      judging
 - [x] `state/arena/<id>.json` persistence, one entry per round
 - [x] Verdict synthesis at match end
 - [x] Round cap clamped to a ceiling (mirrors `rlm`'s `max_depth`)
@@ -415,14 +432,18 @@ Phase 7 — tool/skill design-review use case:
 
 Phase 8 — Battle Royale mode ("with cheese," 3-8 combatants):
 
-- [x] `target` field on `attack`/`block`/`counter`, required once a match
-      has more than 2 combatants
+- [x] `target` field on `attack`/`block`/`counter` once a match has more
+      than 2 combatants (an unusable target is retargeted, not refused; see
+      Known issues)
 - [x] Elimination at 0 HP instead of match-end; eliminated combatants stop
       taking turns and stop being a legal target
 - [x] Last-standing / highest-HP-at-cap verdict, generalized from pairwise's
       existing points fallback
-- [x] Resolved: whether simultaneous multi-attacker targeting is cumulative
-      damage or a holistic per-round judge call (see Open questions)
+- [x] Resolved: simultaneous multi-attacker targeting is cumulative, per
+      attacker-target pair: each exchange judged on its own, one block
+      negates only the attack it names, the rest lands in full (see Design →
+      Battle Royale mode; `arena_match.zig`'s `Board` and its focus-fire
+      tests pin it)
 
 ## Worked example (phase 7)
 
@@ -465,13 +486,6 @@ combatant forfeited a round to an empty completion.
 
 ## Open questions / future work
 
-- **Battle Royale multi-attacker judging.** Design → Battle Royale mode
-  scores each attacker-target pair independently. Still genuinely open:
-  whether that's fair when one combatant is targeted by more than one
-  attacker in the same round, cumulative damage from each, or one holistic
-  judge call for the round, not designed blind here; resolving it is
-  Phase 8's last unchecked acceptance item. The name ("with cheese") is a
-  nod to the meeting that approved the mode, not part of the spec.
 - **Cost/fairness across providers.** A free local model arguing against a
   paid frontier model is not a fair fight in the way that matters for a
   judged debate (one side can afford to think longer per move). Whether

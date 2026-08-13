@@ -168,6 +168,11 @@ specific `vxfw` shape, not an open-ended "figure it out":
 | Mouse wheel | Scrolls the transcript. `vxfw.App.run` enables mouse reporting unconditionally, which takes the terminal's own wheel handling away, so this is owed rather than optional — the same debt that already bought drag-select and OSC 52 copy |
 | A modal is open (picker or search) | It owns the keyboard, tested before the scrollback bindings. Those claim Escape whenever `view_end` is set, and jumping to a search hit always sets it, so a modal tested after them would never see its own cancel key |
 | A modal is drawn over the transcript | Its interior is blanked first (`clearBoxInterior`); `drawBox` draws only a border, so the text underneath used to show through the gaps |
+| Model has no pricing in the catalogue | Cost segment omitted from the turn line and no session cost in the status bar. `$0.0000` would read as "this model is free", which is a different claim from "nobody wrote down what it charges" |
+| Provider reported no cache accounting | `cache` segment omitted rather than shown as 0% |
+| `context_window` unset for the active model | Context meter omitted from both the turn line and the status bar |
+| Turn failed before reaching the provider | No turn line at all, rather than a row of zeroes |
+| Turn hit `max_iterations` / the token budget | Turn line still printed: the run spent real tokens and real money whether or not it answered |
 
 ## Acceptance criteria
 
@@ -219,26 +224,6 @@ Shipped:
       line and the status bar. `session.compactMessages` reports what it
       dropped; `Agent.maybeCompactMessages` is reported from the summary
       message it leaves behind
-
-Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
-
-- [ ] **Inline `ask_user` / confirm-before-write prompt UI.** The biggest gap:
-      a run that calls `ask_user`, or `agent.confirm_writes = "always"`, has no
-      prompt-rendering path here, so the question is silently declined / the
-      write runs ungated (`repl_vaxis.zig` startup warning says so). The
-      `/model` picker's modal (`picker_open`/`handlePickerKey`) is the shape to
-      reuse, not a new mechanism.
-- [ ] **Graceful iteration-limit landing.** Hitting `agent.max_iterations`
-      returns `error.MaxIterationsExceeded` and the turn renders `[error: ...]`,
-      discarding every tool round's work with no partial answer. Default raised
-      24 -> 50, but the REPL should surface partial progress and offer to
-      continue (append "keep going") rather than erroring, the way a coding CLI
-      does. (Config bump: `config.zig`.)
-- [ ] **Real markdown outside fenced code.** Only fences get styled
-      (`syntax.zig`); bold/italic/inline-code/headings/bullets render as plain
-      text, unlike `clanker run`'s `MdStream` and every CLI above.
-- [ ] **Multi-line input** (Shift+Enter or a heredoc paste mode). `vxfw.TextField`
-      is single-line; Enter always submits.
 - [x] **Transcript search.** Shipped on **Ctrl-R**: an incremental,
       case-insensitive substring search over `lines`, Up/Down (or
       Ctrl-N/Ctrl-P) stepping hits with wraparound, Enter leaving the view on
@@ -271,10 +256,6 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
       Tab-complete makes on a unique match. Bound to a key rather than a
       spelling because a `/palette` command would have to be looked up in the
       thing it opens.
-- [ ] **Image / multimodal input.** The web UI has an attachment path (webui
-      1.3); this REPL has no route for a task that needs one.
-- [ ] **Plan mode toggle.** `Agent.plan_mode` exists and the web UI toggles it
-      (webui 2.2); nothing here sets it, so no propose-then-apply flow.
 - [x] **Inline `!shell` escape.** grok/kimi/opencode (and Pi) run a shell line
       with a `!` prefix without leaving the loop. Shipped: `submit()`
       intercepts a leading `!` before `parseCommand` (`parseShellEscape`),
@@ -282,19 +263,35 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
       it past the same `ck_exec` gate a tool goes through — not a shell, so no
       pipes, globs, redirections or `$VAR`. The allowlist is the union of the
       registry's `exec_allow` plus `agent.repl_exec_allow`; bare `!` prints it.
-- [ ] **Theme without an env var.** Colour (the RGB palettes) only lights up
-      when `CLANKER_THEME` is set; the default 16-colour theme is bold-only. A
-      `/theme` command or truecolor autodetection would surface it.
 
-## Failure modes (stats)
+Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
 
-| Condition | Behaviour |
-|---|---|
-| Model has no pricing in the catalogue | Cost segment omitted from the turn line and no session cost in the status bar. `$0.0000` would read as "this model is free", which is a different claim from "nobody wrote down what it charges" |
-| Provider reported no cache accounting | `cache` segment omitted rather than shown as 0% |
-| `context_window` unset for the active model | Context meter omitted from both the turn line and the status bar |
-| Turn failed before reaching the provider | No turn line at all, rather than a row of zeroes |
-| Turn hit `max_iterations` / the token budget | Turn line still printed: the run spent real tokens and real money whether or not it answered |
+- [ ] **Inline `ask_user` / confirm-before-write prompt UI.** The biggest gap:
+      a run that calls `ask_user`, or `agent.confirm_writes = "always"`, has no
+      prompt-rendering path here, so the question is silently declined / the
+      write runs ungated (`repl_vaxis.zig` startup warning says so). The
+      `/model` picker's modal (`picker_open`/`handlePickerKey`) is the shape to
+      reuse, not a new mechanism.
+- [ ] **Graceful iteration-limit landing.** Hitting `agent.max_iterations`
+      returns `error.MaxIterationsExceeded` and the turn renders `[error: ...]`,
+      discarding every tool round's work with no partial answer. Default raised
+      24 -> 50, but the REPL should surface partial progress and offer to
+      continue (append "keep going") rather than erroring, the way a coding CLI
+      does. (Config bump: `config.zig`.)
+- [ ] **Real markdown outside fenced code.** Only fences get styled
+      (`syntax.zig`); bold/italic/inline-code/headings/bullets render as plain
+      text, unlike `clanker run`'s `MdStream` and every CLI above.
+- [ ] **Multi-line input** (Shift+Enter or a heredoc paste mode). `vxfw.TextField`
+      is single-line; Enter always submits.
+- [ ] **Image / multimodal input.** The web UI has an attachment path (webui
+      1.3); this REPL has no route for a task that needs one.
+- [ ] **Plan mode toggle.** `Agent.plan_mode` exists and the web UI toggles it
+      (webui 2.2); nothing here sets it, so no propose-then-apply flow.
+- [ ] **Truecolor autodetection.** `/theme` shipped (registered in
+      `command_registry`, a `PickerKind` in the same modal `/model` uses), so
+      the RGB palettes are reachable without setting `CLANKER_THEME`. What
+      remains is autodetecting truecolor support so a capable terminal gets
+      colour by default instead of the bold-only 16-colour theme.
 
 ## Open questions / future work
 

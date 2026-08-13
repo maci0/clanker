@@ -14,10 +14,10 @@ manual temperature/top_p controls, `~L175-177`).
 
 Sampling parameters have exactly one source today, in this priority order:
 a per-run override (`RunRequest.temperature`/`top_p`, set from the webui
-model picker's manual fields, `src/cli.zig:9681-9682`) beats the model's
+model picker's manual fields, `src/cli.zig:9781-9785`) beats the model's
 configured default (`Model.temperature`/`top_p` in `config.toml`), which
 beats sending nothing at all (`writeSamplingParams`,
-`src/llm/providers/common.zig:50-62`, only writes a field when one of those
+`src/llm/providers/common.zig:54-65`, only writes a field when one of those
 two is non-null — otherwise the provider's own wire default applies,
 whatever that happens to be for that vendor).
 
@@ -97,12 +97,18 @@ has for free.
 `(use_case, model.capabilities)` to a `{temperature: ?f64, top_p: ?f64,
 reasoning_effort: ?[]const u8}` recommendation. Keyed off `capabilities`
 (already on every `Model`, e.g. `"thinking"`, `"tool_use"`,
-`src/config.zig:78-81`) rather than provider/model name, so the same three or
+`src/config.zig:83`) rather than provider/model name, so the same three or
 four rows cover every configured model without a per-model entry: a
 `"thinking"` model gets no explicit temperature (most reasoning-model APIs
 reject or ignore it) and a use-case-appropriate `reasoning_effort` instead; a
 plain chat-completions model gets a use-case-appropriate temperature/top_p
 pair.
+
+Boundary against [PRD 0020 (auto-thinking)](0020-auto-thinking.md): this PRD
+owns writing `reasoning_effort` (the capability-keyed table is the one place
+the field's automatic value comes from); 0020's classifier, if built, only
+selects which row of the table applies to a turn, and never writes the field
+independently.
 
 **Precedence, extended.** `writeSamplingParams`'s existing two-tier check
 (`params.temperature orelse params.provider.activeModel().temperature`)
@@ -110,6 +116,12 @@ gains a third `orelse`: the use-case table's recommendation for this model's
 capabilities. Still: if a user wrote `temperature = 0.2` in `config.toml`,
 that value is what ships, exactly as today — the table only fires into the
 gap that currently sends nothing.
+
+Boundary against [PRD 0025 (fallback provider chain)](0025-fallback-provider-chain.md):
+both PRDs touch the same four `loop.zig` dispatch sites (`~L544`, `~L549`,
+`~L568`, `~L1303`). 0025 owns the call-site restructure (the provider swap
+around `client.chat`/`chatStream`) and lands first; this PRD only extends
+`writeSamplingParams`'s `orelse` chain and touches no call site.
 
 **`top_k`.** Not every wire codec has a slot for it — needs a per-provider
 check (does `buildRequest` for this vendor's kind accept `top_k`?) before it
@@ -126,7 +138,12 @@ move out of the picker's default view into wherever the web UI's advanced/
 power-user surface already lives (e.g. behind a details/disclosure toggle),
 rather than being deleted — a user who wants to override a specific run
 still can, through the same `RunRequest.temperature`/`top_p` path that
-already exists and already wins over any config default.
+already exists and already wins over any config default. Surface ownership:
+this PRD's webui concern is `core/modelpicker.js` (the per-run sampling
+fields) only; `features/models.js` (the catalog view and any
+config-file-writing surface) belongs to
+[PRD 0023 (web UI model configuration)](0023-webui-model-config.md), and
+relocating the picker fields must not reach into it.
 
 ## Known issues
 
