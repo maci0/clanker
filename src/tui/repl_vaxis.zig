@@ -2553,7 +2553,7 @@ const Model = struct {
                 // scroll while already scrolled up, so at the tail they keep
                 // their TextField cursor-motion meaning (aliases of
                 // Ctrl-A/Ctrl-E there). The paging math is pure
-                // (`scrollUpEnd` and friends, below tailStart); this just
+                // (`scrollUpEnd` and friends, below `tailWindow`); this just
                 // feeds it the current anchor and last-drawn height.
                 if (key.matches(vaxis.Key.page_up, .{})) {
                     self.view_end = scrollUpEnd(self.view_end, self.lineCount(), self.availRows());
@@ -3135,22 +3135,26 @@ const Model = struct {
         // bottom and the completed lines fill above it, so the newest text
         // always sits against the input rather than the whole view jumping to
         // the top. Scrolled back (view_end set), the anchored window is frozen.
-        var start: usize = undefined;
+        // One window computation for every case. Scrolled back during a
+        // stream used to take a branch of its own that called `tailStart` — a
+        // one-line-per-row guess that ignores wrapping — and top-aligned the
+        // result. So the same anchor showed one window while the turn was
+        // streaming and a different one the moment it ended: wrapped lines
+        // were miscounted, and the block jumped from the top of the region to
+        // the bottom. That branch was also redundant. `reserved` is only
+        // non-zero when `stream_at_tail`, which requires `view_end == null`,
+        // so in the frozen case `for_completed` is already the full height
+        // and this general path computes exactly what the special case was
+        // reaching for, only wrap-accurately.
         const stream_at_tail = streaming and self.view_end == null;
         const reserved: u16 = if (stream_at_tail)
             @intCast(@min(streamRows(stream_snapshot, text_width), avail_rows))
         else
             0;
         const for_completed: u16 = avail_rows -| reserved;
-        if (streaming and self.view_end != null) {
-            // Frozen scrollback during a stream: keep the anchored window put.
-            start = tailStart(self.lines.items[0..view_end], avail_rows);
-            row = top;
-        } else {
-            const win = tailWindow(self.lines.items[0..view_end], view_end, for_completed, text_width);
-            start = win.start;
-            row = top + (avail_rows -| (win.used_rows + reserved));
-        }
+        const win = tailWindow(self.lines.items[0..view_end], view_end, for_completed, text_width);
+        const start = win.start;
+        row = top + (avail_rows -| (win.used_rows + reserved));
         // Lines carry fence_lang when they came out of a code fence; the
         // highlighter state is rebuilt per draw from the tagged lines.
         const fence_on = active.reset.len > 0;
@@ -3395,18 +3399,6 @@ const Model = struct {
     }
 };
 
-/// How many trailing entries of `lines` to start from so the transcript
-/// shows its tail, not its head, once history exceeds the visible height.
-/// A rough heuristic (one line of history per visible row), long entries
-/// still wrap past that during draw, so this under- rather than
-/// over-estimates what fits, which just means the top of the visible
-/// region can be blank rather than truncating the newest content.
-fn tailStart(lines: []const Line, avail_rows: u16) usize {
-    const n = lines.len;
-    const want: usize = avail_rows;
-    return if (n > want) n - want else 0;
-}
-
 /// How many terminal rows one transcript line occupies at `width`: its
 /// display width divided up by the wrap column, at least one. Embedded
 /// newlines are rare (finishTurn/printHelp pre-split on '\n') but counted so
@@ -3450,7 +3442,7 @@ fn streamRows(text: []const u8, width: u16) usize {
 /// The bottom-aligned window: walk backward from `view_end` accumulating
 /// wrapped rows until the next line would overflow `avail_rows`, so the
 /// newest line always lands at the bottom edge and nothing is clipped there
-/// (unlike tailStart's line-count guess). Returns the first visible line and
+/// (unlike a plain line-count guess). Returns the first visible line and
 /// the rows it and its successors occupy; `avail_rows - used_rows` is the
 /// blank offset that pins short transcripts to the bottom, chat-style.
 fn tailWindow(lines: []const Line, view_end: usize, avail_rows: u16, width: u16) struct { start: usize, used_rows: u16 } {
@@ -3471,7 +3463,7 @@ fn tailWindow(lines: []const Line, view_end: usize, avail_rows: u16, width: u16)
 // so the paging behaviour is unit-testable without a terminal: the anchor
 // is Model.view_end, null means "follow the tail", non-null is the
 // absolute line index (exclusive) the visible window ends at. Counted in
-// `lines` entries, same rough one-entry-per-row heuristic as tailStart.
+// `lines` entries; `tailWindow` turns that into wrap-accurate rows.
 // ---------------------------------------------------------------------
 
 /// First list index the picker's visible window shows, given the selected
@@ -3810,6 +3802,39 @@ test "tailWindow bottom-aligns a short transcript and fills a tall one" {
     const tall = tailWindow(&lines, lines.len, 3, 80);
     try std.testing.expectEqual(@as(usize, 2), tall.start);
     try std.testing.expectEqual(@as(u16, 3), tall.used_rows);
+}
+
+test "tailWindow counts wrapped rows, which the old line-count guess did not" {
+    // Three entries, each three rows wide at width 10. A guess of one row per
+    // entry would say all three fit in four rows; they need nine.
+    const lines = [_]Line{
+        .{ .text = "aaaaaaaaaaaaaaaaaaaaaaaaa" }, // 25 cols -> 3 rows at 10
+        .{ .text = "bbbbbbbbbbbbbbbbbbbbbbbbb" },
+        .{ .text = "ccccccccccccccccccccccccc" },
+    };
+
+    // Four rows available: only the newest entry fits, and it is not clipped.
+    const win = tailWindow(&lines, lines.len, 4, 10);
+    try std.testing.expectEqual(@as(usize, 2), win.start);
+    try std.testing.expectEqual(@as(u16, 3), win.used_rows);
+    // The plain line-count heuristic this replaced would have started at 0
+    // here (3 entries <= 4 rows), asking the draw to fit nine rows of text
+    // into four and clipping the newest content off the bottom.
+    try std.testing.expect(win.start != 0);
+
+    // Ten rows: everything fits, and used_rows is the wrapped total, not the
+    // entry count, so the bottom-alignment offset is right.
+    const all = tailWindow(&lines, lines.len, 10, 10);
+    try std.testing.expectEqual(@as(usize, 0), all.start);
+    try std.testing.expectEqual(@as(u16, 9), all.used_rows);
+    try std.testing.expect(all.used_rows != lines.len);
+
+    // An anchored (scrolled-back) window is the same computation with a
+    // smaller end, which is what lets the frozen-scroll case share this path
+    // instead of guessing: end at 2, four rows, so only entry 1 is shown.
+    const anchored = tailWindow(lines[0..2], 2, 4, 10);
+    try std.testing.expectEqual(@as(usize, 1), anchored.start);
+    try std.testing.expectEqual(@as(u16, 3), anchored.used_rows);
 }
 
 fn writeRow(surface: vxfw.Surface, row: u16, text: []const u8, style: vaxis.Style) void {
