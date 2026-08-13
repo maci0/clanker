@@ -1064,7 +1064,7 @@ fn harnessConfigAccess(tool_name: []const u8) ?HarnessConfigAccess {
     // which one is free to judge, i.e. is not itself an entrant.
     if (std.mem.eql(u8, tool_name, "providers") or std.mem.eql(u8, tool_name, "arena") or
         std.mem.eql(u8, tool_name, "compare")) return .providers;
-    if (std.mem.eql(u8, tool_name, "peers") or std.mem.eql(u8, tool_name, "cmd_status") or std.mem.eql(u8, tool_name, "ask_user")) return .peers;
+    if (std.mem.eql(u8, tool_name, "peers") or std.mem.eql(u8, tool_name, "status") or std.mem.eql(u8, tool_name, "ask_user")) return .peers;
     if (std.mem.eql(u8, tool_name, "workflows")) return .workflows;
     if (std.mem.eql(u8, tool_name, "chain")) return .chains;
     return null;

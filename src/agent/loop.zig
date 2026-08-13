@@ -1906,7 +1906,7 @@ pub const Agent = struct {
     }
 
     fn persistGraphOrErr(self: *Agent, g: *const graph_mod.Graph) !void {
-        const mod = try runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, self.reg, "cmd_graph", null);
+        const mod = try runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, self.reg, "graph", null);
         defer mod.deinit();
 
         var enc: std.Io.Writer.Allocating = .init(self.arena);

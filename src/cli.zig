@@ -3555,7 +3555,7 @@ fn cmdSessions(init: std.process.Init) !void {
     if (!cfg.modules.sessions) {
         return error.ModuleDisabled;
     }
-    try printInternalTool(init, &cfg, "cmd_sessions", "");
+    try printInternalTool(init, &cfg, "sessions", "");
 }
 
 /// `clanker session export <id> [path]`, one saved conversation written out
@@ -3816,7 +3816,7 @@ fn cmdGraph(init: std.process.Init, opts: Options) !void {
     }
     // No run id lists the recorded runs; a run id renders that one. Both are
     // implemented once, in the cmd_graph plugin.
-    printInternalTool(init, &cfg, "cmd_graph", opts.task orelse "list") catch |err| {
+    printInternalTool(init, &cfg, "graph", opts.task orelse "list") catch |err| {
         if (err == error.ToolFailed) {
             printUsageError(init.io, "no such run; run `clanker graph` to list them", .{});
             std.process.exit(1);
@@ -3829,7 +3829,7 @@ fn cmdToolsList(init: std.process.Init, opts: Options) !void {
     _ = opts;
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
-    try printInternalTool(init, &cfg, "cmd_tools", "");
+    try printInternalTool(init, &cfg, "tools", "");
 }
 
 /// `clanker plugins [list|on <name>|off <name>|validate [path]|new <name>]`.
@@ -3846,13 +3846,13 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
 
     if (std.mem.eql(u8, sub, "list")) {
         if (opts.plugin_target != null) usageExit(io, "plugins list takes no arguments", .{});
-        return printInternalTool(init, &cfg, "cmd_plugins", "");
+        return printInternalTool(init, &cfg, "plugins", "");
     }
     if (std.mem.eql(u8, sub, "on") or std.mem.eql(u8, sub, "off")) {
         const name = opts.plugin_target orelse
             usageExit(io, "plugins {s} needs a plugin name: clanker plugins {s} <name>", .{ sub, sub });
         const args = try std.fmt.allocPrint(arena, "{s} {s}", .{ sub, name });
-        const text = try toolText(io, init.gpa, arena, &cfg, init.environ_map, "cmd_plugins", args);
+        const text = try toolText(io, init.gpa, arena, &cfg, init.environ_map, "plugins", args);
         if (pluginToggleFailed(text)) {
             try writeStdErr(io, text);
             if (!std.mem.endsWith(u8, text, "\n")) try writeStdErr(io, "\n");
@@ -7072,7 +7072,7 @@ fn handleRuns(
         return;
     }
 
-    const body = toolText(io, gpa, arena, cfg, environ_map, "cmd_graph", args) catch |err| {
+    const body = toolText(io, gpa, arena, cfg, environ_map, "graph", args) catch |err| {
         log.log(.error_, "GET /api/runs args={s}: {s}", .{ args, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"graph read failed\"}");
         return;
@@ -8849,7 +8849,7 @@ fn handlePlugins(
         };
     }
 
-    const out = toolText(io, gpa, arena, cfg, environ_map, "cmd_plugins", args) catch {
+    const out = toolText(io, gpa, arena, cfg, environ_map, "plugins", args) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"plugin read failed\"}");
         return;
     };
