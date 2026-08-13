@@ -2762,7 +2762,7 @@ fn fnBody(src: []const u8, sig: []const u8) ?[]const u8 {
 }
 
 fn gateReturnsBefore(body: []const u8, required: []const u8, allow: []const []const u8) ?[]const u8 {
-    const at = std.mem.find(u8, body, required) orelse return required;
+    const at = findCodeLine(body, required) orelse return required;
     var lines = std.mem.splitScalar(u8, body[0..at], '\n');
     while (lines.next()) |line| {
         const t = std.mem.trim(u8, line, " \t");
@@ -2778,6 +2778,23 @@ fn gateReturnsBefore(body: []const u8, required: []const u8, allow: []const []co
         }
         if (allowed) continue;
         return "gate returns before its load-bearing call";
+    }
+    return null;
+}
+
+/// Finds a required gate expression only on executable source. A writable
+/// gate can otherwise copy the required text into a comment before an
+/// unconditional green return; a raw substring search stops at that comment
+/// and never examines the bypassing return below it.
+fn findCodeLine(body: []const u8, required: []const u8) ?usize {
+    var offset: usize = 0;
+    var lines = std.mem.splitScalar(u8, body, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trimLeft(u8, line, " \t");
+        if (!std.mem.startsWith(u8, trimmed, "//")) {
+            if (std.mem.find(u8, line, required)) |column| return offset + column;
+        }
+        offset += line.len + 1;
     }
     return null;
 }
@@ -3173,6 +3190,28 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\}
     ;
     try std.testing.expectEqualStrings("gate returns before its load-bearing call", checksZigShapeBroken(early_build).?);
+
+    const commented_build =
+        \\pub fn buildGate() !GateResult {
+        \\    // return runZigArgs(gpa, io, dir, argv.items, "zig build");
+        \\    return .{ .ok = true, .label = "zig build" };
+        \\}
+        \\pub fn testGate() !GateResult {
+        \\    return runZig(gpa, io, dir, &.{ "build", "test", "--summary", "all" }, "zig build test");
+        \\}
+        \\pub fn toolsGate() !GateResult {
+        \\    return runZigArgs(gpa, io, dir, argv.items, "zig build tools");
+        \\}
+        \\pub fn fmtGate() !GateResult {
+        \\    return runZigArgs(gpa, io, dir, argv.items, "zig fmt --check");
+        \\}
+        \\pub fn lintGate() !GateResult { hits += 1 }
+        \\pub fn toolDescriptorGate() !GateResult { if (problems.items.len > 0) {} }
+        \\pub fn gitDenyGuardGate() GateResult { hasGitInExecAllow( }
+        \\pub fn configWeakeningGate() GateResult { weakensImprove( }
+        \\fn runZigArgs() !GateResult { std.process.run( }
+    ;
+    try std.testing.expectEqualStrings("return runZigArgs(gpa, io, dir, argv.items, \"zig build\")", checksZigShapeBroken(commented_build).?);
 
     const early_run =
         \\pub fn buildGate() !GateResult {
