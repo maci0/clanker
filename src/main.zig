@@ -159,18 +159,27 @@ pub fn main(init: std.process.Init) !void {
             log.log(.error_, "out of memory", .{});
             std.process.exit(1);
         }
+        // The rejected argument is quoted back in most of these, and it is
+        // whatever the caller typed: a mistyped flag, or a whole task prompt
+        // the shell split on a stray quote. Elide it once here so no arm has
+        // to think about length. `diag` itself stays intact for the
+        // comparisons and the suggestion lookups below, which key off the
+        // real spelling.
+        var shown_buf: [128]u8 = undefined;
+        const shown = cli.elideArg(&shown_buf, diag);
         switch (err) {
             error.MissingTask => cli.printUsageError(init.io, "`clanker run` needs a task: clanker run \"fix the build\" (or just clanker \"fix the build\")", .{}),
+            error.ExtraTask => cli.printUsageError(init.io, "`clanker run` takes one task but got a second argument: '{s}'. If that is part of the same task, the shell split it: a `\"` inside the task ends the quoted string, so quote the whole task and escape any inner ones as \\\"", .{shown}),
             error.UnknownCommand => if (cli.suggestCommand(diag)) |suggestion|
-                cli.printUsageError(init.io, "unknown command '{s}'; did you mean `clanker {s}`?", .{ diag, suggestion })
+                cli.printUsageError(init.io, "unknown command '{s}'; did you mean `clanker {s}`?", .{ shown, suggestion })
             else
                 // No "(see the list below)": no list follows, only the
                 // printUsageHint line naming `clanker --help`.
-                cli.printUsageError(init.io, "unknown command '{s}'", .{diag}),
+                cli.printUsageError(init.io, "unknown command '{s}'", .{shown}),
             error.UnknownArg => if (cli.suggestFlag(diag)) |suggestion|
-                cli.printUsageError(init.io, "unrecognized argument '{s}'; did you mean `{s}`?", .{ diag, suggestion })
+                cli.printUsageError(init.io, "unrecognized argument '{s}'; did you mean `{s}`?", .{ shown, suggestion })
             else
-                cli.printUsageError(init.io, "unrecognized argument '{s}'", .{diag}),
+                cli.printUsageError(init.io, "unrecognized argument '{s}'", .{shown}),
             error.MissingArg => if (std.mem.eql(u8, diag, "export"))
                 cli.printUsageError(init.io, "clanker session needs `export <id>`; to list conversations run `clanker sessions`", .{})
             else if (std.mem.eql(u8, diag, "conversation id"))
@@ -188,26 +197,26 @@ pub fn main(init: std.process.Init) !void {
             else if (std.mem.eql(u8, diag, "<question>"))
                 cli.printUsageError(init.io, "`clanker arena` needs a question", .{})
             else
-                cli.printUsageError(init.io, "'{s}' needs a value", .{diag}),
-            error.BadIters => cli.printUsageError(init.io, "--iters wants a non-negative integer, got '{s}'", .{diag}),
-            error.BadBudget => cli.printUsageError(init.io, "--budget wants a non-negative integer, got '{s}'", .{diag}),
-            error.BadRounds => cli.printUsageError(init.io, "--rounds wants a non-negative integer, got '{s}'", .{diag}),
-            error.BadPort => cli.printUsageError(init.io, "--webui-port wants a 16-bit port number, got '{s}'", .{diag}),
-            error.BadDirection => cli.printUsageError(init.io, "--direction wants 'min' or 'max', got '{s}'", .{diag}),
-            error.BadJudge => cli.printUsageError(init.io, "--judge wants 'self' or 'third', got '{s}'", .{diag}),
-            error.BadSessionId => cli.printUsageError(init.io, "invalid session id '{s}'; use 1-64 letters, numbers, dashes, or underscores", .{diag}),
+                cli.printUsageError(init.io, "'{s}' needs a value", .{shown}),
+            error.BadIters => cli.printUsageError(init.io, "--iters wants a non-negative integer, got '{s}'", .{shown}),
+            error.BadBudget => cli.printUsageError(init.io, "--budget wants a non-negative integer, got '{s}'", .{shown}),
+            error.BadRounds => cli.printUsageError(init.io, "--rounds wants a non-negative integer, got '{s}'", .{shown}),
+            error.BadPort => cli.printUsageError(init.io, "--webui-port wants a 16-bit port number, got '{s}'", .{shown}),
+            error.BadDirection => cli.printUsageError(init.io, "--direction wants 'min' or 'max', got '{s}'", .{shown}),
+            error.BadJudge => cli.printUsageError(init.io, "--judge wants 'self' or 'third', got '{s}'", .{shown}),
+            error.BadSessionId => cli.printUsageError(init.io, "invalid session id '{s}'; use 1-64 letters, numbers, dashes, or underscores", .{shown}),
             error.ArenaMixedPositions => cli.printUsageError(init.io, "use --for/--against for a two-way match or repeated --position for a battle royale, not both", .{}),
             error.ArenaTooFewPositions => cli.printUsageError(init.io, "a battle royale needs at least 2 --position flags (3 to 8 is the interesting range)", .{}),
             error.CompareTooFewModels => cli.printUsageError(init.io, "a comparison needs at least 2 --with flags, or none at all to compare every configured provider", .{}),
             error.FlagNotForCommand => cli.printUsageError(init.io, "{s} is not an option for this command; run `clanker {s} --help`", .{ diag, arg_list.items[1] }),
-            error.BadSubcommand => cli.printUsageError(init.io, "unrecognized subcommand '{s}'; run `clanker {s} --help`", .{ diag, arg_list.items[1] }),
-            error.PromptLooksLikeCommand => cli.printUsageError(init.io, "'{s}' looks like a quoted command; drop the quotes to run it, or use `clanker run \"{s}\"` to submit it as a task", .{ diag, diag }),
+            error.BadSubcommand => cli.printUsageError(init.io, "unrecognized subcommand '{s}'; run `clanker {s} --help`", .{ shown, arg_list.items[1] }),
+            error.PromptLooksLikeCommand => cli.printUsageError(init.io, "'{s}' looks like a quoted command; drop the quotes to run it, or use `clanker run \"{s}\"` to submit it as a task", .{ shown, shown }),
             error.OutOfMemory => unreachable,
         }
         // These messages already name the next keystroke or the command's
         // own help. Repeating `clanker --help` after them restates the list.
         const skip_hint = switch (err) {
-            error.MissingTask, error.MissingArg, error.BadSessionId, error.FlagNotForCommand, error.BadSubcommand, error.PromptLooksLikeCommand => true,
+            error.MissingTask, error.ExtraTask, error.MissingArg, error.BadSessionId, error.FlagNotForCommand, error.BadSubcommand, error.PromptLooksLikeCommand => true,
             error.UnknownCommand => cli.suggestCommand(diag) != null,
             error.UnknownArg => cli.suggestFlag(diag) != null,
             else => false,
