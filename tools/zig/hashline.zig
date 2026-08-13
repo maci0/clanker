@@ -42,7 +42,10 @@ pub fn annotate(alloc: std.mem.Allocator, text: []const u8, start_line: usize) !
         const nl = std.mem.indexOfScalar(u8, rest, '\n');
         const raw = if (nl) |n| rest[0 .. n + 1] else rest;
         const hex = hashHex(raw);
-        try out.writer(alloc).print("{d:0>4} {s}  {s}", .{ line_no, hex, raw });
+        var buf: [32]u8 = undefined;
+        const prefix = std.fmt.bufPrint(&buf, "{d:0>4} {s}  ", .{ line_no, hex }) catch unreachable;
+        try out.appendSlice(alloc, prefix);
+        try out.appendSlice(alloc, raw);
         i += raw.len;
         line_no += 1;
         if (nl == null) break;
@@ -92,12 +95,15 @@ pub const ApplyError = error{
     OutOfMemory,
 };
 
-pub const ApplyFailure = struct {
-    err: ApplyError,
-    line: usize = 0,
-    expected: u16 = 0,
-    got: u16 = 0,
-};
+const Resolved = struct { start: usize, hunk: Hunk };
+
+fn resolvedLess(_: void, a: Resolved, b: Resolved) bool {
+    return a.start > b.start;
+}
+
+fn appliedLess(_: void, a: Applied, b: Applied) bool {
+    return a.start_line < b.start_line;
+}
 
 /// Validate every hunk, then apply them last-to-first so earlier edits do
 /// not shift later anchors. `tolerance` is the ± window around `anchor_line`.
@@ -108,17 +114,13 @@ pub fn apply(
     tolerance: usize,
 ) ApplyError!struct { text: []u8, applied: []Applied } {
     const lines = try splitLines(alloc, src);
-    var resolved: std.ArrayList(struct { start: usize, hunk: Hunk }) = .empty;
+    var resolved: std.ArrayList(Resolved) = .empty;
     for (hunks) |h| {
         const start = findAnchor(lines, h, tolerance) orelse return error.AnchorNotFound;
         if (start + h.old_count > lines.len) return error.PastEnd;
         try resolved.append(alloc, .{ .start = start, .hunk = h });
     }
-    std.mem.sort(struct { start: usize, hunk: Hunk }, resolved.items, {}, struct {
-        fn lt(_: void, a: @TypeOf(resolved.items[0]), b: @TypeOf(resolved.items[0])) bool {
-            return a.start > b.start;
-        }
-    }.lt);
+    std.mem.sort(Resolved, resolved.items, {}, resolvedLess);
 
     var text = try alloc.dupe(u8, src);
     var applied: std.ArrayList(Applied) = .empty;
@@ -141,11 +143,7 @@ pub fn apply(
         for (new_lines, 0..) |ln, i| hashes[i] = hashHex(ln);
         try applied.append(alloc, .{ .start_line = r.start + 1, .hashes = hashes });
     }
-    std.mem.sort(Applied, applied.items, {}, struct {
-        fn lt(_: void, a: Applied, b: Applied) bool {
-            return a.start_line < b.start_line;
-        }
-    }.lt);
+    std.mem.sort(Applied, applied.items, {}, appliedLess);
     return .{ .text = text, .applied = try applied.toOwnedSlice(alloc) };
 }
 
@@ -199,6 +197,8 @@ test "parseHash accepts 4 hex digits only" {
 }
 
 test "apply replaces a single hunk and returns new hashes" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
     const src = "alpha\nbeta\ngamma\n";
     const hunks = [_]Hunk{.{
         .anchor_hash = lineHash("beta"),
@@ -206,8 +206,7 @@ test "apply replaces a single hunk and returns new hashes" {
         .old_count = 1,
         .new_text = "BETA\n",
     }};
-    const result = try apply(std.testing.allocator, src, &hunks, 10);
-    defer std.testing.allocator.free(result.text);
+    const result = try apply(arena_state.allocator(), src, &hunks, 10);
     try std.testing.expectEqualStrings("alpha\nBETA\ngamma\n", result.text);
     try std.testing.expectEqual(@as(usize, 1), result.applied.len);
     try std.testing.expectEqual(@as(usize, 2), result.applied[0].start_line);
@@ -215,6 +214,8 @@ test "apply replaces a single hunk and returns new hashes" {
 }
 
 test "apply finds an anchor that shifted within the tolerance window" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
     const src = "keep\nkeep\nkeep\nkeep\nkeep\ntarget\n";
     const hunks = [_]Hunk{.{
         .anchor_hash = lineHash("target"),
@@ -222,12 +223,13 @@ test "apply finds an anchor that shifted within the tolerance window" {
         .old_count = 1,
         .new_text = "changed\n",
     }};
-    const result = try apply(std.testing.allocator, src, &hunks, 10);
-    defer std.testing.allocator.free(result.text);
+    const result = try apply(arena_state.allocator(), src, &hunks, 10);
     try std.testing.expectEqualStrings("keep\nkeep\nkeep\nkeep\nkeep\nchanged\n", result.text);
 }
 
 test "apply rejects a missing anchor without changing the file" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
     const src = "alpha\nbeta\n";
     const hunks = [_]Hunk{.{
         .anchor_hash = 0xdead,
@@ -235,10 +237,12 @@ test "apply rejects a missing anchor without changing the file" {
         .old_count = 1,
         .new_text = "nope\n",
     }};
-    try std.testing.expectError(error.AnchorNotFound, apply(std.testing.allocator, src, &hunks, 10));
+    try std.testing.expectError(error.AnchorNotFound, apply(arena_state.allocator(), src, &hunks, 10));
 }
 
 test "apply rejects when old_count walks past the end" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
     const src = "only\n";
     const hunks = [_]Hunk{.{
         .anchor_hash = lineHash("only"),
@@ -246,16 +250,17 @@ test "apply rejects when old_count walks past the end" {
         .old_count = 4,
         .new_text = "x\n",
     }};
-    try std.testing.expectError(error.PastEnd, apply(std.testing.allocator, src, &hunks, 10));
+    try std.testing.expectError(error.PastEnd, apply(arena_state.allocator(), src, &hunks, 10));
 }
 
 test "apply applies later hunks first so earlier offsets stay valid" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
     const src = "one\ntwo\nthree\n";
     const hunks = [_]Hunk{
         .{ .anchor_hash = lineHash("one"), .anchor_line = 1, .old_count = 1, .new_text = "ONE\nONE2\n" },
         .{ .anchor_hash = lineHash("three"), .anchor_line = 3, .old_count = 1, .new_text = "THREE\n" },
     };
-    const result = try apply(std.testing.allocator, src, &hunks, 10);
-    defer std.testing.allocator.free(result.text);
+    const result = try apply(arena_state.allocator(), src, &hunks, 10);
     try std.testing.expectEqualStrings("ONE\nONE2\ntwo\nTHREE\n", result.text);
 }
