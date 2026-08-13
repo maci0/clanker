@@ -62,23 +62,26 @@ const stats_mod = @import("stats.zig");
 /// smoothly instead of in visible 50ms (20fps) batches. Idle, no timer runs.
 const stream_tick_ms: u32 = 33;
 
-const isDroppedControl = sanitize.isControl;
-
-/// Most streamed deltas contain no control bytes, so this only allocates
-/// when one is actually found, keeping the common case alloc-free on the
-/// per-token `onToken` path.
-fn stripControls(gpa: std.mem.Allocator, bytes: []const u8) []const u8 {
-    const first_drop = for (bytes, 0..) |c, i| {
-        if (isDroppedControl(c)) break i;
-    } else return bytes;
-
-    var out: std.ArrayList(u8) = .empty;
-    out.ensureTotalCapacity(gpa, bytes.len) catch return bytes;
-    out.appendSliceAssumeCapacity(bytes[0..first_drop]);
-    for (bytes[first_drop..]) |c| {
-        if (!isDroppedControl(c)) out.appendAssumeCapacity(c);
-    }
-    return out.toOwnedSlice(gpa) catch bytes;
+/// Control-strips untrusted text before it can reach a cell (CWE-150).
+///
+/// Thin wrapper over `sanitize.sanitizeAlloc` so every call site in this file
+/// reads the same and none of them can forget the failure policy: on an
+/// allocation failure the text is **dropped**, not passed through. Rendering
+/// unsanitized bytes is the one outcome this function exists to prevent, so
+/// "render it raw" is not an acceptable fallback for it.
+///
+/// Like `sanitizeAlloc`, the common case (no control bytes) returns the input
+/// slice and allocates nothing, which is what keeps the per-token `onToken`
+/// path free of allocation.
+///
+/// This replaced a local `stripControls` that reused only `sanitize.isControl`
+/// and therefore dropped C0 and DEL but *not* the UTF-8-encoded C1 range
+/// (U+0080..U+009F). U+009B is CSI: terminals that decode C1 from UTF-8 would
+/// have taken a two-byte `\xc2\x9b` in model output as the start of an escape
+/// sequence. sanitize.zig already handled that and says it owns the single
+/// definition; this file was the copy that had drifted.
+fn clean(gpa: std.mem.Allocator, bytes: []const u8) ?[]const u8 {
+    return sanitize.sanitizeAlloc(gpa, bytes) catch null;
 }
 
 fn errorRecoveryHint(err: anyerror, detail: ?[]const u8) []const u8 {
@@ -131,9 +134,9 @@ var bridge_active_tool_len: usize = 0;
 fn onToken(delta: []const u8) void {
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
-    const clean = stripControls(bridge_gpa, delta);
-    defer if (clean.ptr != delta.ptr) bridge_gpa.free(clean);
-    bridge_stream_buf.appendSlice(bridge_gpa, clean) catch {};
+    const safe = clean(bridge_gpa, delta) orelse return;
+    defer if (safe.ptr != delta.ptr) bridge_gpa.free(safe);
+    bridge_stream_buf.appendSlice(bridge_gpa, safe) catch {};
 }
 
 /// Each batch of calls becomes one left-bar card (transcript.zig's card
@@ -221,7 +224,11 @@ fn runThreadMain(args: RunThreadArgs) void {
     const started = std.Io.Timestamp.now(self.io, .awake);
     const resp = a.run(messages, args.task, &err_detail) catch |err| {
         const hint = errorRecoveryHint(err, err_detail);
-        const text = if (err_detail) |d|
+        // `err_detail` is the provider's own error string, echoed verbatim
+        // into the transcript: untrusted text on the same footing as the
+        // answer, and a failing request is exactly when a hostile or merely
+        // broken endpoint gets to choose what bytes clanker prints.
+        const text = if (if (err_detail) |d| clean(self.arena, d) else null) |d|
             std.fmt.allocPrint(self.arena, "[error: {s}{s}]", .{ d, hint }) catch "[error]"
         else
             std.fmt.allocPrint(self.arena, "[error: {s}{s}]", .{ @errorName(err), hint }) catch "[error]";
@@ -247,6 +254,67 @@ const Line = struct {
     /// prompt colour so each turn's starting point is scannable on scrollback.
     user: bool = false,
 };
+
+/// Folds one completed answer into transcript lines: control-stripped, split
+/// on '\n', fence markers consumed and their language carried on the lines
+/// they open, and the first visible line marked with the "› " turn arrow.
+///
+/// Pure over (arena, out, answer) so the sanitizing is testable without a
+/// terminal, a provider or a Model. It is the single place a turn's prose
+/// becomes transcript, which is what makes the control-strip below hold for
+/// every path into it.
+///
+/// **This is the sanitising seam that was missing.** `onToken` stripped each
+/// streamed delta, but `finishTurn` renders `resp.message.content` whenever
+/// the provider sent one (`chatStream` always assembles it), and that
+/// whole-message text had never been through any strip at all — the streamed
+/// copy it displaced was the only sanitized one.
+///
+/// What kept that from being an exploitable hole *for this particular path*
+/// is worth stating plainly, because it is luck rather than design: answer
+/// lines render through `writeWrappedSegments`, which skips graphemes of
+/// display width 0, and a control byte measures 0. So an ESC in prose is
+/// dropped by a wrapping guard that exists for layout reasons and would stop
+/// doing this job the moment a line took any other branch. `writeWrapped`,
+/// the branch every dim line uses, has no such guard and writes each
+/// codepoint unconditionally — which is why the two untrusted strings that
+/// *do* land there (`err_detail` and internal-tool `text`) were live
+/// injections, not theoretical ones. Sanitizing at the seam makes the
+/// guarantee independent of which draw branch a line happens to take.
+fn appendAnswerLines(arena: std.mem.Allocator, out: *std.ArrayList(Line), answer: []const u8) void {
+    const safe = clean(arena, answer) orelse {
+        out.append(arena, .{ .text = "[answer dropped: out of memory]", .dim = true }) catch {};
+        return;
+    };
+    // `answer` is often `bridge_stream_buf.items`, cleared by the caller the
+    // moment this returns, so an unmodified slice still has to be copied. A
+    // slice `clean` allocated is already arena-owned and needs no second copy.
+    const owned = if (safe.ptr == answer.ptr) (arena.dupe(u8, safe) catch return) else safe;
+
+    var in_fence = false;
+    var fence_lang: []const u8 = "";
+    var first = true;
+    var it = std.mem.splitScalar(u8, owned, '\n');
+    while (it.next()) |src_line| {
+        const trimmed = std.mem.trim(u8, src_line, " \t\r");
+        if (std.mem.startsWith(u8, trimmed, "```")) {
+            if (in_fence) {
+                in_fence = false;
+            } else {
+                in_fence = true;
+                fence_lang = std.mem.trim(u8, trimmed[3..], " ");
+            }
+            continue; // fence markers themselves are not shown
+        }
+        const lang: ?[]const u8 = if (in_fence) fence_lang else null;
+        const prefixed = if (first)
+            std.fmt.allocPrint(arena, "\xe2\x80\xba {s}", .{src_line}) catch src_line
+        else
+            src_line;
+        first = false;
+        out.append(arena, .{ .text = prefixed, .fence_lang = lang }) catch {};
+    }
+}
 
 /// One entry in the `/model` picker: a provider/model pair flattened out of
 /// `Config.providers` so the picker can filter and sort without walking the
@@ -1191,33 +1259,7 @@ const Model = struct {
         }
         bridge_tool_lines.clearRetainingCapacity();
         const answer = if (final_text.len > 0) final_text else bridge_stream_buf.items;
-        const owned = self.arena.dupe(u8, answer) catch answer;
-        // Fold the answer's markdown into one transcript line per source
-        // line: the fence is where highlighting attaches, so lines must
-        // know which fence (if any) they came from.
-        var in_fence = false;
-        var fence_lang: []const u8 = "";
-        var first = true;
-        var it = std.mem.splitScalar(u8, owned, '\n');
-        while (it.next()) |src_line| {
-            const trimmed = std.mem.trim(u8, src_line, " \t\r");
-            if (std.mem.startsWith(u8, trimmed, "```")) {
-                if (in_fence) {
-                    in_fence = false;
-                } else {
-                    in_fence = true;
-                    fence_lang = std.mem.trim(u8, trimmed[3..], " ");
-                }
-                continue; // fence markers themselves are not shown
-            }
-            const lang: ?[]const u8 = if (in_fence) fence_lang else null;
-            const prefixed = if (first)
-                std.fmt.allocPrint(self.arena, "\xe2\x80\xba {s}", .{src_line}) catch src_line
-            else
-                src_line;
-            first = false;
-            self.lines.append(self.arena, .{ .text = prefixed, .fence_lang = lang }) catch {};
-        }
+        appendAnswerLines(self.arena, &self.lines, answer);
         bridge_stream_buf.clearRetainingCapacity();
 
         // The turn's receipt, last line of the turn: tokens, wall time,
@@ -1619,7 +1661,8 @@ const Model = struct {
             if (k == .bool) ok = k.bool;
         }
         if (!ok) {
-            const detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "unknown") else "unknown";
+            const raw_detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "unknown") else "unknown";
+            const detail = clean(self.arena, raw_detail) orelse "unknown";
             self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[{s}: {s}]", .{ tool_name, detail }) catch "[internal tool failed]", .dim = true }) catch {};
             return true;
         }
@@ -1631,7 +1674,16 @@ const Model = struct {
             self.lines.append(self.arena, .{ .text = "[internal tool returned no text]", .dim = true }) catch {};
             return true;
         }
-        var it = std.mem.splitScalar(u8, text.string, '\n');
+        // A tool's `text` is untrusted for the same reason a model's answer
+        // is: `cmd_*` tools render file contents, session titles and plugin
+        // manifests, none of which clanker wrote. Stripped once for the whole
+        // block rather than per line, so a control byte cannot hide in the
+        // split.
+        const safe = clean(self.arena, text.string) orelse {
+            self.lines.append(self.arena, .{ .text = "[internal tool output dropped: out of memory]", .dim = true }) catch {};
+            return true;
+        };
+        var it = std.mem.splitScalar(u8, safe, '\n');
         while (it.next()) |line| {
             const trimmed = std.mem.trim(u8, line, " \t\r");
             self.lines.append(self.arena, .{ .text = self.arena.dupe(u8, trimmed) catch trimmed, .dim = true }) catch {};
@@ -1781,9 +1833,9 @@ const Model = struct {
                 return;
             }
             budget.* -= 1;
-            const clean = stripControls(self.gpa, raw);
-            defer if (clean.ptr != raw.ptr) self.gpa.free(clean);
-            const owned = self.arena.dupe(u8, clean) catch continue;
+            const safe = clean(self.gpa, raw) orelse continue;
+            defer if (safe.ptr != raw.ptr) self.gpa.free(safe);
+            const owned = self.arena.dupe(u8, safe) catch continue;
             self.lines.append(self.arena, .{ .text = owned, .dim = true }) catch {};
         }
     }
@@ -2274,7 +2326,13 @@ const Model = struct {
                 self.awaiting_clipboard = false;
                 const flat = singleLinePaste(ctx.alloc, text);
                 defer if (flat.ptr != text.ptr) ctx.alloc.free(flat);
-                try self.text_field.insertSliceAtCursor(flat);
+                // Clipboard content is untrusted too, and it is the one
+                // untrusted source the user cannot preview first: whatever
+                // put it there chose the bytes, and the TextField renders
+                // them into cells like anything else.
+                const safe = clean(ctx.alloc, flat) orelse return;
+                defer if (safe.ptr != flat.ptr) ctx.alloc.free(safe);
+                try self.text_field.insertSliceAtCursor(safe);
                 ctx.redraw = true;
             },
             .mouse => |m| try self.handleMouse(ctx, m),
@@ -3482,9 +3540,9 @@ test "mintSessionId produces a distinct valid id each call" {
     try std.testing.expect(!std.mem.eql(u8, a, b));
 }
 
-test "stripControls returns the input slice unchanged when nothing to drop" {
-    const clean = "hello\nworld\t!";
-    try std.testing.expectEqual(clean.ptr, stripControls(std.testing.allocator, clean).ptr);
+test "clean returns the input slice unchanged when nothing to drop" {
+    const untouched = "hello\nworld\t!";
+    try std.testing.expectEqual(untouched.ptr, clean(std.testing.allocator, untouched).?.ptr);
 }
 
 test "the stats and compaction lines route down the plain dim draw branch" {
@@ -3516,11 +3574,83 @@ test "the stats and compaction lines route down the plain dim draw branch" {
     }
 }
 
-test "stripControls drops control bytes but keeps newline and tab" {
+test "clean drops control bytes but keeps newline and tab" {
     const dirty = "a\x01b\nc\x7Fd\te";
-    const got = stripControls(std.testing.allocator, dirty);
+    const got = clean(std.testing.allocator, dirty).?;
     defer std.testing.allocator.free(got);
     try std.testing.expectEqualStrings("ab\ncd\te", got);
+}
+
+test "clean drops UTF-8 encoded C1 controls the old local strip let through" {
+    // U+009B is CSI. A terminal that decodes C1 from UTF-8 reads the two
+    // bytes \xc2\x9b as the start of an escape sequence, so model output
+    // carrying them was an injection the previous `stripControls` (which
+    // tested single bytes against sanitize.isControl only) did not catch.
+    const csi = "before\xc2\x9b31mafter";
+    const got = clean(std.testing.allocator, csi).?;
+    defer std.testing.allocator.free(got);
+    try std.testing.expectEqualStrings("before31mafter", got);
+
+    // A legitimate multi-byte codepoint whose tail lands in the same numeric
+    // range is untouched: U+20AC (Euro) is \xe2\x82\xac.
+    const euro = "\xe2\x82\xac 5";
+    try std.testing.expectEqual(euro.ptr, clean(std.testing.allocator, euro).?.ptr);
+}
+
+test "a completed answer is control-stripped before it becomes transcript" {
+    // The regression this guards: `finishTurn` renders the provider's whole
+    // `message.content` when there is one, which displaces the per-delta
+    // strip `onToken` does. An ESC in the answer therefore reached a cell on
+    // the ordinary success path. Assert at the seam every answer goes
+    // through, so the guarantee cannot be lost again by a new caller.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var lines: std.ArrayList(Line) = .empty;
+    appendAnswerLines(arena, &lines, "here is \x1b[31mred\x1b[0m and \xc2\x9bcsi");
+    try std.testing.expectEqual(@as(usize, 1), lines.items.len);
+    // The turn arrow is prepended; the escapes are gone, their payload text
+    // stays (dropping bytes, not whole sequences, is sanitize.zig's contract).
+    try std.testing.expectEqualStrings("\xe2\x80\xba here is [31mred[0m and csi", lines.items[0].text);
+    for (lines.items) |l| {
+        try std.testing.expect(std.mem.findScalar(u8, l.text, 0x1B) == null);
+    }
+}
+
+test "appendAnswerLines splits on newlines, tags fences, and arrows only the first line" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var lines: std.ArrayList(Line) = .empty;
+    appendAnswerLines(arena, &lines, "intro\n```zig\nconst x = 1;\n```\noutro");
+    // Fence markers are consumed, so: intro, the code line, outro.
+    try std.testing.expectEqual(@as(usize, 3), lines.items.len);
+    try std.testing.expectEqualStrings("\xe2\x80\xba intro", lines.items[0].text);
+    try std.testing.expect(lines.items[0].fence_lang == null);
+    try std.testing.expectEqualStrings("const x = 1;", lines.items[1].text);
+    try std.testing.expectEqualStrings("zig", lines.items[1].fence_lang.?);
+    try std.testing.expectEqualStrings("outro", lines.items[2].text);
+    try std.testing.expect(lines.items[2].fence_lang == null);
+}
+
+test "appendAnswerLines copies the answer instead of borrowing it" {
+    // finishTurn calls this with `bridge_stream_buf.items` and clears that
+    // buffer on the next statement, so a borrowed slice would leave the
+    // transcript pointing at reused memory.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var scratch: std.ArrayList(u8) = .empty;
+    defer scratch.deinit(std.testing.allocator);
+    try scratch.appendSlice(std.testing.allocator, "borrowed answer");
+
+    var lines: std.ArrayList(Line) = .empty;
+    appendAnswerLines(arena, &lines, scratch.items);
+    @memset(scratch.items, 'X');
+    try std.testing.expectEqualStrings("\xe2\x80\xba borrowed answer", lines.items[0].text);
 }
 
 pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
