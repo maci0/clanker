@@ -1391,7 +1391,7 @@ test "releaseContractGate accepts the live release files" {
     var threaded = std.Io.Threaded.init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
-    const result = try releaseContractGate(gpa, io, std.Io.Dir.cwd());
+    var result = try releaseContractGate(gpa, io, std.Io.Dir.cwd());
     defer result.deinit(gpa);
     try std.testing.expect(result.ok);
 }
