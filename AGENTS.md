@@ -71,7 +71,7 @@ through a gated loop. Follow these conventions when changing this codebase.
   `builder.zig` is part of the anti-cheat boundary.
 - `src/tui/` — libvaxis-backed REPL (`clanker repl`), syntax highlighting,
   theme, transcript rendering, control-character sanitizing, per-turn stats,
-  and terminal width tracking.
+  terminal width tracking, and the optional input-line mascot (`mascot.zig`).
 - `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook,
   logging, dotenv, and the one UTF-8 byte-cap (`util/utf8.zig` `cap`). Peer
   notify/phonebook, patch application, knowledge store, and prompts store
