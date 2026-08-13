@@ -1,5 +1,5 @@
 //! tools: list what is registered, split into what the model can call and
-//! what it cannot, read from tools/manifests/*.tool.json.
+//! what it cannot, read from the configured tools directory.
 //!
 //! A tool is callable: the model picks it by name and gets its result. A
 //! plugin backs the harness itself — the web UI, the markdown formatter, the
