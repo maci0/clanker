@@ -1,0 +1,23 @@
+{
+  "name": "gh_read",
+  "description": "Read a GitHub issue, PR, PR diff, or issue list via gh:// or github:// URLs. Does not extend read_file (which stays network-free). Requires GITHUB_TOKEN. Examples: gh://issue/owner/repo/42, gh://pr/owner/repo/7/diff, gh://issue/owner/repo?state=open.",
+  "llm_description": "Read GitHub issues/PRs via gh:// or github:// (not read_file). Needs GITHUB_TOKEN. gh://issue/o/r/n, gh://pr/o/r/n[/diff[/path]], gh://issue/o/r?state=open.",
+  "wasm": "zig-out/tools/gh_read.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "gh:// or github:// URL."
+      },
+      "path": {
+        "type": "string",
+        "description": "Alias for url."
+      }
+    }
+  },
+  "network_allow": ["api.github.com"],
+  "env_allow": ["GITHUB_TOKEN"],
+  "fs_prefixes": ["state/"],
+  "category": "code"
+}

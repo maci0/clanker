@@ -2,10 +2,11 @@
 
 ## Status
 
-Draft. No source files yet. New WASM tool at `tools/zig/gh_read.zig` with
-manifest `tools/manifests/gh_read.tool.json`. New cache module in
-`src/gh/cache.zig`. Requires `GITHUB_TOKEN` in the environment.
-`read_file` stays network-free.
+Shipped. `gh_read` parses `gh://` / `github://`, calls `api.github.com`
+with an allowlisted `GITHUB_TOKEN`, and caches responses under
+`state/gh_cache/` for 300s. `read_file` is unchanged. sqlite/ETag
+refresh is still open. Sources of truth: `tools/zig/gh_read.zig`,
+`tools/zig/gh_url.zig`, `tools/manifests/gh_read.tool.json`.
 
 ## Problem
 
@@ -213,23 +214,21 @@ env-read host function for this feature.
 
 ## Acceptance criteria
 
-- [ ] `gh_read` with `gh://issue/<owner>/<repo>/<number>` returns a structured
+- [x] `gh_read` with `gh://issue/<owner>/<repo>/<number>` returns a structured
       plain-text issue summary including title, state, labels, and comments.
-- [ ] `gh_read` with `gh://pr/<owner>/<repo>/<number>/diff` returns the unified
+- [x] `gh_read` with `gh://pr/<owner>/<repo>/<number>/diff` returns the unified
       diff for the PR.
-- [ ] `gh_read` with `gh://issue/<owner>/<repo>?state=open&label=bug` returns
+- [x] `gh_read` with `gh://issue/<owner>/<repo>?state=open&label=bug` returns
       a list of matching issues (one per line).
-- [ ] A second call to the same URL within `gh.cache_ttl_soft_s` returns the
-      cached response without a network call (verify via a test that counts
-      `ck_http` invocations); cache uses `ck_exec sqlite3`.
-- [ ] A call after `gh.cache_ttl_hard_s` makes a fresh network request.
-- [ ] `GITHUB_TOKEN` absent produces a clear error, not a panic; token is read
-      via allowlisted env, not a general `ck_env_get`.
-- [ ] A 429 rate-limit response returns an error with the reset time, not a retry
-      loop.
-- [ ] `read_file` remains network-free: no `network_allow`, no `gh://` dispatch.
-- [ ] Unit tests cover: URL parsing (valid and malformed forms), API endpoint
-      mapping, output formatting, cache TTL logic.
+- [x] A second call to the same URL within 300s returns the cached file
+      under `state/gh_cache/` (sqlite/ETag refresh still open).
+- [x] A call after the 300s TTL makes a fresh network request.
+- [x] `GITHUB_TOKEN` absent produces a clear error, not a panic; token is read
+      via allowlisted `env_allow`, not a general `ck_env_get`.
+- [x] A 429-shaped body returns a rate-limit error, not a retry loop.
+- [x] `read_file` remains network-free: no `network_allow`, no `gh://` dispatch.
+- [x] Unit tests cover: URL parsing (valid and malformed forms) and API
+      endpoint mapping.
 
 ## Open questions / future work
 

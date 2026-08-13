@@ -51,6 +51,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Session-scoped subprocess registry (`src/agent/subprocess.zig`) plus a
   `kernel` guest that stays off unless `kernel.enabled = true`. Python/JS
   supervisors are still landing; DAP will reuse the same registry.
+- `gh_read` fetches GitHub issues/PRs via `gh://` URLs with an
+  allowlisted `GITHUB_TOKEN`. Repeat reads within 5 minutes hit
+  `state/gh_cache/`. `read_file` stays network-free.
 
 ### Changed
 

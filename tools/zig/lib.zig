@@ -450,6 +450,13 @@ pub fn httpGet(url: []const u8) HostError![]const u8 {
     return hostResult(rc);
 }
 
+pub fn httpGetHdr(url: []const u8, headers_json: []const u8) HostError![]const u8 {
+    const u = sliceToMem(url);
+    const h = sliceToMem(headers_json);
+    const rc = ck_http(0, u.ptr, u.len, 0, 0, h.ptr, h.len);
+    return hostResult(rc);
+}
+
 pub fn httpPost(url: []const u8, body: []const u8) HostError![]const u8 {
     const u = sliceToMem(url);
     const b = sliceToMem(body);

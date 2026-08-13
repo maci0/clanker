@@ -4,7 +4,7 @@ const build_zon = @import("build.zig.zon");
 // Pure-logic modules under tools/zig/ that don't export the tool ABI (run/scratch/host_arena).
 // They are imported by other tools, not standalone guests, so the wasm build skips them
 // and `zig build test` runs their tests on the host target instead.
-const host_tested_helpers = [_][]const u8{ "alphaxiv_client", "arena_match", "cards", "compare_logic", "hashline", "kernel_magic", "manifest_scan", "search_parse" };
+const host_tested_helpers = [_][]const u8{ "alphaxiv_client", "arena_match", "cards", "compare_logic", "gh_url", "hashline", "kernel_magic", "manifest_scan", "search_parse" };
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
