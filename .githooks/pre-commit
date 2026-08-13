@@ -1,0 +1,54 @@
+#!/bin/sh
+# Pre-commit checks over staged files only. Fast by design: the slow gates
+# (build, tests, e2e) belong to `clanker gate` and CI, not to every commit.
+# Enable once per clone:
+#     git config core.hooksPath .githooks
+# Bypass for a work-in-progress commit: git commit --no-verify
+set -eu
+
+fail() {
+    echo "pre-commit: $1" >&2
+    exit 1
+}
+
+staged() {
+    git diff --cached --name-only --diff-filter=ACMR -z -- "$@"
+}
+
+# Conflict markers in any staged file. Matched at line start on added lines
+# only, so committing this hook (or docs quoting a marker mid-line) passes.
+if git diff --cached --unified=0 | grep -qE '^\+(<{7}( |$)|={7}$|>{7}( |$))'; then
+    fail "staged changes contain merge conflict markers"
+fi
+
+# Obvious credentials in added lines. Narrow, known prefixes only, so a
+# false positive stays rare; --no-verify is the escape hatch for docs that
+# must quote one.
+if git diff --cached --unified=0 | grep -qE '^\+.*(sk-ant-[a-zA-Z0-9_-]{8}|ghp_[A-Za-z0-9]{20}|github_pat_[A-Za-z0-9_]{20}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'; then
+    fail "staged changes look like they contain a credential (bypass: --no-verify)"
+fi
+
+# Zig formatting. `zig fmt --check` also fails on syntax errors, so this
+# doubles as a parse check.
+if [ -n "$(staged '*.zig' | tr -d '\0')" ]; then
+    staged '*.zig' | xargs -0 zig fmt --check ||
+        fail "zig fmt --check failed (fix: zig fmt <files above>)"
+fi
+
+# Shell scripts, when shellcheck is installed (CI runs it regardless).
+if command -v shellcheck >/dev/null 2>&1; then
+    if [ -n "$(staged '*.sh' | tr -d '\0')" ]; then
+        staged '*.sh' | xargs -0 shellcheck || fail "shellcheck failed"
+    fi
+fi
+
+# Tool manifests, when a built clanker is present. The same validation runs
+# as a unit test in CI, so a missing binary is a skip, not a failure.
+if [ -x zig-out/bin/clanker ]; then
+    if [ -n "$(staged 'tools/manifests/*.tool.json' | tr -d '\0')" ]; then
+        staged 'tools/manifests/*.tool.json' | xargs -0 -n1 zig-out/bin/clanker plugins validate ||
+            fail "manifest validation failed"
+    fi
+fi
+
+exit 0
