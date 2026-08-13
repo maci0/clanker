@@ -2980,6 +2980,49 @@ test "the live src/config.zig keeps improve-gate defaults enabled" {
     try std.testing.expect(stagedConfigWeakened("capability_gate: bool = false") != null);
 }
 
+test "the live config.toml does not disable improve gates" {
+    const src = @embedFile("../../config.toml");
+    try std.testing.expect(stagedConfigTomlWeakened(src) == null);
+    try std.testing.expect(stagedConfigTomlWeakened("[improve]\ncapability_gate = false\n") != null);
+    try std.testing.expect(stagedConfigTomlWeakened("exec_pattern_allow = [\"git push\"]") != null);
+    try std.testing.expect(stagedConfigTomlWeakened("git_remote_ops = true\n") != null);
+}
+
+test "the live cmdEval still runs every task and prints its real result" {
+    const src = @embedFile("../cli.zig");
+    try std.testing.expect(cmdEvalShapeBroken(src) == null);
+    try std.testing.expect(cmdEvalShapeBroken("fn cmdEval() void {\nreturn;\n}") != null);
+    const early =
+        \\fn cmdEval() !void {
+        \\    try out.writeStreamingAll(io, "calculator: 1.00 PASS\n");
+        \\    return;
+        \\    const results = try r.runAll(list.items);
+        \\    if (res.ok) "PASS" else "FAIL";
+        \\    if (!all_ok) return error.EvalsFailed;
+        \\}
+        \\fn next() void {}
+    ;
+    try std.testing.expectEqualStrings("cmdEval returns before runAll", cmdEvalShapeBroken(early).?);
+    const overwrite =
+        \\fn cmdEval() !void {
+        \\    const results = try r.runAll(list.items);
+        \\    for (results) |*res| res.ok = true;
+        \\    if (res.ok) "PASS" else "FAIL";
+        \\    if (!all_ok) return error.EvalsFailed;
+        \\}
+        \\fn next() void {}
+    ;
+    try std.testing.expectEqualStrings("cmdEval overwrites eval results", cmdEvalShapeBroken(overwrite).?);
+}
+
+test "the live build.zig still wires test and tools steps" {
+    const src = @embedFile("../../build.zig");
+    try std.testing.expect(buildZigShapeBroken(src) == null);
+    const emptied = try std.mem.replaceOwned(u8, std.testing.allocator, src, "test_step.dependOn(&run_tests.step);", "if (false) test_step.dependOn(&run_tests.step);");
+    defer std.testing.allocator.free(emptied);
+    try std.testing.expectEqualStrings("test_step.dependOn(&run_tests.step);", buildZigShapeBroken(emptied).?);
+}
+
 test "capabilityLineReports requires a named PASS or FAIL line" {
     const out =
         \\calculator: 1.00 PASS
