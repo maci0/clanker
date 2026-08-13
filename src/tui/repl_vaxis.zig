@@ -984,7 +984,7 @@ fn fullCliCommand(tool_name: []const u8) ?[]const u8 {
 /// Adds sanitized internal-tool text to the transcript under the same line
 /// budget as `!` output. Returns whether anything was omitted.
 fn appendInternalToolOutput(arena: std.mem.Allocator, lines: *std.ArrayList(Line), tool_name: []const u8, text: []const u8) bool {
-    const normalized = std.mem.trimRight(u8, text, "\r\n");
+    const normalized = std.mem.trimEnd(u8, text, "\r\n");
     if (normalized.len == 0) {
         lines.append(arena, .{ .text = "notice: command returned no output", .dim = true }) catch {};
         return false;
