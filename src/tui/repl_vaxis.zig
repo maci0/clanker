@@ -1323,6 +1323,24 @@ const Model = struct {
     /// cancelled live-preview does not stick.
     theme_saved: ?[]const u8 = null,
 
+    /// Transcript search (Ctrl-R). Like the pickers this is a modal that owns
+    /// the keyboard while open, but it drives `view_end` rather than
+    /// committing a selection, so paging and searching cannot disagree about
+    /// where the transcript is looking.
+    search_open: bool = false,
+    search_query: std.ArrayList(u8) = .empty,
+    /// Line indices matching the query, oldest first. gpa-owned (not arena):
+    /// it is rebuilt on every keystroke, so arena allocation would grow the
+    /// session arena by a whole hit list per character typed.
+    search_hits: std.ArrayList(usize) = .empty,
+    search_idx: usize = 0,
+    /// The scroll anchor in force when search opened, restored on Escape so a
+    /// cancelled search leaves the reader where it found them.
+    search_saved_view: ?usize = null,
+    /// "<n>/<total>" for the search bar; a field because vaxis cells borrow
+    /// the slice until the frame flushes.
+    search_pos_buf: [32]u8 = undefined,
+
     fn widget(self: *Model) vxfw.Widget {
         return .{
             .userdata = self,
@@ -2138,6 +2156,7 @@ const Model = struct {
             \\keys:
             \\  Tab               complete a /command
             \\  Ctrl-P            command palette (fuzzy: matches mid-word and on description)
+            \\  Ctrl-R            search the transcript (Up/Down step hits, Enter stays, Esc back)
             \\  Up/Down           recall previous input
             \\  PgUp/PgDn         page the transcript (Home: top; End/Esc: back to tail)
             \\  Ctrl-C            stop the current turn, or quit when idle
@@ -2235,6 +2254,104 @@ const Model = struct {
             return;
         }
         try self.runCommand(ctx, .{ .spec = spec, .args = "" }, spec.name);
+    }
+
+    // ----------------------------------------------------------------- search
+
+    /// Ctrl-R: open the search bar. Takes focus for the same reason a picker
+    /// does — the composer would otherwise swallow every typed character.
+    fn openSearch(self: *Model, ctx: *vxfw.EventContext) !void {
+        try self.focusPicker(ctx);
+        self.search_open = true;
+        self.search_saved_view = self.view_end;
+        self.search_query.clearRetainingCapacity();
+        self.search_hits.clearRetainingCapacity();
+        self.search_idx = 0;
+    }
+
+    /// Leaves search. `keep_view` distinguishes Enter (stay where the match
+    /// is, which is the point of having searched) from Escape (put the
+    /// reader back where they were, because they changed their mind).
+    fn closeSearch(self: *Model, ctx: *vxfw.EventContext, keep_view: bool) !void {
+        if (!keep_view) self.view_end = self.search_saved_view;
+        self.search_open = false;
+        self.search_query.clearRetainingCapacity();
+        self.search_hits.clearRetainingCapacity();
+        self.search_idx = 0;
+        try ctx.requestFocus(self.text_field.widget());
+    }
+
+    /// Recomputes hits for the current query and jumps to the first one.
+    /// Called on every edit of the query, so search is incremental: the view
+    /// follows the query as it is typed rather than waiting for Enter.
+    fn refreshSearch(self: *Model) void {
+        bridge_mutex.lockUncancelable(bridge_io);
+        defer bridge_mutex.unlock(bridge_io);
+        findHits(self.lines.items, self.search_query.items, self.gpa, &self.search_hits);
+        self.search_idx = 0;
+        self.jumpToCurrentHitLocked();
+    }
+
+    /// Anchors the view on the current hit. Caller holds the bridge lock:
+    /// `finishTurn` appends to `self.lines` from the run thread, and the
+    /// line count is what the anchor is clamped against.
+    fn jumpToCurrentHitLocked(self: *Model) void {
+        if (self.search_hits.items.len == 0) return;
+        const hit = self.search_hits.items[@min(self.search_idx, self.search_hits.items.len - 1)];
+        self.view_end = searchViewEnd(hit, self.lines.items.len, self.availRows());
+    }
+
+    /// Down/Up (and Ctrl-N/Ctrl-P) step through hits, wrapping at both ends
+    /// so a long transcript does not dead-end at its newest match.
+    fn stepSearch(self: *Model, forward: bool) void {
+        bridge_mutex.lockUncancelable(bridge_io);
+        defer bridge_mutex.unlock(bridge_io);
+        const n = self.search_hits.items.len;
+        if (n == 0) return;
+        if (forward) {
+            self.search_idx = if (self.search_idx + 1 >= n) 0 else self.search_idx + 1;
+        } else {
+            self.search_idx = if (self.search_idx == 0) n - 1 else self.search_idx - 1;
+        }
+        self.jumpToCurrentHitLocked();
+    }
+
+    /// The transcript line the current hit sits on, for the draw to tint.
+    fn currentHitLine(self: *const Model) ?usize {
+        if (!self.search_open or self.search_hits.items.len == 0) return null;
+        return self.search_hits.items[@min(self.search_idx, self.search_hits.items.len - 1)];
+    }
+
+    fn handleSearchKey(self: *Model, ctx: *vxfw.EventContext, key: vaxis.Key) !void {
+        if (key.matches(vaxis.Key.escape, .{})) {
+            try self.closeSearch(ctx, false);
+            return ctx.consumeAndRedraw();
+        }
+        if (key.matches(vaxis.Key.enter, .{})) {
+            try self.closeSearch(ctx, true);
+            return ctx.consumeAndRedraw();
+        }
+        if (key.matches(vaxis.Key.down, .{}) or key.matches('n', .{ .ctrl = true })) {
+            self.stepSearch(true);
+            return ctx.consumeAndRedraw();
+        }
+        if (key.matches(vaxis.Key.up, .{}) or key.matches('p', .{ .ctrl = true })) {
+            self.stepSearch(false);
+            return ctx.consumeAndRedraw();
+        }
+        if (key.matches(vaxis.Key.backspace, .{})) {
+            if (self.search_query.items.len > 0) {
+                _ = self.search_query.pop();
+                self.refreshSearch();
+            }
+            return ctx.consumeAndRedraw();
+        }
+        if (key.text) |t| {
+            self.search_query.appendSlice(self.gpa, t) catch {};
+            self.refreshSearch();
+            return ctx.consumeAndRedraw();
+        }
+        return ctx.consumeAndRedraw();
     }
 
     fn closeModelPicker(self: *Model, ctx: *vxfw.EventContext) !void {
@@ -2415,6 +2532,13 @@ const Model = struct {
                 // The picker is modal: every key goes to it, none of the
                 // clipboard/history/quit shortcuts below apply while it's open.
                 if (self.picker_open) return self.handlePickerKey(ctx, key);
+                // Search is modal for the same reason, and must be tested
+                // *here* rather than further down: the scrollback bindings
+                // immediately below claim Escape whenever `view_end` is set,
+                // and jumping to a hit always sets it. Tested after them,
+                // Escape only cancelled the scroll and left search open with
+                // the keyboard still captured.
+                if (self.search_open) return self.handleSearchKey(ctx, key);
                 // Manual scrollback. PgUp/PgDn page the transcript by a
                 // screenful (one line of overlap); Home jumps to the top and
                 // End/Esc return to the tail, but Home/End only act on the
@@ -2437,6 +2561,21 @@ const Model = struct {
                 }
                 if (self.view_end != null and (key.matches(vaxis.Key.end, .{}) or key.matches(vaxis.Key.escape, .{}))) {
                     self.view_end = null;
+                    return ctx.consumeAndRedraw();
+                }
+                // Ctrl-R opens it. Scrollback paging finds a place you can
+                // already point at; search finds one you can only describe.
+                //
+                // Ctrl-R rather than the more obvious Ctrl-F because the
+                // composer is a `vxfw.TextField` and it holds focus: it
+                // claims Ctrl-F for forward-char and consumes it before the
+                // root Model sees anything, so a Ctrl-F binding here would
+                // simply never fire. TextField's chord list (Ctrl-A/B/D/E/F/
+                // J/K/U/W plus the Alt- word motions) is the set that cannot
+                // be bound at this level. Ctrl-R is free, and is what a
+                // reader coming from readline reaches for to search anyway.
+                if (key.matches('r', .{ .ctrl = true })) {
+                    try self.openSearch(ctx);
                     return ctx.consumeAndRedraw();
                 }
                 // Ctrl-P opens the command palette. A separate mechanism from
@@ -2984,6 +3123,7 @@ const Model = struct {
         // highlighter state is rebuilt per draw from the tagged lines.
         const fence_on = active.reset.len > 0;
         var syn_style = syntax.Style.fromTheme(&active);
+        const hit_line = self.currentHitLine();
         var i: usize = start;
         while (i < view_end and row < bottom) : (i += 1) {
             const l = self.lines.items[i];
@@ -2992,7 +3132,14 @@ const Model = struct {
             // for their own internal wraps but not past the line, so the loop
             // steps to the next row itself: without this every short line
             // (e.g. the whole /help block) overprints the same row.
-            if (l.fence_lang) |lang| {
+            if (hit_line == i) {
+                // The line search is currently sitting on, drawn reversed so
+                // it is findable at a glance. Taken before the type branches
+                // below rather than blended into each of them: a hit can be
+                // any kind of line, and "which line am I on" is the only
+                // thing that matters while the search bar is up.
+                writeWrapped(surface, &row, bottom, text_width, l.text, .{ .reverse = true });
+            } else if (l.fence_lang) |lang| {
                 var state = syntax.State.init(lang);
                 var segs: std.ArrayList(vaxis.Segment) = .empty;
                 if (syntax.spansVaxis(&state, &syn_style, ctx.arena, l.text, &segs)) {
@@ -3035,11 +3182,47 @@ const Model = struct {
         if (show_bar) drawScrollbar(surface, max.width - 1, top, bottom, start, view_end, line_count, rule_style, accent_style);
 
         if (self.has_selection) highlightSelection(surface, self.sel_start, self.sel_end);
+        if (self.search_open) self.drawSearchBar(surface, rule_style, accent_style);
         if (self.picker_open) self.drawModelPicker(surface, rule_style, tool_style);
         self.last_surface = surface;
 
         surface.children = children;
         return surface;
+    }
+
+    /// The search bar: one bordered row above the input, in the same box
+    /// style as the input and the pickers. Deliberately smaller than a
+    /// picker — search has no list to choose from, the transcript itself is
+    /// the result, so a tall modal would only cover the thing being searched.
+    fn drawSearchBar(self: *Model, surface: vxfw.Surface, rule_style: vaxis.Style, accent: vaxis.Style) void {
+        if (surface.size.width < 12) return;
+        const h: u16 = 3;
+        const y = self.transcript_bottom -| h;
+        clearBoxInterior(surface, 0, y, surface.size.width, h);
+        drawBox(surface, 0, y, surface.size.width, h, rule_style);
+
+        var col: u16 = 2;
+        writeRowAt(surface, y + 1, &col, "search ", .{ .bold = true });
+        writeRowAt(surface, y + 1, &col, self.search_query.items, .{ .bold = true });
+        writeRowAt(surface, y + 1, &col, "\xe2\x96\x8f", .{ .bold = true });
+
+        // Right-aligned state: which hit of how many, or that there are
+        // none. "no match" while typing is information, not an error, so it
+        // sits in the same slot rather than replacing the query.
+        const status: []const u8 = if (self.search_query.items.len == 0)
+            "Up/Down step \xc2\xb7 Enter stay \xc2\xb7 Esc back"
+        else if (self.search_hits.items.len == 0)
+            "no match"
+        else
+            std.fmt.bufPrint(&self.search_pos_buf, "{d}/{d} \xc2\xb7 Up/Down step \xc2\xb7 Esc back", .{
+                self.search_idx + 1,
+                self.search_hits.items.len,
+            }) catch "";
+        const w = width_mod.displayWidth(status);
+        if (w > 0 and surface.size.width > w + 4 and col + 2 < surface.size.width - w) {
+            var status_col: u16 = @intCast(surface.size.width - w - 2);
+            writeRowAt(surface, y + 1, &status_col, status, if (self.search_hits.items.len == 0 and self.search_query.items.len > 0) rule_style else accent);
+        }
     }
 
     /// Draws the `/model` picker as a modal box over the tail of the
@@ -3066,6 +3249,7 @@ const Model = struct {
         const h: u16 = rows_shown + 4; // border + query + rows + key guide + border
         if (surface.size.width < 8) return;
         const y = self.transcript_bottom -| h;
+        clearBoxInterior(surface, 0, y, surface.size.width, h);
         drawBox(surface, 0, y, surface.size.width, h, rule_style);
 
         const prompt: []const u8 = switch (self.picker_kind) {
@@ -3304,6 +3488,104 @@ test "pickerWindowStart keeps the selection on screen and the window in range" {
     // Degenerate inputs stay in range rather than underflowing.
     try std.testing.expectEqual(@as(usize, 0), pickerWindowStart(3, 24, 0));
     try std.testing.expectEqual(@as(usize, 0), pickerWindowStart(0, 0, 8));
+}
+
+// ---------------------------------------------------------------------
+// Transcript search. Scrollback paging (PgUp/PgDn/Home/End) finds a place
+// you can already point at; this finds one you can only describe. Both
+// drive the same `view_end` anchor, so a search hit and a paged-to line are
+// the same kind of thing to everything downstream — the draw, the
+// scrollbar, the bottom-alignment math — rather than a second notion of
+// "where the transcript is looking".
+// ---------------------------------------------------------------------
+
+/// Case-insensitive substring test. Deliberately not `fuzzyMatch`: a
+/// subsequence match over a long transcript matches almost every line
+/// (`abc` would hit any line containing an a, then a b, then a c), which is
+/// useful for picking one of a dozen commands and useless for finding one
+/// line in a thousand. Search wants the literal thing you remember reading.
+fn lineContains(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return false;
+    if (needle.len > haystack.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[i .. i + needle.len], needle)) return true;
+    }
+    return false;
+}
+
+/// Indices of every transcript line matching `needle`, oldest first.
+/// Written into `out` (cleared first) so the caller owns the storage.
+fn findHits(lines: []const Line, needle: []const u8, gpa: std.mem.Allocator, out: *std.ArrayList(usize)) void {
+    out.clearRetainingCapacity();
+    if (needle.len == 0) return;
+    for (lines, 0..) |l, i| {
+        if (lineContains(l.text, needle)) out.append(gpa, i) catch return;
+    }
+}
+
+/// The `view_end` anchor that puts hit line `hit` on screen with roughly
+/// half a screen of context below it, so a match lands mid-view rather than
+/// hard against the bottom edge where its surroundings are invisible.
+/// Clamped exactly like every other anchor, so a hit near either end of the
+/// transcript still yields a full window.
+fn searchViewEnd(hit: usize, line_count: usize, avail_rows: u16) ?usize {
+    if (line_count <= avail_rows) return null; // everything already visible
+    const half: usize = @max(1, avail_rows / 2);
+    return clampViewEnd(hit + half, line_count, avail_rows);
+}
+
+test "lineContains is a case-insensitive substring, not a subsequence" {
+    try std.testing.expect(lineContains("the quick brown fox", "quick"));
+    try std.testing.expect(lineContains("the QUICK brown fox", "quick"));
+    try std.testing.expect(lineContains("the quick brown fox", "QUICK"));
+    try std.testing.expect(lineContains("abc", "abc"));
+
+    // A subsequence is not a match: this is the whole reason search does not
+    // reuse fuzzyMatch, which would call "qbf" a hit on the line above.
+    try std.testing.expect(!lineContains("the quick brown fox", "qbf"));
+    try std.testing.expect(!lineContains("short", "much longer needle"));
+    // An empty query matches nothing rather than everything, so an
+    // open-but-untyped search bar does not claim every line is a hit.
+    try std.testing.expect(!lineContains("anything", ""));
+}
+
+test "findHits reports matching line indices oldest first" {
+    const lines = [_]Line{
+        .{ .text = "clanker> build the parser" },
+        .{ .text = "the PARSER is in src/parse.zig" },
+        .{ .text = "unrelated" },
+        .{ .text = "parser again" },
+    };
+    var hits: std.ArrayList(usize) = .empty;
+    defer hits.deinit(std.testing.allocator);
+
+    findHits(&lines, "parser", std.testing.allocator, &hits);
+    try std.testing.expectEqualSlices(usize, &.{ 0, 1, 3 }, hits.items);
+
+    // Re-running replaces the previous result rather than appending to it.
+    findHits(&lines, "unrelated", std.testing.allocator, &hits);
+    try std.testing.expectEqualSlices(usize, &.{2}, hits.items);
+
+    findHits(&lines, "nothing here", std.testing.allocator, &hits);
+    try std.testing.expectEqual(@as(usize, 0), hits.items.len);
+
+    findHits(&lines, "", std.testing.allocator, &hits);
+    try std.testing.expectEqual(@as(usize, 0), hits.items.len);
+}
+
+test "searchViewEnd centres a hit and clamps at both ends" {
+    // 200 lines, 24 visible: a hit in the middle lands with ~half a screen
+    // of context below it.
+    try std.testing.expectEqual(@as(?usize, 112), searchViewEnd(100, 200, 24));
+    // A hit near the top still fills a whole window rather than showing
+    // blank rows above line 0.
+    try std.testing.expectEqual(@as(?usize, 24), searchViewEnd(0, 200, 24));
+    try std.testing.expectEqual(@as(?usize, 24), searchViewEnd(5, 200, 24));
+    // A hit near the bottom stops at the end of the transcript.
+    try std.testing.expectEqual(@as(?usize, 200), searchViewEnd(199, 200, 24));
+    // Nothing to scroll: stay following the tail.
+    try std.testing.expectEqual(@as(?usize, null), searchViewEnd(3, 10, 24));
 }
 
 /// One PgUp/PgDn stride: a screenful less one line of overlap so the reader
@@ -3790,6 +4072,27 @@ fn writeWrapped(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text:
     }
 }
 
+/// Blanks the interior rows of a box before anything is written into them.
+///
+/// `drawBox` draws a border and nothing else, so a modal opened over the
+/// transcript inherited whatever text was already in those cells and showed
+/// it through the gaps its own content did not cover — a search bar reading
+/// `search workflow▏.  measurement loop (see /autoresear1/2 · Up/Down step`,
+/// with two unrelated lines interleaved. The pickers have always had this
+/// too. Interior only: the border is drawn separately, and the composer's
+/// `TextField` is a child surface composited after this, so blanking the
+/// cells underneath it is harmless.
+fn clearBoxInterior(surface: vxfw.Surface, x: u16, y: u16, w: u16, h: u16) void {
+    if (w <= 2 or h <= 2) return;
+    var r: u16 = y + 1;
+    while (r < y + h - 1 and r < surface.size.height) : (r += 1) {
+        var c: u16 = x + 1;
+        while (c < x + w - 1 and c < surface.size.width) : (c += 1) {
+            surface.writeCell(c, r, .{ .char = .{ .grapheme = " ", .width = 1 }, .style = .{} });
+        }
+    }
+}
+
 fn drawBox(surface: vxfw.Surface, x: u16, y: u16, w: u16, h: u16, style: vaxis.Style) void {
     if (w == 0 or h == 0) return;
     surface.writeCell(x, y, .{ .char = .{ .grapheme = "\xe2\x95\xad", .width = 1 }, .style = style });
@@ -4176,6 +4479,11 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     model.context_tokens = stats_mod.historyTokens(model.messages.items);
     model.summary_before = stats_mod.summaryState(model.messages.items);
     defer model.text_field.deinit();
+    // Search state is gpa-owned rather than arena-owned (it is rebuilt on
+    // every keystroke, so the arena would grow by a hit list per character),
+    // which means it has to be released explicitly.
+    defer model.search_query.deinit(gpa);
+    defer model.search_hits.deinit(gpa);
 
     // From here on, log.log writes straight to stderr with no coordination
     // with vaxis's owned alt-screen buffer, unlike the old REPL where stray
