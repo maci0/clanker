@@ -5,6 +5,7 @@
 //! Discovery is a projection of `[models.*]`. See docs/prds/0026-llm-proxy.md.
 
 const std = @import("std");
+const json = std.json;
 const config = @import("../config.zig");
 const providers = @import("../llm/providers.zig");
 const auth = @import("../llm/auth.zig");
