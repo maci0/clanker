@@ -43,7 +43,7 @@ Constraints that shape the design (not just the desired outcome):
 ## Goals
 
 1. `clanker serve --proxy` (off by default) mounts the compatibility surface on the existing web UI socket at `/proxy/v1/*`, sharing `--host`, `--webui-port`, and the existing Host/authority checks. A distinct `--proxy-port` is optional and opens a second listener with `/v1/*` at the root.
-2. `POST …/v1/chat/completions` and `POST …/v1/messages` (see Design for the `/proxy` prefix vs root) forward the request body byte-for-byte to the matching configured backend after attaching that provider's vtable auth. The proxy does not add, drop, or rewrite JSON keys, with one documented exception: rewriting the JSON `model` string when the client sent a composite `provider/id` or a configured alias (see Design, Model routing).
+2. Every `/v1/*` path the official OpenAI and Anthropic HTTP APIs expose is mounted and forwarded 1:1 (method, query string, body bytes) to the matching configured backend after attaching that provider's vtable auth. That includes chat/completions, completions, responses, embeddings, moderations, audio, images, files, uploads, batches, fine-tuning, vector stores, assistants, threads, conversations, evals, videos, containers; and Anthropic messages, messages/count_tokens, messages/batches, complete, files, skills, agents, sessions, environments. The proxy does not add, drop, or rewrite JSON keys, with one documented exception: rewriting the JSON `model` string when the client sent a composite `provider/id` or a configured alias (see Design, Model routing). GET `…/v1/models` and GET `…/v1/models/{id}` stay local projections of the configured catalog.
 3. Incoming client `Authorization` / `x-api-key` is never sent upstream. Upstream headers are built from a named allowlist (never copied from the inbound set) plus `auth.resolve` / Vertex minting (see Design, Upstream headers).
 4. `GET …/v1/models` lists the configured models that actually speak the requested protocol, projected from the same catalog `GET /api/providers` already serves. No third catalog. `vertex_anthropic` models are advertised on the Anthropic envelope.
 5. Streaming is a byte-faithful pass-through of upstream SSE (status, `Content-Type`, event bytes) on the `request` / `receiveHead` path, with `headers.accept_encoding = .omit` so Zig 0.16 does not advertise gzip. No `client.fetch`, no `StreamAccumulator` rebuild, no `[DONE]` invented when the upstream did not send one, no Anthropic events rewritten as OpenAI chunks.
@@ -59,7 +59,9 @@ Constraints that shape the design (not just the desired outcome):
 - Transcoding OpenAI bodies into Anthropic (or the reverse). Transcoding is injection: it rewrites tools, system, content parts, and unknown keys. A mismatch is `400`.
 - Implementing Cursor's gRPC Connect / protobuf `AgentService/Run` inside clanker. `docs/cursor-api-notes.md` still holds: Cursor is not `openai_compat`. Compatibility here means an OpenAI SDK (including a process that currently points at cursor-openai-api) can point `baseURL` at this proxy.
 - Copying agave's inference, KV cache, conversations, web chat UI (`POST /v1/chat`), tokenize/detokenize, embeddings stub, or `system_fingerprint: agave-v…`. Agave *is* the model. Clanker *forwards*.
-- OpenAI `/v1/completions`, `/v1/responses`, `/v1/embeddings`, `/v1/audio/*`, `/v1/images/*`, Anthropic `/v1/complete`, batch APIs, or Files APIs. cursor-openai-api's client bar is `POST /v1/chat/completions` (stream + tools) and `GET /v1/models`.
+- Agave-only paths (`/v1/chat`, `/v1/conversations` as agave's own store, `/v1/tokenize`, `/v1/detokenize`, `/v1/kv_cache`). Those are inference-server features, not OpenAI/Anthropic. OpenAI's own `/v1/conversations` (the Responses-adjacent resource) *is* forwarded.
+- WebSocket / WebRTC Realtime (`Upgrade: websocket` on `/v1/realtime`). HTTP 1:1 cannot carry a socket upgrade. Local `501` with `unknown_endpoint`.
+- OpenAI Administration / org-management hosts that are not `api.openai.com/v1/…` (a different origin). A client that hits `/v1/organization/…` on this proxy is forwarded to the configured `openai_compat` base; if that host is not OpenAI, upstream 404s.
 - Injecting clanker's system prompt, tool catalog, or `agent.tool_catalog` hot-tool subset into proxied requests. The proxy is not the agent.
 - CORS `Access-Control-Allow-Origin`. Same as serve today: no CORS. A browser on another origin uses a reverse proxy if it must.
 - Rate limiting, request queues, or per-client quotas. A 64-connection cap already exists process-wide (`max_connection_threads` in `src/cli.zig`).
@@ -171,19 +173,26 @@ flowchart LR
 
 | Method | Path after strip | Shared socket (`:17921`) | Dedicated `--proxy-port` |
 |---|---|---|---|
-| `GET` | `/v1/models` | `GET /proxy/v1/models` | `GET /v1/models` |
-| `POST` | `/v1/chat/completions` | `POST /proxy/v1/chat/completions` | `POST /v1/chat/completions` |
-| `POST` | `/v1/messages` | `POST /proxy/v1/messages` | `POST /v1/messages` |
+| `GET` | `/v1/models`, `/v1/models/{id}` | local catalog (OpenAI or Anthropic envelope) | same |
+| any | `/v1/<rest>` | 1:1 forward to the matching backend (see Protocol family) | same |
 | `GET` | `/health/live`, `/health/ready` | Existing web UI handlers | Same handlers, so a probe does not need the control-plane port. GET only. A POST still falls through to the existing generic 404 (`src/cli.zig` `~L4672-4675`); health is not a "known proxy path" for `405`. |
-| other `/v1/*` | (any) | `404` OpenAI envelope (`unknown_endpoint`), or Anthropic if `anthropic-version` is present | same |
+| any | `/v1/realtime` with `Upgrade: websocket` | `501 unknown_endpoint` (not an HTTP resource) | same |
 | other | (any) | existing `/api/*` / `/webui` / 404 | `404`, including `/api/*`, `/webui`, and `/proxy/v1/*` |
-| wrong method on a known `/v1/*` path | (known `/v1` path) | `405` + `Allow`. Does not apply to `/health/*`. | same |
+| wrong method on `GET /v1/models` | (local catalog) | `405` + `Allow: GET` | same |
 
-On the shared socket, `GET /v1/models` (no `/proxy` prefix) is **not** a proxy route. It 404s like any unknown path. That is the isolation: an SDK pointed at `http://127.0.0.1:17921/v1` misses on purpose.
+On the shared socket, `/v1/…` (no `/proxy` prefix) is **not** a proxy route. It 404s like any unknown path. That is the isolation: an SDK pointed at `http://127.0.0.1:17921/v1` misses on purpose.
 
-No `/v1/completions`, `/v1/responses`, `/v1/embeddings`, `/v1/chat`, `/v1/conversations`, `/v1/tokenize`, `/v1/kv_cache`. Those are agave-the-model, not clanker-the-forwarder.
+Catch-all, not a closed list. New official `/v1/…` resources (an OpenAI `/v1/videos` or an Anthropic `/v1/skills`) work the day the backend ships them, because the proxy never has to name them. Agave-only paths (`/v1/tokenize`, `/v1/kv_cache`) 404 at the backend if a client hits them; we do not special-case them.
 
-**1:1 forward (the whole point).** For the two POST routes the proxy:
+**Protocol family.** The inbound path (after the `/proxy` strip) picks the family first; the `anthropic-version` header breaks ties on shared paths:
+
+- Anthropic-only prefixes: `/v1/messages`, `/v1/complete`, `/v1/skills`, `/v1/agents`, `/v1/sessions`, `/v1/environments`. Always Anthropic (or `vertex_anthropic` for `/v1/messages` only).
+- Shared: `/v1/models`, `/v1/files`. `anthropic-version` present → Anthropic; absent → OpenAI.
+- Everything else under `/v1/` is OpenAI (`/chat/completions`, `/completions`, `/responses`, `/embeddings`, `/audio/*`, `/images/*`, `/moderations`, `/batches`, `/fine_tuning/*`, `/vector_stores/*`, `/assistants`, `/threads`, `/conversations`, `/evals`, `/videos`, `/uploads`, `/containers`, …).
+
+A protocol mismatch is still `400` when the resolved model's kind does not speak that family. `vertex_anthropic` only has a Vertex URL for `POST /v1/messages` (`:rawPredict` / `:streamRawPredict`). Any other Anthropic path resolved to a Vertex provider is `400 unknown_endpoint` (Vertex has no files/batches/skills API we can address without transcoding).
+
+**1:1 forward (the whole point).** For every `/v1/*` that is not the local models catalog the proxy:
 
 1. Reads the raw body bytes already buffered by `handleConnection` (same `rawhttp.max_body_bytes` cap, 24 MiB). A 413 at this layer is the existing serve JSON (see Trust model).
 2. Parses JSON *only* enough to read `model` (required string) and `stream` (optional). If `stream` is absent, treat it as `false`. If `stream` is present and is not a JSON bool (`"true"`, `1`, an object, …): `400 malformed_request`, no upstream call. The parse is a read. The bytes that go upstream are the bytes that arrived, except the one `model` rewrite below.

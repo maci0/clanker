@@ -4,10 +4,15 @@
   "wasm": "zig-out/tools/cmd_autolearn.wasm",
   "input_schema": {
     "type": "object",
-    "properties": {}
+    "properties": {
+      "reset": {
+        "type": "boolean"
+      }
+    }
   },
   "fs_prefixes": [
     "state/autolearn.jsonl",
+    "state/autolearn.old.jsonl",
     "docs/ROADMAP.md"
   ],
   "internal": true,
