@@ -1077,7 +1077,6 @@ fn primaryFlagName(f: Flag) []const u8 {
 }
 
 fn editDistance(a: []const u8, b: []const u8) usize {
-    var before: [33]usize = undefined;
     var previous: [33]usize = undefined;
     var current: [33]usize = undefined;
     for (0..b.len + 1) |i| previous[i] = i;
@@ -1086,17 +1085,30 @@ fn editDistance(a: []const u8, b: []const u8) usize {
         for (b, 0..) |bc, bi| {
             const substitution = previous[bi] + @intFromBool(ac != bc);
             current[bi + 1] = @min(@min(previous[bi + 1] + 1, current[bi] + 1), substitution);
-            // Adjacent transposition (`--modle` / `--model`) is the typo
-            // Levenshtein counts as two substitutions and would otherwise
-            // miss the one-edit suggestion threshold.
-            if (ai > 0 and bi > 0 and ac == b[bi - 1] and a[ai - 1] == bc) {
-                current[bi + 1] = @min(current[bi + 1], before[bi - 1] + 1);
-            }
         }
-        @memcpy(before[0 .. b.len + 1], previous[0 .. b.len + 1]);
         @memcpy(previous[0 .. b.len + 1], current[0 .. b.len + 1]);
     }
     return previous[b.len];
+}
+
+/// True when `a` is `b` with one adjacent pair swapped (`--modle` / `--model`).
+fn isAdjacentTransposition(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len or a.len < 2) return false;
+    var i: usize = 0;
+    var swaps: usize = 0;
+    while (i < a.len) {
+        if (a[i] == b[i]) {
+            i += 1;
+            continue;
+        }
+        if (i + 1 < a.len and a[i] == b[i + 1] and a[i + 1] == b[i]) {
+            swaps += 1;
+            i += 2;
+            continue;
+        }
+        return false;
+    }
+    return swaps == 1;
 }
 
 fn renderUsage(buf: []u8) []const u8 {
@@ -3633,7 +3645,7 @@ fn toolText(
         // A missing run/session is a lookup miss, not a broken tool: keep it
         // off the timestamped error log so `clanker graph nosuch` does not
         // look like the harness crashed.
-        if (std.mem.eql(u8, detail, "no such run")) return error.UnknownId;
+        if (std.mem.eql(u8, detail, "no such run")) return error.NotFound;
         log.log(.error_, "{s}: {s}", .{ tool_name, detail });
         return error.ToolFailed;
     }
@@ -6809,7 +6821,7 @@ fn handleRuns(
     }
 
     const body = toolText(io, gpa, arena, cfg, environ_map, "cmd_graph", args) catch |err| {
-        if (err == error.UnknownId) {
+        if (err == error.NotFound) {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such run\"}");
             return;
         }

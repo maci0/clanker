@@ -246,7 +246,7 @@ pub fn main(init: std.process.Init) !void {
             error.UnknownProvider => "no provider by that name in config.toml; run `clanker providers check` for the list",
             error.ProviderCheckFailed => "provider check failed; run `clanker doctor` to diagnose",
             error.InvalidSessionId => "no session by that id; run `clanker sessions` for the list",
-            error.UnknownId => "no such run; run `clanker graph` to list them",
+            error.NotFound => "no such run; run `clanker graph` to list them",
             error.ImprovementNotFound => "no improvement by that id; they look like imp-... in state/improvements.jsonl",
             error.ToolFailed => "the internal tool returned an error; run `clanker doctor` to check the build",
             error.ToolBadOutput => "the internal tool returned unreadable output; run `clanker doctor` to check the build",
