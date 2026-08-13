@@ -116,7 +116,10 @@ temperature = 0.2
 capabilities = ["thinking", "tool_use", "image_in", "video_in"]
 
 [agent]
-max_iterations = 24
+# Matches the struct default in src/config.zig. Kept in step deliberately:
+# an explicit value here silently overrides the default, so a raise there
+# does nothing for anyone running from this checkout unless it lands here too.
+max_iterations = 50
 # Ceiling on one provider's turn in `providers check`, so an endpoint that is
 # switched off costs the sweep this instead of the OS connect timeout. Override
 # per provider with `check_timeout_seconds` in its own section.
