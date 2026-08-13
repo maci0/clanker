@@ -64,6 +64,7 @@ const webui_vendor_d3dag = @embedFile("webui_vendor/d3-dag.min.js");
 const webui_vendor_hljs = @embedFile("webui_vendor/hljs.min.js");
 const webui_vendor_mermaid = @embedFile("webui_vendor/mermaid.min.js");
 const webui_vendor_three = @embedFile("webui_vendor/three.module.min.js");
+const webui_vendor_three_core = @embedFile("webui_vendor/three.core.min.js");
 
 /// Sourced from build.zig.zon's `.version` field via the `build_options`
 /// module (see build.zig), so the two can no longer drift apart.
@@ -4799,7 +4800,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             std.mem.startsWith(u8, path, "/webui/plugins/") or
             std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js") or
             std.mem.eql(u8, path, "/webui/vendor/mermaid.min.js") or
-            std.mem.eql(u8, path, "/webui/vendor/three.module.min.js");
+            std.mem.eql(u8, path, "/webui/vendor/three.module.min.js") or
+            std.mem.eql(u8, path, "/webui/vendor/three.core.min.js");
         const is_a2a = std.mem.eql(u8, path, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message"));
         const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify");
         const is_peers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/peers");
@@ -4873,6 +4875,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respondJs(gpa, stream, webui_vendor_mermaid, &gzip_mermaid, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/three.module.min.js")) {
             respondJs(gpa, stream, webui_vendor_three, &gzip_three, acceptsGzip(headers_raw), headers_raw);
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/three.core.min.js")) {
+            respondJs(gpa, stream, webui_vendor_three_core, &gzip_three_core, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/.well-known/agent.json")) {
             handleAgentCard(gpa, cfg, port, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/status")) {
@@ -10622,6 +10626,7 @@ var gzip_d3dag: GzipCache = .{};
 var gzip_hljs: GzipCache = .{};
 var gzip_mermaid: GzipCache = .{};
 var gzip_three: GzipCache = .{};
+var gzip_three_core: GzipCache = .{};
 
 /// A JSON body, gzipped when the client takes it and the saving is worth the
 /// work. Uncached on purpose: these bodies are per-request (a session list, a
