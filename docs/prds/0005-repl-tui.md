@@ -164,7 +164,9 @@ specific `vxfw` shape, not an open-ended "figure it out":
 | CJK / fullwidth text in a rendered line | Occupies two columns, wraps whole rather than across the edge, and the row it lands on matches what `lineRows` reserved (`nextCell`) |
 | Decomposed text (base + combining mark) | One cell carrying both codepoints, so the accent sits on its letter instead of pushing the line right |
 | Control bytes in LLM/tool output | Stripped before render, per Design. Covers the streamed deltas, the provider's final `message.content`, its `err_detail` on a failed turn, internal `cmd_*` tool `text`, `!` escape output, and clipboard payloads |
-| History exceeds visible height | PgUp/PgDn/Home/End page it (manual scrollback, shipped) |
+| History exceeds visible height | PgUp/PgDn/Home/End page it (manual scrollback, shipped); Ctrl-R searches it |
+| A modal is open (picker or search) | It owns the keyboard, tested before the scrollback bindings. Those claim Escape whenever `view_end` is set, and jumping to a search hit always sets it, so a modal tested after them would never see its own cancel key |
+| A modal is drawn over the transcript | Its interior is blanked first (`clearBoxInterior`); `drawBox` draws only a border, so the text underneath used to show through the gaps |
 
 ## Acceptance criteria
 
@@ -236,8 +238,27 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
       text, unlike `clanker run`'s `MdStream` and every CLI above.
 - [ ] **Multi-line input** (Shift+Enter or a heredoc paste mode). `vxfw.TextField`
       is single-line; Enter always submits.
-- [ ] **Transcript search.** Scrollback paging exists; `/`-to-search within it
-      does not (grok/opencode both have it).
+- [x] **Transcript search.** Shipped on **Ctrl-R**: an incremental,
+      case-insensitive substring search over `lines`, Up/Down (or
+      Ctrl-N/Ctrl-P) stepping hits with wraparound, Enter leaving the view on
+      the match and Escape putting the reader back where they started. The
+      current hit is drawn reversed and the bar shows `n/total`, or
+      `no match`.
+
+      Not `/` as this item originally guessed: a leading `/` is how this REPL
+      spells a command, so `/status` would have to mean both "run it" and
+      "find it". Not Ctrl-F either — the composer is a `vxfw.TextField` and
+      holds focus, so it consumes Ctrl-F as forward-char before the root
+      Model sees it. TextField's chord list (Ctrl-A/B/D/E/F/J/K/U/W and the
+      Alt- word motions) is exactly the set that cannot be bound at the app
+      level, which is worth knowing before adding any keybinding here.
+
+      Search drives the same `view_end` anchor paging does rather than
+      introducing a second notion of where the transcript is looking, so the
+      draw, the scrollbar and the bottom-alignment math need no knowledge of
+      it. It matches on substring, not `fuzzyMatch`: a subsequence match over
+      a thousand-line transcript matches nearly every line, which is useful
+      for picking one of a dozen commands and useless for finding one line.
 - [x] **Slash-command fuzzy palette.** Shipped: **Ctrl-P** opens a third
       `PickerKind` over `command_registry` in the same modal `/model` and
       `/theme` use, filtered by the same `fuzzyMatch` subsequence test. It
