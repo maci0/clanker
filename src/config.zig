@@ -398,7 +398,9 @@ pub const Serve = struct {
     proxy_token_env: ?[]const u8 = null,
     /// `client_facing_name = "provider/id"` map so a Cursor-style model
     /// string can hit a configured provider without a third catalog.
-    proxy_aliases: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
+    /// json.ArrayHashMap rather than the raw map: harnessConfigJSON
+    /// stringifies the whole Serve struct, and only the wrapper knows how.
+    proxy_aliases: std.json.ArrayHashMap([]const u8) = .{},
     /// Seconds to wait for the first upstream body byte. Null means the
     /// 300s default. 0 means no ceiling.
     proxy_first_byte_timeout_s: ?u32 = null,
@@ -1042,10 +1044,10 @@ pub const Config = struct {
                 .object => |m| m,
                 else => return error.ProxyAliasesNotObject,
             };
-            var map: std.StringArrayHashMapUnmanaged([]const u8) = .empty;
+            var map: std.json.ArrayHashMap([]const u8) = .{};
             var it = o.iterator();
             while (it.next()) |kv| {
-                try map.put(arena, kv.key_ptr.*, try jsonStr(kv.value_ptr.*, "proxy_aliases"));
+                try map.map.put(arena, kv.key_ptr.*, try jsonStr(kv.value_ptr.*, "proxy_aliases"));
             }
             s.proxy_aliases = map;
             f.proxy_aliases = true;
