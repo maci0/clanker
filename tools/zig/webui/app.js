@@ -2348,7 +2348,9 @@ function drawRun(g) {
       try{
         var svg = canvas.querySelector("svg.run-edges");
         if (svg) {
-          var paths = svg.querySelectorAll("path");
+          // Edges only: the arrowhead marker under <defs> is a path too, and
+          // its "M0,0 L8,4" parses as an edge from the graph's origin.
+          var paths = svg.querySelectorAll("path[data-edge]");
           ctx.strokeStyle = "rgba(140,140,140,0.35)";
           ctx.lineWidth = 0.7;
           paths.forEach(function(p){
