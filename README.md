@@ -88,12 +88,17 @@ claims and closes items, so a multi-step plan is visible while it is worked
 rather than only in the answer.
 
 Start it with `clanker serve` (loopback and port `17921` by default, `--host`
-and `--port` to change them), then open the URL it prints
+and `--webui-port` to change them), then open the URL it prints
 (`http://127.0.0.1:17921/webui`):
 
 ```sh
 ./zig-out/bin/clanker serve
 ```
+
+`--host` is the interface the process binds; `--webui-port` is the port the
+web UI and its same-origin API answer on. Ports are named per surface so that
+a surface added later gets its own name rather than a rename of this one.
+`--port` is still accepted as an alias for `--webui-port`.
 
 `--host 0.0.0.0` makes it reachable from the LAN by IP. There is no
 authentication, so anyone who can reach the port gets full agent and tool
@@ -106,6 +111,34 @@ cannot be rebound.
 
 ```sh
 ./zig-out/bin/clanker serve --host 0.0.0.0 --serve-as clanker.lan
+```
+
+**One port, whatever you bind.** `serve` opens exactly one listening socket
+and multiplexes every surface onto it. Configured `[[peers]]` are outbound
+URLs this process connects to, never anything it listens on, so a peer
+pointed at `127.0.0.1` is not reachable through this server and `--host` does
+not widen it. The shipped `dummy-down` peer is exactly that: a URL on the
+discard port, deliberately dead, with nothing bound behind it.
+
+For a service file or a container that cannot pass flags, the same three
+settings can come from `[serve]` in `config.toml` or from the environment.
+Weakest first, each overriding the one above it:
+
+| Layer | Host | Port | Names |
+| --- | --- | --- | --- |
+| `[serve]` in `config.toml` | `host` | `webui_port` | `serve_as` (array) |
+| environment | `CLANKER_HOST` | `CLANKER_WEBUI_PORT` | — |
+| flags | `--host` | `--webui-port` | `--serve-as` |
+
+A flag always beats the environment, which always beats the file, matching how
+`--verbose` beats `CLANKER_LOG_LEVEL` and `--provider` beats
+`default_provider`.
+
+```toml
+[serve]
+host = "0.0.0.0"
+webui_port = 17921
+serve_as = ["clanker.lan"]
 ```
 
 The server also exposes the peer/chatroom/board/goal/stats APIs over HTTP and
@@ -180,7 +213,7 @@ task; `clanker --help` prints usage.
 | `schedule <list\|add\|remove\|enable\|disable\|run\|run-due\|log>` | Run the agent on a cron-like schedule (see below) |
 | `stats` | Token usage per provider/model |
 | `phonebook` | List peer agent cards |
-| `serve [--host A] [--serve-as N]... [--port N]` | HTTP server + web UI (loopback, port 17921 by default) |
+| `serve [--host A] [--serve-as N]... [--webui-port N]` | HTTP server + web UI (loopback, port 17921 by default) |
 | `graph [run-id]` | List runs, or render one as an ASCII timeline |
 | `gate` | Run the full deterministic gate (build/test/tools/fmt/lint) |
 | `autolearn` | Aggregate usage into roadmap items |

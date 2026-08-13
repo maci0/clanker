@@ -665,7 +665,7 @@ iter 2
 | `chat subscribe <room> [on]` | Join or leave a chatroom (`on` = true/false) |
 | `schedule [list\|add\|remove\|enable\|disable\|run\|run-due\|log]` | Recurring agent runs from `state/schedule.json`; see [Scheduled runs](#scheduled-runs) |
 | `stats` | Token usage per provider/model |
-| `serve [--host A] [--serve-as N]... [--port N]` | HTTP server + web UI (loopback, port 17921 by default) |
+| `serve [--host A] [--serve-as N]... [--webui-port N]` | HTTP server + web UI (loopback, port 17921 by default) |
 | `setup` | Guided first run: check config, keys and tools |
 | `doctor` | Diagnose config, credentials and build outputs (read-only, offline) |
 | `janitor [--yes]` | Sweep up staging copies, old run graphs and improve logs left behind by killed runs (also `clanker prune`) |
@@ -868,6 +868,7 @@ Fields:
 - `CLANKER_LOG_LEVEL`: `debug` | `info` | `warn` | `error` (default `info`). Lets a headless deployment (systemd, docker) set the log level without editing the invocation. `--verbose`/`-v` still overrides it to `debug` when both are given.
 - `CLANKER_THEME`: palette name for the REPL and `clanker run` output (`mocha`/`catppuccin`, `latte`, `frappe`, `macchiato`, `tokyonight`, `storm`, `day`, `mono`, `default`). An env var because a theme is a property of the terminal, not of one invocation. `/theme <name>` overrides it per session.
 - `CLANKER_DEBUG_BODY`: set to any value to log provider name and request byte count on each LLM call (to stderr). Only metadata is printed, never request content.
+- `CLANKER_HOST`, `CLANKER_WEBUI_PORT`: the interface and port `clanker serve` binds, for a headless deployment that cannot pass flags. Both override `[serve]` in the config file and are in turn overridden by `--host`/`--webui-port`. A `CLANKER_WEBUI_PORT` that is not a usable 16-bit port warns and is ignored rather than aborting startup. See [Binding and the trust model](#binding-and-the-trust-model).
 - `NO_COLOR`: standard ([no-color.org](https://no-color.org)) opt-out of colored output. When set to any non-empty value, forces the `mono` theme.
 
 ### Layered agent instructions
@@ -904,7 +905,7 @@ For the authoritative field list and defaults, see the doc comments on each stru
 
 ## HTTP server
 
-`clanker serve` starts an HTTP server on `127.0.0.1:17921` (override the interface with `--host`, the port with `--port`). Endpoints:
+`clanker serve` starts an HTTP server on `127.0.0.1:17921` (override the interface with `--host`, the port with `--webui-port`). It opens exactly one listening socket and serves every route below on it. Endpoints:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -948,6 +949,7 @@ For the authoritative field list and defaults, see the doc comments on each stru
 There is no authentication. The server exposes the full agent: `/api/run` runs a task, tools exec and write, and `/api/ask` answers write confirmations. Anyone who can reach the port can do all of it. Two things keep that from being a network-facing surface by default, and only the first is about the network:
 
 - **What it binds.** `--host` sets the interface, default `127.0.0.1`, so out of the box nothing off this machine can connect at all. `--host 0.0.0.0` (or `::`) makes it reachable from the LAN. That is opt-in and still unauthenticated: past loopback, the access control is a firewall or a network you trust, not clanker.
+- **How much it binds.** Exactly one socket, whatever `--host` says. Every surface (web UI, `/api/*`, A2A, health, metrics) is multiplexed onto that single port; nothing else in the process listens. `clanker mcp` is a separate command speaking stdio JSON-RPC, and the mock LLM servers are test-only and hard-wired to `127.0.0.1`. Configured `[[peers]]` are outbound URLs this process *connects to*, never anything it listens on, so widening `--host` cannot expose a peer: the shipped `dummy-down` peer points at the discard port with nothing bound behind it.
 - **Which authority it answers to.** Binding loopback stops remote connections but not DNS rebinding: a hostile name can resolve to `127.0.0.1` and make a browser treat this control plane as its own origin. So every request, GET included, is checked against the authority in its `Host` header (`unexpectedHost` in `src/cli.zig`) and refused with `421 Misdirected Request` when it does not match. The same rule gates the `Origin` header on state-changing requests, as CSRF protection.
 
 The authority rule is:
@@ -966,7 +968,23 @@ An IP literal is accepted because DNS rebinding needs a *name* whose resolution 
 clanker serve --host 0.0.0.0 --serve-as clanker.lan
 ```
 
-`--serve-as` is repeatable, matched case-insensitively, and takes `--serve-as x` or `--serve-as=x`. Hot reload re-execs with the same `--host`, `--port` and `--serve-as` set, so a rebuild does not quietly narrow the policy.
+`--serve-as` is repeatable, matched case-insensitively, and takes `--serve-as x` or `--serve-as=x`. Hot reload re-execs with the *resolved* `--host`, `--webui-port` and `--serve-as` set, so a rebuild can neither quietly narrow the policy nor rebind somewhere else because the config file or the environment changed underneath it.
+
+### Setting the listener without flags
+
+`--host`/`--webui-port`/`--serve-as` are the strongest of three layers, for deployments (a systemd unit, a container) that cannot pass flags on the invocation. Weakest first:
+
+| Layer | Host | Port | Names |
+|-------|------|------|-------|
+| `[serve]` in `config.toml` / `config.local.toml` | `host` | `webui_port` | `serve_as` (a TOML array) |
+| environment | `CLANKER_HOST` | `CLANKER_WEBUI_PORT` | — |
+| flags | `--host` | `--webui-port` | `--serve-as` |
+
+Each layer overrides the one above it, so a flag beats the environment and the environment beats the file — the same order in which `--verbose` beats `CLANKER_LOG_LEVEL` and `--provider` beats `default_provider`. `[serve]` is field-merged like `[agent]`, so a `config.local.toml` that only moves the port leaves a `host` set by the base file alone. Giving `--serve-as` at all replaces the configured list rather than adding to it, so a command line that names hosts reads as the whole policy.
+
+A `CLANKER_WEBUI_PORT` that is not a 16-bit number (or is `0`) warns and is ignored, leaving the layer below it in force, rather than refusing to start.
+
+Ports are named per surface. `--host` is deliberately *not*: the process binds one address, so a second surface split out later (an API port separate from the web UI) would add its own port next to `webui_port` rather than its own host. `--port` remains accepted as an alias for `--webui-port` so existing service files keep working.
 
 ### `POST /api/run`
 

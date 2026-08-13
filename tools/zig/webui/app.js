@@ -11,7 +11,7 @@ import { metricsFor as graphMetricsFor, buildStages as graphBuildStages, graphSu
 import { boardActionLine as boardActionLineMod } from "./lib/board.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
 import { clearMarks as searchClear, markMatches as searchMark, turnForMessage } from "./core/search.js";
-import { loadPrompts as compLoadPrompts, savePrompts as compSavePrompts, promptQuery as compPromptQuery, autoGrow as compAutoGrow, contextLabel as compContextLabel, transcriptMarkdown as compTranscriptMarkdown, downloadText as compDownloadText } from "./core/composer.js";
+import { loadPrompts as compLoadPrompts, savePrompts as compSavePrompts, promptQuery as compPromptQuery, autoGrow as compAutoGrow, contextLabel as compContextLabel, transcriptMarkdown as compTranscriptMarkdown, downloadText as compDownloadText, forgetPrompt as compForgetPrompt, setActiveItem as compSetActiveItem, loadDrafts as compLoadDrafts, saveDrafts as compSaveDrafts, draftFor as compDraftFor, setDraft as compSetDraft } from "./core/composer.js";
 import { nearBottom as scrollNearBottom, prefersReducedMotion as scrollPrefersReducedMotion, syncScrollButton as scrollSyncButton } from "./core/scroll.js";
 import { textPrompt as dialogTextPrompt, finishTextPrompt as dialogFinishTextPrompt, bindDialog as dialogBindDialog } from "./core/dialog.js";
 import { renderUsageTable as usageRenderTable } from "./core/usage.js";
@@ -246,6 +246,49 @@ function loadSession() {
   return id;
 }
 
+/* ---------- unsent drafts ----------
+
+   What is in the composer belongs to the conversation it was written for. It
+   is saved under that id as you type, put back when the conversation is
+   reopened or the page reloads, and dropped once a run using it finishes.
+   `drafts` is the whole store; `core/composer.js` owns its shape and bounds
+   its size. */
+var drafts = compLoadDrafts();
+var draftTimer = null;
+
+/* Debounced: this runs on every keystroke, and localStorage is synchronous. */
+function rememberDraft() {
+  if (draftTimer) window.clearTimeout(draftTimer);
+  draftTimer = window.setTimeout(flushDraft, 400);
+}
+
+function flushDraft() {
+  if (draftTimer) { window.clearTimeout(draftTimer); draftTimer = null; }
+  compSetDraft(drafts, sessionId, el.task.value);
+  compSaveDrafts(drafts);
+}
+
+function dropDraft(id) {
+  compSetDraft(drafts, id || sessionId, "");
+  compSaveDrafts(drafts);
+}
+
+/* Only ever fills an empty composer. Restoring over text the reader is in the
+   middle of writing would be the same loss this exists to prevent, in the
+   other direction. */
+function restoreDraft() {
+  var saved = compDraftFor(drafts, sessionId);
+  if (!saved || el.task.value) return false;
+  el.task.value = saved;
+  syncControls();
+  autoGrow();
+  // Appended rather than assigned: the caller has usually just said what it
+  // loaded, and that line is still true.
+  var said = el.sessionStatus.textContent;
+  el.sessionStatus.textContent = (said ? said + " " : "") + "Restored the unsent task.";
+  return true;
+}
+
 function renderSessionChip() {
   if (el.sessionChip) el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
   var sel = el.modelSelect ? el.modelSelect.value : "";
@@ -294,7 +337,11 @@ el.themeToggle.addEventListener("click", function () {
 
 el.newChat.addEventListener("click", function () {
   if (busy) return;
+  // The half-written task belongs to the conversation being left, so it is
+  // saved there and the new one opens with an empty composer.
+  flushDraft();
   sessionId = newSessionId();
+  el.task.value = "";
   try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
   el.transcript.textContent = "";
   // createTurn hides the empty state and nothing ever put it back, so after
@@ -307,6 +354,8 @@ el.newChat.addEventListener("click", function () {
   // reload to make it selectable.
   renderSessionOptions(knownSessions);
   el.sessionStatus.textContent = "Started a new conversation.";
+  syncControls();
+  autoGrow();
   el.task.focus();
 });
 
@@ -741,7 +790,11 @@ function switchSession(id, jump) {
     el.sessionStatus.textContent = "Finish or stop the current run before switching conversation.";
     return;
   }
+  // Written down before the id moves, or it would be saved against the
+  // conversation being opened rather than the one being left.
+  flushDraft();
   sessionId = id;
+  el.task.value = "";
   try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
   renderSessionChip();
   renderSessionOptions(null);
@@ -756,6 +809,7 @@ function switchSession(id, jump) {
       syncTranscriptEmpty();
       var n = (data.messages || []).length;
       el.sessionStatus.textContent = "Loaded " + n + (n === 1 ? " message." : " messages.");
+      restoreDraft();
       if (jump) jumpToMessage(jump.index, jump.query);
     })
     .catch(function (err) {
@@ -764,6 +818,9 @@ function switchSession(id, jump) {
       p.textContent = "Could not load that conversation: " + err.message;
       el.transcript.appendChild(p);
       el.sessionStatus.textContent = p.textContent;
+      // The transcript did not load, but the composer is this conversation's
+      // either way — leaving it empty would look like the draft was lost.
+      restoreDraft();
     });
 }
 
@@ -886,6 +943,8 @@ el.sessionDelete.addEventListener("click", function () {
       .then(readJson)
       .then(function () {
         el.sessionStatus.textContent = "Deleted. Started a new conversation.";
+        // Nothing left for the draft to belong to.
+        dropDraft(sessionId);
         sessionId = newSessionId();
         try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
         el.transcript.textContent = "";
@@ -1555,6 +1614,9 @@ el.form.addEventListener("drop", function (e) {
 });
 
 el.task.addEventListener("input", syncControls);
+el.task.addEventListener("input", rememberDraft);
+// A tab closed or reloaded mid-sentence has no other chance to write.
+window.addEventListener("beforeunload", flushDraft);
 
 // Voice input — Web Speech API
 (function(){
@@ -1837,6 +1899,10 @@ el.form.addEventListener("submit", function (e) {
       return;
     }
     el.task.value = "";
+    // The draft was this task; it has been asked and answered. Cleared only on
+    // this path — the branch above deliberately leaves an unfinished run's task
+    // in the composer, and that is exactly a draft worth keeping.
+    dropDraft(sessionId);
     // Attachments belong to the turn that just went out, not the next one.
     pendingImages.length = 0;
     renderAttachments();
@@ -4630,6 +4696,11 @@ function hidePromptList() {
   el.promptList.textContent = "";
   el.task.setAttribute("aria-expanded", "false");
   el.task.removeAttribute("aria-activedescendant");
+  // The one place that means "no suggestion list is open", so it is also where
+  // the mention list's own state stops being true. Leaving the flag set is what
+  // let a key meant for one list be dispatched against another.
+  kbMentionActive = false;
+  kbMentionIndex = 0;
 }
 
 var SLASH_CMDS = [
@@ -4693,15 +4764,40 @@ function usePrompt(text) {
 function taskInputHandler(){ var q=slashQuery(); if(q) renderSlashList(); else renderPromptList(); }
 el.task.addEventListener("input", taskInputHandler);
 el.task.addEventListener("blur", function () { window.setTimeout(hidePromptList, 120); });
+/* One popup, three lists: saved prompts, `/` commands, and `#` knowledge
+   collections. Each keeps its own highlight — `promptIndex` for the first two,
+   `kbMentionIndex` for mentions — and the handler has to know which one is on
+   screen before it moves anything or acts on a row.
+
+   It did not. Every key was treated as belonging to the prompt list, so with
+   the `#` mention list open: an arrow key nudged `promptIndex` and re-rendered
+   the *prompt* list, which for a value not starting with `/` hides the popup —
+   the first arrow press dismissed the mentions rather than walking them; Enter
+   always activated the first row whatever was highlighted; and Delete read the
+   row's label ("3 docs") as the name of a saved prompt, found it absent, and
+   `splice(-1, 1)` silently forgot your most recently saved prompt instead. The
+   index left over from another list can also be past the end of a shorter one,
+   which made `items[promptIndex]` undefined and the keypress a TypeError. */
 el.task.addEventListener("keydown", function (e) {
   var isSlash = slashQuery() !== null;
   if (el.promptList.hidden) return;
   var items = el.promptList.querySelectorAll(".palette-item");
   if (!items.length) return;
+  var list = kbMentionActive ? "kb" : (isSlash ? "slash" : "prompt");
+  var at = list === "kb" ? kbMentionIndex : promptIndex;
+  if (typeof at !== "number" || at < 0 || at >= items.length) at = 0;
   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     e.preventDefault();
-    promptIndex = (promptIndex + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-    if(isSlash) renderSlashList(); else renderPromptList();
+    at = (at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    if (list === "kb") {
+      // Moved in place: the mention list is built from a /api/knowledge fetch,
+      // and re-rendering would be one request per arrow key.
+      kbMentionIndex = at;
+      compSetActiveItem(el.promptList, at, el.task);
+    } else {
+      promptIndex = at;
+      if (isSlash) renderSlashList(); else renderPromptList();
+    }
     return;
   }
   if (e.key === "Escape") {
@@ -4709,10 +4805,10 @@ el.task.addEventListener("keydown", function (e) {
     hidePromptList();
     return;
   }
-  if (!isSlash && e.key === "Delete") {
+  if (list === "prompt" && e.key === "Delete") {
     e.preventDefault();
-    var doomed = items[promptIndex].querySelector(".palette-label").textContent;
-    prompts.splice(prompts.indexOf(doomed), 1);
+    var doomed = items[at].querySelector(".palette-label").textContent;
+    if (!compForgetPrompt(prompts, doomed)) return;
     savePrompts();
     el.sessionStatus.textContent = "Forgot that prompt.";
     renderPromptList();
@@ -4720,16 +4816,15 @@ el.task.addEventListener("keydown", function (e) {
   }
   if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) {
     e.preventDefault();
-    if(kbMentionActive){
-      var kbItem = el.promptList.querySelector(".palette-item");
-      if(kbItem) kbItem.dispatchEvent(new MouseEvent("mousedown", {bubbles:true, cancelable:true}));
+    if (list === "kb") {
+      items[at].dispatchEvent(new MouseEvent("mousedown", {bubbles:true, cancelable:true}));
       return;
     }
-    if(isSlash){
-      var q2=slashQuery(); var m=SLASH_CMDS.filter(function(c){ return c.cmd.indexOf(q2.head)===0; })[promptIndex];
+    if (list === "slash") {
+      var q2=slashQuery(); var m=SLASH_CMDS.filter(function(c){ return c.cmd.indexOf(q2.head)===0; })[at];
       if(m) useSlash(m, q2.rest);
     } else {
-      usePrompt(items[promptIndex].querySelector(".palette-label").textContent);
+      usePrompt(items[at].querySelector(".palette-label").textContent);
     }
   }
 });
@@ -5172,6 +5267,8 @@ el.task.addEventListener("input", integratedTaskInputHandler);
 renderSessionChip();
 renderSessionOptions([]);
 setBusy(false);
+// A reload should not cost the sentence you were in the middle of writing.
+restoreDraft();
 // Status is cheap and gives the header its identity chips, so it loads
 // regardless of which view opened. Rooms wait for it because they need the
 // instance name to tell this clanker's messages from a peer's.

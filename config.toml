@@ -140,6 +140,18 @@ repl_exec_allow = []
 name = "clanker"
 id = "main"
 
+# What `clanker serve` binds, for a deployment that cannot pass flags.
+# CLANKER_HOST / CLANKER_WEBUI_PORT override these, and --host /
+# --webui-port / --serve-as override those in turn. Commented out because
+# the default (loopback, 17921) is the one that is safe unattended.
+# [serve]
+# host = "0.0.0.0"
+# webui_port = 17921
+# serve_as = ["clanker.lan"]
+
+# Outbound only: a peer is a URL this instance connects to, never a port it
+# opens. `dummy-down` points at the discard port on purpose, so `phonebook`
+# and `notify` have a reachable-but-refused case to exercise.
 [[peers]]
 name = "dummy-down"
 url = "http://127.0.0.1:9"

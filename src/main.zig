@@ -156,7 +156,7 @@ pub fn main(init: std.process.Init) !void {
             error.BadIters => cli.printUsageError(init.io, "--iters wants a non-negative integer, got '{s}'", .{diag}),
             error.BadBudget => cli.printUsageError(init.io, "--budget wants a non-negative integer, got '{s}'", .{diag}),
             error.BadRounds => cli.printUsageError(init.io, "--rounds wants a non-negative integer, got '{s}'", .{diag}),
-            error.BadPort => cli.printUsageError(init.io, "--port wants a 16-bit port number, got '{s}'", .{diag}),
+            error.BadPort => cli.printUsageError(init.io, "--webui-port wants a 16-bit port number, got '{s}'", .{diag}),
             error.BadDirection => cli.printUsageError(init.io, "--direction wants 'min' or 'max', got '{s}'", .{diag}),
             error.BadJudge => cli.printUsageError(init.io, "--judge wants 'self' or 'third', got '{s}'", .{diag}),
             error.ArenaMixedPositions => cli.printUsageError(init.io, "use --for/--against for a two-way match or repeated --position for a battle royale, not both", .{}),

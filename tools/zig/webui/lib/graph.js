@@ -20,6 +20,42 @@ export function buildStages(nodes) {
   return { stages: stages, final: final };
 }
 
+/* Where a run spent its time: the total of every step's own duration, and the
+   one step that took the most of it.
+
+   The total is a sum of the recorded steps, not the run's wall clock. Tools in
+   the same iteration run in parallel, so the sum can exceed the wall clock, and
+   the number worth acting on is a step's share of the work rather than of the
+   elapsed time. `slowest` is null for a run whose steps are all untimed. */
+export function graphTotals(built) {
+  var total = 0;
+  var slowest = null;
+  var slowestKind = "";
+  var timed = 0;
+  var consider = function (node, kind) {
+    var ms = node && node.duration_ms;
+    if (typeof ms !== "number" || !(ms > 0)) return;
+    total += ms;
+    timed += 1;
+    if (!slowest || ms > slowest.duration_ms) { slowest = node; slowestKind = kind; }
+  };
+  built.stages.forEach(function (stage) {
+    consider(stage.llm, "model call");
+    stage.tools.forEach(function (t) { consider(t, "tool"); });
+  });
+  if (built.final) consider(built.final, "final answer");
+  return { total: total, slowest: slowest, slowestKind: slowestKind, timed: timed };
+}
+
+/* A step is worth pointing at only when there is another one to compare it
+   with, and when it actually dominates: on two evenly matched steps "slowest"
+   is noise rather than a finding. */
+export function slowestWorthNaming(totals) {
+  if (!totals.slowest || totals.timed < 2) return null;
+  if (totals.slowest.duration_ms / totals.total < 0.4) return null;
+  return totals.slowest;
+}
+
 export function graphSummaryText(built) {
   var parts = ["Execution graph:"];
   built.stages.forEach(function (stage) {
@@ -29,6 +65,15 @@ export function graphSummaryText(built) {
     parts.push(seg + ".");
   });
   parts.push(built.final ? "The run ended with a final answer." : "The run ended without a final answer.");
+  var totals = graphTotals(built);
+  var worth = slowestWorthNaming(totals);
+  if (worth) {
+    parts.push("The slowest step was the " + totals.slowestKind + " " + (worth.label || worth.detail || "") +
+      " at " + worth.duration_ms + "ms, " + Math.round(worth.duration_ms / totals.total * 100) +
+      "% of the " + totals.total.toLocaleString("en-US") + "ms the steps took together.");
+  } else if (totals.total) {
+    parts.push("The steps took " + totals.total.toLocaleString("en-US") + "ms together, none of them dominating.");
+  }
   return parts.join(" ");
 }
 
@@ -76,8 +121,12 @@ export function buildIncompleteNode(nodeW) {
   return stop;
 }
 
-export function buildNodeBox(d, slowest, nodeW) {
+/* `opts.slowest` is the node graphTotals picked out, when it is worth naming.
+   The mark is not a colour: the duration badge says "slowest" in words next to
+   the number, and the button's own accessible name says it too. */
+export function buildNodeBox(d, slowest, nodeW, opts) {
   var kind = d.kind, node = d.node;
+  var isSlowest = !!(opts && opts.slowest && opts.slowest === node);
   var box = document.createElement("button");
   box.type = "button";
   box.className = "run-node";
@@ -112,12 +161,14 @@ export function buildNodeBox(d, slowest, nodeW) {
     var dur = document.createElement("span");
     dur.className = "run-node-duration";
     dur.textContent = (node.duration_ms < 1000 ? node.duration_ms + "ms" : (node.duration_ms/1000).toFixed(1) + "s");
+    if (isSlowest) dur.dataset.slowest = "true";
     dur.setAttribute("aria-hidden", "true");
     box.appendChild(dur);
   }
+  if (isSlowest) box.dataset.slowest = "true";
   var metrics = document.createElement("span");
   metrics.className = "run-node-metrics";
-  metrics.textContent = metricsFor(node) + (fileHint ? " · " + fileHint : "");
+  metrics.textContent = metricsFor(node) + (fileHint ? " · " + fileHint : "") + (isSlowest ? " · slowest step" : "");
   box.appendChild(metrics);
   if (kind !== "final") {
     var bar = document.createElement("span");
@@ -128,7 +179,8 @@ export function buildNodeBox(d, slowest, nodeW) {
     box.appendChild(bar);
   }
   box.setAttribute("data-label", node.label || node.detail || kind);
-  box.setAttribute("aria-label", (node.ok === false ? "failed " : "") + kind + " " + (node.label || "") + ", " + metricsFor(node) + ". Activate to read its recorded output.");
+  box.setAttribute("aria-label", (node.ok === false ? "failed " : "") + kind + " " + (node.label || "") + ", " + metricsFor(node) +
+    (isSlowest ? ", the slowest step of this run" : "") + ". Activate to read its recorded output.");
   return box;
 }
 
@@ -154,8 +206,11 @@ export function layoutGraph(canvas, built, slowest, opts) {
   canvas.querySelectorAll(".run-node, .run-node-incomplete, .run-iter-tag, svg.run-edges, .run-empty").forEach(function (el) { el.remove(); });
   var data = toDagInput(built);
   if (!data.length) return Promise.resolve();
+  // One node per run gets called out as the bottleneck; graphTotals decides
+  // whether there is one worth pointing at.
+  var slowestNode = slowestWorthNaming(graphTotals(built));
   data.forEach(function (d) {
-    d.el = d.kind === "incomplete" ? buildIncompleteNode(nodeW) : buildNodeBox(d, slowest, nodeW);
+    d.el = d.kind === "incomplete" ? buildIncompleteNode(nodeW) : buildNodeBox(d, slowest, nodeW, { slowest: slowestNode });
     d.el.style.visibility = "hidden";
     canvas.appendChild(d.el);
   });

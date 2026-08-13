@@ -1254,6 +1254,10 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .run-edges path[data-highlight="true"] { stroke: var(--accent); stroke-width: 2; stroke-opacity: 1; }
 .run-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .run-node-duration { position: absolute; top: 4px; right: 6px; font-size: 10px; font-weight: 600; color: var(--fg-muted); background: var(--surface-2); border: 1px solid var(--rule); border-radius: 999px; padding: 0 0.35rem; line-height: 1.4; }
+/* The run's bottleneck. The badge already says "slowest" in words, so this is
+   emphasis on top of a label rather than the only thing carrying it. */
+.run-node[data-slowest="true"] { border-color: var(--warn); }
+.run-node-duration[data-slowest="true"] { color: var(--warn-text); border-color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--surface-2)); }
 .run-node-label { display: block; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 2.2rem; }
 .run-node-metrics { font-variant-numeric: tabular-nums; display: block; color: var(--fg-muted); font-size: var(--step-0); margin-top: 0.15rem; }
 /* The bar is the picture: width is the node's share of the run's slowest node. */

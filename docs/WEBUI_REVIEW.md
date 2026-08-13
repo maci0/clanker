@@ -1198,6 +1198,167 @@ and the no-match case draws nothing at all. Gate: `zig build`,
 `zig build tools`, `zig build test --summary all` — 163/163 steps, 765/767
 tests (2 skipped, the expected worktree pair).
 
+## One popup, three lists, one index (2026-08-13)
+
+The composer's suggestion popup (`#prompt-list`) is shared by three different
+lists: saved prompts, `/` commands, and the `#` knowledge-collection mentions.
+Each keeps its own highlight — `promptIndex` for the first two, `kbMentionIndex`
+for mentions — but the keydown handler only ever knew about `promptIndex` and
+the prompt list. Every key pressed while the mention list was open was
+dispatched against the wrong one.
+
+- **An arrow key dismissed the mentions.** ↓ nudged `promptIndex` and called
+  `renderPromptList()`, and `renderPromptList` hides the popup outright when the
+  composer's value does not start with `/`. So the first arrow press closed the
+  list it was meant to walk; the mentions could only be picked with the mouse,
+  or with Enter, which —
+- **— always took the first row.** The Enter branch reached for
+  `el.promptList.querySelector(".palette-item")`, the first item in the DOM,
+  ignoring `kbMentionIndex` entirely. `kbMentionIndex` was written by the
+  renderer and read by nobody.
+- **Delete forgot a prompt you had not asked it to.** The Delete branch was
+  guarded on `!isSlash` only, so it fired for mentions too. It read the row's
+  label — `"3 docs"` — as the text of a saved prompt and ran
+  `prompts.splice(prompts.indexOf(doomed), 1)`. `indexOf` is `-1`, and
+  `splice(-1, 1)` removes the **last** element: pressing Delete over a knowledge
+  collection silently deleted your most recently saved prompt and wrote that to
+  `localStorage`, under the status line "Forgot that prompt."
+- **A stale index could be past the end.** With six saved prompts and a mention
+  list of two, `promptIndex` was still 5 and `items[5]` is `undefined` — Enter or
+  Delete then threw on `.querySelector` of undefined.
+
+- **`core/composer.js: forgetPrompt(prompts, text)`** — removes by exact text
+  and says whether it removed anything. The `-1` case is the whole point.
+- **`core/composer.js: setActiveItem(listEl, index, taskEl)`** — moves the
+  highlight and `aria-activedescendant` inside a list that is already on screen,
+  and clamps an out-of-range index to the first row. The mention list is built
+  from a `/api/knowledge` fetch, so re-rendering it to move a highlight would be
+  one request per arrow key.
+- **`app.js`** — the handler now names which list is on screen (`kb`, `slash` or
+  `prompt`), reads that list's own index, clamps it against what is actually
+  rendered, and routes every key accordingly. Delete is offered for saved
+  prompts only. `hidePromptList` clears the mention flag, since it is the one
+  place that means "no suggestion list is open".
+
+### Verified
+
+`node` driving the real `core/composer.js`. `forgetPrompt` over a three-prompt
+list: the named prompt goes, a text that was never saved removes nothing and in
+particular leaves the *last* prompt alone, and an empty list is total.
+`setActiveItem` over a rendered list of `.palette-item` rows: exactly one row
+carries `aria-selected="true"`, `aria-activedescendant` names it, the rows are
+not rebuilt, an index of 5 against two rows falls back to the first, and an
+empty list reports `-1` rather than throwing. The keydown handler is checked as
+source shape — including that no bare `prompts.splice(prompts.indexOf(...))` is
+left in the file — since importing `app.js` boots the page. 32 assertions
+green; against unmodified `main` the same harness fails 25 of its 32.
+
+## The composer keeps what you were writing (2026-08-13)
+
+A half-written task had no owner. Reloading the page threw it away, and so did
+opening another conversation — which is precisely what you do when the question
+needs something you have to go and look up first. The composer text was the one
+thing on the page with nowhere to live: the transcript is on the server, and the
+model, theme, view, rail state and selected knowledge collections are all in
+`localStorage`. The sentence you were in the middle of was not.
+
+A draft now belongs to the conversation it was written for.
+
+- **`core/composer.js: loadDrafts()`, `saveDrafts(drafts)`,
+  `draftFor(drafts, sessionId)`, `setDraft(drafts, sessionId, text, now)`** —
+  pure but for the one `localStorage` read and write, and the whole shape of the
+  store. One key (`clanker.drafts`), not one per conversation: a profile that
+  has seen a thousand conversations should not carry a thousand entries, so
+  `setDraft` bounds the store to the `max_drafts` (20) most recently touched and
+  drops the rest by age. Whitespace is not a draft — an empty or blank composer
+  deletes the entry rather than storing it, so restoring can never replace a
+  cleared box with blanks. Storage that is unparseable, an array, `null`, or an
+  entry of the wrong shape all read as "no draft" rather than throwing.
+- **`app.js`** — `rememberDraft` on `input`, debounced 400 ms because
+  `localStorage` is synchronous and this is every keystroke; `flushDraft` on
+  `beforeunload` so a closed tab is not a special case. `switchSession` flushes
+  *before* the id moves — otherwise the text would be filed against the
+  conversation being opened — and restores after the transcript lands, or after
+  a failed load, where an empty composer would otherwise read as the draft
+  having been lost. New chat banks the draft against the conversation it leaves
+  and opens with an empty box. Boot restores.
+- **When a draft stops existing** — a run that finishes drops it: it was asked
+  and answered. A run that *doesn't* finish deliberately does not; the existing
+  "the run ended before it finished; your task is still in the composer" branch
+  leaves the task in the box, and that is exactly a draft worth keeping.
+  Deleting a conversation drops its draft, since there is nothing left for it to
+  belong to.
+- **Restore never overwrites.** It fills an empty composer only. Dropping a
+  saved draft on top of a sentence someone is writing is the same loss in the
+  other direction.
+
+### Verified
+
+`node` driving the real `core/composer.js` against the DOM stub's
+`localStorage`. A draft written for one conversation comes back from a fresh
+read of storage (a reload); two conversations keep their own and a third gets
+nothing; an empty text and a whitespace-only text both clear the entry rather
+than storing it. The bound: `max_drafts + 5` conversations leave exactly
+`max_drafts` entries, the oldest is the one dropped, the newest is kept, and
+touching an old draft stops it being evicted for its age. Storage that is
+unparseable, an array, `null`, an entry with no `text` and an entry that is a
+bare string all read as no draft. The `app.js` wiring is checked as source shape
+— the debounce, the `beforeunload` flush, flush-before-id-moves, restore after
+load and after a failed load, the New chat and delete paths, and that restore
+returns early when the box is not empty — since importing `app.js` boots the
+page. 37 assertions green; against unmodified `main` the same harness fails 20
+of its 33.
+Gate: `zig build`, `zig build tools`, `zig build test --summary all`.
+
+## The run graph points at the bottleneck (2026-08-13)
+
+A run graph already showed every step's duration, twice: a badge on the card and
+a bar scaled against the slowest node. Neither says which step *was* the slowest
+one, so finding it meant reading fifteen badges and comparing them by eye, and
+the bar is no help at all for that — the slowest node's bar is full, and so is
+that of anything within a few percent of it. The sr-only summary, which is both
+what a screen reader hears and what `Copy summary` puts on the clipboard,
+described the shape of the run and said nothing about its cost.
+
+`lib/graph.js` now works out where the time went, and both surfaces say so:
+
+- **`graphTotals(built)`** — the sum of every timed step, how many there were,
+  the longest one and what kind of step it was. A sum of steps, not a wall
+  clock: tools in one iteration run in parallel, so the total can exceed the
+  elapsed time, and a step's share of the *work* is the number worth acting on.
+- **`slowestWorthNaming(totals)`** — the editorial half, kept separate because it
+  is a judgement rather than arithmetic. A step is only called out when there is
+  another timed step to compare it against and it took at least 40% of the
+  total. On a run of evenly matched calls "slowest" is noise, and a run with one
+  timed step is not its own bottleneck.
+- **The node** gets `data-slowest`, the words `· slowest step` on its metrics
+  line, and `, the slowest step of this run` in its accessible name. The colour
+  on the border and the duration badge is emphasis on top of a label, not the
+  thing carrying it.
+- **The summary** gains a closing sentence: `The slowest step was the tool grep
+  at 900ms, 67% of the 1,350ms the steps took together.` When nothing dominates
+  it says so instead, rather than promoting whichever step happened to come
+  first.
+
+`buildNodeBox` takes the pick through a new optional `opts` argument, so its
+existing signature and every other caller are unchanged.
+
+### Verified
+
+`node` + the DOM stub driving the real `lib/graph.js`, with `core/vendor.js`
+swapped for a stub whose `loadD3` installs a fake `dagStratify`/`sugiyama`, so
+`layoutGraph` really runs and really builds the nodes. 37 assertions, 17 of them
+this slice: exactly one node marked across a five-node graph, that it is the
+900ms `grep` and not the 300ms model call, the mark present in the metrics text
+and the accessible name as well as the attribute, the totals (1,350ms over four
+timed steps, longest `grep`, kind `tool`), the summary naming the step, its
+share and the total, and both refusals — three steps within 10ms of each other
+name nobody, and neither does a run with a single timed step. Against unmodified
+`main` the same harness fails 6 of them, including the two new exports not
+existing. The `app.css` rules are two lines and are checked as source shape.
+Gate: `zig build`, `zig build tools`, `zig build test --summary all` — 163/163
+steps, 766/768 tests (2 skipped, the expected worktree pair).
+
 ## The Models view hands you the config.toml entry (2026-08-13)
 
 The Models view exists so that finding a model to add to `config.toml` does not
