@@ -2,15 +2,16 @@
 
 ## Status
 
-Draft. Nothing in this PRD is built yet. Named here as the open question
-already on record in
-[docs/prds/0010-plugin-manifest-sdk.md](0010-plugin-manifest-sdk.md#open-questions--future-work)
-and in `docs/ROADMAP.md`'s plugin-manifest-SDK entry: "`agent.tools_dir` as a
-list... is what still stands between the packaging slice and installing a
-third-party plugin *alongside* the built-in ones rather than instead of them."
-This PRD resolves that question with a concrete design. Sources of truth once
-built: `src/tools/registry.zig` (`Registry.load`), `src/config.zig`
-(`Agent.tools_dir`), `tools/zig/plugins.zig`.
+Shipped. `agent.tools_dir` is a list (`[]const []const u8`); a bare string
+still parses as one entry. `Registry.load` scans each directory in order,
+last-listed wins on a cross-directory `name` collision (with a warning),
+and a missing list entry warns and continues. `plugins` / `tools` guests
+read the configured list via `ck_harness_config` (`tools_dirs`) and list
+every directory; `clanker plugins new` writes into the first-listed one;
+`clanker plugins validate` with no path validates every configured
+directory. Sources of truth: `src/config.zig` (`Agent.tools_dir`,
+`firstToolsDir`), `src/tools/registry.zig` (`Registry.load`),
+`tools/zig/plugins.zig`, `tools/zig/lib.zig` (`toolsDirs`).
 
 Distribution (fetch/install/signing/a registry index) is not reopened here —
 see [ADR 0007](../adrs/0007-plugin-manifests-are-declarative-and-unsigned.md).
@@ -233,12 +234,12 @@ behavior). No per-directory `enabled` toggle (remove the entry from
 
 ## Known issues
 
-- `tools/zig/plugins.zig:13` hardcodes `tools_dir = "tools/manifests"`
-  instead of reading `agent.tools_dir` from the harness at all. This predates
-  this PRD (it is wrong today for anyone who already set a non-default
-  `tools_dir`) but must be fixed as part of Goal 5, not filed as a separate
-  follow-up, since multi-directory support is meaningless from the guest's
-  point of view otherwise.
+- An isolated `--worktree` run still cannot list a host-absolute
+  `tools_dir` that sits outside both the worktree and `shared_root`. The
+  host registry loads it; the plugins/tools guest walk is denied unless
+  that path is also granted as an `fs_prefixes` extra (which
+  `fsPrefixesFor` now does). Relative extra directories under the
+  checkout work as designed.
 
 ## Failure modes
 
@@ -255,27 +256,27 @@ behavior). No per-directory `enabled` toggle (remove the entry from
 
 ## Acceptance criteria
 
-- [ ] `Agent.tools_dir` is `[]const []const u8`; a bare JSON string at the
+- [x] `Agent.tools_dir` is `[]const []const u8`; a bare JSON string at the
       `tools_dir` key still parses (normalized to one entry).
-- [ ] `Registry.load` accepts a directory list, scans each in order, and
+- [x] `Registry.load` accepts a directory list, scans each in order, and
       last-listed wins on a cross-directory `name` collision, with a warning
       logged naming both source paths.
-- [ ] A missing directory in the list logs a warning and does not prevent the
+- [x] A missing directory in the list logs a warning and does not prevent the
       remaining directories from loading.
-- [ ] Every existing call site (`cli.zig`, `repl_vaxis.zig`, `subagent.zig`,
+- [x] Every existing call site (`cli.zig`, `repl_vaxis.zig`, `subagent.zig`,
       `phonebook.zig`, `mcp/server.zig`, `autoresearch.zig`, `doctor.zig`,
       `improve/engine.zig`, `gate/checks.zig`) compiles against the new
       signature with no added branching on directory count.
-- [ ] `plugins` reads the configured directory list via
+- [x] `plugins` reads the configured directory list via
       `ck_harness_config` instead of its hardcoded default; `/plugins list`,
       `/api/plugins`, and `clanker plugins list` (which delegates to the same
       guest per PRD 0010) all show tools from every configured directory.
-- [ ] `clanker plugins new` with 2+ configured directories writes into the
+- [x] `clanker plugins new` with 2+ configured directories writes into the
       first-listed one; with exactly one, behavior is unchanged.
-- [ ] `clanker plugins validate` with no argument and 2+ configured
+- [x] `clanker plugins validate` with no argument and 2+ configured
       directories validates all of them and exits non-zero on any error in
       any of them.
-- [ ] A test exists exercising: bare-string config still works; a two-entry
+- [x] A test exists exercising: bare-string config still works; a two-entry
       list loads tools from both; a same-name collision across two
       directories resolves to the later one with a warning; a missing entry
       in the list does not empty the whole registry.

@@ -244,13 +244,13 @@ existing docs:
 - [x] `docs/manifest.md` written from the loader; three inaccurate claims in the old docs fixed
 - [x] Live-verified: a scaffolded tool was built, discovered through the lazy catalog, and called correctly by a real model run
 - [x] `zig build` / `zig build tools` / `zig build test` green
-- [ ] Out-of-tree loading verified end to end through `agent.tools_dir` (unit-tested at `Registry.load`; not exercised as a live run, because pointing `tools_dir` at a package replaces the built-in tools — see Non-goals)
+- [x] Out-of-tree loading verified end to end through `agent.tools_dir` (list form shipped in [PRD 0022](0022-out-of-tree-tools.md); unit-tested at `Registry.load`)
 
 ## Open questions / future work
 
-- **`agent.tools_dir` as a list: Moved to PRD 0022.** No longer an open ask
-  here. Design, acceptance criteria, and the `plugins` hardcoded-path fix
-  live in [PRD 0022 (out-of-tree tools)](0022-out-of-tree-tools.md).
+- **`agent.tools_dir` as a list: Shipped in PRD 0022.** A string or an array;
+  later-listed wins on a name collision. See
+  [PRD 0022 (out-of-tree tools)](0022-out-of-tree-tools.md).
 - **Should the validator run as part of `clanker gate`?** It is cheap and the
   tree is clean, so it would stay green — but it would also make the loader's
   forgiveness irrelevant inside this repo, which may be the point or may be a

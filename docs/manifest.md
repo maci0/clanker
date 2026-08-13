@@ -168,20 +168,19 @@ clanker plugins validate ./my-plugin
 ```toml
 # config.local.toml
 [agent]
-tools_dir = "./my-plugin"
+tools_dir = ["tools/manifests", "./my-plugin"]
 ```
 
-Two honest limits on that today, both deliberate rather than unfinished:
+A later-listed directory wins on a tool `name` collision, so put overrides
+last. A bare string still works and still means one directory.
 
-- **`agent.tools_dir` is one directory, not a list.** Pointing it at a plugin
-  package replaces the built-in tools rather than adding to them. Installing a
-  third-party plugin into a working clanker means copying its two files into
-  `tools/manifests/` and wherever its `wasm` points.
+One remaining limit, deliberate rather than unfinished:
+
 - **There is no trust story.** Nothing is fetched, verified, signed, or
   attributed. A manifest is a local file you are expected to have read, and its
   sandbox policy is the only thing standing between the module and your
-  machine — so read the policy before you copy the files, the same way you would
-  read a shell script before running it. See
+  machine — so read the policy before you point `tools_dir` at it, the same way
+  you would read a shell script before running it. See
   [ADR 0007](adrs/0007-plugin-manifests-are-declarative-and-unsigned.md).
 
 ## Validation

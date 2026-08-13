@@ -42,28 +42,29 @@ and Implementation lists checkable file-level phases.
 | [0019](0019-github-fs.md) | GitHub filesystem | Draft | Dedicated `gh_read` tool |
 | [0020](0020-auto-thinking.md) | Auto thinking | Draft | Selects effort; 0024 writes params |
 | [0021](0021-smart-commit.md) | Smart commit | Draft | |
-| [0022](0022-out-of-tree-tools.md) | Out-of-tree tools | Draft | Unblocks third-party alongside builtins |
+| [0022](0022-out-of-tree-tools.md) | Out-of-tree tools | Shipped | `tools_dir` is a list; last-listed wins |
 | [0023](0023-webui-model-config.md) | Web UI model config | Draft | Read half shipped; write half open |
 | [0024](0024-sampling-profiles.md) | Sampling profiles | Draft | After 0025 |
 | [0025](0025-fallback-provider-chain.md) | Fallback provider chain | Draft | Before 0024 |
 | [0026](0026-llm-proxy.md) | LLM compatibility proxy | Draft | Independent of agent-loop drafts; four-PR plan |
+| [0027](0027-write-goal.md) | write-goal drafting | Draft | Field-list blocker; proof/stop_rule write-only |
 
 ## Recommended build order (Drafts)
 
 Packaging and reliability first, then agent-loop quality, then heavy
 optional subsystems:
 
-1. **0022** — `tools_dir` as a list (unblocks third-party plugins)
-2. **0025** — fallback provider chain (before sampling call-site work)
-3. **0023** — web UI model config writes
-4. **0014** — hashline (edit reliability)
-5. **0015** / **0020** — advisor + auto thinking (shared side-channel)
-6. **0024** — sampling profiles (after 0025; after numbers pinned)
-7. **0013** — TTSR (substring engine)
-8. **0016** then **0017** — eval kernel, then DAP
-9. **0019** — `gh_read`
-10. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
-11. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
+1. **0025** — fallback provider chain (before sampling call-site work)
+2. **0023** — web UI model config writes
+3. **0014** — hashline (edit reliability)
+4. **0015** / **0020** — advisor + auto thinking (shared side-channel)
+5. **0024** — sampling profiles (after 0025; after numbers pinned)
+6. **0013** — TTSR (substring engine)
+7. **0016** then **0017** — eval kernel, then DAP
+8. **0019** — `gh_read`
+9. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
+10. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
+11. **0027** — `write-goal` (field-list blocker still open)
 
 ## Editing rules (short)
 

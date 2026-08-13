@@ -760,17 +760,23 @@ const command_registry = [_]CommandSpec{
 };
 
 const arena_command_help =
-    \\usage: /arena "<question>" --for "<stance>" --against "<stance>" [--rounds N] [--judge self|third]
-    \\       /arena "<question>" --position "<stance>" --position "<stance>" [--position "<stance>"]...
+    \\usage: /arena "<question>" --for "<stance>" --against "<stance>"
+    \\       [--rounds N] [--judge self|third]
+    \\       /arena "<question>" --position "<stance>" --position "<stance>"
+    \\       [--position "<stance>"]...
     \\       /arena "<question>" --defend <text|file> --alternative <text|file>
-    \\  pairwise debates accept --for-provider, --against-provider, and --judge-provider
-    \\  battle royale repeats --position 3-8 times; HP loss eliminates combatants until one remains
+    \\  pairwise debates accept --for-provider, --against-provider, and
+    \\  --judge-provider
+    \\  battle royale repeats --position 3-8 times; HP loss eliminates
+    \\  combatants until one remains
     \\  design review reads file arguments and preserves their paths in the verdict
-    \\  each round is one model call per surviving combatant, plus judge calls with --judge third
+    \\  each round is one model call per survivor, plus judge calls with
+    \\  --judge third
 ;
 
 const compare_command_help =
-    \\usage: /compare "<prompt>" [--with <provider[@model]>]... [--judge <p>|auto|none] [--synthesize] [--reveal]
+    \\usage: /compare "<prompt>" [--with <provider[@model]>]...
+    \\       [--judge <p>|auto|none] [--synthesize] [--reveal]
     \\  every model answers the same prompt at once; the answers come back as A, B, C
     \\  with nothing saying which model wrote which, so the pick is on the answer
     \\  --with repeats 2-8 times; with none, every configured provider enters
@@ -788,6 +794,25 @@ test "TUI arena and compare help cover their CLI modes" {
     const compare_flags = [_][]const u8{ "--synthesize", "--reveal", "--show", "--pick" };
     for (compare_flags) |flag| {
         try std.testing.expect(std.mem.find(u8, compare_command_help, flag) != null);
+    }
+}
+
+test "static REPL help blocks stay within 80 display columns" {
+    for ([_][]const u8{ arena_command_help, compare_command_help, shell_escape_help, keys_help }) |block| {
+        var lines = std.mem.splitScalar(u8, block, '\n');
+        while (lines.next()) |line| {
+            const width = width_mod.displayWidth(line);
+            if (width > 80) {
+                std.debug.print("static REPL help line is {d} columns: {s}\n", .{ width, line });
+                return error.TestUnexpectedResult;
+            }
+        }
+    }
+}
+
+test "key help documents discovery search scroll and editing" {
+    for ([_][]const u8{ "Tab", "Ctrl-P", "Ctrl-R", "PgUp/PgDn", "Ctrl-C", "Ctrl-Shift-C", "Ctrl-Shift-V", "Ctrl-U/K/W" }) |key| {
+        try std.testing.expect(std.mem.find(u8, keys_help, key) != null);
     }
 }
 
@@ -1128,6 +1153,22 @@ const shell_escape_help =
     \\                    tools run under, not a shell, so no pipes, globs,
     \\                    redirections or $VAR expansion
     \\  !                 list the commands the escape may run
+;
+
+const keys_help =
+    \\Keys:
+    \\  Tab               complete a /command
+    \\  Ctrl-P            command palette (matches names and descriptions)
+    \\  Ctrl-R            search transcript; Up/Down step through matches
+    \\                    Enter stays on a match; Esc returns to the tail
+    \\  Up/Down           recall previous input
+    \\  PgUp/PgDn         page transcript (Home: top; End/Esc: tail)
+    \\  Ctrl-C            stop the current turn, or quit when idle
+    \\  Ctrl-Shift-C      copy the selection (or the input line)
+    \\  Ctrl-Shift-V, Shift-Insert   paste from the system clipboard
+    \\  Ctrl-U/K/W, Ctrl-Y   kill to start/end/word, then yank
+    \\  mouse wheel       scroll the transcript
+    \\  mouse drag        select transcript text (copies on release)
 ;
 
 /// True for a submitted line with no content: empty, or only whitespace.
@@ -2662,21 +2703,7 @@ const Model = struct {
         while (it.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = !isSectionHeader(line) }) catch {};
         var eit = std.mem.splitScalar(u8, shell_escape_help, '\n');
         while (eit.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = !isSectionHeader(line) }) catch {};
-        const keys =
-            \\Keys:
-            \\  Tab               complete a /command
-            \\  Ctrl-P            command palette (fuzzy: matches mid-word and on description)
-            \\  Ctrl-R            search the transcript (Up/Down step hits, Enter stays, Esc back)
-            \\  Up/Down           recall previous input
-            \\  PgUp/PgDn         page the transcript (Home: top; End/Esc: back to tail)
-            \\  Ctrl-C            stop the current turn, or quit when idle
-            \\  Ctrl-Shift-C      copy the selection (or the input line)
-            \\  Ctrl-Shift-V, Shift-Insert   paste from the system clipboard
-            \\  Ctrl-U/K/W, Ctrl-Y   kill to start/end/word, then yank
-            \\  mouse wheel       scroll the transcript
-            \\  mouse drag        select text in the transcript (copies on release)
-        ;
-        var kit = std.mem.splitScalar(u8, keys, '\n');
+        var kit = std.mem.splitScalar(u8, keys_help, '\n');
         while (kit.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = !isSectionHeader(line) }) catch {};
     }
 

@@ -216,7 +216,8 @@ Run-loop and path settings. The commonly-touched keys:
 | `max_total_tokens`, `max_tokens_per_turn`, `max_history_tokens` | -, 4096, 16000 | Token budgets that drive compaction. |
 | `tool_catalog` | true | Send full schemas only for hot tools; let the model request the rest by name (saves thousands of tokens/request with many tools). |
 | `hot_tools` | 10 | How many most-used tools keep their schemas loaded unasked. |
-| `tools_dir`, `skills_dir`, `workflows_dir`, `chains_dir`, `state_dir`, `sandbox_root` | see defaults | Where the harness reads tools/skills/state. |
+| `tools_dir` | `tools/manifests` | One directory or a list. Later-listed wins on a tool `name` collision. |
+| `skills_dir`, `workflows_dir`, `chains_dir`, `state_dir`, `sandbox_root` | see defaults | Where the harness reads skills/state. |
 | `system_prompt_file`, `learnings_file`, `global_instructions_file` | see defaults | Prompt-assembly inputs. |
 | `git_remote_ops` | false | Whether the `git` tool may run `push`/`merge`/`checkout` (the rest of the deny list still applies). |
 | `git_commit` | true | Commit promoted self-improvements with git. |

@@ -21,6 +21,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   or a container: a `[serve]` table (`host`, `webui_port`, `serve_as`) and the
   `CLANKER_HOST` / `CLANKER_WEBUI_PORT` environment variables. Precedence is
   config < environment < flags.
+- `agent.tools_dir` accepts a list of directories as well as a string, so a
+  third-party plugin can live beside the built-in tools instead of replacing
+  them. Later-listed wins on a name collision; a missing directory warns and
+  continues. Existing `tools_dir = "tools/manifests"` configs are unchanged.
 
 ### Changed
 
