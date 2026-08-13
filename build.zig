@@ -67,6 +67,7 @@ pub fn build(b: *std.Build) void {
     // ---------------------------------------------------------------- harness
     const exe = b.addExecutable(.{
         .name = "clanker",
+        .use_llvm = true,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = exe_target,
@@ -117,7 +118,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "toml", .module = toml_test_mod },
         },
     });
-    const exe_tests = b.addTest(.{ .root_module = test_mod });
+    const exe_tests = b.addTest(.{ .root_module = test_mod, .use_llvm = true });
     const run_tests = b.addRunArtifact(exe_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
