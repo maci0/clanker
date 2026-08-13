@@ -18,6 +18,6 @@
   },
   "network_allow": ["api.github.com"],
   "env_allow": ["GITHUB_TOKEN"],
-  "fs_prefixes": ["state/"],
+  "fs_prefixes": ["state/gh_cache/"],
   "category": "code"
 }
