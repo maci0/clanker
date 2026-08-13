@@ -5,18 +5,52 @@
 //! requirement is "box borders don't visibly drift for CJK text in tool
 //! output," not full Unicode conformance.
 //!
-//! ponytail: hardcoded ranges for the scripts that actually show up (CJK,
-//! Hangul, Hiragana/Katakana, CJK punctuation/fullwidth forms), width 1 for
-//! everything else including emoji. Most terminals render single-codepoint
-//! emoji as 2 cells, so emoji-heavy text will drift a border by a column;
-//! upgrade to a full East Asian Width table if that's ever reported as an
-//! actual problem rather than a theoretical one.
+//! ponytail: hardcoded ranges for what actually shows up (CJK, Hangul,
+//! Hiragana/Katakana, CJK punctuation/fullwidth forms, and the emoji blocks
+//! whose East Asian Width is Wide), width 1 for everything else. Not a full
+//! UAX #11 table: the long tail of BMP Wide singletons and VS16-driven
+//! presentation (text-style vs emoji-style ☀) still count 1 here. The next
+//! step up, if that tail is ever reported, is vaxis's gwidth/zg tables,
+//! already in the dependency tree — not a second Unicode data source.
 
 const std = @import("std");
 const unicode = std.unicode;
 
 const wide_ranges = [_][2]u21{
     .{ 0x1100, 0x115F }, // Hangul Jamo
+    .{ 0x231A, 0x231B }, // watch, hourglass (EAW=W emoji singletons follow)
+    .{ 0x23E9, 0x23EC }, // play/fast-forward
+    .{ 0x23F0, 0x23F0 }, // alarm clock
+    .{ 0x23F3, 0x23F3 }, // hourglass with sand
+    .{ 0x25FD, 0x25FE }, // small squares
+    .{ 0x2614, 0x2615 }, // umbrella, hot beverage
+    .{ 0x2648, 0x2653 }, // zodiac
+    .{ 0x267F, 0x267F }, // wheelchair
+    .{ 0x2693, 0x2693 }, // anchor
+    .{ 0x26A1, 0x26A1 }, // high voltage
+    .{ 0x26AA, 0x26AB }, // circles
+    .{ 0x26BD, 0x26BE }, // soccer, baseball
+    .{ 0x26C4, 0x26C5 }, // snowman, sun behind cloud
+    .{ 0x26CE, 0x26CE }, // ophiuchus
+    .{ 0x26D4, 0x26D4 }, // no entry
+    .{ 0x26EA, 0x26EA }, // church
+    .{ 0x26F2, 0x26F3 }, // fountain, golf
+    .{ 0x26F5, 0x26F5 }, // sailboat
+    .{ 0x26FA, 0x26FA }, // tent
+    .{ 0x26FD, 0x26FD }, // fuel pump
+    .{ 0x2705, 0x2705 }, // check mark button
+    .{ 0x270A, 0x270B }, // fists
+    .{ 0x2728, 0x2728 }, // sparkles
+    .{ 0x274C, 0x274C }, // cross mark
+    .{ 0x274E, 0x274E }, // cross mark button
+    .{ 0x2753, 0x2755 }, // question/exclamation ornaments
+    .{ 0x2757, 0x2757 }, // heavy exclamation
+    .{ 0x2795, 0x2797 }, // plus/minus/divide
+    .{ 0x27B0, 0x27B0 }, // curly loop
+    .{ 0x27BF, 0x27BF }, // double curly loop
+    .{ 0x2B1B, 0x2B1C }, // large squares
+    .{ 0x2B50, 0x2B50 }, // star
+    .{ 0x2B55, 0x2B55 }, // heavy circle
     .{ 0x2E80, 0x303E }, // CJK Radicals, punctuation
     .{ 0x3041, 0x33FF }, // Hiragana .. CJK compat
     .{ 0x3400, 0x4DBF }, // CJK ext A
@@ -25,6 +59,15 @@ const wide_ranges = [_][2]u21{
     .{ 0xAC00, 0xD7A3 }, // Hangul Syllables
     .{ 0xF900, 0xFAFF }, // CJK Compatibility Ideographs
     .{ 0xFF00, 0xFFEF }, // Fullwidth forms
+    .{ 0x1F004, 0x1F004 }, // mahjong red dragon
+    .{ 0x1F0CF, 0x1F0CF }, // joker
+    .{ 0x1F18E, 0x1F18E }, // AB button
+    .{ 0x1F191, 0x1F19A }, // squared CL..VS
+    .{ 0x1F200, 0x1F2FF }, // enclosed ideographic supplement
+    .{ 0x1F300, 0x1F64F }, // misc pictographs, emoticons
+    .{ 0x1F680, 0x1F6FF }, // transport & map symbols
+    .{ 0x1F900, 0x1F9FF }, // supplemental pictographs
+    .{ 0x1FA70, 0x1FAFF }, // pictographs extended-A
     .{ 0x20000, 0x3FFFD }, // CJK ext B+ / supplementary planes
 };
 
@@ -50,6 +93,9 @@ pub fn codepointWidth(cp: u21) u2 {
     if (cp == 0) return 0;
     if (cp < 0x20 or (cp >= 0x7F and cp < 0xA0)) return 0; // C0/C1 controls
     if (inRanges(cp, &zero_width_ranges)) return 0;
+    // Everything below the first wide range is width 1; skips the ~50-entry
+    // scan for the ASCII/Latin text that dominates real transcripts.
+    if (cp < wide_ranges[0][0]) return 1;
     if (inRanges(cp, &wide_ranges)) return 2;
     return 1;
 }
