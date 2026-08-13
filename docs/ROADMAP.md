@@ -16,7 +16,7 @@
 - **MCP server** — `clanker mcp`: stdio JSON-RPC server exposing the tool registry.
 - **Execution graphs** — every run recorded to `state/runs/`; ASCII timeline via `clanker graph [run-id]` and `/graph`.
 - **Plugins & transforms** — every tool is a WASM plugin; descriptors gate `internal`, `enabled`, `llm`, `config`, `transform`; `after`/`before` transform chains rewrite tool I/O; `/plugins` toggles them.
-- **`/goal`** — persistent structured goals steering agent runs; `clanker goal`.
+- **`/goal`** — persistent structured goals steering agent runs; `clanker goal`. Drafting is a real step: `write_goal` turns the intent into a structured record, the user approves it, then it is persisted via `goal`. `clanker goal <intent>` and `/goal <intent>` both build the design prompt from the single `src/agent/goal_prompt.zig`; `proof`/`stop_rule` reach the run preamble. PRD: [docs/prds/0027-write-goal.md](prds/0027-write-goal.md).
 - **Autolearn** — usage aggregation from `state/autolearn.jsonl` + `state/runs/`, roadmap upsert via `clanker autolearn`.
 - **Autoresearch** — generic `command → scalar` loop (`clanker autoresearch` / `/autoresearch`, ledger under `state/autoresearch/`, WASM list/tail tool, skill + evals). `--budget` is logged advisory only in v1. PRD: [docs/prds/0004-autoresearch.md](prds/0004-autoresearch.md), ADR: [docs/adrs/0003-autoresearch-is-a-generic-harness-loop.md](adrs/0003-autoresearch-is-a-generic-harness-loop.md).
 - **Subagents** — `subagent` WASM tool: nested agent runs on a dedicated thread with bounded iterations (`ck_subagent` host fn), gated by `modules.subagents`.

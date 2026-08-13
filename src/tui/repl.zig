@@ -45,6 +45,7 @@ const types = @import("../llm/types.zig");
 const providers = @import("../llm/registry.zig");
 const registry = @import("../toolhost/registry.zig");
 const session_mod = @import("../agent/session.zig");
+const goal_prompt = @import("../agent/goal_prompt.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const sandbox_host = @import("../sandbox/host.zig");
 const agent_loop = @import("../agent/loop.zig");
@@ -2557,11 +2558,7 @@ const Model = struct {
     /// `clanker goal "<intent>"`. Runs as a normal turn so it streams, is
     /// saved to the session, and can be stopped like any other task.
     fn runGoalTask(self: *Model, ctx: *vxfw.EventContext, intent: []const u8) bool {
-        const task = std.fmt.allocPrint(
-            self.arena,
-            "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.",
-            .{intent},
-        ) catch return true;
+        const task = goal_prompt.task(self.arena, intent) catch return true;
         self.submitTask(ctx, task) catch |err| {
             self.lines.append(self.arena, .{
                 .text = std.fmt.allocPrint(self.arena, "error: could not start goal task: {s}", .{@errorName(err)}) catch "error: could not start goal task",
