@@ -62,6 +62,13 @@ function arenaTheme() {
   };
 }
 
+// Arena v2 (three.js) is an opt-in per-browser toggle; the module and the
+// vendored three.js are only fetched on first use. `mode3d` mirrors the
+// localStorage flag so render paths can branch synchronously.
+var arena3d = null;
+var mode3d = false;
+try { mode3d = window.localStorage.getItem("arena3d") === "1"; } catch (_) {}
+
 var state = {
   id: null,
   match: null,
@@ -99,6 +106,9 @@ function stopPolling() {
 export function stopArena() {
   stopPolling();
   if (state.raf) { window.cancelAnimationFrame(state.raf); state.raf = null; }
+  // The 3D stage's own loop already stops itself when the view hides; a full
+  // stop tears it down so nothing GPU-side outlives the view.
+  if (arena3d) { arena3d.unmountArena3D(); }
 }
 
 function fetchMatch(id, quiet) {
@@ -381,6 +391,16 @@ function renderMatch() {
     state.poseStart = performance.now();
   }
 
+  if (mode3d) {
+    // The 3D stage replaces only the decorative canvas; chips, graph and
+    // transcript above are the record either way. The 2D loop stays off.
+    if (state.raf) { window.cancelAnimationFrame(state.raf); state.raf = null; }
+    syncStageMode();
+    ensure3d().then(function (mod) {
+      if (mod && mode3d) mod.updateArena3D(state.match);
+    });
+    return;
+  }
   if (reducedMotion()) {
     // One static frame of the current state, no loop scheduled at all.
     if (state.raf) { window.cancelAnimationFrame(state.raf); state.raf = null; }
@@ -388,6 +408,46 @@ function renderMatch() {
     return;
   }
   if (!state.raf) state.raf = window.requestAnimationFrame(frame);
+}
+
+/* -------------------------------------------------------------- 3D toggle */
+
+// Shows one of the two decorative stages. Both live inside #arena-stage so
+// the aria-hidden/decorative contract is inherited rather than repeated.
+function syncStageMode() {
+  var cv = byId("arena-canvas");
+  var host = byId("arena-stage3d");
+  if (cv) cv.hidden = mode3d;
+  if (host) host.hidden = !mode3d;
+  var btn = byId("arena-3d-toggle");
+  if (btn) btn.setAttribute("aria-pressed", mode3d ? "true" : "false");
+}
+
+function ensure3d() {
+  if (arena3d) return Promise.resolve(arena3d);
+  return import("./arena3d.js").then(function (mod) {
+    arena3d = mod;
+    var host = byId("arena-stage3d");
+    return mod.mountArena3D(host).then(function () { return mod; });
+  }).catch(function (err) {
+    // three failing to load (old browser, no WebGL) falls back to 2D and
+    // says so once, rather than a blank stage.
+    mode3d = false;
+    try { window.localStorage.setItem("arena3d", "0"); } catch (_) {}
+    syncStageMode();
+    var status = byId("arena-status");
+    if (status) status.textContent = "3D stage unavailable (" + err.message + "); using the 2D stage.";
+    renderMatch();
+    return null;
+  });
+}
+
+function toggle3d() {
+  mode3d = !mode3d;
+  try { window.localStorage.setItem("arena3d", mode3d ? "1" : "0"); } catch (_) {}
+  if (!mode3d && arena3d) arena3d.unmountArena3D();
+  syncStageMode();
+  renderMatch();
 }
 
 function frame(ts) {
@@ -723,6 +783,9 @@ function renderHpGraph(m) {
 export function bindArena() {
   var refresh = byId("arena-refresh");
   if (refresh) refresh.addEventListener("click", function () { loadArenaView(); });
+  var t3d = byId("arena-3d-toggle");
+  if (t3d) t3d.addEventListener("click", toggle3d);
+  syncStageMode();
   // Reduced motion can be toggled while the page is open; honour it live rather
   // than only at load.
   if (window.matchMedia) {
@@ -733,7 +796,9 @@ export function bindArena() {
   // tokens, and a reduced-motion static frame is redrawn too.
   var root = document.documentElement;
   if (root && typeof MutationObserver !== "undefined") {
-    new MutationObserver(function () { renderMatch(); })
-      .observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+    new MutationObserver(function () {
+      if (arena3d) arena3d.retheme();
+      renderMatch();
+    }).observe(root, { attributes: true, attributeFilter: ["data-theme"] });
   }
 }

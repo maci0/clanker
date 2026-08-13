@@ -307,6 +307,8 @@ lamps carry further). The seven named palettes ride the same tokens.
       <div class="section-head">
         <h2>Arena</h2>
         <div class="toolbar-actions">
+          <button type="button" class="secondary" id="arena-3d-toggle" aria-pressed="false"
+                  title="Render the stage in 3D (decorative, same information as the transcript)">3D</button>
           <button type="button" class="secondary" id="arena-refresh">Refresh</button>
         </div>
       </div>
@@ -324,6 +326,10 @@ lamps carry further). The seven named palettes ride the same tokens.
              instead of the animation. Same split as #fleet-floor. -->
         <div id="arena-stage" class="fleet-floor" aria-hidden="true" hidden>
           <canvas id="arena-canvas" width="640" height="200" style="width:100%;height:auto;image-rendering:pixelated;background: var(--surface-2); border:1px solid var(--rule); border-radius: var(--radius);"></canvas>
+          <!-- Arena v2: the three.js stage the 3D toggle swaps in. Same
+               decorative contract as the canvas above; inherits aria-hidden
+               from #arena-stage. -->
+          <div id="arena-stage3d" hidden></div>
         </div>
         <p class="meta" id="arena-status" role="status" aria-live="polite"></p>
         <!-- HP over the match, one stepped line per combatant: the same story
