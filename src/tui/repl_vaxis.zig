@@ -1962,10 +1962,13 @@ const Model = struct {
             .denied => |d| {
                 const msg = switch (d) {
                     .git_verb => std.fmt.allocPrint(self.arena, "[! git: only the local verbs are allowed (status, diff, log, show, add, commit, ls-files, rev-parse, branch, worktree)]", .{}),
+                    .zig_verb => std.fmt.allocPrint(self.arena, "[! zig: only ast-check, fmt --check, test, and build are allowed]", .{}),
+                    .uv_verb => std.fmt.allocPrint(self.arena, "[! uv: only `uv run` of tools/py/opencv_tool.py is allowed]", .{}),
                     .no_pattern_match => std.fmt.allocPrint(self.arena, "[! '{s}': agent.exec_pattern_allow makes this command strict and no pattern matches]", .{argv[0]}),
                     .deny_token => |x| std.fmt.allocPrint(self.arena, "[! '{s}': denied, '{s}' in '{s}' is on the sandbox deny list]", .{ argv[0], x.token, x.arg }),
                     .shell_operator => |x| std.fmt.allocPrint(self.arena, "[! '{s}': denied, shell operator '{s}' in '{s}'; ! does not run a shell]", .{ argv[0], x.token, x.arg }),
                     .foreign_worktree => |a| std.fmt.allocPrint(self.arena, "[! '{s}': denied, '{s}' reaches into another run's worktree; this run's tree is '.']", .{ argv[0], a }),
+                    .host_path => |a| std.fmt.allocPrint(self.arena, "[! '{s}': denied, '{s}' is a path outside the sandbox]", .{ argv[0], a }),
                 };
                 self.lines.append(self.arena, .{ .text = msg catch "[! denied]", .dim = true }) catch {};
             },

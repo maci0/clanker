@@ -2849,6 +2849,96 @@ fn gitVerbAllowed(argv: []const []const u8, remote_ops: bool) bool {
     return remote_ops and (std.mem.eql(u8, v, "push") or std.mem.eql(u8, v, "merge") or std.mem.eql(u8, v, "checkout"));
 }
 
+/// First non-flag argument after argv[0], skipping empty tokens. Used by the
+/// zig/uv verb allowlists the same way gitVerbAllowed finds the subcommand.
+fn firstNonFlag(argv: []const []const u8) ?[]const u8 {
+    if (argv.len < 2) return null;
+    for (argv[1..]) |arg| {
+        if (arg.len == 0) continue;
+        if (arg[0] == '-') continue;
+        return arg;
+    }
+    return null;
+}
+
+/// zig_check, test_file, and gate may run `zig`, but the host must not let a
+/// replaced guest turn that into `zig fetch` (network) or `zig run` (arbitrary
+/// code). `fmt` is allowed only with `--check` so it cannot rewrite the tree.
+fn zigVerbAllowed(argv: []const []const u8) bool {
+    const v = firstNonFlag(argv) orelse return false;
+    if (std.mem.eql(u8, v, "ast-check") or std.mem.eql(u8, v, "test") or std.mem.eql(u8, v, "build")) return true;
+    if (!std.mem.eql(u8, v, "fmt")) return false;
+    for (argv[1..]) |a| {
+        if (std.mem.eql(u8, a, "--check")) return true;
+    }
+    return false;
+}
+
+/// opencv is the only `uv` caller, and it runs one script. Anything else
+/// (`uv pip`, `uvx`, `python3 -c`, a different file) is a sandbox bypass:
+/// uv can download packages and run them, which is network plus exec the
+/// descriptor never granted.
+fn uvVerbAllowed(argv: []const []const u8) bool {
+    const v = firstNonFlag(argv) orelse return false;
+    if (!std.mem.eql(u8, v, "run")) return false;
+    var saw_script = false;
+    for (argv[1..]) |a| {
+        if (std.mem.eql(u8, a, "-c") or std.mem.eql(u8, a, "--script") or std.mem.eql(u8, a, "-")) return false;
+        if (std.mem.eql(u8, a, "tools/py/opencv_tool.py")) saw_script = true;
+    }
+    return saw_script;
+}
+
+/// Host roots a sandboxed argv must never name. `/foo/` as an rg regex is not
+/// one of these; `/etc/passwd` and `/home/me/.env` are.
+const host_abs_roots = [_][]const u8{
+    "/etc", "/home", "/usr", "/var", "/tmp", "/root", "/opt",
+    "/dev", "/proc", "/sys", "/run", "/boot",
+};
+
+fn startsWithHostRoot(path: []const u8) bool {
+    for (host_abs_roots) |root| {
+        if (path.len < root.len) continue;
+        if (!std.mem.eql(u8, path[0..root.len], root)) continue;
+        if (path.len == root.len or path[root.len] == '/') return true;
+    }
+    return false;
+}
+
+/// The path a flag carries: `--git-dir=/etc/foo` yields `/etc/foo`; a bare
+/// `-C` is not a path (the next argv element is checked on its own).
+fn pathFromExecArg(arg: []const u8) []const u8 {
+    if (std.mem.startsWith(u8, arg, "--")) {
+        if (std.mem.findScalar(u8, arg, '=')) |eq| return arg[eq + 1 ..];
+    }
+    return arg;
+}
+
+/// An exec argument that reaches outside the sandbox the same way a ck_fs_*
+/// path would if it skipped safeJoin: a host-absolute root, or a `..`
+/// component. argv[0] is the resolved command and is skipped. `a..b` as an
+/// rg pattern is not a path (argStepsUpward requires a slash next to `..`).
+fn execArgPathDenied(argv: []const []const u8) ?[]const u8 {
+    if (argv.len < 2) return null;
+    for (argv[1..]) |arg| {
+        const path = pathFromExecArg(arg);
+        if (path.len == 0) continue;
+        if (startsWithHostRoot(path)) return arg;
+        if (argStepsUpward(path)) return arg;
+    }
+    return null;
+}
+
+/// `git --exec-path=...` points git at a helper directory the guest chose.
+/// That is a program-execution grant, not a repo path, so it is refused even
+/// when the value is relative.
+fn gitExecPathArg(argv: []const []const u8) ?[]const u8 {
+    for (argv[1..]) |arg| {
+        if (std.mem.eql(u8, arg, "--exec-path") or std.mem.startsWith(u8, arg, "--exec-path=")) return arg;
+    }
+    return null;
+}
+
 /// Whether `pattern` names `cmd`, i.e. its first whitespace-delimited token
 /// is exactly `cmd`. A pattern whose command token carries a `*` cannot name a
 /// specific command, so it does not make the command strict (it can still
@@ -2958,6 +3048,10 @@ pub const DeniedArg = struct { token: []const u8, arg: []const u8 };
 pub const ExecDenial = union(enum) {
     /// `git`, but not one of the subcommands the host allows.
     git_verb,
+    /// `zig`, but not ast-check / fmt --check / test / build.
+    zig_verb,
+    /// `uv`, but not `uv run` of tools/py/opencv_tool.py.
+    uv_verb,
     /// `exec_pattern_allow` names this command, which makes it strict, and no
     /// pattern matched the argv.
     no_pattern_match,
@@ -2968,6 +3062,9 @@ pub const ExecDenial = union(enum) {
     /// An argument reaching into another run's isolated worktree. Carries the
     /// offending argument. See `foreignWorktreeArg`.
     foreign_worktree: []const u8,
+    /// An argument that names a host-absolute path or walks `..`. Carries the
+    /// offending argument. See `execArgPathDenied`.
+    host_path: []const u8,
 };
 
 /// The argv-level half of the ck_exec gate, factored out of `ckExec` so the
@@ -2994,10 +3091,20 @@ pub fn execDenial(sb: *const Sandbox, cmd: []const u8, argv: []const []const u8)
     // matched, so anything checked after that point is bypassable by writing a
     // pattern -- which is exactly the wrong property for this rule.
     if (foreignWorktreeArg(argv)) |arg| return .{ .foreign_worktree = arg };
+    // Same class of escape as a ck_fs_* path that skipped safeJoin: an
+    // allowed command (rg, git -C, uv, zig) with a host-absolute or `..`
+    // argument would read or write outside fs_prefixes. Checked ahead of
+    // exec_pattern_allow so a pattern cannot grant `/etc/passwd`.
+    if (execArgPathDenied(argv)) |arg| return .{ .host_path = arg };
 
     var join_buf: [4096]u8 = undefined;
     const policy = execPolicyFor(sb, argv, &join_buf);
-    if (std.mem.eql(u8, cmd, "git") and !gitVerbAllowed(argv, sb.git_remote_ops)) return .git_verb;
+    if (std.mem.eql(u8, cmd, "git")) {
+        if (gitExecPathArg(argv)) |arg| return .{ .host_path = arg };
+        if (!gitVerbAllowed(argv, sb.git_remote_ops)) return .git_verb;
+    }
+    if (std.mem.eql(u8, cmd, "zig") and !zigVerbAllowed(argv)) return .zig_verb;
+    if (std.mem.eql(u8, cmd, "uv") and !uvVerbAllowed(argv)) return .uv_verb;
     if (policy.governed) return if (policy.allowed) null else .no_pattern_match;
 
     // deny-list check: match whole arguments / flag prefixes / word
@@ -3716,10 +3823,13 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     if (execDenial(h.sandbox, cmd, argv.items)) |d| {
         switch (d) {
             .git_verb => log.log(.warn, "[sandbox] ck_exec denied unlisted git verb", .{}),
+            .zig_verb => log.log(.warn, "[sandbox] ck_exec denied unlisted zig verb", .{}),
+            .uv_verb => log.log(.warn, "[sandbox] ck_exec denied uv argv; only uv run of tools/py/opencv_tool.py is allowed", .{}),
             .no_pattern_match => log.log(.warn, "[sandbox] ck_exec denied '{s}': exec_pattern_allow makes this command strict and no pattern matches", .{cmd}),
             .deny_token => |x| log.log(.warn, "[sandbox] ck_exec denied token '{s}' in arg '{s}'", .{ x.token, x.arg }),
             .shell_operator => |x| log.log(.warn, "[sandbox] ck_exec denied shell operator '{s}' in arg '{s}'", .{ x.token, x.arg }),
             .foreign_worktree => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': it reaches into another run's worktree", .{a}),
+            .host_path => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': path is outside the sandbox", .{a}),
         }
         return Err.denied;
     }
@@ -3888,6 +3998,7 @@ pub fn execUnderPolicy(
             .deny_token => |x| .{ .deny_token = outlives.arg(x, argv.items[0], cmd) },
             .shell_operator => |x| .{ .shell_operator = outlives.arg(x, argv.items[0], cmd) },
             .foreign_worktree => |a| .{ .foreign_worktree = if (a.ptr == argv.items[0].ptr) cmd else a },
+            .host_path => |a| .{ .host_path = if (a.ptr == argv.items[0].ptr) cmd else a },
             else => d,
         } };
     }
@@ -4097,8 +4208,25 @@ fn rootIsProcessCwd(root_dir: []const u8) bool {
         std.mem.eql(u8, root_dir, "./");
 }
 
+/// True when `sub_path` names a dotenv file (or a path under one). Those
+/// files hold the API keys env_allow exists to keep out of guest memory.
+fn isSecretDotenv(sub_path: []const u8) bool {
+    if (std.mem.eql(u8, sub_path, ".env") or std.mem.eql(u8, sub_path, ".envrc")) return true;
+    if (std.mem.startsWith(u8, sub_path, ".env.") or std.mem.startsWith(u8, sub_path, ".env/") or
+        std.mem.startsWith(u8, sub_path, ".envrc/"))
+        return true;
+    if (std.mem.endsWith(u8, sub_path, "/.env") or std.mem.endsWith(u8, sub_path, "/.envrc")) return true;
+    if (std.mem.find(u8, sub_path, "/.env.") != null or std.mem.find(u8, sub_path, "/.env/") != null) return true;
+    return false;
+}
+
 fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
     if (sub_path[0..@min(sub_path.len, 1)].len > 0 and sub_path[0] == '/') return error.PathOutsideSandbox;
+    // .env is where the process loads API keys. env_allow exists so those
+    // values never cross into guest memory via ck_env; reading the file
+    // through ck_fs_* with fs_prefixes ["."] was the same leak by another
+    // door. `.environment` is a different name and is not refused.
+    if (isSecretDotenv(sub_path)) return error.PathOutsideSandbox;
     // The root itself, written "" or ".". Without this no host call could
     // address the sandbox root: listing or searching the project as a whole
     // was refused, and a tool given fs_prefixes ["."] still could not ask what
@@ -4429,6 +4557,30 @@ test "execDenial: the argv-level gate ckExec and the REPL escape share" {
     try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "-C", "../123", "status" }).? == .foreign_worktree);
     // The run's own tree is `.`, which is unaffected.
     try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "-C", ".", "status" }) == null);
+
+    // Host-absolute and `..` path args are refused for every command, including
+    // ones that take a user path (rg, git -C, zig).
+    sb.exec_allow = &.{ "git", "rg", "zig", "uv" };
+    try std.testing.expect(execDenial(&sb, "rg", &.{ "/usr/bin/rg", "needle", "/etc/passwd" }).? == .host_path);
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "-C", "/home/me", "status" }).? == .host_path);
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "--git-dir=/etc/foo", "status" }).? == .host_path);
+    try std.testing.expect(execDenial(&sb, "rg", &.{ "/usr/bin/rg", "needle", "src/../.env" }).? == .host_path);
+    // An rg regex that merely starts with '/' is not a host root.
+    try std.testing.expect(execDenial(&sb, "rg", &.{ "/usr/bin/rg", "/foo/", "src" }) == null);
+
+    try std.testing.expect(execDenial(&sb, "zig", &.{ "/usr/bin/zig", "ast-check", "src/main.zig" }) == null);
+    try std.testing.expect(execDenial(&sb, "zig", &.{ "/usr/bin/zig", "fmt", "--check", "src" }) == null);
+    try std.testing.expect(execDenial(&sb, "zig", &.{ "/usr/bin/zig", "test", "src/foo.zig" }) == null);
+    try std.testing.expect(execDenial(&sb, "zig", &.{ "/usr/bin/zig", "build" }) == null);
+    try std.testing.expect(execDenial(&sb, "zig", &.{ "/usr/bin/zig", "fetch", "https://example.com/x" }).? == .zig_verb);
+    try std.testing.expect(execDenial(&sb, "zig", &.{ "/usr/bin/zig", "run", "src/main.zig" }).? == .zig_verb);
+    try std.testing.expect(execDenial(&sb, "zig", &.{ "/usr/bin/zig", "fmt", "src" }).? == .zig_verb);
+
+    const uv_ok = [_][]const u8{ "/usr/bin/uv", "run", "--quiet", "--with", "opencv-python-headless~=4.14", "python3", "tools/py/opencv_tool.py", "info", "pic.png" };
+    try std.testing.expect(execDenial(&sb, "uv", &uv_ok) == null);
+    try std.testing.expect(execDenial(&sb, "uv", &.{ "/usr/bin/uv", "pip", "install", "pwn" }).? == .uv_verb);
+    try std.testing.expect(execDenial(&sb, "uv", &.{ "/usr/bin/uv", "run", "python3", "-c", "print(1)" }).? == .uv_verb);
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "--exec-path=/tmp/evil", "status" }).? == .host_path);
 }
 
 test "execUnderPolicy refuses a command that is not on the allowlist" {
@@ -4531,7 +4683,6 @@ test "an isolated run resolves tracked paths in its worktree and untracked ones 
         "state/staging/imp-1/src/x.zig",
         ".local/board.json",
         ".agents/AGENTS.md",
-        ".env",
         "config.local.toml",
     }) |p| {
         const got = try safeJoin(&sb, p);
@@ -4539,6 +4690,9 @@ test "an isolated run resolves tracked paths in its worktree and untracked ones 
         try std.testing.expectEqualStrings("/checkout/", got[0..10]);
         try std.testing.expect(!std.mem.startsWith(u8, got, "/checkout/.clanker-worktrees"));
     }
+    // .env is a shared prefix for worktree routing, but guests may not read
+    // it: that file is where API keys live.
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ".env"));
 
     // The prefix has to end on a path boundary: a tracked file whose name
     // merely starts with a shared prefix's bytes stays in the worktree.
@@ -4551,11 +4705,12 @@ test "an isolated run resolves tracked paths in its worktree and untracked ones 
     // No shared_root (every non-isolated run): one root for everything, so the
     // routing cannot change what an unisolated run has always done.
     sb.shared_root = "";
-    for ([_][]const u8{ "src/cli.zig", "state/goals.json", ".env" }) |p| {
+    for ([_][]const u8{ "src/cli.zig", "state/goals.json" }) |p| {
         const got = try safeJoin(&sb, p);
         defer std.testing.allocator.free(got);
         try std.testing.expect(std.mem.startsWith(u8, got, "/checkout/.clanker-worktrees/42/"));
     }
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ".env"));
 }
 
 test "rootIsProcessCwd treats only the cwd spellings as the process cwd" {
