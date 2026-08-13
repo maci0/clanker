@@ -556,12 +556,19 @@ pub const Web = struct {
 /// session-scoped `/theme`, and moving it would change behaviour rather than
 /// just add a key.
 pub const Tui = struct {
-    /// `off`, `type`, or `loop`. Kept as the raw string rather than the
-    /// `tui/mascot.zig` enum so config.zig owes nothing to the TUI: an
-    /// unparseable value is reported where the flag is resolved, next to the
-    /// identical failure from `--mascot=<junk>`, instead of failing config
-    /// load for every non-REPL subcommand.
+    /// `off`, `type`, `loop`, `place` or `input`. Kept as the raw string
+    /// rather than the `tui/mascot.zig` enum so config.zig owes nothing to the
+    /// TUI: an unparseable value is reported where the flag is resolved, next
+    /// to the identical failure from `--mascot=<junk>`, instead of failing
+    /// config load for every non-REPL subcommand.
     mascot: []const u8 = "off",
+    /// `small`, `medium` or `large`. Empty means "not set", so the flag and
+    /// then the built-in default decide. Same raw-string reasoning as above.
+    mascot_size: []const u8 = "",
+    /// `left` or `right`. Empty means "not set", which matters more here than
+    /// elsewhere: the default depends on the mode, so an empty value is not
+    /// the same as writing "right".
+    mascot_facing: []const u8 = "",
 };
 
 /// Post-turn second-model critique. Off by default; fails open. Distinct
@@ -1192,8 +1199,10 @@ pub const Config = struct {
             else => return error.TuiNotObject,
         };
         var t = Tui{};
-        warnUnknownKeys(obj, &.{"mascot"}, "tui");
+        warnUnknownKeys(obj, &.{ "mascot", "mascot_size", "mascot_facing" }, "tui");
         if (obj.get("mascot")) |k| t.mascot = try jsonStr(k, "mascot");
+        if (obj.get("mascot_size")) |k| t.mascot_size = try jsonStr(k, "mascot_size");
+        if (obj.get("mascot_facing")) |k| t.mascot_facing = try jsonStr(k, "mascot_facing");
         return t;
     }
 
