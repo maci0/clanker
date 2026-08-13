@@ -2590,7 +2590,9 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    // `var`, not `const`: an isolated run fills in agent.shared_root below,
+    // once it knows which checkout it came from.
+    var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
     var provider_val = try resolveProvider(&cfg, opts);
@@ -2638,7 +2640,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         };
         const wt_id = try std.fmt.allocPrint(gpa, "{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
         defer gpa.free(wt_id);
-        var created = worktree_mod.createOn(gpa, io, wt_id, "clanker/run-") catch |err| {
+        var created = worktree_mod.createOn(gpa, io, wt_id, "clanker/run-", .run) catch |err| {
             log.log(.error_, "run --worktree: could not create an isolated worktree: {s}", .{@errorName(err)});
             return err;
         };
@@ -2650,6 +2652,14 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
             created.deinit(gpa);
             return err;
         };
+        // Untracked, checkout-wide paths (state/, .local/, .agents/, the
+        // credentials) keep resolving against the checkout rather than the
+        // worktree, so the run reaches the goal that steers it, the session it
+        // resumes and the notes it takes exactly as it would unisolated. Only
+        // git-tracked source is private to the worktree. See `shared_prefixes`
+        // in src/sandbox/host.zig for the sandbox half and `linkCheckoutState`
+        // in src/improve/worktree.zig for the host half.
+        cfg.agent.shared_root = harness_root.?;
         log.log(.info, "run: isolated in {s} on branch {s} (branched from {s})", .{ created.path, created.branch, created.base_branch });
         wt = created;
     }
@@ -5948,6 +5958,7 @@ fn renderWebui(
         .gpa = gpa,
         .io = io,
         .root_dir = cfg.agent.sandbox_root,
+        .shared_root = cfg.agent.shared_root,
         .network_allow = tool.network_allow,
         .environ_map = environ_map,
         .fuel = tool.fuel,

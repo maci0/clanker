@@ -144,6 +144,21 @@ pub const Sandbox = struct {
     io: std.Io,
     /// Absolute path of the directory tool filesystem access is confined to.
     root_dir: []const u8,
+    /// The checkout a run was started from, when `root_dir` is an isolated
+    /// worktree under it (`clanker run --worktree`). Paths under
+    /// `shared_prefixes` resolve here instead of under `root_dir`.
+    ///
+    /// The rule this implements: git-tracked source belongs to the run's own
+    /// tree, because editing it in isolation is the whole point; everything git
+    /// does NOT track is one checkout-wide thing every run shares, and an
+    /// isolated run must reach it exactly as it would without isolation. Left
+    /// as a snapshot instead, a run reads stale state and its writes go
+    /// nowhere: the goal it was steered by, the session it should resume, the
+    /// notes it just took are all invisible to the next run.
+    ///
+    /// Empty (the default, and every non-isolated run) means one root for
+    /// everything, so nothing here changes unless a run asked to be isolated.
+    shared_root: []const u8 = "",
     /// Hosts allowed for ck_http. Entries are exact hostnames or glob
     /// patterns (`*.example.com`, `sub?.example.com`); a bare `*` allows every
     /// host. See networkAllowed.
@@ -302,6 +317,7 @@ pub fn sandboxFor(
         .gpa = gpa,
         .io = io,
         .root_dir = cfg.agent.sandbox_root,
+        .shared_root = cfg.agent.shared_root,
         .network_allow = net,
         .llm = llm_access,
         .exec_allow = tool.exec_allow,
@@ -3821,6 +3837,42 @@ fn safeJoinSecure(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
     return full;
 }
 
+/// Paths that belong to the checkout rather than to any one run's tree: the
+/// things git does not track and every run shares. A run isolated in a worktree
+/// resolves these against `Sandbox.shared_root` instead of its own root, so it
+/// sees the same runtime state, credentials and coordination files it would
+/// have seen without isolation. Keep in step with .gitignore.
+///
+/// Deliberately NOT shared: `zig-out` and `.zig-cache`. Both are untracked, so
+/// the rule above would include them, but builds WRITE there -- a shared
+/// zig-out lets a worktree's build clobber the binaries the checkout is using,
+/// including the clanker binary that is running, and two trees installing into
+/// one zig-out made the gate flaky (see linkSharedState in
+/// src/improve/worktree.zig). Guest wasm modules, the part a run actually needs
+/// to read, are pinned to the harness's own build instead
+/// (Registry.rebaseWasmPaths), which is read-only and cannot collide.
+pub const shared_prefixes = [_][]const u8{
+    "state",
+    ".local",
+    ".agents",
+    ".env",
+    "config.local.toml",
+    "config.local.json",
+};
+
+/// Which root `sub_path` resolves against: the checkout for the shared,
+/// untracked paths above, the run's own tree for everything else. Matching is
+/// at a path boundary, so "state" and "state/x" are shared while a tracked
+/// sibling that merely starts with the same bytes ("stateful.zig") is not.
+fn rootForPath(sb: *const Sandbox, sub_path: []const u8) []const u8 {
+    if (sb.shared_root.len == 0) return sb.root_dir;
+    for (shared_prefixes) |p| {
+        if (!std.mem.startsWith(u8, sub_path, p)) continue;
+        if (sub_path.len == p.len or sub_path[p.len] == '/') return sb.shared_root;
+    }
+    return sb.root_dir;
+}
+
 /// True when `root_dir` names the process cwd itself, so an exec'd child needs
 /// no explicit directory. Spelled out rather than compared against "." alone
 /// because the config accepts the equivalent forms, and opening a directory we
@@ -3889,7 +3941,7 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
         }
         if (!allowed) return error.PathOutsideSandbox;
     }
-    return std.fmt.allocPrint(sb.gpa, "{s}/{s}", .{ std.mem.trimEnd(u8, sb.root_dir, "/"), sub_path });
+    return std.fmt.allocPrint(sb.gpa, "{s}/{s}", .{ std.mem.trimEnd(u8, rootForPath(sb, sub_path), "/"), sub_path });
 }
 
 test "secure filesystem paths refuse symlink escapes" {
@@ -4216,6 +4268,63 @@ test "an exec'd child runs at the sandbox root, not the process cwd" {
         defer std.testing.allocator.free(attempt.ran.stdout);
         defer std.testing.allocator.free(attempt.ran.stderr);
         try std.testing.expect(!std.mem.containsAtLeast(u8, attempt.ran.stdout, 1, marker));
+    }
+}
+
+test "an isolated run resolves tracked paths in its worktree and untracked ones in the checkout" {
+    var environ_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer environ_map.deinit();
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = "/checkout/.clanker-worktrees/42",
+        .shared_root = "/checkout",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = &environ_map,
+    };
+
+    // Tracked source: the worktree's own, which is the entire point of
+    // isolating the run.
+    for ([_][]const u8{ "src/cli.zig", "docs/README.md", "build.zig", "AGENTS.md", "tools/manifests/git.tool.json" }) |p| {
+        const got = try safeJoin(&sb, p);
+        defer std.testing.allocator.free(got);
+        try std.testing.expect(std.mem.startsWith(u8, got, "/checkout/.clanker-worktrees/42/"));
+    }
+
+    // Untracked and checkout-wide: the checkout's, so the run is not reading a
+    // snapshot and writing where nobody looks.
+    for ([_][]const u8{
+        "state/goals.json",
+        "state/sessions/abc.json",
+        "state/learnings.md",
+        "state/staging/imp-1/src/x.zig",
+        ".local/board.json",
+        ".agents/AGENTS.md",
+        ".env",
+        "config.local.toml",
+    }) |p| {
+        const got = try safeJoin(&sb, p);
+        defer std.testing.allocator.free(got);
+        try std.testing.expectEqualStrings("/checkout/", got[0..10]);
+        try std.testing.expect(!std.mem.startsWith(u8, got, "/checkout/.clanker-worktrees"));
+    }
+
+    // The prefix has to end on a path boundary: a tracked file whose name
+    // merely starts with a shared prefix's bytes stays in the worktree.
+    for ([_][]const u8{ "stateful.zig", "state_machine/x.zig", ".environment/x" }) |p| {
+        const got = try safeJoin(&sb, p);
+        defer std.testing.allocator.free(got);
+        try std.testing.expect(std.mem.startsWith(u8, got, "/checkout/.clanker-worktrees/42/"));
+    }
+
+    // No shared_root (every non-isolated run): one root for everything, so the
+    // routing cannot change what an unisolated run has always done.
+    sb.shared_root = "";
+    for ([_][]const u8{ "src/cli.zig", "state/goals.json", ".env" }) |p| {
+        const got = try safeJoin(&sb, p);
+        defer std.testing.allocator.free(got);
+        try std.testing.expect(std.mem.startsWith(u8, got, "/checkout/.clanker-worktrees/42/"));
     }
 }
 

@@ -2455,6 +2455,7 @@ const ToolWorker = struct {
             .gpa = self.ctx.gpa,
             .io = io,
             .root_dir = self.cfg.agent.sandbox_root,
+            .shared_root = self.cfg.agent.shared_root,
             .network_allow = self.tool.network_allow,
             .fs_prefixes = self.tool.fs_prefixes,
             // Copied like every other policy field. Omitting them here did not

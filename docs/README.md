@@ -178,10 +178,54 @@ same isolation by default (`src/improve/worktree.zig`). Worktrees live in
 `.clanker-worktrees/<id>`, which is gitignored.
 
 The worktree and its branch are **kept** when the run ends — the commits are the
-deliverable, and an isolated run's session state lives under the worktree too.
-Remove it with `git worktree remove` once the work has landed. (`improve-self`
-differs: it merges its branch back at the ref level and only then removes the
-worktree.)
+deliverable. Remove it with `git worktree remove` once the work has landed.
+(`improve-self` differs: it merges its branch back at the ref level and only then
+removes the worktree.)
+
+#### What is private and what is shared
+
+Isolation covers **git-tracked files only**. Those are the run's own, because
+editing them without disturbing anyone else is the entire point.
+
+Everything git does *not* track belongs to the checkout, and an isolated run
+reaches it exactly as it would without isolation — same files, same writes, no
+snapshot:
+
+| | Resolves to |
+|---|---|
+| `src/`, `docs/`, `tools/`, `build.zig`, `AGENTS.md`, … (tracked) | the worktree |
+| `state/` — sessions, goals, learnings, stats, run graphs | the checkout |
+| `.local/`, `.agents/` | the checkout |
+| `.env`, `config.local.toml`, `config.local.json` | the checkout |
+| `zig-out/`, `.zig-cache/` | the worktree (see below) |
+
+A snapshot would quietly cripple the run: no goal to be steered by, no session to
+resume, and its notes and token accounting written where nothing reads them —
+each of which looks like a broken tool rather than a missing directory.
+
+Two mechanisms, because two different readers resolve these paths, and both are
+needed:
+
+- **Sandboxed tools** go through `Sandbox.shared_root` and the `shared_prefixes`
+  list in `src/sandbox/host.zig`, which joins those prefixes onto the checkout
+  instead of the run's root. Deliberately not symlinks: `safeJoinSecure` refuses
+  to traverse a symlinked component (that is what stops `allowed/link/secret`
+  escapes), so a linked `state/` would *deny* every tool that touched it.
+- **The harness itself** reads roughly 44 hardcoded relative `state/...` paths
+  against the process cwd, so `linkCheckoutState` symlinks these entries into the
+  worktree and native I/O follows them. The sandbox never traverses those links,
+  because its half routes around them.
+
+`zig-out/` and `.zig-cache/` are untracked but stay per-worktree: builds *write*
+there, and a shared `zig-out` lets a worktree's build clobber the binaries the
+checkout is using — including the running `clanker`. The part a run needs to
+*read*, the guest wasm modules, is pinned to the harness's own build
+(`Registry.rebaseWasmPaths`), which is read-only and cannot collide.
+
+`improve-self` provisions its worktree differently (`linkSharedState`): a real
+local `state/` with individual entries linked or copied in. Its staging directory
+has to be its own, and copying is what keeps a proposal's learnings from escaping
+before the proposal is promoted.
 
 What does *not* work is an agent isolating itself: adding a worktree from inside
 a run relocates nothing, because the run's root does not move with it. Edits keep

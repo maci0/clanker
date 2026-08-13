@@ -14,6 +14,7 @@
 //! docs/ROADMAP.md with concrete, actionable items.
 
 const std = @import("std");
+const ensuredir = @import("../util/ensuredir.zig");
 const log = @import("../util/log.zig");
 const filelock = @import("../util/filelock.zig");
 const atomic_write = @import("../util/atomic_write.zig");
@@ -61,7 +62,7 @@ pub fn record(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, type
 }
 
 fn recordTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, type_: []const u8, tool: []const u8, detail: []const u8) void {
-    base.createDirPath(io, "state") catch |err| {
+    ensuredir.ensureDir(base, io, "state") catch |err| {
         std.log.warn("autolearn: failed to create state dir: {s}", .{@errorName(err)});
         return;
     };
@@ -152,7 +153,7 @@ pub fn recordRun(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, e
 }
 
 fn recordRunTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, e: RunEvent) void {
-    base.createDirPath(io, "state") catch |err| {
+    ensuredir.ensureDir(base, io, "state") catch |err| {
         std.log.warn("autolearn: failed to create state dir: {s}", .{@errorName(err)});
         return;
     };

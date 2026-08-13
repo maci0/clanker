@@ -186,6 +186,13 @@ pub const Agent = struct {
     /// chatroom logs, run records, cursors.
     state_dir: []const u8 = "state",
     sandbox_root: []const u8 = ".",
+    /// Absolute path of the checkout an isolated run was started from, set at
+    /// runtime by `run --worktree` (see cmdRun) and deliberately NOT readable
+    /// from a config file: it describes how this process was invoked, not a
+    /// preference, and a stale value in config.local.toml would point a normal
+    /// run's untracked paths at some other directory. Empty everywhere else.
+    /// Consumed by sandbox.host's `shared_prefixes` routing.
+    shared_root: []const u8 = "",
     /// Directory holding reusable prompt templates ("workflows", Cursor-style).
     workflows_dir: []const u8 = "workflows",
     /// Directory for shared chain pipelines (tool-level, not prompt-level).

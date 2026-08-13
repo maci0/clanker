@@ -13,6 +13,7 @@
 //! temp directory instead of a mock.
 
 const std = @import("std");
+const ensuredir = @import("../util/ensuredir.zig");
 const filelock = @import("../util/filelock.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const log = @import("../util/log.zig");
@@ -126,7 +127,7 @@ pub const Session = struct {
 /// wrong call. A file that parses as neither is warned about so the operator
 /// finds out before the next write replaces it.
 pub fn open(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir) !Session {
-    base.createDirPath(io, state_dir) catch |err| {
+    ensuredir.ensureDir(base, io, state_dir) catch |err| {
         log.log(.warn, "schedule: could not create {s}: {s}", .{ state_dir, @errorName(err) });
     };
     var guard = filelock.acquire(io, base, state_dir, "schedule", gpa);
