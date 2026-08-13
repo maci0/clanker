@@ -12,7 +12,19 @@ clanker.registerView({
   mount: function (container, api) {
     // Everything shown in the list is rebuilt from the server's latest
     // response. Nothing is cached here that could go stale.
-    var cur = { path: "", root: "workspace", parent: "" };
+    //
+    // `at_root` is carried separately from `parent` because the two are not the
+    // same question. GET /api/files reports `parent: ""` for the workspace root
+    // *and* for every top-level directory, since the parent of "src" is the
+    // root and the root's path is the empty string. Deciding root-ness from
+    // `parent` therefore stranded you one level down with a dead Up button.
+    var cur = { path: "", root: "workspace", parent: "", atRoot: true };
+
+    // Which request the view is currently showing. Navigating twice quickly —
+    // a folder, then the breadcrumb — leaves two requests in flight, and this
+    // server answers one request per connection, so they can land in either
+    // order. Only the newest generation is allowed to paint.
+    var generation = 0;
 
     var head = api.el("div", "section-head");
     var h = api.el("h2", null, "Files");
@@ -39,20 +51,41 @@ clanker.registerView({
 
     function show(ctrl, on) { ctrl.disabled = !on; }
 
-    function jump(path, focusRoot) {
-      cur.path = path;
-      load();
-      if (focusRoot) crumbs.firstChild && crumbs.firstChild.focus && crumbs.firstChild.focus();
+    // Nothing is known about the tree until the first response, so neither
+    // control does anything useful yet. Up in particular started out enabled
+    // with no directory to go up from.
+    show(up, false);
+    show(refresh, false);
+
+    /// The parent of a path, worked out from the path itself. Used when the
+    /// server could not answer, so Up still gets you out of a directory whose
+    /// listing failed rather than dead-ending on the error.
+    function parentOf(p) {
+      var slash = p.lastIndexOf("/");
+      return slash === -1 ? "" : p.slice(0, slash);
     }
 
-    // Rebuild the breadcrumb trail for the server-reported location. The root
-    // label is a button back to the top, each following segment a button one
-    // level down; the last segment is the current folder and is not a link.
-    function drawCrumbs(d) {
+    function jump(path, focusRoot) {
+      return load(path).then(function () {
+        // After the load, not before: drawCrumbs rebuilds the trail, so the
+        // button this was focusing had already been thrown away and focus fell
+        // to the body. Focus the root crumb the current trail actually holds.
+        if (!focusRoot) return;
+        var root = crumbs.firstChild;
+        if (root && root.focus) root.focus();
+      });
+    }
+
+    // Rebuild the breadcrumb trail for a location. The root label is a button
+    // back to the top, each following segment a button one level down; the last
+    // segment is the current folder and is not a link. Driven by path + root
+    // rather than by a whole response, so a failed load can still say where you
+    // asked to be.
+    function drawCrumbs(path, root) {
       crumbs.textContent = "";
-      var segs = d.path ? d.path.split("/") : [];
+      var segs = path ? path.split("/") : [];
       var acc = "";
-      var rootBtn = api.el("button", "files-crumb files-crumb-root", d.root || "workspace");
+      var rootBtn = api.el("button", "files-crumb files-crumb-root", root || "workspace");
       rootBtn.type = "button";
       rootBtn.setAttribute("aria-label", "Go to the workspace root");
       rootBtn.addEventListener("click", function () { jump("", true); });
@@ -113,35 +146,63 @@ clanker.registerView({
       });
     }
 
-    function load() {
+    /// A directory that could not be read. The trail names the directory you
+    /// asked for and the list says why it is not there, because leaving the
+    /// previous directory's rows up made the view claim a location it had
+    /// already navigated away from.
+    function drawFailure(path, message) {
+      drawCrumbs(path, cur.root);
+      list.textContent = "";
+      empty.hidden = true;
+      list.appendChild(api.el("p", "files-empty", message));
+    }
+
+    /// Loads one directory. `path` defaults to wherever the view already is,
+    /// which is what Refresh wants.
+    function load(path) {
+      var want = path === undefined ? cur.path : path;
+      var mine = ++generation;
       show(refresh, false);
-      if (cur.parent) show(up, true);
-      return api.getJSON("/api/files?path=" + encodeURIComponent(cur.path))
+      show(up, false);
+      return api.getJSON("/api/files?path=" + encodeURIComponent(want))
         .then(function (d) {
+          if (mine !== generation) return; // a newer navigation already won
           cur.path = d.path || "";
           cur.root = d.root || cur.root;
           cur.parent = d.parent || "";
-          drawCrumbs(d);
+          // Trust the server's own answer; fall back to the path for an older
+          // server that does not send the field.
+          cur.atRoot = d.at_root === undefined ? cur.path === "" : !!d.at_root;
+          drawCrumbs(cur.path, cur.root);
           drawEntries(d.entries || []);
           var n = (d.entries || []).length;
           api.status(n + (n === 1 ? " item." : " items."));
         })
-        .catch(function (err) { api.status("Files: " + err.message); })
+        .catch(function (err) {
+          if (mine !== generation) return;
+          cur.path = want;
+          cur.parent = parentOf(want);
+          cur.atRoot = want === "";
+          drawFailure(want, "Files: " + err.message);
+          api.status("Files: " + err.message);
+        })
         .then(function () {
+          if (mine !== generation) return;
           show(refresh, true);
-          show(up, cur.parent !== "");
+          show(up, !cur.atRoot);
         });
     }
 
     up.addEventListener("click", function () {
-      if (cur.parent !== "") jump(cur.parent, false);
+      if (!cur.atRoot) jump(cur.parent, false);
     });
-    refresh.addEventListener("click", load);
+    refresh.addEventListener("click", function () { load(); });
 
     this.reload = load;
     return load();
   },
   refresh: function () {
-    if (this.reload) this.reload();
+    if (this.reload) return this.reload();
+    return null;
   }
 });
