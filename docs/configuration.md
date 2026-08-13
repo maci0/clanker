@@ -228,7 +228,10 @@ Run-loop and path settings. The commonly-touched keys:
 | `repl_exec_allow` | `[]` | Extra commands the REPL's `!cmd` escape may run, on top of the union of every tool's `exec_allow`. Widens the escape only, never a tool; the deny tokens and git's verb allowlist still apply. |
 | `worktree` | `auto` | Default worktree isolation for a plain `clanker run` when neither `--worktree` nor `--no-worktree` is given. `yes`/`no` force a default for typed runs; `auto` keeps them unisolated. An explicit flag still wins. |
 | `goal_worktree` | `auto` | Same, but for `--goal` runs and scheduled (`unattended`) runs. `auto` keeps those isolated by default; `yes`/`no` force a default. |
-| `git_worktree_on` | `[]` | Extra modes to isolate by default: `run`, `goal`, `tui`, `schedule`. An explicit `--worktree`/`--no-worktree` still wins. |
+| `git_worktree_on` | `[]` | Session modes that default to a private worktree: any of `run`, `goal`, `tui`, or `webui`. An explicit `--worktree`/`--no-worktree` or Web UI checkbox still wins. |
+| `isolated_cli` | `false` | Plain `clanker run` calls use a private worktree and do not implicitly attach the newest active goal. |
+| `isolated_tui` | `false` | The terminal REPL starts in a private worktree for the whole session. |
+| `isolated_webui` | `false` | Web UI chat runs use a private worktree and do not implicitly attach the newest active goal. |
 | `seed` | 0 | RNG seed for reproducibility (`0` = time-seeded). |
 
 ## `[advisor]`
