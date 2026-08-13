@@ -1276,7 +1276,9 @@ fn buildCommandHelp(alloc: std.mem.Allocator) ![]const u8 {
     try out.appendSlice(alloc, "Commands:");
     for (command_registry) |spec| {
         try out.appendSlice(alloc, "\n  ");
-        var col: usize = spec.name.len;
+        // Include the row's two-space indent in the display-column budget;
+        // omitting it let nominally 80-column rows render at 82.
+        var col: usize = 2 + spec.name.len;
         try out.appendSlice(alloc, spec.name);
         for (spec.aliases) |alias| {
             try out.appendSlice(alloc, ", ");
@@ -1288,8 +1290,29 @@ fn buildCommandHelp(alloc: std.mem.Allocator) ![]const u8 {
             try out.appendSlice(alloc, spec.arg_hint);
             col += 1 + spec.arg_hint.len;
         }
-        while (col < help_names_width + 2) : (col += 1) try out.append(alloc, ' ');
-        try out.appendSlice(alloc, spec.help);
+        while (col < 2 + help_names_width + 2) : (col += 1) try out.append(alloc, ' ');
+        var words = std.mem.tokenizeScalar(u8, spec.help, ' ');
+        var first = true;
+        while (words.next()) |word| {
+            const word_width = width_mod.displayWidth(word);
+            const gap: usize = if (first) 0 else 1;
+            if (!first and col + gap + word_width > 80) {
+                // Continuations use a shallow hanging indent rather than the
+                // full command column. On a 40-column terminal this leaves
+                // 36 useful columns instead of wrapping prose eight columns
+                // at a time beneath the wide spelling column.
+                try out.appendSlice(alloc, "\n    ");
+                col = 4;
+                first = true;
+            }
+            if (!first) {
+                try out.append(alloc, ' ');
+                col += 1;
+            }
+            try out.appendSlice(alloc, word);
+            col += word_width;
+            first = false;
+        }
     }
     return out.toOwnedSlice(alloc);
 }
@@ -1310,7 +1333,21 @@ test "generated help mentions every command spelling and help line" {
         for (spec.aliases) |alias| {
             try std.testing.expect(std.mem.find(u8, text, alias) != null);
         }
-        try std.testing.expect(std.mem.find(u8, text, spec.help) != null);
+        var words = std.mem.tokenizeScalar(u8, spec.help, ' ');
+        while (words.next()) |word| try std.testing.expect(std.mem.find(u8, text, word) != null);
+    }
+}
+
+test "generated command help stays within 80 columns" {
+    const text = try buildCommandHelp(std.testing.allocator);
+    defer std.testing.allocator.free(text);
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        const width = width_mod.displayWidth(line);
+        if (width > 80) {
+            std.debug.print("REPL help line is {d} columns: {s}\n", .{ width, line });
+            return error.TestUnexpectedResult;
+        }
     }
 }
 
