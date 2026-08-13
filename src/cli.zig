@@ -7866,7 +7866,10 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
 /// its file (an existing doc of that name is replaced, not duplicated).
 /// With `prune`, documents whose names look file-synced but no longer exist
 /// in the folder are removed — opt-in, because a collection can also hold
-/// hand-added docs whose names happen to end in .md.
+/// hand-added docs whose names happen to end in .md. Prune runs only when the
+/// folder listing came back whole: a listing cut short by an error or by the
+/// per-sync file cap cannot distinguish a deleted file from an unseen one, and
+/// deleting on that reading is the one failure here that loses data.
 fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, col_id: []const u8, body: []const u8, stream: std.Io.net.Stream) void {
     if (!isSlug(col_id)) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad collection id\"}");
@@ -7907,11 +7910,24 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
         return;
     }
 
+    // Every matching file the listing turned up, whether or not it went on to
+    // sync. Prune asks "is this document's file gone?", and a file that is
+    // present but unreadable, momentarily empty, or past the per-sync cap is
+    // still present — recording only the ones that synced would answer "gone"
+    // for all three and delete a document whose file is sitting right there.
     var folder_names: std.ArrayList([]const u8) = .empty;
+    // ...which only holds while the listing is whole. Cut it short and the
+    // names after the cut are missing from the list without being missing from
+    // the folder, so nothing may be pruned on the strength of it.
+    var listing_complete = true;
     var synced: usize = 0;
     var skipped: usize = 0;
     var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
+    while (true) {
+        const entry = (it.next(io) catch {
+            listing_complete = false;
+            break;
+        }) orelse break;
         if (entry.kind != .file) continue;
         const has_ext = for (synced_exts) |ext| {
             if (std.ascii.endsWithIgnoreCase(entry.name, ext)) break true;
@@ -7919,8 +7935,11 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
         if (!has_ext) continue;
         if (folder_names.items.len >= max_files) {
             skipped += 1;
+            listing_complete = false;
             continue;
         }
+        const name = arena.dupe(u8, entry.name) catch return;
+        folder_names.append(arena, name) catch return;
         const content = dir.readFileAlloc(io, entry.name, arena, .limited(max_doc_bytes)) catch {
             skipped += 1;
             continue;
@@ -7929,8 +7948,6 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
             skipped += 1;
             continue;
         }
-        const name = arena.dupe(u8, entry.name) catch return;
-        folder_names.append(arena, name) catch return;
 
         // Upsert: replace the existing doc of this name, if any.
         for (col.docs) |d| {
@@ -7965,14 +7982,7 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
     var removed: usize = 0;
     if (req.prune) {
         for (col.docs) |d| {
-            const looks_synced = for (synced_exts) |ext| {
-                if (std.ascii.endsWithIgnoreCase(d.name, ext)) break true;
-            } else false;
-            if (!looks_synced) continue;
-            const still_there = for (folder_names.items) |n| {
-                if (std.mem.eql(u8, n, d.name)) break true;
-            } else false;
-            if (still_there) continue;
+            if (!knowledgeDocIsOrphaned(listing_complete, d.name, &synced_exts, folder_names.items)) continue;
             const del = std.fmt.allocPrint(arena, "{{\"action\":\"delete_doc\",\"collection_id\":\"{s}\",\"doc_id\":\"{s}\"}}", .{ col_id, d.id }) catch return;
             _ = toolJson(io, gpa, arena, cfg, environ_map, "knowledge", del) catch continue;
             removed += 1;
@@ -7990,8 +8000,61 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
     s.print("{d}", .{removed}) catch return;
     s.objectField("skipped") catch return;
     s.print("{d}", .{skipped}) catch return;
+    // Say so rather than reporting a quiet `removed: 0`, which reads as
+    // "nothing to prune" when it means "I could not tell what to prune".
+    if (req.prune and !listing_complete) {
+        s.objectField("prune_skipped") catch return;
+        s.write(true) catch return;
+    }
     s.endObject() catch return;
     respond(stream, 200, "OK", out.written());
+}
+
+/// Whether a folder sync may delete this document: the listing has to have
+/// come back whole, the name has to look like one a sync wrote (a collection
+/// can also hold hand-added docs), and the file has to be gone from the
+/// folder. `folder_names` is every matching file the listing turned up, not
+/// every file that synced — a file that is present but unreadable, empty, or
+/// past the per-sync cap is still present, and reading "did not sync" as
+/// "deleted" is what turns a failed read into a deleted document.
+fn knowledgeDocIsOrphaned(
+    listing_complete: bool,
+    doc_name: []const u8,
+    exts: []const []const u8,
+    folder_names: []const []const u8,
+) bool {
+    if (!listing_complete) return false;
+    const looks_synced = for (exts) |ext| {
+        if (std.ascii.endsWithIgnoreCase(doc_name, ext)) break true;
+    } else false;
+    if (!looks_synced) return false;
+    for (folder_names) |n| {
+        if (std.mem.eql(u8, n, doc_name)) return false;
+    }
+    return true;
+}
+
+test "a folder sync prunes only what a whole listing proved gone" {
+    const exts = [_][]const u8{ ".md", ".txt" };
+    const present = [_][]const u8{ "kept.md", "also.txt" };
+
+    // Gone from a listing that saw the whole folder: the case prune is for.
+    try std.testing.expect(knowledgeDocIsOrphaned(true, "gone.md", &exts, &present));
+
+    // Still there, so not orphaned however the sync itself went. This is the
+    // bug the flag exists for: an unreadable or over-cap file never syncs, and
+    // deleting its document would lose data the folder still holds.
+    try std.testing.expect(!knowledgeDocIsOrphaned(true, "kept.md", &exts, &present));
+
+    // The listing was cut short, so absence proves nothing about the folder.
+    try std.testing.expect(!knowledgeDocIsOrphaned(false, "gone.md", &exts, &present));
+
+    // Hand-added documents are not the sync's to remove.
+    try std.testing.expect(!knowledgeDocIsOrphaned(true, "notes", &exts, &present));
+    try std.testing.expect(!knowledgeDocIsOrphaned(true, "sheet.pdf", &exts, &present));
+
+    // An empty folder orphans everything a whole listing did not show.
+    try std.testing.expect(knowledgeDocIsOrphaned(true, "gone.md", &exts, &.{}));
 }
 
 fn knowledgeRouteToToolInput(arena: std.mem.Allocator, method: []const u8, rest: []const u8, target: []const u8, body: []const u8) ?[]const u8 {
