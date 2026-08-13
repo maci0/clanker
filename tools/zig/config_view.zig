@@ -1,11 +1,12 @@
 //! config_view: dump the effective config so the agent knows its own settings
 //! (providers, models, modules, budgets). The full dump shows config.toml +
 //! config.local.toml raw (local last, matching src/config.zig's load order).
-//! Optional {"section": "modules"} filters to one top-level key of the
+//! Optional {"section": "<key>"} filters to one top-level key of the
 //! HOST-MERGED config via ck_harness_config -- a wasm guest carries no TOML
 //! parser, so structured access goes through the host, which already parsed
-//! and merged both files.
-//! Input:  {"section": "modules" | "providers" | ""}
+//! and merged both files. Known keys include providers, agent, modules,
+//! instance, peers, chatrooms, tui, improve, web, serve, memory, notify.
+//! Input:  {"section": "modules" | "providers" | "agent" | ""}
 //! Output: {"ok": true, "text": "<TOML dump or JSON section>"}
 
 const std = @import("std");
