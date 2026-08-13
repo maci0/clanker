@@ -168,7 +168,7 @@ export function uiConfirm(message, opts) {
     ok.addEventListener("click", function () { done(true); });
     actions.appendChild(ok);
     form.appendChild(actions);
-    window.setTimeout(function () { ok.focus(); }, 0);
+    window.setTimeout(function () { (opts.danger ? cancel : ok).focus(); }, 0);
   }).then(function (v) { return v === true; });
 }
 

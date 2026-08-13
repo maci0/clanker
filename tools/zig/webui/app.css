@@ -1001,6 +1001,7 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
   color: var(--fg-muted); font-family: var(--sans); font-size: 12px;
 }
 .branch-chip:hover { border-color: var(--accent); color: var(--fg); }
+.branch-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .branch-chip[data-current="true"] { background: var(--accent-dim); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
 .turn-foot button {
   padding: 0.25rem 0.6rem; font-size: 12px;
@@ -1350,7 +1351,7 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
   border: 1px solid var(--rule); border-radius: var(--radius);
   background: var(--surface); color: var(--fg); font-size: 12px;
 }
-.slack-search-box input:focus { border-color: var(--accent); outline: none; }
+.slack-search-box input:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
 .slack-room-list {
   flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0.25rem 0;
 }
@@ -1380,6 +1381,7 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
   position: relative;
 }
 .slack-room-item:hover { background: var(--surface-hover); color: var(--fg); }
+.slack-room-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 .slack-room-item.is-active {
   background: var(--accent); color: var(--on-accent, #fff);
   font-weight: 600;
@@ -1473,7 +1475,7 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
   border: 1px solid var(--rule); border-radius: var(--radius);
   background: var(--surface); color: var(--fg); font-size: 13px;
 }
-.slack-search-bar input:focus { border-color: var(--accent); outline: none; }
+.slack-search-bar input:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
 .slack-search-results {
   width: 100%; max-height: 200px; overflow-y: auto;
   margin-top: 0.25rem; font-size: 12px;
@@ -1485,6 +1487,7 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .slack-search-result:hover { background: var(--surface-hover); }
+.slack-search-result:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 /* A jumped-to message (from search or a pin), so the reader's eye lands on
    the right line instead of just the scroll position. */
 .chat-highlight { animation: chat-highlight-flash 1.5s ease; }
@@ -1525,8 +1528,8 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
   border: 1px solid var(--rule); border-radius: var(--radius);
   background: var(--bg); color: var(--fg); font-size: 13px;
 }
-.slack-composer-row input[type="text"]:focus {
-  border-color: var(--accent); outline: none;
+.slack-composer-row input[type="text"]:focus-visible {
+  border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .slack-composer-row button[type="submit"] {
@@ -1559,8 +1562,11 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
   background: none; border: none; cursor: pointer;
   color: var(--fg-muted); font-size: 16px; padding: 0.25rem;
   border-radius: var(--radius); line-height: 1;
+  min-width: 32px; min-height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
 }
 .slack-btn-icon:hover { background: var(--surface-hover); color: var(--fg); }
+.slack-btn-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* ── Create channel dialog ── */
 .slack-dialog { border: 1px solid var(--rule); border-radius: var(--radius-lg, 8px); padding: 0; background: var(--surface); box-shadow: 0 8px 32px rgba(0,0,0,.3); max-width: 400px; width: 90vw; }
@@ -1568,7 +1574,7 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .slack-dialog-form { padding: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
 .slack-dialog-form h3 { margin: 0; font-size: 16px; }
 .slack-dialog-form input { padding: 0.5rem; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--bg); color: var(--fg); font-size: 14px; }
-.slack-dialog-form input:focus { border-color: var(--accent); outline: none; }
+.slack-dialog-form input:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
 .slack-dialog-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.5rem; }
 /* uiConfirm / uiPrompt (core/ui.js) reuse this dialog language for every
    confirmation and one-line input, replacing the browser's native chrome. */
@@ -1677,11 +1683,13 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .chat-reactions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
 .chat-reactions:empty { display: none; }
 .chat-reaction { font-size: 12px; padding: 0.1rem 0.4rem; border-radius: 999px; border: 1px solid var(--rule); background: var(--surface-2); cursor: pointer; }
+.chat-reaction:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .chat-reaction[data-mine="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
 .chat-edited { font-size: 11px; color: var(--fg-muted); font-style: italic; }
 .chat-deleted { color: var(--fg-muted); font-style: italic; }
 .chat-msg-deleted .chat-actions { display: none; }
-.chat-edit-input { width: 100%; padding: 0.3rem 0.5rem; font: inherit; font-size: 13px; background: var(--surface); color: var(--fg); border: 1px solid var(--accent); border-radius: 4px; outline: none; }
+.chat-edit-input { width: 100%; padding: 0.3rem 0.5rem; font: inherit; font-size: 13px; background: var(--surface); color: var(--fg); border: 1px solid var(--accent); border-radius: 4px; }
+.chat-edit-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .chat-topic { font-size: 12px; color: var(--fg-muted); padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--rule); font-style: italic; }
 .chat-thread-bar { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.4rem; font-size: 12px; }
 .chat-thread-bar[hidden] { display: none; }
@@ -1963,7 +1971,7 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   input[type="date"], select { min-height: 44px; }
   .rail-item, .rail-new, .chat-actions button, .chat-thread-bar button,
   .board-empty-slot button, .board-quick-add .board-add-actions button,
-  .card-quick-actions button { min-width: 44px; min-height: 44px; }
+  .card-quick-actions button, .slack-btn-icon { min-width: 44px; min-height: 44px; }
 }
 
 /* A pressed actuator travels; scale reads as shrinking, travel reads as a
@@ -2195,6 +2203,7 @@ mark {
   box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
 .suggestion:hover { border-color: var(--border); background: var(--surface-2); }
+.suggestion:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Staggered entrance for suggestion pills — motion gated */
 .suggestion { animation: suggestion-in 240ms ease-out both; }
 .suggestion:nth-child(1) { animation-delay: 0ms; }
@@ -2261,6 +2270,7 @@ mark {
   font-weight: 500; display: inline-flex; align-items: center; gap: 0.3rem;
 }
 .board-header-btn:hover { background: var(--surface-2); color: var(--fg); }
+.board-header-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .board-header-btn[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 
 .board-filter {
@@ -2567,6 +2577,7 @@ h2#session-title {
   cursor: pointer; border-radius: 8px; transition: background 120ms ease, color 120ms ease;
 }
 .board-quick-add .board-add-trigger:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+.board-quick-add .board-add-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 .board-quick-add .board-add-trigger .icon { opacity: 0.6; }
 .board-quick-add .board-add-form { display: none; flex-direction: column; gap: 0.4rem; }
 .board-quick-add.is-adding .board-add-trigger { display: none; }
@@ -2577,7 +2588,7 @@ h2#session-title {
   border: 1px solid var(--rule); background: var(--surface);
   box-shadow: 0 1px 4px rgba(0,0,0,0.06); line-height: 1.4;
 }
-.board-quick-add .board-add-form textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+.board-quick-add .board-add-form textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
 .board-quick-add .board-add-actions { display: flex; gap: 0.4rem; align-items: center; }
 .board-quick-add .board-add-actions button { min-height: 32px; font-size: 12px; border-radius: 8px; }
 .board-quick-add .board-add-actions .board-add-cancel { background: none; border: none; color: var(--fg-muted); cursor: pointer; padding: 0 0.4rem; font-size: 16px; line-height: 1; }
@@ -2589,6 +2600,7 @@ h2#session-title {
 /* Trello-style column options "⋯" menu */
 .board-col-menu-btn { font-size: 16px; padding: 0 0.3rem; line-height: 1; border-radius: var(--radius); min-width: auto; }
 .board-col-menu-btn:hover { background: var(--surface-hover); }
+.board-col-menu-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .board-col-menu {
   position: absolute; top: 100%; right: 0; z-index: 50;
   min-width: 220px; background: var(--surface); border: 1px solid var(--border);
@@ -2607,6 +2619,7 @@ h2#session-title {
   cursor: pointer; border-radius: 0;
 }
 .board-col-menu-item:hover:not(:disabled) { background: var(--surface-hover); color: var(--accent); }
+.board-col-menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .board-col-menu-item:disabled { cursor: default; }
 .board-col-menu-backdrop { position: fixed; inset: 0; z-index: 49; }
 
@@ -2674,6 +2687,7 @@ h2#session-title {
   opacity: 0; transition: opacity 120ms ease, background 120ms ease;
 }
 .card-quick-edit-btn:hover { background: var(--surface-2); color: var(--fg); }
+.card-quick-edit-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; opacity: 1; }
 .card-body { padding: 0.55rem 0.65rem 0.5rem; display: flex; flex-direction: column; gap: 0.35rem; }
 
 /* The "in list <column>" subtitle in the card detail header. */
@@ -2737,6 +2751,7 @@ h2#session-title {
   cursor: pointer; transition: transform 100ms ease, border-color 100ms ease;
 }
 .cover-color-swatch:hover { transform: scale(1.08); }
+.cover-color-swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .cover-color-swatch[data-selected="true"] { border-color: var(--fg); box-shadow: 0 0 0 2px var(--surface); }
 .cover-color-swatch[data-color="green"] { background: linear-gradient(135deg, #0a7a2e, #2cb355); }
 .cover-color-swatch[data-color="yellow"] { background: linear-gradient(135deg, #9a7a0a, #d4a80a); }
@@ -2870,6 +2885,7 @@ h2#session-title {
   display: grid; place-items: center; transition: background 120ms ease, color 120ms ease;
 }
 .card-detail-header .card-detail-close:hover { background: var(--surface-2); color: var(--fg); }
+.card-detail-header .card-detail-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card-detail-layout {
   display: grid; grid-template-columns: 1fr 168px; gap: var(--space-4);
   padding: var(--space-3) var(--space-4) var(--space-4);
@@ -2886,6 +2902,7 @@ h2#session-title {
   display: flex; align-items: center; gap: 0.4rem;
 }
 .card-detail-sidebar button:hover { background: color-mix(in srgb, var(--fg) 12%, var(--surface-2)); transform: translateX(1px); }
+.card-detail-sidebar button:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 /* Card detail section headers */
 .card-detail-section-head {
@@ -2921,8 +2938,8 @@ h2#session-title {
   border: 1px solid var(--rule); background: var(--surface);
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-.card-detail-desc-area:focus {
-  border-color: var(--accent); outline: none;
+.card-detail-desc-area:focus-visible {
+  border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 .card-detail-desc-preview {
@@ -2933,6 +2950,7 @@ h2#session-title {
   transition: background 120ms ease;
 }
 .card-detail-desc-preview:hover { background: color-mix(in srgb, var(--fg) 6%, var(--surface-2)); }
+.card-detail-desc-preview:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card-detail-desc-preview:empty::before {
   content: "Add a more detailed description…";
   color: var(--fg-muted); font-style: italic;
@@ -2946,6 +2964,7 @@ h2#session-title {
   position: relative;
 }
 .label-picker-item:hover { transform: scale(1.12); }
+.label-picker-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .label-picker-item[data-selected="true"] { border-color: var(--fg); }
 .label-picker-item[data-selected="true"]::after {
   content: "✓"; position: absolute; inset: 0; display: grid; place-items: center;
