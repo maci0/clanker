@@ -4965,7 +4965,7 @@ test "tailWindow counts wrapped rows, which the old line-count guess did not" {
     // An anchored (scrolled-back) window is the same computation with a
     // smaller end, which is what lets the frozen-scroll case share this path
     // instead of guessing: end at 2, four rows, so only entry 1 is shown.
-    const anchored = tailWindow(lines[0..2], 2, 4, 10);
+    const anchored = tailWindow(lines[0..2], &[_]Fold{}, 2, 4, 10);
     try std.testing.expectEqual(@as(usize, 1), anchored.start);
     try std.testing.expectEqual(@as(u16, 3), anchored.used_rows);
 }

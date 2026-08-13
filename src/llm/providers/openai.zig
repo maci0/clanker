@@ -397,7 +397,11 @@ test "openai request body sends reasoning_effort and omits it when unset" {
         .messages = &messages,
     });
     defer arena.free(body);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"reasoning_effort\":\"high\"") != null);
+    // Exactly once: writeSamplingParams is the only writer. This codec used to
+    // write the field a second time from the model config directly, which a
+    // presence check would not have caught.
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, "\"reasoning_effort\":\"high\""));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, "reasoning_effort"));
 
     const plain = try config.Provider.single(arena, "ollama", "http://localhost:11434", .openai_compat, "llama3.3", .{ .max_tokens = 64 });
     const plain_body = try buildRequest(arena, .{
