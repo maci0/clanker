@@ -968,10 +968,66 @@ fn splitShellArgs(line: []const u8, out: *[max_escape_args][]const u8) ShellSpli
 const escape_stdout_limit = 1 << 20;
 const escape_stderr_limit = 64 * 1024;
 
-/// Transcript lines one `!` command may contribute. The stream caps above are
-/// byte caps; this is the readability cap, so `!git log` cannot push the
-/// conversation off the top of a scrollback nobody asked to page through.
-const escape_max_lines = 500;
+/// Transcript lines one local command may contribute. Both `!git log` and
+/// shared internal tools such as `/graph` can otherwise push the conversation
+/// off the top of a scrollback nobody asked to page through.
+const command_output_max_lines = 200;
+
+fn fullCliCommand(tool_name: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, tool_name, "cmd_sessions")) return "clanker sessions";
+    if (std.mem.eql(u8, tool_name, "cmd_graph")) return "clanker graph";
+    if (std.mem.eql(u8, tool_name, "cmd_tools")) return "clanker tools";
+    if (std.mem.eql(u8, tool_name, "cmd_plugins")) return "clanker plugins";
+    return null;
+}
+
+/// Adds sanitized internal-tool text to the transcript under the same line
+/// budget as `!` output. Returns whether anything was omitted.
+fn appendInternalToolOutput(arena: std.mem.Allocator, lines: *std.ArrayList(Line), tool_name: []const u8, text: []const u8) bool {
+    const normalized = std.mem.trimRight(u8, text, "\r\n");
+    if (normalized.len == 0) {
+        lines.append(arena, .{ .text = "notice: command returned no output", .dim = true }) catch {};
+        return false;
+    }
+    var it = std.mem.splitScalar(u8, normalized, '\n');
+    var count: usize = 0;
+    while (it.next()) |line| {
+        if (count == command_output_max_lines) {
+            const notice = if (fullCliCommand(tool_name)) |cmd|
+                std.fmt.allocPrint(arena, "notice: output truncated after {d} lines; run `{s}` for complete output", .{ command_output_max_lines, cmd }) catch "notice: output truncated"
+            else
+                std.fmt.allocPrint(arena, "notice: output truncated after {d} lines", .{command_output_max_lines}) catch "notice: output truncated";
+            lines.append(arena, .{ .text = notice, .dim = true }) catch {};
+            return true;
+        }
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        lines.append(arena, .{ .text = arena.dupe(u8, trimmed) catch trimmed, .dim = true }) catch {};
+        count += 1;
+    }
+    return false;
+}
+
+test "internal slash-command output is bounded and names the full CLI escape hatch" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    for (0..command_output_max_lines + 1) |i| {
+        if (i > 0) try source.append(std.testing.allocator, '\n');
+        try source.appendSlice(std.testing.allocator, "row");
+    }
+    var lines: std.ArrayList(Line) = .empty;
+    try std.testing.expect(appendInternalToolOutput(arena, &lines, "cmd_graph", source.items));
+    try std.testing.expectEqual(command_output_max_lines + 1, lines.items.len);
+    try std.testing.expectEqualStrings("row", lines.items[command_output_max_lines - 1].text);
+    try std.testing.expectEqualStrings("notice: output truncated after 200 lines; run `clanker graph` for complete output", lines.items[command_output_max_lines].text);
+
+    var empty: std.ArrayList(Line) = .empty;
+    try std.testing.expect(!appendInternalToolOutput(arena, &empty, "cmd_status", "\n"));
+    try std.testing.expectEqualStrings("notice: command returned no output", empty.items[0].text);
+}
 
 fn appendUniqueCmd(arena: std.mem.Allocator, list: *std.ArrayList([]const u8), cmd: []const u8) void {
     for (list.items) |existing| {
@@ -2101,11 +2157,7 @@ const Model = struct {
             self.lines.append(self.arena, .{ .text = "error: internal tool output dropped: out of memory", .dim = true }) catch {};
             return true;
         };
-        var it = std.mem.splitScalar(u8, safe, '\n');
-        while (it.next()) |line| {
-            const trimmed = std.mem.trim(u8, line, " \t\r");
-            self.lines.append(self.arena, .{ .text = self.arena.dupe(u8, trimmed) catch trimmed, .dim = true }) catch {};
-        }
+        _ = appendInternalToolOutput(self.arena, &self.lines, tool_name, safe);
         return true;
     }
 
@@ -2222,7 +2274,7 @@ const Model = struct {
             }) catch {},
             .ran => |out| {
                 defer out.deinit(self.gpa);
-                var budget: usize = escape_max_lines;
+                var budget: usize = command_output_max_lines;
                 self.appendEscapeOutput(out.stdout, &budget);
                 self.appendEscapeOutput(out.stderr, &budget);
                 // A silent non-zero exit reads as "it worked"; say it. Zero
