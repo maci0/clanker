@@ -482,6 +482,11 @@ pub const Modules = struct {
     graphs: bool = true,
     sessions: bool = true,
     goal: bool = true,
+    /// Attach the newest active goal to a run automatically when no explicit
+    /// `--goal <id>` is given. Set to false to run with the goal module on
+    /// (explicit goals, `/goal`, tracking all still work) but without runs
+    /// steering themselves toward the newest active goal.
+    goal_auto_steer: bool = true,
     token_budget: bool = true,
     streaming: bool = true,
     dotenv: bool = true,
@@ -516,6 +521,7 @@ pub const ModulesFields = struct {
     graphs: bool = false,
     sessions: bool = false,
     goal: bool = false,
+    goal_auto_steer: bool = false,
     token_budget: bool = false,
     streaming: bool = false,
     dotenv: bool = false,
@@ -1432,6 +1438,7 @@ pub const Config = struct {
         if (fields.graphs) dst.graphs = src.graphs;
         if (fields.sessions) dst.sessions = src.sessions;
         if (fields.goal) dst.goal = src.goal;
+        if (fields.goal_auto_steer) dst.goal_auto_steer = src.goal_auto_steer;
         if (fields.token_budget) dst.token_budget = src.token_budget;
         if (fields.streaming) dst.streaming = src.streaming;
         if (fields.dotenv) dst.dotenv = src.dotenv;
@@ -1534,6 +1541,7 @@ pub const Config = struct {
             .{ .key = "graphs", .ptr = &m.graphs, .present = &mf.graphs },
             .{ .key = "sessions", .ptr = &m.sessions, .present = &mf.sessions },
             .{ .key = "goal", .ptr = &m.goal, .present = &mf.goal },
+            .{ .key = "goal_auto_steer", .ptr = &m.goal_auto_steer, .present = &mf.goal_auto_steer },
             .{ .key = "token_budget", .ptr = &m.token_budget, .present = &mf.token_budget },
             .{ .key = "streaming", .ptr = &m.streaming, .present = &mf.streaming },
             .{ .key = "dotenv", .ptr = &m.dotenv, .present = &mf.dotenv },
@@ -1547,7 +1555,7 @@ pub const Config = struct {
         };
         warnUnknownKeys(obj, &.{
             "mcp",        "peers",       "a2a",          "webui",     "graphs",
-            "sessions",   "goal",        "token_budget", "streaming", "dotenv",
+            "sessions",   "goal",        "goal_auto_steer", "token_budget", "streaming", "dotenv",
             "hot_reload", "autolearn",   "subagents",    "rlm",       "multimodal",
             "chatrooms",  "token_stats",
         }, "modules");

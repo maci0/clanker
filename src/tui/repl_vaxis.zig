@@ -45,6 +45,7 @@ const types = @import("../llm/types.zig");
 const providers = @import("../llm/providers.zig");
 const registry = @import("../tools/registry.zig");
 const session_mod = @import("../agent/session.zig");
+const goal_prompt = @import("../agent/goal_prompt.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const sandbox_host = @import("../sandbox/host.zig");
 const agent_loop = @import("../agent/loop.zig");
@@ -393,6 +394,26 @@ const Line = struct {
     /// prompt colour so each turn's starting point is scannable on scrollback.
     user: bool = false,
 };
+
+/// A foldable region: one long assistant reply, collapsed behind a `>` header
+/// row until the user clicks it open. `start`/`count` name the reply's
+/// contiguous run in `Model.lines` (lines are only ever appended, so the range
+/// is stable once created). `expanded` is the user's intent; the animation
+/// drives `anim` toward it, and rendering reads `anim`, so a fold round-trips
+/// to exactly its collapsed/open layout — no drift.
+const Fold = struct {
+    start: usize,
+    count: usize,
+    expanded: bool,
+    /// 0 = collapsed (header only), 1 = fully open. Monotonically eased toward
+    /// `expanded` by the tick loop.
+    anim: f32,
+};
+
+/// A reply at least this many wrapped terminal rows tall is worth folding.
+const FOLD_MIN_ROWS: usize = 8;
+/// Ticks per second while a fold animation is running.
+const FOLD_ANIM_RATE: u32 = 60;
 
 /// Errors use the same stable prefix as the non-interactive CLI. Keeping the
 /// classifier separate from drawing prevents a new TUI error path from
@@ -1582,6 +1603,14 @@ const Model = struct {
     session_title: []const u8 = "",
 
     lines: std.ArrayList(Line) = .empty,
+    /// Foldable replies (see `Fold`), sorted by `.start` (creation order).
+    folds: std.ArrayList(Fold) = .empty,
+    /// Clickable `>` header rows from the last draw, in widget-local rows,
+    /// so a mouse release can map back to a fold.
+    fold_hits: std.ArrayList(struct { row: u16, fold: usize }) = .empty,
+    /// Transcript width from the last draw; used to decide foldability when a
+    /// reply lands on the worker thread in `finishTurn`.
+    last_text_width: u16 = 0,
     text_field: vxfw.TextField,
     thread: ?std.Thread = null,
     spinner_frame: u8 = 0,
@@ -1781,7 +1810,14 @@ const Model = struct {
         }
         bridge_tool_lines.clearRetainingCapacity();
         const answer = if (final_text.len > 0) final_text else bridge_stream_buf.items;
+        const reply_start = self.lines.items.len;
         appendAnswerLines(self.arena, &self.lines, answer);
+        // A long reply becomes a foldable region (see `Fold`): it renders as
+        // a single `>` header row until the user clicks it open. Only the
+        // prose is folded; the tool lines and the turn receipt above/below
+        // are untouched. Foldability is judged on wrapped height at the last
+        // transcript width so short replies never fold.
+        self.maybeFoldReply(reply_start);
         bridge_stream_buf.clearRetainingCapacity();
 
         // The turn's receipt, last line of the turn: tokens, wall time,
@@ -1796,6 +1832,87 @@ const Model = struct {
                 } else |_| {}
             }
         }
+    }
+
+    /// If the reply that begins at `reply_start` is long enough, mark it as a
+    /// foldable region, starting collapsed. Runs under `bridge_mutex` from the
+    /// worker thread (`finishTurn`); the draw/tick loop reads the same list
+    /// under the same lock.
+    fn maybeFoldReply(self: *Model, reply_start: usize) void {
+        const count = self.lines.items.len - reply_start;
+        if (count == 0) return;
+        const width = if (self.last_text_width > 0) self.last_text_width else 80;
+        var rows: usize = 0;
+        for (self.lines.items[reply_start .. reply_start + count]) |l| {
+            rows += lineRows(l.text, width);
+            if (rows > FOLD_MIN_ROWS) break;
+        }
+        if (rows <= FOLD_MIN_ROWS) return;
+        self.folds.append(self.arena, .{
+            .start = reply_start,
+            .count = count,
+            .expanded = false,
+            .anim = 0,
+        }) catch {};
+    }
+
+    /// Index into `self.folds` of the fold whose region begins at `line_idx`,
+    /// or null.
+    fn foldIndexAtStart(self: *const Model, line_idx: usize) ?usize {
+        for (self.folds.items, 0..) |f, k| {
+            if (f.start == line_idx) return k;
+        }
+        return null;
+    }
+
+    /// Index into `self.folds` of the fold whose region contains `line_idx`
+    /// (start <= idx < start+count), or null.
+    fn foldContaining(self: *const Model, line_idx: usize) ?usize {
+        for (self.folds.items, 0..) |f, k| {
+            if (line_idx >= f.start and line_idx < f.start + f.count) return k;
+        }
+        return null;
+    }
+
+    /// Wrapped terminal rows the fold's body occupies when fully open.
+    fn foldBodyRows(self: *const Model, fold: Fold, width: u16) usize {
+        var total: usize = 0;
+        for (self.lines.items[fold.start .. fold.start + fold.count]) |l| {
+            total += lineRows(l.text, width);
+        }
+        return total;
+    }
+
+    /// Fractional body rows currently revealed (0..bodyRows), from `anim`.
+    fn foldBodyReveal(self: *const Model, fold: Fold, width: u16) f32 {
+        return @as(f32, @floatFromInt(self.foldBodyRows(fold, width))) * foldEase(fold.anim);
+    }
+
+    /// Whole terminal rows the fold currently occupies in the transcript
+    /// layout: the 1 header row plus the currently revealed body rows.
+    fn foldCurrentRows(self: *const Model, fold: Fold, width: u16) usize {
+        const reveal = self.foldBodyReveal(fold, width);
+        return 1 + @as(usize, @intFromFloat(@round(reveal)));
+    }
+
+    /// Advance every animating fold one step toward its target and report
+    /// whether any fold is still mid-animation (needs another tick). Called
+    /// from the tick handler under `bridge_mutex`.
+    fn advanceFolds(self: *Model) bool {
+        const step: f32 = 1.0 / @as(f32, @floatFromInt(FOLD_ANIM_RATE));
+        var any = false;
+        for (self.folds.items) |*f| {
+            const target: f32 = if (f.expanded) 1 else 0;
+            if (f.anim == target) continue;
+            const delta = step;
+            if (target > f.anim) {
+                f.anim = @min(1, f.anim + delta);
+            } else {
+                f.anim = @max(0, f.anim - delta);
+            }
+            if (f.anim != target) any = true;
+        }
+        return any;
     }
 
     /// Reports the *other* compaction: the one `Agent.maybeCompactMessages`
@@ -2424,11 +2541,7 @@ const Model = struct {
     /// `clanker goal "<intent>"`. Runs as a normal turn so it streams, is
     /// saved to the session, and can be stopped like any other task.
     fn runGoalTask(self: *Model, ctx: *vxfw.EventContext, intent: []const u8) bool {
-        const task = std.fmt.allocPrint(
-            self.arena,
-            "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.",
-            .{intent},
-        ) catch return true;
+        const task = goal_prompt.task(self.arena, intent) catch return true;
         self.submitTask(ctx, task) catch |err| {
             self.lines.append(self.arena, .{
                 .text = std.fmt.allocPrint(self.arena, "error: could not start goal task: {s}", .{@errorName(err)}) catch "error: could not start goal task",
@@ -3777,7 +3890,7 @@ const Model = struct {
         else
             0;
         const for_completed: u16 = avail_rows -| reserved;
-        const win = tailWindow(self.lines.items[0..view_end], view_end, for_completed, text_width);
+        const win = tailWindow(self.lines.items[0..view_end], self.folds.items, view_end, for_completed, text_width);
         const start = win.start;
         row = top + (avail_rows -| (win.used_rows + reserved));
         // Lines carry fence_lang when they came out of a code fence; the
@@ -4120,17 +4233,49 @@ fn streamRows(text: []const u8, width: u16) usize {
 /// (unlike a plain line-count guess). Returns the first visible line and
 /// the rows it and its successors occupy; `avail_rows - used_rows` is the
 /// blank offset that pins short transcripts to the bottom, chat-style.
-fn tailWindow(lines: []const Line, view_end: usize, avail_rows: u16, width: u16) struct { start: usize, used_rows: u16 } {
+///
+/// Folds (see `Fold`) are atomic blocks: any line inside a reply's range
+/// contributes that reply's folded height (1 header row + the currently
+/// revealed body rows) and the walk jumps the whole block in one step, so a
+/// reply is either fully visible or not at all — never cut mid-way.
+fn tailWindow(
+    lines: []const Line,
+    folds: []const Fold,
+    view_end: usize,
+    avail_rows: u16,
+    width: u16,
+) struct { start: usize, used_rows: u16 } {
     var used: usize = 0;
     var start = view_end;
     while (start > 0) {
-        const lr = lineRows(lines[start - 1].text, width);
-        if (used + lr > avail_rows and used > 0) break;
-        used += lr;
-        start -= 1;
+        const i = start - 1;
+        var rows: usize = lineRows(lines[i].text, width);
+        var block_start = i;
+        for (folds) |f| {
+            if (i >= f.start and i < f.start + f.count) {
+                var body: usize = 0;
+                for (lines[f.start .. f.start + f.count]) |l| {
+                    body += lineRows(l.text, width);
+                }
+                const reveal = @as(f32, @floatFromInt(body)) * foldEase(f.anim);
+                rows = 1 + @as(usize, @intFromFloat(@round(reveal)));
+                block_start = f.start;
+                break;
+            }
+        }
+        if (used + rows > avail_rows and used > 0) break;
+        used += rows;
+        start = block_start;
         if (used >= avail_rows) break;
     }
     return .{ .start = start, .used_rows = @intCast(@min(used, avail_rows)) };
+}
+
+/// Ease curve for the fold animation (smoothstep): fast middle, eased ends.
+fn foldEase(t: f32) f32 {
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    return t * t * (3 - 2 * t);
 }
 
 // ---------------------------------------------------------------------
@@ -4469,12 +4614,12 @@ test "tailWindow bottom-aligns a short transcript and fills a tall one" {
         .{ .text = "four" }, .{ .text = "five" },
     };
     // All five fit in ten rows: start at 0, used == the five short lines.
-    const short = tailWindow(&lines, lines.len, 10, 80);
+    const short = tailWindow(&lines, &[_]Fold{}, lines.len, 10, 80);
     try std.testing.expectEqual(@as(usize, 0), short.start);
     try std.testing.expectEqual(@as(u16, 5), short.used_rows);
     // Only three rows available: the window drops the two oldest lines and
     // fills, so the newest line is never clipped.
-    const tall = tailWindow(&lines, lines.len, 3, 80);
+    const tall = tailWindow(&lines, &[_]Fold{}, lines.len, 3, 80);
     try std.testing.expectEqual(@as(usize, 2), tall.start);
     try std.testing.expectEqual(@as(u16, 3), tall.used_rows);
 }
@@ -4489,7 +4634,7 @@ test "tailWindow counts wrapped rows, which the old line-count guess did not" {
     };
 
     // Four rows available: only the newest entry fits, and it is not clipped.
-    const win = tailWindow(&lines, lines.len, 4, 10);
+    const win = tailWindow(&lines, &[_]Fold{}, lines.len, 4, 10);
     try std.testing.expectEqual(@as(usize, 2), win.start);
     try std.testing.expectEqual(@as(u16, 3), win.used_rows);
     // The plain line-count heuristic this replaced would have started at 0
@@ -4499,7 +4644,7 @@ test "tailWindow counts wrapped rows, which the old line-count guess did not" {
 
     // Ten rows: everything fits, and used_rows is the wrapped total, not the
     // entry count, so the bottom-alignment offset is right.
-    const all = tailWindow(&lines, lines.len, 10, 10);
+    const all = tailWindow(&lines, &[_]Fold{}, lines.len, 10, 10);
     try std.testing.expectEqual(@as(usize, 0), all.start);
     try std.testing.expectEqual(@as(u16, 9), all.used_rows);
     try std.testing.expect(all.used_rows != lines.len);
@@ -4845,6 +4990,56 @@ fn writeWrapped(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text:
         surface.writeCell(col, row.*, .{ .char = .{ .grapheme = c.bytes, .width = @intCast(c.width) }, .style = style });
         col += c.width;
     }
+}
+
+/// Like `writeWrapped`, but writes at most `budget` wrapped rows, where the
+/// final row may be fractional: its trailing `fraction * width` columns are
+/// left blank. Used to reveal a fold's body one smooth row at a time — each
+/// tick grows the budget, so the reply unrolls instead of snapping.
+fn writeWrappedPartial(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text: []const u8, style: vaxis.Style, budget: f32) void {
+    if (budget <= 0 or width == 0) return;
+    var rows_done: f32 = 0;
+    var col: u16 = 0;
+    var i: usize = 0;
+    while (nextCell(text, &i)) |c| {
+        if (row.* >= bottom) break;
+        if (std.mem.eql(u8, c.bytes, "\n")) {
+            rows_done += 1;
+            if (rows_done >= budget) break;
+            row.* += 1;
+            col = 0;
+            continue;
+        }
+        if (col + c.width > width) {
+            rows_done += 1;
+            if (rows_done >= budget) break;
+            row.* += 1;
+            col = 0;
+            if (row.* >= bottom) break;
+        }
+        // The fractional tail row stops mid-row after `frac * width` columns.
+        const frac = budget - rows_done;
+        if (frac < 1 and col + c.width > @as(u16, @intFromFloat(@round(frac * @as(f32, @floatFromInt(width)))))) break;
+        surface.writeCell(col, row.*, .{ .char = .{ .grapheme = c.bytes, .width = @intCast(c.width) }, .style = style });
+        col += c.width;
+    }
+}
+
+/// Shorten `s` so its display width is at most `max_cols` columns, cutting at
+/// a cell boundary (never splitting a grapheme). Used to fit a fold header on
+/// one terminal row.
+fn truncateToCols(s: []const u8, max_cols: u16) []const u8 {
+    if (max_cols == 0) return s[0..0];
+    if (width_mod.displayWidth(s) <= max_cols) return s;
+    var cols: u16 = 0;
+    var i: usize = 0;
+    while (i < s.len) {
+        const cell_start = i;
+        const c = nextCell(s, &i) orelse break;
+        if (cols + c.width > max_cols) return s[0..cell_start];
+        cols += c.width;
+    }
+    return s;
 }
 
 /// Blanks the interior rows of a box before anything is written into them.
