@@ -1013,6 +1013,7 @@ pub const Agent = struct {
         const keep = if (lines.items.len > reasoning_keep_lines) lines.items.len - reasoning_keep_lines else 0;
         var out: std.ArrayList(u8) = .empty;
         defer out.deinit(gpa);
+        try out.ensureTotalCapacity(gpa, raw.len);
         for (lines.items[keep..]) |ln| {
             try out.appendSlice(gpa, ln);
             try out.append(gpa, '\n');
@@ -1155,6 +1156,7 @@ pub const Agent = struct {
         if (msgs.len == 0) return null;
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(self.ctx.gpa);
+        buf.ensureTotalCapacity(self.ctx.gpa, 4096) catch {};
         var hdr_buf: [96]u8 = undefined;
         const hdr = std.fmt.bufPrint(&hdr_buf, "[conversation summary: {d} earlier messages compacted (extractive)]\n", .{msgs.len}) catch return null;
         buf.appendSlice(self.ctx.gpa, hdr) catch return null;
@@ -1265,6 +1267,7 @@ pub const Agent = struct {
         const max_transcript: usize = 12000;
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(self.ctx.gpa);
+        try buf.ensureTotalCapacity(self.ctx.gpa, max_transcript);
         for (msgs) |m| {
             if (buf.items.len >= max_transcript) break;
             const role_str: []const u8 = switch (m.role) {
@@ -1273,9 +1276,9 @@ pub const Agent = struct {
                 .tool => "tool",
                 .system => "system",
             };
-            const hdr = try std.fmt.allocPrint(self.ctx.gpa, "[{s}] ", .{role_str});
-            defer self.ctx.gpa.free(hdr);
-            try buf.appendSlice(self.ctx.gpa, hdr);
+            try buf.append(self.ctx.gpa, '[');
+            try buf.appendSlice(self.ctx.gpa, role_str);
+            try buf.appendSlice(self.ctx.gpa, "] ");
             if (m.content) |c| {
                 const remaining = if (max_transcript > buf.items.len) max_transcript - buf.items.len else 0;
                 const slice = if (c.len > remaining) c[0..remaining] else c;
@@ -1624,10 +1627,10 @@ pub const Agent = struct {
         payload: []const u8,
     ) ![]const u8 {
         const chain = try self.reg.transformsFor(self.arena, tool_name, phase);
+        if (chain.len == 0) return payload;
         // Const-qualified: each step's replacement comes back from
         // runTransform as []const u8, and a []u8 here cannot hold it.
         var current: []const u8 = try self.arena.dupe(u8, payload);
-        if (chain.len == 0) return current;
 
         var applied: std.ArrayList([]const u8) = .empty;
         for (chain) |t| {

@@ -155,6 +155,7 @@ fn trimLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.
     const keep = if (lines.items.len > 1000) lines.items.len - 1000 else 0;
     var out = std.ArrayList(u8).empty;
     defer out.deinit(gpa);
+    try out.ensureTotalCapacity(gpa, raw.len);
     for (lines.items[keep..]) |ln| {
         try out.appendSlice(gpa, ln);
         try out.append(gpa, '\n');

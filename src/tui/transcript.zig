@@ -120,11 +120,14 @@ pub const MdStream = struct {
             self.syn_state = syntax.State.init(self.fence_lang[0..self.fence_lang_len]);
             self.syn_style = syntax.Style.fromTheme(&self.theme);
         }
+        // A 4096-byte line produces at most ~200 tokens (24 bytes each).
+        // A stack-backed fixed buffer avoids the mmap/munmap syscalls that
+        // page_allocator would do on every line of every fenced block.
+        var fba_buf: [8192]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&fba_buf);
         var toks: std.ArrayList(syntax.Token) = .empty;
-        defer toks.deinit(std.heap.page_allocator);
-        syntax.highlightLine(&self.syn_state, std.heap.page_allocator, line, &toks) catch {
-            // OOM: fall back to the same plain-but-sanitized path the
-            // pre-highlighting renderer used. Never lose the line.
+        defer toks.deinit(fba.allocator());
+        syntax.highlightLine(&self.syn_state, fba.allocator(), line, &toks) catch {
             writeSanitized(w, line);
             return;
         };
