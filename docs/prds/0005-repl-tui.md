@@ -150,7 +150,7 @@ specific `vxfw` shape, not an open-ended "figure it out":
 | Ctrl-C, idle prompt | Quits the REPL (`ctx.quit = true`) |
 | Ctrl-C, mid-stream | Sets the same `stop_flag` `client.chatStream` already checks |
 | `ask_user` invoked here | No `ask_fn` is wired; falls back to the same "nobody attached" default (`not_found`) a headless run gets. No prompt-rendering path exists yet (tracked below) |
-| `confirm_writes = "always"` invoked here | No `confirm_fn` is wired either, so write-capable tool calls run **ungated**, not declined. A one-line warning prints once at startup so the operator isn't left believing they're protected |
+| `confirm_writes = "always"` invoked here | No `confirm_fn` is wired either, so write-capable tool calls run **ungated**, not declined. A one-line warning prints once at startup so the operator isn't left believing they're protected. That warning is emitted *before* `log.setLevel(.error_)`, which is deliberate: the clamp exists to keep stray stderr off vaxis's alt screen, so it belongs immediately before `app.run`, not at the top of the command. Raised at the top it swallowed this warning (logged at `.warn`) outright, along with config parse warnings and `--session` id complaints |
 | Control bytes in LLM/tool output | Stripped before render, per Design. Covers the streamed deltas, the provider's final `message.content`, its `err_detail` on a failed turn, internal `cmd_*` tool `text`, `!` escape output, and clipboard payloads |
 | History exceeds visible height | PgUp/PgDn/Home/End page it (manual scrollback, shipped) |
 
