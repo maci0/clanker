@@ -85,6 +85,7 @@ comptime {
     _ = @import("tui/theme.zig");
     _ = @import("tui/syntax.zig");
     _ = @import("tui/stats.zig");
+    _ = @import("tui/mascot.zig");
     _ = @import("tui/repl_vaxis.zig");
     _ = @import("cli.zig");
     _ = @import("doctor.zig");
