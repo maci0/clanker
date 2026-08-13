@@ -26,12 +26,13 @@
 # repository with its own tools; nothing is patched unless --fix is given.
 
 set -uo pipefail
-cd "$(dirname "$0")" || exit 1
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT" || exit 1
 
 info() { printf '==> %s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '2,/^$/!d; s/^# \?//p' "$0"; }
+usage() { sed -En '2,/^$/{s/^# ?//p;}' "$0"; }
 
 PROMPT_DIR="$HOME/review-prompts/prompts"
 OUT_DIR="state/reviews"
@@ -66,7 +67,10 @@ done
 [ -d "$PROMPT_DIR" ] || die "prompt directory not found: $PROMPT_DIR"
 
 # Prompt files are "<name>-review.md"; the name alone is what users type.
-mapfile -t AVAILABLE < <(find "$PROMPT_DIR" -maxdepth 1 -name '*-review.md' -printf '%f\n' | sed 's/-review\.md$//' | sort)
+AVAILABLE=()
+while IFS= read -r name; do
+  AVAILABLE+=("$name")
+done < <(find "$PROMPT_DIR" -maxdepth 1 -name '*-review.md' -exec basename {} \; | sed 's/-review\.md$//' | sort)
 [ ${#AVAILABLE[@]} -gt 0 ] || die "no *-review.md prompts in $PROMPT_DIR"
 
 if [ "$LIST" -eq 1 ]; then

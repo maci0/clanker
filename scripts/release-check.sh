@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Validate the consumer-visible identity of a release. This is intentionally a
 # small, dependency-free gate so the tag, changelog, manifest, and executable
 # cannot describe four different releases.

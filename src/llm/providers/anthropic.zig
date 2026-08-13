@@ -12,6 +12,7 @@ const auth = @import("../auth.zig");
 const types = @import("../types.zig");
 const config = @import("../../config.zig");
 const log = @import("../../util/log.zig");
+const redact = @import("../../util/redact.zig");
 
 /// Prefix on Anthropic OAuth access tokens (`sk-ant-oat01-…`), as minted by
 /// `ant auth login`. Matched without the version digits so a later `oat02`
@@ -364,8 +365,10 @@ fn parseResponse(arena: std.mem.Allocator, body: []const u8, err_detail: ?*?[]co
         // A 200 carrying an error body never reaches the HTTP error path, so
         // this is the only place the reason is visible: log it AND hand it to
         // the caller.
-        log.log(.error_, "anthropic error ({s}): {s}", .{ e.type orelse "unknown", e.message orelse "no message" });
-        if (err_detail) |d| d.* = if (e.message) |m| try arena.dupe(u8, m) else e.type;
+        var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+        const msg = e.message orelse "no message";
+        log.log(.error_, "anthropic error ({s}): {s}", .{ e.type orelse "unknown", redact.forLog(&log_detail_buf, msg) });
+        if (err_detail) |d| d.* = if (e.message) |m| try redact.forCaller(arena, m) else e.type;
         return error.ApiError;
     }
 

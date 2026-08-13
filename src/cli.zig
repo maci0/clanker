@@ -40,6 +40,7 @@ const phonebook = @import("peers/phonebook.zig");
 const doctor_mod = @import("doctor.zig");
 const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
+const redact = @import("util/redact.zig");
 const atomic_write = @import("util/atomic_write.zig");
 const diskcap = @import("util/diskcap.zig");
 const ensuredir = @import("util/ensuredir.zig");
@@ -6087,7 +6088,8 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     var messages: std.ArrayList(types.Message) = .empty;
     var err_detail: ?[]const u8 = null;
     const resp = a.run(&messages, text, &err_detail) catch |err| {
-        const detail = err_detail orelse @errorName(err);
+        var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+        const detail = redact.forLog(&log_detail_buf, err_detail orelse @errorName(err));
         log.log(.error_, "POST /api/a2a/message: agent run failed: {s}", .{detail});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"agent run failed\"}");
         return;

@@ -28,6 +28,7 @@ const sandbox_host = @import("../sandbox/host.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const registry = @import("../tools/registry.zig");
 const log = @import("../util/log.zig");
+const redact = @import("../util/redact.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const diskcap = @import("../util/diskcap.zig");
 const worktree_mod = @import("worktree.zig");
@@ -575,7 +576,8 @@ pub const Engine = struct {
             .messages = &messages,
             .max_tokens = opts.response_tokens,
         }, &err_detail) catch |err| {
-            log.log(.error_, "proposal request failed: {s} ({s})", .{ @errorName(err), err_detail orelse "" });
+            var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+            log.log(.error_, "proposal request failed: {s} ({s})", .{ @errorName(err), redact.forLog(&log_detail_buf, err_detail orelse "") });
             return error.ProposalRequestFailed;
         };
 
@@ -1210,7 +1212,8 @@ pub const Engine = struct {
             // only invites the model to write the patches here too.
             .max_tokens = @min(opts.response_tokens, 4096),
         }, &err_detail) catch |err| {
-            log.log(.warn, "plan request failed: {s} ({s})", .{ @errorName(err), err_detail orelse "" });
+            var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+            log.log(.warn, "plan request failed: {s} ({s})", .{ @errorName(err), redact.forLog(&log_detail_buf, err_detail orelse "") });
             return error.PlanRequestFailed;
         };
 

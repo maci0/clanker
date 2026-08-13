@@ -10,6 +10,7 @@ const harness_mod = @import("harness.zig");
 const registry = @import("../tools/registry.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const log = @import("../util/log.zig");
+const redact = @import("../util/redact.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const filelock = @import("../util/filelock.zig");
 pub const Options = struct { targets: []const []const u8 = &.{}, harness_argv: []const []const u8 = &.{}, metric_name: []const u8 = "score", metric_pattern: []const u8 = "", direction: []const u8 = "min", iters: u32 = 3, dry_run: bool = false, research_dir: []const u8 = "state/autoresearch", budget_seconds: u32 = 300 };
@@ -148,7 +149,8 @@ pub const Loop = struct {
         const messages = [_]types.Message{ .{ .role = .system, .content = system_prompt }, .{ .role = .user, .content = user_prompt } };
         var err_detail: ?[]const u8 = null;
         const resp = client.chat(self.ctx, self.arena, .{ .provider = self.provider, .messages = &messages, .max_tokens = 4096 }, &err_detail) catch |err| {
-            log.log(.warn, "autoresearch chat failed: {s} {s}", .{ @errorName(err), err_detail orelse "" });
+            var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+            log.log(.warn, "autoresearch chat failed: {s} {s}", .{ @errorName(err), redact.forLog(&log_detail_buf, err_detail orelse "") });
             return false;
         };
         const raw = resp.message.content orelse return false;

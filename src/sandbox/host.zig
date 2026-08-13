@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const log = @import("../util/log.zig");
+const redact = @import("../util/redact.zig");
 const protocol = @import("protocol.zig");
 const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
@@ -775,7 +776,8 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         .max_tokens = max_tokens,
     }, &err_detail) catch |err| {
         const failed_ms = @divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(h.sandbox.io, .awake)).nanoseconds, std.time.ns_per_ms);
-        log.log(.warn, "[llm] ✗ ck_llm … {d}ms: {s} ({s})", .{ failed_ms, @errorName(err), err_detail orelse "" });
+        var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+        log.log(.warn, "[llm] ✗ ck_llm … {d}ms: {s} ({s})", .{ failed_ms, @errorName(err), redact.forLog(&log_detail_buf, err_detail orelse "") });
         return Err.network;
     };
     const content = resp.message.content orelse "";
