@@ -386,6 +386,40 @@ pub const Serve = struct {
     /// of the repeatable `--serve-as`. A TOML array, not a comma-separated
     /// string, so no name ever has to be escaped.
     serve_as: []const []const u8 = &.{},
+    /// Mount the OpenAI/Anthropic compatibility proxy. Off by default so a
+    /// stock `clanker serve` does not grow `/proxy/v1`. See PRD 0026.
+    proxy: bool = false,
+    /// Optional distinct listen port. Unset or equal to `webui_port`: the
+    /// proxy shares the web UI socket at `/proxy/v1/*`. A different usable
+    /// port: a second listener with `/v1/*` at the root.
+    proxy_port: ?u16 = null,
+    /// Name of the env var holding the optional local proxy token. Never a
+    /// secret value in toml.
+    proxy_token_env: ?[]const u8 = null,
+    /// `client_facing_name = "provider/id"` map so a Cursor-style model
+    /// string can hit a configured provider without a third catalog.
+    proxy_aliases: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
+    /// Seconds to wait for the first upstream body byte. Null means the
+    /// 300s default. 0 means no ceiling.
+    proxy_first_byte_timeout_s: ?u32 = null,
+    /// Seconds of silence after the first byte. Null means the 60s default.
+    /// 0 means no ceiling.
+    proxy_idle_timeout_s: ?u32 = null,
+};
+
+/// Which `[serve]` keys a config file actually set. `proxy` is a real bool
+/// defaulting to false, so absent and false look identical after parse;
+/// merge copies it only when this bit is set (same as `ModulesFields`).
+pub const ServeFields = struct {
+    host: bool = false,
+    webui_port: bool = false,
+    serve_as: bool = false,
+    proxy: bool = false,
+    proxy_port: bool = false,
+    proxy_token_env: bool = false,
+    proxy_aliases: bool = false,
+    proxy_first_byte_timeout_s: bool = false,
+    proxy_idle_timeout_s: bool = false,
 };
 
 /// Peer notification settings.
@@ -515,6 +549,7 @@ pub const Config = struct {
     web: Web = .{},
     instance: Instance = .{},
     serve: Serve = .{},
+    serve_fields: ServeFields = .{},
     notify: Notify = .{},
     tui: Tui = .{},
     chatrooms: Chatrooms = .{},
@@ -678,9 +713,11 @@ pub const Config = struct {
             if (!cfg.instance_present) cfg.instance.name = try defaultInstName(arena);
         }
         if (obj.get("serve")) |v| {
-            cfg.serve = try parseServe(arena, v);
+            const parsed = try parseServe(arena, v);
+            cfg.serve = parsed.serve;
+            cfg.serve_fields = parsed.fields;
             cfg.serve_present = true;
-            cfg.serve_as_present = v.object.get("serve_as") != null;
+            cfg.serve_as_present = parsed.fields.serve_as;
         }
         if (obj.get("peers")) |v| {
             cfg.peers = try parsePeers(arena, v);
@@ -940,20 +977,35 @@ pub const Config = struct {
         return inst;
     }
 
-    fn parseServe(arena: std.mem.Allocator, v: json.Value) !Serve {
+    fn parseServe(arena: std.mem.Allocator, v: json.Value) !struct { serve: Serve, fields: ServeFields } {
         const obj = switch (v) {
             .object => |o| o,
             else => return error.ServeNotObject,
         };
         var s = Serve{};
-        warnUnknownKeys(obj, &.{ "host", "webui_port", "serve_as" }, "serve");
-        if (obj.get("host")) |k| s.host = try jsonStr(k, "host");
+        var f = ServeFields{};
+        warnUnknownKeys(obj, &.{
+            "host",
+            "webui_port",
+            "serve_as",
+            "proxy",
+            "proxy_port",
+            "proxy_token_env",
+            "proxy_aliases",
+            "proxy_first_byte_timeout_s",
+            "proxy_idle_timeout_s",
+        }, "serve");
+        if (obj.get("host")) |k| {
+            s.host = try jsonStr(k, "host");
+            f.host = true;
+        }
         if (obj.get("webui_port")) |k| {
             const n = try jsonInt(k, "webui_port");
             // Caught here rather than at bind time: a config that cannot be
             // honoured should say so while it is being read, naming the key.
             if (n < 1 or n > 65535) return error.ServePortOutOfRange;
             s.webui_port = @intCast(n);
+            f.webui_port = true;
         }
         if (obj.get("serve_as")) |k| {
             const arr = switch (k) {
@@ -966,8 +1018,59 @@ pub const Config = struct {
                 if (name.len > 0) try names.append(arena, name);
             }
             s.serve_as = try names.toOwnedSlice(arena);
+            f.serve_as = true;
         }
-        return s;
+        if (obj.get("proxy")) |k| {
+            s.proxy = switch (k) {
+                .bool => |b| b,
+                else => return error.FieldNotBool,
+            };
+            f.proxy = true;
+        }
+        if (obj.get("proxy_port")) |k| {
+            const n = try jsonInt(k, "proxy_port");
+            if (n < 1 or n > 65535) return error.ServePortOutOfRange;
+            s.proxy_port = @intCast(n);
+            f.proxy_port = true;
+        }
+        if (obj.get("proxy_token_env")) |k| {
+            s.proxy_token_env = try jsonStr(k, "proxy_token_env");
+            f.proxy_token_env = true;
+        }
+        if (obj.get("proxy_aliases")) |k| {
+            const o = switch (k) {
+                .object => |m| m,
+                else => return error.ProxyAliasesNotObject,
+            };
+            var map: std.StringArrayHashMapUnmanaged([]const u8) = .empty;
+            var it = o.iterator();
+            while (it.next()) |kv| {
+                try map.put(arena, kv.key_ptr.*, try jsonStr(kv.value_ptr.*, "proxy_aliases"));
+            }
+            s.proxy_aliases = map;
+            f.proxy_aliases = true;
+        }
+        if (obj.get("proxy_first_byte_timeout_s")) |k| {
+            s.proxy_first_byte_timeout_s = try jsonUnsigned(u32, k, "proxy_first_byte_timeout_s");
+            f.proxy_first_byte_timeout_s = true;
+        }
+        if (obj.get("proxy_idle_timeout_s")) |k| {
+            s.proxy_idle_timeout_s = try jsonUnsigned(u32, k, "proxy_idle_timeout_s");
+            f.proxy_idle_timeout_s = true;
+        }
+        return .{ .serve = s, .fields = f };
+    }
+
+    fn applyServeFields(dst: *Serve, src: Serve, fields: ServeFields) void {
+        if (fields.host) dst.host = src.host;
+        if (fields.webui_port) dst.webui_port = src.webui_port;
+        if (fields.serve_as) dst.serve_as = src.serve_as;
+        if (fields.proxy) dst.proxy = src.proxy;
+        if (fields.proxy_port) dst.proxy_port = src.proxy_port;
+        if (fields.proxy_token_env) dst.proxy_token_env = src.proxy_token_env;
+        if (fields.proxy_aliases) dst.proxy_aliases = src.proxy_aliases;
+        if (fields.proxy_first_byte_timeout_s) dst.proxy_first_byte_timeout_s = src.proxy_first_byte_timeout_s;
+        if (fields.proxy_idle_timeout_s) dst.proxy_idle_timeout_s = src.proxy_idle_timeout_s;
     }
 
     fn parsePeers(arena: std.mem.Allocator, v: json.Value) ![]const Peer {
@@ -1380,11 +1483,7 @@ pub const Config = struct {
         // Field-merged rather than whole-section: every field is optional, so
         // a local file that only moves the port must leave a host set by the
         // base file alone instead of resetting it to "unset".
-        if (src.serve_present) {
-            if (src.serve.host) |h| dst.serve.host = h;
-            if (src.serve.webui_port) |p| dst.serve.webui_port = p;
-            if (src.serve_as_present) dst.serve.serve_as = src.serve.serve_as;
-        }
+        if (src.serve_present) applyServeFields(&dst.serve, src.serve, src.serve_fields);
         if (src.notify_present) dst.notify = src.notify;
         if (src.tui_present) dst.tui = src.tui;
         if (src.chatrooms_present) dst.chatrooms = src.chatrooms;
@@ -1703,6 +1802,34 @@ test "config.local.toml can clear serve_as" {
     const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqualStrings("127.0.0.1", cfg.serve.host.?);
     try std.testing.expectEqual(@as(usize, 0), cfg.serve.serve_as.len);
+}
+
+test "config.local.toml that only sets host does not clear a base proxy = true" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+        \\serve = { host = "127.0.0.1", proxy = true }
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
+        \\serve = { host = "0.0.0.0" }
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqualStrings("0.0.0.0", cfg.serve.host.?);
+    try std.testing.expect(cfg.serve.proxy);
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
+        \\serve = { proxy = false }
+    });
+    const off = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expect(!off.serve.proxy);
 }
 
 test "confirm_writes parses its three values and rejects anything else" {

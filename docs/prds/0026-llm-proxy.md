@@ -194,15 +194,15 @@ A protocol mismatch is still `400` when the resolved model's kind does not speak
 
 **1:1 forward (the whole point).** For every `/v1/*` that is not the local models catalog the proxy:
 
-1. Reads the raw body bytes already buffered by `handleConnection` (same `rawhttp.max_body_bytes` cap, 24 MiB). A 413 at this layer is the existing serve JSON (see Trust model).
-2. Parses JSON *only* enough to read `model` (required string) and `stream` (optional). If `stream` is absent, treat it as `false`. If `stream` is present and is not a JSON bool (`"true"`, `1`, an object, …): `400 malformed_request`, no upstream call. The parse is a read. The bytes that go upstream are the bytes that arrived, except the one `model` rewrite below.
-3. Resolves the provider (Model routing). On mismatch or unknown model, returns a local `400` and does not contact upstream.
+1. Reads the raw body bytes already buffered by `handleConnection` (same `rawhttp.max_body_bytes` cap, 24 MiB). A 413 at this layer is the existing serve JSON (see Trust model). Multipart (audio transcriptions, image edits, file uploads) is forwarded as-is: `Content-Type` including the boundary is allowlisted.
+2. If the body is JSON, parses *only* enough to read `model` (optional string) and `stream` (optional). If `stream` is absent, treat it as `false` unless `Accept` is `text/event-stream` or the path ends in `/events/stream`. If `stream` is present and is not a JSON bool (`"true"`, `1`, an object, …): `400 malformed_request`, no upstream call. The parse is a read. The bytes that go upstream are the bytes that arrived, except the one `model` rewrite below. Non-JSON bodies (multipart, empty GET/DELETE) skip the parse.
+3. Resolves the provider (Model routing). A JSON `model` uses the lookup below. A request with no `model` (GET/DELETE, list, files, multipart without a JSON body) uses the unique configured provider of that family, or `400 missing_required_parameter` if more than one provider speaks it. On mismatch or unknown model, returns a local `400` and does not contact upstream. The inbound method (GET/POST/PUT/PATCH/DELETE/HEAD) and query string are preserved on the upstream request.
 4. Builds upstream headers from scratch (see **Upstream headers**). Never copies the inbound header set.
 5. Builds the upstream URL from the vtable, not by appending the inbound path. The `Provider` passed in is the *copy* from Model routing, so `endpointUrl` sees the requested wire id:
    - `openai_compat`: `endpointUrl(..., streaming=false)` which is `joinBaseAndPath` + `/chat/completions` or `provider.path` (`src/llm/providers/openai.zig` `~L33-37`). Blindly appending `/v1/chat/completions` would double `/v1` on a `base_url` that already ends in `/v1`.
    - `anthropic`: `endpointUrl` → `/v1/messages` or `provider.path`.
    - `vertex_anthropic`: `endpointUrl(..., streaming)` so `:rawPredict` vs `:streamRawPredict` is chosen by the inbound `stream` flag, not by rewriting the body (`src/llm/providers/vertex.zig` `~L55-69`).
-6. POSTs with `std.http.Client.request` + `receiveHead` for **both** stream and non-stream. Do not call `client.fetch` (it buffers into `resp_cap` = 8 MiB, `src/llm/client.zig` `~L124-125`, `~L441-462`, and cannot be an unbounded SSE pipe). Do not call `client.chat` / `chatStream`.
+6. Issues the inbound method with `std.http.Client.request` + `receiveHead` for **both** stream and non-stream. Do not call `client.fetch` (it buffers into `resp_cap` = 8 MiB, `src/llm/client.zig` `~L124-125`, `~L441-462`, and cannot be an unbounded SSE pipe). Do not call `client.chat` / `chatStream`.
 7. Writes the inbound HTTP response as specified under **Inbound response framing**. For `stream: true` this is a raw SSE pipe: read a chunk, write a chunk, until the upstream closes. No `parseStreamEvent`, no `StreamAccumulator` (`src/llm/client.zig` `~L487+`). If the upstream sent `[DONE]`, the client sees `[DONE]`. If it sent Anthropic `message_start` / `content_block_delta` / `message_stop`, the client sees those. The proxy does not invent a terminal event. `respond()` (`src/cli.zig` `~L10244-10258`) is not used for a successful forward: it always sets `Content-Type: application/json`, `Content-Length`, and `Connection: close`.
 8. Does **not** run `client.zig`'s `max_attempts = 3` retry loop. Completions are not idempotent. A `429`/`5xx` is forwarded. The caller retries if they want.
 
@@ -216,8 +216,9 @@ Allowlist, in order:
 | `Accept` | Client value if present, else omitted |
 | `User-Agent` | Client value if present, else `clanker/` + `build_options.version` (same string `client.zig` `~L19-22` uses) |
 | `Authorization` / `x-api-key` | Only from `auth.resolve` + the vtable, never from the client |
-| `anthropic-version` | Client value if present, else the vtable default `2023-06-01` (`anthropic.zig` `~L79-80`) |
+| `anthropic-version` | Client value if present, else the vtable default `2023-06-01` (`anthropic.zig` `~L79-80`) on Anthropic-family requests |
 | `anthropic-beta` | Merge (see below) |
+| `openai-organization`, `openai-project`, `openai-beta`, `x-client-request-id` | Client value if present, else omitted |
 
 Never sent upstream: `Authorization` (client's), `x-api-key` (client's), `Cookie`, `Cookie2`, `Proxy-Authorization`, `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Keep-Alive`, `Upgrade`, `TE`, `Trailer`, `Proxy-Connection`, and every other inbound header not in the allowlist.
 
@@ -478,7 +479,7 @@ clanker serve --host 0.0.0.0 --serve-as clanker.lan --proxy
 
 2. **Same port by default, `/proxy/v1` prefix for isolation. Dedicated `--proxy-port` is opt-in.** An SDK `baseURL` of `http://127.0.0.1:17921/proxy` never sits on `/api/run`. Existing `/api/*` is not moved. A second listener with `/v1` at the root is available when the operator wants a pure OpenAI origin. The shared socket mounts `/proxy/v1` only, not both prefixes.
 
-3. **Raw forward, never `client.chat` / `buildRequest`.** The agent codec rebuilds a closed schema and injects `stream_options`, `cache_control`, and clamped `max_tokens`. That is correct for clanker-as-agent and fatal for clanker-as-proxy. The vtable is still used, but only for `authHeaders` and `endpointUrl`.
+3. **Raw forward of every official `/v1/*` path, never `client.chat` / `buildRequest`.** The agent codec rebuilds a closed schema and injects `stream_options`, `cache_control`, and clamped `max_tokens`. That is correct for clanker-as-agent and fatal for clanker-as-proxy. The vtable is still used, but only for `authHeaders` and `endpointUrl` (chat/completions and messages). Every other `/v1/*` resource is `base_url` plus the inbound suffix, so embeddings, responses, files, batches, count_tokens, skills, sessions, and whatever the vendor ships next do not need a code change.
 
 4. **Refuse protocol mismatch, do not transcode.** Transcoding OpenAI↔Anthropic *is* injection (tools, system, content parts, unknown keys). A 400 the caller can fix by pointing at the other route is better than a silent rewrite they cannot see.
 
@@ -732,7 +733,9 @@ Traceable to Goals. All unchecked: nothing is built.
 - [ ] On the shared socket, `GET /v1/models` (no `/proxy` prefix) is 404 and `/api/run` still works. `/proxy/v1/*` is the only compatibility mount (Goal 8).
 - [ ] `--proxy --proxy-port <other>` answers `/v1/*` on that port and 404s `/api/run` there. The web UI listener does not mount `/proxy/v1` (Goal 8).
 - [ ] `POST /proxy/v1/chat/completions` against a mock `openai_compat` backend sends a body bit-identical to the inbound body when `model` is the wire id, including unknown keys, `tools`, vision parts, `response_format`, and sampling fields. No `stream_options` is added (Goal 2).
+- [ ] `POST /proxy/v1/embeddings`, `POST /proxy/v1/completions`, `POST /proxy/v1/responses`, `GET /proxy/v1/files`, and `POST /proxy/v1/messages/count_tokens` each forward to the matching upstream path (not rewritten onto `/chat/completions` or `/v1/messages`). Query strings survive (Goal 2).
 - [ ] `POST /proxy/v1/messages` against a mock `anthropic` backend forwards `system`, `stop_sequences`, and unknown keys bit-identically when `model` is the wire id (Goal 2).
+- [ ] `GET /proxy/v1/models/{id}` returns that one configured model or `404 model_not_found` (Goal 4).
 - [ ] The captured upstream request has only the allowlisted headers. Inbound `Authorization`, `x-api-key`, `Cookie`, and `Host` are absent. There is no `Accept-Encoding` at all (`headers.accept_encoding = .omit`, not merely missing from `extra_headers`). The vtable auth header is present. A client `anthropic-beta` is merged with `oauth-2025-04-20` on the OAuth path, not replaced (Goal 3).
 - [ ] `GET /proxy/v1/models` without `anthropic-version` lists only `openai_compat` models from config, OpenAI envelope. With `anthropic-version`, only Anthropic-family models including `vertex_anthropic`, Anthropic envelope. Neither calls models.dev or upstream `/models` (Goal 4).
 - [ ] `stream: true` returns the mock upstream's SSE bytes unchanged, including a missing `[DONE]`. The inbound response has no `Content-Encoding: gzip` even if the mock would gzip when asked (Goal 5).
