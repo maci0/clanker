@@ -648,7 +648,8 @@ const CommandAction = union(enum) {
     tool: struct {
         name: []const u8,
         args: []const u8,
-        /// Forward the slash command's arguments instead of the fixed args.
+        /// Forward non-empty slash-command arguments; the fixed args remain
+        /// the no-argument default.
         forward_args: bool = false,
     },
 };
@@ -676,7 +677,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/workflows", .help = "list reusable prompt workflows", .action = .workflows },
     .{ .name = "/workflow", .takes_args = true, .arg_hint = "<name> [args]", .help = "run a workflow (expands {{args}} then runs as a task)", .action = .workflow },
     .{ .name = "/sessions", .aliases = &.{"/history"}, .help = "list saved conversations", .action = .{ .tool = .{ .name = "cmd_sessions", .args = "" } } },
-    .{ .name = "/graph", .help = "list recorded runs (same as clanker graph)", .action = .{ .tool = .{ .name = "cmd_graph", .args = "list" } } },
+    .{ .name = "/graph", .takes_args = true, .arg_hint = "[run-id]", .help = "list runs or draw one as a timeline (same as clanker graph)", .action = .{ .tool = .{ .name = "cmd_graph", .args = "list", .forward_args = true } } },
     .{ .name = "/status", .help = "show instance identity and configured peers", .action = .{ .tool = .{ .name = "cmd_status", .args = "" } } },
     .{ .name = "/tools", .help = "list registered tools (same as clanker tools)", .action = .{ .tool = .{ .name = "cmd_tools", .args = "" } } },
     .{ .name = "/plugins", .aliases = &.{"/plugin"}, .takes_args = true, .arg_hint = "[on|off <name>]", .help = "list plugins or switch an optional one on or off", .action = .{ .tool = .{ .name = "cmd_plugins", .args = "", .forward_args = true } } },
@@ -1280,6 +1281,21 @@ test "plugins command forwards its documented toggle arguments" {
     }
 }
 
+test "graph command accepts the CLI run-id shape and keeps list as its default" {
+    const listed = parseCommand("/graph") orelse return error.TestExpectedCommand;
+    switch (listed.spec.action) {
+        .tool => |tool| {
+            try std.testing.expectEqualStrings("cmd_graph", tool.name);
+            try std.testing.expectEqualStrings("list", tool.args);
+            try std.testing.expect(tool.forward_args);
+        },
+        else => return error.TestExpectedToolCommand,
+    }
+
+    const rendered = parseCommand("/graph run-123") orelse return error.TestExpectedCommand;
+    try std.testing.expectEqualStrings("run-123", rendered.args);
+}
+
 test "parseCommand recognizes the REPL quit set" {
     const quit_spellings = [_][]const u8{ "/quit", "/exit", "/q", "exit", "quit", "  /q  " };
     for (quit_spellings) |s| {
@@ -1316,7 +1332,7 @@ test "parseCommand matches names, aliases, and arguments" {
 
     const sessions = parseCommand("/sessions") orelse return error.TestExpectedCommand;
     try std.testing.expectEqualStrings("cmd_sessions", sessions.spec.action.tool.name);
-    // The internal cmd_* commands take no free-form arguments yet.
+    // Sessions remains a listing rather than accepting an arbitrary id.
     try std.testing.expect(parseCommand("/sessions foo") == null);
 
     try std.testing.expect(parseCommand("hello world") == null);
@@ -2026,7 +2042,7 @@ const Model = struct {
             // `cmd_*` WASM tools the CLI subcommands invoke, so the REPL is
             // not a walled-off corner of clanker. Output is folded into the
             // transcript as dim lines, exactly like a tool result.
-            .tool => |t| _ = self.runInternalTool(t.name, if (t.forward_args) pc.args else t.args),
+            .tool => |t| _ = self.runInternalTool(t.name, if (t.forward_args and pc.args.len > 0) pc.args else t.args),
         }
     }
 
