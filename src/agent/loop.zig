@@ -18,6 +18,7 @@ const chatrooms = @import("../peers/chatrooms.zig");
 const filelock = @import("../util/filelock.zig");
 const ensuredir = @import("../util/ensuredir.zig");
 const log = @import("../util/log.zig");
+const json_util = @import("../util/json.zig");
 const toolout = @import("../util/toolout.zig");
 const utf8 = @import("../util/utf8.zig");
 const mock_server = @import("../llm/mock_server.zig");
@@ -1621,7 +1622,7 @@ pub const Agent = struct {
         // A tool that named no provider of its own follows the agent, which may
         // itself be running under a --provider override rather than the default.
         if (sb.llm) |*access| {
-            if (host.pluginStr(tool.config, "provider") == null and host.pluginStr(tool.config, "model") == null) {
+            if (json_util.pluginStr(tool.config, "provider") == null and json_util.pluginStr(tool.config, "model") == null) {
                 access.provider = self.provider;
             }
         }

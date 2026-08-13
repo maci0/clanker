@@ -10,6 +10,7 @@
 const std = @import("std");
 const log = @import("../util/log.zig");
 const redact = @import("../util/redact.zig");
+const json_util = @import("../util/json.zig");
 const protocol = @import("protocol.zig");
 const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
@@ -255,8 +256,8 @@ fn pluginProvider(
     cfg: *const config_mod.Config,
     tool: *const registry.Tool,
 ) !*const config_mod.Provider {
-    const want_provider = pluginStr(tool.config, "provider");
-    const want_model = pluginStr(tool.config, "model");
+    const want_provider = json_util.pluginStr(tool.config, "provider");
+    const want_model = json_util.pluginStr(tool.config, "model");
     const base = cfg.provider(want_provider) catch blk: {
         log.log(.warn, "plugin '{s}': unknown provider, using the default", .{tool.name});
         break :blk try cfg.provider(null);
@@ -266,21 +267,6 @@ fn pluginProvider(
     copy.* = base.*;
     copy.default_model = want_model.?;
     return copy;
-}
-
-pub fn pluginStr(cfg_value: std.json.Value, key: []const u8) ?[]const u8 {
-    if (cfg_value != .object) return null;
-    const v = cfg_value.object.get(key) orelse return null;
-    return if (v == .string and v.string.len > 0) v.string else null;
-}
-
-fn pluginU32(cfg_value: std.json.Value, key: []const u8) ?u32 {
-    if (cfg_value != .object) return null;
-    const v = cfg_value.object.get(key) orelse return null;
-    // Reject out-of-u32-range values instead of panicking in @intCast (a
-    // plugin's tool.json is not trusted input).
-    if (v == .integer and v.integer > 0 and v.integer <= std.math.maxInt(u32)) return @intCast(v.integer);
-    return null;
 }
 
 /// The single place a tool's sandbox policy is assembled from its descriptor.
@@ -311,7 +297,7 @@ pub fn sandboxFor(
         if (llm_ctx) |ctx| llm_access = .{
             .ctx = ctx,
             .provider = try pluginProvider(arena, cfg, tool),
-            .max_tokens = pluginU32(tool.config, "max_tokens") orelse 1024,
+            .max_tokens = json_util.pluginU32(tool.config, "max_tokens") orelse 1024,
         };
     }
 
@@ -394,33 +380,10 @@ pub fn execPolicyConfig(
     try out.appendSlice(arena, ",\"exec_pattern_allow\":[");
     for (cfg.agent.exec_pattern_allow, 0..) |p, i| {
         if (i > 0) try out.append(arena, ',');
-        try appendJsonString(arena, &out, p);
+        try json_util.appendJsonString(arena, &out, p);
     }
     try out.appendSlice(arena, "]}");
     return out.toOwnedSlice(arena);
-}
-
-fn appendJsonString(arena: std.mem.Allocator, out: *std.ArrayList(u8), s: []const u8) !void {
-    try out.append(arena, '"');
-    for (s) |c| {
-        switch (c) {
-            '"' => try out.appendSlice(arena, "\\\""),
-            '\\' => try out.appendSlice(arena, "\\\\"),
-            '\n' => try out.appendSlice(arena, "\\n"),
-            '\r' => try out.appendSlice(arena, "\\r"),
-            '\t' => try out.appendSlice(arena, "\\t"),
-            0x08 => try out.appendSlice(arena, "\\b"),
-            0x0c => try out.appendSlice(arena, "\\f"),
-            0x00...0x07, 0x0b, 0x0e...0x1f => {
-                try out.appendSlice(arena, "\\u00");
-                const hex = "0123456789abcdef";
-                try out.append(arena, hex[c >> 4]);
-                try out.append(arena, hex[c & 0x0f]);
-            },
-            else => try out.append(arena, c),
-        }
-    }
-    try out.append(arena, '"');
 }
 
 fn appendNetworkAllow(
@@ -471,24 +434,6 @@ test "execPolicyConfig injects git_remote_ops and exec_pattern_allow for exec to
         "{\"git_remote_ops\":false,\"exec_pattern_allow\":[]}",
         out3,
     );
-}
-
-test "appendJsonString escapes all JSON control characters" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var out: std.ArrayList(u8) = .empty;
-    try appendJsonString(arena, &out, "a\x00b\x08c\x0cd\x1fe");
-    try std.testing.expectEqualStrings("\"a\\u0000b\\bc\\fd\\u001fe\"", out.items);
-
-    out.clearRetainingCapacity();
-    try appendJsonString(arena, &out, "\x01\x0b\x0e\x1f");
-    try std.testing.expectEqualStrings("\"\\u0001\\u000b\\u000e\\u001f\"", out.items);
-
-    out.clearRetainingCapacity();
-    try appendJsonString(arena, &out, "clean");
-    try std.testing.expectEqualStrings("\"clean\"", out.items);
 }
 
 test "sandboxFor adds web.allow only to research tools and keeps static hosts" {
@@ -5376,32 +5321,6 @@ test "a \".\" prefix authorizes the whole sandbox root" {
     var narrow = sb;
     narrow.fs_prefixes = &.{"state/"};
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&narrow, "src/main.zig"));
-}
-
-test "pluginStr and pluginU32 fall back to null on missing, empty, or wrong-typed fields" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"provider\":\"kimi\",\"model\":\"m1\",\"max_tokens\":512}", .{});
-    try std.testing.expectEqualStrings("kimi", pluginStr(v, "provider").?);
-    try std.testing.expectEqualStrings("m1", pluginStr(v, "model").?);
-    try std.testing.expect(pluginStr(v, "missing") == null);
-    try std.testing.expectEqual(@as(?u32, 512), pluginU32(v, "max_tokens"));
-
-    // Non-object values yield null for every key.
-    const arr = try std.json.parseFromSliceLeaky(std.json.Value, arena, "[1,2]", .{});
-    try std.testing.expect(pluginStr(arr, "provider") == null);
-    try std.testing.expect(pluginU32(arr, "max_tokens") == null);
-
-    // Empty strings and non-positive integers are treated as unset.
-    const bad = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"provider\":\"\",\"max_tokens\":0}", .{});
-    try std.testing.expect(pluginStr(bad, "provider") == null);
-    try std.testing.expect(pluginU32(bad, "max_tokens") == null);
-
-    // A value beyond u32 range must be ignored, not panic @intCast.
-    const huge = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"max_tokens\":9000000000}", .{});
-    try std.testing.expect(pluginU32(huge, "max_tokens") == null);
 }
 
 test "a tool cannot read an environment variable it was not allowed" {
