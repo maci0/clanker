@@ -2915,7 +2915,7 @@ test "capToolResult leaves small results untouched and truncates large ones" {
     try std.testing.expectEqualStrings(big[0..max_tool_result_bytes], capped[0..max_tool_result_bytes]);
 
     // A multi-byte code point at the cut is dropped whole, not split.
-    const mid = try arena.alloc(u8, max_tool_result_bytes + 8);
+    const mid = try arena.alloc(u8, max_tool_result_bytes * 4);
     @memset(mid, 'y');
     mid[max_tool_result_bytes - 1] = 0xC3;
     mid[max_tool_result_bytes] = 0xA9;
