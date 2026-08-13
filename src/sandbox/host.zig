@@ -379,6 +379,14 @@ fn appendJsonString(arena: std.mem.Allocator, out: *std.ArrayList(u8), s: []cons
             '\n' => try out.appendSlice(arena, "\\n"),
             '\r' => try out.appendSlice(arena, "\\r"),
             '\t' => try out.appendSlice(arena, "\\t"),
+            0x08 => try out.appendSlice(arena, "\\b"),
+            0x0c => try out.appendSlice(arena, "\\f"),
+            0x00...0x07, 0x0b, 0x0e...0x1f => {
+                try out.appendSlice(arena, "\\u00");
+                const hex = "0123456789abcdef";
+                try out.append(arena, hex[c >> 4]);
+                try out.append(arena, hex[c & 0x0f]);
+            },
             else => try out.append(arena, c),
         }
     }
@@ -433,6 +441,24 @@ test "execPolicyConfig injects git_remote_ops and exec_pattern_allow for exec to
         "{\"git_remote_ops\":false,\"exec_pattern_allow\":[]}",
         out3,
     );
+}
+
+test "appendJsonString escapes all JSON control characters" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var out: std.ArrayList(u8) = .empty;
+    try appendJsonString(arena, &out, "a\x00b\x08c\x0cd\x1fe");
+    try std.testing.expectEqualStrings("\"a\\u0000b\\bc\\fd\\u001fe\"", out.items);
+
+    out.clearRetainingCapacity();
+    try appendJsonString(arena, &out, "\x01\x0b\x0e\x1f");
+    try std.testing.expectEqualStrings("\"\\u0001\\u000b\\u000e\\u001f\"", out.items);
+
+    out.clearRetainingCapacity();
+    try appendJsonString(arena, &out, "clean");
+    try std.testing.expectEqualStrings("\"clean\"", out.items);
 }
 
 test "sandboxFor adds web.allow only to research tools and keeps static hosts" {
