@@ -625,6 +625,74 @@ none is claimed. What was run:
 - **The CLI end of the same store**: `schedule add` x2, `schedule disable`,
   `schedule list`, confirming the on-disk shape the route reads.
 
+## Search view — finding a conversation by what was said in it (2026-08-13)
+
+The sidebar's filter box matches conversation *titles*, and a title is mostly
+the first line of the first task, so until now a conversation was findable by
+how it started and by nothing else. `core/search.js` only ever highlighted
+matches inside the transcript already on screen. Nothing read the archive.
+
+**Route.** `GET /api/sessions/search?q=` walks `state/sessions` exactly the way
+`listSessions` does — same directory, same open, so a `state/` that is a
+symlink into the checkout (which it now can be, after #165) resolves
+identically for both — and returns one row per conversation: id, title,
+updated, archived, the index and role of the first matching message, a snippet
+around the match, and `more`, the number of further matches in that same
+conversation.
+
+**Decisions worth keeping:**
+
+- **Substring, not fuzzy.** The rail filter is fuzzy over titles and that is
+  right for a short string. Fuzzy over whole transcripts matches nearly every
+  conversation, and a search that always answers "all of them" answers
+  nothing.
+- **One row per conversation, with a count.** Ten hits in one conversation is
+  one result that says ten, not ten results that bury every other
+  conversation.
+- **A 3-character floor, answered as `ok` with an empty list.** One or two
+  characters match everything and cost a full read of every session to prove
+  it. An empty search box is the normal state of a search view, so that is a
+  prompt in the page, not an error.
+- **Snippets are built server-side and stripped there.** Newlines and tabs
+  collapse to spaces and control bytes are dropped, so a hit is one line of
+  safe text however the message was written — the same treatment
+  `transcript.zig` gives untrusted model output.
+- **Opening a hit goes through `switchSession`.** It refuses mid-run and puts
+  the rail back; the search view has no business reimplementing that.
+- **The turn number is shown but not jumped to.** The transcript renders from
+  the top and there is no per-turn anchor to scroll to, so saying where the
+  match is beats pretending to navigate there. That anchor is the obvious next
+  slice.
+
+### Verified
+
+`clanker serve` still cannot run here (it logs `serve listening` and the
+process is gone by the first connection), so there is no browser check and
+none is claimed.
+
+- **Zig unit tests**, three of them: `findFold` (case folding, an empty needle
+  and an over-long needle finding nothing rather than everything),
+  `snippetAround` (no ellipsis when nothing was cut, one at each end when it
+  was, radius-bounded, newlines flattened and control bytes dropped), and
+  `searchSessions` against a real `tmpDir` store — two saved conversations,
+  one row for the one holding the word twice with `more: 1`, both rows newest
+  first for a word in each, an empty list for no match and for an empty store,
+  and the cap applied after the sort so it keeps the newest.
+- **The real store format**, from a live DeepSeek run: a conversation written
+  by `clanker run` was found by a phrase from the model's own answer, at the
+  right turn and role, with the snippet cut at a word boundary. That is the
+  check the tmpDir test cannot make, since it writes the file itself.
+- **The view module under node**, 21 checks: the ids `index.html` defines,
+  titles/snippets/turn/role/`more`/archived rendering, the `<mark>` landing on
+  the query inside the snippet, a click reaching `openSession`, the short-query
+  prompt not touching the server, the no-match and truncated wordings, and a
+  500 surfacing the server's reason.
+
+One bug the harness caught before it shipped: the failure path set `hits = []`
+and re-rendered, which drew "No conversation says …" over a server error — the
+same misleading empty state PR #153 had just removed from four other views.
+The view now carries an explicit error state.
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.

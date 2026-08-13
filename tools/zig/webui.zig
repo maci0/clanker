@@ -31,6 +31,7 @@ const prompts_view = @embedFile("webui/features/prompts.js");
 const todos_view = @embedFile("webui/features/todos.js");
 const models_view = @embedFile("webui/features/models.js");
 const schedule_view = @embedFile("webui/features/schedule.js");
+const search_view = @embedFile("webui/features/search.js");
 const icons = @embedFile("webui/core/icons.js");
 const ui = @embedFile("webui/core/ui.js");
 const utils = @embedFile("webui/core/utils.js");
@@ -79,7 +80,7 @@ fn encodedLen(comptime asset: []const u8) usize {
 // checked on its own, because each is sent in its own response.
 comptime {
     const overhead = "{\"ok\":true,\"content_type\":\"text/javascript; charset=utf-8\",\"body\":}".len;
-    for ([_][]const u8{ page, styles, script, preact_boot, fleet, arena_view, board_view, compare_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, schedule_view, icons, ui, utils, vendor, chat, labels, goals, stream, theme, overlay, search, composer, scroll, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board }, [_][]const u8{ "index.html", "app.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/board.js", "features/compare.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/schedule.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/scroll.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js" }) |asset, name| {
+    for ([_][]const u8{ page, styles, script, preact_boot, fleet, arena_view, board_view, compare_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, schedule_view, search_view, icons, ui, utils, vendor, chat, labels, goals, stream, theme, overlay, search, composer, scroll, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board }, [_][]const u8{ "index.html", "app.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/board.js", "features/compare.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/schedule.js", "features/search.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/scroll.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js" }) |asset, name| {
         const envelope = overhead + encodedLen(asset);
         if (envelope > lib.out_cap) @compileError(std.fmt.comptimePrint(
             "webui/{s} JSON-encodes to {d} bytes, over lib.zig's out_cap of {d}. Shrink it or raise out_cap.",
@@ -135,6 +136,7 @@ fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/features/todos.js")) return .{ .body = todos_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/models.js")) return .{ .body = models_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/schedule.js")) return .{ .body = schedule_view, .content_type = "text/javascript; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/features/search.js")) return .{ .body = search_view, .content_type = "text/javascript; charset=utf-8" };
     return .{ .body = page, .content_type = "text/html; charset=utf-8" };
 }
 

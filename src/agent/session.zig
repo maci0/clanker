@@ -331,6 +331,137 @@ pub fn listSessions(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]S
     return out.toOwnedSlice(arena);
 }
 
+/// One message that matched a search, with enough around it to recognise.
+pub const SearchHit = struct {
+    id: []const u8,
+    title: []const u8,
+    updated: i64,
+    archived: bool = false,
+    /// Index into the stored message list, so the browser can say which turn
+    /// and jump there rather than only naming the conversation.
+    turn: usize,
+    role: []const u8,
+    snippet: []const u8,
+    /// Matches in this conversation beyond the one reported. A conversation
+    /// is one row however often the word appears in it, and this is what
+    /// stops that from reading as "found once".
+    more: usize = 0,
+};
+
+/// Characters of context kept either side of a match.
+const snippet_radius = 90;
+
+/// Case-insensitive substring position, ASCII-folded. Deliberately not a
+/// fuzzy or subsequence match: the rail filter is already fuzzy over titles,
+/// and a fuzzy match over whole transcripts finds a hit in nearly every
+/// conversation, which is the same as finding nothing.
+pub fn findFold(haystack: []const u8, needle: []const u8) ?usize {
+    if (needle.len == 0 or needle.len > haystack.len) return null;
+    var i: usize = 0;
+    outer: while (i + needle.len <= haystack.len) : (i += 1) {
+        var j: usize = 0;
+        while (j < needle.len) : (j += 1) {
+            if (std.ascii.toLower(haystack[i + j]) != std.ascii.toLower(needle[j])) continue :outer;
+        }
+        return i;
+    }
+    return null;
+}
+
+/// The text around `at`, trimmed to a word boundary where one is close, with
+/// ellipses marking each end that was cut. Newlines and tabs collapse to
+/// spaces so a hit renders as one line whatever the message looked like.
+pub fn snippetAround(arena: std.mem.Allocator, text: []const u8, at: usize, match_len: usize) []const u8 {
+    const start_raw = if (at > snippet_radius) at - snippet_radius else 0;
+    const end_raw = @min(text.len, at + match_len + snippet_radius);
+    // Never cut inside the match itself while hunting for a space.
+    var start = start_raw;
+    if (start > 0) {
+        if (std.mem.findScalarPos(u8, text[start..at], 0, ' ')) |sp| start += sp + 1;
+    }
+    var end = end_raw;
+    if (end < text.len) {
+        const tail_from = at + match_len;
+        if (tail_from < end) {
+            if (std.mem.lastIndexOfScalar(u8, text[tail_from..end], ' ')) |sp| end = tail_from + sp;
+        }
+    }
+    var out: std.ArrayList(u8) = .empty;
+    if (start > 0) out.appendSlice(arena, "\u{2026}") catch return text[start..end];
+    for (text[start..end]) |c| {
+        const ch: u8 = switch (c) {
+            '\n', '\r', '\t' => ' ',
+            else => c,
+        };
+        // Control bytes never reach the page: this is model output and tool
+        // results, the same untrusted text transcript.zig strips.
+        if (ch < 0x20 or ch == 0x7f) continue;
+        out.append(arena, ch) catch return text[start..end];
+    }
+    if (end < text.len) out.appendSlice(arena, "\u{2026}") catch {};
+    return out.items;
+}
+
+/// Every stored conversation holding `query` in a message, newest first, one
+/// row per conversation.
+///
+/// Reads the same directory `listSessions` walks and in the same way, so a
+/// `state/` that is a symlink into the checkout resolves identically for both.
+/// A file that fails to read or parse is skipped rather than failing the
+/// search, matching how the listing treats a corrupt session.
+pub fn searchSessions(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    base: std.Io.Dir,
+    query: []const u8,
+    limit: usize,
+) ![]SearchHit {
+    var out: std.ArrayList(SearchHit) = .empty;
+    if (query.len == 0) return out.toOwnedSlice(arena);
+
+    var dir = base.openDir(io, store_dir, .{ .iterate = true }) catch return out.toOwnedSlice(arena);
+    defer dir.close(io);
+
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
+        const path = std.fmt.allocPrint(arena, "{s}/{s}", .{ store_dir, entry.name }) catch continue;
+        const raw = base.readFileAlloc(io, path, arena, .limited(1 << 24)) catch continue;
+        const stored = json.parseFromSliceLeaky(StoredSession, arena, raw, .{ .ignore_unknown_fields = true }) catch continue;
+
+        var first: ?SearchHit = null;
+        var count: usize = 0;
+        for (stored.messages, 0..) |m, idx| {
+            const content = m.content orelse continue;
+            const at = findFold(content, query) orelse continue;
+            count += 1;
+            if (first != null) continue;
+            first = .{
+                .id = stored.id,
+                .title = stored.title,
+                .updated = stored.updated,
+                .archived = stored.archived,
+                .turn = idx,
+                .role = m.role,
+                .snippet = snippetAround(arena, content, at, query.len),
+            };
+        }
+        if (first) |*hit| {
+            hit.more = count - 1;
+            out.append(arena, hit.*) catch continue;
+        }
+    }
+
+    std.mem.sort(SearchHit, out.items, {}, struct {
+        fn newestFirst(_: void, a: SearchHit, b: SearchHit) bool {
+            return a.updated > b.updated;
+        }
+    }.newestFirst);
+    if (out.items.len > limit) out.shrinkRetainingCapacity(limit);
+    return out.toOwnedSlice(arena);
+}
+
 /// The most recently updated session's id, or null when none exist, what
 /// `--continue` means, for both `clanker run` and the REPL.
 pub fn latestSessionId(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ?[]const u8 {
@@ -1136,4 +1267,95 @@ test "compactMessages is a no-op on an empty message list" {
     defer messages.deinit(std.testing.allocator);
     compactMessages(&messages, 0);
     try std.testing.expectEqual(@as(usize, 0), messages.items.len);
+}
+
+test "findFold matches case-insensitively and reports the position" {
+    try std.testing.expectEqual(@as(?usize, 0), findFold("Hello", "hello"));
+    try std.testing.expectEqual(@as(?usize, 4), findFold("say HELLO there", "hello"));
+    try std.testing.expectEqual(@as(?usize, null), findFold("nothing here", "zig"));
+    // A needle longer than the haystack, and an empty needle, find nothing
+    // rather than matching everything.
+    try std.testing.expectEqual(@as(?usize, null), findFold("hi", "hello"));
+    try std.testing.expectEqual(@as(?usize, null), findFold("hello", ""));
+}
+
+test "snippetAround keeps context, marks both cuts, and flattens the line" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Short enough to need no cutting: no ellipsis either end.
+    const whole = snippetAround(arena, "the cron spec is wrong", 4, 4);
+    try std.testing.expectEqualStrings("the cron spec is wrong", whole);
+
+    // A match in the middle of something long is cut on both sides.
+    const long = "x" ** 300 ++ " needle " ++ "y" ** 300;
+    const cut = snippetAround(arena, long, 301, 6);
+    try std.testing.expect(std.mem.startsWith(u8, cut, "\u{2026}"));
+    try std.testing.expect(std.mem.endsWith(u8, cut, "\u{2026}"));
+    try std.testing.expect(std.mem.indexOf(u8, cut, "needle") != null);
+    // Bounded by the radius either side, not by the message length.
+    try std.testing.expect(cut.len < 300);
+
+    // Newlines become spaces and control bytes are dropped, so a hit is one
+    // line of safe text however the message was written.
+    const messy = snippetAround(arena, "first\nsecond\ttab\x07bell", 0, 5);
+    try std.testing.expectEqualStrings("first second tab" ++ "bell", messy);
+}
+
+test "searchSessions finds conversations by message text, newest first" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+        .id = "older",
+        .title = "cron questions",
+        .created = 100,
+        .updated = 100,
+        .messages = &.{
+            .{ .role = .user, .content = "how do I read a CRON spec" },
+            .{ .role = .assistant, .content = "five fields, and the cron spec is read at a fixed offset" },
+        },
+    });
+    try saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+        .id = "newer",
+        .title = "unrelated",
+        .created = 200,
+        .updated = 200,
+        .messages = &.{.{ .role = .user, .content = "nothing to do with schedules, though it mentions a spec" }},
+    });
+
+    // Case-insensitive, and the conversation the word appears in twice is one
+    // row that says so rather than two rows.
+    const hits = try searchSessions(io, arena, tmp.dir, "cron", 10);
+    try std.testing.expectEqual(@as(usize, 1), hits.len);
+    try std.testing.expectEqualStrings("older", hits[0].id);
+    try std.testing.expectEqualStrings("cron questions", hits[0].title);
+    try std.testing.expectEqual(@as(usize, 0), hits[0].turn);
+    try std.testing.expectEqualStrings("user", hits[0].role);
+    try std.testing.expectEqual(@as(usize, 1), hits[0].more);
+    try std.testing.expect(std.mem.indexOf(u8, hits[0].snippet, "CRON") != null);
+
+    // A word in both conversations returns both, newest first.
+    const both = try searchSessions(io, arena, tmp.dir, "spec", 10);
+    try std.testing.expectEqual(@as(usize, 2), both.len);
+    try std.testing.expectEqualStrings("newer", both[0].id);
+
+    // No match is an empty list, not an error, and neither is an empty store.
+    try std.testing.expectEqual(@as(usize, 0), (try searchSessions(io, arena, tmp.dir, "zzzz", 10)).len);
+    var empty = std.testing.tmpDir(.{});
+    defer empty.cleanup();
+    try std.testing.expectEqual(@as(usize, 0), (try searchSessions(io, arena, empty.dir, "cron", 10)).len);
+
+    // The limit is applied after the sort, so it keeps the newest.
+    const capped = try searchSessions(io, arena, tmp.dir, "spec", 1);
+    try std.testing.expectEqual(@as(usize, 1), capped.len);
+    try std.testing.expectEqualStrings("newer", capped[0].id);
 }

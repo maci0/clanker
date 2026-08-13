@@ -77,6 +77,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
     <p class="rail-group" role="presentation">Set up</p>
     <button type="button" class="rail-tab" role="tab" id="tab-models" aria-controls="view-models" aria-selected="false" tabindex="-1" data-view="models">Models</button>
+    <button type="button" class="rail-tab" role="tab" id="tab-search" aria-controls="view-search" aria-selected="false" tabindex="-1" data-view="search">Search</button>
     <button type="button" class="rail-tab" role="tab" id="tab-schedule" aria-controls="view-schedule" aria-selected="false" tabindex="-1" data-view="schedule">Schedule</button>
     <button type="button" class="rail-tab" role="tab" id="tab-knowledge" aria-controls="view-knowledge" aria-selected="false" tabindex="-1" data-view="knowledge">Knowledge</button>
     <button type="button" class="rail-tab" role="tab" id="tab-prompts" aria-controls="view-prompts" aria-selected="false" tabindex="-1" data-view="prompts">Prompts</button>
@@ -538,6 +539,22 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
 
   </div>
+  <div class="view" id="view-search" role="tabpanel" aria-labelledby="tab-search" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Search</h2>
+      </div>
+      <p class="meta">Find a saved conversation by what was said in it. The conversation list in the sidebar filters on titles; this reads the messages.</p>
+      <div class="transcript-tools">
+        <label for="search-q">Find</label>
+        <input type="search" id="search-q" placeholder="e.g. cron spec, provider refused, safeJoin…" autocomplete="off" spellcheck="false">
+        <button type="button" class="secondary" id="search-go">Search</button>
+      </div>
+      <p class="sr-only" id="search-status" role="status" aria-live="polite"></p>
+      <div id="search-results"></div>
+    </section>
+  </div>
+
   <div class="view" id="view-schedule" role="tabpanel" aria-labelledby="tab-schedule" tabindex="-1" hidden>
     <section>
       <div class="section-head">
@@ -865,6 +882,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 <script type="module" src="/webui/features/todos.js"></script>
 <script type="module" src="/webui/features/models.js"></script>
 <script type="module" src="/webui/features/schedule.js"></script>
+<script type="module" src="/webui/features/search.js"></script>
 <script type="module" src="/webui/app.js"></script>
 </body>
 </html>

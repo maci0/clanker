@@ -3348,3 +3348,18 @@ h2#session-title {
 .schedule-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .schedule-log-row { display: grid; grid-template-columns: 6rem 6rem 1fr; gap: 10px; align-items: baseline; }
 .schedule-log-row[data-state="error"] { color: var(--danger, #d33); }
+
+/* ---- Search view ---- */
+.search-hit { display: block; width: 100%; text-align: left; margin-bottom: var(--space-3); padding: 10px 12px; }
+.search-hit-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.search-hit-title { font-weight: 600; }
+.search-hit-snippet { margin: 4px 0; font-size: 13px; overflow-wrap: anywhere; }
+/* The match itself. mark's default yellow ignores the palette and is
+   unreadable on the dark themes, so it is tokenized like everything else. */
+.search-hit-snippet mark {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.search-hit-foot { margin-top: 2px; }
