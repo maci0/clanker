@@ -109,6 +109,21 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/gate/checks.zig", .needle = "weakensAgent(obj)" },
     .{ .file = "src/gate/checks.zig", .needle = "agent.git_commit must not be disabled" },
     .{ .file = "src/gate/checks.zig", .needle = "hasGitInExecAllow(obj)" },
+    // The detail-string needles above assert that the error MESSAGE survives,
+    // but a patch can gut the function body (return null unconditionally)
+    // while keeping every detail string in a comment. These assert the
+    // actual conditional logic that decides whether to return the error.
+    .{ .file = "src/gate/checks.zig", .needle = "isFalse(obj.get(\"capability_gate\"))" },
+    .{ .file = "src/gate/checks.zig", .needle = "isFalse(obj.get(\"inert_gate\"))" },
+    .{ .file = "src/gate/checks.zig", .needle = "isFalse(obj.get(\"plan_phase\"))" },
+    .{ .file = "src/gate/checks.zig", .needle = "isFalse(obj.get(\"git_commit\"))" },
+    .{ .file = "src/gate/checks.zig", .needle = ".bool => |b| !b," },
+    .{ .file = "src/gate/checks.zig", .needle = "std.mem.startsWith(u8, s, \"git \")" },
+    // lintGate splits forbidden markers so checks.zig doesn't flag itself;
+    // only "TO"++"DO" had a needle, leaving the other three removable.
+    .{ .file = "src/gate/checks.zig", .needle = "\"FIX\" ++ \"ME\"" },
+    .{ .file = "src/gate/checks.zig", .needle = "\"HA\" ++ \"CK\"" },
+    .{ .file = "src/gate/checks.zig", .needle = "\"XX\" ++ \"X\"" },
     // A build.zig change can make `zig build` succeed without installing the
     // staged executable. Capability evaluation must fail closed in that case,
     // otherwise removing the binary is enough to skip the entire eval suite.
