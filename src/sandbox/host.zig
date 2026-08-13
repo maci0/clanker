@@ -1907,7 +1907,7 @@ fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
     // The janitor announces what it pruned into the room. Like the board it
     // ignores a failed chat call, so being denied here cost it its
     // announcements silently rather than failing the prune.
-    if (std.mem.eql(u8, tool_name, "cmd_janitor")) return std.mem.eql(u8, op, "send");
+    if (std.mem.eql(u8, tool_name, "janitor")) return std.mem.eql(u8, op, "send");
 
     const allowed_ops: ?[]const []const u8 = if (std.mem.eql(u8, tool_name, "chat_send"))
         &.{"send"}
@@ -5543,8 +5543,8 @@ test "ck_chat access covers every shipped caller, one op at a time" {
     try std.testing.expect(board_names >= 11);
 
     // The janitor announces what it pruned, and only that.
-    try std.testing.expect(chatAccessAllowed("cmd_janitor", "send"));
-    try std.testing.expect(!chatAccessAllowed("cmd_janitor", "history"));
+    try std.testing.expect(chatAccessAllowed("janitor", "send"));
+    try std.testing.expect(!chatAccessAllowed("janitor", "history"));
 
     // Fail closed for anything else, including a name that merely looks close.
     for ([_][]const u8{ "", "chat", "boardroom", "unrelated", "arena" }) |tool| {

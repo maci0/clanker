@@ -2562,7 +2562,7 @@ fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
     }
     const out = std.Io.File.stdout();
     const input = if (opts.autolearn_reset) "{\"reset\":true}" else "{}";
-    const raw = try toolJson(io, gpa, arena, &cfg, init.environ_map, "cmd_autolearn", input);
+    const raw = try toolJson(io, gpa, arena, &cfg, init.environ_map, "autolearn", input);
     const result = try std.json.parseFromSliceLeaky(struct {
         ok: bool = false,
         text: []const u8 = "",
@@ -3753,7 +3753,7 @@ fn cmdPrune(init: std.process.Init, apply: bool) !void {
     try is.objectField("state_dir");
     try is.write(cfg.agent.state_dir);
     try is.endObject();
-    const raw = try toolJson(init.io, init.gpa, arena, &cfg, init.environ_map, "cmd_janitor", ibuf[0..iw.end]);
+    const raw = try toolJson(init.io, init.gpa, arena, &cfg, init.environ_map, "janitor", ibuf[0..iw.end]);
     const stdout = std.Io.File.stdout();
     // Empty output reads as "did it even run?": when the tool has nothing to
     // report, say so, and on scans point at the flag that would act on it.
@@ -7825,7 +7825,7 @@ fn handleJanitor(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, 
     is.write(cfg.agent.state_dir) catch return;
     is.endObject() catch return;
 
-    const raw = toolJson(io, gpa, arena, cfg, environ_map, "cmd_janitor", ibuf[0..iw.end]) catch {
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "janitor", ibuf[0..iw.end]) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not scan\"}");
         return;
     };
