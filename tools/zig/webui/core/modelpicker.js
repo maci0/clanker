@@ -58,6 +58,25 @@ export function loadProviders() {
         });
         _el.modelSelect.appendChild(group);
       });
+      // Populate the fallback-provider selector: None + each configured provider.
+      if (_el.fallbackProvider) {
+        var fbSaved = null;
+        try { fbSaved = window.localStorage.getItem("clanker.fallback"); } catch (e) {}
+        _el.fallbackProvider.textContent = "";
+        var none = document.createElement("option");
+        none.value = "";
+        none.textContent = "None (no auto-retry)";
+        _el.fallbackProvider.appendChild(none);
+        (d.providers || []).forEach(function (prov) {
+          var opt = document.createElement("option");
+          opt.value = prov.name;
+          opt.textContent = prov.name;
+          _el.fallbackProvider.appendChild(opt);
+        });
+        if (fbSaved && _el.fallbackProvider.querySelector('option[value="' + fbSaved.replace(/"/g, "") + '"]')) {
+          _el.fallbackProvider.value = fbSaved;
+        }
+      }
       var saved = null;
       try { saved = window.localStorage.getItem("clanker.model"); } catch (e) {}
       if (saved && _el.modelSelect.querySelector('option[value="' + saved.replace(/"/g, "") + '"]')) {
@@ -151,11 +170,16 @@ export function runOptions() {
   } else if (raw) {
     out.provider = raw;
   }
+  out.fallbackProvider = fallbackProviderValue();
   var t = parseFloat(_el.paramTemp.value);
   if (!isNaN(t)) out.temperature = t;
   var tp = parseFloat(_el.paramTopP.value);
   if (!isNaN(tp)) out.top_p = tp;
   return out;
+}
+
+export function fallbackProviderValue() {
+  return (_el.fallbackProvider && _el.fallbackProvider.value) || "";
 }
 
 export function syncSubmitLabel() {
@@ -220,4 +244,10 @@ export function bindModelPicker(ctx) {
     try { window.localStorage.setItem("clanker.entersends", _el.enterSends.checked ? "1" : "0"); } catch (e) {}
     syncSubmitLabel();
   });
+
+  if (_el.fallbackProvider) {
+    _el.fallbackProvider.addEventListener("change", function () {
+      try { window.localStorage.setItem("clanker.fallback", _el.fallbackProvider.value); } catch (e) {}
+    });
+  }
 }

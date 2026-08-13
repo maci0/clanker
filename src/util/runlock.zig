@@ -8,10 +8,11 @@
 //!
 //! The lock is a file holding the owning process id. A process that dies
 //! without releasing leaves the file behind, so a lock whose owner no longer
-//! exists is taken over rather than honoured forever. Liveness is read from
-//! /proc, which answers the question directly; signal 0 is the usual trick and
-//! is not expressible here, because this std types the signal argument as an
-//! enum with no zero member.
+//! exists is taken over rather than honoured forever. Liveness is probed with
+//! signal 0, the usual trick: this std types the signal argument as an enum,
+//! but a non-exhaustive one, so 0 is expressible after all. /proc, which this
+//! used to read instead, does not exist on macOS or the BSDs — so every lookup
+//! there answered "no such process" and the lock was never honoured at all.
 
 const std = @import("std");
 const log = @import("log.zig");
@@ -48,7 +49,7 @@ pub fn acquire(
     // Held, or left behind. Only the second is ours to clear.
     const owner = readOwner(io, gpa, dir, path);
     if (owner) |pid| {
-        if (processExists(io, gpa, pid)) {
+        if (processExists(pid)) {
             holder.* = pid;
             return Error.Busy;
         }
@@ -98,19 +99,20 @@ fn selfPid() u32 {
     return @intCast(std.c.getpid());
 }
 
-/// Whether a process with this id is alive, read from /proc rather than probed
-/// with a signal.
-fn processExists(io: std.Io, gpa: std.mem.Allocator, pid: u32) bool {
-    const path = std.fmt.allocPrint(gpa, "/proc/{d}", .{pid}) catch return true;
-    defer gpa.free(path);
-    // Only a confirmed absence (ENOENT) means the process is dead. Any other
-    // failure (permission, transient EMFILE, ...) is doubt, and the comment
-    // above promises doubt treats the lock as held: refusing to start is
-    // recoverable, two runs corrupting a tree is not. Folding every error
-    // into "dead" would reclaim a live process's lock on nothing more than a
-    // hiccup opening /proc.
-    var d = std.Io.Dir.cwd().openDir(io, path, .{}) catch |err| return err != error.FileNotFound;
-    d.close(io);
+/// Whether a process with this id is alive, probed with signal 0, which runs
+/// kill(2)'s existence and permission checks and delivers nothing.
+fn processExists(pid: u32) bool {
+    // kill(2) reads 0 and negative pids as process *group* selectors, and a
+    // value past pid_t cannot name a process at all: none of them is a live
+    // owner, and passing them through would probe something else entirely.
+    if (pid == 0 or pid > std.math.maxInt(std.posix.pid_t)) return false;
+    // Only ProcessNotFound (ESRCH) is a confirmed absence. PermissionDenied
+    // (EPERM) means it is alive and owned by another user, and Unexpected is
+    // doubt, which the comment at the top promises to treat as held: refusing
+    // to start is recoverable, two runs corrupting a tree is not.
+    std.posix.kill(@intCast(pid), @enumFromInt(0)) catch |err| {
+        return err != error.ProcessNotFound;
+    };
     return true;
 }
 
@@ -165,9 +167,15 @@ test "a lock left by a dead process is taken over" {
 }
 
 test "a live process is reported alive and a dead one is not" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    try std.testing.expect(processExists(io, std.testing.allocator, selfPid()));
-    try std.testing.expect(!processExists(io, std.testing.allocator, 4294967290));
+    try std.testing.expect(processExists(selfPid()));
+
+    // Past every platform's pid ceiling (macOS stops at 99999, Linux at
+    // 4194304), so nothing can be running under it, but still inside pid_t.
+    try std.testing.expect(!processExists(0x7fff_fff0));
+
+    // Out of pid_t's range entirely, and the group selectors: none of these
+    // names a process, and each one has to be rejected before it reaches
+    // kill(2) rather than by it.
+    try std.testing.expect(!processExists(4294967290));
+    try std.testing.expect(!processExists(0));
 }

@@ -37,7 +37,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 // ----------------------------------------------------------------- helpers ---
 
 fn newId() []const u8 {
-    const r = lib.random();
+    // Time-mixed: with agent.seed pinned (default 0), lib.random() alone
+    // draws the same value in every fresh invocation of this tool, so every
+    // collection and document got the same id — and delete_doc, matching by
+    // id, then removed all of them at once.
+    const r = lib.random() ^ lib.nowNanos();
     return std.fmt.allocPrint(lib.alloc, "kb-{x}", .{r & 0xffffffffffff}) catch "kb-0";
 }
 

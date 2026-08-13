@@ -39,7 +39,9 @@ const StoredPrompt = struct {
 };
 
 fn newId() []const u8 {
-    const r = lib.random();
+    // Time-mixed for the same reason as knowledge.zig's newId: a pinned
+    // agent.seed makes bare lib.random() identical across invocations.
+    const r = lib.random() ^ lib.nowNanos();
     return std.fmt.allocPrint(lib.alloc, "pr-{x}", .{r & 0xffffffffffff}) catch "pr-0";
 }
 

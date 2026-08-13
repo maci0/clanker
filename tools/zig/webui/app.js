@@ -27,6 +27,7 @@ import { goalState, loadGoals, bindGoals } from "./features/goals.js";
 import { goalStatusLabel } from "./core/goals.js";
 import { selectedKnowledge as kbSelected, loadKnowledge as kbLoad, bindKnowledge as kbBind } from "./features/knowledge.js";
 import { loadPromptsView as promptsLoadView, bindPrompts as promptsBind } from "./features/prompts.js";
+import { loadModelsView as modelsLoadView, bindModels as modelsBind } from "./features/models.js";
 import { renderTurnTodos as todosRenderTurn } from "./features/todos.js";
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -180,6 +181,7 @@ var el = {
   modelList: document.getElementById("model-list"),
   paramTemp: document.getElementById("param-temp"),
   paramTopP: document.getElementById("param-topp"),
+  fallbackProvider: document.getElementById("fallback-provider"),
   enterSends: document.getElementById("enter-sends"),
   planMode: document.getElementById("plan-mode"),
   researchMode: document.getElementById("research-mode"),
@@ -1726,6 +1728,7 @@ el.form.addEventListener("submit", function (e) {
       images: pendingImages.map(function (i) { return { mime: i.mime, b64: i.b64 }; }),
       provider: opts.provider || "",
       model: opts.model || "",
+      fallback_provider: opts.fallbackProvider || "",
       temperature: typeof opts.temperature === "number" ? opts.temperature : null,
       top_p: typeof opts.top_p === "number" ? opts.top_p : null,
       plan: isPlan,
@@ -3962,7 +3965,7 @@ toolsBind({
 
 // ---- views: one section visible at a time -----------------------------
 
-var VIEWS = ["chat", "board", "runs", "fleet", "arena", "compare", "rooms", "knowledge", "prompts", "tools", "system"];
+var VIEWS = ["chat", "board", "runs", "fleet", "arena", "compare", "rooms", "models", "knowledge", "prompts", "tools", "system"];
 var arenaModulePromise = null;
 function loadArenaModule() {
   if (!arenaModulePromise) arenaModulePromise = import("./features/arena.js");
@@ -4004,6 +4007,7 @@ var viewLoaders = {
   // marks its goal) needs the goal list, and the goal->board mirror needs to
   // run even when the Goals view was never opened.
   board: function () { return loadBoardRooms().then(function () { return loadGoals(); }); },
+  models: function () { modelsBind(); return modelsLoadView(); },
   knowledge: function(){ return kbLoad(); },
   prompts: promptsLoadView,
   tools: loadTools,
@@ -4014,6 +4018,7 @@ var viewLoaders = {
    Each renderer overwrites this on success and each catch replaces it with the
    failure, so one line is enough. */
 var VIEW_CONTAINERS = {
+  models: "models-configured",
   runs: "run-graph",
   fleet: "fleet-runs",
   arena: "arena-list",
