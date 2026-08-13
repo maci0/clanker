@@ -197,7 +197,10 @@ pub fn appendRecord(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, rec: R
     var line: std.Io.Writer.Allocating = .init(gpa);
     defer line.deinit();
     var s = std.json.Stringify{ .writer = &line.writer, .options = .{} };
-    s.write(rec) catch return;
+    s.write(rec) catch |err| {
+        log.log(.warn, "schedule: could not encode ledger record: {s}", .{@errorName(err)});
+        return;
+    };
 
     const existing = base.readFileAlloc(io, ledger_path, gpa, .limited(max_ledger_bytes)) catch null;
     defer if (existing) |e| gpa.free(e);
@@ -205,11 +208,23 @@ pub fn appendRecord(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, rec: R
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(gpa);
     if (existing) |e| {
-        out.appendSlice(gpa, e) catch return;
-        if (e.len > 0 and e[e.len - 1] != '\n') out.append(gpa, '\n') catch return;
+        out.appendSlice(gpa, e) catch |err| {
+            log.log(.warn, "schedule: could not merge ledger: {s}", .{@errorName(err)});
+            return;
+        };
+        if (e.len > 0 and e[e.len - 1] != '\n') out.append(gpa, '\n') catch |err| {
+            log.log(.warn, "schedule: could not merge ledger: {s}", .{@errorName(err)});
+            return;
+        };
     }
-    out.appendSlice(gpa, line.written()) catch return;
-    out.append(gpa, '\n') catch return;
+    out.appendSlice(gpa, line.written()) catch |err| {
+        log.log(.warn, "schedule: could not append ledger record: {s}", .{@errorName(err)});
+        return;
+    };
+    out.append(gpa, '\n') catch |err| {
+        log.log(.warn, "schedule: could not append ledger record: {s}", .{@errorName(err)});
+        return;
+    };
 
     if (out.items.len > max_ledger_bytes) {
         const floor = out.items.len - max_ledger_bytes;
