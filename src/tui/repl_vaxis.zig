@@ -205,10 +205,11 @@ fn runThreadMain(args: RunThreadArgs) void {
     // the wait the person at the keyboard actually sat through.
     const started = std.Io.Timestamp.now(self.io, .awake);
     const resp = a.run(messages, args.task, &err_detail) catch |err| {
+        const hint = errorRecoveryHint(err, err_detail);
         const text = if (err_detail) |d|
-            std.fmt.allocPrint(self.arena, "[error: {s}]", .{d}) catch "[error]"
+            std.fmt.allocPrint(self.arena, "[error: {s}{s}]", .{ d, hint }) catch "[error]"
         else
-            std.fmt.allocPrint(self.arena, "[error: {s}]", .{@errorName(err)}) catch "[error]";
+            std.fmt.allocPrint(self.arena, "[error: {s}{s}]", .{ @errorName(err), hint }) catch "[error]";
         // A turn that ran out of iterations or budget still spent real
         // tokens and real money; report them the same as a turn that
         // finished. `Agent.run`'s own defer has already folded its stats by

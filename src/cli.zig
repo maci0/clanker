@@ -8082,14 +8082,46 @@ fn visionFallbackProvider(cfg: *const config.Config, current_name: []const u8) ?
 /// a hint that the model may not be vision-capable, the most common
 /// image-upload failure class.
 fn enrichRunError(arena: std.mem.Allocator, provider_name: []const u8, had_images: bool, detail: []const u8) []const u8 {
-    if (!had_images) {
-        return std.fmt.allocPrint(arena, "{s}: {s}", .{ provider_name, detail }) catch detail;
+    const suffix: []const u8 = if (had_images)
+        "; with image attachment, the provider/model may not support vision, or the image is invalid; check that the selected model is vision-capable and that modules.multimodal is enabled"
+    else if (containsAnyCaseInsensitive(detail, &.{ "401", "unauthorized", "invalid_api_key", "authentication" }))
+        "; check that the API key is set and valid (`clanker doctor`)"
+    else if (containsAnyCaseInsensitive(detail, &.{ "429", "rate limit", "rate_limit", "too many requests", "quota" }))
+        "; rate limited, wait a moment or switch model"
+    else if (containsAnyCaseInsensitive(detail, &.{ "not found", "does not exist", "no such model", "model_not_found" }))
+        "; the model may not exist on this provider; try `clanker providers models`"
+    else if (containsAnyCaseInsensitive(detail, &.{ "timeout", "timed out", "deadline" }))
+        "; the request timed out; the provider may be slow or unreachable"
+    else if (containsAnyCaseInsensitive(detail, &.{ "onnection refused", "onnection reset", "unreachable" }))
+        "; cannot reach the provider; check the network and base_url in config"
+    else
+        "";
+    return std.fmt.allocPrint(arena, "{s}: {s}{s}", .{ provider_name, detail, suffix }) catch detail;
+}
+
+fn containsAnyCaseInsensitive(haystack: []const u8, needles: []const []const u8) bool {
+    for (needles) |needle| {
+        if (findCaseInsensitive(haystack, needle)) return true;
     }
-    return std.fmt.allocPrint(
-        arena,
-        "{s}: {s}; with image attachment, the provider/model may not support vision, or the image is invalid; check that the selected model is vision-capable and that modules.multimodal is enabled",
-        .{ provider_name, detail },
-    ) catch detail;
+    return false;
+}
+
+fn findCaseInsensitive(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (haystack.len < needle.len) return false;
+    var i: usize = 0;
+    while (i <= haystack.len - needle.len) : (i += 1) {
+        var match = true;
+        for (needle, 0..) |nc, j| {
+            const hc = haystack[i + j];
+            if (hc != nc and std.ascii.toLower(hc) != std.ascii.toLower(nc)) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return true;
+    }
+    return false;
 }
 
 /// Runs one agent task synchronously and returns the final answer as JSON:
