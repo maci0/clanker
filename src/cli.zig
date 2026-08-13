@@ -13,6 +13,7 @@ const scorers = @import("evals/scorers.zig");
 const eval_runner = @import("evals/runner.zig");
 const improve = @import("improve/engine.zig");
 const worktree_mod = @import("improve/worktree.zig");
+const retire = @import("improve/retire.zig");
 const history = @import("improve/history.zig");
 const mcp = @import("mcp/server.zig");
 const session = @import("agent/session.zig");
@@ -1207,7 +1208,7 @@ const specs = [_]Spec{
     .{ .command = .phonebook, .usage = "phonebook", .blurb = "list peer agent cards", .group = .peers },
 
     .{ .command = .setup, .usage = "setup", .blurb = "guided first run: check config, keys and tools", .group = .maintain, .detail = "Scaffolds what is missing, says which provider this environment can actually reach,\nand finishes with the same checks `clanker doctor` runs." },
-    .{ .command = .prune, .usage = "janitor [--yes]", .blurb = "sweep up what old runs left behind", .group = .maintain, .flags = &.{.yes}, .detail = "Also reachable as `clanker prune`.\n\nReports by default and deletes nothing. --yes removes: staging copies left by\nimprove runs that were killed, run graphs beyond the newest 200, and improve logs\nbeyond the newest 20. Sessions, goals, learnings and chat history are never touched." },
+    .{ .command = .prune, .usage = "janitor [--yes]", .blurb = "sweep up what old runs left behind", .group = .maintain, .flags = &.{.yes}, .detail = "Also reachable as `clanker prune`.\n\nReports by default and deletes nothing. --yes removes: staging copies left by\nimprove runs that were killed, run graphs beyond the newest 200, improve logs\nbeyond the newest 20, and the worktrees of goals that have been archived or\nabandoned whose branch is already merged. Sessions, goals, learnings and chat\nhistory are never touched, and neither is a worktree whose branch still holds\ncommits the base does not." },
     .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can guard a\nscript or a CI step. Connectivity is `clanker providers check`." },
     .{ .command = .init, .usage = "init", .blurb = "create config.local.toml and state/", .group = .maintain },
     .{ .command = .gate, .usage = "gate", .blurb = "run the build/test/tools/fmt/lint gates", .group = .maintain },
@@ -2630,7 +2631,18 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // rather than a line at the end of the function: an isolated run that
     // errors out halfway still leaves commits in the worktree, and the path to
     // them is the one thing the operator cannot reconstruct from the error.
-    defer if (wt) |*w| log.log(.info, "run: work is on branch {s} in {s} (kept; `git worktree remove` it when done)", .{ w.branch, w.path });
+    defer if (wt) |*w| {
+        log.log(.info, "run: work is on branch {s} in {s} (kept; it retires when its goal is archived)", .{ w.branch, w.path });
+        // The janitor's own dry run, so the pile is visible at the moment it
+        // grew rather than only when someone thinks to look. Counts only, and
+        // `apply = false` deletes nothing.
+        const pending = retire.reconcile(init.gpa, io, std.Io.Dir.cwd(), false);
+        if (pending.actionable() > 0) log.log(
+            .info,
+            "run: {d} worktree(s) are ready to retire ({d} removable, {d} held back by unmerged commits) -- `clanker janitor --yes` sweeps them",
+            .{ pending.actionable(), pending.removed, pending.kept_unmerged },
+        );
+    };
     // Where the harness itself lives, captured before the chdir: the guest
     // wasm modules are pinned to it below, since a worktree has no zig-out.
     var harness_root: ?[]const u8 = null;
@@ -2713,6 +2725,25 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         cfg.modules.goal and opts.goal == null,
     );
     const task_text = resolved_task.task;
+
+    // Record the worktree against the goal steering it, now that the goal is
+    // resolved (`--goal <id>` and auto-steer both land in `resolved_task`).
+    // This is what lets the worktree retire itself when that goal is archived
+    // or abandoned; see src/improve/retire.zig.
+    //
+    // Deliberately after the run has been set up rather than at creation: a
+    // registration written before the goal is known could only record "" and
+    // would then have to be corrected. A run that dies before reaching this
+    // line leaves an unlinked worktree, which the janitor reports rather than
+    // deletes -- the safe direction, since its commits are still there.
+    if (wt) |*w| retire.register(init.gpa, io, std.Io.Dir.cwd(), .{
+        .path = w.path,
+        .branch = w.branch,
+        .base_branch = w.base_branch,
+        .goal_id = resolved_task.goal_id orelse "",
+        .created = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000)),
+    });
+
     session.compactMessages(&messages, max_turn_tokens);
     var err_detail: ?[]const u8 = null;
 
@@ -3332,24 +3363,54 @@ fn cmdPrune(init: std.process.Init, apply: bool) !void {
     // Empty output reads as "did it even run?": when the tool has nothing to
     // report, say so, and on scans point at the flag that would act on it.
     const fallback: []const u8 = if (apply) "nothing to sweep; state is clean.\n" else "nothing to sweep; state is clean (janitor --yes would act on anything listed here).\n";
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
-        try stdout.writeStreamingAll(init.io, fallback);
-        return;
+    // One exit, so the worktree sweep below runs whatever the tool reported.
+    // These used to `return` on each unusable shape, which meant a clean
+    // state/ skipped the worktree half entirely -- the case where the pile of
+    // worktrees is the only thing left to sweep.
+    const text: []const u8 = blk: {
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch break :blk fallback;
+        if (parsed != .object) break :blk fallback;
+        const t = parsed.object.get("text") orelse break :blk fallback;
+        if (t != .string or std.mem.trim(u8, t.string, " \t\r\n").len == 0) break :blk fallback;
+        break :blk t.string;
     };
-    if (parsed != .object) {
-        try stdout.writeStreamingAll(init.io, fallback);
-        return;
-    }
-    const t = parsed.object.get("text") orelse {
-        try stdout.writeStreamingAll(init.io, fallback);
-        return;
-    };
-    if (t != .string or std.mem.trim(u8, t.string, " \t\r\n").len == 0) {
-        try stdout.writeStreamingAll(init.io, fallback);
-        return;
-    }
-    try stdout.writeStreamingAll(init.io, t.string);
-    if (!std.mem.endsWith(u8, t.string, "\n")) try stdout.writeStreamingAll(init.io, "\n");
+    try stdout.writeStreamingAll(init.io, text);
+    if (!std.mem.endsWith(u8, text, "\n")) try stdout.writeStreamingAll(init.io, "\n");
+    try pruneWorktrees(init, apply);
+}
+
+/// The worktree half of the janitor, in the harness rather than in
+/// `cmd_janitor`, because removing a worktree means running
+/// `git worktree remove`: a wasm tool cannot spawn git, and deleting the
+/// directory with the fs tools would leave `.git/worktrees/<id>` behind, so
+/// `git worktree list` would keep reporting a tree that is not there.
+///
+/// Retirement itself is decided by goal status, not by the janitor (see
+/// src/improve/retire.zig); this is the batched trigger for it, and the place
+/// where worktrees nobody can classify get named instead of removed.
+fn pruneWorktrees(init: std.process.Init, apply: bool) !void {
+    const out = retire.reconcile(init.gpa, init.io, std.Io.Dir.cwd(), apply);
+    const unregistered = retire.countUnregistered(init.gpa, init.io, std.Io.Dir.cwd());
+    if (out.actionable() == 0 and unregistered == 0 and out.live == 0 and out.unlinked == 0) return;
+
+    var buf: [768]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    w.writeAll("worktrees:\n") catch {};
+    if (apply and out.removed > 0)
+        w.print("  retired {d} (goal archived or abandoned, branch already merged)\n", .{out.removed}) catch {};
+    if (!apply and out.removed > 0)
+        w.print("  {d} ready to retire (goal archived or abandoned, branch already merged)\n", .{out.removed}) catch {};
+    if (out.kept_unmerged > 0)
+        w.print("  {d} kept: goal is archived but the branch still has commits the base does not\n", .{out.kept_unmerged}) catch {};
+    if (out.live > 0)
+        w.print("  {d} in use by a goal that is still open\n", .{out.live}) catch {};
+    if (out.unlinked > 0)
+        w.print("  {d} from runs with no goal, so nothing retires them automatically\n", .{out.unlinked}) catch {};
+    if (unregistered > 0)
+        w.print("  {d} unrecognised in {s}/ -- an improve-self run may be using one right now, so these are never removed automatically\n", .{ unregistered, retire.container }) catch {};
+    if (!apply and out.removed > 0)
+        w.writeAll("  `clanker janitor --yes` retires them\n") catch {};
+    try std.Io.File.stdout().writeStreamingAll(init.io, w.buffered());
 }
 
 fn cmdGraph(init: std.process.Init, opts: Options) !void {
@@ -7163,6 +7224,14 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"write failed\"}");
         return;
     };
+
+    // Archiving a goal here is the point at which its run's worktree stops
+    // being worth keeping, so act on it now rather than waiting for someone to
+    // run the janitor. A reconcile pass, not a targeted removal, because this
+    // handler is only one of several writers of goals.json and the same
+    // decision has to come out the same way whichever one moved the status.
+    // Unmerged branches survive it; see src/improve/retire.zig.
+    _ = retire.reconcile(arena, io, std.Io.Dir.cwd(), true);
 
     var out: std.Io.Writer.Allocating = .init(arena);
     out.writer.writeAll("{\"ok\":true,\"goals\":") catch return;
