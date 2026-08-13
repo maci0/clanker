@@ -539,7 +539,6 @@ Internal tools, never offered to the model:
 
 | Tool | Filesystem | Purpose |
 |------|------------|---------|
-| `cmd_help` | none | Slash-command reference |
 | `cmd_tools` | `tools/manifests/` | List registered tools |
 | `cmd_sessions` | `state/sessions/` | List saved sessions |
 | `cmd_graph` | `state/runs/` | Render the latest execution graph |
@@ -637,10 +636,11 @@ A line starting with `!` is a shell escape (see below), a line starting with `/`
 | `/model [query]` | in-process | Switch provider/model through a fuzzy picker (Enter picks, Esc cancels) |
 | `/workflows` | in-process | List reusable prompt workflows |
 | `/workflow <name> [args]` | in-process | Run a workflow (expands `{{args}}`, then runs it as a task) |
-| `/sessions` | `cmd_sessions` | List saved sessions |
+| `/sessions`, `/history` | `cmd_sessions` | List saved conversations |
 | `/graph` | `cmd_graph list` | List recorded runs (same as `clanker graph`) |
-| `/plugins` | `cmd_plugins` | List installed plugins. Takes no arguments — toggling is `POST /api/plugins` |
 | `/status` | `cmd_status` | Show configuration and state status |
+| `/tools` | `cmd_tools` | List registered tools (same as `clanker tools`) |
+| `/plugins`, `/plugin` | `cmd_plugins` | List installed plugins. Takes no arguments — toggling is `POST /api/plugins` |
 | `/theme [name]` | in-process | List or switch the color theme (`mocha`, `latte`, `tokyonight`, …) |
 | `/autoresearch ...` | in-process | Measurement loop (see `/autoresearch --help`) |
 | `/goal <intent>` | in-process | Design and persist a goal (runs the agent) |

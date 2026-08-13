@@ -652,7 +652,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/model", .takes_args = true, .arg_hint = "[query]", .help = "switch provider/model (fuzzy picker; Enter picks, Esc cancels)", .action = .model },
     .{ .name = "/workflows", .help = "list reusable prompt workflows", .action = .workflows },
     .{ .name = "/workflow", .takes_args = true, .arg_hint = "<name> [args]", .help = "run a workflow (expands {{args}} then runs as a task)", .action = .workflow },
-    .{ .name = "/sessions", .aliases = &.{"/history"}, .help = "list saved sessions", .action = .{ .tool = .{ .name = "cmd_sessions", .args = "" } } },
+    .{ .name = "/sessions", .aliases = &.{"/history"}, .help = "list saved conversations", .action = .{ .tool = .{ .name = "cmd_sessions", .args = "" } } },
     .{ .name = "/graph", .help = "list recorded runs (same as clanker graph)", .action = .{ .tool = .{ .name = "cmd_graph", .args = "list" } } },
     .{ .name = "/status", .help = "show configuration and state status", .action = .{ .tool = .{ .name = "cmd_status", .args = "" } } },
     .{ .name = "/tools", .help = "list registered tools (same as clanker tools)", .action = .{ .tool = .{ .name = "cmd_tools", .args = "" } } },

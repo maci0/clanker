@@ -1,4 +1,4 @@
-//! cmd_sessions: list saved sessions (state/sessions/*.json).
+//! cmd_sessions: list saved conversations (state/sessions/*.json).
 //! Input:  {"args": "..."}
 //! Output: {"ok": true, "text": "<id>\t<title>\t<updated>  per line, newest last>"}
 
