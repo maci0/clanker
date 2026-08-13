@@ -48,6 +48,8 @@ through a gated loop. Follow these conventions when changing this codebase.
   clanker can improve its own research capabilities.
 - `src/stats/` — per-(provider, model) token usage tracking (`tokens.zig`),
   appended at the LLM client choke point to `state/token_stats.jsonl`.
+  Failed completions are recorded too (`ok:false`, `http_status`, `err`);
+  a log of only successes cannot answer "is the provider down?".
 - `src/tools/` — the native tool infrastructure: `registry.zig` (loads
   `*.tool.json` descriptors), `manifest.zig` (validates them),
   `builder.zig` (compiles WASM tools), `usage.zig` (tool call accounting).

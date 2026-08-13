@@ -5,7 +5,8 @@
 //! calls, subagents) is appended to `<state_dir>/token_stats.jsonl`:
 //!   {"ts":...,"provider":"kimi-k3","model":"kimi-k3","prompt_tokens":...,
 //!    "completion_tokens":...,"total_tokens":...,"cache_hit":...,
-//!    "cache_miss":...,"cost":0.001,"duration_ms":123}
+//!    "cache_miss":...,"cost":0.001,"duration_ms":123,"ok":true,
+//!    "http_status":200,"err":"","request_id":"http-3"}
 //!
 //! Aggregation groups the log by provider+model and produces one Stat per
 //! group (plus a totals row), newest usage counted exactly once.
@@ -31,6 +32,16 @@ pub const Record = struct {
     cache_miss: u64,
     cost: f64,
     duration_ms: u64,
+    /// False when the completion never came back (transport, HTTP 4xx/5xx,
+    /// parse). Defaults keep older log lines (successes only) readable.
+    ok: bool = true,
+    /// Provider HTTP status, 0 when the request never got a response.
+    http_status: u16 = 0,
+    /// Short error name or provider detail. Empty on success. Never a request
+    /// body: those can echo prompts and credentials.
+    err: []const u8 = "",
+    /// Log correlation id when the call happened on an HTTP worker.
+    request_id: []const u8 = "",
 };
 
 /// Aggregated usage for one (provider, model) pair.
@@ -45,6 +56,13 @@ pub const Stat = struct {
     cache_miss: u64 = 0,
     cost: f64 = 0,
     duration_ms: u64 = 0,
+    ok_calls: u64 = 0,
+    error_calls: u64 = 0,
+
+    pub fn errorRate(self: *const Stat) f64 {
+        if (self.calls == 0) return 0;
+        return @as(f64, @floatFromInt(self.error_calls)) / @as(f64, @floatFromInt(self.calls)) * 100.0;
+    }
 
     pub fn cacheHitRate(self: *const Stat) f64 {
         const cached = self.cache_hit + self.cache_miss;
@@ -199,6 +217,7 @@ pub fn aggregate(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
         gop.value_ptr.cache_miss += r.cache_miss;
         gop.value_ptr.cost += r.cost;
         gop.value_ptr.duration_ms += r.duration_ms;
+        if (r.ok) gop.value_ptr.ok_calls += 1 else gop.value_ptr.error_calls += 1;
     }
     const out = try arena.alloc(Stat, by_key.count());
     var idx: usize = 0;
@@ -227,6 +246,8 @@ pub fn totals(stats: []const Stat) Stat {
         t.cache_miss += s.cache_miss;
         t.cost += s.cost;
         t.duration_ms += s.duration_ms;
+        t.ok_calls += s.ok_calls;
+        t.error_calls += s.error_calls;
     }
     return t;
 }
@@ -267,6 +288,12 @@ pub fn statsJSON(arena: std.mem.Allocator, stats: []const Stat, total: Stat) ![]
         try s.print("{d:.6}", .{st.cost});
         try s.objectField("duration_ms");
         try s.print("{d}", .{st.duration_ms});
+        try s.objectField("ok_calls");
+        try s.print("{d}", .{st.ok_calls});
+        try s.objectField("error_calls");
+        try s.print("{d}", .{st.error_calls});
+        try s.objectField("error_rate");
+        try s.print("{d:.1}", .{st.errorRate()});
         try s.endObject();
     }
     try s.endArray();
@@ -286,6 +313,12 @@ pub fn statsJSON(arena: std.mem.Allocator, stats: []const Stat, total: Stat) ![]
     try s.print("{d:.1}", .{total.tokensPerSec()});
     try s.objectField("cost");
     try s.print("{d:.6}", .{total.cost});
+    try s.objectField("ok_calls");
+    try s.print("{d}", .{total.ok_calls});
+    try s.objectField("error_calls");
+    try s.print("{d}", .{total.error_calls});
+    try s.objectField("error_rate");
+    try s.print("{d:.1}", .{total.errorRate()});
     try s.endObject();
     try s.endObject();
     return arena.dupe(u8, buf[0..w.end]);
@@ -336,11 +369,90 @@ test "append + aggregate groups by provider/model and sums" {
     try std.testing.expectEqual(@as(u64, 2), stats[1].calls);
     try std.testing.expectEqual(@as(u64, 350), stats[1].total_tokens);
     try std.testing.expectApproxEqAbs(@as(f64, 90.0), stats[0].cacheHitRate(), 0.01);
+    try std.testing.expectEqual(@as(u64, 1), stats[0].ok_calls);
+    try std.testing.expectEqual(@as(u64, 0), stats[0].error_calls);
 
     const t = totals(stats);
     try std.testing.expectEqual(@as(u64, 3), t.calls);
+    try std.testing.expectEqual(@as(u64, 3), t.ok_calls);
+    try std.testing.expectEqual(@as(u64, 0), t.error_calls);
     try std.testing.expectEqual(@as(u64, 1400), t.total_tokens);
     try std.testing.expectApproxEqAbs(@as(f64, 0.03), t.cost, 0.0001);
+}
+
+test "failed records count toward error_rate and older lines stay successes" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    append(tmp.dir, io, std.testing.allocator, arena, "", .{
+        .ts = 1,
+        .provider = "kimi-k3",
+        .model = "kimi-k3",
+        .prompt_tokens = 10,
+        .completion_tokens = 2,
+        .total_tokens = 12,
+        .cache_hit = 0,
+        .cache_miss = 10,
+        .cost = 0,
+        .duration_ms = 20,
+    });
+    append(tmp.dir, io, std.testing.allocator, arena, "", .{
+        .ts = 2,
+        .provider = "kimi-k3",
+        .model = "kimi-k3",
+        .prompt_tokens = 0,
+        .completion_tokens = 0,
+        .total_tokens = 0,
+        .cache_hit = 0,
+        .cache_miss = 0,
+        .cost = 0,
+        .duration_ms = 5,
+        .ok = false,
+        .http_status = 503,
+        .err = "service_unavailable",
+        .request_id = "http-9",
+    });
+
+    const stats = try aggregate(tmp.dir, io, std.testing.allocator, arena, "");
+    try std.testing.expectEqual(@as(usize, 1), stats.len);
+    try std.testing.expectEqual(@as(u64, 2), stats[0].calls);
+    try std.testing.expectEqual(@as(u64, 1), stats[0].ok_calls);
+    try std.testing.expectEqual(@as(u64, 1), stats[0].error_calls);
+    try std.testing.expectApproxEqAbs(@as(f64, 50.0), stats[0].errorRate(), 0.01);
+
+    // A pre-field line (no ok/err) must parse as a success so historical
+    // logs do not suddenly look like a 100% error rate.
+    const recs = try loadAll(tmp.dir, io, std.testing.allocator, arena, "");
+    try std.testing.expect(recs[0].ok);
+    try std.testing.expectEqual(@as(u16, 0), recs[0].http_status);
+    try std.testing.expect(!recs[1].ok);
+    try std.testing.expectEqual(@as(u16, 503), recs[1].http_status);
+    try std.testing.expectEqualStrings("http-9", recs[1].request_id);
+
+    const json_out = try statsJSON(arena, stats, totals(stats));
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, json_out, .{});
+    try std.testing.expectEqual(@as(i64, 1), parsed.object.get("totals").?.object.get("error_calls").?.integer);
+}
+
+test "legacy token_stats lines without ok default to success" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const line =
+        \\{"ts":1,"provider":"p","model":"m","prompt_tokens":1,"completion_tokens":1,"total_tokens":2,"cache_hit":0,"cache_miss":1,"cost":0.0,"duration_ms":1}
+    ;
+    const rec = try std.json.parseFromSliceLeaky(Record, arena, line, .{ .ignore_unknown_fields = true });
+    try std.testing.expect(rec.ok);
+    try std.testing.expectEqual(@as(u16, 0), rec.http_status);
+    try std.testing.expectEqualStrings("", rec.err);
+    try std.testing.expectEqualStrings("", rec.request_id);
 }
 
 test "statsJSON serializes stats + totals" {

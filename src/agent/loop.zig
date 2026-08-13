@@ -541,17 +541,16 @@ pub const Agent = struct {
 
             const llm_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
             const resp = if (self.on_token) |cb| blk: {
-                if (!self.cfg.modules.streaming) break :blk try client.chat(self.ctx, self.arena, .{
-                    .provider = self.provider,
-                    .messages = messages.items,
-                    .tools = self.tool_defs,
-                }, err_detail);
+                if (!self.cfg.modules.streaming) break :blk try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0);
                 break :blk client.chatStream(self.ctx, self.arena, .{
                     .provider = self.provider,
                     .messages = messages.items,
                     .tools = self.tool_defs,
                 }, err_detail, cb, self.stop_flag) catch |err| {
-                    if (err != error.Interrupted) return err;
+                    if (err != error.Interrupted) {
+                        try self.recordFailedLlm(&g, iteration, llm_t0, err, err_detail.*);
+                        return err;
+                    }
                     // Same outcome as the between-iterations stopRequested()
                     // check above, for a Ctrl-C that instead landed mid-stream.
                     _ = self.stopRequested(); // consume the flag
@@ -565,11 +564,7 @@ pub const Agent = struct {
                     });
                     return .{ .message = .{ .role = .assistant, .content = "[stopped]" } };
                 };
-            } else try client.chat(self.ctx, self.arena, .{
-                .provider = self.provider,
-                .messages = messages.items,
-                .tools = self.tool_defs,
-            }, err_detail);
+            } else try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0);
             try g.add(self.ctx.gpa, .{
                 .kind = .llm,
                 .iteration = iteration + 1,
@@ -1835,6 +1830,48 @@ pub const Agent = struct {
         var core: std.ArrayList([]const u8) = .empty;
         for (hot) |e| core.append(self.arena, e.name) catch {};
         self.tool_defs = self.reg.lazyToolDefs(self.arena, core.items, &self.revealed) catch return;
+    }
+
+    /// One blocking completion. On failure the graph still gets a node so a
+    /// run that dies on the provider is visible in `clanker graph` and the
+    /// web UI, not only as a stack trace on stderr.
+    fn llmChat(
+        self: *Agent,
+        messages: []const types.Message,
+        err_detail: *?[]const u8,
+        g: *graph_mod.Graph,
+        iteration: u32,
+        started: std.Io.Timestamp,
+    ) !types.ChatResponse {
+        return client.chat(self.ctx, self.arena, .{
+            .provider = self.provider,
+            .messages = messages,
+            .tools = self.tool_defs,
+        }, err_detail) catch |err| {
+            try self.recordFailedLlm(g, iteration, started, err, err_detail.*);
+            return err;
+        };
+    }
+
+    fn recordFailedLlm(
+        self: *Agent,
+        g: *graph_mod.Graph,
+        iteration: u32,
+        started: std.Io.Timestamp,
+        err: anyerror,
+        detail: ?[]const u8,
+    ) !void {
+        const ms: u64 = @intCast(@divTrunc(started.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
+        const why = detail orelse @errorName(err);
+        log.log(.error_, "LLM call failed at iteration {d}: {s} ({s})", .{ iteration + 1, @errorName(err), why });
+        try g.add(self.ctx.gpa, .{
+            .kind = .llm,
+            .iteration = iteration + 1,
+            .label = "chat",
+            .detail = why,
+            .duration_ms = ms,
+            .ok = false,
+        });
     }
 
     /// Persists a finished run's graph through the sandboxed `cmd_graph`

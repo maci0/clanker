@@ -189,16 +189,22 @@ clanker.registerView({
       return box;
     }
 
-    function drawTiles(http, at) {
+    function drawTiles(http, llm, at) {
       var total = num(http.requests_total);
       var errors = num(http.errors_total);
       var inFlight = num(http.in_flight);
       var limit = num(http.connection_limit);
+      var llmTotal = num(llm && llm.requests_total);
+      var llmErrors = num(llm && llm.errors_total);
+      var llmRetries = num(llm && llm.retries_total);
 
       var reqRate = rateOf(prev ? num(prev.http.requests_total) : null, total, prev ? prev.at : null, at);
       var errRate = rateOf(prev ? num(prev.http.errors_total) : null, errors, prev ? prev.at : null, at);
+      var llmRate = rateOf(prev && prev.llm ? num(prev.llm.requests_total) : null, llmTotal, prev ? prev.at : null, at);
+      var llmErrRate = rateOf(prev && prev.llm ? num(prev.llm.errors_total) : null, llmErrors, prev ? prev.at : null, at);
       var mean = total > 0 ? num(http.latency_ms_sum) / total : null;
       var errShare = pct(errors, total);
+      var llmErrShare = pct(llmErrors, llmTotal);
       var st = loadState(inFlight, limit);
 
       tiles.textContent = "";
@@ -218,6 +224,14 @@ clanker.registerView({
         "Mean response", fmtMs(mean),
         total > 0 ? "over " + total + " requests" : "nothing served yet",
         null));
+      tiles.appendChild(tile(
+        "LLM calls", fmtRate(llmRate.rate),
+        rateNote(llmRate, llmTotal) + (llmRetries ? ", " + llmRetries + " retried" : ""),
+        null));
+      tiles.appendChild(tile(
+        "LLM errors", fmtRate(llmErrRate.rate),
+        llmErrors + " of " + llmTotal + " (" + fmtPct(llmErrShare) + ")",
+        errorState(llmErrors, llmErrShare)));
 
       state.textContent = st.word === "unknown"
         ? "connection limit unknown"
@@ -305,12 +319,15 @@ clanker.registerView({
         .then(function (d) {
           var http = (d && d.http) || null;
           if (!http) throw new Error("no http metrics in the response");
+          var llm = (d && d.llm) || {};
           var at = Date.now();
-          drawTiles(http, at);
+          drawTiles(http, llm, at);
           drawBands(http);
-          prev = { at: at, http: http };
+          prev = { at: at, http: http, llm: llm };
           api.status("Health: " + num(http.requests_total) + " requests served, " +
-            num(http.errors_total) + " errors.");
+            num(http.errors_total) + " errors, " +
+            num(llm.requests_total) + " LLM calls, " +
+            num(llm.errors_total) + " LLM errors.");
           return http;
         })
         .catch(function (err) {

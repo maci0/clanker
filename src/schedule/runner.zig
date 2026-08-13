@@ -110,7 +110,10 @@ pub fn runDue(
     fire: Fire,
 ) !Summary {
     var lock = acquireRunLock(io, base) catch |err| switch (err) {
-        Error.Busy => return .{ .busy = true },
+        Error.Busy => {
+            log.log(.info, "schedule: another run-due is still working; nothing started", .{});
+            return .{ .busy = true };
+        },
         else => return err,
     };
     defer lock.close(io);
@@ -137,6 +140,11 @@ pub fn runDue(
         if (claims.items.len > 0) try s.save();
     }
     if (claims.items.len == 0) return .{ .considered = considered };
+    log.log(.info, "schedule: firing {d} due entr{s} ({d} scheduled)", .{
+        claims.items.len,
+        if (claims.items.len == 1) "y" else "ies",
+        considered,
+    });
 
     var outcomes: std.ArrayList(Outcome) = .empty;
     for (claims.items) |c| {
@@ -220,10 +228,11 @@ fn fireOne(
         // would make one broken schedule silently stop every other.
         ok = false;
         err_name = @errorName(err);
-        log.log(.warn, "schedule: entry {s} failed: {s}", .{ entry.id, err_name });
+        log.log(.warn, "schedule: entry {s} failed: {s} (trigger={s})", .{ entry.id, err_name, trigger });
     };
     const elapsed_ns = started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
     const duration_ms: u64 = @intCast(@max(0, @divTrunc(elapsed_ns, std.time.ns_per_ms)));
+    if (ok) log.log(.info, "schedule: entry {s} ok in {d}ms (trigger={s})", .{ entry.id, duration_ms, trigger });
 
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
     store.appendRecord(io, gpa, base, .{

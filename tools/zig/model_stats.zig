@@ -44,6 +44,10 @@ const Record = struct {
     cache_miss: u64 = 0,
     cost: f64 = 0,
     duration_ms: u64 = 0,
+    ok: bool = true,
+    http_status: u16 = 0,
+    err: []const u8 = "",
+    request_id: []const u8 = "",
 };
 
 const Stat = struct {
@@ -56,6 +60,8 @@ const Stat = struct {
     cache_hit_rate: f64 = 0,
     tokens_per_sec: f64 = 0,
     cost: f64 = 0,
+    ok_calls: u64 = 0,
+    error_calls: u64 = 0,
 };
 
 const Stats = struct {
@@ -81,6 +87,7 @@ fn aggregate(records: []const Record) !Stats {
         stat.completion_tokens += record.completion_tokens;
         stat.total_tokens += record.total_tokens;
         stat.cost += record.cost;
+        if (record.ok) stat.ok_calls += 1 else stat.error_calls += 1;
         gop.value_ptr.cache_hit += record.cache_hit;
         gop.value_ptr.cache_miss += record.cache_miss;
         gop.value_ptr.duration_ms += record.duration_ms;
@@ -117,6 +124,8 @@ fn aggregate(records: []const Record) !Stats {
         totals.completion_tokens += stat.completion_tokens;
         totals.total_tokens += stat.total_tokens;
         totals.cost += stat.cost;
+        totals.ok_calls += stat.ok_calls;
+        totals.error_calls += stat.error_calls;
     }
     const cache_total = cache_hits + cache_misses;
     totals.cache_hit_rate = if (cache_total == 0) 0 else @as(f64, @floatFromInt(cache_hits)) / @as(f64, @floatFromInt(cache_total)) * 100.0;
@@ -128,7 +137,7 @@ fn renderText(stats: []const Stat, totals: Stat) ![]const u8 {
     if (stats.len == 0) return "no token usage recorded yet (run an agent task first)\n";
 
     var text: std.ArrayList(u8) = .empty;
-    try text.appendSlice(lib.alloc, "provider        model                          calls  prompt  output   total  cache%  tok/s       cost$\n");
+    try text.appendSlice(lib.alloc, "provider        model                          calls  prompt  output   total  cache%  tok/s       cost$  fail\n");
     for (stats) |stat| try appendRow(&text, stat.provider, stat.model, stat);
     try appendRow(&text, "totals", "", totals);
     return text.toOwnedSlice(lib.alloc);
@@ -138,7 +147,7 @@ fn appendRow(text: *std.ArrayList(u8), provider: []const u8, model: []const u8, 
     const prompt = try compactCount(stat.prompt_tokens);
     const completion = try compactCount(stat.completion_tokens);
     const total = try compactCount(stat.total_tokens);
-    const line = try std.fmt.allocPrint(lib.alloc, "{s:<15} {s:<30}{d:>5} {s:>7} {s:>7} {s:>7} {d:>5.1} {d:>7.1} {d:>10.4}\n", .{
+    const line = try std.fmt.allocPrint(lib.alloc, "{s:<15} {s:<30}{d:>5} {s:>7} {s:>7} {s:>7} {d:>5.1} {d:>7.1} {d:>10.4} {d:>5}\n", .{
         provider,
         model,
         stat.calls,
@@ -148,6 +157,7 @@ fn appendRow(text: *std.ArrayList(u8), provider: []const u8, model: []const u8, 
         stat.cache_hit_rate,
         stat.tokens_per_sec,
         stat.cost,
+        stat.error_calls,
     });
     try text.appendSlice(lib.alloc, line);
 }

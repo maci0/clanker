@@ -48,6 +48,39 @@ pub const Ctx = struct {
 const resp_cap = 8 << 20;
 const max_attempts = 3;
 
+/// Process-local RED counters for LLM calls. Cardinality is zero (no
+/// provider/model labels) so a busy loop cannot blow a time-series store;
+/// per-provider detail lives in token_stats.jsonl and the correlated logs.
+var llm_requests_total = std.atomic.Value(u64).init(0);
+var llm_errors_total = std.atomic.Value(u64).init(0);
+var llm_retries_total = std.atomic.Value(u64).init(0);
+
+pub const LlmMetrics = struct {
+    requests_total: u64,
+    errors_total: u64,
+    retries_total: u64,
+};
+
+pub fn snapshotMetrics() LlmMetrics {
+    return .{
+        .requests_total = llm_requests_total.load(.monotonic),
+        .errors_total = llm_errors_total.load(.monotonic),
+        .retries_total = llm_retries_total.load(.monotonic),
+    };
+}
+
+fn noteRequest() void {
+    _ = llm_requests_total.fetchAdd(1, .monotonic);
+}
+
+fn noteRetry() void {
+    _ = llm_retries_total.fetchAdd(1, .monotonic);
+}
+
+fn noteError() void {
+    _ = llm_errors_total.fetchAdd(1, .monotonic);
+}
+
 /// Appends provider-controlled bytes without allowing a malformed response to
 /// grow a process-owned buffer indefinitely. The caller chooses whether the
 /// limit applies to a complete body or to one protocol frame.
@@ -100,15 +133,27 @@ pub fn chat(
     var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
     defer client.deinit();
 
+    noteRequest();
     var attempt: u32 = 0;
     var outcome: FetchOutcome = undefined;
     while (true) {
         attempt += 1;
-        outcome = try doFetch(ctx, &client, url, body, cred, impl, provider, arena, err_detail);
+        outcome = doFetch(ctx, &client, url, body, cred, impl, provider, arena, err_detail) catch |err| {
+            if (attempt < max_attempts and isRetryableTransport(err)) {
+                noteRetry();
+                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
+                continue;
+            }
+            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
+                provider.name, @errorName(err), attempt, max_attempts,
+            });
+            noteError();
+            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            return err;
+        };
         if (isRetryable(outcome.status) and attempt < max_attempts) {
-            const base: u64 = @as(u64, attempt) * std.time.ns_per_s;
-            const jitter: u64 = @intCast(@mod(std.Io.Timestamp.now(ctx.io, .awake).nanoseconds, 500_000_000));
-            const delay = base + jitter;
+            noteRetry();
+            const delay = retryDelayNs(ctx.io, attempt);
             log.log(.warn, "HTTP {d} from '{s}', retrying in {d}ms (attempt {d}/{d})", .{ @intFromEnum(outcome.status), provider.name, delay / std.time.ns_per_ms, attempt, max_attempts });
             ctx.gpa.free(outcome.body);
             // A cancellation during the backoff sleep must abort the retry,
@@ -125,6 +170,11 @@ pub fn chat(
         if (err_detail.* == null) {
             err_detail.* = try arena.dupe(u8, outcome.body);
         }
+        log.log(.error_, "provider '{s}' returned HTTP {d} after {d} attempt(s): {s}", .{
+            provider.name, @intFromEnum(outcome.status), attempt, err_detail.* orelse "",
+        });
+        noteError();
+        recordFailure(ctx, arena, provider, @intFromEnum(outcome.status), err_detail.* orelse "ApiError", elapsedMs(ctx.io, llm_t0));
         return error.ApiError;
     }
 
@@ -135,7 +185,14 @@ pub fn chat(
     // err_detail goes in here: a 200 carrying an error body never passes the
     // HTTP error path in doFetch, so without this the caller only sees a bare
     // error.ApiError with no idea what the provider said.
-    const resp = try impl.parseResponse(arena, body_owned, err_detail);
+    const resp = impl.parseResponse(arena, body_owned, err_detail) catch |err| {
+        log.log(.error_, "provider '{s}' returned an unreadable response: {s} ({s})", .{
+            provider.name, @errorName(err), err_detail.* orelse "",
+        });
+        noteError();
+        recordFailure(ctx, arena, provider, @intFromEnum(outcome.status), err_detail.* orelse @errorName(err), elapsedMs(ctx.io, llm_t0));
+        return err;
+    };
     const ms: u64 = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
     recordUsage(ctx, arena, provider, resp.usage, ms);
     return resp;
@@ -223,7 +280,68 @@ fn recordUsage(ctx: *Ctx, arena: std.mem.Allocator, provider: *const config.Prov
         .cache_miss = u.prompt_cache_miss_tokens,
         .cost = cost,
         .duration_ms = duration_ms,
+        .ok = true,
+        .request_id = log.getContext(),
     });
+}
+
+/// Records a completion that never produced usage: the operator question at
+/// 3 AM is "is the provider failing?", and a log of only successes cannot
+/// answer it. Tokens stay zero; `err` is a name or a parsed provider
+/// message, never the raw body.
+fn recordFailure(
+    ctx: *Ctx,
+    arena: std.mem.Allocator,
+    provider: *const config.Provider,
+    http_status: u16,
+    err_name: []const u8,
+    duration_ms: u64,
+) void {
+    const cfg = ctx.cfg orelse return;
+    if (!cfg.modules.token_stats) return;
+
+    const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(ctx.io, .real).nanoseconds, 1_000_000_000));
+    token_stats.append(std.Io.Dir.cwd(), ctx.io, ctx.gpa, arena, cfg.agent.state_dir, .{
+        .ts = ts,
+        .provider = provider.name,
+        .model = provider.activeModelName(),
+        .prompt_tokens = 0,
+        .completion_tokens = 0,
+        .total_tokens = 0,
+        .cache_hit = 0,
+        .cache_miss = 0,
+        .cost = 0,
+        .duration_ms = duration_ms,
+        .ok = false,
+        .http_status = http_status,
+        .err = err_name,
+        .request_id = log.getContext(),
+    });
+}
+
+fn elapsedMs(io: std.Io, started: std.Io.Timestamp) u64 {
+    const ns = started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
+    return @intCast(@max(0, @divTrunc(ns, std.time.ns_per_ms)));
+}
+
+fn retryDelayNs(io: std.Io, attempt: u32) u64 {
+    const base: u64 = @as(u64, attempt) * std.time.ns_per_s;
+    const jitter: u64 = @intCast(@mod(std.Io.Timestamp.now(io, .awake).nanoseconds, 500_000_000));
+    return base + jitter;
+}
+
+fn sleepRetry(io: std.Io, attempt: u32, provider_name: []const u8, http_status: u16, reason: []const u8) !void {
+    const delay = retryDelayNs(io, attempt);
+    if (http_status == 0) {
+        log.log(.warn, "request to '{s}' failed: {s}, retrying in {d}ms (attempt {d}/{d})", .{
+            provider_name, reason, delay / std.time.ns_per_ms, attempt, max_attempts,
+        });
+    } else {
+        log.log(.warn, "HTTP {d} from '{s}', retrying in {d}ms (attempt {d}/{d})", .{
+            http_status, provider_name, delay / std.time.ns_per_ms, attempt, max_attempts,
+        });
+    }
+    try std.Io.sleep(io, .{ .nanoseconds = @intCast(delay) }, .awake);
 }
 
 fn doFetch(
@@ -253,11 +371,9 @@ fn doFetch(
         .extra_headers = extra[0..extra_len],
         .response_writer = &w,
     }) catch |err| {
-        log.log(.debug, "request to '{s}' failed: {s}", .{ url, @errorName(err) });
-        // Unlike an HTTP error status, this never reaches `err_detail` below,
-        // so every caller that reports `err_detail orelse @errorName(err)`
-        // would otherwise show the user a bare Zig error name (e.g.
-        // "ConnectionRefused") instead of a sentence.
+        // The retry loop in chat() owns the operator-visible log line so a
+        // transient blip is one warn and a terminal failure is one error,
+        // not a debug line that vanishes at the default level.
         err_detail.* = std.fmt.allocPrint(arena, "couldn't reach '{s}' ({s})", .{ provider.name, @errorName(err) }) catch null;
         return err;
     };
@@ -311,16 +427,23 @@ pub fn chatStream(
     var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
     defer client.deinit();
 
+    noteRequest();
+
     var headers = baseHeaders();
     var extra: providers.ExtraHeaders = undefined;
     const extra_len = impl.authHeaders(cred, &headers, &extra);
 
     const uri = std.Uri.parse(url) catch return error.InvalidUrl;
-    var req = try client.request(.POST, uri, .{
+    var req = client.request(.POST, uri, .{
         .redirect_behavior = .unhandled,
         .headers = headers,
         .extra_headers = extra[0..extra_len],
-    });
+    }) catch |err| {
+        log.log(.error_, "stream request to '{s}' failed: {s}", .{ provider.name, @errorName(err) });
+        noteError();
+        recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+        return err;
+    };
     defer req.deinit();
 
     req.transfer_encoding = .{ .content_length = body.len };
@@ -330,13 +453,38 @@ pub fn chatStream(
     if (ctx.environ_map.get("CLANKER_DEBUG_BODY") != null) {
         log.log(.debug, "LLM streaming request provider={s} bytes={d}", .{ provider.name, body.len });
     }
-    var body_writer = try req.sendBodyUnflushed(&.{});
-    try body_writer.writer.writeAll(body);
-    try body_writer.end();
-    try req.connection.?.flush();
+    var body_writer = req.sendBodyUnflushed(&.{}) catch |err| {
+        log.log(.error_, "stream send to '{s}' failed: {s}", .{ provider.name, @errorName(err) });
+        noteError();
+        recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+        return err;
+    };
+    body_writer.writer.writeAll(body) catch |err| {
+        log.log(.error_, "stream send to '{s}' failed: {s}", .{ provider.name, @errorName(err) });
+        noteError();
+        recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+        return err;
+    };
+    body_writer.end() catch |err| {
+        log.log(.error_, "stream send to '{s}' failed: {s}", .{ provider.name, @errorName(err) });
+        noteError();
+        recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+        return err;
+    };
+    req.connection.?.flush() catch |err| {
+        log.log(.error_, "stream send to '{s}' failed: {s}", .{ provider.name, @errorName(err) });
+        noteError();
+        recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+        return err;
+    };
 
     var redirect_buffer: [8192]u8 = undefined;
-    var response = try req.receiveHead(&redirect_buffer);
+    var response = req.receiveHead(&redirect_buffer) catch |err| {
+        log.log(.error_, "stream response from '{s}' failed: {s}", .{ provider.name, @errorName(err) });
+        noteError();
+        recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+        return err;
+    };
 
     if (@intFromEnum(response.head.status) >= 400) {
         // The client advertises gzip, and providers compress error bodies too:
@@ -366,6 +514,9 @@ pub fn chatStream(
         } else {
             err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}", .{@intFromEnum(response.head.status)});
         }
+        log.log(.error_, "provider '{s}' stream returned {s}", .{ provider.name, err_detail.*.? });
+        noteError();
+        recordFailure(ctx, arena, provider, @intFromEnum(response.head.status), err_detail.*.?, elapsedMs(ctx.io, llm_t0));
         return error.ApiError;
     }
 
@@ -400,7 +551,9 @@ pub fn chatStream(
             // whatever was collected so far would hand the caller a
             // silently truncated "success" with no way to tell it apart
             // from a model that actually finished.
-            log.log(.error_, "stream read failed: {s}", .{@errorName(err)});
+            log.log(.error_, "stream read failed from '{s}': {s}", .{ provider.name, @errorName(err) });
+            noteError();
+            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
             return err;
         };
         if (n == 0) {
@@ -557,6 +710,50 @@ fn isRetryable(status: std.http.Status) bool {
         .too_many_requests, .internal_server_error, .bad_gateway, .service_unavailable, .gateway_timeout => true,
         else => false,
     };
+}
+
+/// Transport failures that are worth another try: the remote is unreachable
+/// or the connection dropped before a status existed. Auth, TLS, and parse
+/// errors are not here; they fail the same way on every attempt.
+fn isRetryableTransport(err: anyerror) bool {
+    return switch (err) {
+        error.ConnectionRefused,
+        error.ConnectionResetByPeer,
+        error.ConnectionTimedOut,
+        error.NetworkUnreachable,
+        error.HostLacksNetworkAddresses,
+        error.TemporaryNameServerFailure,
+        error.UnknownHostName,
+        error.NameServerFailure,
+        error.Timeout,
+        error.EndOfStream,
+        error.ReadFailed,
+        error.WriteFailed,
+        => true,
+        else => false,
+    };
+}
+
+test "retryable statuses are the ones a later attempt can recover from" {
+    try std.testing.expect(isRetryable(.too_many_requests));
+    try std.testing.expect(isRetryable(.internal_server_error));
+    try std.testing.expect(isRetryable(.bad_gateway));
+    try std.testing.expect(isRetryable(.service_unavailable));
+    try std.testing.expect(isRetryable(.gateway_timeout));
+    try std.testing.expect(!isRetryable(.ok));
+    try std.testing.expect(!isRetryable(.bad_request));
+    try std.testing.expect(!isRetryable(.unauthorized));
+    try std.testing.expect(!isRetryable(.forbidden));
+    try std.testing.expect(!isRetryable(.not_found));
+}
+
+test "transport retries cover dropped connections, not auth or parse" {
+    try std.testing.expect(isRetryableTransport(error.ConnectionRefused));
+    try std.testing.expect(isRetryableTransport(error.ConnectionResetByPeer));
+    try std.testing.expect(isRetryableTransport(error.Timeout));
+    try std.testing.expect(!isRetryableTransport(error.OutOfMemory));
+    try std.testing.expect(!isRetryableTransport(error.InvalidUrl));
+    try std.testing.expect(!isRetryableTransport(error.ApiError));
 }
 
 // ------------------------------------------------------------------- tests --
@@ -885,6 +1082,50 @@ test "vertex non-stream chat hits rawPredict, not streamRawPredict" {
     try std.testing.expect(std.mem.endsWith(u8, captured.target, ":rawPredict"));
     try std.testing.expect(!std.mem.endsWith(u8, captured.target, ":streamRawPredict"));
     try std.testing.expect(std.mem.find(u8, captured.body, "\"stream\":true") == null);
+}
+
+test "chat retries a 503 and records the successful completion" {
+    const mock_server = @import("mock_server.zig");
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, std.testing.allocator, .anthropic_text);
+    defer mock.stop();
+    mock.fail_before_ok.store(1, .release);
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("MOCK_ANTHROPIC_KEY", "test-key");
+
+    const base_url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}", .{mock.port});
+    defer std.testing.allocator.free(base_url);
+    var arena_for_provider = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_for_provider.deinit();
+    var provider = try config.Provider.single(arena_for_provider.allocator(), "anthropic-mock", base_url, .anthropic, "claude-sonnet-5", .{
+        .context_window = 1_000_000,
+        .max_tokens = 1024,
+    });
+    provider.api_key_env = "MOCK_ANTHROPIC_KEY";
+
+    var ctx = Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    const before = snapshotMetrics();
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    var err_detail: ?[]const u8 = null;
+    const resp = try chat(&ctx, arena_state.allocator(), .{
+        .provider = &provider,
+        .messages = &messages,
+    }, &err_detail);
+    try std.testing.expect(resp.message.content != null);
+    try std.testing.expectEqual(@as(usize, 2), mock.captured.items.len);
+
+    const after = snapshotMetrics();
+    try std.testing.expectEqual(before.requests_total + 1, after.requests_total);
+    try std.testing.expectEqual(before.retries_total + 1, after.retries_total);
+    try std.testing.expectEqual(before.errors_total, after.errors_total);
 }
 
 test "cached prompt tokens are billed at the cache-read rate" {

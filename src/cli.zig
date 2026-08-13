@@ -1227,7 +1227,7 @@ const specs = [_]Spec{
     .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect, .detail = "Lists every conversation in state/sessions, newest last. To resume one:\n  clanker run --session <id> \"continue where we left off\"\n  clanker repl --session <id>\nTo export one as a standalone HTML file:\n  clanker session export <id>" },
     .{ .command = .session_export, .usage = "session export <id> [path]", .blurb = "write one conversation as a self-contained HTML file", .group = .inspect, .detail = "Writes state/exports/<id>.html unless a path is given. One file, no scripts and\nno external stylesheet, font or image, so it opens straight from file:// with no\nnetwork. Session text is model and tool output, so every field is HTML-escaped\non the way in; markup in a transcript renders as the characters that were typed.\n\nThere is deliberately no upload and no public URL. Sharing is copying the file." },
     .{ .command = .graph, .usage = "graph [run-id]", .blurb = "list runs, or draw one as a timeline", .group = .inspect, .detail = "With no argument, lists recorded runs (newest last). With a run id, renders\nthe execution graph as an ASCII timeline of LLM calls and tool invocations.\nThe web UI (clanker serve) shows the same graph interactively." },
-    .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, prompt and\ncompletion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
+    .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
     .{ .command = .tools_list, .usage = "tools list", .blurb = "list the registered WASM tools", .group = .inspect },
     .{ .command = .plugins, .usage = "plugins [list|validate [path]|new <name>]", .blurb = "list plugins, check a manifest, or scaffold a new tool", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
     .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, caps it at\n                agent.provider_check_timeout_seconds, and ends with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the public models.dev directory by id/family\nfill <name>     print models.dev specs for a configured provider's models" },
@@ -4289,6 +4289,7 @@ var http_latency_le_100ms = std.atomic.Value(u64).init(0);
 var http_latency_le_1s = std.atomic.Value(u64).init(0);
 var http_latency_le_10s = std.atomic.Value(u64).init(0);
 var http_latency_total_ms = std.atomic.Value(u64).init(0);
+var http_client_errors_total = std.atomic.Value(u64).init(0);
 
 fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream) void {
     // A bound, so a flood of slow clients cannot make the process spawn
@@ -5409,6 +5410,7 @@ fn recordHttpRequest(status: u16, duration_ms: u64) void {
     _ = http_requests_total.fetchAdd(1, .monotonic);
     _ = http_latency_total_ms.fetchAdd(duration_ms, .monotonic);
     if (status == 0 or status >= 500) _ = http_errors_total.fetchAdd(1, .monotonic);
+    if (status >= 400 and status < 500) _ = http_client_errors_total.fetchAdd(1, .monotonic);
     if (duration_ms <= 10) _ = http_latency_le_10ms.fetchAdd(1, .monotonic);
     if (duration_ms <= 100) _ = http_latency_le_100ms.fetchAdd(1, .monotonic);
     if (duration_ms <= 1000) _ = http_latency_le_1s.fetchAdd(1, .monotonic);
@@ -5419,10 +5421,12 @@ fn recordHttpRequest(status: u16, duration_ms: u64) void {
 /// path, request-id, provider, or model labels, keeping cardinality and storage
 /// bounded; detailed diagnosis remains in the correlated completion logs.
 fn handleHttpMetrics(stream: std.Io.net.Stream) void {
-    var buf: [1024]u8 = undefined;
-    const body = std.fmt.bufPrint(&buf, "{{\"ok\":true,\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}}}}", .{
+    const llm = client.snapshotMetrics();
+    var buf: [2048]u8 = undefined;
+    const body = std.fmt.bufPrint(&buf, "{{\"ok\":true,\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d}}}}}", .{
         http_requests_total.load(.monotonic),
         http_errors_total.load(.monotonic),
+        http_client_errors_total.load(.monotonic),
         connection_threads.load(.monotonic),
         max_connection_threads,
         http_latency_total_ms.load(.monotonic),
@@ -5430,6 +5434,9 @@ fn handleHttpMetrics(stream: std.Io.net.Stream) void {
         http_latency_le_100ms.load(.monotonic),
         http_latency_le_1s.load(.monotonic),
         http_latency_le_10s.load(.monotonic),
+        llm.requests_total,
+        llm.errors_total,
+        llm.retries_total,
     }) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"metrics unavailable\"}");
         return;
@@ -5442,13 +5449,25 @@ fn handleHttpMetrics(stream: std.Io.net.Stream) void {
 /// an upstream LLM outage eject every instance and hide the useful control UI.
 /// Saturation is the one local condition that makes this process unable to
 /// accept useful work, so expose it as degraded readiness.
+fn readinessBody(buf: []u8, in_flight: u32, limit: u32) []const u8 {
+    const saturated = in_flight >= limit;
+    return std.fmt.bufPrint(buf, "{{\"ok\":{s},\"status\":\"{s}\",\"in_flight\":{d},\"connection_limit\":{d}}}", .{
+        if (saturated) "false" else "true",
+        if (saturated) "saturated" else "ready",
+        in_flight,
+        limit,
+    }) catch "{\"ok\":false,\"status\":\"error\"}";
+}
+
 fn handleReadiness(stream: std.Io.net.Stream) void {
     const active = connection_threads.load(.monotonic);
+    var buf: [160]u8 = undefined;
+    const body = readinessBody(&buf, active, max_connection_threads);
     if (active >= max_connection_threads) {
-        respond(stream, 503, "Service Unavailable", "{\"ok\":false,\"status\":\"saturated\"}");
+        respond(stream, 503, "Service Unavailable", body);
         return;
     }
-    respond(stream, 200, "OK", "{\"ok\":true,\"status\":\"ready\"}");
+    respond(stream, 200, "OK", body);
 }
 
 fn handleAgentCard(gpa: std.mem.Allocator, cfg: *const config.Config, port: u16, stream: std.Io.net.Stream) void {
@@ -10487,6 +10506,20 @@ test "an idle keep-alive pass is not a request, a truncated one still is" {
     // Bytes that arrive and then stop are a real truncated request and must
     // keep being reported, which is why this is not simply "status != 0".
     try std.testing.expect(connectionSawRequest(true));
+}
+
+test "readiness names saturation and reports how close the listener is" {
+    var buf: [160]u8 = undefined;
+    const ready = readinessBody(&buf, 3, 64);
+    try std.testing.expect(std.mem.indexOf(u8, ready, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ready, "\"status\":\"ready\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ready, "\"in_flight\":3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ready, "\"connection_limit\":64") != null);
+
+    const sat = readinessBody(&buf, 64, 64);
+    try std.testing.expect(std.mem.indexOf(u8, sat, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sat, "\"status\":\"saturated\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sat, "\"in_flight\":64") != null);
 }
 
 test "only requests worth reading about are logged, at a level matching the status" {
