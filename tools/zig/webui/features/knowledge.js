@@ -183,6 +183,7 @@ function deleteCollection(id,title){
 export function bindKnowledge(){
   var syncBtn=document.getElementById("knowledge-sync-btn");
   if(syncBtn) syncBtn.addEventListener("click", runFolderSync);
+  var createForm=document.getElementById("knowledge-create-form");
   var createBtn=document.getElementById("knowledge-create");
   var titleInput=document.getElementById("knowledge-title");
   var descInput=document.getElementById("knowledge-desc");
@@ -190,14 +191,19 @@ export function bindKnowledge(){
   var searchInput=document.getElementById("knowledge-search");
   var searchBtn=document.getElementById("knowledge-search-btn");
   var searchOut=document.getElementById("knowledge-search-out");
-  if(createBtn) createBtn.addEventListener("click",function(){
+  /* Submit rather than click, for the same reason the Prompts form does it:
+     Enter in a text field is how every other form on this page is sent, and
+     these two were the only ones where it either did nothing (here — two text
+     fields suppress implicit submission) or reloaded the app (Prompts). */
+  if(createForm) createForm.addEventListener("submit",function(e){
+    e.preventDefault();
     var title=titleInput?titleInput.value.trim():""; var desc=descInput?descInput.value.trim():"";
     if(!title){ alert("Title required."); return; }
-    createBtn.disabled=true;
+    if(createBtn) createBtn.disabled=true;
     fetch("/api/knowledge",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:title,description:desc})})
       .then(readJson)
       .then(function(){ if(titleInput) titleInput.value=""; if(descInput) descInput.value=""; loadKnowledge(); })
-      .catch(function(err){ alert(err.message); }).finally(function(){ createBtn.disabled=false; });
+      .catch(function(err){ alert(err.message); }).finally(function(){ if(createBtn) createBtn.disabled=false; });
   });
   if(refreshBtn) refreshBtn.addEventListener("click",function(){ loadKnowledge(); });
   function doSearch(){
