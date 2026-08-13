@@ -191,7 +191,11 @@ pub fn main(init: std.process.Init) !void {
             error.PromptLooksLikeCommand => cli.printUsageError(init.io, "'{s}' looks like a quoted command; drop the quotes to run it, or use `clanker run \"{s}\"` to submit it as a task", .{ diag, diag }),
             error.OutOfMemory => unreachable,
         }
-        cli.printUsageHint(init.io);
+        // A did-you-mean already names the next keystroke. Repeating
+        // `clanker --help` after it just restates the command list.
+        const skip_hint = (err == error.UnknownCommand and cli.suggestCommand(diag) != null)
+            or (err == error.UnknownArg and cli.suggestFlag(diag) != null);
+        if (!skip_hint) cli.printUsageHint(init.io);
         // Usage errors (bad/missing args) are the caller's fault, not
         // clanker's: exit nonzero so scripts and `&&` chains don't mistake a
         // rejected invocation for success.
