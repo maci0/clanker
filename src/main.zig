@@ -49,6 +49,7 @@ comptime {
     _ = @import("agent/system_prompt.zig");
     _ = @import("agent/loop.zig");
     _ = @import("agent/advisor.zig");
+    _ = @import("agent/thinking.zig");
     _ = @import("agent/session.zig");
     _ = @import("agent/graph.zig");
     _ = @import("agent/subagent.zig");

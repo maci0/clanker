@@ -212,6 +212,9 @@ Run-loop and path settings. The commonly-touched keys:
 | `ask_timeout_seconds` | 120 | How long a serve-side `ask_user`/confirm question waits for the browser before giving up. |
 | `confirm_writes` | `never` | Gate write-capable tool calls on a human's allow/deny. `browser` asks streaming web runs; `always` is reserved for the REPL and behaves like `browser` today. |
 | `fallback_provider` / `fallback_providers` | (unset) | Ordered fallbacks after the selected provider cannot serve a request. A string or an array; later entries are tried in order. Also the preferred vision-routing target. |
+| `auto_thinking` | `false` | Per-turn classifier that selects a sampling-profile `reasoning_effort` row. Opt-in. |
+| `thinking_classifier_model` | (unset) | `provider` or `provider/model`. Empty = cheapest configured provider. |
+| `thinking_classifier_timeout_ms` | 3000 | Parsed now; deadline abort is still open. |
 | `compact_threshold_bytes` | 24000 | Compact conversation history past this size (`0` uses the model window). |
 | `max_total_tokens`, `max_tokens_per_turn`, `max_history_tokens` | -, 4096, 16000 | Token budgets that drive compaction. |
 | `tool_catalog` | true | Send full schemas only for hot tools; let the model request the rest by name (saves thousands of tokens/request with many tools). |

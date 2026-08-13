@@ -23,6 +23,7 @@ const toolout = @import("../util/toolout.zig");
 const utf8 = @import("../util/utf8.zig");
 const mock_server = @import("../llm/mock_server.zig");
 const advisor = @import("advisor.zig");
+const thinking = @import("thinking.zig");
 
 /// Each chatroom inbox line injected into a run. Long enough to see what a
 /// peer said, short enough that a burst of rooms cannot fill the context.
@@ -572,12 +573,14 @@ pub const Agent = struct {
             }
 
             const llm_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
+            const effort = self.classifyEffort(messages.items);
             const resp = if (self.on_token) |cb| blk: {
-                if (!self.cfg.modules.streaming) break :blk try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0);
+                if (!self.cfg.modules.streaming) break :blk try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0, effort);
                 break :blk chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
                     .provider = self.provider,
                     .messages = messages.items,
                     .tools = self.tool_defs,
+                    .reasoning_effort = effort,
                 }, err_detail, cb, self.stop_flag) catch |err| {
                     if (err != error.Interrupted) {
                         try self.recordFailedLlm(&g, iteration, llm_t0, err, err_detail.*);
@@ -596,7 +599,7 @@ pub const Agent = struct {
                     });
                     return .{ .message = .{ .role = .assistant, .content = "[stopped]" } };
                 };
-            } else try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0);
+            } else try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0, effort);
             try g.add(self.ctx.gpa, .{
                 .kind = .llm,
                 .iteration = iteration + 1,
@@ -1936,6 +1939,21 @@ pub const Agent = struct {
     /// One blocking completion. On failure the graph still gets a node so a
     /// run that dies on the provider is visible in `clanker graph` and the
     /// web UI, not only as a stack trace on stderr.
+    fn classifyEffort(self: *Agent, messages: []const types.Message) ?[]const u8 {
+        if (!self.cfg.agent.auto_thinking) return null;
+        var i = messages.len;
+        while (i > 0) {
+            i -= 1;
+            if (messages[i].role == .user) {
+                if (thinking.classify(self.ctx.io, self.ctx.gpa, self.ctx.environ_map, self.cfg, messages[i].content orelse "")) |level| {
+                    return thinking.effortFor(level);
+                }
+                return null;
+            }
+        }
+        return null;
+    }
+
     fn llmChat(
         self: *Agent,
         messages: []const types.Message,
@@ -1943,11 +1961,13 @@ pub const Agent = struct {
         g: *graph_mod.Graph,
         iteration: u32,
         started: std.Io.Timestamp,
+        effort: ?[]const u8,
     ) !types.ChatResponse {
         return chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
             .provider = self.provider,
             .messages = messages,
             .tools = self.tool_defs,
+            .reasoning_effort = effort,
         }, err_detail, null, null) catch |err| {
             try self.recordFailedLlm(g, iteration, started, err, err_detail.*);
             return err;

@@ -64,7 +64,7 @@ pub fn writeSamplingParams(s: *json.Stringify, params: api.RequestParams) !void 
         try s.objectField("top_p");
         try s.print("{d}", .{tp});
     }
-    const effort = model.reasoning_effort orelse rec.reasoning_effort;
+    const effort = params.reasoning_effort orelse model.reasoning_effort orelse rec.reasoning_effort;
     if (effort) |re| {
         try s.objectField("reasoning_effort");
         try s.write(re);

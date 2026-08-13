@@ -40,7 +40,7 @@ and Implementation lists checkable file-level phases.
 | [0017](0017-dap.md) | DAP | Draft | Needs 0016 subprocess registry |
 | [0018](0018-snapcompact.md) | Snapcompact | Draft | Opt-in; default stays LLM compact |
 | [0019](0019-github-fs.md) | GitHub filesystem | Draft | Dedicated `gh_read` tool |
-| [0020](0020-auto-thinking.md) | Auto thinking | Draft | Selects effort; 0024 writes params |
+| [0020](0020-auto-thinking.md) | Auto thinking | Shipped | Opt-in classifier; selects a 0024 row |
 | [0021](0021-smart-commit.md) | Smart commit | Draft | |
 | [0022](0022-out-of-tree-tools.md) | Out-of-tree tools | Shipped | `tools_dir` is a list; last-listed wins |
 | [0023](0023-webui-model-config.md) | Web UI model config | Shipped | Writes `config.local.toml` only |
@@ -54,8 +54,8 @@ and Implementation lists checkable file-level phases.
 Packaging and reliability first, then agent-loop quality, then heavy
 optional subsystems:
 
-1. **0020** — auto thinking (classifier selects a 0024 row)
-2. **0013** — TTSR (substring engine)
+1. **0013** — TTSR (substring engine)
+2. **0016** then **0017** — eval kernel, then DAP
 3. **0016** then **0017** — eval kernel, then DAP
 4. **0019** — `gh_read`
 5. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work

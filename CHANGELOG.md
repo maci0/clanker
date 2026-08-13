@@ -43,6 +43,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   default (chat 0.7, tool-use 0.0). Thinking models get
   `reasoning_effort` (`medium`/`high`) instead. An explicit config or
   per-run value still wins.
+- Optional `agent.auto_thinking` classifies each user turn and selects a
+  `reasoning_effort` row. Off by default; fail-open.
 
 ### Changed
 

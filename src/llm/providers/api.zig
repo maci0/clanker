@@ -24,6 +24,11 @@ pub const RequestParams = struct {
     tools: ?[]const types.ToolDef = null,
     temperature: ?f64 = null,
     top_p: ?f64 = null,
+    /// Per-turn override from auto-thinking. Wins over the model config
+    /// and the use-case table, never over an explicit model value the
+    /// user did not also want classified away — only set when the
+    /// classifier actually ran.
+    reasoning_effort: ?[]const u8 = null,
     max_tokens: ?u32 = null,
     response_format_json: bool = false,
     /// Ask the provider to stream the response (SSE). Consumed by
