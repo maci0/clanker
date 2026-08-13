@@ -1691,6 +1691,15 @@ fn pingWithTimeout(
 ) PingResult {
     var done: std.Io.Event = .unset;
     if (budget_ms <= 0) return pingProvider(io, ctx, arena, p, &done);
+
+    // The handle the timeout path below uses to unstick a wedged read. It
+    // lives on this frame, which outlives the ping: `fut` is always either
+    // awaited or cancelled before this function returns, and `chat` disarms
+    // the handle on its own way out, so nothing can reach it afterwards.
+    var abort: client.Abort = .{};
+    ctx.abort = &abort;
+    defer ctx.abort = null;
+
     var fut = io.concurrent(pingProvider, .{ io, ctx, arena, p, &done }) catch {
         // No spare unit of concurrency to run the ping in. Checking the
         // provider without a ceiling beats not checking it at all, but say so:
@@ -1709,8 +1718,25 @@ fn pingWithTimeout(
             error.Timeout => {
                 if (done.isSet()) break;
                 if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
-                // cancel() interrupts the blocking syscall and waits for the
-                // task, so nothing is left running behind the sweep.
+                // Shut the socket down *before* cancelling, and this ordering
+                // is the whole fix.
+                //
+                // cancel() alone does not rescue a ping blocked reading a
+                // response that never comes. It interrupts a *cancelable*
+                // syscall; a blocking read on an established connection is not
+                // one, so `waitForCancelWithSignaling` futex-waits with a null
+                // timeout and cancel never returns — the sweep wedges next to
+                // the ping it was trying to abandon, forever. That is not
+                // hypothetical: it hung `zig build test` outright, and with it
+                // `clanker improve-self`, whose first act is a gate run.
+                //
+                // `abort.trigger` shuts down the connections the worker's
+                // http.Client holds, which makes that read return end-of-
+                // stream. The worker then unwinds normally through its own
+                // error path and frees its own client, and the cancel below
+                // completes instead of blocking. Nothing is freed from this
+                // thread.
+                abort.trigger(io);
                 var out = fut.cancel(io);
                 out.status = .timed_out;
                 out.ms = budget_ms;
@@ -11574,44 +11600,6 @@ test "a canceled or refused socket is unreachable, an HTTP error status is a fai
 }
 
 test "a provider that never answers costs the sweep its budget, not the OS connect timeout" {
-    // SKIPPED BECAUSE THE BUG IT DESCRIBES IS REAL AND UNFIXED.
-    //
-    // This test does not fail. It hangs the entire test binary forever, which
-    // means `zig build test` never produces a Build Summary — and because
-    // `Engine.run` takes a baseline `gateScore()` before its first model call,
-    // `clanker improve-self` cannot start at all on a machine where this runs.
-    // The flagship loop is dead, and the suite is merely where it surfaces
-    // first. Skipping restores both; it does not fix anything.
-    //
-    // What actually happens (confirmed by sampling the wedged binary):
-    //
-    //   main:   pingWithTimeout -> Io.Future(PingResult).cancel
-    //             -> Threaded.waitForCancelWithSignaling
-    //             -> futexWaitUncancelable(null timeout)   [never returns]
-    //   worker: pingProvider -> llm.client.chat -> http.Client.fetch
-    //             -> Request.receiveHead -> http.Reader.receiveHead  [blocked]
-    //
-    // The budget *does* expire at 1000ms and cancel *is* called. Cancel itself
-    // is what never returns: `waitForCancelWithSignaling` only signals a thread
-    // it believes is parked in a cancelable syscall, and a blocking read on an
-    // established connection does not register as one. The comment on
-    // `pingWithTimeout` ("cancel() interrupts the blocking syscall") holds for a
-    // stuck connect and not for this. `std.http.Client` has no read timeout to
-    // bound it either: `ConnectTcpOptions.timeout` is declared and never
-    // referenced.
-    //
-    // So `clanker providers check` still hangs forever against a host that
-    // accepts a connection and never answers — precisely the failure
-    // `pingWithTimeout` exists to prevent. Fixing it needs a cancellation handle
-    // threaded out of `llm.client.chat` so the timeout path can close the
-    // socket (closing the fd is the only portable lever given the above), and
-    // `chat()` owns its `http.Client` as a local, so there is no seam today.
-    //
-    // Re-enable by deleting this block once that lands. Do not "fix" it by
-    // loosening the assertions: they are correct, and they are what will prove
-    // the real fix works.
-    if (true) return error.SkipZigTest;
-
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
