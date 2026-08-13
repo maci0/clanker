@@ -63,7 +63,7 @@ pub fn record(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, type
 
 fn recordTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, type_: []const u8, tool: []const u8, detail: []const u8) void {
     ensuredir.ensureDir(base, io, "state") catch |err| {
-        std.log.warn("autolearn: failed to create state dir: {s}", .{@errorName(err)});
+        log.log(.warn, "autolearn: failed to create state dir: {s}", .{@errorName(err)});
         return;
     };
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
@@ -101,11 +101,13 @@ fn appendLine(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     // Trim before opening for append below: trimming rewrites the file and
     // would otherwise contend with the handle appendLine is about to hold.
     if (base.statFile(io, event_path, .{})) |st| {
-        if (st.size > max_log_bytes) trimLog(base, io, gpa, arena) catch {};
+        if (st.size > max_log_bytes) trimLog(base, io, gpa, arena) catch |err| {
+            log.log(.warn, "autolearn: trim failed: {s}", .{@errorName(err)});
+        };
     } else |_| {}
 
     const file = base.createFile(io, event_path, .{ .truncate = false }) catch |err| {
-        std.log.warn("autolearn: failed to open {s}: {s}", .{ event_path, @errorName(err) });
+        log.log(.warn, "autolearn: failed to open {s}: {s}", .{ event_path, @errorName(err) });
         return;
     };
     defer file.close(io);
@@ -154,7 +156,7 @@ pub fn recordRun(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, e
 
 fn recordRunTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, e: RunEvent) void {
     ensuredir.ensureDir(base, io, "state") catch |err| {
-        std.log.warn("autolearn: failed to create state dir: {s}", .{@errorName(err)});
+        log.log(.warn, "autolearn: failed to create state dir: {s}", .{@errorName(err)});
         return;
     };
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));

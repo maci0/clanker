@@ -109,6 +109,11 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/gate/checks.zig", .needle = "weakensAgent(obj)" },
     .{ .file = "src/gate/checks.zig", .needle = "agent.git_commit must not be disabled" },
     .{ .file = "src/gate/checks.zig", .needle = "hasGitInExecAllow(obj)" },
+    // git_remote_ops = true is a parallel path to git capability escalation
+    // that exec_pattern_allow alone does not cover.
+    .{ .file = "src/gate/checks.zig", .needle = "proposals must not enable git_remote_ops" },
+    .{ .file = "src/gate/checks.zig", .needle = "isTrue(obj.get(\"git_remote_ops\"))" },
+    .{ .file = "src/gate/checks.zig", .needle = ".bool => |b| b," },
     // The detail-string needles above assert that the error MESSAGE survives,
     // but a patch can gut the function body (return null unconditionally)
     // while keeping every detail string in a comment. These assert the
