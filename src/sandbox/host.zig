@@ -1104,46 +1104,8 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
             try s.beginObject();
             var mit = p.models.iterator();
             while (mit.next()) |mkv| {
-                const m = mkv.value_ptr;
                 try s.objectField(mkv.key_ptr.*);
-                try s.beginObject();
-                try s.objectField("context_window");
-                try s.write(m.context_window);
-                try s.objectField("max_tokens");
-                try s.write(m.max_tokens);
-                if (m.display) |d| {
-                    try s.objectField("display");
-                    try s.write(d);
-                }
-                if (m.cost_per_1m_input) |c| {
-                    try s.objectField("cost_per_1m_input");
-                    try s.write(c);
-                }
-                if (m.cost_per_1m_output) |c| {
-                    try s.objectField("cost_per_1m_output");
-                    try s.write(c);
-                }
-                if (m.temperature) |t| {
-                    try s.objectField("temperature");
-                    try s.write(t);
-                }
-                if (m.top_p) |t| {
-                    try s.objectField("top_p");
-                    try s.write(t);
-                }
-                if (m.reasoning_effort) |r| {
-                    try s.objectField("reasoning_effort");
-                    try s.write(r);
-                }
-                if (m.capabilities.len > 0) {
-                    try s.objectField("capabilities");
-                    try s.write(m.capabilities);
-                }
-                if (m.category.len > 0) {
-                    try s.objectField("category");
-                    try s.write(m.category);
-                }
-                try s.endObject();
+                try writeModelJson(&s, mkv.value_ptr, null);
             }
             try s.endObject();
             try s.endObject();
@@ -1180,6 +1142,23 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
     if (access == .full) {
         try s.objectField("agent");
         try s.write(cfg.agent);
+        // On disk, models are a top-level `[models."provider/name"]` table.
+        // In memory they live under each provider. Reconstruct the flat
+        // table so `config_view {"section":"models"}` is not reported as
+        // missing after a successful load.
+        try s.objectField("models");
+        try s.beginObject();
+        var mit = cfg.providers.iterator();
+        while (mit.next()) |pkv| {
+            const pname = pkv.key_ptr.*;
+            var mm = pkv.value_ptr.models.iterator();
+            while (mm.next()) |mkv| {
+                const key = try std.fmt.allocPrint(arena, "{s}/{s}", .{ pname, mkv.key_ptr.* });
+                try s.objectField(key);
+                try writeModelJson(&s, mkv.value_ptr, pname);
+            }
+        }
+        try s.endObject();
     } else if (access == .workflows or access == .chains) {
         try s.objectField("agent");
         try s.beginObject();
@@ -1219,6 +1198,54 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
 
     try s.endObject();
     return w.toOwnedSlice();
+}
+
+/// One model's settings as JSON. `provider` is set only for the reconstructed
+/// top-level `models` table (the on-disk field); nested maps under each
+/// provider omit it because those guests already know the parent key.
+fn writeModelJson(s: *std.json.Stringify, m: *const config_mod.Model, provider: ?[]const u8) !void {
+    try s.beginObject();
+    if (provider) |p| {
+        try s.objectField("provider");
+        try s.write(p);
+    }
+    try s.objectField("context_window");
+    try s.write(m.context_window);
+    try s.objectField("max_tokens");
+    try s.write(m.max_tokens);
+    if (m.display) |d| {
+        try s.objectField("display");
+        try s.write(d);
+    }
+    if (m.cost_per_1m_input) |c| {
+        try s.objectField("cost_per_1m_input");
+        try s.write(c);
+    }
+    if (m.cost_per_1m_output) |c| {
+        try s.objectField("cost_per_1m_output");
+        try s.write(c);
+    }
+    if (m.temperature) |t| {
+        try s.objectField("temperature");
+        try s.write(t);
+    }
+    if (m.top_p) |t| {
+        try s.objectField("top_p");
+        try s.write(t);
+    }
+    if (m.reasoning_effort) |r| {
+        try s.objectField("reasoning_effort");
+        try s.write(r);
+    }
+    if (m.capabilities.len > 0) {
+        try s.objectField("capabilities");
+        try s.write(m.capabilities);
+    }
+    if (m.category.len > 0) {
+        try s.objectField("category");
+        try s.write(m.category);
+    }
+    try s.endObject();
 }
 
 /// ck_env(name_ptr, name_len) -> value of the environment variable in the

@@ -899,8 +899,8 @@ pub const Config = struct {
             "capabilities",
             "category",
         }, name);
-        if (obj.get("context_window")) |k| m.context_window = @intCast(try jsonInt(k, "context_window"));
-        if (obj.get("max_tokens")) |k| m.max_tokens = @intCast(try jsonInt(k, "max_tokens"));
+        if (obj.get("context_window")) |k| m.context_window = try jsonUnsigned(u32, k, "context_window");
+        if (obj.get("max_tokens")) |k| m.max_tokens = try jsonUnsigned(u32, k, "max_tokens");
         if (obj.get("temperature")) |k| m.temperature = try jsonFloat(k, "temperature");
         if (obj.get("top_p")) |k| m.top_p = try jsonFloat(k, "top_p");
         if (obj.get("reasoning_effort")) |k| m.reasoning_effort = try jsonStr(k, "reasoning_effort");
@@ -1070,7 +1070,7 @@ pub const Config = struct {
             }
             c.rooms = try rooms.toOwnedSlice(arena);
         }
-        if (obj.get("max_history")) |k| c.max_history = @intCast(try jsonInt(k, "max_history"));
+        if (obj.get("max_history")) |k| c.max_history = try jsonUnsigned(u32, k, "max_history");
         return c;
     }
 
@@ -1115,23 +1115,23 @@ pub const Config = struct {
             "fallback_provider",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
-            a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
+            a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
             f.max_iterations = true;
         }
         if (obj.get("compact_threshold_bytes")) |k| {
-            a.compact_threshold_bytes = @intCast(try jsonInt(k, "compact_threshold_bytes"));
+            a.compact_threshold_bytes = try jsonUnsigned(usize, k, "compact_threshold_bytes");
             f.compact_threshold_bytes = true;
         }
         if (obj.get("max_total_tokens")) |k| {
-            a.max_total_tokens = @intCast(try jsonInt(k, "max_total_tokens"));
+            a.max_total_tokens = try jsonUnsigned(u32, k, "max_total_tokens");
             f.max_total_tokens = true;
         }
         if (obj.get("max_tokens_per_turn")) |k| {
-            a.max_tokens_per_turn = @intCast(try jsonInt(k, "max_tokens_per_turn"));
+            a.max_tokens_per_turn = try jsonUnsigned(u32, k, "max_tokens_per_turn");
             f.max_tokens_per_turn = true;
         }
         if (obj.get("max_history_tokens")) |k| {
-            a.max_history_tokens = @intCast(try jsonInt(k, "max_history_tokens"));
+            a.max_history_tokens = try jsonUnsigned(u32, k, "max_history_tokens");
             f.max_history_tokens = true;
         }
         if (obj.get("tools_dir")) |k| {
@@ -1231,15 +1231,15 @@ pub const Config = struct {
             f.tool_catalog = true;
         }
         if (obj.get("hot_tools")) |k| {
-            a.hot_tools = @intCast(try jsonInt(k, "hot_tools"));
+            a.hot_tools = try jsonUnsigned(u32, k, "hot_tools");
             f.hot_tools = true;
         }
         if (obj.get("seed")) |k| {
-            a.seed = @intCast(try jsonInt(k, "seed"));
+            a.seed = try jsonUnsigned(u64, k, "seed");
             f.seed = true;
         }
         if (obj.get("ask_timeout_seconds")) |k| {
-            a.ask_timeout_seconds = @intCast(try jsonInt(k, "ask_timeout_seconds"));
+            a.ask_timeout_seconds = try jsonUnsigned(u32, k, "ask_timeout_seconds");
             f.ask_timeout_seconds = true;
         }
         if (obj.get("provider_check_timeout_seconds")) |k| {
@@ -1332,7 +1332,7 @@ pub const Config = struct {
             .bool => |b| b,
             else => return error.FieldNotBool,
         };
-        if (obj.get("max_cache_bytes")) |k| im.max_cache_bytes = @intCast(try jsonInt(k, "max_cache_bytes"));
+        if (obj.get("max_cache_bytes")) |k| im.max_cache_bytes = try jsonUnsigned(u64, k, "max_cache_bytes");
         if (obj.get("max_context_requests")) |k| {
             const n = try jsonInt(k, "max_context_requests");
             im.max_context_requests = if (n <= 0) 0 else @intCast(n);
@@ -1448,8 +1448,8 @@ pub const Config = struct {
                 else => return error.MemoryNotObject,
             };
             warnUnknownKeys(co, &.{ "size", "overlap", "strategy" }, "memory.chunk");
-            if (co.get("size")) |x| m.chunk_size = @intCast(try jsonInt(x, "chunk.size"));
-            if (co.get("overlap")) |x| m.chunk_overlap = @intCast(try jsonInt(x, "chunk.overlap"));
+            if (co.get("size")) |x| m.chunk_size = try jsonUnsigned(u32, x, "chunk.size");
+            if (co.get("overlap")) |x| m.chunk_overlap = try jsonUnsigned(u32, x, "chunk.overlap");
             if (co.get("strategy")) |x| m.chunk_strategy = try jsonStr(x, "chunk.strategy");
         }
         if (obj.get("embedding")) |k| {
@@ -1468,7 +1468,7 @@ pub const Config = struct {
             };
             warnUnknownKeys(vo, &.{ "backend", "top_k", "threshold" }, "memory.vector");
             if (vo.get("backend")) |x| m.vector_backend = try jsonStr(x, "vector.backend");
-            if (vo.get("top_k")) |x| m.vector_top_k = @intCast(try jsonInt(x, "vector.top_k"));
+            if (vo.get("top_k")) |x| m.vector_top_k = try jsonUnsigned(u32, x, "vector.top_k");
             if (vo.get("threshold")) |x| m.vector_threshold = @floatCast(try jsonFloat(x, "vector.threshold"));
         }
         return m;
@@ -1512,6 +1512,18 @@ pub const Config = struct {
             .number_string => |s| std.fmt.parseInt(i64, s, 10) catch error.FieldNotInt,
             else => error.FieldNotInt,
         };
+    }
+
+    /// Unsigned config integers. `@intCast` of a negative `jsonInt` wraps
+    /// into a huge value in ReleaseFast (a `max_tokens = -1` became a 4G
+    /// completion cap) and panics in Debug; reject it by name instead.
+    fn jsonUnsigned(comptime T: type, v: json.Value, key: []const u8) !T {
+        const n = try jsonInt(v, key);
+        if (n < 0 or n > std.math.maxInt(T)) {
+            log.log(.error_, "config: \"{s}\" must be an integer in 0..{d}", .{ key, std.math.maxInt(T) });
+            return error.FieldNotUint;
+        }
+        return @intCast(n);
     }
 
     fn jsonFloat(v: json.Value, key: []const u8) !f64 {
@@ -2092,6 +2104,27 @@ test "a negative check timeout is rejected instead of wrapping into a huge one" 
         ,
     });
     try std.testing.expectError(error.BadCheckTimeout, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+}
+
+test "a negative max_tokens is rejected instead of wrapping into a huge cap" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a", max_tokens = -1 } }
+        ,
+    });
+    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
 }
 
 test "agent.git_remote_ops and exec_pattern_allow parse from config" {
