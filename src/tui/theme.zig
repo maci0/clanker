@@ -460,31 +460,59 @@ pub const Theme = struct {
 /// Closed name table: operator spellings and aliases to a theme. Aliases
 /// (`catppuccin` -> mocha, `frappé` -> frappe) cannot be expressed with
 /// `stringToEnum`, so this is a StaticStringMap like `log.Level.fromStr`.
-const theme_by_name = std.StaticStringMap(*const Theme).initComptime(.{
-    .{ "mono", &Theme.mono },
-    .{ "default", &Theme.default },
-    .{ "mocha", &Theme.mocha },
-    .{ "catppuccin", &Theme.mocha },
-    .{ "latte", &Theme.latte },
-    .{ "frappe", &Theme.frappe },
-    .{ "frappé", &Theme.frappe },
-    .{ "macchiato", &Theme.macchiato },
-    .{ "tokyonight", &Theme.tokyo_night },
-    .{ "tokyo-night", &Theme.tokyo_night },
-    .{ "tokyonight-night", &Theme.tokyo_night },
-    .{ "storm", &Theme.tokyo_storm },
-    .{ "tokyonight-storm", &Theme.tokyo_storm },
-    .{ "day", &Theme.tokyo_day },
-    .{ "tokyonight-day", &Theme.tokyo_day },
-    .{ "hackerman", &Theme.hackerman },
+const ThemeId = enum {
+    mono,
+    default,
+    mocha,
+    latte,
+    frappe,
+    macchiato,
+    tokyo_night,
+    tokyo_storm,
+    tokyo_day,
+    hackerman,
+};
+
+const theme_by_name = std.StaticStringMap(ThemeId).initComptime(.{
+    .{ "mono", .mono },
+    .{ "default", .default },
+    .{ "mocha", .mocha },
+    .{ "catppuccin", .mocha },
+    .{ "latte", .latte },
+    .{ "frappe", .frappe },
+    .{ "frappé", .frappe },
+    .{ "macchiato", .macchiato },
+    .{ "tokyonight", .tokyo_night },
+    .{ "tokyo-night", .tokyo_night },
+    .{ "tokyonight-night", .tokyo_night },
+    .{ "storm", .tokyo_storm },
+    .{ "tokyonight-storm", .tokyo_storm },
+    .{ "day", .tokyo_day },
+    .{ "tokyonight-day", .tokyo_day },
+    .{ "hackerman", .hackerman },
 });
+
+fn themeFromId(id: ThemeId) Theme {
+    return switch (id) {
+        .mono => Theme.mono,
+        .default => Theme.default,
+        .mocha => Theme.mocha,
+        .latte => Theme.latte,
+        .frappe => Theme.frappe,
+        .macchiato => Theme.macchiato,
+        .tokyo_night => Theme.tokyo_night,
+        .tokyo_storm => Theme.tokyo_storm,
+        .tokyo_day => Theme.tokyo_day,
+        .hackerman => Theme.hackerman,
+    };
+}
 
 /// `default` unless `NO_COLOR` is set (to any non-empty value, matching the
 /// https://no-color.org/ convention) or `name` asks for `"mono"`, an
 /// explicit `--theme mono`/config value wins even if `NO_COLOR` is unset.
 pub fn select(name: ?[]const u8, environ_map: *const std.process.Environ.Map) Theme {
     if (name) |n| {
-        if (theme_by_name.get(n)) |t| return t.*;
+        if (theme_by_name.get(n)) |id| return themeFromId(id);
     }
     if (environ_map.get("NO_COLOR")) |v| {
         if (v.len > 0) return Theme.mono;
