@@ -1115,6 +1115,144 @@ gone from the file), since importing `app.js` boots the page. 31 assertions
 green; against unmodified `main` the same harness fails 20 of its 31.
 Gate: `zig build`, `zig build tools`, `zig build test --summary all`.
 
+## One dropped poll no longer ends the arena watch (2026-08-13)
+
+The Arena view follows a running match by polling `/api/arena/<id>` every
+1.1 s, and `fetchMatch`'s `catch` called `stopPolling()`. Every failure was
+therefore terminal: one reset connection, one moment where the server was busy
+answering something else, and the timer was gone for good. What is left on
+screen is the worst version of that. The stage keeps its last frame, the HP
+chips keep their last numbers, the transcript keeps the round it had, and the
+one thing that would have told you it is no longer live, the status line, has
+been overwritten with `Could not load match: …`. Nothing is asking any more,
+and nothing says so. This server answers one request per connection, so a poll
+colliding with another client is ordinary rather than exceptional.
+
+Consecutive failures are now counted, five in a row give up, and any answer
+resets the count. Below the threshold the last known state stays on screen and
+the status line is left alone, so a hiccup is invisible, which is what it
+should be. At the threshold it stops and says `Lost track of match <id> after 5
+failed updates (…). Refresh to pick it up again.` — the state a frozen view was
+already in, said out loud. Opening a match by hand still fails loudly on the
+first try, because that failure is the answer to something you just asked for.
+
+The picker had a smaller version of the same disagreement: the lamp decided
+"running" from `!winner && !headline`, while the words beside it decided from
+`winner` alone. A match that ended with nobody named, a mutual concession, was
+drawn with a "done" lamp and labelled `running`. Both now read the same test,
+and that case reads `no verdict` — the vocabulary the Compare list already uses
+for it.
+
+### Verified
+
+`node` + the DOM stub driving the real `features/arena.js`, with
+`window.setInterval` handing back a token the test ticks by hand, so a poll is a
+poll and the test can then ask whether the timer is still there. 14 assertions:
+opening a running match starts exactly one timer, the status line describes the
+last move, a single failed poll leaves the timer alive and does *not* replace
+the live status with an error, the next poll recovers, a match that reaches a
+verdict still stops the timer and reaches both the status line and the
+transcript, twelve failures in a row stop it once and say so, and the picker row
+for a headline-without-winner match is neither lit nor labelled as running.
+Against unmodified `main` the same harness fails 6 of the 14: the timer is gone
+after the first failure, and everything downstream of still-watching goes with
+it. Gate: `zig build`, `zig build tools`, `zig build test --summary all` —
+163/163 steps, 765/767 tests (2 skipped, the expected worktree pair).
+
+
+## The Prompts filter survives a re-render (2026-08-13)
+
+`#prompts-filter` hid non-matching cards from its own `input` handler, walking
+the cards that happened to exist at that moment. Nothing else knew the filter
+was there — so every re-render silently dropped it. `renderPrompts` starts with
+`listEl.textContent = ""` and rebuilds, and Refresh, Create and Delete all
+reload the list, which means:
+
+- typing a filter and pressing Refresh brought every prompt back while the
+  filter box still read `review`;
+- saving a new prompt did the same, so the one moment you most want the list
+  narrowed is the moment it widened;
+- `#prompts-status` reported the full count either way, contradicting a list
+  that was showing one card.
+
+The filter is now part of what "render" means. `applyPromptFilter()` decides
+which cards are on screen, owns the status line, and runs at the end of every
+render as well as on input — so the box and the list cannot disagree, and
+`loadPromptsView` no longer writes its own count over the top of it.
+
+A filter matching nothing used to leave a blank panel with no explanation:
+`#prompts-status` is `.sr-only`, so "0 of 4" was announced to a screen reader
+and to nobody else. There is now a visible note where the cards were, naming
+the query. It lives inside `#prompts-list` and is therefore thrown away by the
+next render's `textContent = ""`, which is why it is looked up by id rather
+than held in a variable.
+
+### Verified
+
+`node` + a DOM stub driving the real `features/prompts.js`: bind, load three
+prompts, filter to one, then Refresh, then create a fourth through the form's
+own `submit` — 17 assertions on card visibility, the status text and the
+no-match note. Against unmodified `main` the same harness fails 6 of the 17:
+the list unfilters on Refresh and again on create, the count ignores the filter,
+and the no-match case draws nothing at all. Gate: `zig build`,
+`zig build tools`, `zig build test --summary all` — 163/163 steps, 765/767
+tests (2 skipped, the expected worktree pair).
+
+## One popup, three lists, one index (2026-08-13)
+
+The composer's suggestion popup (`#prompt-list`) is shared by three different
+lists: saved prompts, `/` commands, and the `#` knowledge-collection mentions.
+Each keeps its own highlight — `promptIndex` for the first two, `kbMentionIndex`
+for mentions — but the keydown handler only ever knew about `promptIndex` and
+the prompt list. Every key pressed while the mention list was open was
+dispatched against the wrong one.
+
+- **An arrow key dismissed the mentions.** ↓ nudged `promptIndex` and called
+  `renderPromptList()`, and `renderPromptList` hides the popup outright when the
+  composer's value does not start with `/`. So the first arrow press closed the
+  list it was meant to walk; the mentions could only be picked with the mouse,
+  or with Enter, which —
+- **— always took the first row.** The Enter branch reached for
+  `el.promptList.querySelector(".palette-item")`, the first item in the DOM,
+  ignoring `kbMentionIndex` entirely. `kbMentionIndex` was written by the
+  renderer and read by nobody.
+- **Delete forgot a prompt you had not asked it to.** The Delete branch was
+  guarded on `!isSlash` only, so it fired for mentions too. It read the row's
+  label — `"3 docs"` — as the text of a saved prompt and ran
+  `prompts.splice(prompts.indexOf(doomed), 1)`. `indexOf` is `-1`, and
+  `splice(-1, 1)` removes the **last** element: pressing Delete over a knowledge
+  collection silently deleted your most recently saved prompt and wrote that to
+  `localStorage`, under the status line "Forgot that prompt."
+- **A stale index could be past the end.** With six saved prompts and a mention
+  list of two, `promptIndex` was still 5 and `items[5]` is `undefined` — Enter or
+  Delete then threw on `.querySelector` of undefined.
+
+- **`core/composer.js: forgetPrompt(prompts, text)`** — removes by exact text
+  and says whether it removed anything. The `-1` case is the whole point.
+- **`core/composer.js: setActiveItem(listEl, index, taskEl)`** — moves the
+  highlight and `aria-activedescendant` inside a list that is already on screen,
+  and clamps an out-of-range index to the first row. The mention list is built
+  from a `/api/knowledge` fetch, so re-rendering it to move a highlight would be
+  one request per arrow key.
+- **`app.js`** — the handler now names which list is on screen (`kb`, `slash` or
+  `prompt`), reads that list's own index, clamps it against what is actually
+  rendered, and routes every key accordingly. Delete is offered for saved
+  prompts only. `hidePromptList` clears the mention flag, since it is the one
+  place that means "no suggestion list is open".
+
+### Verified
+
+`node` driving the real `core/composer.js`. `forgetPrompt` over a three-prompt
+list: the named prompt goes, a text that was never saved removes nothing and in
+particular leaves the *last* prompt alone, and an empty list is total.
+`setActiveItem` over a rendered list of `.palette-item` rows: exactly one row
+carries `aria-selected="true"`, `aria-activedescendant` names it, the rows are
+not rebuilt, an index of 5 against two rows falls back to the first, and an
+empty list reports `-1` rather than throwing. The keydown handler is checked as
+source shape — including that no bare `prompts.splice(prompts.indexOf(...))` is
+left in the file — since importing `app.js` boots the page. 32 assertions
+green; against unmodified `main` the same harness fails 25 of its 32.
+
 ## The composer keeps what you were writing (2026-08-13)
 
 A half-written task had no owner. Reloading the page threw it away, and so did

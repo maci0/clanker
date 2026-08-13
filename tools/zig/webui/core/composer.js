@@ -7,6 +7,40 @@ export function savePrompts(prompts) {
   try { window.localStorage.setItem("clanker.prompts", JSON.stringify(prompts)); } catch (e) {}
 }
 
+/* Removes a saved prompt by its exact text, and says whether it removed
+   anything. The caller had `prompts.splice(prompts.indexOf(doomed), 1)`, which
+   for a text that is not in the list is `splice(-1, 1)` — it deletes the *last*
+   saved prompt and then persists that. The composer's suggestion popup is
+   shared by three lists (saved prompts, `/` commands, `#` knowledge
+   collections), so "the label under the cursor is one of your saved prompts"
+   was never a safe assumption. */
+export function forgetPrompt(prompts, text) {
+  var at = prompts.indexOf(text);
+  if (at === -1) return false;
+  prompts.splice(at, 1);
+  return true;
+}
+
+/* Moves the highlight inside a suggestion list that is already on screen.
+
+   The `#` mention list had no way to move: the key handler only knew how to
+   nudge `promptIndex` and re-render the *prompt* list, which for a value that
+   does not start with `/` hides the popup outright — so the first arrow key
+   dismissed the mentions instead of walking them. Re-rendering the mention
+   list is not the answer either; it is built from a `/api/knowledge` fetch, and
+   one request per arrow key is a request per arrow key. */
+export function setActiveItem(listEl, index, taskEl) {
+  var items = listEl.querySelectorAll(".palette-item");
+  if (!items.length) return -1;
+  var at = index;
+  if (typeof at !== "number" || at < 0 || at >= items.length) at = 0;
+  Array.prototype.forEach.call(items, function (li, i) {
+    li.setAttribute("aria-selected", String(i === at));
+  });
+  if (taskEl) taskEl.setAttribute("aria-activedescendant", items[at].id || "");
+  return at;
+}
+
 /* ---------- unsent drafts, per conversation ----------
 
    A half-written task in the composer had no owner. Reloading the page, or

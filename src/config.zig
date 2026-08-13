@@ -364,6 +364,30 @@ pub const Instance = struct {
     id: []const u8 = "",
 };
 
+/// What `clanker serve` binds, for deployments that cannot pass flags on the
+/// invocation (a systemd unit, a container image).
+///
+/// Every field is optional because absent has to stay distinguishable from
+/// "set to the default": these are the weakest layer, and `CLANKER_HOST` /
+/// `CLANKER_PORT` and then `--host` / `--port` are each allowed to override
+/// whatever this said. A non-optional field with a default would look
+/// identical to one the operator wrote by hand and would win over the env.
+pub const Serve = struct {
+    /// The interface every listener binds. Shared rather than per-surface:
+    /// the process binds one address, and a future second surface (an API
+    /// port split out from the web UI) is expected to add its own *port* key
+    /// next to `webui_port`, not its own host.
+    host: ?[]const u8 = null,
+    /// The port the web UI and its same-origin API answer on. Named for the
+    /// surface, not the process, so another surface can be given its own
+    /// port later without either key being ambiguous.
+    webui_port: ?u16 = null,
+    /// Hostnames the server may present itself as, the config-file spelling
+    /// of the repeatable `--serve-as`. A TOML array, not a comma-separated
+    /// string, so no name ever has to be escaped.
+    serve_as: []const []const u8 = &.{},
+};
+
 /// Peer notification settings.
 pub const Notify = struct {
     on: bool = true,
@@ -477,6 +501,7 @@ pub const Config = struct {
     peers: []const Peer = &.{},
     web: Web = .{},
     instance: Instance = .{},
+    serve: Serve = .{},
     notify: Notify = .{},
     chatrooms: Chatrooms = .{},
     memory: Memory = .{},
@@ -486,6 +511,7 @@ pub const Config = struct {
     chatrooms_present: bool = false,
     memory_present: bool = false,
     instance_present: bool = false,
+    serve_present: bool = false,
     default_provider_present: bool = false,
     peers_present: bool = false,
     web_present: bool = false,
@@ -594,6 +620,7 @@ pub const Config = struct {
             "default_provider", "agent",    "improve", "providers",
             "models",           "instance", "peers",   "notify",
             "chatrooms",        "modules",  "web",     "memory",
+            "serve",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -633,6 +660,10 @@ pub const Config = struct {
             // without an "instance" section must not clobber a named instance
             // with a pid-based default (merge() checks instance_present).
             if (!cfg.instance_present) cfg.instance.name = try defaultInstName(arena);
+        }
+        if (obj.get("serve")) |v| {
+            cfg.serve = try parseServe(arena, v);
+            cfg.serve_present = true;
         }
         if (obj.get("peers")) |v| {
             cfg.peers = try parsePeers(arena, v);
@@ -886,6 +917,36 @@ pub const Config = struct {
             inst.id = try jsonStr(k, "id");
         }
         return inst;
+    }
+
+    fn parseServe(arena: std.mem.Allocator, v: json.Value) !Serve {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.ServeNotObject,
+        };
+        var s = Serve{};
+        warnUnknownKeys(obj, &.{ "host", "webui_port", "serve_as" }, "serve");
+        if (obj.get("host")) |k| s.host = try jsonStr(k, "host");
+        if (obj.get("webui_port")) |k| {
+            const n = try jsonInt(k, "webui_port");
+            // Caught here rather than at bind time: a config that cannot be
+            // honoured should say so while it is being read, naming the key.
+            if (n < 1 or n > 65535) return error.ServePortOutOfRange;
+            s.webui_port = @intCast(n);
+        }
+        if (obj.get("serve_as")) |k| {
+            const arr = switch (k) {
+                .array => |a| a,
+                else => return error.ServeAsNotArray,
+            };
+            var names: std.ArrayList([]const u8) = .empty;
+            for (arr.items) |item| {
+                const name = std.mem.trim(u8, try jsonStr(item, "serve_as[]"), " \t");
+                if (name.len > 0) try names.append(arena, name);
+            }
+            s.serve_as = try names.toOwnedSlice(arena);
+        }
+        return s;
     }
 
     fn parsePeers(arena: std.mem.Allocator, v: json.Value) ![]const Peer {
@@ -1283,6 +1344,14 @@ pub const Config = struct {
         // a bare config.local.toml must not replace a stable name with a
         // pid-based default on every restart.
         if (src.instance_present) dst.instance = src.instance;
+        // Field-merged rather than whole-section: every field is optional, so
+        // a local file that only moves the port must leave a host set by the
+        // base file alone instead of resetting it to "unset".
+        if (src.serve_present) {
+            if (src.serve.host) |h| dst.serve.host = h;
+            if (src.serve.webui_port) |p| dst.serve.webui_port = p;
+            if (src.serve.serve_as.len > 0) dst.serve.serve_as = src.serve.serve_as;
+        }
         if (src.notify_present) dst.notify = src.notify;
         if (src.chatrooms_present) dst.chatrooms = src.chatrooms;
         if (src.memory_present) dst.memory = src.memory;

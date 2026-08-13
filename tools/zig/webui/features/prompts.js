@@ -7,9 +7,57 @@ export function loadPromptsView() {
   if (status) status.textContent = "Loading…";
   return fetch("/api/prompts").then(readJson).then(function(data){
     var prompts = (data && data.prompts) || [];
+    // renderPrompts ends in applyPromptFilter, which owns the status line: it
+    // is the only thing that knows how many of the rendered cards are actually
+    // on screen, and a count that ignores the filter contradicts the list.
     renderPrompts(prompts);
-    if (status) status.textContent = prompts.length + (prompts.length===1 ? " prompt." : " prompts.");
   }).catch(function(err){ if(status) status.textContent = "Could not load prompts: " + err.message; });
+}
+
+/* What is on screen, decided in one place.
+   The filter used to live only in the input handler, walking cards that already
+   existed — so every re-render dropped it. Create, Delete and Refresh all
+   rebuild the list, and each of them left every prompt showing while
+   `#prompts-filter` still held the query, with `#prompts-status` reporting the
+   full count. Called at the end of every render as well as on input, so the
+   filter box and the list cannot disagree. */
+function applyPromptFilter(){
+  var listEl=document.getElementById("prompts-list");
+  if(!listEl) return null;
+  var filterEl=document.getElementById("prompts-filter");
+  var raw=filterEl?filterEl.value.trim():"";
+  var q=raw.toLowerCase();
+  var cards=listEl.querySelectorAll(".prompt-card");
+  var shown=0;
+  cards.forEach(function(card){
+    var hide=!!q&&(card.textContent||"").toLowerCase().indexOf(q)===-1;
+    card.hidden=hide;
+    if(!hide) shown++;
+  });
+  /* `#prompts-status` is `.sr-only`, so a filter that matched nothing left a
+     blank panel and announced the reason to a screen reader only. The note goes
+     where the cards were. It lives inside #prompts-list and so is thrown away
+     by the next render's `textContent = ""`, which is why it is looked up
+     rather than kept. */
+  var note=document.getElementById("prompts-filter-empty");
+  if(q&&cards.length&&!shown){
+    if(!note){
+      note=document.createElement("p");
+      note.id="prompts-filter-empty";
+      note.className="run-empty";
+      listEl.appendChild(note);
+    }
+    note.textContent="No prompt matches “"+raw+"”.";
+    note.hidden=false;
+  } else if(note) note.hidden=true;
+  var status=document.getElementById("prompts-status");
+  if(status){
+    status.textContent=!cards.length
+      ? "No prompts."
+      : q ? shown+" of "+cards.length+(cards.length===1?" prompt shown.":" prompts shown.")
+        : cards.length+(cards.length===1?" prompt.":" prompts.");
+  }
+  return { shown: shown, total: cards.length, query: q };
 }
 
 function renderPrompts(prompts){
@@ -19,7 +67,7 @@ function renderPrompts(prompts){
   if(!prompts.length){
     var empty=document.createElement("p"); empty.className="run-empty";
     empty.textContent="No prompts yet. Save one from the chat composer or create it here.";
-    listEl.appendChild(empty); return;
+    listEl.appendChild(empty); applyPromptFilter(); return;
   }
   prompts.forEach(function(p){
     var card=document.createElement("div"); card.className="prompt-card";
@@ -57,6 +105,7 @@ function renderPrompts(prompts){
     meta.style.marginTop="0.35rem"; card.appendChild(meta);
     listEl.appendChild(card);
   });
+  applyPromptFilter();
 }
 
 function refreshLocalPrompts(){
@@ -94,9 +143,5 @@ export function bindPrompts(){
       .catch(function(e){ alert(e.message); }).finally(function(){ if(createBtn) createBtn.disabled=false; });
   });
   if(refreshBtn) refreshBtn.addEventListener("click",function(){ loadPromptsView(); });
-  if(filterEl) filterEl.addEventListener("input",function(){
-    var q=filterEl.value.trim().toLowerCase();
-    var cards=document.querySelectorAll("#prompts-list .prompt-card");
-    cards.forEach(function(card){ var text=(card.textContent||"").toLowerCase(); card.hidden=!!q&&text.indexOf(q)===-1; });
-  });
+  if(filterEl) filterEl.addEventListener("input",applyPromptFilter);
 }

@@ -421,16 +421,16 @@ test "web_search wasm tool returns results from a live backend (skips when offli
     const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/web_search.wasm", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(wasm);
 
-    const mod = ToolModule.load(std.testing.allocator, io, &sb, wasm) catch return; // tools not built, nothing to check
+    const mod = ToolModule.load(std.testing.allocator, io, &sb, wasm) catch return error.SkipZigTest;
     defer mod.deinit();
 
-    const out = mod.executeTool("{\"query\":\"zig programming language\",\"max_results\":4}") catch return; // offline
+    const out = mod.executeTool("{\"query\":\"zig programming language\",\"max_results\":4}") catch return error.SkipZigTest; // offline
     defer std.testing.allocator.free(out);
 
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, out, .{}) catch return;
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, out, .{});
     if (parsed != .object) return;
 
     // A successful search must parse as an object; when it advertises ok and

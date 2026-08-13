@@ -36,8 +36,17 @@ var state = {
   // Elimination order, so the compactor makes one pass per loser rather than a
   // pile-up (PRD phase 8 note).
   compactor: { queue: [], i: 0, started: 0, scene: 0 },
-  lastMoveKey: ""
+  lastMoveKey: "",
+  // Consecutive failed polls. Reset by any answer, so it counts a run of
+  // failures rather than a total.
+  pollFails: 0
 };
+
+/* How many polls in a row may fail before the view stops following a running
+   match. One is not a verdict on anything: this server answers one request per
+   connection, so a poll landing while another tab or the CLI is mid-request is
+   ordinary, and so is a laptop lid. */
+var POLL_GIVE_UP = 5;
 
 /* ------------------------------------------------------------------ polling */
 
@@ -45,6 +54,7 @@ var state = {
    Never a standing background timer on a finished match. */
 function startPolling() {
   stopPolling();
+  state.pollFails = 0;
   state.timer = window.setInterval(function () { fetchMatch(state.id, true); }, 1100);
 }
 
@@ -71,6 +81,7 @@ function fetchMatch(id, quiet) {
       if (location.hash !== want) history.replaceState(null, "", want);
     } catch (_) {}
     var wasRunning = state.match && state.match.status === "running";
+    state.pollFails = 0;
     state.match = data.match;
     renderMatch();
     if (data.match.status === "running") {
@@ -83,6 +94,21 @@ function fetchMatch(id, quiet) {
     }
     return data.match;
   }).catch(function (err) {
+    // A poll that failed is a poll, not a verdict on the match. Stopping the
+    // timer on the first one meant a single reset connection froze a running
+    // match on screen for good: the stage kept its last frame, the status line
+    // said only what had gone wrong, and nothing was still asking. The last
+    // known state stays up while it retries, and it gives up out loud.
+    if (quiet) {
+      state.pollFails += 1;
+      if (state.pollFails < POLL_GIVE_UP) return null;
+      stopPolling();
+      if (status) {
+        status.textContent = "Lost track of match " + id + " after " + state.pollFails +
+          " failed updates (" + err.message + "). Refresh to pick it up again.";
+      }
+      return null;
+    }
     stopPolling();
     if (status) status.textContent = "Could not load match: " + err.message;
     return null;
@@ -143,7 +169,12 @@ function renderPicker(matches) {
     q.title = m.question || m.id;
     var who = document.createElement("span");
     who.className = "meta arena-pick-outcome";
-    who.textContent = m.winner ? (m.winner === "draw" ? "draw" : m.winner + " won") : "running";
+    // The words follow the same test the lamp does. Reading only `winner` made
+    // a finished match that named nobody, a mutual concession, read as still
+    // running next to a lamp that said it was over.
+    who.textContent = running
+      ? "running"
+      : (m.winner ? (m.winner === "draw" ? "draw" : m.winner + " won") : "no verdict");
     row.appendChild(lamp);
     row.appendChild(q);
     row.appendChild(who);
