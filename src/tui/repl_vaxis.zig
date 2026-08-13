@@ -652,11 +652,11 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/model", .takes_args = true, .arg_hint = "[query]", .help = "switch provider/model (fuzzy picker; Enter picks, Esc cancels)", .action = .model },
     .{ .name = "/workflows", .help = "list reusable prompt workflows", .action = .workflows },
     .{ .name = "/workflow", .takes_args = true, .arg_hint = "<name> [args]", .help = "run a workflow (expands {{args}} then runs as a task)", .action = .workflow },
-    .{ .name = "/sessions", .help = "list saved sessions", .action = .{ .tool = .{ .name = "cmd_sessions", .args = "" } } },
+    .{ .name = "/sessions", .aliases = &.{"/history"}, .help = "list saved sessions", .action = .{ .tool = .{ .name = "cmd_sessions", .args = "" } } },
     .{ .name = "/graph", .help = "list recorded runs (same as clanker graph)", .action = .{ .tool = .{ .name = "cmd_graph", .args = "list" } } },
     .{ .name = "/status", .help = "show configuration and state status", .action = .{ .tool = .{ .name = "cmd_status", .args = "" } } },
     .{ .name = "/tools", .help = "list registered tools (same as clanker tools)", .action = .{ .tool = .{ .name = "cmd_tools", .args = "" } } },
-    .{ .name = "/plugins", .help = "list installed plugins", .action = .{ .tool = .{ .name = "cmd_plugins", .args = "" } } },
+    .{ .name = "/plugins", .aliases = &.{"/plugin"}, .help = "list installed plugins", .action = .{ .tool = .{ .name = "cmd_plugins", .args = "" } } },
     .{ .name = "/goal", .takes_args = true, .arg_hint = "<intent>", .help = "design and persist a structured goal", .action = .goal },
     .{ .name = "/autoresearch", .takes_args = true, .arg_hint = "...", .help = "measurement loop (see /autoresearch --help)", .action = .autoresearch },
     .{ .name = "/arena", .takes_args = true, .arg_hint = "...", .help = "judged debate between two positions (see /arena --help)", .action = .arena },
@@ -1172,6 +1172,20 @@ test "tools command routes through the same internal tool as the CLI" {
             try std.testing.expectEqualStrings("", tool.args);
         },
         else => return error.TestExpectedToolCommand,
+    }
+}
+
+test "REPL accepts the CLI aliases for sessions and plugins" {
+    const cases = [_]struct { input: []const u8, tool: []const u8 }{
+        .{ .input = "/history", .tool = "cmd_sessions" },
+        .{ .input = "/plugin", .tool = "cmd_plugins" },
+    };
+    for (cases) |case| {
+        const pc = parseCommand(case.input) orelse return error.TestExpectedCommand;
+        switch (pc.spec.action) {
+            .tool => |tool| try std.testing.expectEqualStrings(case.tool, tool.name),
+            else => return error.TestExpectedToolCommand,
+        }
     }
 }
 
