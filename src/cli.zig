@@ -416,7 +416,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else if (std.mem.eql(u8, a, "--dry-run")) {
                 opts.dry_run = true;
                 used = .dry_run;
-            } else if (std.mem.eql(u8, a, "--worktree")) {
+            } else if (std.mem.eql(u8, a, "--worktree") or std.mem.eql(u8, a, "-wt")) {
                 opts.worktree = true;
                 used = .worktree;
             } else if (std.mem.eql(u8, a, "--no-worktree")) {
@@ -3223,7 +3223,20 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         opts.goal,
         cfg.modules.goal and cfg.modules.goal_auto_steer and opts.goal == null,
     );
-    const task_text = resolved_task.task;
+    const task_text_ = resolved_task.task;
+
+    // When the run lives in its own git worktree (whether via `--worktree`
+    // / `-wt` or a goal-steered run), tell the agent up front. It is running
+    // isolated from the shared checkout, so its edits, builds, tests, and
+    // commits all belong to this worktree and should stay here.
+    var task_text = task_text_;
+    if (wt) |*w| {
+        task_text = try std.fmt.allocPrint(arena,
+            \\You are on a worktree run: this run lives in a separate git worktree on branch "{s}" (path {s}, based on "{s}"), isolated from the shared checkout. Make your edits, test, and commit here; the worktree is retired automatically when the run finishes.
+            \\
+            \\{s}
+        , .{ w.branch, w.path, w.base_branch, task_text });
+    }
 
     // Record the worktree against the goal steering it, now that the goal is
     // resolved (`--goal <id>` and auto-steer both land in `resolved_task`).
@@ -12270,6 +12283,11 @@ test "--worktree is accepted by run and refused elsewhere" {
     const isolated = try parse(&.{ "clanker", "run", "--worktree", "do the thing" }, &diag);
     try std.testing.expect(isolated.worktree);
     try std.testing.expectEqual(Command.run, isolated.command);
+
+    // -wt is the short-hand for --worktree.
+    const short = try parse(&.{ "clanker", "run", "-wt", "do the thing" }, &diag);
+    try std.testing.expect(short.worktree);
+    try std.testing.expectEqual(Command.run, short.command);
 
     // Off unless asked for: the shared checkout stays the default, so no
     // existing invocation starts writing somewhere else.

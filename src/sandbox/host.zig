@@ -1217,7 +1217,7 @@ fn writeModelJson(s: *std.json.Stringify, m: *const config_mod.Model, provider: 
     }
     if (m.reasoning_effort) |r| {
         try s.objectField("reasoning_effort");
-        try s.write(r);
+        try s.write(@tagName(r));
     }
     if (m.capabilities.len > 0) {
         try s.objectField("capabilities");

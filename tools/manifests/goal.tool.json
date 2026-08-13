@@ -1,7 +1,7 @@
 {
   "name": "goal",
   "description": "Append a structured goal to state/goals.json (write). Use when you need a durable objective with a completion criterion; link a board card to it later via kanban_add/kanban_update goal id. Not a kanban card.",
-  "llm_description": "Append a structured goal to state/goals.json (write). Required: \"objective\", \"completion_criterion\". Optional: \"proof\", \"boundaries\", \"stop_rule\". Link cards via kanban_* goal id; this is not a board card.",
+  "llm_description": "Append a structured goal to state/goals.json (write). Required: \"objective\", \"completion_criterion\". Optional: \"proof\", \"boundaries\", \"stop_rule\", \"worktree\" (branch/path for worktree runs). Link cards via kanban_* goal id; this is not a board card.",
   "wasm": "zig-out/tools/goal.wasm",
   "input_schema": {
     "type": "object",
@@ -19,6 +19,9 @@
         "type": "string"
       },
       "stop_rule": {
+        "type": "string"
+      },
+      "worktree": {
         "type": "string"
       }
     },

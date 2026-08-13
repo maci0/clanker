@@ -33,6 +33,22 @@ pub const ProviderKind = enum {
     }
 };
 
+/// Reasoning effort for models that expose it on the OpenAI-compatible wire
+/// (`/v1/chat/completions`): Ollama, DeepSeek, OpenAI, OpenRouter, ... Sent as
+/// the `reasoning_effort` request field. `null` (unconfigured) omits the field
+/// entirely; `none` explicitly disables reasoning on providers that accept it.
+pub const ReasoningEffort = enum {
+    none,
+    low,
+    medium,
+    high,
+    max,
+
+    pub fn fromStr(s: []const u8) ?ReasoningEffort {
+        return std.meta.stringToEnum(ReasoningEffort, s);
+    }
+};
+
 /// How a provider's credential is acquired, a separate axis from the wire
 /// kind, because one wire format can accept several (docs/adrs/0005). Left
 /// unset, each kind auto-detects from the credential's shape where the two
@@ -63,8 +79,11 @@ pub const Model = struct {
     /// distribution, and Anthropic's API documents adjusting only one.
     top_p: ?f64 = null,
     /// Keeps reasoning models' chain-of-thought short so `content` stays
-    /// populated (e.g. DeepSeek v4: "low" | "medium").
-    reasoning_effort: ?[]const u8 = null,
+    /// populated (e.g. DeepSeek v4: "low" | "medium"). Sent as the
+    /// `reasoning_effort` field on the OpenAI-compatible wire (Ollama,
+    /// DeepSeek, OpenAI, ...). One of "none" | "low" | "medium" | "high" |
+    /// "max"; null omits the field entirely.
+    reasoning_effort: ?ReasoningEffort = null,
     /// What to call this model in the UI, when the wire id is not what a
     /// person calls it. `kimi-k3` on api.moonshot.ai is sent bare because that
     /// is what the vendor's own API accepts, but it is read as
@@ -1039,7 +1058,13 @@ pub const Config = struct {
         if (obj.get("max_tokens")) |k| m.max_tokens = try jsonUnsigned(u32, k, "max_tokens");
         if (obj.get("temperature")) |k| m.temperature = try jsonFloat(k, "temperature");
         if (obj.get("top_p")) |k| m.top_p = try jsonFloat(k, "top_p");
-        if (obj.get("reasoning_effort")) |k| m.reasoning_effort = try jsonStr(k, "reasoning_effort");
+        if (obj.get("reasoning_effort")) |k| {
+            const s = try jsonStr(k, "reasoning_effort");
+            m.reasoning_effort = ReasoningEffort.fromStr(s) orelse {
+                log.log(.error_, "models[\"{s}\"]: reasoning_effort \"{s}\" is not one of \"none\", \"low\", \"medium\", \"high\", \"max\"", .{ name, s });
+                return error.UnknownReasoningEffort;
+            };
+        }
         if (obj.get("display")) |k| m.display = try jsonStr(k, "display");
         if (obj.get("cost_per_1m_input")) |k| m.cost_per_1m_input = try jsonFloat(k, "cost_per_1m_input");
         if (obj.get("cost_per_1m_output")) |k| m.cost_per_1m_output = try jsonFloat(k, "cost_per_1m_output");
@@ -2614,6 +2639,72 @@ test "a negative max_tokens is rejected instead of wrapping into a huge cap" {
         ,
     });
     try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+}
+
+test "reasoning_effort parses supported values and null when absent" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const supported = [_]struct { toml: []const u8, want: ReasoningEffort }{
+        .{ .toml = "none", .want = .none },
+        .{ .toml = "low", .want = .low },
+        .{ .toml = "medium", .want = .medium },
+        .{ .toml = "high", .want = .high },
+        .{ .toml = "max", .want = .max },
+    };
+    for (supported) |c| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(io, .{
+            .sub_path = "config.toml",
+            .data = try std.fmt.allocPrint(arena,
+                \\default_provider = "a"
+                \\providers = {{ a = {{ base_url = "https://a.test" }} }}
+                \\models = {{ "a/m" = {{ provider = "a", reasoning_effort = "{s}" }} }}
+            , .{c.toml}),
+        });
+        const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+        try std.testing.expectEqual(c.want, cfg.providers.get("a").?.activeModel().reasoning_effort.?);
+    }
+
+    // Absent field stays null (wire omits it).
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expect(cfg.providers.get("a").?.activeModel().reasoning_effort == null);
+}
+
+test "an invalid reasoning_effort is rejected" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a", reasoning_effort = "turbo" } }
+        ,
+    });
+    try std.testing.expectError(error.UnknownReasoningEffort, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
 }
 
 test "agent.git_remote_ops and exec_pattern_allow parse from config" {

@@ -1,5 +1,5 @@
 //! goal: design and persist a structured goal to state/goals.json
-//! Input:  {"objective":"...","completion_criterion":"...","proof":"...","boundaries":"...","stop_rule":"..."}
+//! Input:  {"objective":"...","completion_criterion":"...","proof":"...","boundaries":"...","stop_rule":"...","worktree":"..."}
 //! Output: {"ok":true,"goal":{...}}
 
 const std = @import("std");
@@ -31,13 +31,15 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const proof = fieldString(obj, "proof") orelse "";
     const boundaries = fieldString(obj, "boundaries") orelse "";
     const stop_rule = fieldString(obj, "stop_rule") orelse "";
+    // The git worktree this goal belongs to (branch/path), for worktree runs.
+    const worktree = fieldString(obj, "worktree") orelse "";
 
     const now = ck_now();
     const id = std.fmt.allocPrint(lib.alloc, "{d}", .{now}) catch return lib.fail(out, "alloc");
 
     var obj_buf: std.ArrayList(u8) = .empty;
     defer obj_buf.deinit(lib.alloc);
-    try writeGoalObject(&obj_buf, id, objective, completion, proof, boundaries, stop_rule, now);
+    try writeGoalObject(&obj_buf, id, objective, completion, proof, boundaries, stop_rule, worktree, now);
 
     var existing: []const u8 = "";
     if (lib.fsRead("state/goals.json")) |cur| {
@@ -89,6 +91,7 @@ fn writeGoalObject(
     proof: []const u8,
     boundaries: []const u8,
     stop_rule: []const u8,
+    worktree: []const u8,
     now: u64,
 ) !void {
     const wbuf = try lib.alloc.alloc(u8, 32 * 1024);
@@ -108,6 +111,10 @@ fn writeGoalObject(
     try s.write(boundaries);
     try s.objectField("stop_rule");
     try s.write(stop_rule);
+    if (worktree.len > 0) {
+        try s.objectField("worktree");
+        try s.write(worktree);
+    }
     try s.objectField("status");
     try s.write("active");
     try s.objectField("created");
