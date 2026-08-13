@@ -277,6 +277,7 @@ pub const Agent = struct {
             .workflows_catalog = wf_catalog,
             .global_instructions_file = global_path,
             .home = home,
+            .git_remote_ops = cfg.agent.git_remote_ops,
         }, defs);
         const prompt_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ base_prompt, exact_format_suffix });
         return .{
@@ -332,6 +333,7 @@ pub const Agent = struct {
             .workflows_catalog = wf_catalog,
             .global_instructions_file = global_path,
             .home = home,
+            .git_remote_ops = self.cfg.agent.git_remote_ops,
         }, self.tool_defs) catch |err| {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;

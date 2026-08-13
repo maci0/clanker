@@ -766,6 +766,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 pending_sub = null; // sub consumed; next tokens are room etc.
             } else {
                 setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.BadSubcommand;
             }
         } else if (opts.command == .eval and opts.eval_name == null) {
@@ -1027,6 +1028,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             }
         } else {
             setDiag(diag, sub);
+            if (cmd_out) |c| c.* = opts.command;
             return error.BadSubcommand;
         }
     }
@@ -11852,7 +11854,27 @@ test "parseWithCommand resolves the real command when a global flag precedes it"
     var diag2: []const u8 = "";
     var cmd2: Command = .help;
     try std.testing.expectError(error.BadSubcommand, parseWithCommand(&.{ "clanker", "--model", "x", "session", "bogus" }, &diag2, &cmd2));
-    try std.testing.expectEqual(Command.session, cmd2);
+    // `session` is the spelling; `session_export` is the command it selects,
+    // since the singular is not a listing (that is `sessions`) and so has no
+    // meaning without its subcommand.
+    try std.testing.expectEqual(Command.session_export, cmd2);
+    try std.testing.expectEqualStrings("session", commandName(cmd2));
+
+    // Every subcommand mismatch reports, not just the one the post-loop check
+    // catches. These three take that in-loop path, where an unset cmd_out left
+    // the caller with its own initial value: `.help`, whose name is the empty
+    // string, so the hint read "run `clanker  --help`".
+    inline for (.{
+        .{ "session", Command.session_export },
+        .{ "chat", Command.chat },
+        .{ "schedule", Command.schedule },
+    }) |case| {
+        var d: []const u8 = "";
+        var c: Command = .help;
+        try std.testing.expectError(error.BadSubcommand, parseWithCommand(&.{ "clanker", case[0], "bogus" }, &d, &c));
+        try std.testing.expectEqual(case[1], c);
+        try std.testing.expect(commandName(c).len > 0);
+    }
 }
 
 test "the listener resolves config < env < flag, in that order" {
