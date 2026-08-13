@@ -20,13 +20,16 @@ policy.
 
 ## Quick start
 
+Build the binary, compile the WASM tools, run the test suite, create local
+state, run the complete gate, and enable the repository hooks:
+
 ```sh
-zig build          # build the clanker binary
-zig build tools    # build the WASM tools
-zig build test     # run the test suite
-./zig-out/bin/clanker init   # create config.local.toml + state/
-./zig-out/bin/clanker gate   # run the full deterministic gate (build/test/tools/fmt/lint)
-git config core.hooksPath .githooks   # enable the fast pre-commit checks (fmt, shellcheck, manifests, secrets)
+zig build
+zig build tools
+zig build test
+./zig-out/bin/clanker init
+./zig-out/bin/clanker gate
+git config core.hooksPath .githooks
 ```
 
 Set the API key env var for your chosen provider (see [config.toml](config.toml)), then:
@@ -45,14 +48,18 @@ clanker loads **[config.toml](config.toml)** (committed example) and merges **`c
 | `default_provider` | Name of the active entry under `providers` |
 | `providers` | Map of named backends: `kind`, `base_url`, `api_key_env`, optional `auth`, `default_model` |
 | `models` | Top-level map of `"<provider>/<model>"` → per-model settings (`context_window`, `max_tokens`, `reasoning_effort`, …), each naming its `provider`. Per-model settings on a provider entry, or a `models` table nested inside one, are rejected at load |
-| `agent` | Loop limits, paths, sandbox root, and compaction |
-| `improve` | Self-improvement iteration and context size caps |
+| `agent` | Loop limits, paths, sandbox, compaction, fallback, confirmation, and worktree defaults |
+| `improve` | Self-improvement gates, iteration, context, and cache caps |
 | `instance` | This agent's `name` and `id` |
-| `serve` | What `clanker serve` binds: `host`, `webui_port`, `serve_as` |
+| `serve` | What `clanker serve` binds, including proxy ports, credentials, aliases, and timeouts |
 | `peers` | Other instances (`name` + `url`) for notify / phonebook |
 | `notify` | Peer notification topic / enable |
 | `chatrooms` | Default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag |
-| `modules` | Feature flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`) |
+| `memory` | Retrieval backend, chunking, embeddings, and vector search |
+| `web` | Additional hosts the research tools may reach |
+| `tui` | REPL appearance, including the mascot mode, size, and direction |
+| `advisor`, `ttsr`, `kernel` | Post-turn critique, turn-time repair rules, and persistent eval kernels |
+| `modules` | Feature flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`) |
 
 Agent instructions are layered: device-wide `$HOME/.agents/AGENTS.md`, shared repository `AGENTS.md`, then ignored project-local `.agents/AGENTS.md`. Put personal, checkout-specific additions such as a Git workflow in the last file; it supplements the shared conventions rather than replacing them. Instruction files also support Claude-style `@path` imports (missing files soft-skip), so a shared root `AGENTS.md` can contain `@.agents/AGENTS.md` for tools that only read the root file.
 
@@ -123,15 +130,15 @@ pointed at `127.0.0.1` is not reachable through this server and `--host` does
 not widen it. The shipped `dummy-down` peer is exactly that: a URL on the
 discard port, deliberately dead, with nothing bound behind it.
 
-For a service file or a container that cannot pass flags, the same three
+For a service file or a container that cannot pass flags, listener and proxy
 settings can come from `[serve]` in `config.toml` or from the environment.
-Weakest first, each overriding the one above it:
+Weakest first, each layer overrides the one above it:
 
-| Layer | Host | Port | Names |
-| --- | --- | --- | --- |
-| `[serve]` in `config.toml` / `config.local.toml` | `host` | `webui_port` | `serve_as` (array) |
-| environment | `CLANKER_HOST` | `CLANKER_WEBUI_PORT` | — |
-| flags | `--host` | `--webui-port` | `--serve-as` |
+| Layer | Host | Web UI port | Names | Proxy |
+| --- | --- | --- | --- | --- |
+| `[serve]` in `config.toml` / `config.local.toml` | `host` | `webui_port` | `serve_as` (array) | `proxy`, `proxy_port` |
+| environment | `CLANKER_HOST` | `CLANKER_WEBUI_PORT` | — | `CLANKER_PROXY_PORT` |
+| flags | `--host` | `--webui-port` | `--serve-as` | `--proxy`, `--no-proxy`, `--proxy-port` |
 
 A flag always beats the environment, which always beats the file, matching how
 `--verbose` beats `CLANKER_LOG_LEVEL` and `--provider` beats

@@ -285,7 +285,7 @@ function abortGoalRun(gid) {
    the panel is local; the run's own stream shows a "steering message
    applied" status line when the loop actually consumes it. */
 function sendSteer(gid) {
-  var box = el.goals.querySelector('input[data-goal-steer="' + gid + '"]');
+  var box = el.goals.querySelector('textarea[data-goal-steer="' + gid + '"]');
   if (!box) return;
   var msg = box.value.trim();
   if (!msg) return;
@@ -340,13 +340,13 @@ function renderGoalRunPanel(g) {
         : null),
     run ? T.pre({ class: "goal-run-output", "data-goal-output": gid }, run.text || "") : null,
     steerable ? T.div({ class: "goal-steer" },
-      T.input({
-        type: "text",
+      T.textarea({
         "data-goal-steer": gid,
+        rows: "2",
         placeholder: "Steer this run — tell the agent something mid-flight…",
         maxlength: "8000",
         onkeydown: function (e) {
-          if (e.key === "Enter") { e.preventDefault(); sendSteer(gid); }
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendSteer(gid); }
         }
       }),
       UI.button("Send", function () { sendSteer(gid); },
@@ -420,6 +420,10 @@ function runGoal(g, opts) {
       goal: g.id,
       stream: true,
       session: _getSessionId(),
+      // A goal explicitly marked by the creation checkbox must isolate. For
+      // an older unmarked goal leave this unset, allowing [agent]
+      // git_worktree_on = ["goal"] to supply the server-side default.
+      worktree: g.worktree ? true : null,
       max_iterations: opts.maxIterations || null
     }),
     signal: controller.signal
@@ -487,7 +491,7 @@ function iterateGoal(g) {
   uiPrompt(
     "What should the agent iterate on?",
     "",
-    { placeholder: "e.g. the retry path, the board sync edge case, tighten the criterion…", maxlength: 8000 }
+    { placeholder: "e.g. the retry path, the board sync edge case, tighten the criterion…", maxlength: 8000, multiline: true, rows: 5, confirmLabel: "Iterate" }
   ).then(function (raw) {
     var msg = (raw || "").trim();
     if (!msg) return;
@@ -718,7 +722,7 @@ export function bindGoals(deps) {
       el.goalObjective.value = "";
       el.goalCriterion.value = "";
       el.goalMaxIterations.value = "";
-      if (el.goalWorktree) el.goalWorktree.checked = false;
+      if (el.goalWorktree) el.goalWorktree.checked = !!window.clankerWorktreeDefault;
       el.goalsStatus.textContent = "Goal card created in Backlog.";
     });
   });

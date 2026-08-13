@@ -62,7 +62,7 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - An opt-in REPL mascot (`--mascot`, `[tui] mascot`), off by default. Five
   modes: it can track what you type, loop across the screen, run on the
   spot above the composer, or run inside the composer, which grows to make
-  room. `--mascot-size` picks an 8x4, 10x5 or 21x10 cell grid and
+  room. `--mascot-size` picks a 6x1, 7x2, 8x4, 10x5, or 21x10 cell grid and
   `--mascot-facing` mirrors it. Drawn with kitty graphics where the
   terminal supports it and unicode half-blocks everywhere else.
 

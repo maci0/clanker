@@ -12,7 +12,6 @@
     },
     "required": ["intent"]
   },
-  "llm": true,
   "sequential": true,
   "tool_call": true,
   "tool_allow": ["ask_user"],

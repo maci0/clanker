@@ -895,9 +895,14 @@ Fields:
   - `git_remote_ops`: when true, let the `git` tool run the PR-lifecycle verbs it otherwise cannot — `push`, `merge`, `checkout` (default false). Scoped to the `git` command only; `reset`, `rebase`, `clean`, `rm`, `fetch`, `-f`, … stay denied. This is the machine-local flip that lets the agent open and merge PRs unaided; set it in `config.local.toml`, not the committed example.
   - `exec_pattern_allow`: whole-command-line glob patterns a tool may run through `ck_exec`, e.g. `"gh pr create*"` or `"gh pr merge*"`. When a pattern names a command, that command becomes strict: only an argv matching one of its patterns runs, and the match also overrides the deny tokens for the args it grants (`"gh pr merge"` legitimately contains `"merge"`). Commands with no pattern stay under the deny-list check, so a pattern for `gh` does not widen `git` or anything else. `*` matches any run of characters, including across spaces and empty. The `gh` tool refuses to run at all unless a matching pattern is configured.
   - `repl_exec_allow`: extra commands the REPL's `!cmd` escape may run, e.g. `["ls", "cat"]`. Empty (default) means `!` runs exactly the union of every registered tool's `exec_allow` and nothing more, so the escape starts with no authority the harness did not already have. Nothing but the REPL reads this, so widening it never widens a tool, and the rest of the policy — the deny tokens, `git`'s verb allowlist, `exec_pattern_allow` — still applies to whatever is named here.
-  - `seed`: sampling seed.
+  - `seed`: sampling seed (`0`, the default, is time-seeded).
   - `workflows_dir`: where reusable prompt workflows are read from (default `workflows`).
   - `chains_dir`: where transform chains are read from (default `chains`).
+  - `worktree`, `goal_worktree`, `git_worktree_on`: default isolation for
+    ordinary, goal/scheduled, and named run modes. `worktree` and
+    `goal_worktree` accept `auto`, `yes`, or `no`; `git_worktree_on` names any
+    of `run`, `goal`, `tui`, and `schedule`. An explicit
+    `--worktree`/`--no-worktree` always wins.
   - `fallback_provider` / `fallback_providers`: ordered fallbacks after the selected provider cannot serve a request (default unset). A string still means one name. After the primary exhausts its own retries (or fails before any content is delivered), the next configured name is tried. Also the preferred vision-routing target: ignored unless it names a configured provider that differs from the current one and has a vision model; with nothing set, the first other provider that qualifies is used.
   - `ask_timeout_seconds`: how long a serve-side `ask_user` question waits for the browser before giving up (default 120). Confirm questions share the timeout.
   - `provider_check_timeout_seconds`: how long `providers check` waits for one provider before reporting it as timed out and moving on (default 10). Without a ceiling a single unreachable endpoint costs the whole sweep the OS connect timeout (~75s on macOS). `0` disables the ceiling; `[providers.<name>] check_timeout_seconds` overrides it per provider.
@@ -910,7 +915,7 @@ Fields:
 - `instance`: identity of this agent.
 - `notify`: `on` / `topic` for peer notifications.
 - `chatrooms`: default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag.
-- `modules`: feature on/off flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`). All default to `true`.
+- `modules`: feature on/off flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`). All default to `true`. `goal_auto_steer` only controls automatic attachment of the newest active goal; explicit goals continue to work when it is off.
 - `improve`: settings for self-improvement.
   - `max_context_bytes`: byte budget for the proposal context slice.
   - `max_context_requests`: how many `{"need": [...]}` context refills a run gets (default 3, 0 disables).
@@ -921,7 +926,11 @@ Fields:
   - `inert_gate`: reject changes classified as doing nothing observable (default true).
   - `max_consecutive_test_only`: how many test-only changes may land in a row before one must touch behavior (default 3).
   - `max_cache_bytes`: cap on the build cache before it is dropped, applied at the start of `improve-self` and of `clanker gate` — the two commands that compile repeatedly.
-- `serve`: what `clanker serve` binds — `host` (default `127.0.0.1`), `webui_port` (default `17921`), and `serve_as` (an array of hostnames the server may present itself as). Field-merged, and the weakest of three layers: `CLANKER_HOST`/`CLANKER_WEBUI_PORT` override it, and `--host`/`--webui-port`/`--serve-as` override those. See [Binding and the trust model](#binding-and-the-trust-model).
+- `serve`: what `clanker serve` binds — `host` (default `127.0.0.1`), `webui_port` (default `17921`), and `serve_as` (an array of hostnames the server may present itself as). `proxy` enables the OpenAI/Anthropic compatibility surface; `proxy_port` can put it on a dedicated listener, `proxy_token_env` names its optional local token, `proxy_aliases` maps client-facing model names to configured models, and `proxy_first_byte_timeout_s`/`proxy_idle_timeout_s` tune its 300s/60s upstream deadlines (`0` disables either). Field-merged, and the weakest of three layers: `CLANKER_HOST`/`CLANKER_WEBUI_PORT`/`CLANKER_PROXY_PORT` override it, and `--host`/`--webui-port`/`--serve-as`/`--proxy`/`--no-proxy`/`--proxy-port` override those. See [Binding and the trust model](#binding-and-the-trust-model).
+- `tui`: REPL decoration. `mascot` accepts `off`, `type`, `loop`, `place`, or `input`; `mascot_size` accepts `mini`, `xsmall`, `small`, `medium`, or `large`; and `mascot_facing` accepts `left` or `right`. The detailed behavior and terminal sizes are in [docs/configuration.md](configuration.md#tui).
+- `advisor`: optional fail-open post-turn critique (`enabled`, `provider`, `model`, `scope`, `context_turns`, `timeout_ms`).
+- `ttsr`: optional turn-time self-repair (`max_retries_per_turn`, `buffer_bytes`, and `[[ttsr.rules]]`).
+- `kernel`: persistent eval-kernel controls (`enabled`, `max_output_bytes`, `cleanup_delay_ms`); it remains off by default because a kernel is an unsandboxed subprocess.
 - `memory`: RAG backend. `backend` at the top level, then the `[memory.chunk]` (`size`, `overlap`, `strategy`), `[memory.embedding]` (`provider`, `model`) and `[memory.vector]` (`backend`, `top_k`, `threshold`) sub-tables. See [docs/configuration.md](configuration.md).
 
 ### Environment variables
@@ -930,7 +939,7 @@ Fields:
 - `CLANKER_LOG_LEVEL`: `debug` | `info` | `warn` | `error` (default `info`). Lets a headless deployment (systemd, docker) set the log level without editing the invocation. `--verbose`/`-v` still overrides it to `debug` when both are given.
 - `CLANKER_THEME`: default palette for the REPL and `clanker run` output (`mocha`/`catppuccin`, `latte`, `frappe`, `macchiato`, `tokyonight`, `storm`, `day`, `mono`, `default`). `clanker repl --theme <name>` overrides it for one invocation; `/theme <name>` switches the current session.
 - `CLANKER_DEBUG_BODY`: set to any value to log provider name and request byte count on each LLM call (to stderr). Only metadata is printed, never request content.
-- `CLANKER_HOST`, `CLANKER_WEBUI_PORT`: the interface and port `clanker serve` binds, for a headless deployment that cannot pass flags. Both override `[serve]` in the config file and are in turn overridden by `--host`/`--webui-port`. A `CLANKER_WEBUI_PORT` that is not a usable 16-bit port warns and is ignored rather than aborting startup. See [Binding and the trust model](#binding-and-the-trust-model).
+- `CLANKER_HOST`, `CLANKER_WEBUI_PORT`, `CLANKER_PROXY_PORT`: the interface, web UI port, and optional dedicated proxy port for `clanker serve`. They override `[serve]` in the config file and are in turn overridden by the corresponding flags. An unusable port warns and is ignored rather than aborting startup. See [Binding and the trust model](#binding-and-the-trust-model).
 - `NO_COLOR`: standard ([no-color.org](https://no-color.org)) opt-out of colored output. When set to any non-empty value, forces the `mono` theme.
 
 ### Layered agent instructions
@@ -1060,17 +1069,21 @@ clanker serve --host 0.0.0.0 --serve-as clanker.lan
 
 ### Setting the listener without flags
 
-`--host`/`--webui-port`/`--serve-as` are the strongest of three layers, for deployments (a systemd unit, a container) that cannot pass flags on the invocation. Weakest first:
+`--host`/`--webui-port`/`--serve-as` and the proxy controls are the strongest
+of three layers, for deployments (a systemd unit, a container) that cannot
+pass flags on the invocation. Weakest first:
 
-| Layer | Host | Port | Names |
-|-------|------|------|-------|
-| `[serve]` in `config.toml` / `config.local.toml` | `host` | `webui_port` | `serve_as` (a TOML array) |
-| environment | `CLANKER_HOST` | `CLANKER_WEBUI_PORT` | — |
-| flags | `--host` | `--webui-port` | `--serve-as` |
+| Layer | Host | Web UI port | Names | Proxy |
+|-------|------|-------------|-------|-------|
+| `[serve]` in `config.toml` / `config.local.toml` | `host` | `webui_port` | `serve_as` (a TOML array) | `proxy`, `proxy_port` |
+| environment | `CLANKER_HOST` | `CLANKER_WEBUI_PORT` | — | `CLANKER_PROXY_PORT` |
+| flags | `--host` | `--webui-port` | `--serve-as` | `--proxy`, `--no-proxy`, `--proxy-port` |
 
 Each layer overrides the one above it, so a flag beats the environment and the environment beats the file — the same order in which `--verbose` beats `CLANKER_LOG_LEVEL` and `--provider` beats `default_provider`. `[serve]` is field-merged like `[agent]`, so a `config.local.toml` that only moves the port leaves a `host` set by the base file alone. Giving `--serve-as` at all replaces the configured list rather than adding to it, so a command line that names hosts reads as the whole policy.
 
-A `CLANKER_WEBUI_PORT` that is not a 16-bit number (or is `0`) warns and is ignored, leaving the layer below it in force, rather than refusing to start.
+A `CLANKER_WEBUI_PORT` or `CLANKER_PROXY_PORT` that is not a 16-bit number
+(or is `0`) warns and is ignored, leaving the layer below it in force, rather
+than refusing to start.
 
 Ports are named per surface. `--host` is deliberately *not*: the process binds one address, so a second surface split out later (an API port separate from the web UI) would add its own port next to `webui_port` rather than its own host. `--port` remains accepted as an alias for `--webui-port` so existing service files keep working.
 
