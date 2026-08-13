@@ -20,6 +20,18 @@
 const std = @import("std");
 const log = @import("../util/log.zig");
 
+/// Absolute path to the cwd as a plain (non-sentinel) owned slice.
+/// std.process.currentPathAlloc returns a [:0]u8 whose allocation is one byte
+/// larger than its .len (the sentinel). Freeing that slice with gpa.free
+/// loses the sentinel byte; in the debug allocator the shorter length can
+/// land in a different size bucket and panic "Invalid free". Dupe into an
+/// exactly-sized slice so the caller's gpa.free is correct.
+fn currentPath(gpa: std.mem.Allocator, io: std.Io) ![]u8 {
+    const z = std.process.currentPathAlloc(io, gpa) catch return try gpa.dupe(u8, ".");
+    defer gpa.free(z);
+    return gpa.dupe(u8, z);
+}
+
 pub const Worktree = struct {
     path: []const u8,
     branch: []const u8,
@@ -212,7 +224,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
     // '.clanker-worktrees/<id>'` failing with "No such file or directory"
     // from inside that very worktree, silently skipping the post-merge
     // resync.
-    const cwd_path = std.process.currentPathAlloc(io, gpa) catch try gpa.dupe(u8, ".");
+    const cwd_path = try currentPath(gpa, io);
     defer gpa.free(cwd_path);
     const path = try std.fmt.allocPrint(gpa, "{s}/.clanker-worktrees/{s}", .{ cwd_path, id });
     errdefer gpa.free(path);
@@ -260,7 +272,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
 /// directory local to the worktree; only the two entries below are linked
 /// back in, as leaves the sandboxed tools never traverse through.
 fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8) !void {
-    const root = try std.process.currentPathAlloc(io, gpa);
+    const root = try currentPath(gpa, io);
     defer gpa.free(root);
 
     // .zig-cache deliberately NOT linked: several sandbox tests place their

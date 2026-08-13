@@ -3463,7 +3463,7 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     // behavior) if git or disk can't give us a worktree, degraded, not
     // blocked. Skipped for --dry-run, which never writes anything anyway.
     const original_cwd: ?[:0]u8 = if (!opts.dry_run) std.process.currentPathAlloc(io, gpa) catch null else null;
-    defer if (original_cwd) |p| gpa.free(p);
+    defer if (original_cwd) |p| gpa.free(p[0 .. p.len + 1]);
     var wt: ?worktree_mod.Worktree = null;
     if (!opts.dry_run and original_cwd != null) {
         const wt_id = try std.fmt.allocPrint(gpa, "{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
