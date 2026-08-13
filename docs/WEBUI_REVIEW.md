@@ -693,6 +693,39 @@ and re-rendered, which drew "No conversation says …" over a server error — t
 same misleading empty state PR #153 had just removed from four other views.
 The view now carries an explicit error state.
 
+## Create forms answer Enter — Knowledge and Prompts (2026-08-13)
+
+Two of the page's eight `<form>`s had no submit handler and no
+`type="submit"` button: `#knowledge-create-form` and `#prompts-create-form`
+both hung their Create on the button's `click`. What Enter did in each was
+decided by an HTML rule neither form was written against — implicit submission
+is suppressed when a form holds more than one field that blocks it — so the
+two behaved differently, and both wrongly:
+
+- **Prompts** has one blocking field (`#prompts-title`; a `<textarea>` does not
+  block). Enter in the title submitted a handler-less, action-less form, so the
+  browser navigated to the page's own URL: the whole app reloaded and the
+  half-typed prompt went with it.
+- **Knowledge** has two (`#knowledge-title`, `#knowledge-desc`), which
+  suppressed submission entirely. Enter did nothing at all — a dead key in the
+  one place on the page where every other form sends.
+
+Both now bind `submit` and `preventDefault()`, and both Create buttons are
+`type="submit"`, so the click path and the Enter path are one path. The
+button-disabled guards moved inside the handler (`if (createBtn)`), since the
+handler no longer proves the button exists.
+
+### Verified
+
+`node` + a DOM stub driving the real ES modules (no browser, no server):
+`bindPrompts()` / `bindKnowledge()` bind exactly one `submit` listener each,
+the listener calls `preventDefault`, one `POST` reaches `/api/prompts` and
+`/api/knowledge` respectively, and neither Create button carries a second
+`click` listener that would double-send. The same harness run against `main`
+fails 10 of its 12 assertions, so it is testing the fix and not the harness.
+Gate: `zig build`, `zig build tools`, `zig build test --summary all` —
+163/163 steps, 763/765 tests (2 skipped, the expected worktree pair).
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.

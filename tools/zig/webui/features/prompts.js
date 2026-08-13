@@ -70,21 +70,28 @@ function refreshLocalPrompts(){
 }
 
 export function bindPrompts(){
+  var createForm=document.getElementById("prompts-create-form");
   var createBtn=document.getElementById("prompts-create");
   var titleEl=document.getElementById("prompts-title");
   var contentEl=document.getElementById("prompts-content");
   var refreshBtn=document.getElementById("prompts-refresh");
   var filterEl=document.getElementById("prompts-filter");
-  if(createBtn) createBtn.addEventListener("click",function(){
+  /* On the form's submit, not the button's click. Title is the only field in
+     here that blocks implicit submission (a textarea does not), so Enter in it
+     submitted a form with no handler and no action: the browser navigated to
+     the page's own URL and the whole app reloaded, taking the half-typed
+     prompt with it. Submit covers the click too — the button is type=submit. */
+  if(createForm) createForm.addEventListener("submit",function(e){
+    e.preventDefault();
     var title=titleEl?titleEl.value.trim():"";
     var content=contentEl?contentEl.value.trim():"";
     if(!title||!content){ alert("Title and content required."); return; }
     if(title.length>200||content.length>20000){ alert("Title 1-200, content 1-20000."); return; }
-    createBtn.disabled=true;
+    if(createBtn) createBtn.disabled=true;
     fetch("/api/prompts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:title,content:content})})
       .then(readJson)
       .then(function(){ if(titleEl) titleEl.value=""; if(contentEl) contentEl.value=""; loadPromptsView(); refreshLocalPrompts(); })
-      .catch(function(e){ alert(e.message); }).finally(function(){ createBtn.disabled=false; });
+      .catch(function(e){ alert(e.message); }).finally(function(){ if(createBtn) createBtn.disabled=false; });
   });
   if(refreshBtn) refreshBtn.addEventListener("click",function(){ loadPromptsView(); });
   if(filterEl) filterEl.addEventListener("input",function(){
