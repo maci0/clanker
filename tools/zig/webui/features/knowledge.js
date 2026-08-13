@@ -106,7 +106,7 @@ function runFolderSync(){
     body: JSON.stringify({ path: path, prune: !!(prune && prune.checked) })
   }).then(function(r){ return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||("HTTP "+r.status)); return d; }); })
     .then(function(d){
-      if(status) status.textContent = "Synced " + d.synced + " document(s)" + (d.removed ? ", removed " + d.removed : "") + (d.skipped ? ", skipped " + d.skipped : "") + ".";
+      if(status) status.textContent = "Synced " + d.synced + " document(s)" + (d.removed ? ", removed " + d.removed : "") + (d.skipped ? ", skipped " + d.skipped : "") + "." + (d.prune_skipped ? " Prune was skipped: the folder listing was incomplete, so a missing document may just be an unread file." : "");
       openCollection(syncOpenId); loadKnowledge();
     })
     .catch(function(err){ if(status) status.textContent = "Sync failed: " + err.message; })
