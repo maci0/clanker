@@ -39,7 +39,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
-const b = @import("compare_blind.zig");
+const b = @import("compare_logic.zig");
 
 const alloc = lib.alloc;
 
