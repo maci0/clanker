@@ -17,9 +17,7 @@
       "file"
     ]
   },
-  "fs_prefixes": [
-    "."
-  ],
+  "fs_prefixes": [],
   "network_allow": [],
   "exec_allow": [
     "zig"

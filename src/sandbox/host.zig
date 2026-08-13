@@ -4922,6 +4922,25 @@ test "safeJoin bare prefix does not bleed into sibling names" {
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "notes-old/plans.txt"));
 }
 
+test "safeJoin refuses dotenv files even under a wide fs_prefixes grant" {
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = "/tmp/sandbox",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = undefined,
+    };
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ".env"));
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ".env.local"));
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ".envrc"));
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "state/.env"));
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "foo/.env.production"));
+    // A name that only shares the prefix bytes is not a dotenv file.
+    const ok = try safeJoin(&sb, ".environment/x");
+    defer std.testing.allocator.free(ok);
+}
+
 test "safeJoin rejects escapes" {
     var sb = Sandbox{
         .gpa = std.testing.allocator,

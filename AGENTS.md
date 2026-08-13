@@ -49,7 +49,10 @@ through a gated loop. Follow these conventions when changing this codebase.
   stay on its `fs_prefixes` (emptying them makes every dump fail as
   "config.toml unreadable"). Empty `env_allow` is the safe defaults (PWD,
   HOME, PATH, ...), never API keys; a tool that reads a secret via
-  `ck_getenv` must name it.
+  `ck_getenv` must name it. `.env` is refused by `safeJoin` (the keys live
+  on disk too). `ck_exec` allowlists git/zig/uv verbs and refuses
+  host-absolute or `..` path args, so a guest cannot bypass `network_allow`
+  or `fs_prefixes` through a subprocess.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   execution graphs, sub-agents, autolearn, workflows.
 - `src/schedule/` — `clanker schedule`: the cron dialect and next-fire
