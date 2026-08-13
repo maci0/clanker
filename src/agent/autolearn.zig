@@ -274,6 +274,27 @@ test "trimLog keeps only the newest keep_lines lines" {
     try std.testing.expectEqual(@as(usize, 500), first_ts.?);
 }
 
+test "capUtf8 never splits a codepoint" {
+    // At or under the cap the input is returned unchanged.
+    try std.testing.expectEqualStrings("", capUtf8("", 5));
+    try std.testing.expectEqualStrings("hello", capUtf8("hello", 100));
+
+    // ASCII truncates at the byte cap.
+    try std.testing.expectEqualStrings("hel", capUtf8("hello", 3));
+
+    // "é" is 2 bytes (0xC3 0xA9). A cap of 2 lands mid-é; the cut backs up
+    // to the "h" so no dangling continuation byte is emitted.
+    try std.testing.expectEqualStrings("h", capUtf8("héllo", 2));
+    // A cap inside a lone multi-byte codepoint yields the empty string.
+    try std.testing.expectEqualStrings("", capUtf8("é", 1));
+    // A cap that lands exactly on a codepoint end keeps it whole.
+    try std.testing.expectEqualStrings("é", capUtf8("é", 2));
+
+    // Mixed: "aéé" is 5 bytes; a cap of 3 ("a" + complete first "é") leaves
+    // the second "é" untouched rather than half of it.
+    try std.testing.expectEqualStrings("aé", capUtf8("aéé", 3));
+}
+
 test "recordRunTo writes a run event with all fields" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
