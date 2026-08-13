@@ -242,6 +242,18 @@ Post-turn second-model critique. Off by default. Distinct from
 | `context_turns` | 3 | How many user turns `scope = "session"` sends. |
 | `timeout_ms` | 5000 | Parsed now; deadline abort is still open. |
 
+## `[kernel]`
+
+Persistent Python/JS eval kernels. Off by default — an unsandboxed
+subprocess (ADR 0010). Do not flip `enabled` on in a recommended config
+until cgroups quotas exist.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Start kernels. Off = the tool returns a disabled error. |
+| `max_output_bytes` | 65536 | Cap on returned stdout/stderr/result. |
+| `cleanup_delay_ms` | 5000 | Delay before deleting `state/kernels/<session>/` after SIGTERM. |
+
 ## `[modules]`
 
 Feature toggles, all boolean, all default `true` (except where noted). Turning

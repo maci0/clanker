@@ -945,10 +945,12 @@ pub const HarnessAgent = struct {
     tools_dir: []const u8 = "",
     tools_dirs: []const []const u8 = &.{},
 };
+pub const HarnessKernel = struct { enabled: bool = false, max_output_bytes: u32 = 65536 };
 pub const HarnessConfig = struct {
     default_provider: []const u8 = "",
     providers: std.json.ArrayHashMap(HarnessProvider) = .{},
     agent: HarnessAgent = .{},
+    kernel: HarnessKernel = .{},
 };
 
 /// The first configured manifest directory (scaffold destination), or the

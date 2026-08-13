@@ -1014,7 +1014,7 @@ pub fn ckHarnessConfig(caller: *zwasm.Caller) u32 {
     return h.writeResult(bytes, json_out);
 }
 
-const HarnessConfigAccess = enum { full, providers, peers, workflows, chains, tools_dir };
+const HarnessConfigAccess = enum { full, providers, peers, workflows, chains, tools_dir, kernel };
 
 /// ck_harness_config is a privileged structured view, independent of
 /// fs_prefixes. Grant each shipped caller only the section it consumes and
@@ -1034,6 +1034,7 @@ fn harnessConfigAccess(tool_name: []const u8) ?HarnessConfigAccess {
     if (std.mem.eql(u8, tool_name, "workflows")) return .workflows;
     if (std.mem.eql(u8, tool_name, "chain")) return .chains;
     if (std.mem.eql(u8, tool_name, "plugins") or std.mem.eql(u8, tool_name, "tools")) return .tools_dir;
+    if (std.mem.eql(u8, tool_name, "kernel")) return .kernel;
     return null;
 }
 
@@ -1169,6 +1170,12 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
         try s.write(cfg.chatrooms);
         try s.objectField("tui");
         try s.write(cfg.tui);
+        try s.objectField("kernel");
+        try s.write(cfg.kernel);
+    }
+    if (access == .kernel) {
+        try s.objectField("kernel");
+        try s.write(cfg.kernel);
     }
 
     try s.endObject();

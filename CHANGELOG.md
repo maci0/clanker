@@ -48,6 +48,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - `[ttsr]` stream rules can abort an in-flight completion on a
   literal/`*` match, inject a note into the system prompt, and retry
   the turn. Off unless rules are configured.
+- Session-scoped subprocess registry (`src/agent/subprocess.zig`) plus a
+  `kernel` guest that stays off unless `kernel.enabled = true`. Python/JS
+  supervisors are still landing; DAP will reuse the same registry.
 
 ### Changed
 
