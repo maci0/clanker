@@ -9,8 +9,10 @@ zig-pkg/
 tools/ts/node_modules/
 tools/ts/build/
 
-# Runtime state (logs, history, sessions, improvements) — never commit
-state/
+# Runtime state (logs, history, sessions, improvements) — never commit.
+# No trailing slash: isolated runs use a state symlink, which Git otherwise
+# treats as a file and can accidentally stage.
+/state
 
 # Isolated git worktrees improve-self runs stage themselves in
 .clanker-worktrees/
@@ -19,14 +21,17 @@ state/
 config.local.json
 config.local.toml
 
-# User-local project agent instructions
-.agents/
+# User-local project agent instructions. No trailing slash: this can be a
+# symlink and must not be stageable as a regular Git entry.
+/.agents
 
 # User-local Claude project rules (e.g. symlink into .agents/)
 .claude/
 
-# User-local agent coordination and machine state (task board, locks, scratch)
-.local/
+# User-local agent coordination and machine state (task board, locks, scratch).
+# No trailing slash: this can be a symlink and must not be stageable as a
+# regular Git entry.
+/.local
 
 # Editor / OS junk
 .DS_Store

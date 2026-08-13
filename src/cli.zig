@@ -2819,10 +2819,13 @@ fn autolearnSynthesize(
         .messages = &messages,
         .max_tokens = 2500,
     }, &err_detail) catch |err| {
-        try std.Io.File.stderr().writer(io).print(
+        var stderr_buf: [512]u8 = undefined;
+        var stderr = std.Io.File.stderr().writer(io, &stderr_buf);
+        try stderr.interface.print(
             "autolearn: model synthesis failed ({s})\n",
             .{err_detail orelse @errorName(err)},
         );
+        try stderr.interface.flush();
         return error.ModelSynthesisFailed;
     };
     return resp.message.content orelse return error.EmptySynthesis;

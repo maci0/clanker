@@ -2278,16 +2278,16 @@ test "agent.git_worktree_on parses per-mode list and rejects unknown modes" {
     try dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
-        \\default_provider = \"ollama\"
+        \\default_provider = "ollama"
         \\
         \\[providers.ollama]
-        \\base_url = \"http://127.0.0.1:11434/v1\"
+        \\base_url = "http://127.0.0.1:11434/v1"
         \\
-        \\[models.\"ollama/llama3.1\"]
-        \\provider = \"ollama\"
+        \\[models."ollama/llama3.1"]
+        \\provider = "ollama"
         \\
         \\[agent]
-        \\git_worktree_on = [\"goal\", \"schedule\"]
+        \\git_worktree_on = ["goal", "schedule"]
         \\
         ,
     });
@@ -2301,16 +2301,16 @@ test "agent.git_worktree_on parses per-mode list and rejects unknown modes" {
     try dir.writeFile(io, .{
         .sub_path = "bad.toml",
         .data =
-        \\default_provider = \"ollama\"
+        \\default_provider = "ollama"
         \\
         \\[providers.ollama]
-        \\base_url = \"http://127.0.0.1:11434/v1\"
+        \\base_url = "http://127.0.0.1:11434/v1"
         \\
-        \\[models.\"ollama/llama3.1\"]
-        \\provider = \"ollama\"
+        \\[models."ollama/llama3.1"]
+        \\provider = "ollama"
         \\
         \\[agent]
-        \\git_worktree_on = [\"goal\", \"nope\"]
+        \\git_worktree_on = ["goal", "nope"]
         \\
         ,
     });
