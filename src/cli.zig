@@ -48,6 +48,7 @@ const filelock = @import("util/filelock.zig");
 const utf8 = @import("util/utf8.zig");
 const gate_checks = @import("gate/checks.zig");
 const schedule_cmd = @import("schedule/command.zig");
+const proxy = @import("serve/proxy.zig");
 const schedule_runner = @import("schedule/runner.zig");
 const schedule_store = @import("schedule/store.zig");
 const schedule_cron = @import("schedule/cron.zig");
@@ -187,6 +188,11 @@ pub const Options = struct {
     /// proxy, a `.lan` entry, a tailnet name. Names, unlike IP literals, are
     /// what DNS rebinding needs, which is why each one is opted into by hand.
     serve_as_hosts: []const []const u8 = &.{},
+    /// `serve --proxy` / `--no-proxy`. Null is "flag absent" so `[serve].proxy`
+    /// and `CLANKER_PROXY_PORT` still apply.
+    proxy: ?bool = null,
+    /// `serve --proxy-port <port>`. Null is "flag absent".
+    proxy_port: ?u16 = null,
     /// Set when `--help` followed a command: print that command's help rather
     /// than the whole list.
     help_for: ?Command = null,
@@ -447,6 +453,19 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else if (std.mem.eql(u8, a, "--host")) {
                 opts.host = try takeValue(args, &idx, inline_value, a, diag);
                 used = .host;
+            } else if (std.mem.eql(u8, a, "--proxy")) {
+                opts.proxy = true;
+                used = .proxy;
+            } else if (std.mem.eql(u8, a, "--no-proxy")) {
+                opts.proxy = false;
+                used = .proxy;
+            } else if (std.mem.eql(u8, a, "--proxy-port")) {
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                opts.proxy_port = std.fmt.parseInt(u16, v, 10) catch {
+                    setDiag(diag, v);
+                    return error.BadPort;
+                };
+                used = .proxy_port;
             } else if (std.mem.eql(u8, a, "--serve-as")) {
                 // Repeatable, and not comma-split, for the same reason `--with`
                 // is not: one flag per name is what makes the whole policy
@@ -1069,7 +1088,7 @@ pub fn suggestFlag(input: []const u8) ?[]const u8 {
     return best;
 }
 
-const extra_flag_spellings = [_][]const u8{ "--verbose", "--help", "--version", "--no-worktree", "--port" };
+const extra_flag_spellings = [_][]const u8{ "--verbose", "--help", "--version", "--no-worktree", "--port", "--no-proxy" };
 
 fn primaryFlagName(f: Flag) []const u8 {
     const n = f.name();
@@ -1171,6 +1190,8 @@ const Flag = enum {
     webui_port,
     host,
     serve_as,
+    proxy,
+    proxy_port,
     yes,
     research_target,
     research_harness,
@@ -1212,6 +1233,8 @@ const Flag = enum {
             .webui_port => "--webui-port",
             .host => "--host",
             .serve_as => "--serve-as",
+            .proxy => "--proxy",
+            .proxy_port => "--proxy-port",
             .yes => "--yes",
             .research_target => "--target",
             .research_harness => "--harness",
@@ -1259,6 +1282,8 @@ const Flag = enum {
             .webui_port => "web UI listen port (default 17921; also [serve].webui_port, CLANKER_WEBUI_PORT)",
             .host => "interface to bind; default 127.0.0.1, 0.0.0.0 reaches the LAN",
             .serve_as => "a hostname this server may present itself as; repeatable",
+            .proxy => "mount the OpenAI/Anthropic compatibility proxy at /proxy/v1 (--no-proxy forces off)",
+            .proxy_port => "optional dedicated proxy port; /v1 at the root when it differs from --webui-port",
             .yes => "confirm destructive actions without prompting",
             .research_target => "file the agent may edit; repeatable, comma-separated",
             .research_harness => "shell command whose output contains the metric",

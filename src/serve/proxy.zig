@@ -63,6 +63,22 @@ pub const Ctx = struct {
     stream: std.Io.net.Stream,
 };
 
+/// 401 from `handleConnection` before CSRF, so an SDK error parser works.
+pub fn writeAuthError(stream: std.Io.net.Stream, path: []const u8, headers_raw: []const u8) u16 {
+    return writeEnvelope(.{
+        .io = undefined,
+        .gpa = undefined,
+        .cfg = undefined,
+        .environ_map = undefined,
+        .method = "GET",
+        .path = path,
+        .query = "",
+        .headers_raw = headers_raw,
+        .body = "",
+        .stream = stream,
+    }, 401, "invalid_api_key", "Invalid API key");
+}
+
 /// Dispatch one proxy request. Returns the inbound HTTP status written.
 pub fn handle(ctx: Ctx) u16 {
     if (!std.mem.startsWith(u8, ctx.path, "/v1")) {
