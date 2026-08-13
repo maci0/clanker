@@ -22,7 +22,10 @@ through a gated loop. Follow these conventions when changing this codebase.
   `std.json.Stringify` + `parseFromSliceLeaky`, `std.ArrayList` with
   `.empty` + `append(alloc, ...)`. `@intFromFloat` is `@trunc` (or `@floor`/
   `@round`) with an integer dest type; `@trunc(opt orelse 800)` treats the
-  default as comptime_float, so bind the `f64` first.
+  default as comptime_float, so bind the `f64` first. `@intCast` of a
+  `jsonInt` into `u32`/`u64` wraps a negative in ReleaseFast (`max_tokens
+  = -1` became a 4G completion cap); unsigned config ints go through
+  `jsonUnsigned`.
 - No libc-dependent code in the harness beyond what the build links.
 - Allocators are explicit; arena for run-scoped data, gpa for ownership.
 - New code must be `zig fmt` clean (the improve gate auto-formats and checks).
