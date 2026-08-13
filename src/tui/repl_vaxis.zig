@@ -401,6 +401,11 @@ fn isErrorLine(text: []const u8) bool {
     return std.mem.startsWith(u8, text, "error:");
 }
 
+fn appendDimBlock(arena: std.mem.Allocator, lines: *std.ArrayList(Line), text: []const u8) void {
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |line| lines.append(arena, .{ .text = line, .dim = true }) catch {};
+}
+
 test "TUI error lines use the CLI error prefix" {
     try std.testing.expect(isErrorLine("error: unknown command: /modle"));
     try std.testing.expect(isErrorLine("error: ProviderRefused"));
@@ -658,6 +663,36 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/theme", .takes_args = true, .arg_hint = "[name]", .help = "list or switch color theme (mocha, latte, tokyonight, ...)", .action = .theme },
     .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
 };
+
+const arena_command_help =
+    \\usage: /arena "<question>" --for "<stance>" --against "<stance>" [--rounds N] [--judge self|third]
+    \\       /arena "<question>" --position "<stance>" --position "<stance>" [--position "<stance>"]...
+    \\       /arena "<question>" --defend <text|file> --alternative <text|file>
+    \\  pairwise debates accept --for-provider, --against-provider, and --judge-provider
+    \\  battle royale repeats --position 3-8 times; HP loss eliminates combatants until one remains
+    \\  design review reads file arguments and preserves their paths in the verdict
+    \\  each round is one model call per surviving combatant, plus judge calls with --judge third
+;
+
+const compare_command_help =
+    \\usage: /compare "<prompt>" [--with <provider[@model]>]... [--judge <p>|auto|none] [--synthesize] [--reveal]
+    \\  every model answers the same prompt at once; the answers come back as A, B, C
+    \\  with nothing saying which model wrote which, so the pick is on the answer
+    \\  --with repeats 2-8 times; with none, every configured provider enters
+    \\  --synthesize adds a merged answer; --reveal prints the label-to-model key
+    \\  /compare --list                    past comparisons
+    \\  /compare --show <id> [--pick <A>]  read one back, and record your pick
+    \\  example: /compare "rewrite this error message" --with deepseek --with kimi-k3
+;
+
+test "TUI arena and compare help cover their CLI modes" {
+    for (.{ "--position", "--defend", "--alternative", "--judge-provider" }) |flag| {
+        try std.testing.expect(std.mem.find(u8, arena_command_help, flag) != null);
+    }
+    for (.{ "--synthesize", "--reveal", "--show", "--pick" }) |flag| {
+        try std.testing.expect(std.mem.find(u8, compare_command_help, flag) != null);
+    }
+}
 
 /// One row of the command palette: a registry entry with its display row and
 /// the text the fuzzy filter matches against, both built once at startup.
@@ -1813,11 +1848,7 @@ const Model = struct {
             // transcript is what lands in the turn, verdict block included.
             .arena => {
                 if (pc.args.len == 0 or std.mem.eql(u8, pc.args, "--help") or std.mem.eql(u8, pc.args, "-h")) {
-                    self.lines.append(self.arena, .{ .text = "usage: /arena \"<question>\" --for \"<stance>\" --against \"<stance>\" [--rounds N] [--judge self|third]", .dim = true }) catch {};
-                    self.lines.append(self.arena, .{ .text = "  two combatants argue opposing positions, each seeing every prior move, until a verdict", .dim = true }) catch {};
-                    self.lines.append(self.arena, .{ .text = "  --for-provider / --against-provider pick who argues each side; --judge third pays for a neutral scorer", .dim = true }) catch {};
-                    self.lines.append(self.arena, .{ .text = "  example: /arena \"queue or direct calls?\" --for \"use a message queue\" --against \"use direct calls\"", .dim = true }) catch {};
-                    self.lines.append(self.arena, .{ .text = "  each round is one model call per side, so keep --rounds small", .dim = true }) catch {};
+                    appendDimBlock(self.arena, &self.lines, arena_command_help);
                     return;
                 }
                 const prompt = std.fmt.allocPrint(
@@ -1826,8 +1857,12 @@ const Model = struct {
                         "Call the `arena` tool exactly once, mapping the flags onto its input fields " ++
                         "(--for -> \"for\", --against -> \"against\", --rounds -> \"max_rounds\", " ++
                         "--judge -> \"judge\", --for-provider -> \"provider_for\", " ++
-                        "--against-provider -> \"provider_against\", --judge-provider -> \"judge_provider\"), " ++
-                        "with the quoted text before the first flag as \"question\". Then print the tool's " ++
+                        "--against-provider -> \"provider_against\", --judge-provider -> \"judge_provider\", " ++
+                        "repeated --position -> the \"positions\" array, --defend -> \"defend\", and " ++
+                        "--alternative -> \"alternative\"). For --defend/--alternative, when a value is an " ++
+                        "existing file, read it into the field and also pass its path as \"defend_path\" or " ++
+                        "\"alternative_path\". Do not combine pairwise, positions, and design-review modes. " ++
+                        "Use the quoted text before the first flag as \"question\". Then print the tool's " ++
                         "\"text\" field verbatim as your whole answer. Do not summarize it, re-score the " ++
                         "match, or add commentary; the transcript and verdict are the result.",
                     .{pc.args},
@@ -1898,13 +1933,7 @@ const Model = struct {
 
         switch (parseCompareCommand(argv)) {
             .usage => {
-                self.lines.append(self.arena, .{ .text = "usage: /compare \"<prompt>\" [--with <provider[@model]>]... [--judge <p>|auto|none] [--synthesize]", .dim = true }) catch {};
-                self.lines.append(self.arena, .{ .text = "  every model answers the same prompt at once; the answers come back as A, B, C", .dim = true }) catch {};
-                self.lines.append(self.arena, .{ .text = "  with nothing saying which model wrote which, so the pick is on the answer", .dim = true }) catch {};
-                self.lines.append(self.arena, .{ .text = "  --with repeats 2-8 times; with none, every configured provider enters", .dim = true }) catch {};
-                self.lines.append(self.arena, .{ .text = "  /compare --list                    past comparisons", .dim = true }) catch {};
-                self.lines.append(self.arena, .{ .text = "  /compare --show <id> [--pick <A>]  read one back, and record your pick", .dim = true }) catch {};
-                self.lines.append(self.arena, .{ .text = "  example: /compare \"rewrite this error message\" --with deepseek --with kimi-k3", .dim = true }) catch {};
+                appendDimBlock(self.arena, &self.lines, compare_command_help);
             },
             // No fields at all is the compare tool's own listing input.
             .list => _ = self.runToolJson("compare", "{}"),
