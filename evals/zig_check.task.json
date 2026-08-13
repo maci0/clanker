@@ -1,7 +1,7 @@
 {
   "name": "zig_check",
   "kind": "task",
-  "description": "zig_check must run zig ast-check on a single file and report the verdict. The file asserted is src/main.zig, which the fmt and build gates keep permanently parseable, so the expectation is content-independent: a known-good file must come back ok regardless of what the file says that week. Exercises the exec_allow path (zig) with fs_prefixes of \".\", the narrowest write-free exec grant a tool carries.",
+  "description": "zig_check must run zig ast-check on a single file and report the verdict. The file asserted is src/main.zig, which the fmt and build gates keep permanently parseable, so the expectation is content-independent: a known-good file must come back ok regardless of what the file says that week. Exercises the exec_allow path (zig) with an empty fs_prefixes (the file is an exec argument, not a ck_fs_* path).",
   "prompt": "Use the zig_check tool on file \"src/main.zig\" without the fmt option. Look at the tool's JSON result and reply with only the value of its \"ok\" field: true or false.",
   "requires_tool": "zig_check",
   "criteria": [

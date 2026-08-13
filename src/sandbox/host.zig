@@ -2892,7 +2892,7 @@ fn uvVerbAllowed(argv: []const []const u8) bool {
 /// Host roots a sandboxed argv must never name. `/foo/` as an rg regex is not
 /// one of these; `/etc/passwd` and `/home/me/.env` are.
 const host_abs_roots = [_][]const u8{
-    "/etc", "/home", "/usr", "/var", "/tmp", "/root", "/opt",
+    "/etc", "/home", "/usr", "/var", "/tmp",  "/root", "/opt",
     "/dev", "/proc", "/sys", "/run", "/boot",
 };
 
@@ -2914,12 +2914,28 @@ fn pathFromExecArg(arg: []const u8) []const u8 {
     return arg;
 }
 
+fn isSearchCmd(cmd: []const u8) bool {
+    return std.mem.eql(u8, cmd, "rg") or std.mem.eql(u8, cmd, "ast-grep") or std.mem.eql(u8, cmd, "semcode");
+}
+
 /// An exec argument that reaches outside the sandbox the same way a ck_fs_*
 /// path would if it skipped safeJoin: a host-absolute root, or a `..`
-/// component. argv[0] is the resolved command and is skipped. `a..b` as an
-/// rg pattern is not a path (argStepsUpward requires a slash next to `..`).
-fn execArgPathDenied(argv: []const []const u8) ?[]const u8 {
+/// component. argv[0] is the resolved command and is skipped.
+///
+/// Search tools (`rg`, `ast-grep`, `semcode`) treat most arguments as
+/// patterns, so `..` is only checked on the last argument (the path). A
+/// host-absolute root is still refused in every argument: `/etc/passwd` is
+/// never a regex we need to search for.
+fn execArgPathDenied(cmd: []const u8, argv: []const []const u8) ?[]const u8 {
     if (argv.len < 2) return null;
+    if (isSearchCmd(cmd)) {
+        for (argv[1..]) |arg| {
+            if (startsWithHostRoot(pathFromExecArg(arg))) return arg;
+        }
+        const last = pathFromExecArg(argv[argv.len - 1]);
+        if (argStepsUpward(last)) return argv[argv.len - 1];
+        return null;
+    }
     for (argv[1..]) |arg| {
         const path = pathFromExecArg(arg);
         if (path.len == 0) continue;
@@ -3095,7 +3111,7 @@ pub fn execDenial(sb: *const Sandbox, cmd: []const u8, argv: []const []const u8)
     // allowed command (rg, git -C, uv, zig) with a host-absolute or `..`
     // argument would read or write outside fs_prefixes. Checked ahead of
     // exec_pattern_allow so a pattern cannot grant `/etc/passwd`.
-    if (execArgPathDenied(argv)) |arg| return .{ .host_path = arg };
+    if (execArgPathDenied(cmd, argv)) |arg| return .{ .host_path = arg };
 
     var join_buf: [4096]u8 = undefined;
     const policy = execPolicyFor(sb, argv, &join_buf);
@@ -4565,8 +4581,10 @@ test "execDenial: the argv-level gate ckExec and the REPL escape share" {
     try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "-C", "/home/me", "status" }).? == .host_path);
     try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "--git-dir=/etc/foo", "status" }).? == .host_path);
     try std.testing.expect(execDenial(&sb, "rg", &.{ "/usr/bin/rg", "needle", "src/../.env" }).? == .host_path);
-    // An rg regex that merely starts with '/' is not a host root.
+    // An rg regex that merely starts with '/' is not a host root, and `..`
+    // in a pattern (not the last/path argument) is ordinary regex syntax.
     try std.testing.expect(execDenial(&sb, "rg", &.{ "/usr/bin/rg", "/foo/", "src" }) == null);
+    try std.testing.expect(execDenial(&sb, "rg", &.{ "/usr/bin/rg", "foo/../bar", "src" }) == null);
 
     try std.testing.expect(execDenial(&sb, "zig", &.{ "/usr/bin/zig", "ast-check", "src/main.zig" }) == null);
     try std.testing.expect(execDenial(&sb, "zig", &.{ "/usr/bin/zig", "fmt", "--check", "src" }) == null);

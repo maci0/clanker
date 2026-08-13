@@ -516,8 +516,8 @@ changes as tools are added.
 | `docker` | none | Query the local Docker daemon over its Unix socket |
 | `peers` | none — reads clanker's own config through the host (ck_harness_config) | Scan peer agent cards (up/down) or post a message to one peer |
 | `opencv` | none | Image analysis: size/brightness/sharpness, Canny edges, contours, faces, grayscale, resize |
-| `zig_check` | `.` | Fast per-file `zig ast-check` and format check, without the full gate |
-| `test_file` | `.` | Run one Zig test file, optionally with `--test-filter` |
+| `zig_check` | none | Fast per-file `zig ast-check` and format check, without the full gate |
+| `test_file` | none | Run one Zig test file, optionally with `--test-filter` |
 | `config_view` | `config.toml` via direct file read for the whole-dump path; structured fields via ck_harness_config | Dump the effective config: providers, models, modules, budgets |
 | `roadmap` | `docs/` | Read the roadmap and list the planned (unchecked) items |
 | `history` | `state/` | Review the improve history: successes, failures, summaries |
