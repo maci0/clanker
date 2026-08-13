@@ -1384,6 +1384,105 @@ fn dockerAccessAllowed(sb: *const Sandbox) bool {
     return std.mem.eql(u8, sb.tool_self_name, "docker");
 }
 
+/// Privileged one-shot kernel eval. Import existing is not a grant: only the
+/// `kernel` guest may call this, and only when `kernel.enabled` is true.
+pub fn ckKernel(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
+    const h = getHost(caller);
+    if (!std.mem.eql(u8, h.sandbox.tool_self_name, "kernel")) {
+        log.log(.warn, "[sandbox] ck_kernel denied for tool '{s}'", .{h.sandbox.tool_self_name});
+        return Err.denied;
+    }
+    const cfg = h.sandbox.cfg orelse return Err.denied;
+    if (!cfg.kernel.enabled) return Err.denied;
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const json_input = sliceOf(bytes, ptr, len) orelse return Err.invalid;
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, json_input, .{}) catch return Err.invalid;
+    const obj = switch (parsed) {
+        .object => |o| o,
+        else => return Err.invalid,
+    };
+    const kind = switch (obj.get("kernel") orelse std.json.Value{ .string = "python" }) {
+        .string => |s| s,
+        else => "python",
+    };
+    const cell = switch (obj.get("cell") orelse return Err.invalid) {
+        .string => |s| s,
+        else => return Err.invalid,
+    };
+    if (!std.mem.eql(u8, kind, "python")) {
+        const msg = "{\"ok\":false,\"error\":\"js kernel not started: bun worker is still landing\"}";
+        return h.writeResult(bytes, msg);
+    }
+    const out = runPythonCell(h.sandbox, arena, cell) catch |err| {
+        const msg = std.fmt.allocPrint(arena, "{{\"ok\":false,\"error\":\"{s}\"}}", .{@errorName(err)}) catch
+            "{\"ok\":false,\"error\":\"kernel failed\"}";
+        return h.writeResult(bytes, msg);
+    };
+    return h.writeResult(bytes, out);
+}
+
+fn runPythonCell(sb: *const Sandbox, arena: std.mem.Allocator, cell: []const u8) ![]const u8 {
+    const script =
+        \\import ast, io, json, sys, traceback
+        \\src = sys.stdin.read()
+        \\stdout = io.StringIO()
+        \\stderr = io.StringIO()
+        \\result = None
+        \\ok = True
+        \\try:
+        \\    tree = ast.parse(src, mode="exec")
+        \\    body, last = (tree.body[:-1], tree.body[-1]) if tree.body else ([], None)
+        \\    g = {"__name__": "__main__"}
+        \\    if body:
+        \\        exec(compile(ast.Module(body=body, type_ignores=[]), "<cell>", "exec"), g, g)
+        \\    if last is not None:
+        \\        if isinstance(last, ast.Expr):
+        \\            result = eval(compile(ast.Expression(last.value), "<cell>", "eval"), g, g)
+        \\        else:
+        \\            exec(compile(ast.Module(body=[last], type_ignores=[]), "<cell>", "exec"), g, g)
+        \\except Exception:
+        \\    ok = False
+        \\    traceback.print_exc(file=stderr)
+        \\print(json.dumps({"ok": ok, "stdout": stdout.getvalue(), "stderr": stderr.getvalue(), "result": None if result is None else repr(result)}))
+    ;
+    var child = std.process.spawn(sb.io, .{
+        .argv = &.{ "python3", "-c", script },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    }) catch |err| switch (err) {
+        error.FileNotFound => return error.Python3NotFound,
+        else => return err,
+    };
+    defer child.kill(sb.io);
+    if (child.stdin) |stdin_file| {
+        var wbuf: [4096]u8 = undefined;
+        var writer = stdin_file.writer(sb.io, &wbuf);
+        writer.interface.writeAll(cell) catch {};
+        writer.interface.flush() catch {};
+        stdin_file.close(sb.io);
+        child.stdin = null;
+    }
+    var out: std.ArrayList(u8) = .empty;
+    if (child.stdout) |stdout_file| {
+        var rbuf: [8192]u8 = undefined;
+        var reader = stdout_file.reader(sb.io, &rbuf);
+        while (true) {
+            const chunk = reader.interface.peekGreedy(1) catch break;
+            try out.appendSlice(arena, chunk);
+            reader.interface.toss(chunk.len);
+            if (out.items.len > 512 * 1024) break;
+        }
+    }
+    _ = child.wait(sb.io) catch {};
+    if (out.items.len == 0) return error.Python3NotFound;
+    return out.items;
+}
+
 fn methodFromDockerInput(obj: std.json.ObjectMap) []const u8 {
     const value = obj.get("method") orelse return "GET";
     return if (value == .string) value.string else "";
@@ -3355,6 +3454,7 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     linker.defineFuncCtx("env", "ck_swarm", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckSwarm) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_ask", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckAsk) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_docker", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckDocker) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_kernel", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckKernel) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_llm", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckLlm) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_llm_many", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckLlmMany) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_chat", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckChat) catch return Err.invalid;

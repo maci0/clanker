@@ -31,6 +31,7 @@ extern fn ck_fs_list(path_ptr: u32, path_len: u32) u32;
 extern fn ck_getenv(name_ptr: u32, name_len: u32) u32;
 extern fn ck_exec(argv_ptr: u32, argv_len: u32) u32;
 extern fn ck_docker(req_ptr: u32, req_len: u32) u32;
+extern fn ck_kernel(req_ptr: u32, req_len: u32) u32;
 extern fn ck_llm(prompt_ptr: u32, prompt_len: u32) u32;
 extern fn ck_llm_many(req_ptr: u32, req_len: u32) u32;
 extern fn ck_chat(op_ptr: u32, op_len: u32) u32;
@@ -840,6 +841,11 @@ pub const DockerError = error{ OutOfMemory, WriteFailed, SandboxDenied, InvalidA
 
 /// Calls the harness's Docker-socket host function with a JSON request
 /// {"method": "...", "path": "..."}; returns the raw response body.
+pub fn kernelEval(req: []const u8) FsError![]const u8 {
+    const d = sliceToMem(req);
+    return fsPathQuery(ck_kernel(d.ptr, d.len));
+}
+
 pub fn dockerRequest(method: []const u8, path: []const u8) DockerError![]const u8 {
     const wbuf = std.heap.wasm_allocator.alloc(u8, 8 * 1024) catch return error.OutOfMemory;
     defer std.heap.wasm_allocator.free(wbuf);
