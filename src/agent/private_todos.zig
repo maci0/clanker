@@ -57,8 +57,7 @@ pub const List = struct {
         self.items.deinit(self.alloc);
     }
 
-    fn find(self: *List, arena: std.mem.Allocator, id: []const u8) !?*Item {
-        _ = arena;
+    fn find(self: *List, id: []const u8) ?*Item {
         if (id.len < 2 or id[0] != 'p') return null;
         const wanted = std.fmt.parseInt(u32, id[1..], 10) catch return null;
         for (self.items.items) |*it| {
@@ -109,7 +108,7 @@ pub fn applyTodoOp(
     } else if (std.mem.eql(u8, op, "todo_claim") or std.mem.eql(u8, op, "todo_close")) {
         const id = todo_id orelse "";
         if (id.len == 0) return fail(arena, "this op needs \\\"todo\\\" (an id from todo_list)");
-        const it = (try list.find(arena, id)) orelse
+        const it = list.find(id) orelse
             return fail(arena, "unknown todo id in your private list; call todo_list first");
         if (std.mem.eql(u8, op, "todo_claim")) {
             if (!it.closed and !it.claimed) {
