@@ -20,6 +20,29 @@ clanker.registerView({
     var list = api.el("div", "activity-list");
     container.appendChild(list);
 
+    /// A card that has never been given a title still has to be announceable,
+    /// so the button falls back to naming the card by id rather than being an
+    /// unlabelled target.
+    function cardLabel(entry) {
+      if (entry.card && entry.card.trim()) return entry.card;
+      return entry.id ? "card " + entry.id : "an untitled card";
+    }
+
+    /// Open the card this entry belongs to. The board's own deep link is
+    /// `#board/<id>`, which app.js's hash router resolves by waiting for the
+    /// board to load and then opening that card — so this navigates rather
+    /// than reimplementing any of it. Previously this called showView("board")
+    /// and dropped the id, which switched views and left you to find the card
+    /// yourself, under a button whose title promised to open it.
+    function openCard(entry) {
+      if (!entry.id) { api.showView("board"); return; }
+      var want = "#board/" + encodeURIComponent(entry.id);
+      // Assigning an unchanged hash fires no hashchange, so nothing would
+      // happen; ask the host directly in that case.
+      if (window.location.hash === want) { api.showView("board"); return; }
+      window.location.hash = want;
+    }
+
     function draw(entries) {
       list.textContent = "";
       if (!entries.length) {
@@ -31,13 +54,23 @@ clanker.registerView({
         row.appendChild(api.el("span", "activity-when", api.fmt.time(e.ts)));
         row.appendChild(api.el("span", "activity-who", e.who || "someone"));
         row.appendChild(api.el("span", "activity-what", e.what));
+        var label = cardLabel(e);
         var card = api.el("button", "activity-card", e.card);
         card.type = "button";
         card.title = "Open this card on the board";
-        card.addEventListener("click", function () { api.showView("board"); });
+        card.setAttribute("aria-label", "Open " + label + " on the board");
+        card.addEventListener("click", function () { openCard(e); });
         row.appendChild(card);
         list.appendChild(row);
       });
+    }
+
+    /// The board could not be read. Said in the list as well as in the status
+    /// line, because leaving the previous timeline up made the view contradict
+    /// itself: rows describing work while the status said the load had failed.
+    function drawFailure(message) {
+      list.textContent = "";
+      list.appendChild(api.el("p", "run-empty", message));
     }
 
     function load() {
@@ -47,7 +80,7 @@ clanker.registerView({
           var entries = [];
           ((d.board && d.board.cards) || []).forEach(function (c) {
             (c.log || []).forEach(function (e) {
-              entries.push({ ts: e.ts, who: e.who, what: e.what, card: c.title });
+              entries.push({ ts: e.ts, who: e.who, what: e.what, card: c.title, id: c.id });
             });
           });
           // Newest first: coming back to a board, the last thing that happened
@@ -56,7 +89,10 @@ clanker.registerView({
           draw(entries);
           api.status(entries.length + (entries.length === 1 ? " entry." : " entries."));
         })
-        .catch(function (err) { api.status("Activity: " + err.message); })
+        .catch(function (err) {
+          drawFailure("Could not read the board: " + err.message);
+          api.status("Activity: " + err.message);
+        })
         .then(function () { refresh.disabled = false; });
     }
 
@@ -65,6 +101,7 @@ clanker.registerView({
     return load();
   },
   refresh: function () {
-    if (this.reload) this.reload();
+    if (this.reload) return this.reload();
+    return null;
   }
 });

@@ -141,3 +141,43 @@ while an action whose id does not land on the 1-in-3 leaves the floor clean.
 Against unmodified `main` the same harness fails 6 of the 15. Gate: `zig build`,
 `zig build tools`, `zig build test --summary all` — 163/163 steps, 2 skipped
 tests, the expected worktree pair.
+
+## The Activity timeline would not open the card it named (2026-08-13)
+
+Every row in the Activity timeline ends in a button carrying the card's title,
+with `title="Open this card on the board"`. It called
+`api.showView("board")` — and nothing else. It switched view and left you to
+find the card among all the others yourself, which on a board several clankers
+have been working is the whole reason you were reading the timeline. The button
+kept its promise as far as the word "board" and no further.
+
+The card's id was available and thrown away: `load()` folded each entry as
+`{ ts, who, what, card: c.title }`, keeping the title for display and dropping
+`c.id`. The board already has a deep link for this — `#board/<id>`, which
+`app.js`'s hash router resolves by waiting for the board to load and then
+opening that card, the same path `#arena/<id>` and `#compare/<id>` take. So the
+entry now carries its id and the button navigates to that link; nothing about
+opening a card is reimplemented here, and no host-side change was needed. An
+unchanged hash fires no `hashchange`, so that one case asks the host directly
+instead.
+
+A card with no title left the button with no accessible name at all — empty
+text, and an `aria-label` was never set. The plugin rules require every control
+to carry a visible label or an `aria-label`, so the button now always has one,
+falling back to naming the card by id.
+
+And a failed `/api/board` left the previous timeline on screen. `draw()` was
+only reached on success, so the rows kept describing work while the status line
+said the read had failed — the view contradicting itself, with no way to tell
+which half was current. A failure now replaces the list with what went wrong.
+
+### Verified
+
+`node` + the DOM stub driving the real `activity/app.js`, 16 assertions: one row
+per log entry across all cards, newest first, with the count announced; each
+button navigates to its *own* card's deep link rather than the first one's; no
+button is left without an accessible name and the untitled card's carries an
+`aria-label`; a failed refresh clears the stale rows, says why, leaves Refresh
+usable, and a later refresh recovers; and an empty board explains itself.
+Against unmodified `main` the same harness fails 6 of the 16. Gate: `zig build`,
+`zig build tools`, `zig build test --summary all`.
