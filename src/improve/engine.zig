@@ -83,6 +83,13 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     // removing it would look, to every other check, like a clean patch.
     .{ .file = "src/improve/engine.zig", .needle = "inert.classify(" },
     .{ .file = "src/improve/engine.zig", .needle = "self.valueRejection(" },
+    // The cached live-tree gate sweep is only sound while everything that
+    // changes that tree clears it. Deleting an `invalidateLiveGate()` call
+    // reads as harmless cleanup and makes the loop measurably faster, which
+    // is precisely the gradient caching introduces -- so the call sites are
+    // pinned here, and counted in "the cached gate sweep is dropped by
+    // everything that changes the live tree".
+    .{ .file = "src/improve/engine.zig", .needle = "self.invalidateLiveGate();" },
     // src/gate/checks.zig is deliberately outside the protected surface (so
     // clanker can keep strengthening the gates), which means a patch could
     // also gut buildGate/testGate/toolsGate's actual implementation there
@@ -333,6 +340,11 @@ pub const Engine = struct {
     /// or ran dry, which leaves the iteration exactly as it was before the
     /// plan phase existed.
     plan_current: []const u8 = "",
+    /// The last sweep of the selfhost gates over the LIVE tree, reused until
+    /// something changes that tree. Null means "not measured since the last
+    /// change"; see `liveGate` for why this is worth caching and
+    /// `invalidateLiveGate` for the two places that must clear it.
+    live_gate: ?LiveGate = null,
 
     /// Score bands for the focus block, highest first. A file the instruction
     /// names is the file being patched and goes in whatever its size; a file
@@ -935,6 +947,11 @@ pub const Engine = struct {
         log.log(.info, "gates green, promoting {d} file(s)", .{proposal.changes.len});
         const files = proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{};
         try self.hist.snapshot(id, files);
+        // From here the live tree is being rewritten, so whatever was measured
+        // of it no longer describes it. Cleared before the first write rather
+        // than after the last, so an error return partway through the set (or
+        // the restore that follows it) cannot leave a stale measurement behind.
+        self.invalidateLiveGate();
         for (proposal.changes) |c| {
             const src = try std.fmt.allocPrint(self.ctx.gpa, "{s}/{s}", .{ staging, c.file });
             defer self.ctx.gpa.free(src);
@@ -976,6 +993,13 @@ pub const Engine = struct {
             if (self.worktree) |wt| {
                 const msg = std.fmt.allocPrint(self.arena, "clanker: {s} [{s}]", .{ proposal.summary, id }) catch proposal.summary;
                 wt.mergeBack(self.ctx.gpa, self.ctx.io, msg);
+                // A non-fast-forward merge-back resyncs this worktree onto the
+                // merge commit, so the tree now also holds whatever else landed
+                // on the base branch since the branch was cut. `live` above was
+                // measured before that and is deliberately what history records
+                // for this change alone; it must not be what the next iteration
+                // reads back as the current state of the tree.
+                self.invalidateLiveGate();
             }
         }
         self.notifyPeers("improve", proposal.summary);
@@ -1516,14 +1540,73 @@ pub const Engine = struct {
         return .{ .name = name, .kind = kind };
     }
 
-    fn gateScore(self: *Engine) !struct { score: f64, total: usize } {
+    /// One sweep of the selfhost gates over the live tree: how many passed,
+    /// and the concatenated error tails of those that did not.
+    const LiveGate = struct {
+        passing: usize,
+        /// Arena-owned, so copying this struct out of the cache is free and
+        /// the text outlives the sweep that produced it.
+        tail: []const u8,
+    };
+
+    /// The live tree's gate state, measured at most once per change to it.
+    ///
+    /// Both callers used to sweep independently, every time: `gateErrorTail`
+    /// on *every attempt* of every iteration, and `gateScore` at run start,
+    /// after each promotion and at run end. Each sweep is a full `zig build`
+    /// + `zig build tools` + `zig build test`, and GateTimer measured the
+    /// gate cycle at ~85% of a 7-8 minute iteration. Since a failed attempt
+    /// only ever writes to `state/staging/<id>`, the live tree it was
+    /// measuring is byte-identical across all of them -- on a green tree the
+    /// whole of `gateErrorTail` was recomputing the constant string "all
+    /// gates pass", at the cost of building and testing the project.
+    ///
+    /// So measure once and reuse until something actually changes the tree.
+    /// A run of N iterations goes from ~N*attempts+promotions+2 sweeps to
+    /// 1+promotions.
+    fn liveGate(self: *Engine) !LiveGate {
+        if (self.live_gate) |g| {
+            log.log(.debug, "live gate: reusing the sweep from the last change to the tree ({d}/{d} passing)", .{ g.passing, gate_evals.len });
+            return g;
+        }
+        log.log(.debug, "live gate: measuring the tree", .{});
+
         var passing: usize = 0;
+        var buf: std.ArrayList(u8) = .empty;
         for (gate_evals) |name| {
             const e = gateEvalNamed(name);
             const res = try self.runGateEval(&e);
-            if (res.ok) passing += 1;
+            if (res.ok) {
+                passing += 1;
+            } else {
+                try buf.appendSlice(self.arena, res.detail);
+                try buf.append(self.arena, '\n');
+            }
         }
-        return .{ .score = @floatFromInt(passing), .total = gate_evals.len };
+        const g: LiveGate = .{
+            .passing = passing,
+            .tail = if (buf.items.len == 0) "all gates pass" else try buf.toOwnedSlice(self.arena),
+        };
+        self.live_gate = g;
+        return g;
+    }
+
+    /// Drops the cached sweep, forcing the next reader to re-measure.
+    ///
+    /// Must be called by everything that changes the live tree. Today that is
+    /// exactly two things, both in the promotion block: the `atomic_write` of
+    /// the promoted files, and `mergeBack` -- whose `resyncLocalBranch` does a
+    /// `git reset --hard` onto the merge commit, which folds in whatever else
+    /// landed on the base branch meanwhile (another session's work, in the
+    /// parallel case). Missing that second one would carry a pre-merge
+    /// measurement into an iteration running against a post-merge tree.
+    fn invalidateLiveGate(self: *Engine) void {
+        self.live_gate = null;
+    }
+
+    fn gateScore(self: *Engine) !struct { score: f64, total: usize } {
+        const g = try self.liveGate();
+        return .{ .score = @floatFromInt(g.passing), .total = gate_evals.len };
     }
 
     fn runGateEval(self: *Engine, e: *const scorers.Eval) !runner_mod.Result {
@@ -1540,17 +1623,8 @@ pub const Engine = struct {
     }
 
     fn gateErrorTail(self: *Engine) ![]const u8 {
-        var buf: std.ArrayList(u8) = .empty;
-        for (gate_evals) |name| {
-            const e = gateEvalNamed(name);
-            const res = try self.runGateEval(&e);
-            if (!res.ok) {
-                try buf.appendSlice(self.arena, res.detail);
-                try buf.append(self.arena, '\n');
-            }
-        }
-        if (buf.items.len == 0) return "all gates pass";
-        return buf.toOwnedSlice(self.arena);
+        const g = try self.liveGate();
+        return g.tail;
     }
 
     /// Real declarations for the std symbols a compile error complains about.
@@ -2985,6 +3059,80 @@ test "pruneStaging keeps the newest N and removes the rest" {
     try tmp.dir.access(io, "state/staging/imp-300", .{});
     // The non-imp directory is untouched.
     try tmp.dir.access(io, "state/staging/other-thing", .{});
+}
+
+test "the live gate sweep is measured once and reused until the tree changes" {
+    // Seeds the cache with a state the real tree cannot be in, so anything
+    // that re-measures instead of reading the cache is visible: a passing
+    // count of 0 paired with a tail that no gate produces. Re-measuring for
+    // real here would mean three full `zig build` invocations per assertion,
+    // which is the cost this cache exists to remove.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var cfg = config.Config{};
+    var provider = try config.Provider.single(arena, "p", "http://localhost", .openai_compat, "m", .{});
+
+    var hist = history_mod.History.init(std.testing.allocator, io, std.Io.Dir.cwd(), "state");
+    defer hist.deinit();
+    var engine = Engine{ .ctx = &ctx, .arena = arena, .provider = &provider, .cfg = &cfg, .hist = hist, .instructions = "" };
+
+    const sentinel = "sentinel: this tail came from the cache";
+    engine.live_gate = .{ .passing = 0, .tail = sentinel };
+
+    // Both readers go through the cache, and neither shells out to a gate.
+    const tail = try engine.gateErrorTail();
+    try std.testing.expectEqualStrings(sentinel, tail);
+    const score = try engine.gateScore();
+    try std.testing.expectEqual(@as(f64, 0), score.score);
+    try std.testing.expectEqual(gate_evals.len, score.total);
+
+    // Repeated reads keep hitting it; this is the per-attempt case, where the
+    // live tree provably has not moved because a failed attempt only ever
+    // writes into state/staging/<id>.
+    try std.testing.expectEqualStrings(sentinel, try engine.gateErrorTail());
+    try std.testing.expectEqualStrings(sentinel, try engine.gateErrorTail());
+
+    // And a change to the tree drops it, so the next read has to re-measure.
+    engine.invalidateLiveGate();
+    try std.testing.expect(engine.live_gate == null);
+}
+
+test "the cached gate sweep is dropped by everything that changes the live tree" {
+    // A correctness property that cannot be asserted by running the loop:
+    // promotion is the only thing that writes the live tree, and it does so
+    // in two distinct places. gate_invariants pins the call as a string, but
+    // a substring check cannot tell one surviving call site from two -- if a
+    // patch dropped either one, every needle would still match. So count
+    // them, and pin each to the block it belongs to.
+    //
+    // Scoped to improveOnce and below: this file's own test blocks quote the
+    // strings being searched for, and so does the gate_invariants entry that
+    // pins the call -- counting from the top of the file would find that
+    // needle as a third "call site".
+    const whole = @embedFile("engine.zig");
+    const body = whole[0..(std.mem.find(u8, whole, "\ntest \"") orelse whole.len)];
+    const src = body[(std.mem.find(u8, body, "fn improveOnce(self: *Engine") orelse return error.PromotionShapeChanged)..];
+
+    try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, src, "self.invalidateLiveGate();"));
+
+    // 1. Before the loop that writes promoted files into the live tree.
+    const snapshot_at = std.mem.find(u8, src, "try self.hist.snapshot(id, files);") orelse return error.PromotionShapeChanged;
+    const write_at = std.mem.find(u8, src, "atomic_write.writeFile(self.ctx.io, std.Io.Dir.cwd(), c.file, data)") orelse return error.PromotionShapeChanged;
+    const first = std.mem.find(u8, src[snapshot_at..], "self.invalidateLiveGate();") orelse return error.NoInvalidateBeforePromotionWrite;
+    try std.testing.expect(snapshot_at + first < write_at);
+
+    // 2. After merge-back, whose resyncLocalBranch does a `git reset --hard`
+    //    onto the merge commit and so can fold in another session's work.
+    const merge_at = std.mem.find(u8, src, "wt.mergeBack(self.ctx.gpa, self.ctx.io, msg);") orelse return error.PromotionShapeChanged;
+    try std.testing.expect(std.mem.find(u8, src[merge_at..], "self.invalidateLiveGate();") != null);
 }
 
 test "an Arena verdict cannot satisfy a gate or reject a proposal on its own" {
