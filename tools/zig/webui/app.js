@@ -10,7 +10,7 @@ import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as 
 import { metricsFor as graphMetricsFor, buildStages as graphBuildStages, graphSummaryText as graphSummaryTextMod, toDagInput as graphToDagInput, buildIncompleteNode as graphBuildIncompleteNode, buildNodeBox as graphBuildNodeBox, layoutGraph as graphLayoutGraph } from "./lib/graph.js";
 import { boardActionLine as boardActionLineMod } from "./lib/board.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
-import { clearMarks as searchClear, markMatches as searchMark } from "./core/search.js";
+import { clearMarks as searchClear, markMatches as searchMark, turnForMessage } from "./core/search.js";
 import { loadPrompts as compLoadPrompts, savePrompts as compSavePrompts, promptQuery as compPromptQuery, autoGrow as compAutoGrow, contextLabel as compContextLabel, transcriptMarkdown as compTranscriptMarkdown, downloadText as compDownloadText } from "./core/composer.js";
 import { nearBottom as scrollNearBottom, prefersReducedMotion as scrollPrefersReducedMotion, syncScrollButton as scrollSyncButton } from "./core/scroll.js";
 import { textPrompt as dialogTextPrompt, finishTextPrompt as dialogFinishTextPrompt, bindDialog as dialogBindDialog } from "./core/dialog.js";
@@ -634,29 +634,42 @@ function loadSessions() {
     });
 }
 
+/* Which message indices each rendered turn covers, in render order. Written
+   by renderSessionHistory, read by jumpToMessage: a search hit names a message
+   and the transcript is drawn in turns, so this is the only place that knows
+   how the one maps onto the other. Cleared with the transcript. */
+var replayedSpans = [];
+
 /* Replays a saved conversation into the transcript. Reuses the same turn
    card the live stream builds, so history and a just-finished turn are the
    same object rather than two renderings of the same thing that drift. */
 function renderSessionHistory(messages) {
   el.transcript.textContent = "";
+  replayedSpans = [];
   var pendingTurn = null;
   var lastTask = null;
-  messages.forEach(function (m) {
+  var span = null;
+  messages.forEach(function (m, idx) {
     if (m.role === "user") {
       // A question with no reply before the next one: close it off rather
       // than letting the next answer attach to the wrong question.
       if (pendingTurn) markTurnUnanswered(pendingTurn);
       lastTask = m.content;
       pendingTurn = createTurn(m.content);
+      span = { from: idx, to: idx };
+      replayedSpans.push(span);
       return;
     }
     if (!pendingTurn) {
       lastTask = null;
       pendingTurn = createTurn("(question not in this transcript)");
+      span = { from: idx, to: idx };
+      replayedSpans.push(span);
       var head = pendingTurn.root.querySelector(".turn-you");
       head.setAttribute("data-orphan", "true");
       head.querySelector(".turn-author").textContent = "clanker  ·  ";
     }
+    if (span) span.to = idx;
     appendText(pendingTurn, m.content, false);
     finalizeAnswer(pendingTurn);
     // The task is passed back so Run again and Edit & resend survive a reload;
@@ -665,6 +678,30 @@ function renderSessionHistory(messages) {
     pendingTurn = null;
   });
   if (pendingTurn) markTurnUnanswered(pendingTurn);
+}
+
+/* Scrolls the transcript to the turn holding message `index` and says which
+   one it is: the card is flagged for a moment, and the text that was searched
+   for is marked inside it. Used by the Search view, which until now could only
+   open the conversation and leave you at the top of it — on a long transcript
+   that is the same as not going there.
+
+   The mark reuses the transcript's own find-in-page highlighter, so a hit
+   found from Search looks exactly like one found with `/`, and the next `/`
+   clears it the same way. */
+function jumpToMessage(index, query) {
+  var turns = el.transcript.querySelectorAll(".turn");
+  var at = turnForMessage(replayedSpans, index);
+  if (at === -1 || !turns.length) return null;
+  var turn = turns[Math.min(at, turns.length - 1)];
+  clearMarks(el.transcript);
+  if (query) markMatches(turn, String(query).toLowerCase());
+  scrollTo(turn, "center");
+  // Removed on its own so a later jump to the same turn flags it again, and
+  // so the card does not stay singled out for the rest of the conversation.
+  turn.setAttribute("data-found", "true");
+  window.setTimeout(function () { turn.removeAttribute("data-found"); }, 2000);
+  return turn;
 }
 
 /* Appends a note about the turn's outcome into the answer itself. Inside the
@@ -684,8 +721,18 @@ function markTurnUnanswered(turn) {
   markTurn(turn, "No answer was recorded for this turn.");
 }
 
-function switchSession(id) {
-  if (id === sessionId) return;
+/* `jump`, when given, is `{ index, query }` from a Search hit: the message to
+   land on once the transcript is on screen. Passed in rather than read back
+   later because the scroll can only happen after the fetch resolves, and the
+   caller is gone by then. */
+function switchSession(id, jump) {
+  if (id === sessionId) {
+    // Already open. Still a jump — a hit in the conversation you are reading
+    // is the case where scrolling to it helps most, and refusing to move
+    // because nothing had to load reads as a dead link.
+    if (jump) jumpToMessage(jump.index, jump.query);
+    return;
+  }
   if (busy) {
     // Refused mid-run, so put the control back on the conversation that is
     // actually still running rather than leaving it pointing at one the
@@ -709,6 +756,7 @@ function switchSession(id) {
       syncTranscriptEmpty();
       var n = (data.messages || []).length;
       el.sessionStatus.textContent = "Loaded " + n + (n === 1 ? " message." : " messages.");
+      if (jump) jumpToMessage(jump.index, jump.query);
     })
     .catch(function (err) {
       var p = document.createElement("p");
@@ -4075,7 +4123,7 @@ var viewLoaders = {
       // Opening a hit is a conversation switch, which app.js owns: switchSession
       // refuses mid-run and puts the rail back, and the search view has no
       // business reimplementing that.
-      searchDeps({ openSession: function (id) { switchSession(id); showView("chat", true); } });
+      searchDeps({ openSession: function (id, jump) { switchSession(id, jump); showView("chat", true); } });
       searchBind();
     });
     return searchLoadView();

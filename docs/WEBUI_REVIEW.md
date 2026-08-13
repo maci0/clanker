@@ -662,7 +662,7 @@ conversation.
 - **The turn number is shown but not jumped to.** The transcript renders from
   the top and there is no per-turn anchor to scroll to, so saying where the
   match is beats pretending to navigate there. That anchor is the obvious next
-  slice.
+  slice. *(Built — see "Search hits land on the turn that matched" below.)*
 
 ### Verified
 
@@ -723,6 +723,60 @@ the listener calls `preventDefault`, one `POST` reaches `/api/prompts` and
 `/api/knowledge` respectively, and neither Create button carries a second
 `click` listener that would double-send. The same harness run against `main`
 fails 10 of its 12 assertions, so it is testing the fix and not the harness.
+Gate: `zig build`, `zig build tools`, `zig build test --summary all` —
+163/163 steps, 763/765 tests (2 skipped, the expected worktree pair).
+
+## Search hits land on the turn that matched (2026-08-13)
+
+The Search view shipped with the jump deliberately unwired, and said so: the
+transcript renders from the top and there was no per-turn anchor to scroll to,
+so a hit showed the turn number without following it. That is the right call
+for a view that would otherwise pretend to navigate — but it left the feature
+half-done. Finding the conversation is the easy half; on a forty-turn
+transcript, opening at the top is close to not going there at all.
+
+The anchor exists now. `/api/sessions/search` already returns `turn` as an
+index into the same `messages` array `/api/sessions/<id>` returns, so the two
+were always talking about the same array — nothing on the server changes.
+
+- **`core/search.js: turnForMessage(spans, index)`** — pure, the whole mapping.
+  A turn is a question plus everything answered before the next question, so it
+  covers a *run* of message indices, not one. Total by construction: an index
+  past the end (a conversation that grew since the search) resolves to the last
+  turn rather than to nothing, because roughly the right place beats not
+  moving; `-1` only when there are no turns.
+- **`app.js: renderSessionHistory`** — records `{ from, to }` per rendered turn
+  into `replayedSpans` as it replays, including the orphan-answer branch. The
+  one place that knows how messages map onto turn cards.
+- **`app.js: jumpToMessage(index, query)`** — resolves the span, scrolls the
+  card to centre, marks the query inside it with the transcript's own
+  find-in-page highlighter (so a hit found from Search looks exactly like one
+  found with `/`, and the next `/` clears it), and flags the card
+  `data-found` for two seconds.
+- **`switchSession(id, jump)`** — the target is passed in rather than read back
+  later, because the scroll can only happen once the fetch resolves and the
+  caller is gone by then. It also fires when the hit is in the conversation
+  already open: that is the case where scrolling helps most, and the early
+  `id === sessionId` return used to make it a dead link.
+- **`app.css`** — `.turn[data-found="true"]` gets the accent strip the live
+  turn uses, held rather than pulsing, over a wash that fades out. The wash is
+  decoration and is off under `prefers-reduced-motion`; the mark inside the
+  turn is what actually says where the match is, and that is never animated.
+
+The row's `aria-label` now names the turn it will open at, so the destination
+is announced before the click rather than discovered after it.
+
+### Verified
+
+`node` + a DOM stub driving the real modules. `turnForMessage` over a
+two-turn transcript where the second turn spans three messages: question,
+answer, a later message in the same turn, past-the-end, negative, empty, and
+null all resolve as documented. Driving the real `features/search.js`: a
+rendered hit's click reaches `openSession` carrying `{ index: 7, query:
+"needle" }` — the server's index, and the query that matched rather than
+whatever is in the box by the time the transcript loads. The `app.js` and
+`app.css` halves are checked as source shape, since importing `app.js` boots
+the page. Against `main` the same harness fails 14 of its 23 assertions.
 Gate: `zig build`, `zig build tools`, `zig build test --summary all` —
 163/163 steps, 763/765 tests (2 skipped, the expected worktree pair).
 

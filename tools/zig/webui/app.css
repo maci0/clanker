@@ -649,6 +649,27 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
   background: var(--accent);
   opacity: 0.9;
 }
+/* Arrived at from a Search hit. A scroll on its own does not say which turn
+   was the reason for it, so the card is named for a moment: the same accent
+   strip the live turn uses, held rather than pulsing, plus a wash that fades
+   out. Removed after two seconds by the code that set it, so nothing here has
+   to decide when the reader has seen it. */
+.turn[data-found="true"]::before {
+  content: "";
+  position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+  background: var(--accent);
+}
+.turn[data-found="true"] {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  animation: turn-found 2s ease-out forwards;
+}
+@keyframes turn-found {
+  from { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  to { background: transparent; }
+}
+/* The wash is decoration; the mark inside the turn is what actually says
+   where the match is, and that is not animated. */
+@media (prefers-reduced-motion: reduce) { .turn[data-found="true"] { animation: none; } }
 .turn-depth { display: none; }
 /* What was asked, set as the entry's heading: the text face, not mono,
    because it is prose and not a measurement. */

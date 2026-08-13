@@ -1,4 +1,24 @@
 // Vanilla, no bundler. Transcript search helpers — DOM helpers, no app state.
+
+/* A search hit names a *message* index, and the transcript is drawn in turns:
+   one question plus everything answered before the next question, so a turn
+   covers a run of message indices rather than one. `spans` is what
+   renderSessionHistory recorded — `{ from, to }` per rendered turn, in order —
+   and this is the lookup back.
+
+   Pure, and total: an index past the end (a conversation that grew since the
+   search, or a transcript the server trimmed) resolves to the last turn rather
+   than to nothing, because scrolling to roughly the right place beats
+   silently not moving. -1 only when there are no turns at all. */
+export function turnForMessage(spans, index) {
+  if (!spans || !spans.length) return -1;
+  if (typeof index !== "number" || !isFinite(index) || index < 0) return -1;
+  for (var i = 0; i < spans.length; i++) {
+    if (index >= spans[i].from && index <= spans[i].to) return i;
+  }
+  return spans.length - 1;
+}
+
 export function clearMarks(root) {
   var marks = root.querySelectorAll("mark");
   Array.prototype.forEach.call(marks, function (m) {
