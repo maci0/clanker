@@ -98,6 +98,9 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/gate/checks.zig", .needle = "if (problems.items.len > 0) {" },
     .{ .file = "src/gate/checks.zig", .needle = "exec_pattern_allow must not name git commands" },
     .{ .file = "src/gate/checks.zig", .needle = "capability_gate must not be disabled" },
+    .{ .file = "src/gate/checks.zig", .needle = "inert_gate must not be disabled" },
+    .{ .file = "src/gate/checks.zig", .needle = "max_consecutive_test_only must not be 0" },
+    .{ .file = "src/gate/checks.zig", .needle = "plan_phase must not be disabled" },
     // The root-level TOML check that catches a proposal replacing just a
     // value line without the section header. Without these, the detail
     // string can survive in dead code while the actual check is removed.
