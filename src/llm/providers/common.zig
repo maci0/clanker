@@ -116,3 +116,50 @@ test "a path override replaces the kind default and is slash-normalized" {
     defer gpa.free(overridden);
     try std.testing.expectEqualStrings("https://api.test/v2/chat", overridden);
 }
+
+test "writeSamplingParams fills the use-case table when nothing is configured" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const p = try config.Provider.single(arena, "p", "https://p.test", .openai_compat, "m", .{});
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = json.Stringify{ .writer = &out.writer };
+    try s.beginObject();
+    try writeSamplingParams(&s, .{ .provider = &p, .messages = &.{} });
+    try s.endObject();
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"temperature\":0.7") != null);
+}
+
+test "writeSamplingParams keeps an explicit model temperature" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var p = try config.Provider.single(arena, "p", "https://p.test", .openai_compat, "m", .{});
+    var it = p.models.iterator();
+    it.next().?.value_ptr.temperature = 0.2;
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = json.Stringify{ .writer = &out.writer };
+    try s.beginObject();
+    try writeSamplingParams(&s, .{ .provider = &p, .messages = &.{} });
+    try s.endObject();
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"temperature\":0.2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"temperature\":0.7") == null);
+}
+
+test "writeSamplingParams sends reasoning_effort for thinking models" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var p = try config.Provider.single(arena, "p", "https://p.test", .openai_compat, "m", .{});
+    var it = p.models.iterator();
+    const caps = try arena.alloc([]const u8, 1);
+    caps[0] = "thinking";
+    it.next().?.value_ptr.capabilities = caps;
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = json.Stringify{ .writer = &out.writer };
+    try s.beginObject();
+    try writeSamplingParams(&s, .{ .provider = &p, .messages = &.{} });
+    try s.endObject();
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"reasoning_effort\":\"medium\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "temperature") == null);
+}

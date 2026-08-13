@@ -44,7 +44,7 @@ and Implementation lists checkable file-level phases.
 | [0021](0021-smart-commit.md) | Smart commit | Draft | |
 | [0022](0022-out-of-tree-tools.md) | Out-of-tree tools | Shipped | `tools_dir` is a list; last-listed wins |
 | [0023](0023-webui-model-config.md) | Web UI model config | Shipped | Writes `config.local.toml` only |
-| [0024](0024-sampling-profiles.md) | Sampling profiles | Draft | After 0025 |
+| [0024](0024-sampling-profiles.md) | Sampling profiles | Shipped | Use-case table fills empty knobs |
 | [0025](0025-fallback-provider-chain.md) | Fallback provider chain | Shipped | Reactive list; vision path unchanged |
 | [0026](0026-llm-proxy.md) | LLM compatibility proxy | Draft | Independent of agent-loop drafts; four-PR plan |
 | [0027](0027-write-goal.md) | write-goal drafting | Draft | Field-list blocker; proof/stop_rule write-only |
@@ -54,12 +54,11 @@ and Implementation lists checkable file-level phases.
 Packaging and reliability first, then agent-loop quality, then heavy
 optional subsystems:
 
-1. **0024** — sampling profiles (unlocks 0020 auto thinking)
-2. **0020** — auto thinking (after 0024)
-3. **0013** — TTSR (substring engine)
-4. **0016** then **0017** — eval kernel, then DAP
-5. **0019** — `gh_read`
-6. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
+1. **0020** — auto thinking (classifier selects a 0024 row)
+2. **0013** — TTSR (substring engine)
+3. **0016** then **0017** — eval kernel, then DAP
+4. **0019** — `gh_read`
+5. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
 7. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
 8. **0027** — `write-goal` (field-list blocker still open)
 
