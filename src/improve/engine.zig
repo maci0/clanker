@@ -157,6 +157,12 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/improve/engine.zig", .needle = "cmdEvalShapeBroken(" },
     .{ .file = "src/improve/engine.zig", .needle = "buildZigShapeBroken(" },
     .{ .file = "src/improve/engine.zig", .needle = "stagedConfigTomlWeakened(" },
+    .{ .file = "src/improve/engine.zig", .needle = "checksZigShapeBroken(" },
+    // Needles still match if the real work is skipped by an early
+    // `return .{ .ok = true }` left above them as dead code. These pin
+    // the assignments the wrappers cannot reach around.
+    .{ .file = "src/gate/checks.zig", .needle = "hits += 1" },
+    .{ .file = "src/gate/checks.zig", .needle = "const ok = switch (result.term)" },
     .{ .file = "src/gate/checks.zig", .needle = "std.mem.startsWith(u8, s, \"git \")" },
     // lintGate splits forbidden markers so checks.zig doesn't flag itself;
     // only "TO"++"DO" had a needle, leaving the other three removable.
@@ -933,7 +939,7 @@ pub const Engine = struct {
         // an emptied test step) would otherwise land in the same pass.
         for (proposal.changes) |c| {
             const check: ?*const fn ([]const u8) ?[]const u8 =
-                if (std.mem.eql(u8, c.file, "src/config.zig")) &stagedConfigWeakened else if (std.mem.eql(u8, c.file, "src/cli.zig")) &cmdEvalShapeBroken else if (std.mem.eql(u8, c.file, "build.zig")) &buildZigShapeBroken else if (std.mem.eql(u8, c.file, "config.toml")) &stagedConfigTomlWeakened else null;
+                if (std.mem.eql(u8, c.file, "src/config.zig")) &stagedConfigWeakened else if (std.mem.eql(u8, c.file, "src/cli.zig")) &cmdEvalShapeBroken else if (std.mem.eql(u8, c.file, "build.zig")) &buildZigShapeBroken else if (std.mem.eql(u8, c.file, "config.toml")) &stagedConfigTomlWeakened else if (std.mem.eql(u8, c.file, "src/gate/checks.zig")) &checksZigShapeBroken else null;
             const checker = check orelse continue;
             const data = staged_dir.readFileAlloc(self.ctx.io, c.file, self.arena, .limited(1 << 22)) catch {
                 log.log(.warn, "proposal rejected: staged {s} unreadable", .{c.file});
@@ -2605,20 +2611,25 @@ fn stagedConfigWeakened(src: []const u8) ?[]const u8 {
 /// host still enforces via writable `configWeakeningGate`. Protected: a
 /// patch that guts that gate and sets `capability_gate = false` here in
 /// the same pass (or the next, after a rebuild) has to fail this too.
+///
+/// Matches `key = value` with any spaces or tabs around `=`. A literal
+/// `capability_gate = false` needle misses `capability_gate  =  false`,
+/// which TOML accepts and the next run would load as disabled.
 fn stagedConfigTomlWeakened(src: []const u8) ?[]const u8 {
+    const false_keys = [_][]const u8{
+        "capability_gate",
+        "inert_gate",
+        "plan_phase",
+        "git_commit",
+    };
+    for (false_keys) |key| {
+        if (tomlKeyEquals(src, key, "false")) return key;
+    }
+    if (tomlKeyEquals(src, "max_consecutive_test_only", "0"))
+        return "max_consecutive_test_only";
+    if (tomlKeyEquals(src, "git_remote_ops", "true"))
+        return "git_remote_ops";
     const forbidden = [_][]const u8{
-        "capability_gate = false",
-        "capability_gate=false",
-        "inert_gate = false",
-        "inert_gate=false",
-        "plan_phase = false",
-        "plan_phase=false",
-        "git_commit = false",
-        "git_commit=false",
-        "max_consecutive_test_only = 0",
-        "max_consecutive_test_only=0",
-        "git_remote_ops = true",
-        "git_remote_ops=true",
         "\"git ",
         "\"git\t",
         "\"git\"]",
@@ -2628,6 +2639,32 @@ fn stagedConfigTomlWeakened(src: []const u8) ?[]const u8 {
         if (std.mem.find(u8, src, needle) != null) return needle;
     }
     return null;
+}
+
+/// True when `src` assigns `value` to TOML `key`, ignoring spaces and tabs
+/// around `=`. Requires a non-identifier boundary on both sides so
+/// `capability_gate_extra = false` and `falsehood` do not match.
+fn tomlKeyEquals(src: []const u8, key: []const u8, value: []const u8) bool {
+    var i: usize = 0;
+    while (i + key.len <= src.len) : (i += 1) {
+        if (!std.mem.startsWith(u8, src[i..], key)) continue;
+        if (i > 0) {
+            const p = src[i - 1];
+            if (std.ascii.isAlphanumeric(p) or p == '_' or p == '-') continue;
+        }
+        var j = i + key.len;
+        while (j < src.len and (src[j] == ' ' or src[j] == '\t')) j += 1;
+        if (j >= src.len or src[j] != '=') continue;
+        j += 1;
+        while (j < src.len and (src[j] == ' ' or src[j] == '\t')) j += 1;
+        if (!std.mem.startsWith(u8, src[j..], value)) continue;
+        if (j + value.len < src.len) {
+            const n = src[j + value.len];
+            if (std.ascii.isAlphanumeric(n) or n == '_') continue;
+        }
+        return true;
+    }
+    return false;
 }
 
 /// cmdEval is writable. Needles keep `runAll` in the file; they do not
@@ -2680,6 +2717,68 @@ fn buildZigShapeBroken(src: []const u8) ?[]const u8 {
             found_test_dep = true;
     }
     if (!found_test_dep) return "test_step.dependOn(&run_tests.step);";
+    return null;
+}
+
+/// checks.zig is writable. Needles keep `return runZigArgs(...)` and
+/// `.ok = ok` in the file; they do not stop an early `return .{ .ok = true }`
+/// that leaves those strings as dead code. The host still runs the old
+/// gates this pass, so the gutted copy is what the *next* improve run
+/// compiles. Refuse that shape here, the same way cmdEvalShapeBroken does.
+fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
+    const gates = [_]struct {
+        sig: []const u8,
+        required: []const u8,
+        allow: []const []const u8,
+    }{
+        .{ .sig = "fn buildGate(", .required = "return runZigArgs(gpa, io, dir, argv.items, \"zig build\")", .allow = &.{} },
+        .{ .sig = "fn testGate(", .required = "return runZig(gpa, io, dir, &.{ \"build\", \"test\", \"--summary\", \"all\" }, \"zig build test\")", .allow = &.{} },
+        .{ .sig = "fn toolsGate(", .required = "return runZigArgs(gpa, io, dir, argv.items, \"zig build tools\")", .allow = &.{} },
+        .{ .sig = "fn fmtGate(", .required = "return runZigArgs(gpa, io, dir, argv.items, \"zig fmt --check\")", .allow = &.{ "changed_files.len == 0", "argv.items.len == 3" } },
+        .{ .sig = "fn lintGate(", .required = "hits += 1", .allow = &.{} },
+        .{ .sig = "fn toolDescriptorGate(", .required = "if (problems.items.len > 0)", .allow = &.{"FileNotFound"} },
+        .{ .sig = "fn gitDenyGuardGate(", .required = "hasGitInExecAllow(", .allow = &.{} },
+        .{ .sig = "fn configWeakeningGate(", .required = "weakensImprove(", .allow = &.{} },
+        .{ .sig = "fn runZigArgs(", .required = "std.process.run(", .allow = &.{} },
+    };
+    for (gates) |g| {
+        const body = fnBody(src, g.sig) orelse return g.sig;
+        if (gateReturnsBefore(body, g.required, g.allow)) |detail| return detail;
+    }
+    return null;
+}
+
+fn fnBody(src: []const u8, sig: []const u8) ?[]const u8 {
+    const start = std.mem.find(u8, src, sig) orelse return null;
+    const rest = src[start..];
+    var end: usize = rest.len;
+    for ([_][]const u8{ "\npub fn ", "\nfn ", "\ntest " }) |mark| {
+        if (std.mem.find(u8, rest[1..], mark)) |rel| {
+            const at = rel + 1;
+            if (at < end) end = at;
+        }
+    }
+    return rest[0..end];
+}
+
+fn gateReturnsBefore(body: []const u8, required: []const u8, allow: []const []const u8) ?[]const u8 {
+    const at = std.mem.find(u8, body, required) orelse return required;
+    var lines = std.mem.splitScalar(u8, body[0..at], '\n');
+    while (lines.next()) |line| {
+        const t = std.mem.trim(u8, line, " \t");
+        if (t.len == 0) continue;
+        if (std.mem.startsWith(u8, t, "//")) continue;
+        if (std.mem.find(u8, t, "return") == null) continue;
+        if (std.mem.find(u8, t, "return error.") != null) continue;
+        if (std.mem.find(u8, t, "return err") != null) continue;
+        if (std.mem.find(u8, t, "return .{ .ok = false") != null) continue;
+        var allowed = false;
+        for (allow) |a| {
+            if (std.mem.find(u8, t, a) != null) allowed = true;
+        }
+        if (allowed) continue;
+        return "gate returns before its load-bearing call";
+    }
     return null;
 }
 
@@ -2989,8 +3088,14 @@ test "the live config.toml does not disable improve gates" {
     defer gpa.free(src);
     try std.testing.expect(stagedConfigTomlWeakened(src) == null);
     try std.testing.expect(stagedConfigTomlWeakened("[improve]\ncapability_gate = false\n") != null);
+    try std.testing.expect(stagedConfigTomlWeakened("capability_gate  =  false") != null);
+    try std.testing.expect(stagedConfigTomlWeakened("capability_gate\t=\tfalse") != null);
+    try std.testing.expect(stagedConfigTomlWeakened("capability_gate=false") != null);
+    try std.testing.expect(stagedConfigTomlWeakened("capability_gate = true") == null);
+    try std.testing.expect(stagedConfigTomlWeakened("capability_gate_extra = false") == null);
     try std.testing.expect(stagedConfigTomlWeakened("exec_pattern_allow = [\"git push\"]") != null);
     try std.testing.expect(stagedConfigTomlWeakened("git_remote_ops = true\n") != null);
+    try std.testing.expect(stagedConfigTomlWeakened("git_remote_ops  =  true") != null);
 }
 
 test "the live cmdEval still runs every task and prints its real result" {
@@ -3031,6 +3136,75 @@ test "the live build.zig still wires test and tools steps" {
     const emptied = try std.mem.replaceOwned(u8, gpa, src, "test_step.dependOn(&run_tests.step);", "if (false) test_step.dependOn(&run_tests.step);");
     defer gpa.free(emptied);
     try std.testing.expectEqualStrings("test_step.dependOn(&run_tests.step);", buildZigShapeBroken(emptied).?);
+}
+
+test "the live checks.zig gate functions still reach their load-bearing calls" {
+    const src = @embedFile("../gate/checks.zig");
+    try std.testing.expect(checksZigShapeBroken(src) == null);
+
+    const early_build =
+        \\pub fn buildGate() !GateResult {
+        \\    return .{ .ok = true, .label = "zig build" };
+        \\    return runZigArgs(gpa, io, dir, argv.items, "zig build");
+        \\}
+        \\pub fn testGate() !GateResult {
+        \\    return runZig(gpa, io, dir, &.{ "build", "test", "--summary", "all" }, "zig build test");
+        \\}
+        \\pub fn toolsGate() !GateResult {
+        \\    return runZigArgs(gpa, io, dir, argv.items, "zig build tools");
+        \\}
+        \\pub fn fmtGate() !GateResult {
+        \\    return runZigArgs(gpa, io, dir, argv.items, "zig fmt --check");
+        \\}
+        \\pub fn lintGate() !GateResult {
+        \\    hits += 1
+        \\}
+        \\pub fn toolDescriptorGate() !GateResult {
+        \\    if (problems.items.len > 0) {}
+        \\}
+        \\pub fn gitDenyGuardGate() GateResult {
+        \\    hasGitInExecAllow(
+        \\}
+        \\pub fn configWeakeningGate() GateResult {
+        \\    weakensImprove(
+        \\}
+        \\fn runZigArgs() !GateResult {
+        \\    std.process.run(
+        \\}
+    ;
+    try std.testing.expectEqualStrings("gate returns before its load-bearing call", checksZigShapeBroken(early_build).?);
+
+    const early_run =
+        \\pub fn buildGate() !GateResult {
+        \\    return runZigArgs(gpa, io, dir, argv.items, "zig build");
+        \\}
+        \\pub fn testGate() !GateResult {
+        \\    return runZig(gpa, io, dir, &.{ "build", "test", "--summary", "all" }, "zig build test");
+        \\}
+        \\pub fn toolsGate() !GateResult {
+        \\    return runZigArgs(gpa, io, dir, argv.items, "zig build tools");
+        \\}
+        \\pub fn fmtGate() !GateResult {
+        \\    return runZigArgs(gpa, io, dir, argv.items, "zig fmt --check");
+        \\}
+        \\pub fn lintGate() !GateResult {
+        \\    hits += 1
+        \\}
+        \\pub fn toolDescriptorGate() !GateResult {
+        \\    if (problems.items.len > 0) {}
+        \\}
+        \\pub fn gitDenyGuardGate() GateResult {
+        \\    hasGitInExecAllow(
+        \\}
+        \\pub fn configWeakeningGate() GateResult {
+        \\    weakensImprove(
+        \\}
+        \\fn runZigArgs() !GateResult {
+        \\    return .{ .ok = true, .label = label };
+        \\    _ = std.process.run(
+        \\}
+    ;
+    try std.testing.expectEqualStrings("gate returns before its load-bearing call", checksZigShapeBroken(early_run).?);
 }
 
 test "capabilityLineReports requires a named PASS or FAIL line" {

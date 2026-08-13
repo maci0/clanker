@@ -805,7 +805,7 @@ The pre-`models`-table form is **rejected**, not silently accepted:
 | In the file | Result |
 |-------------|--------|
 | `model` on the provider | `ProviderLegacyModelFields` — declare the model in the top-level `models` table instead |
-| `max_tokens` / `context_window` / `temperature` / `reasoning_effort` on the provider | `ProviderLegacyModelFields` — move it into the model |
+| `max_tokens` / `context_window` / `temperature` / `top_p` / `reasoning_effort` on the provider | `ProviderLegacyModelFields` — move it into the model |
 | `models` nested under the provider (the pre-Kimi-restructure shape) | `ProviderLegacyModelFields` — move it to the top-level `models` table |
 | a `models."<provider>/<model>"` entry naming no `provider`, or whose key doesn't start with `"<provider>/"` | `MissingField` / `ModelKeyProviderMismatch` |
 | a `models` entry naming a `provider` that isn't declared under `providers` | `ModelUnknownProvider` |
@@ -817,7 +817,7 @@ Each names the provider (or model key) and the fix. All fail at startup rather t
 
 A key that doesn't belong in its section (a typo like `mx_iterations`) doesn't fail the load — it logs `unknown key '<name>' in <section> (ignored — check spelling)` and falls back to that field's default, so a misspelling is visible in the startup log instead of silently taking effect as "unset."
 
-Internally, `Config.load` distributes the top-level `models` table into each `Provider`'s own `models` map at load time (`distributeModels` in `src/config.zig`), so everything downstream — `Provider.activeModel()`, `resolveProvider`, the LLM client, the agent loop's context budgeting — still sees the same per-provider model map it always has. Only the on-disk shape changed; wasm guest tools that need structured config fields (`peers`, `providers`, `cmd_status`, `ask_user`) go through a `ck_harness_config` host function rather than reading `config.toml` themselves, since a `wasm32-freestanding` guest carries no TOML parser. `config_view` is the exception for its whole-file dump (raw bytes). Its `{"section":...}` filter reads the same host JSON, which includes every non-secret top-level section of the merged config (`agent` budgets, `modules`, `chatrooms`, `tui`, `improve`, `web`, `serve`, `memory`, `notify`) and still omits `api_key_env` and `service_account_file`.
+Internally, `Config.load` distributes the top-level `models` table into each `Provider`'s own `models` map at load time (`distributeModels` in `src/config.zig`), so everything downstream — `Provider.activeModel()`, `resolveProvider`, the LLM client, the agent loop's context budgeting — still sees the same per-provider model map it always has. Only the on-disk shape changed; wasm guest tools that need structured config fields (`peers`, `providers`, `cmd_status`, `ask_user`) go through a `ck_harness_config` host function rather than reading `config.toml` themselves, since a `wasm32-freestanding` guest carries no TOML parser. `config_view` is the exception for its whole-file dump (raw bytes). Its `{"section":...}` filter reads the same host JSON, which includes every non-secret top-level section of the merged config (`agent` budgets, `modules`, `models` as the reconstructed flat table, `chatrooms`, `tui`, `improve`, `web`, `serve`, `memory`, `notify`) and still omits `api_key_env` and `service_account_file`.
 
 Full example:
 
@@ -907,8 +907,6 @@ Fields:
 - `chatrooms`: default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag.
 - `modules`: feature on/off flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`). All default to `true`.
 - `improve`: settings for self-improvement.
-- `serve`: what `clanker serve` binds — `host` (default `127.0.0.1`), `webui_port` (default `17921`), and `serve_as` (an array of hostnames the server may present itself as). Field-merged, and the weakest of three layers: `CLANKER_HOST`/`CLANKER_WEBUI_PORT` override it, and `--host`/`--webui-port`/`--serve-as` override those. See [Binding and the trust model](#binding-and-the-trust-model).
-- `memory`: RAG backend. `backend` at the top level, then the `[memory.chunk]` (`size`, `overlap`, `strategy`), `[memory.embedding]` (`provider`, `model`) and `[memory.vector]` (`backend`, `top_k`, `threshold`) sub-tables. See [docs/configuration.md](configuration.md).
   - `max_context_bytes`: byte budget for the proposal context slice.
   - `max_context_requests`: how many `{"need": [...]}` context refills a run gets (default 3, 0 disables).
   - `capability_gate`: run the deterministic capability evals as a promotion gate (default true).
@@ -918,6 +916,8 @@ Fields:
   - `inert_gate`: reject changes classified as doing nothing observable (default true).
   - `max_consecutive_test_only`: how many test-only changes may land in a row before one must touch behavior (default 3).
   - `max_cache_bytes`: cap on the build cache before it is dropped, applied at the start of `improve-self` and of `clanker gate` — the two commands that compile repeatedly.
+- `serve`: what `clanker serve` binds — `host` (default `127.0.0.1`), `webui_port` (default `17921`), and `serve_as` (an array of hostnames the server may present itself as). Field-merged, and the weakest of three layers: `CLANKER_HOST`/`CLANKER_WEBUI_PORT` override it, and `--host`/`--webui-port`/`--serve-as` override those. See [Binding and the trust model](#binding-and-the-trust-model).
+- `memory`: RAG backend. `backend` at the top level, then the `[memory.chunk]` (`size`, `overlap`, `strategy`), `[memory.embedding]` (`provider`, `model`) and `[memory.vector]` (`backend`, `top_k`, `threshold`) sub-tables. See [docs/configuration.md](configuration.md).
 
 ### Environment variables
 

@@ -8,13 +8,13 @@
       "action": { "type": "string", "enum": ["chunk", "search", "embed"], "description": "chunk, search, or embed. If omitted: search when query is set, embed when texts is set, chunk when text is set." },
       "text": { "type": "string" },
       "texts": { "type": "array", "items": { "type": "string" } },
-      "size": { "type": "number" },
-      "overlap": { "type": "number" },
+      "size": { "type": "number", "minimum": 1, "maximum": 800, "description": "Maximum bytes per chunk (default 800). Values above 800 are capped by the guest." },
+      "overlap": { "type": "number", "minimum": 0, "maximum": 120, "description": "Bytes of overlap between chunks (default 120). Values above 120 are capped by the guest." },
       "query": { "type": "string" },
       "mode": { "type": "string", "enum": ["vector", "keyword"], "description": "Search mode: vector (default) or keyword." },
-      "top_k": { "type": "number" },
+      "top_k": { "type": "number", "minimum": 0, "description": "Maximum search hits to return (default 5)." },
       "threshold": { "type": "number" },
-      "dim": { "type": "number" },
+      "dim": { "type": "number", "minimum": 16, "maximum": 1024, "description": "Embedding dimensions (default 128). Values are clamped to 16-1024 by the guest." },
       "collection_ids": { "type": "array", "items": { "type": "string" } }
     }
   },

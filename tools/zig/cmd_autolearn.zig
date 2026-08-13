@@ -1,14 +1,19 @@
 //! cmd_autolearn: read state/autolearn.jsonl, aggregate usage observations
 //! into actionable roadmap items, and upsert an "## Autolearn" section into
 //! docs/ROADMAP.md.
-//! Input:  {} (no fields used)
-//! Output: {"ok": true, "text": "<the generated section>"}
+//! Input:  {"reset": bool}
+//! Output: {"ok": true, "text": "<the generated section>", "notice": "..."}
 
 const std = @import("std");
 const lib = @import("lib.zig");
 
 const event_path = "state/autolearn.jsonl";
+const archive_path = "state/autolearn.old.jsonl";
 const roadmap_path = "docs/ROADMAP.md";
+
+const Request = struct {
+    reset: bool = false,
+};
 
 /// Only events this recent count toward roadmap items. The log keeps full
 /// history, but a suggestion generated from a failure fixed days ago is
@@ -46,8 +51,16 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    _ = input;
     const alloc = lib.alloc;
+    const req = try std.json.parseFromSliceLeaky(Request, alloc, input, .{ .ignore_unknown_fields = true });
+    var notice: []const u8 = "";
+    if (req.reset) {
+        lib.fsRename(event_path, archive_path) catch |err| switch (err) {
+            error.NotFound => notice = "No event log to reset (state/autolearn.jsonl not found)",
+            else => return lib.failErr(out, err, "archiving the autolearn event log"),
+        };
+        if (notice.len == 0) notice = "Event log archived to state/autolearn.old.jsonl";
+    }
 
     var unknown: std.StringArrayHashMapUnmanaged(Count) = .empty;
     var errors: std.StringArrayHashMapUnmanaged(Count) = .empty;
@@ -175,7 +188,19 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     try upsertRoadmap(alloc, section.items);
 
-    return lib.okText(out, section.items);
+    var result: std.Io.Writer.Allocating = .init(alloc);
+    var s = std.json.Stringify{ .writer = &result.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("text");
+    try s.write(section.items);
+    if (notice.len > 0) {
+        try s.objectField("notice");
+        try s.write(notice);
+    }
+    try s.endObject();
+    try out.writeAll(result.written());
 }
 
 /// Replaces any existing "## Autolearn" section in docs/ROADMAP.md (from the

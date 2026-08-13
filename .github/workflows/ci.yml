@@ -6,6 +6,10 @@ on:
     tags: ["v*.*.*"]
   pull_request:
   workflow_dispatch:
+  # Weekly run on an unchanged tree: npm audit findings and toolchain
+  # breakage appear without a commit to surface them.
+  schedule:
+    - cron: "17 4 * * 1"
 
 permissions:
   contents: read
@@ -26,18 +30,14 @@ jobs:
         with:
           persist-credentials: false
 
+      # No `version`: setup-zig resolves it from build.zig.zon's
+      # minimum_zig_version, so the pin lives in one place. `use-cache`
+      # already caches ~/.cache/zig and redirects local caches there; a
+      # separate actions/cache step on the same directory was redundant.
       - name: Install Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
-          version: 0.16.0
           use-cache: true
-
-      - name: Cache Zig global build artifacts
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ~/.cache/zig
-          key: zig-cache-${{ hashFiles('build.zig', 'build.zig.zon') }}
-          restore-keys: zig-cache-
 
       - name: Install Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -46,15 +46,11 @@ jobs:
           cache: npm
           cache-dependency-path: tools/ts/package-lock.json
 
+      # Glob from the index instead of a hand-kept list: a new script is
+      # checked from its first commit, not from when someone remembers to
+      # add it here.
       - name: Check shell scripts
-        run: |
-          shellcheck \
-            clanker-improve.sh \
-            clanker-merge-worktree.sh \
-            clanker-review.sh \
-            release-check.sh \
-            tools/grammars/build.sh \
-            tools/ts/verify.sh
+        run: git ls-files -z '*.sh' | xargs -0 -r shellcheck
 
       - name: Audit AssemblyScript toolchain
         working-directory: tools/ts
@@ -75,3 +71,30 @@ jobs:
         run: |
           zig build -Doptimize=ReleaseSafe
           ./release-check.sh "${GITHUB_REF_NAME}" zig-out/bin/clanker
+
+  # build.zig once hard-pinned x86_64-linux and produced unrunnable binaries
+  # on arm64 macs; this job is the regression guard for that promise.
+  # `zig build test` pulls in the wasm tools build (the sandbox tests load
+  # zig-out/tools/*.wasm), so this covers native + wasm compilation and the
+  # full unit-test suite. Lint, shellcheck, npm audit and e2e stay
+  # linux-only: they check sources, not the host target.
+  verify-macos:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      NO_COLOR: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          use-cache: true
+
+      - name: Build and run unit tests
+        run: |
+          zig build
+          zig build test

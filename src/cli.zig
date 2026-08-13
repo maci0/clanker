@@ -2477,7 +2477,7 @@ fn httpGetTask(
 
 /// `clanker autolearn`, review usage observations, refresh the roadmap
 /// Autolearn section, and print the generated items. The aggregate-and-write
-/// logic lives in the cmd_autolearn tool (fs-scoped read/aggregate/write,
+/// logic lives in the cmd_autolearn tool (fs-scoped archive/read/aggregate/write,
 /// same shape as roadmap/history/learnings); this just runs it and reports.
 fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
     const io = init.io;
@@ -2490,21 +2490,20 @@ fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
         return error.ModuleDisabled;
     }
     const out = std.Io.File.stdout();
-    if (opts.autolearn_reset) {
-        // Archive rather than delete: the history stays greppable, the
-        // aggregation starts over. Overwrites the previous archive; one
-        // generation back is enough for "what did it say before the reset".
-        const cwd = std.Io.Dir.cwd();
-        if (cwd.rename("state/autolearn.jsonl", cwd, "state/autolearn.old.jsonl", io)) {
-            try out.writeStreamingAll(io, "Event log archived to state/autolearn.old.jsonl\n");
-        } else |err| switch (err) {
-            error.FileNotFound => try out.writeStreamingAll(io, "No event log to reset (state/autolearn.jsonl not found)\n"),
-            else => return err,
-        }
+    const input = if (opts.autolearn_reset) "{\"reset\":true}" else "{}";
+    const raw = try toolJson(io, gpa, arena, &cfg, init.environ_map, "cmd_autolearn", input);
+    const result = try std.json.parseFromSliceLeaky(struct {
+        ok: bool = false,
+        text: []const u8 = "",
+        notice: []const u8 = "",
+    }, arena, raw, .{ .ignore_unknown_fields = true });
+    if (!result.ok) return error.ToolFailed;
+    if (result.notice.len > 0) {
+        try out.writeStreamingAll(io, result.notice);
+        try out.writeStreamingAll(io, "\n");
     }
-    const section = try toolText(io, gpa, arena, &cfg, init.environ_map, "cmd_autolearn", "");
     try out.writeStreamingAll(io, "Autolearn section updated in docs/ROADMAP.md\n\n");
-    try out.writeStreamingAll(io, section);
+    try out.writeStreamingAll(io, result.text);
 }
 
 // ---------------------------------------------------------------------- run --

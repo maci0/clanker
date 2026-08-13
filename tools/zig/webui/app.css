@@ -1387,11 +1387,17 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
   width: 260px; min-width: 200px; max-width: 320px;
   background: var(--bg); border-right: 1px solid var(--rule);
   display: flex; flex-direction: column; overflow: hidden;
-  transition: width 0.2s ease, margin-left 0.2s ease;
+  transition: width 0.2s ease;
 }
+/* Children keep the sidebar's own floor width, so most of the collapse tween
+   clips them (cheap) instead of reflowing text every frame; at rest nothing
+   changes, since the sidebar never sits below its 200px min-width anyway.
+   The 1px margin-left snaps rather than tweening — invisible either way. */
+.slack-sidebar > * { min-width: 200px; }
 .slack-sidebar.is-collapsed {
   width: 0; min-width: 0; margin-left: -1px; overflow: hidden;
 }
+@media (prefers-reduced-motion: reduce) { .slack-sidebar { transition: none; } }
 .slack-sidebar-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 0.75rem 1rem; border-bottom: 1px solid var(--rule);
@@ -1691,7 +1697,9 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 }
 
 /* ── Mobile responsive ── */
-@media (max-width: 768px) {
+/* 48rem, not 768px: every other breakpoint here is rem so zoomed-text users
+   get consistent trigger points. */
+@media (max-width: 48rem) {
   .slack-layout { height: calc(100vh - 48px); height: calc(100dvh - 48px); }
   .slack-sidebar {
     position: absolute; z-index: 30; height: 100%;
@@ -2614,7 +2622,10 @@ h2#session-title {
   border: 0; border-radius: 12px;
   background: var(--surface-2); max-height: calc(100vh - 14rem);
   padding-top: 0;
-  transition: background 180ms ease, box-shadow 180ms ease, flex 200ms ease, min-width 200ms ease, max-width 200ms ease, opacity 200ms ease;
+  /* Collapse snaps like Trello's (the incumbent reference for this board);
+     opacity still tweens as the feedback. Animating flex/min/max-width
+     re-laid out the whole board row every frame for 200ms. */
+  transition: background 180ms ease, box-shadow 180ms ease, opacity 200ms ease;
 }
 @media (max-width: 40rem) {
   .board-col { flex: 1 1 100%; min-width: 0; max-width: none; }
@@ -2855,7 +2866,7 @@ h2#session-title {
    deliberately theme-constant (like Trello's own label colors): saturated
    mid-tones carrying white text, legible on light and dark alike, so a
    card's color means the same thing whichever theme a browser picked. */
-.card-cover { height: 4px; border-radius: 8px 8px 0 0; margin: 0; background: var(--rule); flex-shrink: 0; transition: height 160ms ease; }
+.card-cover { height: 4px; border-radius: 8px 8px 0 0; margin: 0; background: var(--rule); flex-shrink: 0; }
 .card-cover[data-priority="high"] { background: linear-gradient(90deg, var(--danger), color-mix(in srgb, var(--danger) 75%, #ff6b6b)); height: 4px; }
 .card-cover[data-priority="low"] { background: var(--surface-2); height: 3px; }
 .card-cover[data-color] { height: 40px; border-radius: 8px 8px 0 0; }

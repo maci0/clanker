@@ -26,6 +26,7 @@ zig build tools    # build the WASM tools
 zig build test     # run the test suite
 ./zig-out/bin/clanker init   # create config.local.toml + state/
 ./zig-out/bin/clanker gate   # run the full deterministic gate (build/test/tools/fmt/lint)
+git config core.hooksPath .githooks   # enable the fast pre-commit checks (fmt, shellcheck, manifests, secrets)
 ```
 
 Set the API key env var for your chosen provider (see [config.toml](config.toml)), then:
