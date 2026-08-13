@@ -66,6 +66,12 @@ fn hasUnsafeSegment(path: []const u8) bool {
     var it = std.mem.splitScalar(u8, path, '/');
     while (it.next()) |part| {
         if (std.mem.eql(u8, part, "..")) return true;
+        // A `.` segment resolves to the same directory on the filesystem but
+        // is a different string, so `src/./improve/engine.zig` would pass
+        // the `src/improve/` deny check while still writing to the denied
+        // path. Empty segments (from `//`) have the same property.
+        if (std.mem.eql(u8, part, ".")) return true;
+        if (part.len == 0) return true;
     }
     return false;
 }
@@ -323,6 +329,15 @@ test "validatePath" {
     try std.testing.expect(!validatePath("src/foo/../../../etc/passwd"));
     try std.testing.expect(!validatePath("/etc/passwd"));
     try std.testing.expect(!validatePath(""));
+    // A `.` segment resolves to the same directory on the filesystem but
+    // bypasses the string-prefix deny checks that protect src/improve/ etc.
+    try std.testing.expect(!validatePath("src/./improve/engine.zig"));
+    try std.testing.expect(!validatePath("src/./evals/runner.zig"));
+    try std.testing.expect(!validatePath("src/./gate/checks.zig"));
+    try std.testing.expect(!validatePath("tools/./manifests/x.tool.json"));
+    // Double-slash produces an empty segment with the same bypass.
+    try std.testing.expect(!validatePath("src//improve/engine.zig"));
+    try std.testing.expect(!validatePath("src//gate/checks.zig"));
 }
 
 test "stripMarkdownFence and parse fenced proposal" {

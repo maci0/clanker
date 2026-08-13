@@ -24,8 +24,6 @@ export function goalStatusLabel(g, running) {
   return s;
 }
 
-export function isActiveGoal(g) { return (g.status || "active") === "active"; }
-
 /* The board column a goal's card must sit in, or null when an idle active
    goal is deliberately parked in one of the planning columns. */
 export function goalPinnedColumn(g, running) {
