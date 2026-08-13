@@ -186,7 +186,7 @@ both appear. The explicit flag also decides what a failure means: `--worktree` i
 a requirement, so a checkout where `git worktree add` cannot succeed is a fatal
 error, while a default that cannot be met logs a warning and runs in the checkout.
 Without that split, defaulting it on would have made clanker unusable outside a
-git repo. (`clanker a2a` does not go through this path and is never isolated.) The
+git repo. (`clanker serve`, which is where the A2A routes live, does not go through this path and is never isolated.) The
 worktree becomes the root, so cwd-relative paths need no prefix and
 `git rev-parse --show-toplevel` reports the worktree. `improve-self` takes the
 same isolation by default (`src/improve/worktree.zig`). Worktrees live in
@@ -359,8 +359,10 @@ peer keeps the message only when it subscribes to that room.
   module flag `modules.chatrooms`.
 - CLI: `clanker chat send <room> "<text>"`, `clanker chat history <room> [after]`,
   `clanker chat rooms`, `clanker chat subscribe <room> [on]`.
-- WASM tools: `chat_send`, `chat_history`, `chat_rooms`, `chat_subscribe`
-  (one `chat.wasm` module; the descriptor `config` pins the op). They are
+- WASM tools: `chat_send`, `chat_history`, `chat_rooms`, `chat_subscribe`,
+  `chat_react`, `chat_edit`, `chat_delete`, `chat_pin`, `chat_topic`
+  (nine descriptors over one `chat.wasm` module; the descriptor `config` pins
+  the op). They are
   marked `sequential` so concurrent tool calls never race on the log file.
 - Shared board: room-scoped `todo_*` (a `room` param on the shared list) was
   removed once the board covered the same need (see
@@ -372,7 +374,7 @@ peer keeps the message only when it subscribes to that room.
   `docs/adrs/0001-board-is-a-chatroom.md`), with subtasks, dependencies, a
   work log and accrued cost per card. A move or claim is announced in the
   board's chatroom, so
-  `todo_*` with a `room` set now fails with a pointer to the `board_*`
+  `todo_*` with a `room` set now fails with a pointer to the `kanban_*`
   replacement.
 - Private sub-agent todos: `todo_*` tools called without a `room`
   operate on a per-nested-run in-memory list (`src/agent/private_todos.zig`),
@@ -388,7 +390,9 @@ peer keeps the message only when it subscribes to that room.
   `ck_subagent` joins the nested thread, so the parent is parked with no tool
   of its own in flight while the question is answered.
 - HTTP: `POST /api/chat/message` (delivery), `GET /api/chat/messages?room=..&after=..`,
-  `GET /api/chat/rooms`.
+  `GET /api/chat/rooms`, `GET /api/chat/pins`, and `POST` for `send`,
+  `subscribe`, `react`, `edit`, `delete`, `pin` and `topic`. All eleven are
+  gated by `modules.chatrooms`.
 - Inbox: each agent run injects a `[chatroom inbox]` user message with messages
   newer than the cursor, so a subscribed clanker notices what its peers said.
 
@@ -418,6 +422,10 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `tools/` | `src/tools/` | Tool sources, descriptors, and committed WASM |
 | `evals/` | `src/evals/` | `*.task.json` eval definitions |
 | `skills/` | — | Markdown skills folded into the system prompt |
+| `workflows/` | — | Reusable prompt workflows (`agent.workflows_dir`) |
+| `chains/` | — | Transform chains (`agent.chains_dir`) |
+| `rules/` | — | Rule files |
+| `vendor/` | — | Vendored third-party source, committed rather than fetched |
 | `docs/` | — | This reference, the roadmap, review prompts, assets |
 | `tests/` | — | Fixtures; the tests themselves live in `test` blocks beside the code |
 | `state/` | — | Runtime only, gitignored: `exports/`, `history/`, `logs/`, `runs/`, `sessions/`, `staging/`, `schedule.json` + `schedule/` |
@@ -432,6 +440,9 @@ dependency cache location is controlled by the Zig installation/environment.
 
 - `tools/zig/` — Zig tool sources.
 - `tools/ts/` — AssemblyScript tool sources.
+- `tools/c/`, `tools/cpp/`, `tools/py/` — tool sources in those languages.
+- `tools/grammars/` — grammars used by tools that parse.
+- `tools/webui-plugins/` — web UI plugin apps, served under `/webui/plugins/<name>`.
 - `tools/manifests/*.tool.json` — tool descriptors, with optional `"internal": true` flag for internal tools (like `webui`). Full field reference: [docs/manifest.md](manifest.md).
 - `zig-out/tools/` — built WASM binaries from `zig build tools`.
 - `tools/bin/` — committed AssemblyScript artifacts (compiled JS/WASM).
@@ -478,7 +489,7 @@ changes as tools are added.
 | `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
 | `fetch_web` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
 | `web_search` | none | No-key web search: tries DuckDuckGo Lite first, transparently falls back to Bing Search RSS when DDG is unreachable, bot-challenged, or empty. Input: `{"query", "max_results" (1-20, default 8), "region"}`; returns `{ok, backend, query, count, results:[{title,url,snippet}]}` |
-| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Runs at the run's root, the directory the file tools resolve against, so plain `add`/`commit` stage what the agent edited. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored only for paths inside the run's own tree — an argument naming `.clanker-worktrees`, or stepping above the root with `..`, is refused as another run's worktree — and they do not relocate the agent's work: see [Isolating a run](#isolating-a-run) |
+| `git <args...>` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Runs at the run's root, the directory the file tools resolve against, so plain `add`/`commit` stage what the agent edited. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored only for paths inside the run's own tree — an argument naming `.clanker-worktrees`, or stepping above the root with `..`, is refused as another run's worktree — and they do not relocate the agent's work: see [Isolating a run](#isolating-a-run) |
 | `docker` | none | Query the local Docker daemon over its Unix socket |
 | `peers` | none — reads clanker's own config through the host (ck_harness_config) | Scan peer agent cards (up/down) or post a message to one peer |
 | `opencv` | none | Image analysis: size/brightness/sharpness, Canny edges, contours, faces, grayscale, resize |
@@ -490,7 +501,7 @@ changes as tools are added.
 | `learnings` | `state/learnings.md` | Read the persisted learnings |
 | `write_note` | `state/` | Append a learning to `state/learnings.md`, included in later system prompts |
 | `edit_skill` | `skills/` | Write or replace a markdown skill file, changing the agent's own instructions |
-| `goal` | `state/` | Design and persist a structured goal that steers later runs |
+| `goal "<intent>"` | `state/` | Design and persist a structured goal that steers later runs |
 | `subagent` | none | Delegate a task to a nested sub-agent run (own context, bounded iterations, dedicated thread) |
 | `rlm` | none | Recursive Language Model: recursively call a sub-LM over input chunks with bounded depth |
 | `arena` | `state/arena/` | Run a bounded, judged debate between two positions, or a 3-8 way Battle Royale, and return a verdict traceable to the move transcript. Rules live in `tools/zig/arena_match.zig` (host-tested); turns go through `ck_llm`, one bounded completion per move |
@@ -509,9 +520,17 @@ Internal tools, never offered to the model:
 | `cmd_status` | none — reads clanker's own config through the host (ck_harness_config) | Show this instance and its peers |
 | `cmd_plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
 | `cmd_autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`) |
-| `webui` | none | Serve the self-contained web UI (no external scripts or fonts) at `GET /` |
+| `webui` | none | Serve the web UI at `GET /`. Same-origin only: every script, style and font comes from this server's own `/webui/*` routes, with no CDN and no third-party origin (`script-src 'self'`). Not a single file — the page is many small ES modules, each served on its own route |
 | `translate` | none | Transform plugin, off by default: translates tool results through `ck_llm` |
-| `board` | none | The whole board operation surface behind one entry point, used by `/api/board`; agents use the `board_*` tools instead (same wasm, one op each) |
+| `board` | none | The whole board operation surface behind one entry point, used by `/api/board`; agents use the `kanban_*` tools instead (same wasm, one op each) |
+| `cmd_janitor` | `state/` | Report what old runs left behind, for `/api/janitor` |
+| `knowledge` | `state/` | Knowledge collections behind `/api/knowledge`: list, create, delete, add or search documents |
+| `prompts` | `state/` | Saved prompt templates behind `/api/prompts` |
+| `session_export` | `state/` | Render one saved session as a self-contained HTML transcript (`clanker session export`) |
+| `patch_apply` | `state/staging/`, `state/autoresearch/` | Materialize a proposed batch of exact-match edits; used by the improve and autoresearch loops, never by the model |
+| `mutate` | none | Generic mutator transform, off by default: rewrites tool results via an LLM instruction (translate, summarize, extract, redact) |
+| `statusline_clock` | none | Demo statusline plugin: current UTC time as a status-bar segment |
+| `turn_hook_echo` | none | Demo turn-hook plugin: prints a line into the transcript after every turn |
 
 `tools/manifests/examples/` holds descriptors that are not loaded, such as `calc_ts.tool.json` (the AssemblyScript build of the calculator).
 
@@ -588,12 +607,16 @@ A line starting with `!` is a shell escape (see below), a line starting with `/`
 
 | Command | Runs as | Description |
 |---------|---------|-------------|
-| `/help` | `cmd_help` | List these commands |
-| `/tools` | `cmd_tools` | List registered tools |
+| `/help`, `?` | in-process | List these commands, generated from `command_registry` |
+| `/model [query]` | in-process | Switch provider/model through a fuzzy picker (Enter picks, Esc cancels) |
+| `/workflows` | in-process | List reusable prompt workflows |
+| `/workflow <name> [args]` | in-process | Run a workflow (expands `{{args}}`, then runs it as a task) |
 | `/sessions` | `cmd_sessions` | List saved sessions |
-| `/graph` | `cmd_graph` | Show the latest execution graph |
-| `/plugins [on\|off <name>]` | `cmd_plugins` | List plugins and switch the optional ones on or off |
-| `/status` | `cmd_status` | Show instance and peers |
+| `/graph` | `cmd_graph list` | List knowledge-graph entries |
+| `/plugins` | `cmd_plugins` | List installed plugins. Takes no arguments — toggling is `POST /api/plugins` |
+| `/status` | `cmd_status` | Show configuration and state status |
+| `/theme [name]` | in-process | List or switch the color theme (`mocha`, `latte`, `tokyonight`, …) |
+| `/autoresearch ...` | in-process | Measurement loop (see `/autoresearch --help`) |
 | `/goal <intent>` | in-process | Design and persist a goal (runs the agent) |
 | `/arena "<question>" --for X --against Y` | in-process | Run a judged debate (runs the agent, which calls the `arena` tool). `--position` x3-8 for a Battle Royale |
 | `/compare "<prompt>" [--with <p[@model]>]...` | in-process | Put one prompt to 2-8 models at once and show the answers unlabeled (runs the agent, which calls the `compare` tool) |
@@ -615,7 +638,11 @@ The commands it may run are the union of every registered tool's `exec_allow` (`
 
 ### `/graph`
 
-Every agent run records an execution graph and writes it to `state/runs/run-<timestamp>.json` on exit (`src/agent/graph.zig`), unless `modules.graphs` is `false`. `/graph` reads the lexically last of those files, which is the most recent run since the ids sort chronologically, and prints a header plus one line per node grouped by iteration:
+Every agent run records an execution graph and writes it to `state/runs/run-<timestamp>.json` on exit (`src/agent/graph.zig`), unless `modules.graphs` is `false`.
+
+The REPL's `/graph` dispatches `cmd_graph` with the `list` argument (`command_registry`, `src/tui/repl_vaxis.zig`), so it prints **one line per recorded run**, not a single run's timeline. With nothing recorded yet it prints `(no runs yet — clanker run creates one)`.
+
+To render one run as an ASCII timeline, pass its id to the CLI — `clanker graph <run-id>` — which prints a header plus one line per node grouped by iteration:
 
 ```
 run-1786365428 — summarize the config
@@ -628,7 +655,7 @@ iter 2
   done 512 B, stop
 ```
 
-`llm` lines carry prompt/completion tokens and latency, `tool` lines the result size, and the closing `done` line the final answer size and stop reason. With no runs recorded yet it prints `(no runs yet — clanker run creates one)`. To read an older run, pass its id to the CLI: `clanker graph <run-id>`.
+`llm` lines carry prompt/completion tokens and latency, `tool` lines the result size, and the closing `done` line the final answer size and stop reason.
 
 ## CLI commands
 
@@ -645,13 +672,13 @@ iter 2
 | `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
 | `tools list` | List registered tools |
 | `plugins [list\|validate [path]\|new <name>]` | List plugins, check a manifest, or scaffold a new tool |
-| `eval [name]` | Run evals |
+| `eval [name] [--tasks]` | Run evals |
 | `improve-self [--provider P] [--model M] [--iters N] [--dry-run] "<instructions>"` | Run the self-improvement loop |
 | `revert <id>` | Revert a promoted improvement |
 | `gate` | Run the full deterministic gate (build/test/tools/fmt/lint) on the current checkout |
 | `autolearn` | Aggregate usage from `state/autolearn.jsonl` + `state/runs/` and update the ROADMAP's Autolearn section |
 | `git` | Git passthrough (everything after `git` is passed through) |
-| `mcp` | Start the MCP server |
+| `mcp` | Serve tools over MCP (stdio) |
 | `goal` | Design and persist a structured goal |
 | `arena "<question>" --for X --against Y` | Run a judged debate between two positions; repeated `--position` (3-8) runs a Battle Royale instead. `--judge third` pays a provider that is not fighting to score every move; `--defend <text|file> --alternative <text|file>` runs a design review instead, seeding both sides with a real artifact and returning a review finding; `--match <id>` prints a stored match |
 | `compare "<prompt>" --with a --with b@model` | Ask 2-8 models the same prompt concurrently and show the answers unlabeled. Repeated `--with <provider>` or `--with <provider@model>`, or none at all to use every configured provider. `--judge <provider>` names the scorer (default: the configured default provider, with a caveat on the verdict when it is itself an entrant), `--judge none` leaves the pick to you; `--synthesize` merges the answers, `--reveal` prints the label-to-model key with no verdict, `--show <id>` prints a stored comparison and `--show <id> --pick <letter>` records your pick. The web UI's Compare tab is the same thing in a browser: the answers side by side and a pick button per column, reading blind and recording through the same tool op |
@@ -720,7 +747,7 @@ The shell scripts `clanker-improve.sh` and `clanker-review.sh` are still driven 
 
 ## Configuration
 
-`config.toml` is the global config; `config.local.toml` overrides it, provider by provider. Other sections, including `web`, are replaced as whole sections when the local file names them. TOML is the only supported config format; a leftover pre-migration `.json` file is ignored entirely (and `clanker doctor` warns about it) rather than half-supported.
+`config.toml` is the global config; `config.local.toml` overrides it, provider by provider. Other sections, including `web`, are replaced as whole sections when the local file names them. The exceptions are `[modules]` and `[serve]`, which are field-merged like `[agent]`: a local file that flips one flag or moves one port leaves the rest of that section as the base file had it. TOML is the only supported config format; a leftover pre-migration `.json` file is ignored entirely (and `clanker doctor` warns about it) rather than half-supported.
 
 A provider declares its backend once (`[providers.<name>]`); its models live in a separate, top-level `[models."<provider>/<model>"]` table, keyed by that composite id, each entry naming its own `provider` — inspired by Kimi Code's config.toml shape. Per-model settings (`context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`, `capabilities`) belong to the model rather than the provider, because they differ between models sharing one endpoint:
 
@@ -792,11 +819,11 @@ max_tokens = 2048
 provider = "muse-spark"
 
 [agent]
-max_iterations = 12
+max_iterations = 50
 compact_threshold_bytes = 30000
 max_total_tokens = 100000
 tools_dir = "tools/manifests"
-sandbox_root = "state/sandbox"
+sandbox_root = "."
 
 [[peers]]
 name = "peer1"
@@ -825,7 +852,7 @@ Fields:
   - `kimi-k3` supports reasoning (returns `reasoning` field).
 - `models`: top-level map of `"<provider>/<model>"` → model settings: `provider` (required — which entry under `providers` this belongs to), `context_window`, `max_tokens`, `temperature`, `top_p`, `reasoning_effort`, `display`, `cost_per_1m_input`, `cost_per_1m_output`, `capabilities`, `category`.
 - `agent`:
-  - `max_iterations`: max agent loop iterations.
+  - `max_iterations`: tool-call rounds per turn before the run stops (default 50). Hitting it errors the turn, so keep it generous for multi-file work.
   - `compact_threshold_bytes`: if conversation exceeds this, compact history.
   - `max_total_tokens`: total token budget across the run.
   - `max_tokens_per_turn`, `max_history_tokens`: per-turn input cap and total history budget before compaction kicks in.
@@ -839,6 +866,9 @@ Fields:
   - `exec_pattern_allow`: whole-command-line glob patterns a tool may run through `ck_exec`, e.g. `"gh pr create*"` or `"gh pr merge*"`. When a pattern names a command, that command becomes strict: only an argv matching one of its patterns runs, and the match also overrides the deny tokens for the args it grants (`"gh pr merge"` legitimately contains `"merge"`). Commands with no pattern stay under the deny-list check, so a pattern for `gh` does not widen `git` or anything else. `*` matches any run of characters, including across spaces and empty. The `gh` tool refuses to run at all unless a matching pattern is configured.
   - `repl_exec_allow`: extra commands the REPL's `!cmd` escape may run, e.g. `["ls", "cat"]`. Empty (default) means `!` runs exactly the union of every registered tool's `exec_allow` and nothing more, so the escape starts with no authority the harness did not already have. Nothing but the REPL reads this, so widening it never widens a tool, and the rest of the policy — the deny tokens, `git`'s verb allowlist, `exec_pattern_allow` — still applies to whatever is named here.
   - `seed`: sampling seed.
+  - `workflows_dir`: where reusable prompt workflows are read from (default `workflows`).
+  - `chains_dir`: where transform chains are read from (default `chains`).
+  - `fallback_provider`: provider to route image-bearing work to when the selected provider has no vision-capable model (default unset). Ignored unless it names a configured provider that differs from the current one and has a vision model; with nothing set, the first other provider that qualifies is used.
   - `ask_timeout_seconds`: how long a serve-side `ask_user` question waits for the browser before giving up (default 120). Confirm questions share the timeout.
   - `provider_check_timeout_seconds`: how long `providers check` waits for one provider before reporting it as timed out and moving on (default 10). Without a ceiling a single unreachable endpoint costs the whole sweep the OS connect timeout (~75s on macOS). `0` disables the ceiling; `[providers.<name>] check_timeout_seconds` overrides it per provider.
   - `confirm_writes`: gate write-capable tool calls (exec or filesystem access in the descriptor, or `"confirm": true`) on a human's allow/deny. `"never"` (default) asks nobody; `"browser"` asks streaming web runs. `"always"` is reserved for also asking interactive REPL sessions, but `src/tui/repl_vaxis.zig` has no prompt-rendering path to answer it yet, so today `"always"` behaves exactly like `"browser"` — the REPL runs write-capable tools ungated whatever this is set to (tracked in `docs/ROADMAP.md`, "vaxis REPL: close the gap left by the deleted REPL"). Runs with no human channel — headless one-shots, the improve loop, nested sub-agents — are never gated. Read-only tools opt out with `"confirm": false` in their manifest.
@@ -852,6 +882,8 @@ Fields:
 - `chatrooms`: default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag.
 - `modules`: feature on/off flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`). All default to `true`.
 - `improve`: settings for self-improvement.
+- `serve`: what `clanker serve` binds — `host` (default `127.0.0.1`), `webui_port` (default `17921`), and `serve_as` (an array of hostnames the server may present itself as). Field-merged, and the weakest of three layers: `CLANKER_HOST`/`CLANKER_WEBUI_PORT` override it, and `--host`/`--webui-port`/`--serve-as` override those. See [Binding and the trust model](#binding-and-the-trust-model).
+- `memory`: RAG backend. `backend` at the top level, then the `[memory.chunk]` (`size`, `overlap`, `strategy`), `[memory.embedding]` (`provider`, `model`) and `[memory.vector]` (`backend`, `top_k`, `threshold`) sub-tables. See [docs/configuration.md](configuration.md).
   - `max_context_bytes`: byte budget for the proposal context slice.
   - `max_context_requests`: how many `{"need": [...]}` context refills a run gets (default 3, 0 disables).
   - `capability_gate`: run the deterministic capability evals as a promotion gate (default true).
@@ -907,12 +939,34 @@ For the authoritative field list and defaults, see the doc comments on each stru
 
 `clanker serve` starts an HTTP server on `127.0.0.1:17921` (override the interface with `--host`, the port with `--webui-port`). It opens exactly one listening socket and serves every route below on it. Endpoints:
 
+Routes gated by a `modules.*` flag answer `404` with a body naming the flag when it is off. Those gates are `modules.webui` (the web UI and every `/webui/*` asset), `modules.a2a` (`/.well-known/agent.json`, `/api/a2a/message`), `modules.peers` (`/api/notify`, `/api/peers`), `modules.chatrooms` (all of `/api/chat/*`), `modules.token_stats` (`/api/stats`) and `modules.sessions` (all of `/api/sessions*`).
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | Web UI (rendered by the internal `webui` WASM tool) |
+| `/`, `/webui` | GET | Web UI (rendered by the internal `webui` WASM tool). Both paths serve it; the URL `serve` prints is `/webui` |
+| `/webui/app.css`, `/webui/core/*.js`, `/webui/features/*.js`, `/webui/lib/*.js` | GET | Web UI modules and stylesheet, each on its own route |
+| `/webui/vendor/*.js` | GET | Vendored `preact`, `htm`, `signals-core`, `d3-dag`, `hljs`, `mermaid` |
+| `/health/live` | GET | Liveness probe; always `{"ok":true,"status":"live"}` if the process is up |
+| `/health/ready` | GET | Readiness probe |
+| `/api/metrics` | GET | Request counters and latency buckets for this process (JSON) |
 | `/.well-known/agent.json` | GET | Agent card for A2A discovery |
 | `/api/status` | GET | Instance + peers status (JSON) |
 | `/api/peers` | GET | Every configured peer's live A2A agent card, via the sandboxed `peers` tool (JSON) |
+| `/api/sessions` | GET | Saved conversations, newest first (JSON) |
+| `/api/sessions/<id>` | GET, DELETE | Read or delete one saved conversation |
+| `/api/sessions/<id>/fork` | POST | Copy a conversation to a new id |
+| `/api/sessions/<id>/branch/<n>` | POST | Fork from message `n`, dropping everything after it |
+| `/api/sessions/<id>/compact` | POST | Compact one conversation in place |
+| `/api/skills` | GET | Skills discovered under `agent.skills_dir` (JSON) |
+| `/api/workflows` | GET | Reusable prompt workflows (JSON) |
+| `/api/catalog` | GET | models.dev catalog entries (JSON) |
+| `/api/providers/models` | GET | Models for a configured provider (JSON) |
+| `/api/files?path=` | GET | List one directory of the workspace (JSON). `..` is clamped at the working directory, so no traversal escapes it |
+| `/api/knowledge` | GET, POST | Knowledge-graph entries |
+| `/api/prompts` | GET, POST | Stored prompts |
+| `/api/steer` | POST | Send steering text into a run already in flight |
+| `/api/chat/messages`, `/api/chat/rooms`, `/api/chat/pins` | GET | Read the chatroom log, the room list, and pinned messages |
+| `/api/chat/send`, `/subscribe`, `/react`, `/edit`, `/delete`, `/pin`, `/topic` | POST | Chatroom mutations |
 | `/api/runs` | GET | Recorded runs, newest first (JSON) |
 | `/api/runs/<run-id>` | GET | One execution graph, node by node (JSON) |
 | `/api/notify` | POST | Receive a notification (JSON) |

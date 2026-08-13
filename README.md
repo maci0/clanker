@@ -42,10 +42,12 @@ clanker loads **[config.toml](config.toml)** (committed example) and merges **`c
 | Key | Purpose |
 |-----|---------|
 | `default_provider` | Name of the active entry under `providers` |
-| `providers` | Map of named backends (`kind`, `base_url`, `api_key_env`, optional `auth`, `default_model`, `models` — a map of model name to `max_tokens` / `context_window` / `reasoning_effort` / etc.; per-model settings on the provider itself are rejected, see below) |
+| `providers` | Map of named backends: `kind`, `base_url`, `api_key_env`, optional `auth`, `default_model` |
+| `models` | Top-level map of `"<provider>/<model>"` → per-model settings (`context_window`, `max_tokens`, `reasoning_effort`, …), each naming its `provider`. Per-model settings on a provider entry, or a `models` table nested inside one, are rejected at load |
 | `agent` | Loop limits, paths, sandbox root, and compaction |
 | `improve` | Self-improvement iteration and context size caps |
 | `instance` | This agent's `name` and `id` |
+| `serve` | What `clanker serve` binds: `host`, `webui_port`, `serve_as` |
 | `peers` | Other instances (`name` + `url`) for notify / phonebook |
 | `notify` | Peer notification topic / enable |
 | `chatrooms` | Default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag |
@@ -60,15 +62,15 @@ Provider `kind` is `openai_compat`, `anthropic`, or `vertex_anthropic` (Anthropi
 - **WASM tools** – sandboxed tool execution via zwasm with an explicit ABI
 - **MCP server** – stdio JSON-RPC server exposing tools to MCP clients
 - **Peer notifications + phonebook** – send messages to other clanker instances and list agent cards
-- **A2A agent cards** – `.well-known/agent.json` discovery
+- **A2A agent cards** – `.well-known/agent.json` discovery (`modules.a2a`)
 - **`/goal`** – persistent structured goals steering agent runs
-- **REPL with streaming** – interactive session with live token output, plus slash commands (`/help`, `/tools`, `/sessions`, `/graph`, `/status`) served by internal WASM tools
+- **REPL with streaming** – interactive session with live token output, plus slash commands (`/help`, `/model`, `/workflows`, `/workflow`, `/sessions`, `/graph`, `/status`, `/plugins`, `/theme`, `/goal`, `/autoresearch`, `/arena`, `/compare`) with Tab-complete; some run in-process, the rest dispatch to an internal WASM tool
 - **Visible cost and context** – every turn closes with `[turn: 1234 in / 567 out · 4.2s · 135.1 tok/s · cache 82% · $0.0031 · ctx 12.3k/128k (10%)]` in the REPL and on `clanker run`'s stderr, the status bar carries a running context meter and session cost, and compaction announces itself instead of quietly dropping the exchange you were about to ask about
 - **Inline shell escape** – `!git log --oneline -5` in the REPL runs there and then, printing into the transcript instead of going to the model. Not a shell: one fixed argv through the same `ck_exec` gate the tools go through, so no pipes, globs or `$VAR`, and the child never sees your API keys. Bare `!` lists what it may run
 - **Execution graphs** – every run is recorded to `state/runs/`; replay it with `/graph` or `clanker graph <run-id>`
 - **Arena** – `clanker arena "<question>" --for X --against Y` runs a judged debate between two positions, or a 3-8 way battle royale with repeated `--position`; ends in a verdict traceable to the transcript, viewable as a pixel battle in the web UI
 - **Blind model comparison** – `clanker compare "<prompt>" --with a --with b@model` asks 2-8 configured models the same thing concurrently (`ck_llm_many`) and shows the answers as A, B, C with nothing saying which model wrote which; a judge model or `--pick <letter>` decides, `--synthesize` merges them; the web UI's Compare tab shows the same answers side by side with a pick button per column, and stays blind until you choose
-- **Plugin toggles** – `/plugins` lists every WASM tool and switches the optional ones on or off; core tools stay on
+- **Plugin toggles** – `/plugins` lists every WASM tool; the web UI (or `POST /api/plugins`) switches the optional ones on or off, and core tools stay on
 - **Plugin manifest SDK** – a plugin is one `*.tool.json` manifest plus a WASM module, and the manifest is the whole sandbox policy. `clanker plugins new <name>` scaffolds a working pair, `clanker plugins validate` checks a manifest or a directory of them and names the offending key, and a manifest whose `wasm` is a bare filename resolves beside itself, so `{name.tool.json, name.wasm}` in one directory is a portable plugin. Field reference: [docs/manifest.md](docs/manifest.md)
 - **Transform chains** – plugins that rewrite another tool's input or output, in order, each knowing which tool it wraps
 - **Plugins that call the model** – `ck_llm` plus a per-plugin `config` for provider, model, and its own settings (see the `translate` plugin)
@@ -126,7 +128,7 @@ Weakest first, each overriding the one above it:
 
 | Layer | Host | Port | Names |
 | --- | --- | --- | --- |
-| `[serve]` in `config.toml` | `host` | `webui_port` | `serve_as` (array) |
+| `[serve]` in `config.toml` / `config.local.toml` | `host` | `webui_port` | `serve_as` (array) |
 | environment | `CLANKER_HOST` | `CLANKER_WEBUI_PORT` | — |
 | flags | `--host` | `--webui-port` | `--serve-as` |
 
@@ -188,7 +190,7 @@ task; `clanker --help` prints usage.
 | `help` / `--help` | Print usage |
 | `version` / `--version` | Print the version |
 | `init` | Create `config.local.toml` + `state/` |
-| `providers <check\|models\|catalog\|fill> [name]` | Verify connectivity, list models, or query the models.dev catalog |
+| `providers [check\|models\|catalog\|fill] [name]` | Verify connectivity, list models, query the models.dev catalog, or fill in model specs from it. Defaults to `check` |
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive multi-turn chat (streams tokens); the default |
 | `sessions` | List saved sessions |
@@ -196,24 +198,24 @@ task; `clanker --help` prints usage.
 | `tools list` | List registered WASM tools |
 | `plugins [list\|validate [path]\|new <name>]` | List plugins, check a manifest, or scaffold a new tool |
 | `eval [name] [--tasks]` | Run evals |
-| `improve-self [--iters N] [--dry-run] "<instructions>"` | Self-improvement loop |
+| `improve-self [--provider P] [--model M] [--iters N] [--dry-run] "<instructions>"` | Self-improvement loop |
 | `revert <id>` | Revert a promoted improvement |
 | `git <args...>` | Git passthrough |
 | `mcp` | Serve tools over MCP (stdio) |
 | `goal "<intent>"` | Design and persist a structured goal |
 | `arena "<question>" --for X --against Y` | Judged debate between two positions, or a battle royale |
-| `compare "<prompt>" [--with <provider>]...` | One prompt to several models at once, answers shown unlabeled |
+| `compare "<prompt>" [--with <provider[@model]>]...` | One prompt to several models at once, answers shown unlabeled |
 | `autoresearch [--target F] [--harness C]` | Measurement-driven research loop |
-| `workflow [list\|show\|run] [name]` | List, inspect, or run reusable prompt workflows |
+| `workflow [list\|show <name>\|run <name> [args]]` | List, inspect, or run reusable prompt workflows |
 | `notify <peer> "<message>"` | Send a notification to a peer |
 | `chat send <room> "<text>"` | Send a message to a chatroom |
 | `chat history <room> [after]` | Read chatroom history (newest first) |
 | `chat rooms` | List chatrooms + subscriptions |
 | `chat subscribe <room> [on]` | Join/leave a chatroom |
-| `schedule <list\|add\|remove\|enable\|disable\|run\|run-due\|log>` | Run the agent on a cron-like schedule (see below) |
+| `schedule [list\|add\|remove\|enable\|disable\|run\|run-due\|log]` | Run the agent on a cron-like schedule (see below). Defaults to `list` |
 | `stats` | Token usage per provider/model |
 | `phonebook` | List peer agent cards |
-| `serve [--host A] [--serve-as N]... [--webui-port N]` | HTTP server + web UI (loopback, port 17921 by default) |
+| `serve [--host <addr>] [--serve-as <name>]... [--webui-port <port>]` | HTTP API + web UI (loopback, port 17921 by default) |
 | `graph [run-id]` | List runs, or render one as an ASCII timeline |
 | `gate` | Run the full deterministic gate (build/test/tools/fmt/lint) |
 | `autolearn` | Aggregate usage into roadmap items |

@@ -369,8 +369,8 @@ pub const Instance = struct {
 ///
 /// Every field is optional because absent has to stay distinguishable from
 /// "set to the default": these are the weakest layer, and `CLANKER_HOST` /
-/// `CLANKER_PORT` and then `--host` / `--port` are each allowed to override
-/// whatever this said. A non-optional field with a default would look
+/// `CLANKER_WEBUI_PORT` and then `--host` / `--webui-port` are each allowed to
+/// override whatever this said. A non-optional field with a default would look
 /// identical to one the operator wrote by hand and would win over the env.
 pub const Serve = struct {
     /// The interface every listener binds. Shared rather than per-surface:

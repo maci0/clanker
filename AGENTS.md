@@ -12,6 +12,9 @@ through a gated loop. Follow these conventions when changing this codebase.
 - `zig build test` — run unit + integration tests. All tests must pass before
   any change is accepted. Tests live in `test` blocks inside the source files;
   new files must be referenced from the `comptime` block in `src/main.zig`.
+- `zig build e2e` — black-box end-to-end tests, driving the built binary
+  against a mock LLM server. Not part of `zig build test`; run it separately.
+- `zig build run` — build and run the harness in one step.
 
 ## Zig style
 
@@ -50,7 +53,8 @@ through a gated loop. Follow these conventions when changing this codebase.
   `builder.zig` (compiles WASM tools), `usage.zig` (tool call accounting).
   `builder.zig` is part of the anti-cheat boundary.
 - `src/tui/` — libvaxis-backed REPL (`clanker repl`), syntax highlighting,
-  theme, transcript rendering, and terminal width tracking.
+  theme, transcript rendering, control-character sanitizing, per-turn stats,
+  and terminal width tracking.
 - `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook,
   logging and dotenv. Peer notify/phonebook, patch application, knowledge
   store, and prompts store moved to sandboxed WASM tools (`tools/zig/`).
