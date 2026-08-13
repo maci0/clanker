@@ -253,7 +253,8 @@ Leaving `Accept-Encoding` out of `extra_headers` is **not** enough. Zig 0.16 `st
 - Copy upstream status and `Content-Type` (default `application/json` if the provider omitted it).
 - Always set `X-Content-Type-Options: nosniff` and `X-Request-ID` (serve already does this on `respond`).
 - Do not copy `Content-Encoding` or `Transfer-Encoding`. We frame the inbound response ourselves and we did not ask for gzip.
-- `stream: true`: no `Content-Length`, `Connection: close`, write body chunks as they arrive. Cap the *accumulated* stream at `rawhttp.max_body_bytes` (24 MiB); past that, stop reading, close both sides, `token_stats` `ok: false`. A missing `[DONE]` is preserved (we never append one).
+- `stream: true`, same family: no `Content-Length`, `Connection: close`, write body chunks as they arrive. Cap the *accumulated* stream at `rawhttp.max_body_bytes` (24 MiB). A missing `[DONE]` is preserved.
+- `stream: true`, cross-family: same framing, but each upstream SSE payload is parsed and rewritten (`OpenaiStream` / `AnthropicStream`). OpenAI clients get `[DONE]` when the Anthropic stream ends. Anthropic clients get `message_stop` when the OpenAI stream ends.
 - `stream: false`: read the upstream body into a buffer capped at 24 MiB (same inbound cap, not `resp_cap`'s 8 MiB), then send `Content-Length` and `Connection: close`. Over the cap: local `502` agave envelope, no partial body.
 - On inbound client close or a write error mid-pipe: cancel the upstream request (`client.Abort.trigger`, `shutdown(2)`) and release the connection slot. Do not wait for the provider to finish.
 
@@ -508,6 +509,9 @@ clanker serve --proxy --proxy-port 17922
 
 clanker serve --host 0.0.0.0 --serve-as clanker.lan --proxy
 # pair with [serve].proxy_token_env so the LAN bind is not an open relay
+
+# Claude Code (claude-code-proxy shape)
+ANTHROPIC_BASE_URL=http://127.0.0.1:17921/proxy ANTHROPIC_API_KEY=x claude
 ```
 
 **Dependencies.** Soft: PRD 0025 (fallback chain) is intentionally *not* on the proxy path — see Open questions. Hard: ADR 0004 / 0005 (native provider vtable + auth axis), existing `cmdServe` / `resolveListen` / Host+CSRF trust model in `src/cli.zig`, provider `authHeaders` / `endpointUrl` vtable, `src/stats/tokens.zig` for usage recording. No other Draft PRD blocks starting PR 1 of the PR Plan.
@@ -736,12 +740,16 @@ Exposed on the existing `GET /api/metrics` of the web UI port, not on the proxy 
 | Client sends a unique wire id | Body forwarded bit-identically. Auth replaced. |
 | Client sends `provider/id` or an alias | Only the JSON `model` string is rewritten to the wire id. |
 | Two providers share a wire id and the client sent that bare id | `400 model_not_found` (not unique). Discovery advertised the composites. |
-| `anthropic` model on `POST /v1/chat/completions` | `400 protocol_mismatch`. No upstream call. |
+| `anthropic` / `vertex_anthropic` model on `POST /v1/chat/completions` | Transcode to Anthropic/Vertex. OpenAI JSON or SSE comes back. |
+| `openai_compat` model on `POST /v1/messages` | Transcode to OpenAI chat/completions. Anthropic JSON or `event:` SSE comes back. |
+| Claude Code model `claude-3-5-sonnet-…` with `[serve.proxy_aliases] sonnet = "kimi-k3/kimi-k3"` | Routes to that backend. |
+| `POST /v1/messages/count_tokens` | Local `{input_tokens}` estimate. No upstream. |
 | `openai_compat` model on `POST /v1/messages` | `400 protocol_mismatch`. No upstream call. |
 | Unknown `model` | `400 model_not_found`. |
 | Body not JSON, or `model` missing/not a string | `400 malformed_request` / `missing_required_parameter` (agave envelope from `proxy.handle`). |
 | `stream` present and not a JSON bool | `400 malformed_request`. No upstream call. Vertex verb and inbound framing are not guessed. |
-| `stream: true` | Raw SSE pipe on `request` / `receiveHead`. No invented `[DONE]`, no event rewrite, no `Content-Encoding: gzip` on the inbound response. |
+| `stream: true`, same family | Raw SSE pipe. No invented `[DONE]`, no event rewrite, no `Content-Encoding: gzip`. |
+| `stream: true`, cross-family | SSE rewritten to the client dialect. |
 | Upstream `429` / `5xx` / `4xx` | Status and body forwarded. No retry. |
 | Upstream connect/TLS failure | Local `502` with envelope (`message` names the provider, not the key). `token_stats` `ok: false`. |
 | Hung upstream (accepts, never writes) | First-byte budget (default 300s). `Abort.trigger`. `504` if no status line yet. Slot released. |
@@ -750,7 +758,8 @@ Exposed on the existing `GET /api/metrics` of the web UI port, not on the proxy 
 | `[serve].proxy_first_byte_timeout_s = 0` | No first-byte ceiling. Inter-chunk idle still applies unless also 0. |
 | Inbound client closes mid-SSE | `Abort.trigger` on the upstream request. Slot released. Provider is not drained to completion. |
 | Dedicated proxy listener at 56+ in-flight | New `.proxy` accept is `503` (8 slots reserved for `.webui` / `.both`). |
-| Vertex model on `/v1/messages` | Copied `Provider` with `default_model` = requested id. Forwarded to that id's `:rawPredict` / `:streamRawPredict` with the client body as-is. Vertex may 400 on `model` vs `anthropic_version`. That 400 is forwarded. |
+| Vertex model on `/v1/messages` | Copied `Provider`, URL contains the requested id, body gets `anthropic_version` and loses `model`. |
+| Vertex model on `/v1/chat/completions` | Same URL/auth; body transcoded OpenAI → Vertex Anthropic. Response transcoded back. |
 | Proxy token configured, missing/wrong | `401 invalid_api_key` (agave envelope from `proxy.authorize` in `handleConnection`). Includes `GET /v1/models`. No upstream call. CSRF not reached. |
 | Proxy token configured, correct | CSRF skipped. Token not forwarded. |
 | No token, loopback, SDK `apiKey: "x"` | Accepted. Inbound Bearer discarded. |
@@ -759,46 +768,40 @@ Exposed on the existing `GET /api/metrics` of the web UI port, not on the proxy 
 | `unexpectedHost` | `421` serve JSON `{"ok":false,"error":"invalid host"}`. Not an agave envelope. |
 | Body larger than `rawhttp.max_body_bytes` (24 MiB) | `413` serve JSON, existing `handleConnection` path. |
 | 64 connections already in flight (`.webui` / `.both`) | `503` serve JSON, existing pool. |
-| `GET /proxy/v1/models` (shared) or `GET /v1/models` (dedicated) | Configured models for that protocol only, including `vertex_anthropic` on the Anthropic envelope. No upstream. Empty `data` if none. Token required when `proxy_token_env` is set. |
+| `GET /proxy/v1/models` (shared) or `GET /v1/models` (dedicated) | Every configured model. Envelope shape from `anthropic-version`. No upstream. Empty `data` if none. Token required when `proxy_token_env` is set. |
 | `GET /v1/models` on the shared socket (no `/proxy` prefix) | Existing generic 404. Not a proxy route. |
 | `POST /health/live` or `POST /health/ready` | Existing generic 404, same as the web UI listener. Not `405`. |
-| `POST /proxy/v1/embeddings` (or any other `…/v1/*` we do not serve) | `404 unknown_endpoint`. |
+| `POST /proxy/v1/embeddings` against an `openai_compat` backend | 1:1 forward to `/embeddings`. |
+| `POST /proxy/v1/embeddings` with only a Vertex/Anthropic model | `400 protocol_mismatch` (non-chat). |
 | `modules.token_stats = false` | No jsonl line. Forward still happens. |
 | Alias points at an unknown `provider/id` | Skipped with a warning at first use (or at listen time). Lookup falls through to `model_not_found`. |
 | Hot reload after `--proxy` | Child is re-exec'd with `--proxy` and `--proxy-port` only when a distinct port was resolved, so the surface cannot silently disappear or grow a second socket. |
 
 ## Acceptance criteria
 
-Traceable to Goals. All unchecked: nothing is built.
+Traceable to Goals. Boxes that the unit suite already covers are checked. End-to-end against a spawned `clanker serve` is not.
 
-- [ ] `clanker serve` without `--proxy` and with `[serve].proxy` left false opens one socket and does not serve `/proxy/v1/*` or `/v1/*` (Goal 1, Goal 8).
-- [ ] `clanker serve --proxy` keeps one socket on `:17921`, logs `serve proxy at http://127.0.0.1:17921/proxy/v1`, and answers `POST /proxy/v1/chat/completions` (Goal 1).
-- [ ] `--proxy-port` and `[serve].proxy_port` / `CLANKER_PROXY_PORT` resolve in the same three-layer order as `--webui-port`. A usable value that *differs* from `webui_port` opens a second listener. `0` or a non-integer warns and is ignored (Goal 1).
-- [ ] `--no-proxy` disables the surface when `[serve].proxy = true` or `CLANKER_PROXY_PORT` is set (Goal 1).
-- [ ] On the shared socket, `GET /v1/models` (no `/proxy` prefix) is 404 and `/api/run` still works. `/proxy/v1/*` is the only compatibility mount (Goal 8).
-- [ ] `--proxy --proxy-port <other>` answers `/v1/*` on that port and 404s `/api/run` there. The web UI listener does not mount `/proxy/v1` (Goal 8).
-- [ ] `POST /proxy/v1/chat/completions` against a mock `openai_compat` backend sends a body bit-identical to the inbound body when `model` is the wire id, including unknown keys, `tools`, vision parts, `response_format`, and sampling fields. No `stream_options` is added (Goal 2).
-- [ ] `POST /proxy/v1/embeddings`, `POST /proxy/v1/completions`, `POST /proxy/v1/responses`, `GET /proxy/v1/files`, and `POST /proxy/v1/messages/count_tokens` each forward to the matching upstream path (not rewritten onto `/chat/completions` or `/v1/messages`). Query strings survive (Goal 2).
-- [ ] `POST /proxy/v1/messages` against a mock `anthropic` backend forwards `system`, `stop_sequences`, and unknown keys bit-identically when `model` is the wire id (Goal 2).
-- [ ] `GET /proxy/v1/models/{id}` returns that one configured model or `404 model_not_found` (Goal 4).
-- [ ] The captured upstream request has only the allowlisted headers. Inbound `Authorization`, `x-api-key`, `Cookie`, and `Host` are absent. There is no `Accept-Encoding` at all (`headers.accept_encoding = .omit`, not merely missing from `extra_headers`). The vtable auth header is present. A client `anthropic-beta` is merged with `oauth-2025-04-20` on the OAuth path, not replaced (Goal 3).
-- [ ] `GET /proxy/v1/models` without `anthropic-version` lists only `openai_compat` models from config, OpenAI envelope. With `anthropic-version`, only Anthropic-family models including `vertex_anthropic`, Anthropic envelope. Neither calls models.dev or upstream `/models` (Goal 4).
-- [ ] `stream: true` returns the mock upstream's SSE bytes unchanged, including a missing `[DONE]`. The inbound response has no `Content-Encoding: gzip` even if the mock would gzip when asked (Goal 5).
-- [ ] A `stream` field that is not a JSON bool is `400 malformed_request` with zero upstream calls (Goal 5).
-- [ ] An `anthropic` model on `/proxy/v1/chat/completions` and an `openai_compat` model on `/proxy/v1/messages` return `400` with `code: protocol_mismatch` and make zero upstream calls (Goal 6).
-- [ ] A `vertex_anthropic` provider whose default is `claude-opus-4-6` and whose request asks for another configured id produces an upstream URL containing the requested id. `cfg.providers` is not mutated (Goal 2).
-- [ ] With `proxy_token_env` set, `GET /proxy/v1/models` and both POST routes without the token are `401`; with the token, they proceed and the token is not sent upstream. A foreign-`Origin` POST with a valid token is not CSRF-blocked (Goal 7).
-- [ ] `POST /api/run`, board, chat, A2A, and `clanker run` behave as they do today on a process that also has `--proxy` (Goal 8).
-- [ ] A successful forward and a failed forward each append one `token_stats.jsonl` line in the existing `Record` shape when `modules.token_stats` is on, including `cost` from `totalCost` and Anthropic cache fields when the peek succeeds; the response body the client saw is still the upstream's (Goal 9).
-- [ ] A mock that accepts and never writes fails the forward by the first-byte budget (`504` or closed pipe) and releases the slot; it does not hang the test process. Tests pass a short override so this is not a 300s wait (Goal 5, Security).
-- [ ] A mock that writes its first SSE byte at T+90s succeeds under the default first-byte budget (Goal 5).
-- [ ] A `config.local.toml` that only sets `[serve].host` does not clear a base `proxy = true`. A local `proxy = false` does (Goal 1).
-- [ ] An OpenAI SDK-shaped request (the cursor-openai-api snippet: `baseURL` ending in `/proxy`, Bearer, `chat.completions.create` with `stream` and `tools`) is accepted on the shared socket (Goals 2, 4, 5).
-- [ ] `zig build test` covers lookup, protocol mismatch, the bit-identical body invariant, the header allowlist, gzip-not-double-applied, missing `[DONE]`, Vertex URL model, `stream` type check, and discovery envelopes. `zig build e2e` drives `harness.spawnServe` plus `tests/e2e/serve_proxy_test.zig` against `mock_llm.zig`. `zig fmt --check` is clean.
+- [x] Flags, `ServeFields` merge, `--no-proxy`, `CLANKER_PROXY_PORT`, one vs two sockets (Goal 1).
+- [x] `lookup` unique wire id, composite, alias, Claude Code `sonnet`/`haiku`/`opus` fallback, copy-not-mutate `cfg` (Goal 2).
+- [x] Same-family OpenAI body stays free of injected `stream_options` when transcoding *to* Anthropic is tested; Vertex body has `anthropic_version` and no `model` (Goal 2).
+- [x] OpenAI chat transcodes to Anthropic/Vertex (tools, system, stream); OpenAI completion JSON maps `tool_use` → `tool_calls` (Goal 2, Goal 6).
+- [x] `OpenaiStream` / `AnthropicStream` emit the client dialect (`[DONE]` vs `message_start`/`message_stop`) (Goal 5).
+- [x] `joinUpstream` does not double `/v1`; embeddings/files/count_tokens stay off the chat path (Goal 2).
+- [x] `authorize` accepts Bearer and `x-api-key` (Goal 7).
+- [ ] `clanker serve --proxy` log line and live `/proxy/v1` dispatch, verified by `zig build e2e` / `spawnServe` (Goal 1).
+- [ ] On the shared socket, `GET /v1/models` (no `/proxy` prefix) is 404 and `/api/run` still works (Goal 8).
+- [ ] Mock-server 1:1 capture: inbound Bearer absent, no `Accept-Encoding`, provider header present (Goal 3).
+- [ ] `GET /proxy/v1/models` lists every configured model on both envelopes; neither calls models.dev (Goal 4).
+- [ ] An `anthropic` / Vertex model on `POST /proxy/v1/chat/completions` transcodes (does **not** 400 `protocol_mismatch`) (Goal 6).
+- [ ] An `openai_compat` model on `POST /proxy/v1/messages` transcodes and streams Anthropic `event:` frames (Goal 6).
+- [ ] `POST /proxy/v1/messages/count_tokens` returns local `{input_tokens}` (Goal 2).
+- [ ] `POST /proxy/v1/embeddings` against only a Vertex model is `400 protocol_mismatch` (Goal 6).
+- [ ] Token, CSRF-skip, hung-upstream first-byte, T+90s first byte, `token_stats` lines (Goals 5, 7, 9).
+- [ ] `zig build e2e` drives `harness.spawnServe` plus `tests/e2e/serve_proxy_test.zig` against `mock_llm.zig`.
 
 ## Open questions / future work
 
-Vertex discovery (advertise, do not transcode) and listen default (shared socket + `/proxy/v1`, optional dedicated `--proxy-port`) are decided in Key Decisions / Design — not repeated here.
+Listen default (shared socket + `/proxy/v1`), Vertex advertise, and chat/messages transcode are decided in Key Decisions / Design — not repeated here.
 
 - **Live `/models` for empty `Provider.models`.** `handleProviders` already fetches live ids for ollama-style providers. Doing the same on `GET …/v1/models` would make discovery match the picker, at the cost of a networked, non-deterministic list and a third caller of that fetch. Left out on purpose. A follow-up can share `writeLiveModels` if operators actually miss it.
 
@@ -825,13 +828,15 @@ Vertex discovery (advertise, do not transcode) and listen default (shared socket
 - `src/cli.zig` `cmdServe`, `handleConnection`, `unexpectedHost`, `crossOriginRequest`, `handleProviders`, `handleProviderModels`, `handleCatalog`
 - `src/config.zig` `Serve`, `Provider`, `Model`, `ProviderKind`, `resolveProvider`
 - `src/stats/tokens.zig`
+- `src/serve/proxy.zig`, `src/serve/proxy_transcode.zig`
 - `src/llm/mock_server.zig`, `tests/e2e/mock_llm.zig`
 - [agave `docs/API.md`](https://github.com/maci0/agave/blob/main/docs/API.md) (protocol surface only)
-- [cursor-openai-api `fix/cursor-api-compatibility`](https://github.com/maci0/cursor-openai-api/tree/fix/cursor-api-compatibility) (client bar: `/v1/chat/completions`, `/v1/models`, Bearer)
+- [cursor-openai-api `fix/cursor-api-compatibility`](https://github.com/maci0/cursor-openai-api/tree/fix/cursor-api-compatibility) (OpenAI client bar)
+- [claude-code-proxy](https://github.com/fuergaosi233/claude-code-proxy) (Anthropic `/v1/messages` client bar, haiku/sonnet/opus mapping)
 
 ## PR Plan
 
-Four incremental PRs, each independently reviewable. The surface stays off by default until PR 3 mounts `/proxy/v1` *and* the token check, so a merge never ships an unauthenticated LAN relay. PR 3 is not deployable as a credential forwarder without the token code that lives in the same change.
+Four incremental PRs as originally planned. They landed in-tree together with a follow-up that added cross-family transcode (`proxy_transcode.zig`), Claude Code SSE, haiku/sonnet/opus aliases, and local `count_tokens`. The surface is still off by default.
 
 ### PR 1: serve: proxy listen policy and flags
 
@@ -861,4 +866,4 @@ Four incremental PRs, each independently reviewable. The surface stays off by de
 - **Depends on:** PR 3
 - **Changes:** Best-effort usage/failure records in the existing `Record` shape, with `cost` and cache fields filled when the peek succeeds. Black-box e2e on loopback with no token: `spawnServe` against `tests/e2e/mock_llm.zig`, OpenAI-shaped POST to `/proxy/v1/chat/completions` (stream + tools) and `GET /proxy/v1/models`, then kill the child. Document that `--proxy` keeps one socket. Living-document slice: the binding section and `[serve]`, not a rewrite.
 
-After PR 4 the acceptance-criteria boxes can start flipping. Nothing before PR 3 is user-visible on `/proxy/v1`. PR 3 is the first change that can spend a provider key, and it includes the token.
+Unit-level acceptance boxes for lookup, transcode, and flags are checked. PR 4's e2e (`spawnServe` + `serve_proxy_test.zig`) is the remaining hole.
