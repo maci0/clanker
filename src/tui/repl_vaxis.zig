@@ -686,10 +686,12 @@ const compare_command_help =
 ;
 
 test "TUI arena and compare help cover their CLI modes" {
-    for (.{ "--position", "--defend", "--alternative", "--judge-provider" }) |flag| {
+    const arena_flags = [_][]const u8{ "--position", "--defend", "--alternative", "--judge-provider" };
+    for (arena_flags) |flag| {
         try std.testing.expect(std.mem.find(u8, arena_command_help, flag) != null);
     }
-    for (.{ "--synthesize", "--reveal", "--show", "--pick" }) |flag| {
+    const compare_flags = [_][]const u8{ "--synthesize", "--reveal", "--show", "--pick" };
+    for (compare_flags) |flag| {
         try std.testing.expect(std.mem.find(u8, compare_command_help, flag) != null);
     }
 }
