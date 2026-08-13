@@ -4050,7 +4050,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_goals) {
             handleGoals(io, gpa, cfg, method, body, stream);
         } else if (is_providers) {
-            handleProviders(cfg, stream);
+            handleProviders(io, gpa, cfg, environ_map, stream);
         } else if (is_janitor) {
             handleJanitor(io, gpa, cfg, environ_map, stream);
         } else if (is_board) {
@@ -6073,7 +6073,10 @@ test "transcriptBytes counts tool call arguments, like the session listing" {
 
 /// Every configured provider and its models, so the composer can offer the
 /// same choice `--provider` does instead of always running the default.
-fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
+fn handleProviders(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *const std.process.Environ.Map, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
     var buf: [1 << 16]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -6129,12 +6132,67 @@ fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
             }
             s.endObject() catch return;
         }
+        if (prov.models.count() == 0) {
+            writeLiveModels(io, gpa, arena, prov, environ_map, &s);
+        }
         s.endArray() catch return;
         s.endObject() catch return;
     }
     s.endArray() catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", buf[0..w.end]);
+}
+
+/// A configured provider with an empty static `models` map (a locally-run
+/// ollama server, for example) shows nothing in the webui's chat provider
+/// picker. When that happens, ask the provider's OpenAI-compat `/models`
+/// endpoint for its live model list and write each model into the still-open
+/// `models` JSON array. This is why such providers appear only when they are
+/// both configured *and* reachable: an unreachable endpoint (or one without a
+/// `/models` route) yields nothing, which matches how `providers check` treats
+/// a down provider. Failures are swallowed so a cloud provider that is merely
+/// slow never breaks the picker.
+fn writeLiveModels(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    provider: *const config.Provider,
+    environ_map: *const std.process.Environ.Map,
+    s: *std.json.Stringify,
+) void {
+    const base = std.mem.trimRight(u8, provider.base_url, "/");
+    if (base.len == 0) return;
+    const url = std.fmt.allocPrint(arena, "{s}/models", .{base}) catch return;
+    var bearer: ?[]const u8 = null;
+    if (provider.api_key_env) |env_name| {
+        if (environ_map.get(env_name)) |key| {
+            var b = std.ArrayList(u8).empty;
+            b.appendSlice(arena, "Bearer ") catch return;
+            b.appendSlice(arena, key) catch return;
+            bearer = b.items;
+        }
+    }
+    const body = httpGet(io, gpa, arena, url, bearer) catch return;
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return;
+    if (parsed != .object) return;
+    const data = parsed.object.get("data") orelse return;
+    if (data != .array) return;
+    for (data.array.items) |item| {
+        if (item != .object) continue;
+        const id = fieldStr(item.object, "id") orelse continue;
+        if (id.len == 0) continue;
+        if (provider.models.get(id) != null) continue;
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(id) catch return;
+        if (fieldStr(item.object, "context_length")) |ctx| {
+            if (std.fmt.parseInt(u32, ctx, 10)) |n| {
+                s.objectField("context_window") catch return;
+                s.write(n) catch return;
+            } else |_| {}
+        }
+        s.endObject() catch return;
+    }
 }
 
 const webui_plugins_dir = "tools/webui-plugins";
