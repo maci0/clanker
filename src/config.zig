@@ -3282,4 +3282,87 @@ test "modules flags reject non-bool values instead of silently defaulting" {
         Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
     );
 }
+
+/// Whether `config.toml` documents `key`: a line that sets it, live or
+/// commented out, or a table header that names it (`[[ttsr.rules]]`).
+///
+/// Line-anchored rather than a substring search, or `allow` would be
+/// "documented" by `exec_pattern_allow` and the whole check would pass on
+/// coincidences.
+fn documentsKey(text: []const u8, key: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        // `# # proxy_port = 17922`: a key commented out inside an
+        // already-commented block is still documented, so strip every layer
+        // rather than one.
+        const line = std.mem.trim(u8, raw, " \t#");
+        if (std.mem.startsWith(u8, line, key)) {
+            const rest = std.mem.trimStart(u8, line[key.len..], " \t");
+            if (rest.len > 0 and rest[0] == '=') return true;
+        }
+        // `[memory.chunk]`, `[[ttsr.rules]]`: the key names a table.
+        if (std.mem.startsWith(u8, line, "[")) {
+            if (std.mem.indexOf(u8, line, key)) |at| {
+                const before = line[at - 1];
+                const after = line[at + key.len ..];
+                if ((before == '.' or before == '[') and (after.len > 0 and after[0] == ']')) return true;
+            }
+        }
+    }
+    return false;
+}
+
+test "config.toml documents every key the loader accepts" {
+    // The committed config is the only place most of these keys are written
+    // down at all: a key added to the schema and not to the file is one
+    // nobody outside this source file will ever find. Reflection over the
+    // structs rather than a hand-kept list, so the guard cannot go stale the
+    // same way the file did.
+    const text = @embedFile("config_toml");
+
+    // Fields that are not config keys. `shared_root` is set by `run
+    // --worktree` at runtime and deliberately unreadable from a file; the
+    // rest are the parsed *results* of keys rather than keys themselves.
+    const not_keys = [_][]const u8{ "shared_root", "name", "models" };
+    inline for (.{ Agent, Improve, Modules, Web, Notify, Chatrooms, Kernel, Ttsr, TtsrRule, Advisor, Instance, Tui, Serve, Model, Provider }) |T| {
+        inline for (@typeInfo(T).@"struct".fields) |f| {
+            comptime var skip = false;
+            inline for (not_keys) |n| {
+                if (comptime std.mem.eql(u8, f.name, n)) skip = true;
+            }
+            // Provider.name and Instance.name are different things: the
+            // instance really does take a `name =` key.
+            if (comptime std.mem.eql(u8, f.name, "name") and (T == Instance or T == TtsrRule)) skip = false;
+            if (!skip and !documentsKey(text, f.name)) {
+                std.debug.print("config.toml does not document {s}.{s}\n", .{ @typeName(T), f.name });
+                return error.UndocumentedConfigKey;
+            }
+        }
+    }
+
+    // `[memory]`'s keys are nested tables, so its field names (chunk_size,
+    // vector_top_k, ...) are not the spellings a file uses. Check those.
+    inline for ([_][]const u8{ "memory", "chunk", "embedding", "vector", "size", "overlap", "strategy", "top_k", "threshold", "backend" }) |key| {
+        if (!documentsKey(text, key)) {
+            std.debug.print("config.toml does not document memory key {s}\n", .{key});
+            return error.UndocumentedConfigKey;
+        }
+    }
+
+    // And the alternate spelling the loader accepts for one-entry chains.
+    try std.testing.expect(documentsKey(text, "fallback_provider"));
+}
+
+test "documentsKey does not accept a coincidental substring" {
+    const text =
+        \\exec_pattern_allow = []
+        \\# [memory.chunk]
+        \\# size = 800
+    ;
+    try std.testing.expect(!documentsKey(text, "allow"));
+    try std.testing.expect(documentsKey(text, "exec_pattern_allow"));
+    try std.testing.expect(documentsKey(text, "size"));
+    try std.testing.expect(documentsKey(text, "chunk"));
+    try std.testing.expect(!documentsKey(text, "vector"));
+}
 // --- memory helpers (appended via patch) ---

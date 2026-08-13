@@ -1,5 +1,45 @@
 default_provider = "kimi-k3"
 
+# Every key a [providers.<name>] section takes. The four below are the ones
+# these entries use; the rest are commented out here rather than repeated on
+# each provider, since most configs never need them.
+#
+#   kind             openai_compat (default) | anthropic | vertex_anthropic
+#   base_url         required
+#   api_key_env      name of the env var holding the key, never the key itself
+#   default_model    which [models."<name>/..."] entry is active; with exactly
+#                    one model for the provider it is inferred
+#
+# [providers.example]
+# kind = "openai_compat"
+# base_url = "https://api.example.com/v1"
+# api_key_env = "EXAMPLE_API_KEY"
+# default_model = "example-pro"
+#
+# # api_key | oauth_static | oauth_refresh. Overrides the kind's own
+# # auto-detection, which is needed only where a provider's keys and OAuth
+# # tokens are not distinguishable by shape -- guessing wrong sends the secret
+# # on the wrong header.
+# auth = "api_key"
+#
+# # Endpoint path override. Defaults per kind: /chat/completions for
+# # openai_compat, /v1/messages for anthropic.
+# path = "/chat/completions"
+#
+# # This provider's own ceiling for `providers check`, overriding
+# # agent.provider_check_timeout_seconds. Exists because one config mixes a LAN
+# # endpoint that either answers in a blink or is switched off with hosted ones
+# # that legitimately take seconds, and one number cannot be short for both.
+# # 0 = no ceiling.
+# check_timeout_seconds = 3
+#
+# # vertex_anthropic only, and all three are required for it: the GCP project
+# # and region serving the model, plus the service account json used to mint
+# # access tokens (or api_key_env instead of the file).
+# project = "my-gcp-project"
+# location = "us-east5"
+# service_account_file = "/path/to/sa.json"
+
 [providers.deepseek]
 kind = "openai_compat"
 base_url = "https://api.deepseek.com"
@@ -39,6 +79,27 @@ kind = "openai_compat"
 base_url = "https://api.moonshot.ai/v1"
 api_key_env = "KIMI_API_KEY"
 default_model = "kimi-k3"
+
+# Every key a [models."<provider>/<model>"] entry takes. The table key carries
+# the provider prefix and `provider` names it again; both are checked against
+# each other at load, so a typo is a startup error rather than a wrong route.
+#
+# [models."example/example-pro"]
+# provider = "example"           # required, must match the key's prefix
+# context_window = 131072        # input + output, sizes compaction budgets
+# max_tokens = 1024              # per-request completion cap
+# temperature = 0.2
+# top_p = 0.95                   # generally set instead of temperature, not
+#                                # alongside: both narrow the same distribution
+# reasoning_effort = "low"       # none | low | medium | high | max; unset omits
+#                                # the field from the request entirely
+# display = "vendor/example-pro" # what to call it in the UI when the wire id is
+#                                # not what people call it. Display only.
+# cost_per_1m_input = 0.14       # USD, for run cost accounting
+# cost_per_1m_output = 0.28
+# capabilities = ["thinking", "tool_use", "image_in", "video_in", "audio_in"]
+# category = "fast"              # free-form grouping for the model pickers
+#                                # (flagship, fast, reasoning, cheap, ...)
 
 [models."deepseek/deepseek-v4-flash"]
 provider = "deepseek"
@@ -139,6 +200,55 @@ exec_pattern_allow = []
 # tool's exec_allow. Empty = the escape can run exactly what the tools can.
 repl_exec_allow = []
 
+# The rest of [agent], commented out at its built-in default. Uncommenting a
+# line pins it: the default stops applying, including a later change to it.
+#
+# Conversation budgeting. compact_threshold_bytes above is the byte-based
+# trigger; these are the token-based ceilings.
+# max_tokens_per_turn = 4096     # per-turn input cap; history compacts first
+# max_history_tokens = 16000     # total history budget before old turns go
+# max_total_tokens = 200000      # unset (the default) = no ceiling at all
+#
+# Tool schemas. With forty-odd tools the full schemas are several thousand
+# tokens in every request, and most are unwanted on most turns; the catalog
+# sends the hot ones and lets the model ask for the rest by name.
+# tool_catalog = true
+# hot_tools = 10                 # how many stay loaded unasked (measured, not picked)
+#
+# Paths. Empty global_instructions_file means $HOME/.agents/AGENTS.md when HOME
+# is set; the project-root AGENTS.md is separate and always read.
+# global_instructions_file = ""
+# state_dir = "state"            # chatroom logs, run records, cursors
+#
+# git_commit = true              # commit promoted improvements
+#
+# ask_timeout_seconds = 120      # serve-side ask_user wait; the wait holds a
+#                                # connection thread, so it has to be bounded
+#
+# never | browser | always. Gate write-capable tool calls on a human's
+# allow/deny. Only the serve path reads it today, so `always` behaves like
+# `browser` until the REPL grows a prompt for it. Runs with no human channel
+# (headless, improve, sub-agents) are never gated whatever this says.
+# confirm_writes = "never"
+#
+# Ordered providers tried after the selected one cannot serve a request.
+# Either spelling works; a bare string becomes a one-entry chain.
+# fallback_providers = ["deepseek", "openai"]
+# fallback_provider = "deepseek"
+#
+# Per-turn classifier that picks a reasoning_effort. Off until a calibration
+# eval justifies it. Empty model = cheapest configured provider by input cost.
+# auto_thinking = false
+# thinking_classifier_model = ""
+# thinking_classifier_timeout_ms = 3000
+#
+# auto | yes | no. Whether a run isolates itself in a git worktree without
+# being asked. `auto` is the historical behaviour: off for a plain typed run,
+# on for --goal and scheduled runs. An explicit --worktree/--no-worktree still
+# wins over both.
+# worktree = "auto"
+# goal_worktree = "auto"
+
 [instance]
 name = "clanker"
 id = "main"
@@ -177,6 +287,10 @@ webui = true
 graphs = true
 sessions = true
 goal = true
+# Attach the newest active goal to a run when no --goal is given. Turning this
+# off keeps the goal module on -- explicit goals, /goal and tracking all still
+# work -- but stops runs steering themselves toward whatever is newest.
+goal_auto_steer = true
 token_budget = true
 streaming = true
 dotenv = true
@@ -198,6 +312,105 @@ on = true
 rooms = ["dev"]
 max_history = 500
 
+# Peer notifications: whether events are pushed to the [[peers]] above, and
+# under what topic. Both at their defaults.
+# [notify]
+# on = true
+# topic = "clanker"
+
+# Hosts the research tools may reach. The sandbox denies a tool the network
+# unless its own descriptor names the host, so this is the config-side channel
+# for that: every name here is added to fetch_web's and web_search's allowlists
+# at load, which makes granting a site a config edit rather than a manifest
+# edit. Hostnames only -- no scheme, no path. Entries are glob-matched, so
+# "*.ziglang.org" works and a bare "*" allows any host at all.
+# [web]
+# allow = ["docs.rs", "*.ziglang.org"]
+
+# The self-improvement loop (`clanker improve-self`). Everything here is at its
+# built-in default; the two `false` ones are the opt-ins.
+# [improve]
+# max_context_bytes = 0          # 0/unset = size the context from the model's
+#                                # own window. A fixed number silently keeps a
+#                                # 1M-window model on whatever diet it names.
+# capability_gate = true         # run the staged tree's task evals before
+#                                # promoting: one agent run each, and the price
+#                                # of catching a patch that compiles, passes
+#                                # every unit test, and breaks a tool
+# inert_gate = true              # reject a proposal whose only effect is code
+#                                # nothing can reach. Every other gate asks if a
+#                                # change is safe, and a no-op is maximally safe
+# plan_phase = true              # list and dedup candidates before patching,
+#                                # instead of letting the patch call pick its
+#                                # own idea and write it blind in one breath
+# max_consecutive_test_only = 3  # test-only promotions in a row before the next
+#                                # is refused. 0 disables
+# max_context_requests = 3       # times the model may ask for unseen files
+#                                # instead of producing a patch. 0 disables
+# max_cache_bytes = 4294967296   # ceiling on the zig build cache, checked each
+#                                # attempt. Zig never prunes it; unbounded it
+#                                # reached 72 GB here and filled the disk. 0 off
+# arena_advisory = false         # advisory Arena verdict per proposal. Logged,
+#                                # never consulted: a gate a self-authored
+#                                # proposal could learn to persuade is not a gate
+# eval_provider = "deepseek"     # provider the capability evals run on. They are
+#                                # mechanical (call a tool, read a field), so a
+#                                # cheap model grades them the same as a frontier
+#                                # one. Unset = the staged tree's own default
+
+# Post-turn critique by a second model. Off by default, and fails open: an
+# advisor that errors or times out never blocks the turn. Distinct from
+# improve.arena_advisory, which lives inside the improve engine.
+# [advisor]
+# enabled = false
+# provider = ""                  # empty = the run's own provider
+# model = ""
+# scope = "turn"
+# context_turns = 3
+# timeout_ms = 5000
+
+# Turn-time self-repair: watch the stream for a pattern and inject a
+# correction, up to a cap, rather than letting a turn fail on a known-shaped
+# mistake. No rules by default, which makes the whole thing inert.
+# [ttsr]
+# max_retries_per_turn = 3
+# buffer_bytes = 4096
+#
+# [[ttsr.rules]]
+# name = "no-such-tool"
+# pattern = "unknown tool"
+# inject = "That tool does not exist. List the tools you have and pick one."
+# max_fires = 1
+
+# Persistent eval kernels: a long-lived subprocess an eval can talk to instead
+# of paying process startup per case. Off by default and worth leaving off
+# unless you need it -- a kernel is unsandboxed, with the host's own ambient
+# filesystem permission.
+# [kernel]
+# enabled = false
+# max_output_bytes = 65536
+# cleanup_delay_ms = 5000
+
+# Retrieval memory. `hybrid` combines the keyword index with vector search;
+# an empty embedding provider falls back to keyword-only, so vector search is
+# opt-in by naming one.
+# [memory]
+# backend = "hybrid"
+#
+# [memory.chunk]
+# size = 800
+# overlap = 120
+# strategy = "markdown"
+#
+# [memory.embedding]
+# provider = ""
+# model = ""
+#
+# [memory.vector]
+# backend = "builtin"
+# top_k = 5
+# threshold = 0.35
+
 [tui]
 # The REPL mascot: a small robot that runs around the input box. Purely
 # decorative and off by default, so every key here is commented out -- the
@@ -215,13 +428,15 @@ max_history = 500
 #          upside down while you backspace
 #   loop   runs across the width, off the right edge, back in from the left
 #   place  runs on the spot in the bottom-right corner above the box
-#   input  runs on the spot *inside* the input box, at its bottom right. The
-#          box grows to make room and the text field is narrowed, so the robot
-#          never sits on top of what you are typing. Costs no transcript rows,
-#          which makes it the cheapest mode on a short terminal.
+#   input  runs on the spot *inside* the input box, at its bottom right. At its
+#          default size the box stays the height it is with no mascot at all;
+#          a bigger size grows it. Either way the text field is narrowed, so
+#          the robot never sits on top of what you are typing. Costs no
+#          transcript rows, which makes it the cheapest mode on a short
+#          terminal.
 #
-# Every mode except `input` reserves rows above the composer: 4, 5 or 10
-# depending on mascot_size. `--mascot` overrides this key for one session, and
+# Every mode except `input` reserves rows above the composer: 1 to 10 depending
+# on mascot_size. `--mascot` overrides this key for one session, and
 # `--mascot=off` forces it off again.
 #
 # Rendered with kitty graphics where the terminal supports it (Ghostty, kitty,
@@ -229,13 +444,16 @@ max_history = 500
 # on a terminal too small for the chosen size.
 # mascot = "off"
 
-# small, medium or large. Unset means medium.
+# mini, xsmall, small, medium or large.
 #
-# The grids are 8x4, 10x5 and 21x10 cells, needing a terminal of at least
-# 10x12, 12x13 and 23x18 respectively. `small` is a floor rather than a
-# preference: below roughly 8x4 the eye and the legs stop surviving the
-# downsample and the robot reads as a grey smudge. Overridden by
-# `--mascot-size`.
+# Unset means "per mode", not "medium": `input` gets mini, the one size that
+# fits the ordinary three-row composer, and every other mode gets medium, where
+# the rows come out of the transcript and a smaller robot buys nothing.
+#
+# The grids are 6x1, 7x2, 8x4, 10x5 and 21x10 cells, needing a terminal of at
+# least 8x9, 9x10, 10x12, 12x13 and 23x18 respectively. Below `small` the robot
+# is a silhouette and its cyan eye: the generator drops its emptiness threshold
+# and leans on the eye to keep even that. Overridden by `--mascot-size`.
 # mascot_size = "medium"
 
 # left or right. Unset means "whatever the mode wants", which is left for
