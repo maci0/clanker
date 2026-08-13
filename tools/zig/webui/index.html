@@ -257,7 +257,7 @@ lamps carry further). The seven named palettes ride the same tokens.
                #run-graph, which is a plain group rather than a live region. -->
           <p class="sr-only" id="run-status" role="status" aria-live="polite"></p>
         </div>
-        <div class="run-compare" id="run-compare" style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem;" hidden>
+        <div class="run-compare" id="run-compare" hidden>
           <label for="run-compare-a">Compare</label>
           <select id="run-compare-a"></select>
           <span class="meta" id="run-compare-vs">vs</span>
@@ -295,7 +295,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         </section>
         <div id="fleet-detail" class="run-detail" role="region" aria-label="Fleet run detail" hidden></div>
         <div id="fleet-floor" class="fleet-floor" aria-hidden="true" hidden>
-          <canvas id="fleet-canvas" width="640" height="180" style="width:100%;height:auto;image-rendering:pixelated;background: var(--surface-2); border:1px solid var(--rule); border-radius: var(--radius);"></canvas>
+          <canvas class="pixel-canvas" id="fleet-canvas" width="640" height="180"></canvas>
           <p class="meta" id="fleet-floor-status" aria-live="polite"></p>
         </div>
         <p class="sr-only" id="fleet-status" role="status" aria-live="polite"></p>
@@ -325,7 +325,7 @@ lamps carry further). The seven named palettes ride the same tokens.
              words and is what a screen reader or a reduced-motion session gets
              instead of the animation. Same split as #fleet-floor. -->
         <div id="arena-stage" class="fleet-floor" aria-hidden="true" hidden>
-          <canvas id="arena-canvas" width="640" height="200" style="width:100%;height:auto;image-rendering:pixelated;background: var(--surface-2); border:1px solid var(--rule); border-radius: var(--radius);"></canvas>
+          <canvas class="pixel-canvas" id="arena-canvas" width="640" height="200"></canvas>
           <!-- Arena v2: the three.js stage the 3D toggle swaps in. Same
                decorative contract as the canvas above; inherits aria-hidden
                from #arena-stage. -->
@@ -337,7 +337,7 @@ lamps carry further). The seven named palettes ride the same tokens.
              the stage is; the transcript is the record. -->
         <details id="arena-graph" class="arena-graph" hidden open>
           <summary>Match graph — HP by move</summary>
-          <canvas id="arena-hp-canvas" width="640" height="150" aria-hidden="true" style="width:100%;height:auto;image-rendering:pixelated;background: var(--surface-2); border:1px solid var(--rule); border-radius: var(--radius);"></canvas>
+          <canvas class="pixel-canvas" id="arena-hp-canvas" width="640" height="150" aria-hidden="true"></canvas>
           <p class="meta" id="arena-graph-caption"></p>
         </details>
         <section aria-labelledby="arena-transcript-head">
@@ -569,7 +569,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <p class="meta">What <code>clanker schedule</code> has been asked to run, and when each entry fires next. Times are each entry's own fixed UTC offset, never a DST-aware zone. Nothing fires from this page: entries run when the system's own cron calls <code>clanker schedule run-due</code>.</p>
       <p class="sr-only" id="schedule-status" role="status" aria-live="polite"></p>
       <div id="schedule-list"></div>
-      <h3 class="detail-head" style="margin-top: var(--space-5);">Recent fires</h3>
+      <h3 class="detail-head subsection-head">Recent fires</h3>
       <ul class="schedule-log" id="schedule-log"></ul>
     </section>
   </div>
@@ -583,20 +583,20 @@ lamps carry further). The seven named palettes ride the same tokens.
       <p class="meta">What each configured provider offers, and the public models.dev directory for discovering models to add to config.toml.</p>
       <h3 class="detail-head">Configured</h3>
       <div id="models-configured"></div>
-      <h3 class="detail-head" style="margin-top: var(--space-5);">Live from provider</h3>
+      <h3 class="detail-head subsection-head">Live from provider</h3>
       <div class="transcript-tools">
         <label for="models-live-provider">Provider</label>
         <select id="models-live-provider"></select>
         <button type="button" class="secondary" id="models-live-btn">List models</button>
       </div>
-      <div id="models-live-out" style="margin-top: var(--space-3);"></div>
-      <h3 class="detail-head" style="margin-top: var(--space-5);">Discover (models.dev)</h3>
+      <div id="models-live-out" class="section-output"></div>
+      <h3 class="detail-head subsection-head">Discover (models.dev)</h3>
       <div class="transcript-tools">
         <label for="models-catalog-q">Search</label>
         <input type="search" id="models-catalog-q" placeholder="e.g. kimi, deepseek, gemma…" autocomplete="off">
         <button type="button" class="secondary" id="models-catalog-btn">Search</button>
       </div>
-      <div id="models-catalog-out" style="margin-top: var(--space-3);"></div>
+      <div id="models-catalog-out" class="section-output"></div>
       <!-- The [models."…"] block for a discovered model: the same TOML
            `clanker providers fill` prints. Shown as selectable text rather than
            only copied, because navigator.clipboard needs a secure context and
@@ -626,16 +626,16 @@ lamps carry further). The seven named palettes ride the same tokens.
         <input type="text" id="knowledge-desc" placeholder="Optional description" maxlength="1000">
         <button type="submit" class="secondary" id="knowledge-create">Create</button>
       </form>
-      <div class="transcript-tools" style="margin-top: var(--space-3);">
+      <div class="transcript-tools">
         <label for="knowledge-search">Search</label>
         <input type="search" id="knowledge-search" placeholder="Search all documents…" autocomplete="off">
         <button type="button" class="secondary" id="knowledge-search-btn">Search</button>
       </div>
-      <div id="knowledge-search-out" style="margin-top: 0.5rem;"></div>
+      <div id="knowledge-search-out" class="section-output"></div>
       <!-- Folder-linked collections: mirror a server-side folder's text files
            into the selected collection. The path is a path on the machine
            running `clanker serve`, not this browser. -->
-      <div class="transcript-tools" id="knowledge-sync-row" style="margin-top: var(--space-3);" hidden>
+      <div class="transcript-tools" id="knowledge-sync-row" hidden>
         <label for="knowledge-sync-path">Linked folder</label>
         <input type="text" id="knowledge-sync-path" placeholder="/path/on/server/docs" autocomplete="off">
         <label class="checkbox-row" for="knowledge-sync-prune" title="Also remove synced documents whose files no longer exist in the folder">
@@ -644,7 +644,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         </label>
         <button type="button" class="secondary" id="knowledge-sync-btn">Sync changes</button>
       </div>
-      <div id="knowledge-list" style="margin-top: var(--space-5);"></div>
+      <div id="knowledge-list" class="section-list"></div>
       <div id="knowledge-detail" class="run-detail" role="region" aria-label="Collection detail" hidden></div>
       <p class="sr-only" id="knowledge-status" role="status" aria-live="polite"></p>
     </section>
@@ -663,11 +663,11 @@ lamps carry further). The seven named palettes ride the same tokens.
         <textarea id="prompts-content" rows="4" placeholder="Prompt content…" maxlength="20000"></textarea>
         <button type="submit" class="secondary" id="prompts-create">Create</button>
       </form>
-      <div class="transcript-tools" style="margin-top: var(--space-3);">
+      <div class="transcript-tools">
         <label for="prompts-filter">Filter</label>
         <input type="search" id="prompts-filter" placeholder="Filter prompts…" autocomplete="off">
       </div>
-      <div id="prompts-list" style="margin-top: var(--space-5);"></div>
+      <div id="prompts-list" class="section-list"></div>
       <p class="sr-only" id="prompts-status" role="status" aria-live="polite"></p>
     </section>
   </div>
@@ -684,14 +684,14 @@ lamps carry further). The seven named palettes ride the same tokens.
         </div>
         <div id="tools"></div>
         <div id="tool-detail" class="run-detail" role="region" aria-label="Selected tool detail" hidden></div>
-        <h3 class="detail-head" style="margin-top: var(--space-5);">Skills</h3>
+        <h3 class="detail-head subsection-head">Skills</h3>
         <!-- Skills are the markdown files in skills/ the system prompt embeds
              wholesale; this list mirrors that discovery (same dir, same
              filters) so what the page shows is what the agent actually sees.
              Read-only: skills are authored by the agent itself via edit_skill. -->
         <div id="skills" class="skills"></div>
         <p class="sr-only" id="skills-status" role="status" aria-live="polite"></p>
-        <h3 class="detail-head" style="margin-top: var(--space-5);">Workflows</h3>
+        <h3 class="detail-head subsection-head">Workflows</h3>
         <!-- Workflows are reusable prompt templates in workflows/
              and .cursor/workflows. Listed here so the page mirrors what the agent
              sees and what `clanker workflow list` reports. -->
@@ -712,13 +712,13 @@ lamps carry further). The seven named palettes ride the same tokens.
           <button type="button" class="secondary danger" id="progress-stop" hidden>Stop</button>
         </div>
       </div>
-      <div class="run-detail" id="progress-log" role="log" aria-live="polite" aria-label="Progress log" style="max-height: 18rem; overflow:auto; white-space:pre-wrap; font-family: var(--mono); font-size: var(--step--1);"></div>
+      <div class="run-detail progress-log" id="progress-log" role="log" aria-live="polite" aria-label="Progress log"></div>
       <p class="sr-only" id="progress-status" role="status" aria-live="polite"></p>
-      <div style="display:flex; gap: 0.5rem; align-items:center; margin-top: 0.5rem;">
-        <h3 class="detail-head" style="margin:0;">History</h3>
+      <div class="subsection-head-row">
+        <h3 class="detail-head">History</h3>
         <button type="button" class="secondary" id="progress-history-refresh">Refresh history</button>
       </div>
-      <div id="progress-history" style="margin-top: 0.5rem;"></div>
+      <div id="progress-history" class="section-output"></div>
     </section>
     <section>
       <div class="section-head">
@@ -756,32 +756,32 @@ lamps carry further). The seven named palettes ride the same tokens.
         <h2>Settings</h2>
         <span class="meta">Appearance, session, and system. Local to this browser unless noted.</span>
       </div>
-      <div class="settings-grid" style="display:grid;gap:0.9rem;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">
-        <div style="border:1px solid var(--rule);border-radius:10px;padding:0.7rem 0.9rem;background:var(--surface)">
-          <div style="font-weight:600;margin-bottom:0.35rem">Appearance</div>
-          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
+      <div class="settings-grid">
+        <div class="settings-panel">
+          <div class="settings-panel-title">Appearance</div>
+          <div class="settings-actions">
             <button type="button" class="secondary" id="settings-theme-cycle">Cycle theme</button>
             <span class="meta" id="settings-theme-label">system</span>
           </div>
-          <div class="meta" style="margin-top:0.35rem">Cycles through the header theme control's themes (single-user).</div>
+          <div class="meta settings-note">Cycles through the header theme control's themes (single-user).</div>
         </div>
-        <div style="border:1px solid var(--rule);border-radius:10px;padding:0.7rem 0.9rem;background:var(--surface)">
-          <div style="font-weight:600;margin-bottom:0.35rem">Chat history</div>
-          <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+        <div class="settings-panel">
+          <div class="settings-panel-title">Chat history</div>
+          <div class="settings-actions">
             <button type="button" class="secondary" id="settings-compact">Compact</button>
             <button type="button" class="secondary danger" id="settings-delete">Delete chat</button>
           </div>
-          <div class="meta" style="margin-top:0.35rem">Compact drops oldest exchanges to fit context; Delete removes this conversation only. Both use the existing chat header actions.</div>
+          <div class="meta settings-note">Compact drops oldest exchanges to fit context; Delete removes this conversation only. Both use the existing chat header actions.</div>
         </div>
-        <div style="border:1px solid var(--rule);border-radius:10px;padding:0.7rem 0.9rem;background:var(--surface)">
-          <div style="font-weight:600;margin-bottom:0.35rem">Session</div>
+        <div class="settings-panel">
+          <div class="settings-panel-title">Session</div>
           <div class="meta" id="settings-session-chip">session …</div>
-          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.4rem">
+          <div class="settings-actions settings-actions-spaced">
             <button type="button" class="secondary" id="settings-fork">Fork</button>
             <button type="button" class="secondary" id="settings-rename">Rename</button>
             <button type="button" class="secondary" id="settings-move">Move to workspace</button>
           </div>
-          <div class="meta" style="margin-top:0.35rem">Same actions as the chat header, surfaced here for discoverability.</div>
+          <div class="meta settings-note">Same actions as the chat header, surfaced here for discoverability.</div>
         </div>
       </div>
       <p class="sr-only" id="settings-status" role="status" aria-live="polite"></p>
@@ -834,7 +834,7 @@ lamps carry further). The seven named palettes ride the same tokens.
      of arrow keys rather than retyping it exactly and risking a near-miss
      that quietly forks a new workspace. -->
 <div class="overlay" id="card-detail" role="dialog" aria-modal="true" aria-labelledby="card-detail-title" hidden>
-  <div class="overlay-box" style="max-width: 48rem; max-height: 85vh;"></div>
+  <div class="overlay-box overlay-box-wide"></div>
 </div>
 
 <div class="overlay" id="text-prompt" role="dialog" aria-modal="true" aria-labelledby="text-prompt-title" hidden>
