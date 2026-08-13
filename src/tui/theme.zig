@@ -457,21 +457,34 @@ pub const Theme = struct {
     pub const mono: Theme = .{};
 };
 
+/// Closed name table: operator spellings and aliases to a theme. Aliases
+/// (`catppuccin` -> mocha, `frappé` -> frappe) cannot be expressed with
+/// `stringToEnum`, so this is a StaticStringMap like `log.Level.fromStr`.
+const theme_by_name = std.StaticStringMap(*const Theme).initComptime(.{
+    .{ "mono", &Theme.mono },
+    .{ "default", &Theme.default },
+    .{ "mocha", &Theme.mocha },
+    .{ "catppuccin", &Theme.mocha },
+    .{ "latte", &Theme.latte },
+    .{ "frappe", &Theme.frappe },
+    .{ "frappé", &Theme.frappe },
+    .{ "macchiato", &Theme.macchiato },
+    .{ "tokyonight", &Theme.tokyo_night },
+    .{ "tokyo-night", &Theme.tokyo_night },
+    .{ "tokyonight-night", &Theme.tokyo_night },
+    .{ "storm", &Theme.tokyo_storm },
+    .{ "tokyonight-storm", &Theme.tokyo_storm },
+    .{ "day", &Theme.tokyo_day },
+    .{ "tokyonight-day", &Theme.tokyo_day },
+    .{ "hackerman", &Theme.hackerman },
+});
+
 /// `default` unless `NO_COLOR` is set (to any non-empty value, matching the
 /// https://no-color.org/ convention) or `name` asks for `"mono"`, an
 /// explicit `--theme mono`/config value wins even if `NO_COLOR` is unset.
 pub fn select(name: ?[]const u8, environ_map: *const std.process.Environ.Map) Theme {
     if (name) |n| {
-        if (std.mem.eql(u8, n, "mono")) return Theme.mono;
-        if (std.mem.eql(u8, n, "default")) return Theme.default;
-        if (std.mem.eql(u8, n, "mocha") or std.mem.eql(u8, n, "catppuccin")) return Theme.mocha;
-        if (std.mem.eql(u8, n, "latte")) return Theme.latte;
-        if (std.mem.eql(u8, n, "frappe") or std.mem.eql(u8, n, "frappé")) return Theme.frappe;
-        if (std.mem.eql(u8, n, "macchiato")) return Theme.macchiato;
-        if (std.mem.eql(u8, n, "tokyonight") or std.mem.eql(u8, n, "tokyo-night") or std.mem.eql(u8, n, "tokyonight-night")) return Theme.tokyo_night;
-        if (std.mem.eql(u8, n, "storm") or std.mem.eql(u8, n, "tokyonight-storm")) return Theme.tokyo_storm;
-        if (std.mem.eql(u8, n, "day") or std.mem.eql(u8, n, "tokyonight-day")) return Theme.tokyo_day;
-        if (std.mem.eql(u8, n, "hackerman")) return Theme.hackerman;
+        if (theme_by_name.get(n)) |t| return t.*;
     }
     if (environ_map.get("NO_COLOR")) |v| {
         if (v.len > 0) return Theme.mono;
@@ -500,18 +513,17 @@ pub const names = [_][]const u8{
 /// so `/theme <name>` can reject a typo instead of silently falling back to
 /// default.
 pub fn isKnown(name: []const u8) bool {
-    for (names) |n| if (std.mem.eql(u8, n, name)) return true;
-    return std.mem.eql(u8, name, "catppuccin") or
-        std.mem.eql(u8, name, "tokyo-night") or
-        std.mem.eql(u8, name, "tokyonight-night") or
-        std.mem.eql(u8, name, "frappé") or
-        std.mem.eql(u8, name, "storm") or
-        std.mem.eql(u8, name, "day");
+    return theme_by_name.get(name) != null;
 }
 
 test "isKnown accepts every canonical name and rejects a typo" {
     for (names) |n| try std.testing.expect(isKnown(n));
     try std.testing.expect(isKnown("catppuccin"));
+    try std.testing.expect(isKnown("tokyo-night"));
+    try std.testing.expect(isKnown("tokyonight-night"));
+    try std.testing.expect(isKnown("frappé"));
+    try std.testing.expect(isKnown("storm"));
+    try std.testing.expect(isKnown("day"));
     try std.testing.expect(!isKnown("nord"));
     try std.testing.expect(!isKnown(""));
 }
