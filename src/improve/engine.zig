@@ -97,6 +97,9 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     // the delegation call sites and the one exit-code check every gate
     // ultimately shares.
     .{ .file = "src/gate/checks.zig", .needle = ".exited => |c| c == 0," },
+    // The exit-code switch is not enough: a patch can keep that arm and
+    // return `{ .ok = true }` anyway. Bind the result to the computed `ok`.
+    .{ .file = "src/gate/checks.zig", .needle = ".ok = ok," },
     .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig build\")" },
     .{ .file = "src/gate/checks.zig", .needle = "return runZig(gpa, io, dir, &.{ \"build\", \"test\", \"--summary\", \"all\" }, \"zig build test\")" },
     .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig build tools\")" },
@@ -146,9 +149,14 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     // no result lines. The call sites plus uncoveredCapabilityTasks are
     // what make that fail closed.
     .{ .file = "src/cli.zig", .needle = "try r.runAll(list.items)" },
+    .{ .file = "src/cli.zig", .needle = "const results = try r.runAll(list.items);" },
     .{ .file = "src/cli.zig", .needle = "if (!all_ok) return error.EvalsFailed" },
+    .{ .file = "src/cli.zig", .needle = "if (res.ok) \"PASS\" else \"FAIL\"" },
     .{ .file = "src/cli.zig", .needle = "scorers.Eval.loadAll(" },
     .{ .file = "src/improve/engine.zig", .needle = "uncoveredCapabilityTasks(" },
+    .{ .file = "src/improve/engine.zig", .needle = "cmdEvalShapeBroken(" },
+    .{ .file = "src/improve/engine.zig", .needle = "buildZigShapeBroken(" },
+    .{ .file = "src/improve/engine.zig", .needle = "stagedConfigTomlWeakened(" },
     .{ .file = "src/gate/checks.zig", .needle = "std.mem.startsWith(u8, s, \"git \")" },
     // lintGate splits forbidden markers so checks.zig doesn't flag itself;
     // only "TO"++"DO" had a needle, leaving the other three removable.
@@ -159,6 +167,19 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     // staged executable. Capability evaluation must fail closed in that case,
     // otherwise removing the binary is enough to skip the entire eval suite.
     .{ .file = "src/improve/engine.zig", .needle = "staged binary is missing" },
+    // build.zig is writable. Deleting the test/tools wiring makes
+    // `zig build test` / `zig build tools` exit 0 without running anything,
+    // and the host's testGate/toolsGate would pass this promotion.
+    .{ .file = "build.zig", .needle = "test_step.dependOn(&run_tests.step);" },
+    .{ .file = "build.zig", .needle = "const exe_tests = b.addTest(.{ .root_module = test_mod });" },
+    .{ .file = "build.zig", .needle = "run_tests.step.dependOn(tools_step);" },
+    .{ .file = "build.zig", .needle = "tools_step.dependOn(&install.step);" },
+    .{ .file = "build.zig", .needle = ".root_source_file = b.path(\"src/main.zig\")," },
+    // Dropping these comptime imports makes the gate/engine test blocks
+    // invisible to `zig build test` while the files themselves still exist.
+    .{ .file = "src/main.zig", .needle = "_ = @import(\"gate/checks.zig\");" },
+    .{ .file = "src/main.zig", .needle = "_ = @import(\"improve/engine.zig\");" },
+    .{ .file = "src/main.zig", .needle = "_ = @import(\"improve/proposal.zig\");" },
     // The worktree's load-bearing state sharing keeps getting reverted by
     // proposals that reconstruct linkSharedState's arrays from memory
     // instead of the current source (twice in one afternoon, both times a
@@ -906,23 +927,25 @@ pub const Engine = struct {
 
         // The fragment check above sees only `new`. A one-word replace of
         // `true` with `false` on a default would slip past it; the staged
-        // file is what the next run will compile.
+        // file is what the next run will compile. The checks themselves live
+        // here, not only in writable checks.zig / cli.zig / build.zig: a
+        // patch that guts those copies (early `return ok`, fake PASS lines,
+        // an emptied test step) would otherwise land in the same pass.
         for (proposal.changes) |c| {
-            if (!std.mem.eql(u8, c.file, "src/config.zig")) continue;
+            const check: ?*const fn ([]const u8) ?[]const u8 =
+                if (std.mem.eql(u8, c.file, "src/config.zig")) &stagedConfigWeakened else if (std.mem.eql(u8, c.file, "src/cli.zig")) &cmdEvalShapeBroken else if (std.mem.eql(u8, c.file, "build.zig")) &buildZigShapeBroken else if (std.mem.eql(u8, c.file, "config.toml")) &stagedConfigTomlWeakened else null;
+            const checker = check orelse continue;
             const data = staged_dir.readFileAlloc(self.ctx.io, c.file, self.arena, .limited(1 << 22)) catch {
-                log.log(.warn, "proposal rejected: staged src/config.zig unreadable", .{});
-                try self.hist.append(id, .failed, opts.instructions, proposal.summary, gate_files, 0, 0, "staged src/config.zig unreadable", fingerprints, null);
-                self.feedback = "Your patch touched src/config.zig but the staged file could not be read. Keep the improve-gate defaults enabled.";
+                log.log(.warn, "proposal rejected: staged {s} unreadable", .{c.file});
+                try self.hist.append(id, .failed, opts.instructions, proposal.summary, gate_files, 0, 0, try std.fmt.allocPrint(self.arena, "staged {s} unreadable", .{c.file}), fingerprints, null);
+                self.feedback = try std.fmt.allocPrint(self.arena, "Your patch touched {s} but the staged file could not be read. Do not weaken a gate.", .{c.file});
                 self.removeTree(staging);
                 return .failed;
             };
-            // The check itself lives here, not only in writable checks.zig:
-            // a patch that guts configSourceWeakeningGate to `return ok`
-            // would otherwise land a default flip.
-            if (stagedConfigWeakened(data)) |detail| {
+            if (checker(data)) |detail| {
                 log.log(.warn, "proposal rejected: {s}", .{detail});
                 try self.hist.append(id, .failed, opts.instructions, proposal.summary, gate_files, 0, 0, detail, fingerprints, null);
-                self.feedback = try std.fmt.allocPrint(self.arena, "Your patch was rejected by the config-weakening guard: {s}\nDo not disable safety gates in src/config.zig defaults or their parser.", .{detail});
+                self.feedback = try std.fmt.allocPrint(self.arena, "Your patch was rejected by a protected gate check: {s}\nDo not disable or bypass the improve-loop gates.", .{detail});
                 self.removeTree(staging);
                 return .failed;
             }
@@ -2575,6 +2598,88 @@ fn stagedConfigWeakened(src: []const u8) ?[]const u8 {
     for (forbidden) |needle| {
         if (std.mem.find(u8, src, needle) != null) return needle;
     }
+    return null;
+}
+
+/// Staged `config.toml` must not flip the improve/agent safety keys the
+/// host still enforces via writable `configWeakeningGate`. Protected: a
+/// patch that guts that gate and sets `capability_gate = false` here in
+/// the same pass (or the next, after a rebuild) has to fail this too.
+fn stagedConfigTomlWeakened(src: []const u8) ?[]const u8 {
+    const forbidden = [_][]const u8{
+        "capability_gate = false",
+        "capability_gate=false",
+        "inert_gate = false",
+        "inert_gate=false",
+        "plan_phase = false",
+        "plan_phase=false",
+        "git_commit = false",
+        "git_commit=false",
+        "max_consecutive_test_only = 0",
+        "max_consecutive_test_only=0",
+        "git_remote_ops = true",
+        "git_remote_ops=true",
+        "\"git \"",
+        "\"git\t",
+        "\"git\"]",
+        "\"git\",",
+    };
+    for (forbidden) |needle| {
+        if (std.mem.find(u8, src, needle) != null) return needle;
+    }
+    return null;
+}
+
+/// cmdEval is writable. Needles keep `runAll` in the file; they do not
+/// stop an early `return` that prints fake `NAME: 1.00 PASS` lines and
+/// skips the runner. The staged binary is what capabilityGate execs, so
+/// that shape has to be refused here.
+fn cmdEvalShapeBroken(src: []const u8) ?[]const u8 {
+    const start = std.mem.find(u8, src, "fn cmdEval(") orelse return "fn cmdEval(";
+    const rest = src[start..];
+    const end_rel = std.mem.find(u8, rest[1..], "\nfn ") orelse rest.len - 1;
+    const body = rest[0 .. end_rel + 1];
+
+    const run_all = "const results = try r.runAll(list.items);";
+    const run_at = std.mem.find(u8, body, run_all) orelse return run_all;
+
+    var lines = std.mem.splitScalar(u8, body[0..run_at], '\n');
+    while (lines.next()) |line| {
+        const t = std.mem.trim(u8, line, " \t");
+        if (std.mem.startsWith(u8, t, "//")) continue;
+        if (std.mem.find(u8, t, "return") == null) continue;
+        if (std.mem.find(u8, t, "if (opts.eval_tasks_only) return;") != null) continue;
+        if (std.mem.find(u8, t, "return error.UnknownEval;") != null) continue;
+        return "cmdEval returns before runAll";
+    }
+    if (std.mem.find(u8, body, "res.ok =") != null) return "cmdEval overwrites eval results";
+    if (std.mem.find(u8, body, "if (res.ok) \"PASS\" else \"FAIL\"") == null)
+        return "if (res.ok) \"PASS\" else \"FAIL\"";
+    if (std.mem.find(u8, body, "if (!all_ok) return error.EvalsFailed") == null)
+        return "if (!all_ok) return error.EvalsFailed";
+    return null;
+}
+
+/// build.zig is writable. The host runs `zig build test` / `zig build
+/// tools` against the staged copy, so deleting the dependOn wiring is a
+/// one-pass skip of those gates.
+fn buildZigShapeBroken(src: []const u8) ?[]const u8 {
+    const need = [_][]const u8{
+        "const exe_tests = b.addTest(.{ .root_module = test_mod });",
+        "run_tests.step.dependOn(tools_step);",
+        "tools_step.dependOn(&install.step);",
+        ".root_source_file = b.path(\"src/main.zig\"),",
+    };
+    for (need) |n| {
+        if (std.mem.find(u8, src, n) == null) return n;
+    }
+    var found_test_dep = false;
+    var lines = std.mem.splitScalar(u8, src, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.eql(u8, std.mem.trim(u8, line, " \t"), "test_step.dependOn(&run_tests.step);"))
+            found_test_dep = true;
+    }
+    if (!found_test_dep) return "test_step.dependOn(&run_tests.step);";
     return null;
 }
 
