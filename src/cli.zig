@@ -314,6 +314,58 @@ fn takeValue(
     return args[idx.*];
 }
 
+/// Closed command-name table, including aliases (`janitor`/`prune`,
+/// `repl-vaxis`/`repl`). `stringToEnum` cannot map two spellings onto one
+/// tag, and some names also stash a pending subcommand, so this is a
+/// StaticStringMap like `log.Level.fromStr`.
+const ParsedCommand = struct {
+    command: Command,
+    pending_sub: ?[]const u8 = null,
+};
+
+const commands_by_name = std.StaticStringMap(ParsedCommand).initComptime(.{
+    .{ "help", .{ .command = .help } },
+    .{ "init", .{ .command = .init } },
+    .{ "doctor", .{ .command = .doctor } },
+    .{ "janitor", .{ .command = .prune } },
+    .{ "prune", .{ .command = .prune } },
+    .{ "setup", .{ .command = .setup } },
+    .{ "provide", .{ .command = .providers_check, .pending_sub = "" } },
+    .{ "providers", .{ .command = .providers_check, .pending_sub = "" } },
+    .{ "run", .{ .command = .run } },
+    .{ "sessions", .{ .command = .sessions } },
+    .{ "history", .{ .command = .sessions } },
+    // `session` alone is not a listing (`sessions` is); export is mandatory.
+    .{ "session", .{ .command = .session_export, .pending_sub = "export" } },
+    .{ "tools", .{ .command = .tools_list, .pending_sub = "list" } },
+    .{ "eval", .{ .command = .eval } },
+    .{ "improve-self", .{ .command = .improve_self } },
+    .{ "revert", .{ .command = .revert } },
+    .{ "git", .{ .command = .git } },
+    .{ "mcp", .{ .command = .mcp } },
+    .{ "goal", .{ .command = .goal } },
+    .{ "notify", .{ .command = .notify } },
+    .{ "chat", .{ .command = .chat, .pending_sub = "" } },
+    .{ "stats", .{ .command = .stats } },
+    .{ "phonebook", .{ .command = .phonebook } },
+    .{ "serve", .{ .command = .serve } },
+    .{ "graph", .{ .command = .graph } },
+    .{ "autolearn", .{ .command = .autolearn } },
+    .{ "repl", .{ .command = .repl } },
+    // Compatibility alias from when the vaxis REPL was a separate command.
+    .{ "repl-vaxis", .{ .command = .repl } },
+    .{ "autoresearch", .{ .command = .autoresearch } },
+    .{ "arena", .{ .command = .arena } },
+    .{ "compare", .{ .command = .compare } },
+    .{ "gate", .{ .command = .gate } },
+    .{ "plugins", .{ .command = .plugins } },
+    .{ "plugin", .{ .command = .plugins } },
+    .{ "workflow", .{ .command = .workflow } },
+    .{ "workflows", .{ .command = .workflow } },
+    .{ "schedule", .{ .command = .schedule } },
+    .{ "version", .{ .command = .version } },
+});
+
 pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     var opts = Options{};
     var idx: usize = 1;
@@ -569,83 +621,10 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         // at all the default (the REPL) stands.
         if (!cmd_seen) {
             cmd_seen = true;
-            if (std.mem.eql(u8, a, "help")) {
-                opts.command = .help;
-            } else if (std.mem.eql(u8, a, "init")) {
-                opts.command = .init;
-            } else if (std.mem.eql(u8, a, "doctor")) {
-                opts.command = .doctor;
-            } else if (std.mem.eql(u8, a, "janitor") or std.mem.eql(u8, a, "prune")) {
-                opts.command = .prune;
-            } else if (std.mem.eql(u8, a, "setup")) {
-                opts.command = .setup;
-            } else if (std.mem.eql(u8, a, "provide") or std.mem.eql(u8, a, "providers")) {
-                opts.command = .providers_check;
-                pending_sub = "";
-            } else if (std.mem.eql(u8, a, "run")) {
-                opts.command = .run;
-            } else if (std.mem.eql(u8, a, "sessions") or std.mem.eql(u8, a, "history")) {
-                opts.command = .sessions;
-            } else if (std.mem.eql(u8, a, "session")) {
-                // Mandatory subcommand, the way `tools list` is: `session`
-                // alone is not a listing (that is `sessions`), so leaving it
-                // to mean something would make the singular and the plural
-                // two spellings of one command.
-                opts.command = .session_export;
-                pending_sub = "export";
-            } else if (std.mem.eql(u8, a, "tools")) {
-                opts.command = .tools_list;
-                pending_sub = "list";
-            } else if (std.mem.eql(u8, a, "eval")) {
-                opts.command = .eval;
-            } else if (std.mem.eql(u8, a, "improve-self")) {
-                opts.command = .improve_self;
-            } else if (std.mem.eql(u8, a, "revert")) {
-                opts.command = .revert;
-            } else if (std.mem.eql(u8, a, "git")) {
-                opts.command = .git;
-            } else if (std.mem.eql(u8, a, "mcp")) {
-                opts.command = .mcp;
-            } else if (std.mem.eql(u8, a, "goal")) {
-                opts.command = .goal;
-            } else if (std.mem.eql(u8, a, "notify")) {
-                opts.command = .notify;
-            } else if (std.mem.eql(u8, a, "chat")) {
-                opts.command = .chat;
-                pending_sub = "";
-            } else if (std.mem.eql(u8, a, "stats")) {
-                opts.command = .stats;
-            } else if (std.mem.eql(u8, a, "phonebook")) {
-                opts.command = .phonebook;
-            } else if (std.mem.eql(u8, a, "serve")) {
-                opts.command = .serve;
-            } else if (std.mem.eql(u8, a, "graph")) {
-                opts.command = .graph;
-            } else if (std.mem.eql(u8, a, "autolearn")) {
-                opts.command = .autolearn;
-            } else if (std.mem.eql(u8, a, "repl")) {
-                opts.command = .repl;
-            } else if (std.mem.eql(u8, a, "repl-vaxis")) {
-                // Compatibility alias from when the vaxis REPL was a
-                // separate opt-in command; now `repl` itself.
-                opts.command = .repl;
-            } else if (std.mem.eql(u8, a, "autoresearch")) {
-                opts.command = .autoresearch;
-            } else if (std.mem.eql(u8, a, "arena")) {
-                opts.command = .arena;
-            } else if (std.mem.eql(u8, a, "compare")) {
-                opts.command = .compare;
-            } else if (std.mem.eql(u8, a, "gate")) {
-                opts.command = .gate;
-            } else if (std.mem.eql(u8, a, "plugins") or std.mem.eql(u8, a, "plugin")) {
-                opts.command = .plugins;
-            } else if (std.mem.eql(u8, a, "workflow") or std.mem.eql(u8, a, "workflows")) {
-                opts.command = .workflow;
-            } else if (std.mem.eql(u8, a, "schedule")) {
-                opts.command = .schedule;
-            } else if (std.mem.eql(u8, a, "version")) {
-                opts.command = .version;
-            } else if (a.len > 0 and !std.mem.eql(u8, a, "help")) {
+            if (commands_by_name.get(a)) |parsed| {
+                opts.command = parsed.command;
+                if (parsed.pending_sub) |sub| pending_sub = sub;
+            } else if (a.len > 0) {
                 // Not a command: treat it as the task, the way every other
                 // agent CLI takes a bare prompt (`clanker "fix the bug"`).
                 // Only when it cannot be a command name, so a typo'd command
@@ -960,18 +939,25 @@ fn scheduleSubArity(sub: []const u8) ?u8 {
     return null;
 }
 
+/// Spellings `specs` does not already list as a usage first word. Kept
+/// separate from `commands_by_name` so a compatibility alias like
+/// `repl-vaxis` does not start rejecting a quoted prompt that happens to
+/// begin with that token.
+const help_aliases = std.StaticStringMap(Command).initComptime(.{
+    .{ "prune", .prune },
+    .{ "janitor", .prune },
+    .{ "provide", .providers_check },
+    .{ "workflows", .workflow },
+    .{ "plugin", .plugins },
+    .{ "history", .sessions },
+});
+
 fn commandForHelp(name: []const u8) ?Command {
     for (&specs) |*s| {
         const end = std.mem.findAny(u8, s.usage, " [") orelse s.usage.len;
         if (std.mem.eql(u8, name, s.usage[0..end])) return s.command;
     }
-    if (std.mem.eql(u8, name, "prune")) return .prune;
-    if (std.mem.eql(u8, name, "janitor")) return .prune;
-    if (std.mem.eql(u8, name, "provide")) return .providers_check;
-    if (std.mem.eql(u8, name, "workflows")) return .workflow;
-    if (std.mem.eql(u8, name, "plugin")) return .plugins;
-    if (std.mem.eql(u8, name, "history")) return .sessions;
-    return null;
+    return help_aliases.get(name);
 }
 
 /// The whole command list, grouped. Rendered from `specs` so a new command
