@@ -1315,6 +1315,10 @@ test "configWeakeningGate rejects flipping improve defaults in src/config.zig" {
     try std.testing.expect(result3.ok);
 }
 
+test "the live src/config.zig passes configSourceWeakeningGate" {
+    try std.testing.expect(configSourceWeakeningGate(@embedFile("../config.zig")).ok);
+}
+
 test "configSourceWeakeningGate requires the enabled defaults and rejects a flip" {
     const good =
         \\capability_gate: bool = true
@@ -1330,7 +1334,7 @@ test "configSourceWeakeningGate requires the enabled defaults and rejects a flip
     const flipped = good ++ "\ncapability_gate: bool = false\n";
     try std.testing.expect(!configSourceWeakeningGate(flipped).ok);
 
-    const missing = 
+    const missing =
         \\inert_gate: bool = true
         \\plan_phase: bool = true
         \\git_commit: bool = true
