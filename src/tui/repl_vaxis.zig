@@ -3110,6 +3110,23 @@ const Model = struct {
                     try self.copySelectionOrInput(ctx);
                     return ctx.consumeAndRedraw();
                 }
+                // Terminals without kitty-keyboard support collapse
+                // Ctrl+Shift+C to the same 0x03 byte as plain Ctrl+C and
+                // drop the shift bit, so the branch above never fires for
+                // them. Recover the copy intent from a live mouse selection
+                // when no turn is streaming (isCopyChord), so a genuine
+                // Ctrl+C can still interrupt; with no selection the byte is
+                // indistinguishable from plain Ctrl+C and falls through to
+                // that handler's quit, untouched.
+                if (self.has_selection and key.matches('c', .{ .ctrl = true })) {
+                    bridge_mutex.lockUncancelable(bridge_io);
+                    const copy_streaming = bridge_streaming;
+                    bridge_mutex.unlock(bridge_io);
+                    if (isCopyChord(key, copy_streaming, self.has_selection)) {
+                        try self.copySelectionOrInput(ctx);
+                        return ctx.consumeAndRedraw();
+                    }
+                }
                 // Paste from the system clipboard. Two routes, tried in
                 // order: Ctrl+Shift+V asks the terminal for its OSC 52
                 // clipboard (arrives as a .paste event, which is handled
@@ -4859,6 +4876,41 @@ fn extractSelectionText(alloc: std.mem.Allocator, surface: vxfw.Surface, a: vxfw
         if (row < n.last.row) try out.append(alloc, '\n');
     }
     return out.toOwnedSlice(alloc);
+}
+
+/// True when a key event should trigger the Ctrl+Shift+C copy action.
+/// Most terminals report the chord with the shift modifier set. Terminals
+/// that lack kitty-keyboard support collapse it to the same 0x03 byte as
+/// plain Ctrl+C and drop the shift bit; such a byte is only recovered as
+/// copy when a mouse selection is live (the copy intent the user signalled)
+/// and the REPL is not streaming (so a genuine Ctrl+C can still interrupt
+/// the running turn). With no selection the collapsed byte is
+/// indistinguishable from plain Ctrl+C and must reach that handler's quit.
+fn isCopyChord(key: vaxis.Key, streaming: bool, has_selection: bool) bool {
+    if (key.matches('c', .{ .ctrl = true, .shift = true })) return true;
+    return !streaming and has_selection and key.matches('c', .{ .ctrl = true });
+}
+
+test "isCopyChord recovers the collapsed Ctrl+Shift+C byte only with a selection and no stream" {
+    const shift = vaxis.Key{ .codepoint = 'c', .mods = .{ .ctrl = true, .shift = true } };
+    // Terminal-reported chord (kitty protocol): shift modifier present,
+    // copied regardless of streaming or selection state.
+    try std.testing.expect(isCopyChord(shift, false, false));
+    try std.testing.expect(isCopyChord(shift, true, false));
+    try std.testing.expect(isCopyChord(shift, true, true));
+
+    // Collapsed to plain 0x03 (no kitty protocol): the shift bit is dropped.
+    const dropped = vaxis.Key{ .codepoint = 'c', .mods = .{ .ctrl = true } };
+    // Recovered as copy only with a live selection and nothing streaming.
+    try std.testing.expect(isCopyChord(dropped, false, true));
+    // Otherwise it is indistinguishable from plain Ctrl+C and must not copy.
+    try std.testing.expect(!isCopyChord(dropped, false, false));
+    try std.testing.expect(!isCopyChord(dropped, true, true));
+    try std.testing.expect(!isCopyChord(dropped, true, false));
+
+    // No other key is the chord.
+    try std.testing.expect(!isCopyChord(.{ .codepoint = 'x', .mods = .{ .ctrl = true } }, false, true));
+    try std.testing.expect(!isCopyChord(.{ .codepoint = 'c' }, false, true));
 }
 
 /// Folds CR/LF runs in clipboard text to single spaces so a multi-line
