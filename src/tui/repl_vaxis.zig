@@ -394,6 +394,20 @@ const Line = struct {
     user: bool = false,
 };
 
+/// Errors use the same stable prefix as the non-interactive CLI. Keeping the
+/// classifier separate from drawing prevents a new TUI error path from
+/// silently falling back to the dim notice style.
+fn isErrorLine(text: []const u8) bool {
+    return std.mem.startsWith(u8, text, "error:");
+}
+
+test "TUI error lines use the CLI error prefix" {
+    try std.testing.expect(isErrorLine("error: unknown command: /modle"));
+    try std.testing.expect(isErrorLine("error: ProviderRefused"));
+    try std.testing.expect(!isErrorLine("usage: /model [query]"));
+    try std.testing.expect(!isErrorLine("[turn: 12 in / 3 out]"));
+}
+
 /// Folds one completed answer into transcript lines: control-stripped, split
 /// on '\n', fence markers consumed and their language carried on the lines
 /// they open, and the first visible line marked with the "› " turn arrow.
@@ -3550,7 +3564,7 @@ const Model = struct {
                 // The user's echoed prompt line: accent, no markdown (it is
                 // literal input, not model prose).
                 writeWrapped(surface, &row, bottom, text_width, l.text, prompt_style);
-            } else if (std.mem.startsWith(u8, l.text, "error:")) {
+            } else if (isErrorLine(l.text)) {
                 writeWrapped(surface, &row, bottom, text_width, l.text, err_style);
             } else if (l.dim) {
                 // System notices, usage hints, tool output: plain dim.
