@@ -504,7 +504,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/workflows", .help = "list reusable prompt workflows", .action = .workflows },
     .{ .name = "/workflow", .takes_args = true, .arg_hint = "<name> [args]", .help = "run a workflow (expands {{args}} then runs as a task)", .action = .workflow },
     .{ .name = "/sessions", .help = "list saved sessions", .action = .{ .tool = .{ .name = "cmd_sessions", .args = "" } } },
-    .{ .name = "/graph", .help = "list knowledge-graph entries", .action = .{ .tool = .{ .name = "cmd_graph", .args = "list" } } },
+    .{ .name = "/graph", .help = "list recorded runs (same as clanker graph)", .action = .{ .tool = .{ .name = "cmd_graph", .args = "list" } } },
     .{ .name = "/status", .help = "show configuration and state status", .action = .{ .tool = .{ .name = "cmd_status", .args = "" } } },
     .{ .name = "/plugins", .help = "list installed plugins", .action = .{ .tool = .{ .name = "cmd_plugins", .args = "" } } },
     .{ .name = "/goal", .takes_args = true, .arg_hint = "<intent>", .help = "design and persist a structured goal", .action = .goal },
@@ -3236,7 +3236,7 @@ const Model = struct {
             }
             if (row < bottom) row += 1;
             if (row < bottom) {
-                writeWrapped(surface, &row, bottom, text_width, "/model to switch  /help for commands  Ctrl-C to quit", dim);
+                writeWrapped(surface, &row, bottom, text_width, "Tab completes /commands. Ctrl-P opens the palette. /help for the rest.", dim);
             }
         }
         // Transcript layout: the visible block is bottom-aligned, chat-style,
@@ -4729,17 +4729,11 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
             }) catch {};
         }
     }
-    // Fresh session: a one-line hint so the blank screen says something.
-    // Skipped on resume (the "[resumed session]" line is enough) and
-    // suppressed after the first task, so it never competes with real output.
-    if (model.lines.items.len == 0) {
-        model.lines.append(arena, .{
-            .text = "Type a task, or /help for commands. Tab completes /commands; Ctrl-P opens the palette.",
-            .dim = true,
-        }) catch {};
-    }
-    // Appended after the opening hint so a typo in the mode does not cost the
-    // hint its "nothing has happened yet" test above.
+    // Fresh session leaves `lines` empty so draw's empty-state hero (examples
+    // + Tab/Ctrl-P) can show. A seed transcript line used to hide that
+    // forever, and was never removed after the first task. A resume already
+    // has the "[resumed session]" line; a bad mascot spelling is appended
+    // below and takes the same slot.
     if (mascot_choice.bad) |bad| {
         model.lines.append(arena, .{
             .text = std.fmt.allocPrint(
