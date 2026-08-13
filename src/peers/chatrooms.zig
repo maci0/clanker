@@ -808,17 +808,12 @@ pub fn writeCursor(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, state_d
 
 // ------------------------------------------------------------------ helpers --
 
-var id_counter: u32 = 0;
+var id_counter = std.atomic.Value(u32).init(0);
 
 fn makeId(arena: std.mem.Allocator, ts: i64) ![]const u8 {
-    // Unique per (second, process, call): two instances sending in the same
-    // second can never collide because their pids differ, and a per-process
-    // counter keeps ids unique within a burst. (No std.crypto.random in
-    // Zig 0.16; chat tools are `sequential` and serve is single-threaded, so
-    // the counter needs no atomics here.)
-    id_counter +%= 1;
+    const seq = id_counter.fetchAdd(1, .monotonic) +% 1;
     const pid = std.c.getpid();
-    return std.fmt.allocPrint(arena, "m{d}-{d}-{x}", .{ ts, pid, id_counter });
+    return std.fmt.allocPrint(arena, "m{d}-{d}-{x}", .{ ts, pid, seq });
 }
 
 // ------------------------------------------------------------------- tests --

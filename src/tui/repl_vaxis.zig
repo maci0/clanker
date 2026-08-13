@@ -1397,8 +1397,10 @@ const Model = struct {
             self.lines.append(self.arena, .{ .text = "[steer failed: out of memory]", .dim = true }) catch {};
             return;
         };
-        const echo = std.fmt.allocPrint(self.arena, "[steering queued: {s}]", .{task}) catch "[steering queued]";
-        self.lines.append(self.arena, .{ .text = echo, .dim = true }) catch {};
+        const echo = std.fmt.allocPrint(bridge_gpa, "[steering queued: {s}]", .{task}) catch "[steering queued]";
+        bridge_tool_lines.append(bridge_gpa, echo) catch {
+            if (echo.ptr != "[steering queued]".ptr) bridge_gpa.free(echo);
+        };
         ctx.redraw = true;
     }
 
@@ -3657,11 +3659,16 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // idle alike, so persisting here (rather than in submit) is what makes the
     // conversation survive. Save even if the run loop errored out.
     const run_result = app.run(model.widget(), .{});
+    // If app.run errored out while a turn was in flight, signal it to stop
+    // and join it before touching self.messages or freeing bridge buffers.
+    if (model.thread) |t| {
+        bridge_stop_flag.store(true, .release);
+        t.join();
+        model.thread = null;
+    }
     model.saveConversation();
-    // Free the bridge buffers only when the worker is joined (idle exit):
-    // a still-running worker appends to them, and freeing under it would
-    // trade a shutdown leak report for a use-after-free.
-    if (model.thread == null) {
+    // Worker is joined (either was idle or we joined above), safe to free.
+    {
         for (bridge_tool_lines.items) |l| bridge_gpa.free(l);
         bridge_tool_lines.deinit(bridge_gpa);
         bridge_stream_buf.deinit(bridge_gpa);
