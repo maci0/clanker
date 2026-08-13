@@ -12215,6 +12215,37 @@ test "no webui source hand-rolls a partial HTML escape" {
     }
 }
 
+test "webui chrome icons are drawn, not typed as unicode" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var root = std.Io.Dir.cwd().openDir(io, "tools/zig/webui", .{}) catch return error.SkipZigTest;
+    defer root.close(io);
+
+    const icons = root.readFileAlloc(io, "core/icons.js", std.testing.allocator, .limited(1 << 20)) catch return error.SkipZigTest;
+    defer std.testing.allocator.free(icons);
+    // icon() looks up these names; if a path is missing it returns an empty
+    // span and the chrome button goes blank.
+    for ([_][]const u8{ "  mic:", "  refresh:", "  star:", "  panel:", "  pin:", "  find:", "  list:", "  help:", "  close:" }) |name| {
+        if (std.mem.find(u8, icons, name) == null) {
+            std.debug.print("core/icons.js is missing ICON_PATHS{s}\n", .{name});
+            return error.MissingChromeIcon;
+        }
+    }
+
+    const page = root.readFileAlloc(io, "index.html", std.testing.allocator, .limited(1 << 20)) catch return error.SkipZigTest;
+    defer std.testing.allocator.free(page);
+    // These were the chrome stand-ins. Reactions/shortcodes elsewhere may
+    // still use emoji; the header and rail must not.
+    for ([_][]const u8{ "☰", "🎙", "◧", "🔍", "📌", "↻", "✕" }) |glyph| {
+        if (std.mem.find(u8, page, glyph) != null) {
+            std.debug.print("index.html still types chrome as '{s}'\n", .{glyph});
+            return error.UnicodeChrome;
+        }
+    }
+}
+
 test "runStreamTodos frames the private list as one \\x01 todos event" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
