@@ -2702,7 +2702,7 @@ fn cmdEvalShapeBroken(src: []const u8) ?[]const u8 {
 /// one-pass skip of those gates.
 fn buildZigShapeBroken(src: []const u8) ?[]const u8 {
     const need = [_][]const u8{
-        "const exe_tests = b.addTest(.{ .root_module = test_mod });",
+        "const exe_tests = b.addTest(.{ .root_module = test_mod, .use_llvm = true });",
         "run_tests.step.dependOn(tools_step);",
         "tools_step.dependOn(&install.step);",
         ".root_source_file = b.path(\"src/main.zig\"),",

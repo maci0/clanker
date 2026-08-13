@@ -1099,3 +1099,30 @@ test "complete is Anthropic; completions is OpenAI" {
     try std.testing.expectEqual(Family.anthropic, familyOf("/v1/complete", ""));
     try std.testing.expectEqual(Family.openai, familyOf("/v1/completions", ""));
 }
+
+test "upstreamUrl keeps embeddings, count_tokens, and files off the chat path" {
+    const gpa = std.testing.allocator;
+    const openai_impl = providers.forKind(.openai_compat);
+    var openai = config.Provider{ .name = "o", .base_url = "https://api.openai.com/v1", .default_model = "m" };
+    const emb = try upstreamUrl(gpa, &openai, openai_impl, "/v1/embeddings", "", false);
+    defer gpa.free(emb);
+    try std.testing.expectEqualStrings("https://api.openai.com/v1/embeddings", emb);
+    const files = try upstreamUrl(gpa, &openai, openai_impl, "/v1/files", "limit=10", false);
+    defer gpa.free(files);
+    try std.testing.expectEqualStrings("https://api.openai.com/v1/files?limit=10", files);
+    const resp = try upstreamUrl(gpa, &openai, openai_impl, "/v1/responses", "", false);
+    defer gpa.free(resp);
+    try std.testing.expectEqualStrings("https://api.openai.com/v1/responses", resp);
+
+    const anth_impl = providers.forKind(.anthropic);
+    var anth = config.Provider{ .name = "a", .base_url = "https://api.anthropic.com", .kind = .anthropic, .default_model = "c" };
+    const count = try upstreamUrl(gpa, &anth, anth_impl, "/v1/messages/count_tokens", "", false);
+    defer gpa.free(count);
+    try std.testing.expectEqualStrings("https://api.anthropic.com/v1/messages/count_tokens", count);
+    const batches = try upstreamUrl(gpa, &anth, anth_impl, "/v1/messages/batches", "", false);
+    defer gpa.free(batches);
+    try std.testing.expectEqualStrings("https://api.anthropic.com/v1/messages/batches", batches);
+    const msgs = try upstreamUrl(gpa, &anth, anth_impl, "/v1/messages", "", false);
+    defer gpa.free(msgs);
+    try std.testing.expectEqualStrings("https://api.anthropic.com/v1/messages", msgs);
+}
