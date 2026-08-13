@@ -540,7 +540,7 @@ Internal tools, never offered to the model:
 | Tool | Filesystem | Purpose |
 |------|------------|---------|
 | `cmd_tools` | `tools/manifests/` | List registered tools |
-| `cmd_sessions` | `state/sessions/` | List saved sessions |
+| `cmd_sessions` | `state/sessions/` | List saved conversations |
 | `cmd_graph` | `state/runs/` | Render the latest execution graph |
 | `cmd_status` | none — reads clanker's own config through the host (ck_harness_config) | Show this instance and its peers |
 | `cmd_plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
@@ -693,7 +693,7 @@ iter 2
 | `providers <check\|models\|catalog\|fill> [name]` | Verify connectivity, list models, search the models.dev catalog, or print catalog specs for configured models |
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive REPL with streaming (vaxis-backed; the default for a bare `clanker`) |
-| `sessions` | List saved sessions |
+| `sessions`, `history` | List saved conversations |
 | `session export <id> [path]` | Write one saved session as a self-contained HTML transcript. Defaults to `state/exports/<id>.html`; a second positional names the file instead. One document, no scripts and no external stylesheet, font or image, so it opens from `file://` with no network. A session's text is model and tool output, so every field is HTML-escaped on the way in (`tools/zig/session_export.zig`) and markup in a transcript renders as the characters that were typed. There is deliberately no upload and no public URL: sharing is copying the file |
 | `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
 | `tools list` | List registered tools |

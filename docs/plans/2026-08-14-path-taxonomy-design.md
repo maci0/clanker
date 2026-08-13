@@ -89,7 +89,6 @@ src/
 |-------------|-----------|-------|
 | `cmd_autolearn` | `autolearn` | keep `internal: true` |
 | `cmd_graph` | `graph` | |
-| `cmd_help` | `help` | |
 | `cmd_janitor` | `janitor` | |
 | `cmd_plugins` | `plugins` | |
 | `cmd_sessions` | `sessions` | |
