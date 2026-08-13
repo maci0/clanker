@@ -123,9 +123,9 @@ pub fn get(io: std.Io, gpa: std.mem.Allocator, service_account_file: []const u8)
 }
 
 /// Frees the cached token; call once at shutdown.
-pub fn deinit(gpa: std.mem.Allocator) void {
-    cache_mutex.lockUncancelable(bridge_io);
-    defer cache_mutex.unlock(bridge_io);
+pub fn deinit(io: std.Io, gpa: std.mem.Allocator) void {
+    cache_mutex.lockUncancelable(io);
+    defer cache_mutex.unlock(io);
     if (cached_token) |tok| gpa.free(tok);
     if (cached_for.len > 0) gpa.free(cached_for);
     cached_token = null;

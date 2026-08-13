@@ -3176,6 +3176,10 @@ fn toolJson(
     return arena.dupe(u8, raw);
 }
 
+fn toolResultFailed(out: []const u8) bool {
+    return std.mem.startsWith(u8, std.mem.trimStart(u8, out, " \t\r\n"), "{\"ok\":false");
+}
+
 fn memorySearch(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -6968,7 +6972,7 @@ fn handleBoard(
     };
     // The tool reports its own refusals as {"ok":false,...}; a refusal is a bad
     // request, not a server error.
-    const status: u16 = if (std.mem.startsWith(u8, std.mem.trimStart(u8, out, " \t\r\n"), "{\"ok\":false")) 400 else 200;
+    const status: u16 = if (toolResultFailed(out)) 400 else 200;
     respond(stream, status, if (status == 200) "OK" else "Bad Request", out);
 }
 
@@ -8062,7 +8066,7 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"knowledge tool unavailable\"}");
         return;
     };
-    const status: u16 = if (std.mem.startsWith(u8, std.mem.trimStart(u8, result, " \t\r\n"), "{\"ok\":false")) 400 else 200;
+    const status: u16 = if (toolResultFailed(result)) 400 else 200;
     if (accepts_gzip and status == 200)
         respondCompressible(arena, stream, true, result)
     else
@@ -8181,7 +8185,7 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
             skipped += 1;
             continue;
         };
-        if (std.mem.startsWith(u8, std.mem.trimStart(u8, add_out, " \t\r\n"), "{\"ok\":false")) {
+        if (toolResultFailed(add_out)) {
             skipped += 1;
             continue;
         }
@@ -8384,7 +8388,7 @@ fn handlePrompts(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, 
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"prompts tool unavailable\"}");
         return;
     };
-    const status: u16 = if (std.mem.startsWith(u8, std.mem.trimStart(u8, result, " \t\r\n"), "{\"ok\":false")) 400 else 200;
+    const status: u16 = if (toolResultFailed(result)) 400 else 200;
     respond(stream, status, if (status == 200) "OK" else "Bad Request", result);
 }
 
@@ -8417,7 +8421,7 @@ fn handleArena(
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"arena tool unavailable\"}");
         return;
     };
-    const status: u16 = if (std.mem.startsWith(u8, std.mem.trimStart(u8, result, " \t\r\n"), "{\"ok\":false")) 404 else 200;
+    const status: u16 = if (toolResultFailed(result)) 404 else 200;
     respond(stream, status, if (status == 200) "OK" else "Not Found", result);
 }
 
@@ -8697,7 +8701,7 @@ fn handleCompare(
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"compare tool unavailable\"}");
         return;
     };
-    if (!std.mem.startsWith(u8, std.mem.trimStart(u8, result, " \t\r\n"), "{\"ok\":false")) {
+    if (!toolResultFailed(result)) {
         respond(stream, 200, "OK", result);
         return;
     }

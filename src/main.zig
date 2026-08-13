@@ -124,7 +124,7 @@ pub fn main(init: std.process.Init) !void {
     // allocator's leak report meaningful: a real leak should not hide behind a
     // known one.
     defer if (host.zig_lib_dir.len > 0) gpa.free(host.zig_lib_dir);
-    defer vertex_token.deinit(gpa);
+    defer vertex_token.deinit(init.io, gpa);
     std.posix.setrlimit(.STACK, .{ .cur = std.math.maxInt(u64), .max = std.math.maxInt(u64) }) catch {};
     const arena = init.arena.allocator();
 

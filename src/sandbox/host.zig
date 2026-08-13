@@ -3371,7 +3371,10 @@ pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
 fn pathHasWorktreeDir(path: []const u8) bool {
     var it = std.mem.splitScalar(u8, path, '/');
     while (it.next()) |comp| {
-        if (std.mem.eql(u8, comp, ".clanker-worktrees")) return true;
+        if (std.mem.eql(u8, comp, ".clanker-worktrees")) {
+            // The container itself is fine; only descent *into* it matters.
+            return it.rest().len > 0;
+        }
     }
     return false;
 }
