@@ -20,7 +20,7 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
   `app.js`, so a `/webui/app.js` render could alias another module's cache).
   All 28 `GET /webui/*` now `200 text/javascript`, each with its own cache
   slot, gzip + `Vary` + `ETag`/`304` + vendor `public,max-age=3600` verified
-  live (`clanker serve --port 40536`, `curl` + `playwright`, `clanker gate`
+  live (`clanker serve --webui-port 40536`, `curl` + `playwright`, `clanker gate`
   5/5 PASS, `zig fmt` clean).
 
 ### P0 fixes (earlier)
@@ -1418,7 +1418,7 @@ behaviour-preserving was checked live rather than argued —
 (`clanker providers check deepseek: ok, 786ms`).
 
 Then end to end, over real HTTP — `clanker serve` runs again since #188, so this
-no longer has to stop at the module boundary. `serve --port 41998`, then:
+no longer has to stop at the module boundary. `serve --webui-port 41998`, then:
 
 - `/webui`, `/webui/features/models.js`, `/webui/app.css` all `200`, and each
   really carries this change: `export function configSnippet` in the served

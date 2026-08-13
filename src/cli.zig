@@ -179,6 +179,9 @@ pub const Options = struct {
     /// config table and `CLANKER_WEBUI_PORT` still have a say; the effective
     /// default is `default_webui_port`, applied in `resolveListen`.
     webui_port: ?u16 = null,
+    /// Set when the operator used the deprecated `--port` spelling instead of
+    /// `--webui-port`, so `cmdServe` can emit the policy-mandated warning.
+    webui_port_deprecated_alias: bool = false,
     /// `serve --host <addr>`: the interface to bind to. Deliberately not
     /// per-surface: the process binds one address, and a second surface would
     /// add a port next to `webui_port` rather than a host next to this.
@@ -473,7 +476,14 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                     return error.BadIters;
                 };
                 used = .iters;
-            } else if (std.mem.eql(u8, a, "--webui-port") or std.mem.eql(u8, a, "--port")) {
+            } else if (std.mem.eql(u8, a, "--webui-port")) {
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                opts.webui_port = std.fmt.parseInt(u16, v, 10) catch {
+                    setDiag(diag, v);
+                    return error.BadPort;
+                };
+                used = .webui_port;
+            } else if (std.mem.eql(u8, a, "--port")) {
                 // `--port` is the original spelling, kept working so existing
                 // service files and scripts do not break. `--webui-port` is
                 // the documented one: it names the surface, so a second
@@ -483,6 +493,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                     setDiag(diag, v);
                     return error.BadPort;
                 };
+                opts.webui_port_deprecated_alias = true;
                 used = .webui_port;
             } else if (std.mem.eql(u8, a, "--host")) {
                 opts.host = try takeValue(args, &idx, inline_value, a, diag);
@@ -1543,7 +1554,7 @@ const specs = [_]Spec{
     .{ .command = .prune, .usage = "janitor [--yes]", .blurb = "sweep up what old runs left behind", .group = .maintain, .flags = &.{.yes}, .detail = "Also reachable as `clanker prune`.\n\nReports by default and deletes nothing. --yes removes: staging copies left by\nimprove runs that were killed, run graphs beyond the newest 200, improve logs\nbeyond the newest 20, and the worktrees of goals that have been archived or\nabandoned whose branch is already merged. Sessions, goals, learnings and chat\nhistory are never touched, and neither is a worktree whose branch still holds\ncommits the base does not." },
     .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can\nguard a script or CI step. Connectivity is `clanker providers check`." },
     .{ .command = .init, .usage = "init", .blurb = "create config.local.toml and state/", .group = .maintain, .detail = "Writes config.local.toml if it is missing, creates state/, and stops.\nDoes not check keys or tools; `clanker setup` is the guided first run." },
-    .{ .command = .gate, .usage = "gate", .blurb = "run the build/test/tools/fmt/lint gates", .group = .maintain },
+    .{ .command = .gate, .usage = "gate", .blurb = "run the build/test/tools/fmt/lint/release-contract gates", .group = .maintain },
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model }, .detail = "--tasks             run only agent-driven evals; skip self-host build gates\n--provider <name>   run agent-driven evals with this provider\n--model <name>      run agent-driven evals with this model" },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain, .detail = "Ids look like imp-... and live in state/improvements.jsonl (the same list the\nimprove loop records). A missing id is refused; nothing is written." },
     .{ .command = .autolearn, .usage = "autolearn [reset] [--model <model>]", .blurb = "fold recent runs into the ROADMAP's Autolearn section", .group = .maintain, .flags = &.{ .provider, .model }, .detail = "Aggregates the last 7 days of state/autolearn.jsonl into actionable items.\n\nreset    archive the event log to state/autolearn.old.jsonl (overwriting any\n         previous archive) and start observations from a clean slate. Use it\n         after addressing the reported items, so they stop resurfacing.\n\n--provider <name>  run the item synthesis with this provider instead of the\n                   configured default\n--model, -m        run the item synthesis with this model, or\n                   <provider>/<model>. Default is the deterministic local\n                   aggregation; passing a model instead has the chosen model\n                   review the raw observations and write the Autolearn section." },
@@ -1746,8 +1757,9 @@ fn reportGate(io: std.Io, name: []const u8, result: gate_checks.GateResult) !voi
     return error.GateFailed;
 }
 
-/// Runs all deterministic gates (build, test, tools, fmt, lint) against the
-/// current checkout. Throws error.GateFailed on the first failure.
+/// Runs all deterministic gates (build, test, tools, fmt, lint,
+/// release-contract) against the current checkout. Throws error.GateFailed on
+/// the first failure.
 fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !void {
     var build = try gate_checks.buildGate(gpa, io, std.Io.Dir.cwd(), &.{});
     defer build.deinit(gpa);
@@ -1769,6 +1781,10 @@ fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !vo
     var lint = try gate_checks.lintGate(gpa, io, std.Io.Dir.cwd(), files);
     defer lint.deinit(gpa);
     try reportGate(io, "lint", lint);
+
+    var release_contract = try gate_checks.releaseContractGate(gpa, io, std.Io.Dir.cwd());
+    defer release_contract.deinit(gpa);
+    try reportGate(io, "release-contract", release_contract);
 
     log.log(.info, "all gates passed", .{});
 }
@@ -4907,6 +4923,9 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     // decide what gets bound, and the env and the flags override it in turn.
     const listen = resolveListen(&cfg, init.environ_map, opts);
     const port = listen.port;
+    if (opts.webui_port_deprecated_alias) {
+        log.log(.warn, "serve --port is deprecated; use --webui-port instead", .{});
+    }
 
     const addr = try parseBindAddr(listen.host, port);
     // reuse_address lets a restarted `clanker serve` rebind immediately even
@@ -12104,8 +12123,12 @@ test "--port still works as an alias for --webui-port" {
     // silent outage for anyone who upgraded without reading the changelog.
     const aliased = try parse(&.{ "clanker", "serve", "--port", "9099" }, null);
     try std.testing.expectEqual(@as(u16, 9099), aliased.webui_port.?);
+    try std.testing.expect(aliased.webui_port_deprecated_alias);
     const inline_form = try parse(&.{ "clanker", "serve", "--port=9099" }, null);
     try std.testing.expectEqual(@as(u16, 9099), inline_form.webui_port.?);
+    try std.testing.expect(inline_form.webui_port_deprecated_alias);
+    const canonical = try parse(&.{ "clanker", "serve", "--webui-port", "9099" }, null);
+    try std.testing.expect(!canonical.webui_port_deprecated_alias);
 
     // Both spellings land on the same Flag, so the alias is accepted on serve
     // and refused everywhere the real flag is refused, with no second entry
@@ -12717,6 +12740,10 @@ test "a bare invocation starts the REPL, and --help still asks for help" {
     try std.testing.expectEqual(Command.version, (try parse(&.{ "clanker", "--version" }, null)).command);
     // A typo is still a typo, not a silent REPL start.
     try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "runn" }, null));
+}
+
+test "version matches build.zig.zon" {
+    try std.testing.expectEqualStrings(@import("build_options").version, version);
 }
 
 test "every session-taking command rejects malformed ids during parsing" {

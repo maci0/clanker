@@ -1348,3 +1348,55 @@ test "configSourceWeakeningGate requires the enabled defaults and rejects a flip
         good ++ "\nmax_consecutive_test_only: u32 = 0\n";
     try std.testing.expect(!configSourceWeakeningGate(zeroed).ok);
 }
+
+/// Validates the consumer-facing release contract files that must stay aligned
+/// with `build.zig.zon` and the policy in RELEASES.md.
+pub fn releaseContractGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
+    _ = std.SemanticVersion.parse(build_options.version) catch {
+        return .{ .ok = false, .label = "release-contract", .detail = "build.zig.zon .version is not valid SemVer" };
+    };
+
+    const changelog = dir.readFileAlloc(io, "CHANGELOG.md", gpa, .limited(1 << 20)) catch |err| {
+        const detail = try std.fmt.allocPrint(gpa, "cannot read CHANGELOG.md: {s}", .{@errorName(err)});
+        return .{ .ok = false, .label = "release-contract", .detail = detail };
+    };
+    defer gpa.free(changelog);
+    if (std.mem.indexOf(u8, changelog, "## [Unreleased]") == null) {
+        return .{ .ok = false, .label = "release-contract", .detail = "CHANGELOG.md must have a [Unreleased] section" };
+    }
+
+    const readme = dir.readFileAlloc(io, "README.md", gpa, .limited(1 << 20)) catch |err| {
+        const detail = try std.fmt.allocPrint(gpa, "cannot read README.md: {s}", .{@errorName(err)});
+        return .{ .ok = false, .label = "release-contract", .detail = detail };
+    };
+    defer gpa.free(readme);
+    if (std.mem.indexOf(u8, readme, "CHANGELOG.md") == null)
+        return .{ .ok = false, .label = "release-contract", .detail = "README.md must link to CHANGELOG.md" };
+    if (std.mem.indexOf(u8, readme, "RELEASES.md") == null)
+        return .{ .ok = false, .label = "release-contract", .detail = "README.md must link to RELEASES.md" };
+
+    const releases = dir.readFileAlloc(io, "RELEASES.md", gpa, .limited(1 << 20)) catch |err| {
+        const detail = try std.fmt.allocPrint(gpa, "cannot read RELEASES.md: {s}", .{@errorName(err)});
+        return .{ .ok = false, .label = "release-contract", .detail = detail };
+    };
+    defer gpa.free(releases);
+    if (std.mem.indexOf(u8, releases, "build.zig.zon") == null)
+        return .{ .ok = false, .label = "release-contract", .detail = "RELEASES.md must name build.zig.zon as the version source of truth" };
+
+    return .{ .ok = true, .label = "release-contract" };
+}
+
+test "releaseContractGate accepts the live release files" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const result = try releaseContractGate(gpa, io, std.Io.Dir.cwd());
+    defer result.deinit(gpa);
+    try std.testing.expect(result.ok);
+}
+
+test "releaseContractGate rejects a changelog without Unreleased" {
+    const bad = "# Changelog\n\n## [0.1.0] - 2026-01-01\n";
+    try std.testing.expect(std.mem.indexOf(u8, bad, "## [Unreleased]") == null);
+}

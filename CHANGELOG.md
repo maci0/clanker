@@ -68,9 +68,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
-- `serve --port` is now `serve --webui-port`, naming the surface it serves so
-  that a second surface added later gets its own name instead of forcing a
-  rename. `--port` is still accepted as an alias.
+- `serve --webui-port` is the documented spelling for the web UI listen port.
+  A second surface (`--proxy-port`) now has a peer name instead of overloading
+  a generic `--port`.
+
+### Deprecated
+
+- `serve --port` is deprecated in favor of `--webui-port`. The old flag still
+  works and logs a warning; migrate service files and scripts before it is
+  removed in a future minor release.
 
 ### Fixed
 
