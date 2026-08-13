@@ -69,6 +69,22 @@ van.derive(function () {
 Plugins are off until turned on in System → Web UI plugins. Enabled ones are
 recorded in `state/webui_plugins.json`.
 
+A disabled plugin's assets are not served: `GET /webui/plugins/<name>/app.js`
+answers `404` with `{"ok":false,"error":"plugin is not enabled"}` before it
+looks for the file. That is the intended behaviour — the page only requests
+assets for plugins already enabled — but a `404` while `/api/webui/plugins`
+answers `200` looks like a routing fault if you are probing by hand. Read the
+body, and enable the plugin first:
+
+```bash
+curl -X POST -H 'Content-Type: application/json' \
+	-d '{"name":"<name>","enabled":true}' http://127.0.0.1:<port>/api/webui/plugins
+```
+
+`clanker serve` also needs `zig build tools` before it can render any
+`/webui/*` path: the page comes out of `zig-out/tools/webui.wasm`, and without
+it those paths return `500` while `/api/*` keeps answering `200`.
+
 Constraints, which are the page's constraints:
 
 - Served same-origin from `/webui/plugins/<name>/`. The Content-Security-Policy

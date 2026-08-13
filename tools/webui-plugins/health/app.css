@@ -1,0 +1,155 @@
+/* Built from the page's own tokens, so a plugin cannot drift from the page it
+   is mounted in — and so light, dark and the Catppuccin themes all work
+   without this file knowing they exist. No literal colours here for that
+   reason: a hex would be the one thing on the page that does not follow the
+   theme. */
+
+.health-sub {
+  margin: var(--space-6) 0 var(--space-2);
+  font-size: var(--step-1);
+}
+
+/* ------------------------------------------------------------------ tiles */
+
+.health-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.health-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  /* State rides on the edge rather than on the number: the value keeps the
+     page's ink so it stays legible, and the word in the note below says the
+     same thing for anyone the colour does not reach. */
+  border-left: 3px solid var(--border);
+  border-radius: 4px;
+}
+
+.health-tile[data-state="good"] { border-left-color: var(--ok-fill); }
+.health-tile[data-state="warn"] { border-left-color: var(--warn); }
+.health-tile[data-state="bad"] { border-left-color: var(--danger); }
+
+.health-tile-label {
+  font-size: var(--step--1);
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.health-tile-value {
+  font-family: var(--mono);
+  font-size: var(--step-3);
+  font-weight: 600;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.health-tile-note {
+  font-size: var(--step--1);
+  color: var(--fg-muted);
+}
+
+/* The state chip beside the heading. */
+.health-state {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.health-state[data-state="warn"],
+.health-state[data-state="busy"] { color: var(--warn-text); }
+.health-state[data-state="saturated"] { color: var(--danger); }
+
+/* -------------------------------------------------------- distribution */
+
+.health-bands {
+  width: 100%;
+  margin-top: var(--space-3);
+  border-collapse: collapse;
+  font-size: var(--step-0);
+}
+
+.health-bands-caption {
+  caption-side: bottom;
+  margin-top: var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--step--1);
+  text-align: left;
+}
+
+.health-bands th,
+.health-bands td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.health-bands thead th {
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+
+.health-band-label {
+  font-weight: 500;
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+/* The bar column takes the slack, so the labels and the numbers stay put and
+   only the picture stretches. */
+.health-band-barcell { width: 55%; }
+
+.health-band-track {
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.health-band-bar {
+  height: 100%;
+  min-width: 0;
+  background: var(--accent);
+  border-radius: 4px;
+}
+
+/* One hue, getting stronger as the band gets slower: the bands are an ordered
+   magnitude, not five separate things, so this is a sequence and not a set of
+   identities. Slow bands read hardest, which is the one you want to notice. */
+.health-band-bar[data-band="0"] { opacity: 0.34; }
+.health-band-bar[data-band="1"] { opacity: 0.5; }
+.health-band-bar[data-band="2"] { opacity: 0.66; }
+.health-band-bar[data-band="3"] { opacity: 0.82; }
+.health-band-bar[data-band="4"] { opacity: 1; }
+
+.health-band-count,
+.health-band-share {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.health-band-share { color: var(--fg-muted); }
+
+/* Forced colours strip the fills, so give the bars an edge that survives it.
+   The numbers are in their own cells regardless, so nothing is lost either
+   way. */
+@media (forced-colors: active) {
+  .health-band-bar {
+    background: CanvasText;
+    opacity: 1;
+    border: 1px solid CanvasText;
+  }
+  .health-tile { border-left-color: CanvasText; }
+}

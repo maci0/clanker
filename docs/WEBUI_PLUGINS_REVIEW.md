@@ -181,3 +181,102 @@ button is left without an accessible name and the untitled card's carries an
 usable, and a later refresh recovers; and an empty board explains itself.
 Against unmodified `main` the same harness fails 6 of the 16. Gate: `zig build`,
 `zig build tools`, `zig build test --summary all`.
+
+## Health — the server's own numbers, which nothing was reading (2026-08-13)
+
+`GET /api/metrics` has been served since it was added and **no code in the
+browser ever called it**. A grep for each `/api/*` route across
+`tools/zig/webui/` finds a consumer for every one of them except this. So
+everything `handleHttpMetrics` reports was invisible from the page: how much
+traffic the server is taking, how much of it is failing, how close it is to its
+connection limit, and how long it takes to answer.
+
+The saturation figure is the one that earns a view. This server hands each
+connection to a thread and answers one request per connection, so `in_flight`
+against `connection_limit` is the difference between "busy" and "your next
+request waits" — and it is the mechanism behind the dropped polls that the arena
+and rooms views have each had to be made resilient to. `/health/ready` already
+reports that condition, but it reports it as a 503, which is the right shape for
+a load balancer and the wrong one for a page: it says whether the server
+arrived, not how close it got. This view says how close.
+
+A new plugin rather than a page module, because it is exactly the kind of thing
+the plugin surface exists for: useful, self-contained, and off by default.
+
+### What it shows
+
+Four stat tiles and one distribution. The tiles are `Requests`, `Errors`,
+`In flight` and `Mean response`; the distribution is the latency histogram.
+
+**A total is not a rate.** Every counter the endpoint exposes is a monotonic
+total, and the number you want from most of them is per-second. Two samples are
+differenced, and until the second one arrives the rate reads `—` and says
+"waiting for a second sample" rather than showing a total in a per-second slot.
+A gap of unknown length is not a sample window either, so a failed read drops
+the stored sample instead of differencing across the outage; the first read
+after a recovery also reads `—`.
+
+**A counter that goes backwards means a restart**, not negative traffic. That
+case reports no rate and names itself: "counters reset, now N since start". It
+is worth distinguishing from a just-opened view, because both show no rate but
+only one of them is news.
+
+**The bands are cut from cumulative buckets.** `latency_buckets` is
+`le_10 ≤ le_100 ≤ le_1000 ≤ le_10000`, so each band is a subtraction and the
+slowest band is `requests_total - le_10000`. Every subtraction is clamped at
+zero: the server loads each counter with its own atomic read, so a sample taken
+mid-request can legitimately have a bucket ahead of `requests_total`, and an
+unclamped band would render a negative bar width.
+
+**`in_flight` counts the connection asking.** It never reads zero from a
+browser, because the poll itself is one of the connections. The tile says "this
+poll included" rather than quietly subtracting one.
+
+### Drawing
+
+Nothing is on a canvas. The distribution is a real `<table>` with the bars
+inside a cell, so the numbers *are* the chart rather than a caption for it, and
+a screen reader or a stylesheet-less page reads exactly what the bars show. The
+bars are `aria-hidden` because the count and the share are already in their own
+cells beside them — the same choice the run checklist and the office log make.
+
+Colour is never the only encoding. Saturation is a word (`ready`, `busy`,
+`saturated`) with the colour following it, not carrying it. The bands are one
+hue getting stronger as the band gets slower, which is a sequence rather than
+five identities — slow bands read hardest, which is the one you want to notice.
+State rides on a tile's left edge rather than on its number, so the value keeps
+the page's ink and stays legible. Under `forced-colors` the fills are replaced
+with outlines. Every colour is a page token, so light, dark and the Catppuccin
+themes all work without this file knowing they exist; a literal hex would be the
+one thing on the page that does not follow the theme.
+
+The poll is 2s and gated on the panel's `hidden` attribute, because the host
+never unmounts a view — and a poll on a view nobody is looking at costs a
+connection that another view's poll wanted. Coming back re-reads immediately
+rather than showing numbers as old as the moment it was hidden.
+
+### Verified
+
+Two ways.
+
+`node` + the DOM stub driving the real `health/app.js`, 60 assertions: a first
+sample has totals but no rate; 40 requests over 2s reads as `20/s` and half a
+request a second is not `0/s`; a counter going backwards reports no rate, names
+the reset, and the pair after it measures from the new baseline; the four
+saturation cases each show the numbers, the word, the state attribute and a
+header chip that agrees; cumulative buckets become `700,200,60,30,10` with
+shares and bar widths scaled against the largest band; an inconsistent sample
+clamps to `90,0,25,0,0` with no negative widths; an empty server reads as empty
+rather than dividing by zero; a hidden view stops polling and resumes when
+shown; a failed read clears the tiles, says why, and does not fake a rate across
+the gap; and a poll is not issued while one is in flight.
+
+Live, against a real `clanker serve` on this machine: the plugin is discovered
+by `/api/webui/plugins` with its title, description, group and `has_css`; its
+`app.js` and `app.css` 404 while disabled and serve `200` with the right content
+types once enabled; and the real view, fed two real samples taken 1230 ms apart
+with real traffic in between, rendered `44/s` against an independently computed
+`43.9/s` — 54 requests over 1230 ms — with `1/64 connections, ready`,
+`10 of 88 (11%)` errors, a `0.2ms` mean and all 88 requests in the `up to 10ms`
+band. Gate: `zig build`, `zig build tools`, `zig build test --summary all` —
+163/163 steps, 776/778 tests, 2 skipped, the expected worktree pair.
