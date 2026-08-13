@@ -34,7 +34,7 @@ and Implementation lists checkable file-level phases.
 | [0011](0011-clanker-mesh.md) | Clanker mesh | Draft | Admission/TLS decided in Design |
 | [0012](0012-surface-plugins.md) | Surface plugins | Partial | Web UI shipped; TUI/CLI draft |
 | [0013](0013-ttsr.md) | TTSR | Draft | Substring/`*` matcher (no full regex v1) |
-| [0014](0014-hashline.md) | Hashline edit format | Draft | |
+| [0014](0014-hashline.md) | Hashline edit format | Shipped | `hashes:true` + `op:hashline` |
 | [0015](0015-advisor.md) | Advisor | Draft | Shares side-channel pattern with 0020 |
 | [0016](0016-eval-kernel.md) | Eval kernel | Draft | Hard prereq for 0017 |
 | [0017](0017-dap.md) | DAP | Draft | Needs 0016 subprocess registry |
@@ -54,9 +54,8 @@ and Implementation lists checkable file-level phases.
 Packaging and reliability first, then agent-loop quality, then heavy
 optional subsystems:
 
-1. **0014** — hashline (edit reliability)
-2. **0015** / **0020** — advisor + auto thinking (shared side-channel)
-3. **0024** — sampling profiles (after 0025; after numbers pinned)
+1. **0015** / **0020** — advisor + auto thinking (shared side-channel)
+2. **0024** — sampling profiles (after 0025; after numbers pinned)
 4. **0013** — TTSR (substring engine)
 5. **0016** then **0017** — eval kernel, then DAP
 6. **0019** — `gh_read`

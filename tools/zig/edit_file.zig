@@ -114,6 +114,91 @@ fn existingSize(alloc: std.mem.Allocator, path: []const u8) ?u64 {
     };
 }
 
+fn applyHashline(obj: std.json.ObjectMap, path: []const u8, out: *lib.Out) !void {
+    const alloc = lib.alloc;
+    const hunks_v = obj.get("hunks") orelse return lib.fail(out, "hashline needs \"hunks\"");
+    if (hunks_v != .array or hunks_v.array.items.len == 0)
+        return lib.fail(out, "hashline needs a non-empty hunks array");
+
+    var hunks: std.ArrayList(hashline.Hunk) = .empty;
+    for (hunks_v.array.items) |item| {
+        if (item != .object) return lib.fail(out, "each hunk must be an object");
+        const h = item.object;
+        const hash_s = str(h, "anchor_hash") orelse
+            return lib.fail(out, "hunk needs \"anchor_hash\"");
+        const hash = hashline.parseHash(hash_s) orelse
+            return lib.fail(out, "anchor_hash must be 4 lowercase hex digits");
+        const old_count = switch (h.get("old_count") orelse std.json.Value{ .integer = 1 }) {
+            .integer => |n| if (n < 1) 1 else @as(usize, @intCast(n)),
+            else => 1,
+        };
+        const new_text = joinNewLines(alloc, h) catch
+            return lib.fail(out, "hunk needs \"new_lines\" (array of strings)");
+        const anchor_line: usize = switch (h.get("anchor_line") orelse std.json.Value{ .integer = 1 }) {
+            .integer => |n| if (n < 1) 1 else @as(usize, @intCast(n)),
+            else => 1,
+        };
+        try hunks.append(alloc, .{
+            .anchor_hash = hash,
+            .anchor_line = anchor_line,
+            .old_count = old_count,
+            .new_text = new_text,
+        });
+    }
+
+    const current = lib.fsRead(path) catch |err| return lib.failErr(out, err, path);
+    const text = try alloc.dupe(u8, current);
+    const result = hashline.apply(alloc, text, hunks.items, 10) catch |err| {
+        const msg: []const u8 = switch (err) {
+            error.AnchorNotFound => "hashline mismatch: anchor hash not found within ±10 lines of the given line (file may have changed since it was read)",
+            error.PastEnd => "hashline mismatch: old_count extends past the end of the file",
+            error.HashMismatch => "hashline mismatch: a line hash did not match (file may have changed since it was read)",
+            error.OutOfMemory => "out of memory",
+        };
+        return lib.fail(out, msg);
+    };
+
+    lib.fsWrite(path, result.text) catch |err| return lib.failErr(out, err, path);
+
+    var w = out.writer();
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("path");
+    try s.write(path);
+    try s.objectField("bytes");
+    try s.write(result.text.len);
+    try s.objectField("hunks");
+    try s.beginArray();
+    for (result.applied) |a| {
+        try s.beginObject();
+        try s.objectField("start_line");
+        try s.write(a.start_line);
+        try s.objectField("hashes");
+        try s.beginArray();
+        for (a.hashes) |hx| try s.write(&hx);
+        try s.endArray();
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.endObject();
+    out.len = w.end;
+}
+
+fn joinNewLines(alloc: std.mem.Allocator, h: std.json.ObjectMap) ![]const u8 {
+    const v = h.get("new_lines") orelse return error.Missing;
+    if (v != .array) return error.Missing;
+    var out: std.ArrayList(u8) = .empty;
+    for (v.array.items, 0..) |item, i| {
+        if (item != .string) return error.Missing;
+        try out.appendSlice(alloc, item.string);
+        if (i + 1 < v.array.items.len) try out.append(alloc, '\n');
+    }
+    if (out.items.len > 0 and out.items[out.items.len - 1] != '\n') try out.append(alloc, '\n');
+    return out.toOwnedSlice(alloc);
+}
+
 fn report(out: *lib.Out, path: []const u8, replaced: usize, bytes: usize) !void {
     var w = out.writer();
     var s = std.json.Stringify{ .writer = &w, .options = .{} };

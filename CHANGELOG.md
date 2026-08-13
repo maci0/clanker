@@ -32,6 +32,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - The Models view can save a catalog snippet (or set the default
   provider/model) into `config.local.toml`. Writes are surgical table/key
   replacements and take effect on the next `clanker serve` restart.
+- `read_file` accepts `hashes: true` (4-hex xxHash per line) and
+  `edit_file` accepts `op: "hashline"` so an edit can target those hashes
+  instead of reproducing the exact text. A mismatch rejects the whole
+  patch; success returns the new hashes for a follow-up edit.
 
 ### Changed
 

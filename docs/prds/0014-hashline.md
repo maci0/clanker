@@ -2,9 +2,12 @@
 
 ## Status
 
-Draft. No source files yet. Affects `tools/zig/read_file.zig`,
-`tools/zig/edit_file.zig`, and their manifests
-(`tools/manifests/read_file.tool.json`, `tools/manifests/edit_file.tool.json`).
+Shipped. `read_file` accepts `hashes: true`; `edit_file` accepts
+`op: "hashline"` with hunks of `{anchor_hash, anchor_line, old_count,
+new_lines}`. Hashing and apply live in `tools/zig/hashline.zig` (host-
+tested). Tolerance is the v1 default ±10. Sources of truth:
+`tools/zig/hashline.zig`, `tools/zig/read_file.zig`,
+`tools/zig/edit_file.zig`, and the two manifests.
 
 ## Problem
 
@@ -207,25 +210,26 @@ hashline_tolerance = 10
 
 ## Acceptance criteria
 
-- [ ] `read_file` with `{"hashes": true}` returns output annotated with
+- [x] `read_file` with `{"hashes": true}` returns output annotated with
       `{line:04} {hash:4}  {content}` for every line.
-- [ ] Hash computation is `xxHash32(line_bytes) & 0xFFFF` formatted as 4-char
+- [x] Hash computation is `xxHash32(line_bytes) & 0xFFFF` formatted as 4-char
       lowercase hex, verified by a unit test against a known input/output pair.
-- [ ] `edit_file` with `op: "hashline"` applies a valid patch to a file and
+- [x] `edit_file` with `op: "hashline"` applies a valid patch to a file and
       produces the correct result.
-- [ ] A successful `hashline` edit returns new hashes (and start line) for each
+- [x] A successful `hashline` edit returns new hashes (and start line) for each
       applied hunk so a follow-up edit can proceed without re-reading.
-- [ ] A hunk with a wrong `anchor_hash` is rejected with an error naming the
+- [x] A hunk with a wrong `anchor_hash` is rejected with an error naming the
       line and the hash mismatch; the file is not modified.
-- [ ] A multi-hunk patch with one valid and one invalid hunk is rejected in
+- [x] A multi-hunk patch with one valid and one invalid hunk is rejected in
       full; the file is not modified.
-- [ ] Plain `{path, old, new}` edits and plain `read_file` (no `hashes`)
+- [x] Plain `{path, old, new}` edits and plain `read_file` (no `hashes`)
       continue to work unchanged; no regression in existing eval coverage.
-- [ ] `edit.hashline_tolerance` (default ±10) finds an anchor that shifted by 5
-      lines from `anchor_line`.
-- [ ] System prompt and tool manifests always mention `hashes: true` /
+- [x] `edit.hashline_tolerance` (default ±10) finds an anchor that shifted by 5
+      lines from `anchor_line`. (v1 uses the default; the config key is still
+      open if a later eval needs it retuned.)
+- [x] System prompt and tool manifests always mention `hashes: true` /
       `hashline` (not opt-in advertising).
-- [ ] Unit tests cover: hash computation, read output format, single-hunk apply,
+- [x] Unit tests cover: hash computation, read output format, single-hunk apply,
       multi-hunk apply in reverse order, mismatch rejection, tolerance-window
       search, write-back hash response.
 
