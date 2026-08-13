@@ -13,7 +13,7 @@
 // the title fallback there is what adopts cards created before the field
 // existed.
 import { readJson } from "../core/utils.js";
-import { T, bind, UI, state, uiConfirm } from "../core/ui.js";
+import { T, bind, UI, state, uiConfirm, uiPrompt } from "../core/ui.js";
 import { goalSortKey, goalFields, goalStatusLabel, goalPinnedColumn } from "../core/goals.js";
 import { makeLineSplitter } from "../core/stream.js";
 import { board, postBoard, loadBoard, boardIsLoaded } from "./board.js";
@@ -168,6 +168,13 @@ function goalCard(g) {
         doneAction.title = "Finish every checklist item before marking this goal done.";
       }
       actions.push(doneAction);
+    }
+    /* Iterate: ask what to refine, then reactivate the goal (if it is not
+       already active) and start a run steered by that instruction. Works for
+       finished, reviewing, archived or idle-active goals alike. */
+    if (g.id && !running) {
+      actions.push(UI.button("Iterate", function () { iterateGoal(g); },
+        { label: "Iterate on this goal's implementation" }));
     }
     [["Archive", "archived", "Goal archived and retained for future learning."],
      ["Reactivate", "active", "Goal reactivated."]].forEach(function (pair) {
@@ -460,6 +467,40 @@ function workOnGoal(g) {
   var box = el.goals.querySelector('input[data-goal-budget="' + g.id + '"]');
   var n = box ? parseInt(box.value, 10) : NaN;
   runGoal(g, { maxIterations: Number.isFinite(n) && n > 0 ? n : null });
+}
+
+/* Iterate: ask what specifics of the goal's implementation to refine, then
+   reactivate the goal (if it is not already active) and start a run steered
+   by that instruction. The current implementation stays in the repo; the new
+   run is told to build on it and focus only on the named specifics, so an
+   iteration is a narrower, directed pass rather than a fresh attempt from the
+   goal's completion criterion alone. */
+function iterateGoal(g) {
+  uiPrompt(
+    "What should the agent iterate on?",
+    "",
+    { placeholder: "e.g. the retry path, the board sync edge case, tighten the criterion…", maxlength: 8000 }
+  ).then(function (raw) {
+    var msg = (raw || "").trim();
+    if (!msg) return;
+    // Re-read the goal from live state: the user may have taken another
+    // action while the prompt was open, and its status decides reactivation.
+    var cur = findGoal(goalState.val, g.id) || g;
+    var act = function () {
+      if ((cur.status || "active") === "active") return Promise.resolve(cur);
+      return postGoal({ id: cur.id, status: "active" }, "Goal reactivated for iteration.")
+        .then(function (d) {
+          return findGoal(d.goals, cur.id) || cur;
+        });
+    };
+    act().then(function (goal) {
+      runGoal(goal, {
+        task: "Iterate on the previous work already done toward this goal. The user wants the implementation refined in this specific way — focus on this and this alone:\n\n" +
+          msg + "\n\nKeep what already works; change only what this instruction targets, then land the improvement in the repository (branch, commit, push, open a pull request, and merge it).\n\nObjective: " +
+          (goal.objective || "") + "\nDone when: " + (goal.completion_criterion || "")
+      });
+    });
+  });
 }
 
 /* Runs a board card as a goal. If the card already mirrors a goal (its
