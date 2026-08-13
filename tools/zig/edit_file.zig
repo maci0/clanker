@@ -17,6 +17,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const hashline = @import("hashline.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -34,6 +35,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         .bool => |b| b,
         else => false,
     };
+
+    if (str(obj, "op")) |op| {
+        if (std.mem.eql(u8, op, "hashline")) return applyHashline(obj, path, out);
+        return lib.fail(out, "unknown op; use \"hashline\" or omit op for exact-text replace");
+    }
 
     if (create) {
         const content = str(obj, "content") orelse

@@ -14,6 +14,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const hashline = @import("hashline.zig");
 
 /// The harness looks up `run` with this exact signature, and `lib` supplies
 /// the rest of the guest ABI (scratch, host_arena, the output buffer). A guest
@@ -39,7 +40,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         // Zero lines is never what the caller wanted, and answering with an
         // empty string looks like an empty file.
         const want = jsonUint(input, "line_count", 200);
-        return readByLine(out, path, start_line, if (want == 0) 200 else want);
+        return readByLine(out, path, start_line, if (want == 0) 200 else want, jsonBool(input, "hashes"));
     }
 
     // Read only the requested window. Reading the whole file first capped this
@@ -73,6 +74,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // it unsnapped is the only way the caller makes progress.
     const slice = if (end > start) raw[start..end] else raw;
     const consumed = if (end > start) end else raw.len;
+    const hashes = jsonBool(input, "hashes");
+    const start_no: usize = if (hashes and offset > 0)
+        countLines(raw[0..start]) + 1
+    else
+        1;
+    const text = if (hashes) try hashline.annotate(lib.alloc, slice, start_no) else slice;
 
     // Straight into the output buffer: a local array of this size would be a
     // megabyte-plus on the wasm stack, which traps.
@@ -82,7 +89,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.objectField("ok");
     try s.write(true);
     try s.objectField("text");
-    try s.write(slice);
+    try s.write(text);
     // Byte mode reads a window and never learns how big the file is, so an
     // offset past the end came back as an empty string with nothing else at
     // all: indistinguishable from an empty file.
@@ -104,7 +111,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 /// Reads `count` lines starting at `start_line` (1-based). The file is pulled
 /// in whole, which the host arena bounds; a file too large for that still has
 /// the byte-offset path.
-fn readByLine(out: *lib.Out, path: []const u8, start_line: usize, count: usize) !void {
+fn readByLine(out: *lib.Out, path: []const u8, start_line: usize, count: usize, hashes: bool) !void {
     const data = lib.fsRead(path) catch |err| return lib.fail(out, switch (err) {
         error.SandboxDenied => "path is outside the sandbox",
         error.NotFound => "no such file",
@@ -130,6 +137,7 @@ fn readByLine(out: *lib.Out, path: []const u8, start_line: usize, count: usize) 
     const slice = data[start..end];
     const last_line = first + countLines(slice) -| 1;
     const total = countLines(data);
+    const text = if (hashes) try hashline.annotate(lib.alloc, slice, first) else slice;
 
     var w = out.writer();
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -137,7 +145,7 @@ fn readByLine(out: *lib.Out, path: []const u8, start_line: usize, count: usize) 
     try s.objectField("ok");
     try s.write(true);
     try s.objectField("text");
-    try s.write(slice);
+    try s.write(text);
     try s.objectField("start_line");
     try s.write(first);
     try s.objectField("end_line");
@@ -217,6 +225,11 @@ fn jsonUintOpt(input: []const u8, name: []const u8) ?usize {
         digits += 1;
     }
     return if (digits == 0) null else n;
+}
+
+fn jsonBool(input: []const u8, name: []const u8) bool {
+    const rest = fieldValue(input, name) orelse return false;
+    return std.mem.startsWith(u8, rest, "true");
 }
 
 fn jsonUint(input: []const u8, name: []const u8, fallback: usize) usize {
