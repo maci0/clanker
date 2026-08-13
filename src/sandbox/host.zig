@@ -1377,9 +1377,9 @@ fn dockerRequestAllowed(method: []const u8, path: []const u8) bool {
     if (std.mem.find(u8, rest, "..") != null) return false;
 
     const exact = [_][]const u8{
-        "info",           "version",        "_ping",
-        "containers/json", "images/json",   "networks",
-        "volumes",        "system/df",
+        "info",            "version",     "_ping",
+        "containers/json", "images/json", "networks",
+        "volumes",         "system/df",
     };
     for (exact) |e| {
         if (std.mem.eql(u8, rest, e)) return true;
