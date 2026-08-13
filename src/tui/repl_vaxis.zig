@@ -339,7 +339,7 @@ fn runThreadMain(args: RunThreadArgs) void {
     var a = Agent.init(&self.ctx, self.arena, &self.provider, &self.cfg, &self.reg, self.tool_defs) catch |err| {
         // No agent, so no usage to report: the turn line is skipped rather
         // than printed as a row of zeroes.
-        self.finishTurn(std.fmt.allocPrint(self.arena, "[error: {s}]", .{@errorName(err)}) catch "[error]", null);
+        self.finishTurn(std.fmt.allocPrint(self.arena, "error: {s}", .{@errorName(err)}) catch "error", null);
         return;
     };
     defer a.deinit();
@@ -368,9 +368,9 @@ fn runThreadMain(args: RunThreadArgs) void {
         // answer, and a failing request is exactly when a hostile or merely
         // broken endpoint gets to choose what bytes clanker prints.
         const text = if (if (err_detail) |d| clean(self.arena, d) else null) |d|
-            std.fmt.allocPrint(self.arena, "[error: {s}{s}]", .{ d, hint }) catch "[error]"
+            std.fmt.allocPrint(self.arena, "error: {s}{s}", .{ d, hint }) catch "error"
         else
-            std.fmt.allocPrint(self.arena, "[error: {s}{s}]", .{ @errorName(err), hint }) catch "[error]";
+            std.fmt.allocPrint(self.arena, "error: {s}{s}", .{ @errorName(err), hint }) catch "error";
         // A turn that ran out of iterations or budget still spent real
         // tokens and real money; report them the same as a turn that
         // finished. `Agent.run`'s own defer has already folded its stats by
@@ -422,7 +422,7 @@ const Line = struct {
 /// guarantee independent of which draw branch a line happens to take.
 fn appendAnswerLines(arena: std.mem.Allocator, out: *std.ArrayList(Line), answer: []const u8) void {
     const safe = clean(arena, answer) orelse {
-        out.append(arena, .{ .text = "[answer dropped: out of memory]", .dim = true }) catch {};
+        out.append(arena, .{ .text = "error: answer dropped: out of memory", .dim = true }) catch {};
         return;
     };
     // `answer` is often `bridge_stream_buf.items`, cleared by the caller the
@@ -1687,9 +1687,9 @@ const Model = struct {
         if (looksLikeSlashCommand(task)) {
             const typed = std.mem.trim(u8, task, " \t");
             const text = if (suggestSlashCommand(typed)) |suggestion|
-                std.fmt.allocPrint(self.arena, "[unknown command: {s}; did you mean {s}?]", .{ typed, suggestion }) catch "[unknown command, try /help]"
+                std.fmt.allocPrint(self.arena, "error: unknown command: {s}; did you mean {s}?", .{ typed, suggestion }) catch "error: unknown command; try /help"
             else
-                std.fmt.allocPrint(self.arena, "[unknown command: {s}, try /help]", .{typed}) catch "[unknown command, try /help]";
+                std.fmt.allocPrint(self.arena, "error: unknown command: {s}; try /help", .{typed}) catch "error: unknown command; try /help";
             self.lines.append(self.arena, .{
                 .text = text,
                 .dim = true,
@@ -1718,12 +1718,12 @@ const Model = struct {
         // Same framing POST /api/steer applies server-side, so the model reads
         // a TUI steer as the same mid-run course correction it reads a web one.
         const framed = std.fmt.allocPrint(bridge_gpa, "[The user interjected while this run was in progress; take the message into account and adjust course.]\n\n{s}", .{task}) catch {
-            self.lines.append(self.arena, .{ .text = "[steer failed: out of memory]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "error: steer failed: out of memory", .dim = true }) catch {};
             return;
         };
         bridge_steer.append(bridge_gpa, framed) catch {
             bridge_gpa.free(framed);
-            self.lines.append(self.arena, .{ .text = "[steer failed: out of memory]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "error: steer failed: out of memory", .dim = true }) catch {};
             return;
         };
         const echo = std.fmt.allocPrint(bridge_gpa, "[steering queued: {s}]", .{task}) catch "[steering queued]";
@@ -1801,7 +1801,7 @@ const Model = struct {
                         "match, or add commentary; the transcript and verdict are the result.",
                     .{pc.args},
                 ) catch {
-                    self.lines.append(self.arena, .{ .text = "[arena: out of memory]", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "error: arena: out of memory", .dim = true }) catch {};
                     return;
                 };
                 try self.submitTask(ctx, prompt);
@@ -1829,10 +1829,10 @@ const Model = struct {
                 const wf_name = if (space) |i| std.mem.trim(u8, pc.args[0..i], " \t") else pc.args;
                 const wf_args = if (space) |i| std.mem.trim(u8, pc.args[i + 1 ..], " \t") else "";
                 const prompt = self.expandWorkflow(wf_name, wf_args) catch |err| {
-                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[workflow '{s}': {s}]", .{ wf_name, @errorName(err) }) catch "[workflow failed]", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: workflow '{s}': {s}", .{ wf_name, @errorName(err) }) catch "error: workflow failed", .dim = true }) catch {};
                     return;
                 } orelse {
-                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[no workflow named '{s}', try /workflows]", .{wf_name}) catch "[unknown workflow]", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: no workflow named '{s}'; try /workflows", .{wf_name}) catch "error: unknown workflow", .dim = true }) catch {};
                     return;
                 };
                 defer self.gpa.free(prompt);
@@ -1858,8 +1858,8 @@ const Model = struct {
         var argv_buf: [max_escape_args][]const u8 = undefined;
         const argv = splitShellArgs(args, &argv_buf) catch |err| {
             const msg = switch (err) {
-                error.UnterminatedQuote => "[compare: unbalanced quote in the arguments]",
-                error.TooManyArgs => "[compare: too many arguments]",
+                error.UnterminatedQuote => "error: compare: unbalanced quote in the arguments",
+                error.TooManyArgs => "error: compare: too many arguments",
             };
             self.lines.append(self.arena, .{ .text = msg, .dim = true }) catch {};
             return;
@@ -1906,7 +1906,7 @@ const Model = struct {
                         "and naming them is the one thing that undoes the comparison.",
                     .{args},
                 ) catch {
-                    self.lines.append(self.arena, .{ .text = "[compare: out of memory]", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "error: compare: out of memory", .dim = true }) catch {};
                     return;
                 };
                 try self.submitTask(ctx, prompt);
