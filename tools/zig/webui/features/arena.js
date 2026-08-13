@@ -419,19 +419,21 @@ function drawFrame(ts) {
   var t = reduced ? 0 : (ts || 0);
   var cs = m.combatants || [];
   var n = cs.length || 1;
+  var pal = arenaTheme();
 
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, cv.width, cv.height);
 
-  // Ground plane and horizon, tiled the same way as Fleet's desk floor.
-  ctx.fillStyle = "#1d2225";
+  // Ground plane and horizon, toned from the active theme rather than a fixed
+  // dark ramp, tiled the same way as Fleet's desk floor.
+  ctx.fillStyle = pal.bg;
   ctx.fillRect(0, 0, cv.width, cv.height);
-  ctx.fillStyle = "rgba(255,255,255,0.04)";
+  ctx.fillStyle = withAlpha(pal.fg, 0.04);
   for (var gx = 0; gx < cv.width; gx += 8) ctx.fillRect(gx, 0, 1, cv.height);
   var ground = cv.height - 46;
-  ctx.fillStyle = "#2a3033";
+  ctx.fillStyle = pal.surface;
   ctx.fillRect(0, ground, cv.width, 2);
-  ctx.fillStyle = "#343b3f";
+  ctx.fillStyle = pal.border;
   for (var tx = 0; tx < cv.width; tx += 16) ctx.fillRect(tx + 1, ground + 2, 14, 26);
 
   var last = lastMove(m);
@@ -445,14 +447,14 @@ function drawFrame(ts) {
     // Pairwise faces the two sprites across the centre; a royale lines them up.
     var facing = n <= 2 ? (i === 0 ? 1 : -1) : (cx < cv.width / 2 ? 1 : -1);
     var acting = last && last.combatant === i ? last.move : null;
-    drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, reduced, m);
+    drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, reduced, m, pal);
   }
 
   // The compactor runs after the verdict, over the top of the still stage.
   if (!reduced && m.status !== "running") drawCompactor(ctx, cv, m, t, ground, cw);
 }
 
-function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, reduced, m) {
+function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, reduced, m, pal) {
   var gone = c.eliminated || c.conceded;
   var bob = reduced || gone ? 0 : Math.sin(t / 420 + i * 1.1) * 2;
   var kneel = c.conceded || c.eliminated ? 8 : 0;
@@ -484,7 +486,7 @@ function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, redu
     ctx.fillRect(bx - 2, by - 10, 5, 4);
     ctx.fillRect(bx + 15, by - 10, 5, 4);
     ctx.globalAlpha = breathe;
-    ctx.fillStyle = HP_GOOD;
+    ctx.fillStyle = pal.ok;
     ctx.fillRect(bx + 2, by - 18, 14, 3);
     ctx.globalAlpha = gone ? 0.45 : 1;
   }
@@ -506,7 +508,7 @@ function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, redu
   var barY = ground - 52;
   ctx.globalAlpha = gone ? 0.4 : 1;
   for (var s = 0; s < segs; s++) {
-    ctx.fillStyle = s < filled ? hpColor(c.hp, maxHp) : "#3a4146";
+    ctx.fillStyle = s < filled ? hpColor(c.hp / maxHp, pal) : pal.border;
     ctx.fillRect(barX + s * 4.4, barY, 3, 5);
   }
   ctx.globalAlpha = 1;
@@ -516,14 +518,14 @@ function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, redu
   var lm = lastMove(m);
   if (lm && lm.combatant === i && lm.damage_taken > 0 && !reduced && lunge > 0) {
     ctx.globalAlpha = lunge;
-    ctx.fillStyle = HP_LOW;
+    ctx.fillStyle = pal.danger;
     ctx.font = "10px monospace";
     ctx.textAlign = "center";
     ctx.fillText("-" + lm.damage_taken, cx, barY - 6 - Math.round((1 - lunge) * 10));
     ctx.globalAlpha = 1;
   }
 
-  ctx.fillStyle = INK;
+  ctx.fillStyle = pal.fg;
   ctx.font = "10px monospace";
   ctx.textAlign = "center";
   ctx.fillText((c.label || "").slice(0, 14), cx, ground + 40);
@@ -600,6 +602,7 @@ function renderCombatants(m) {
   var host = byId("arena-combatants");
   if (!host) return;
   host.textContent = "";
+  var pal = arenaTheme();
   (m.combatants || []).forEach(function (c, i) {
     var chip = document.createElement("div");
     chip.className = "arena-combatant";
@@ -621,7 +624,7 @@ function renderCombatants(m) {
     fill.className = "arena-hp-fill";
     var frac = (c.max_hp ? c.hp / c.max_hp : 0);
     fill.style.width = Math.max(0, Math.min(100, Math.round(frac * 100))) + "%";
-    fill.style.background = hpColor(c.hp, c.max_hp || 100);
+    fill.style.background = hpColor((c.max_hp ? c.hp / c.max_hp : 0), pal);
     bar.appendChild(fill);
     var hp = document.createElement("span");
     hp.className = "meta";
@@ -660,8 +663,9 @@ function renderHpGraph(m) {
   var ctx = cv.getContext("2d");
   var W = cv.width, H = cv.height;
   var padL = 26, padR = 8, padT = 8, padB = 16;
+  var pal = arenaTheme();
   ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = "#1d2225";
+  ctx.fillStyle = pal.bg;
   ctx.fillRect(0, 0, W, H);
   var maxHp = 0;
   cs.forEach(function (c) { maxHp = Math.max(maxHp, c.max_hp || 100); });
@@ -669,8 +673,8 @@ function renderHpGraph(m) {
   function X(k) { return padL + (W - padL - padR) * (k / nx); }
   function Y(hp) { return padT + (H - padT - padB) * (1 - hp / maxHp); }
   // Gridlines at 0/50/100% with axis labels, same ink as the stage.
-  ctx.strokeStyle = "rgba(255,255,255,0.08)";
-  ctx.fillStyle = "#8b948b";
+  ctx.strokeStyle = withAlpha(pal.fg, 0.08);
+  ctx.fillStyle = pal.muted;
   ctx.font = "9px monospace";
   ctx.textAlign = "right";
   [0, 0.5, 1].forEach(function (f) {
@@ -687,7 +691,7 @@ function renderHpGraph(m) {
   (m.rounds || []).forEach(function (r) {
     var upto = moveIdx + (r.moves || []).length;
     var x = X(upto);
-    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.strokeStyle = withAlpha(pal.fg, 0.05);
     ctx.beginPath();
     ctx.moveTo(x, padT);
     ctx.lineTo(x, H - padB);
@@ -724,5 +728,12 @@ export function bindArena() {
   if (window.matchMedia) {
     var mq = window.matchMedia("(prefers-reduced-motion: reduce)");
     if (mq.addEventListener) mq.addEventListener("change", function () { renderMatch(); });
+  }
+  // A theme switch must re-seed the palette; re-render draws from the new
+  // tokens, and a reduced-motion static frame is redrawn too.
+  var root = document.documentElement;
+  if (root && typeof MutationObserver !== "undefined") {
+    new MutationObserver(function () { renderMatch(); })
+      .observe(root, { attributes: true, attributeFilter: ["data-theme"] });
   }
 }
