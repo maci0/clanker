@@ -320,7 +320,7 @@ fn appendAnswerLines(arena: std.mem.Allocator, out: *std.ArrayList(Line), answer
 /// `Config.providers` so the picker can filter and sort without walking the
 /// nested map on every keystroke.
 /// Which list the shared modal picker is showing.
-const PickerKind = enum { model, theme };
+const PickerKind = enum { model, theme, command };
 
 const ModelCandidate = struct {
     provider: []const u8,
@@ -505,6 +505,90 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/theme", .takes_args = true, .arg_hint = "[name]", .help = "list or switch color theme (mocha, latte, tokyonight, ...)", .action = .theme },
     .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
 };
+
+/// One row of the command palette: a registry entry with its display row and
+/// the text the fuzzy filter matches against, both built once at startup.
+///
+/// `haystack` is deliberately wider than the label: it carries every
+/// spelling *and* the help text, so the palette answers "what was the
+/// command for switching models" as readily as "/mod". That is the whole
+/// point of having it next to Tab-complete, which can only ever extend a
+/// prefix of a name you already remember.
+const CommandCandidate = struct {
+    spec: *const CommandSpec,
+    label: []const u8,
+    haystack: []const u8,
+};
+
+/// Flattens `command_registry` into palette rows, in registry order (the
+/// same order `/help` lists them, so the unfiltered palette reads as the
+/// help screen it is drawn from).
+///
+/// Built once into session-lifetime memory rather than per keystroke: vaxis
+/// cells borrow the label slices until the frame is flushed, so a row must
+/// not point into a draw function's stack, and the registry cannot change at
+/// runtime.
+fn buildCommandCandidates(arena: std.mem.Allocator) ![]const CommandCandidate {
+    var out: std.ArrayList(CommandCandidate) = .empty;
+    for (&command_registry) |*spec| {
+        var names: std.ArrayList(u8) = .empty;
+        try names.appendSlice(arena, spec.name);
+        for (spec.aliases) |alias| {
+            try names.appendSlice(arena, ", ");
+            try names.appendSlice(arena, alias);
+        }
+        if (spec.arg_hint.len > 0) {
+            try names.append(arena, ' ');
+            try names.appendSlice(arena, spec.arg_hint);
+        }
+        var label: std.ArrayList(u8) = .empty;
+        try label.appendSlice(arena, names.items);
+        var col = width_mod.displayWidth(names.items);
+        while (col < help_names_width + 2) : (col += 1) try label.append(arena, ' ');
+        try label.appendSlice(arena, spec.help);
+        try out.append(arena, .{
+            .spec = spec,
+            .label = try label.toOwnedSlice(arena),
+            .haystack = try std.fmt.allocPrint(arena, "{s} {s}", .{ names.items, spec.help }),
+        });
+    }
+    return out.toOwnedSlice(arena);
+}
+
+test "buildCommandCandidates covers the registry and matches on name or description" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const cands = try buildCommandCandidates(arena);
+    try std.testing.expectEqual(command_registry.len, cands.len);
+
+    // Every row shows its spelling and its help line, so the palette is
+    // readable without cross-referencing /help.
+    for (cands, 0..) |c, i| {
+        try std.testing.expect(std.mem.find(u8, c.label, command_registry[i].name) != null);
+        try std.testing.expect(std.mem.find(u8, c.label, command_registry[i].help) != null);
+    }
+
+    // Find by name, the way Tab-complete already can...
+    const model = for (cands) |c| {
+        if (c.spec.action == .model) break c;
+    } else return error.TestExpectedModel;
+    try std.testing.expect(fuzzyMatch("model", model.haystack));
+    // ...by a mid-word fragment, which Tab-complete cannot...
+    try std.testing.expect(fuzzyMatch("mdl", model.haystack));
+    // ...and by what the command does, which is the reason for the palette.
+    try std.testing.expect(fuzzyMatch("switch", model.haystack));
+
+    // An alias is matchable too: /quit carries "exit".
+    const quit = for (cands) |c| {
+        if (c.spec.action == .quit) break c;
+    } else return error.TestExpectedQuit;
+    try std.testing.expect(fuzzyMatch("exit", quit.haystack));
+
+    // Nonsense still matches nothing.
+    for (cands) |c| try std.testing.expect(!fuzzyMatch("zzqqxx", c.haystack));
+}
 
 /// A registry hit: which entry matched, plus whatever followed the
 /// matched spelling (trimmed; empty when nothing did).
@@ -1222,6 +1306,8 @@ const Model = struct {
     /// it's true every key press is routed to `handlePickerKey` instead of
     /// the normal input handling below, a small modal, not a second widget.
     model_candidates: []const ModelCandidate = &.{},
+    /// Every slash command, flattened once at startup for the Ctrl-P palette.
+    command_candidates: []const CommandCandidate = &.{},
     picker_open: bool = false,
     /// What the open picker is choosing: a provider/model or a color theme.
     /// Both share the one modal (query line + arrow-select + Enter/Esc); the
@@ -2051,6 +2137,7 @@ const Model = struct {
         const keys =
             \\keys:
             \\  Tab               complete a /command
+            \\  Ctrl-P            command palette (fuzzy: matches mid-word and on description)
             \\  Up/Down           recall previous input
             \\  PgUp/PgDn         page the transcript (Home: top; End/Esc: back to tail)
             \\  Ctrl-C            stop the current turn, or quit when idle
@@ -2077,10 +2164,10 @@ const Model = struct {
     /// `handlePickerKey` only ever saw the keys the field ignores — arrows,
     /// Enter, Escape. Typed characters and Backspace went into the composer
     /// behind the modal instead of into `picker_query`, so the query line
-    /// both pickers draw could not be typed into at all, and the fuzzy filter
-    /// was unreachable except through a seed argument (`/model kimi`).
-    /// Moving focus to the Model for the life of the modal is what makes the
-    /// picker a picker; `closeModelPicker` hands it back.
+    /// every picker draws could not be typed into at all, and the fuzzy
+    /// filter was unreachable except through a seed argument
+    /// (`/model kimi`). Moving focus to the Model for the life of the modal
+    /// is what makes the picker a picker; `closeModelPicker` hands it back.
     fn focusPicker(self: *Model, ctx: *vxfw.EventContext) !void {
         try ctx.requestFocus(self.widget());
     }
@@ -2106,6 +2193,48 @@ const Model = struct {
         self.picker_query.appendSlice(self.arena, seed_query) catch {};
         self.picker_selected = 0;
         self.previewSelectedTheme();
+    }
+
+    /// The command palette: the same modal, listing every slash command and
+    /// filtering it with the same subsequence match `/model` uses. Distinct
+    /// from Tab-complete, which extends a prefix of a name already typed;
+    /// this finds a command mid-word ("mdl") or by what it does ("switch"),
+    /// which is what the fuzzy-palette gap in docs/prds/0005-repl-tui.md
+    /// asked for.
+    fn openCommandPalette(self: *Model, ctx: *vxfw.EventContext, seed_query: []const u8) !void {
+        try self.focusPicker(ctx);
+        self.picker_kind = .command;
+        self.picker_open = true;
+        self.picker_query.clearRetainingCapacity();
+        self.picker_query.appendSlice(self.arena, seed_query) catch {};
+        self.picker_selected = 0;
+    }
+
+    /// Commands whose spelling or help text matches the query, in registry
+    /// order. Same per-keystroke rescan as `filteredCandidates`, for the same
+    /// reason: the list is a dozen entries, so bookkeeping to avoid the scan
+    /// would cost more than the scan.
+    fn filteredCommands(self: *Model) []const CommandCandidate {
+        var out: std.ArrayList(CommandCandidate) = .empty;
+        for (self.command_candidates) |c| {
+            if (fuzzyMatch(self.picker_query.items, c.haystack)) out.append(self.arena, c) catch break;
+        }
+        return out.items;
+    }
+
+    /// Enter on a palette row. A command that takes no arguments runs now —
+    /// there is nothing more to say about `/help`, and making the user press
+    /// Enter twice for it would be worse than useless. One that takes
+    /// arguments loads `"<name> "` into the composer instead, because
+    /// running `/goal` or `/workflow` with no arguments only prints its own
+    /// usage; this leaves the cursor exactly where the arguments go. That is
+    /// the same split Tab-complete already makes on a unique match.
+    fn runPaletteSelection(self: *Model, ctx: *vxfw.EventContext, spec: *const CommandSpec) !void {
+        if (spec.takes_args) {
+            self.loadInputFrom(std.fmt.allocPrint(self.arena, "{s} ", .{spec.name}) catch spec.name);
+            return;
+        }
+        try self.runCommand(ctx, .{ .spec = spec, .args = "" }, spec.name);
     }
 
     fn closeModelPicker(self: *Model, ctx: *vxfw.EventContext) !void {
@@ -2176,6 +2305,7 @@ const Model = struct {
         return switch (self.picker_kind) {
             .model => self.filteredCandidates().len,
             .theme => self.filteredThemes().len,
+            .command => self.filteredCommands().len,
         };
     }
 
@@ -2197,6 +2327,19 @@ const Model = struct {
                     // highlighted theme; Enter just keeps it.
                     const matches = self.filteredThemes();
                     if (matches.len > 0) self.theme_override = matches[@min(self.picker_selected, matches.len - 1)];
+                },
+                .command => {
+                    const matches = self.filteredCommands();
+                    if (matches.len > 0) {
+                        const picked = matches[@min(self.picker_selected, matches.len - 1)].spec;
+                        // Closed before dispatching: a command may print into
+                        // the transcript (or quit), and doing that with the
+                        // modal still flagged open would draw the palette on
+                        // top of its own output.
+                        try self.closeModelPicker(ctx);
+                        try self.runPaletteSelection(ctx, picked);
+                        return ctx.consumeAndRedraw();
+                    }
                 },
             }
             try self.closeModelPicker(ctx);
@@ -2294,6 +2437,17 @@ const Model = struct {
                 }
                 if (self.view_end != null and (key.matches(vaxis.Key.end, .{}) or key.matches(vaxis.Key.escape, .{}))) {
                     self.view_end = null;
+                    return ctx.consumeAndRedraw();
+                }
+                // Ctrl-P opens the command palette. A separate mechanism from
+                // Tab-complete on purpose: Tab extends a prefix of a name you
+                // already remember, the palette finds a command you don't
+                // ("mdl" -> /model, "switch" -> /model). Bound on Ctrl-P
+                // rather than a slash spelling so it is reachable with a line
+                // already half-typed, and because a `/palette` command would
+                // itself need to be looked up in the thing it opens.
+                if (key.matches('p', .{ .ctrl = true })) {
+                    try self.openCommandPalette(ctx, "");
                     return ctx.consumeAndRedraw();
                 }
                 // Terminal convention: Ctrl+Shift+C copies the current
@@ -2894,11 +3048,17 @@ const Model = struct {
     /// than a bolted-on popup.
     fn drawModelPicker(self: *Model, surface: vxfw.Surface, rule_style: vaxis.Style, sel_style: vaxis.Style) void {
         const is_theme = self.picker_kind == .theme;
-        // Row count for either list; theme labels come from a static names
-        // list, model labels from the filtered candidates.
+        const is_command = self.picker_kind == .command;
+        // Row count for whichever list is open; theme labels come from a
+        // static names list, model and command labels from their candidates.
         const theme_matches = if (is_theme) self.filteredThemes() else &[_][]const u8{};
-        const model_matches = if (is_theme) &[_]ModelCandidate{} else self.filteredCandidates();
-        const count = if (is_theme) theme_matches.len else model_matches.len;
+        const model_matches = if (self.picker_kind == .model) self.filteredCandidates() else &[_]ModelCandidate{};
+        const command_matches = if (is_command) self.filteredCommands() else &[_]CommandCandidate{};
+        const count = switch (self.picker_kind) {
+            .theme => theme_matches.len,
+            .model => model_matches.len,
+            .command => command_matches.len,
+        };
         const max_rows: u16 = 8;
         const rows_shown: u16 = @intCast(@min(count, max_rows));
         // The picker commits on Enter, so teach its controls at the decision
@@ -2908,14 +3068,22 @@ const Model = struct {
         const y = self.transcript_bottom -| h;
         drawBox(surface, 0, y, surface.size.width, h, rule_style);
 
-        const prompt: []const u8 = if (is_theme) "/theme " else "/model ";
+        const prompt: []const u8 = switch (self.picker_kind) {
+            .theme => "/theme ",
+            .model => "/model ",
+            .command => "> ",
+        };
         writeRow(surface, y + 1, prompt, .{ .bold = true });
         var query_col: u16 = @intCast(prompt.len);
         writeRowAt(surface, y + 1, &query_col, self.picker_query.items, .{ .bold = true });
         writeRowAt(surface, y + 1, &query_col, "\xe2\x96\x8f", .{ .bold = true });
 
         if (count == 0) {
-            writeRow(surface, y + 2, if (is_theme) "  no matching theme" else "  no matching provider/model", .{ .dim = true });
+            writeRow(surface, y + 2, switch (self.picker_kind) {
+                .theme => "  no matching theme",
+                .model => "  no matching provider/model",
+                .command => "  no matching command",
+            }, .{ .dim = true });
             return;
         }
         const sel = @min(self.picker_selected, count - 1);
@@ -2934,14 +3102,19 @@ const Model = struct {
             const style = if (idx == sel) sel_style else vaxis.Style{};
             writeRow(surface, row, marker, style);
             var col: u16 = 2;
-            const label = if (is_theme) theme_matches[idx] else model_matches[idx].label;
+            const label = switch (self.picker_kind) {
+                .theme => theme_matches[idx],
+                .model => model_matches[idx].label,
+                .command => command_matches[idx].label,
+            };
             writeRowAt(surface, row, &col, label, style);
             row += 1;
         }
-        const guide: []const u8 = if (is_theme)
-            "  Up/Down preview  \xc2\xb7  Enter keep  \xc2\xb7  Esc cancel"
-        else
-            "  Up/Down move  \xc2\xb7  Enter select  \xc2\xb7  Esc cancel";
+        const guide: []const u8 = switch (self.picker_kind) {
+            .theme => "  Up/Down preview  \xc2\xb7  Enter keep  \xc2\xb7  Esc cancel",
+            .model => "  Up/Down move  \xc2\xb7  Enter select  \xc2\xb7  Esc cancel",
+            .command => "  Up/Down move  \xc2\xb7  Enter run (or fill in args)  \xc2\xb7  Esc cancel",
+        };
         writeRow(surface, y + h - 2, guide, .{ .dim = true });
         // Position within the list, right-aligned on the guide row: with a
         // scrolling window the eight visible rows no longer say how much list
@@ -3996,6 +4169,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         }) catch {};
     }
     model.model_candidates = buildModelCandidates(arena, &model.cfg) catch &.{};
+    model.command_candidates = buildCommandCandidates(arena) catch &.{};
     // A resumed conversation already occupies part of the window, so the
     // meter and the mid-turn compaction baseline start from what was loaded
     // rather than from zero.

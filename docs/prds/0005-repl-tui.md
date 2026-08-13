@@ -238,8 +238,17 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
       is single-line; Enter always submits.
 - [ ] **Transcript search.** Scrollback paging exists; `/`-to-search within it
       does not (grok/opencode both have it).
-- [ ] **Slash-command fuzzy palette.** Tab-complete is prefix-only; a `/model`-
-      style fuzzy picker over `command_registry` would match mid-word.
+- [x] **Slash-command fuzzy palette.** Shipped: **Ctrl-P** opens a third
+      `PickerKind` over `command_registry` in the same modal `/model` and
+      `/theme` use, filtered by the same `fuzzyMatch` subsequence test. It
+      matches mid-word (`mdl` -> `/model`), on an alias (`exit` -> `/quit`)
+      and on the help text (`switch` -> `/model`), which is what separates it
+      from Tab-complete: that can only extend a prefix of a name already
+      remembered. Enter runs a command that takes no arguments outright and
+      loads `"<name> "` into the composer for one that does, the same split
+      Tab-complete makes on a unique match. Bound to a key rather than a
+      spelling because a `/palette` command would have to be looked up in the
+      thing it opens.
 - [ ] **Image / multimodal input.** The web UI has an attachment path (webui
       1.3); this REPL has no route for a task that needs one.
 - [ ] **Plan mode toggle.** `Agent.plan_mode` exists and the web UI toggles it
