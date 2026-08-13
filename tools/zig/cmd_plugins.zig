@@ -243,7 +243,7 @@ fn listJson(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plugin) !v
         const line = try std.fmt.allocPrint(alloc, "[{s}] {s: <14} {s}{s}{s}\n", .{ mark, p.name, tags, clipped, ellipsis });
         try text.appendSlice(alloc, line);
     }
-    try text.appendSlice(alloc, "\nToggle in the REPL with /plugins on|off <name>. Core tools back the REPL and HTTP routes and stay on; transforms rewrite other tools' input or output.\n");
+    try text.appendSlice(alloc, "\nToggle with `clanker plugins on|off <name>` or `/plugins on|off <name>` in the REPL. Core tools back the REPL and HTTP routes and stay on; transforms rewrite other tools' input or output.\n");
     try writeText(out, text.items);
 }
 

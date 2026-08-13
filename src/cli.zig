@@ -103,7 +103,7 @@ pub const Command = enum {
     arena,
     compare,
     workflow,
-    /// `plugins list|validate|new`: the third-party side of the tool
+    /// `plugins list|on|off|validate|new`: the operator and authoring side of the tool
     /// registry. `src/tools/manifest.zig` is the schema it enforces.
     plugins,
     schedule,
@@ -220,8 +220,9 @@ pub const Options = struct {
     workflow_sub: ?[]const u8 = null,
     workflow_name: ?[]const u8 = null,
     workflow_args: ?[]const u8 = null,
-    /// `plugins`: "list" (default), "validate" or "new". `plugin_target` is
-    /// the manifest/directory for validate, and the new tool's name for new.
+    /// `plugins`: "list" (default), "on", "off", "validate" or "new".
+    /// `plugin_target` is the affected plugin, manifest, directory, or new
+    /// tool name according to the subcommand.
     plugins_sub: ?[]const u8 = null,
     plugin_target: ?[]const u8 = null,
     /// `arena`: the two stances, and who argues them. A side with no provider
@@ -1378,7 +1379,7 @@ const specs = [_]Spec{
     .{ .command = .graph, .usage = "graph [run-id]", .blurb = "list runs, or draw one as a timeline", .group = .inspect, .detail = "With no argument, lists recorded runs (newest last). With a run id, renders\nthe execution graph as an ASCII timeline of LLM calls and tool invocations.\nThe web UI (clanker serve) shows the same graph interactively." },
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
     .{ .command = .tools_list, .usage = "tools [list]", .blurb = "list the registered WASM tools", .group = .inspect },
-    .{ .command = .plugins, .usage = "plugins [list|validate [path]|new <name>]", .blurb = "list plugins, check a manifest, or scaffold a new tool", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
+    .{ .command = .plugins, .usage = "plugins [list|on <name>|off <name>|validate [path]|new <name>]", .blurb = "list, switch, validate, or scaffold plugins", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\non <name>         switch an optional plugin on\noff <name>        switch an optional plugin off\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nCore tools cannot be switched off. Changes take effect in the next command; a\nrunning REPL reloads its tool catalog immediately.\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
     .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, caps it at\n                agent.provider_check_timeout_seconds, and ends with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the public models.dev directory by id/family\nfill <name>     print models.dev specs for a configured provider's models" },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
@@ -3804,7 +3805,7 @@ fn cmdToolsList(init: std.process.Init, opts: Options) !void {
     try printInternalTool(init, &cfg, "cmd_tools", "");
 }
 
-/// `clanker plugins [list|validate [path]|new <name>]`.
+/// `clanker plugins [list|on <name>|off <name>|validate [path]|new <name>]`.
 ///
 /// The third-party half of the plugin surface: `list` is the same view
 /// `/plugins` gives in the REPL (the cmd_plugins guest owns it, so there is one
@@ -3820,6 +3821,12 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
         if (opts.plugin_target != null) usageExit(io, "plugins list takes no arguments", .{});
         return printInternalTool(init, &cfg, "cmd_plugins", "");
     }
+    if (std.mem.eql(u8, sub, "on") or std.mem.eql(u8, sub, "off")) {
+        const name = opts.plugin_target orelse
+            usageExit(io, "plugins {s} needs a plugin name: clanker plugins {s} <name>", .{ sub, sub });
+        const args = try std.fmt.allocPrint(arena, "{s} {s}", .{ sub, name });
+        return printInternalTool(init, &cfg, "cmd_plugins", args);
+    }
     if (std.mem.eql(u8, sub, "validate")) {
         return pluginsValidate(init, opts.plugin_target orelse cfg.agent.tools_dir);
     }
@@ -3828,7 +3835,7 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
             usageExit(io, "plugins new needs a tool name: clanker plugins new word_count", .{});
         return pluginsNew(init, cfg.agent.tools_dir, name);
     }
-    usageExit(io, "unknown plugins subcommand '{s}' (list, validate, new)", .{sub});
+    usageExit(io, "unknown plugins subcommand '{s}' (list, on, off, validate, new)", .{sub});
 }
 
 /// A usage mistake caught after parsing: same message shape and same exit code
@@ -11525,6 +11532,18 @@ test "history is the sessions alias people type first" {
     const opts = try parse(&.{ "clanker", "history" }, null);
     try std.testing.expectEqual(Command.sessions, opts.command);
     try std.testing.expectEqual(Command.sessions, commandForHelp("history").?);
+}
+
+test "plugin switches have the same command shape as the REPL" {
+    const enabled = try parse(&.{ "clanker", "plugins", "on", "translate" }, null);
+    try std.testing.expectEqual(Command.plugins, enabled.command);
+    try std.testing.expectEqualStrings("on", enabled.plugins_sub.?);
+    try std.testing.expectEqualStrings("translate", enabled.plugin_target.?);
+
+    const disabled = try parse(&.{ "clanker", "plugin", "off", "translate" }, null);
+    try std.testing.expectEqual(Command.plugins, disabled.command);
+    try std.testing.expectEqualStrings("off", disabled.plugins_sub.?);
+    try std.testing.expectEqualStrings("translate", disabled.plugin_target.?);
 }
 
 test "bare tools lists, session without export names the next step" {
