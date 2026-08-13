@@ -25,6 +25,10 @@ const mock_server = @import("../llm/mock_server.zig");
 const max_chat_inbox_preview_bytes: usize = 300;
 /// What the human is shown when asked to allow a tool call.
 const max_args_preview_bytes: usize = 400;
+/// Recent messages kept verbatim when compacting history or pruning stale
+/// tool results. Compaction walks further back from this window so a
+/// tool_call/result pair is never split.
+const recent_tail_messages: usize = 6;
 
 /// Appended to the system prompt so a model asked for an exact-format answer
 /// (a string, a number, JSON) does not wrap it in prose or markdown fences.
@@ -538,7 +542,7 @@ pub const Agent = struct {
             // model already processed are shortened in place so the estimated
             // token count that drives compaction reflects the reduced payload,
             // and subsequent LLM calls carry less redundant context.
-            pruneOldToolResults(messages.items, self.arena, 6);
+            pruneOldToolResults(messages.items, self.arena, recent_tail_messages);
             // Log estimated prompt tokens before each LLM call for visibility
             // into context usage and to aid compaction tuning. maybeCompactMessages
             // already computes this while deciding whether to compact, so reuse
@@ -1106,9 +1110,9 @@ pub const Agent = struct {
     /// it without a provider or an LLM call.
     fn compactionKeepStart(messages: []const types.Message, estimated_tokens: usize, threshold: usize) ?usize {
         if (estimated_tokens <= threshold) return null;
-        // Need at least system + one middle + last 6 = 8 messages to compact.
-        if (messages.len <= 7) return null;
-        var keep_start = messages.len - 6;
+        // Need at least system + one middle + the kept tail to compact.
+        if (messages.len <= recent_tail_messages + 1) return null;
+        var keep_start = messages.len - recent_tail_messages;
         while (keep_start > 1 and messages[keep_start].role == .tool) keep_start -= 1;
         return keep_start;
     }
@@ -1144,10 +1148,18 @@ pub const Agent = struct {
             if (m.role != .tool) continue;
             const content = m.content orelse continue;
             if (content.len <= prune_preview_bytes) continue;
+            // This runs every agent-loop iteration. A previous pass already
+            // rewrote the result as preview + "... [pruned: N bytes total]";
+            // allocPrint again would grow the run arena by another copy each
+            // turn, because the arena never shrinks.
+            if (std.mem.indexOf(u8, content, "... [pruned: ")) |at| {
+                if (at <= prune_preview_bytes) continue;
+            }
+            const preview = utf8.cap(content, prune_preview_bytes);
             m.content = std.fmt.allocPrint(
                 arena,
                 "{s}... [pruned: {d} bytes total]",
-                .{ content[0..prune_preview_bytes], content.len },
+                .{ preview, content.len },
             ) catch continue;
         }
     }
@@ -1178,10 +1190,10 @@ pub const Agent = struct {
             switch (m.role) {
                 .user => {
                     if (m.content) |c| {
-                        const preview = if (c.len > content_preview_chars) c[0..content_preview_chars] else c;
+                        const preview = utf8.cap(c, content_preview_chars);
                         buf.appendSlice(self.ctx.gpa, "- User: ") catch continue;
                         buf.appendSlice(self.ctx.gpa, preview) catch continue;
-                        if (c.len > content_preview_chars) buf.appendSlice(self.ctx.gpa, "...") catch {};
+                        if (preview.len < c.len) buf.appendSlice(self.ctx.gpa, "...") catch {};
                         buf.append(self.ctx.gpa, '\n') catch continue;
                     }
                 },
@@ -1193,23 +1205,21 @@ pub const Agent = struct {
                             buf.appendSlice(self.ctx.gpa, "- Called tool: ") catch continue;
                             buf.appendSlice(self.ctx.gpa, tc.name) catch continue;
                             // Include a short preview of arguments for context.
-                            if (tc.arguments.len > 0 and tc.arguments.len <= args_preview_chars) {
+                            if (tc.arguments.len > 0) {
+                                const args = utf8.cap(tc.arguments, args_preview_chars);
                                 buf.appendSlice(self.ctx.gpa, " args=") catch {};
-                                buf.appendSlice(self.ctx.gpa, tc.arguments) catch {};
-                            } else if (tc.arguments.len > args_preview_chars) {
-                                buf.appendSlice(self.ctx.gpa, " args=") catch {};
-                                buf.appendSlice(self.ctx.gpa, tc.arguments[0..args_preview_chars]) catch {};
-                                buf.appendSlice(self.ctx.gpa, "...") catch {};
+                                buf.appendSlice(self.ctx.gpa, args) catch {};
+                                if (args.len < tc.arguments.len) buf.appendSlice(self.ctx.gpa, "...") catch {};
                             }
                             buf.append(self.ctx.gpa, '\n') catch continue;
                         }
                     }
                     if (m.content) |c| {
                         if (c.len > 0) {
-                            const preview = if (c.len > content_preview_chars) c[0..content_preview_chars] else c;
+                            const preview = utf8.cap(c, content_preview_chars);
                             buf.appendSlice(self.ctx.gpa, "- Assistant: ") catch continue;
                             buf.appendSlice(self.ctx.gpa, preview) catch continue;
-                            if (c.len > content_preview_chars) buf.appendSlice(self.ctx.gpa, "...") catch {};
+                            if (preview.len < c.len) buf.appendSlice(self.ctx.gpa, "...") catch {};
                             buf.append(self.ctx.gpa, '\n') catch continue;
                         }
                     }
@@ -1218,10 +1228,10 @@ pub const Agent = struct {
                     if (m.content) |c| {
                         // Extract a preview so key values (numbers, paths, statuses)
                         // survive compaction.
-                        const preview = if (c.len > tool_result_preview_chars) c[0..tool_result_preview_chars] else c;
+                        const preview = utf8.cap(c, tool_result_preview_chars);
                         buf.appendSlice(self.ctx.gpa, "- Tool result: ") catch continue;
                         buf.appendSlice(self.ctx.gpa, preview) catch continue;
-                        if (c.len > tool_result_preview_chars) buf.appendSlice(self.ctx.gpa, "...") catch {};
+                        if (preview.len < c.len) buf.appendSlice(self.ctx.gpa, "...") catch {};
                         buf.append(self.ctx.gpa, '\n') catch continue;
                     }
                 },
@@ -1285,8 +1295,7 @@ pub const Agent = struct {
             try buf.appendSlice(self.ctx.gpa, "] ");
             if (m.content) |c| {
                 const remaining = if (max_transcript > buf.items.len) max_transcript - buf.items.len else 0;
-                const slice = if (c.len > remaining) c[0..remaining] else c;
-                try buf.appendSlice(self.ctx.gpa, slice);
+                try buf.appendSlice(self.ctx.gpa, utf8.cap(c, remaining));
             } else {
                 try buf.appendSlice(self.ctx.gpa, "(no text content)");
             }
@@ -2444,7 +2453,7 @@ const max_per_turn_tokens: u32 = 32768;
 /// Hard cap on a single tool result before it enters the conversation. A huge
 /// result (large file read, verbose search dump) can dominate the context
 /// window and inflate cost on the very next LLM call, before compaction has a
-/// chance to act (and compaction preserves the last 6 messages, so a recent
+/// chance to act (and compaction preserves the last `recent_tail_messages`, so a recent
 /// giant result stays in context regardless). The model sees the first
 /// `max_tool_result_bytes` plus a truncation notice so it can ask for specific
 /// parts (offset, line range) if it needs more.
@@ -2461,7 +2470,8 @@ fn capToolResult(arena: std.mem.Allocator, content: []const u8) ![]const u8 {
     // Upper bound on the marker text (two decimal fields + static prose).
     const marker_overhead = 200;
     if (content.len <= max_tool_result_bytes + marker_overhead) return content;
-    return try std.fmt.allocPrint(arena, "{s}\n\n[... result truncated: {d} bytes total, showing first {d}. Ask for specific parts (offset, line range) if you need more. ...]", .{ content[0..max_tool_result_bytes], content.len, max_tool_result_bytes });
+    const preview = utf8.cap(content, max_tool_result_bytes);
+    return try std.fmt.allocPrint(arena, "{s}\n\n[... result truncated: {d} bytes total, showing first {d}. Ask for specific parts (offset, line range) if you need more. ...]", .{ preview, content.len, preview.len });
 }
 
 const WorkerHandle = struct {
