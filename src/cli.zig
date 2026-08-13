@@ -4461,6 +4461,8 @@ const Connection = struct {
 /// the streaming socket and the gzip cache, are made per-thread and mutex-
 /// guarded respectively.
 const max_connection_threads = 64;
+const max_keep_alive_requests: u8 = 100;
+const connection_read_timeout_seconds = 5;
 var connection_threads = std.atomic.Value(u32).init(0);
 var request_sequence = std.atomic.Value(u64).init(1);
 threadlocal var request_status: u16 = 0;
@@ -4515,10 +4517,10 @@ fn connectionThread(conn: *Connection) void {
 
 fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream) void {
     defer stream.close(io);
-    const tv: std.posix.timeval = .{ .sec = 5, .usec = 0 };
+    const tv: std.posix.timeval = .{ .sec = connection_read_timeout_seconds, .usec = 0 };
     std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
     var requests: u8 = 0;
-    while (requests < 100) : (requests += 1) {
+    while (requests < max_keep_alive_requests) : (requests += 1) {
         request_keep_alive = false;
         // A hot-reload must never fire mid-request (would drop the client
         // mid-response); see HotReload's doc comment.
