@@ -72,7 +72,7 @@ pub const Group = struct {
     files: []const []const u8,
 };
 
-pub const OrderError = error{ PartialCycle, DegenerateCycle };
+pub const OrderError = error{ PartialCycle, DegenerateCycle, OutOfMemory };
 
 /// Kahn topo sort. `deps[i]` lists group indices that must come before i.
 pub fn topoSort(arena: std.mem.Allocator, n: usize, deps: []const []const usize) OrderError![]usize {

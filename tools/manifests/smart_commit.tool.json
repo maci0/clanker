@@ -1,0 +1,17 @@
+{
+  "name": "smart_commit",
+  "description": "Group the working-tree diff into atomic conventional commits. Input {dry_run, scope:staged|all, max_commits}. Lock files are excluded. A dependency cycle that spans every group falls back to one commit with a note. Prefer dry_run first.",
+  "llm_description": "Group staged/unstaged files into conventional commits. {dry_run, scope:'staged'|'all', max_commits}. Lock files excluded. Degenerate import cycles become one commit + note. Prefer dry_run first.",
+  "wasm": "zig-out/tools/smart_commit.wasm",
+  "llm": true,
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "dry_run": { "type": "boolean" },
+      "scope": { "type": "string", "enum": ["staged", "all"] },
+      "max_commits": { "type": "integer" }
+    }
+  },
+  "exec_allow": ["git"],
+  "category": "code"
+}
