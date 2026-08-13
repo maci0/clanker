@@ -99,20 +99,21 @@ fn selfPid() u32 {
     return @intCast(std.c.getpid());
 }
 
-/// Whether a process with this id is alive, probed with signal 0 — which runs
+/// Whether a process with this id is alive, probed with signal 0, which runs
 /// kill(2)'s existence and permission checks and delivers nothing.
 fn processExists(pid: u32) bool {
     // kill(2) reads 0 and negative pids as process *group* selectors, and a
     // value past pid_t cannot name a process at all: none of them is a live
     // owner, and passing them through would probe something else entirely.
-    if (pid == 0 or pid > std.math.maxInt(std.c.pid_t)) return false;
-    if (std.c.kill(@intCast(pid), @enumFromInt(0)) == 0) return true;
-    // Only ESRCH is a confirmed absence. EPERM means it is alive and owned by
-    // another user, and anything else is doubt, which the comment at the top
-    // promises to treat as held: refusing to start is recoverable, two runs
-    // corrupting a tree is not. Folding every errno into "dead" would reclaim
-    // a live process's lock on nothing more than a hiccup.
-    return std.c._errno().* != @intFromEnum(std.c.E.SRCH);
+    if (pid == 0 or pid > std.math.maxInt(std.posix.pid_t)) return false;
+    // Only ProcessNotFound (ESRCH) is a confirmed absence. PermissionDenied
+    // (EPERM) means it is alive and owned by another user, and Unexpected is
+    // doubt, which the comment at the top promises to treat as held: refusing
+    // to start is recoverable, two runs corrupting a tree is not.
+    std.posix.kill(@intCast(pid), @enumFromInt(0)) catch |err| {
+        return err != error.ProcessNotFound;
+    };
+    return true;
 }
 
 // ------------------------------------------------------------------- tests --
