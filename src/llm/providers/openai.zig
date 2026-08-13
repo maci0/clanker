@@ -511,6 +511,24 @@ test "openai stream frames decode into neutral events" {
     try std.testing.expect(try parseStreamEvent(arena, "{ not json") == null);
 }
 
+test "fuzz: openai stream events never hang or crash on malformed payloads" {
+    // parseStreamEvent sees whatever the provider sends on the SSE wire. The
+    // property under test is simply that no byte sequence panics or allocates
+    // without bound, including adversarial tool-call index fields.
+    const F = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+            const payload = buf[0..len];
+
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            _ = try parseStreamEvent(arena_state.allocator(), payload);
+        }
+    };
+    try std.testing.fuzz({}, F.one, .{});
+}
+
 test "openai endpoint url" {
     const p = config.Provider{ .name = "m", .base_url = "https://api.deepseek.com/", .default_model = "x" };
     const url = try endpointUrl(std.testing.allocator, &p, false);
