@@ -11276,6 +11276,66 @@ test "with nothing configured the listener is loopback on the default port" {
     try std.testing.expectEqualStrings("127.0.0.1", l.host);
     try std.testing.expectEqual(default_webui_port, l.port);
     try std.testing.expectEqual(@as(usize, 0), l.serve_as_hosts.len);
+    try std.testing.expect(!l.proxy_enabled);
+}
+
+test "serve --proxy and --no-proxy resolve against the file and env" {
+    const on = try parse(&.{ "clanker", "serve", "--proxy" }, null);
+    try std.testing.expectEqual(@as(?bool, true), on.proxy);
+    const off = try parse(&.{ "clanker", "serve", "--no-proxy" }, null);
+    try std.testing.expectEqual(@as(?bool, false), off.proxy);
+    const last = try parse(&.{ "clanker", "serve", "--proxy", "--no-proxy" }, null);
+    try std.testing.expectEqual(@as(?bool, false), last.proxy);
+    const port = try parse(&.{ "clanker", "serve", "--proxy-port", "17922" }, null);
+    try std.testing.expectEqual(@as(?u16, 17922), port.proxy_port);
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "zai"
+        \\
+        \\[providers.zai]
+        \\base_url = "http://x/v1"
+        \\
+        \\[models."zai/glm-5.2"]
+        \\provider = "zai"
+        \\
+        \\[serve]
+        \\proxy = true
+        \\
+        ,
+    });
+    const cfg = try config.Config.load(io, arena, tmp.dir, "config.toml", "absent.toml");
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    {
+        const l = resolveListen(&cfg, &env, .{});
+        try std.testing.expect(l.proxy_enabled);
+        try std.testing.expectEqual(default_webui_port, l.proxy_port);
+    }
+    {
+        const l = resolveListen(&cfg, &env, .{ .proxy = false });
+        try std.testing.expect(!l.proxy_enabled);
+    }
+    try env.put("CLANKER_PROXY_PORT", "17922");
+    {
+        const l = resolveListen(&cfg, &env, .{});
+        try std.testing.expect(l.proxy_enabled);
+        try std.testing.expectEqual(@as(u16, 17922), l.proxy_port);
+    }
+    {
+        const l = resolveListen(&cfg, &env, .{ .proxy = false });
+        try std.testing.expect(!l.proxy_enabled);
+    }
 }
 
 test "a rebuild is recognised by this platform's own executable header" {
