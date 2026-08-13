@@ -267,6 +267,20 @@ fn setDiag(diag: ?*[]const u8, token: []const u8) void {
     if (diag) |d| d.* = token;
 }
 
+/// Grows a repeatable flag's slice (`--with`, `--serve-as`, ...). `parse`
+/// has no allocator parameter, so these live on `page_allocator`; the
+/// previous owned slice is freed so repeating the flag does not leak.
+fn appendRepeatable(dest: *[]const []const u8, value: []const u8) !void {
+    const gpa = std.heap.page_allocator;
+    var list: std.ArrayList([]const u8) = .empty;
+    errdefer list.deinit(gpa);
+    try list.appendSlice(gpa, dest.*);
+    try list.append(gpa, value);
+    const prev = dest.*;
+    dest.* = try list.toOwnedSlice(gpa);
+    if (prev.len > 0) gpa.free(prev);
+}
+
 /// The value belonging to `flag`, taken from `--flag=value` when that is how it
 /// was written and from the next argument otherwise.
 fn takeValue(
@@ -420,24 +434,16 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 // is not: one flag per name is what makes the whole policy
                 // legible in a shell history or a service file.
                 const v = try takeValue(args, &idx, inline_value, a, diag);
-                const gpa = std.heap.page_allocator;
-                var list: std.ArrayList([]const u8) = .empty;
-                for (opts.serve_as_hosts) |x| try list.append(gpa, x);
                 const trimmed = std.mem.trim(u8, v, " \t");
-                if (trimmed.len > 0) try list.append(gpa, trimmed);
-                opts.serve_as_hosts = try list.toOwnedSlice(gpa);
+                if (trimmed.len > 0) try appendRepeatable(&opts.serve_as_hosts, trimmed);
                 used = .serve_as;
             } else if (std.mem.eql(u8, a, "--target")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
-                const gpa = std.heap.page_allocator;
-                var list: std.ArrayList([]const u8) = .empty;
-                for (opts.research_targets) |x| try list.append(gpa, x);
                 var it = std.mem.splitScalar(u8, v, ',');
                 while (it.next()) |part| {
                     const tt = std.mem.trim(u8, part, " \t");
-                    if (tt.len > 0) try list.append(gpa, tt);
+                    if (tt.len > 0) try appendRepeatable(&opts.research_targets, tt);
                 }
-                opts.research_targets = try list.toOwnedSlice(gpa);
                 used = .research_target;
             } else if (std.mem.eql(u8, a, "--harness")) {
                 opts.research_harness = try takeValue(args, &idx, inline_value, a, diag);
@@ -508,12 +514,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 // flag per entrant is what makes the list obvious in a shell
                 // history.
                 const v = try takeValue(args, &idx, inline_value, a, diag);
-                const gpa = std.heap.page_allocator;
-                var list: std.ArrayList([]const u8) = .empty;
-                for (opts.compare_with) |x| try list.append(gpa, x);
                 const trimmed = std.mem.trim(u8, v, " \t");
-                if (trimmed.len > 0) try list.append(gpa, trimmed);
-                opts.compare_with = try list.toOwnedSlice(gpa);
+                if (trimmed.len > 0) try appendRepeatable(&opts.compare_with, trimmed);
                 used = .compare_with;
             } else if (std.mem.eql(u8, a, "--show")) {
                 opts.compare_show = try takeValue(args, &idx, inline_value, a, diag);
@@ -547,12 +549,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 // is prose, and "use a queue, not direct calls" is one position
                 // rather than two.
                 const v = try takeValue(args, &idx, inline_value, a, diag);
-                const gpa = std.heap.page_allocator;
-                var list: std.ArrayList([]const u8) = .empty;
-                for (opts.arena_positions) |x| try list.append(gpa, x);
                 const trimmed = std.mem.trim(u8, v, " \t");
-                if (trimmed.len > 0) try list.append(gpa, trimmed);
-                opts.arena_positions = try list.toOwnedSlice(gpa);
+                if (trimmed.len > 0) try appendRepeatable(&opts.arena_positions, trimmed);
                 used = .arena_position;
             } else {
                 setDiag(diag, a);
