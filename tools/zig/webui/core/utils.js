@@ -68,9 +68,13 @@ export function fmtInt(n) {
 }
 
 export function fmtCost(n) {
+  var v = typeof n === "number" ? n : 0;
+  // Sub-dollar amounts (a single card or turn) need the extra precision;
+  // a system-wide total reads better as $200.00 than $200.0000.
+  var digits = Math.abs(v) >= 1 ? 2 : 4;
   return new Intl.NumberFormat(undefined, {
-    style: "currency", currency: "USD", minimumFractionDigits: 4, maximumFractionDigits: 4
-  }).format(typeof n === "number" ? n : 0);
+    style: "currency", currency: "USD", minimumFractionDigits: digits, maximumFractionDigits: digits
+  }).format(v);
 }
 
 export function formatChatTime(ts) {

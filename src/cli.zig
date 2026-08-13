@@ -1052,7 +1052,7 @@ pub fn suggestFlag(input: []const u8) ?[]const u8 {
     for (std.enums.values(Flag)) |f| {
         const spelling = primaryFlagName(f);
         if (spelling.len < 6) continue;
-        const distance = editDistance(input, spelling);
+        const distance = if (isAdjacentTransposition(input, spelling)) @as(usize, 1) else editDistance(input, spelling);
         if (distance < best_distance) {
             best = spelling;
             best_distance = distance;
@@ -1060,7 +1060,7 @@ pub fn suggestFlag(input: []const u8) ?[]const u8 {
     }
     for (extra_flag_spellings) |spelling| {
         if (spelling.len < 6) continue;
-        const distance = editDistance(input, spelling);
+        const distance = if (isAdjacentTransposition(input, spelling)) @as(usize, 1) else editDistance(input, spelling);
         if (distance < best_distance) {
             best = spelling;
             best_distance = distance;
@@ -3642,10 +3642,7 @@ fn toolText(
     }
     if (!ok) {
         const detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "unknown") else "unknown";
-        // A missing run/session is a lookup miss, not a broken tool: keep it
-        // off the timestamped error log so `clanker graph nosuch` does not
-        // look like the harness crashed.
-        if (std.mem.eql(u8, detail, "no such run")) return error.NotFound;
+        if (std.mem.eql(u8, detail, "no such run")) return error.ToolFailed;
         log.log(.error_, "{s}: {s}", .{ tool_name, detail });
         return error.ToolFailed;
     }
@@ -3740,7 +3737,13 @@ fn cmdGraph(init: std.process.Init, opts: Options) !void {
     }
     // No run id lists the recorded runs; a run id renders that one. Both are
     // implemented once, in the cmd_graph plugin.
-    try printInternalTool(init, &cfg, "cmd_graph", opts.task orelse "list");
+    printInternalTool(init, &cfg, "cmd_graph", opts.task orelse "list") catch |err| {
+        if (err == error.ToolFailed) {
+            printUsageError(init.io, "no such run; run `clanker graph` to list them", .{});
+            std.process.exit(1);
+        }
+        return err;
+    };
 }
 
 fn cmdToolsList(init: std.process.Init, opts: Options) !void {
@@ -4234,7 +4237,7 @@ fn cmdStats(init: std.process.Init) !void {
 fn renderStatsTable(arena: std.mem.Allocator, stats: []const token_stats.Stat, totals_row: token_stats.Stat) ![]const u8 {
     if (stats.len == 0) return "no token usage recorded yet (run an agent task first)\n";
     var text: std.ArrayList(u8) = .empty;
-    try text.appendSlice(arena, "provider        model                          calls  prompt  output   total  cache%  tok/s       cost$  fail\n");
+    try text.appendSlice(arena, "provider        model                          calls  prompt  output   total  cache%  tok/s     cost$  fail\n");
     for (stats) |stat| try appendStatsRow(arena, &text, stat.provider, stat.model, stat);
     try appendStatsRow(arena, &text, "totals", "", totals_row);
     return text.toOwnedSlice(arena);
@@ -4244,7 +4247,7 @@ fn appendStatsRow(arena: std.mem.Allocator, text: *std.ArrayList(u8), provider: 
     const prompt = try compactStatsCount(arena, stat.prompt_tokens);
     const completion = try compactStatsCount(arena, stat.completion_tokens);
     const total = try compactStatsCount(arena, stat.total_tokens);
-    const line = try std.fmt.allocPrint(arena, "{s:<15} {s:<30}{d:>5} {s:>7} {s:>7} {s:>7} {d:>5.1} {d:>7.1} {d:>10.4} {d:>5}\n", .{
+    const line = try std.fmt.allocPrint(arena, "{s:<15} {s:<30}{d:>5} {s:>7} {s:>7} {s:>7} {d:>5.1} {d:>7.1} {d:>8.2} {d:>5}\n", .{
         provider,
         model,
         stat.calls,
@@ -6821,10 +6824,6 @@ fn handleRuns(
     }
 
     const body = toolText(io, gpa, arena, cfg, environ_map, "cmd_graph", args) catch |err| {
-        if (err == error.NotFound) {
-            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such run\"}");
-            return;
-        }
         log.log(.error_, "GET /api/runs args={s}: {s}", .{ args, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"graph read failed\"}");
         return;

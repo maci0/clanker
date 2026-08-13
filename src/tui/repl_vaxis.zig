@@ -3204,7 +3204,13 @@ const Model = struct {
             }
         }
         if (self.session_cost) |cost| {
-            const cost_text = std.fmt.bufPrint(&self.cost_buf, "${d:.4}", .{cost}) catch "";
+            // Session-lifetime total, not a single turn: $200.00 reads
+            // better than $200.0000. A sub-dollar session keeps the extra
+            // precision, same threshold as the webui's fmtCost.
+            const cost_text = if (@abs(cost) >= 1.0)
+                std.fmt.bufPrint(&self.cost_buf, "${d:.2}", .{cost}) catch ""
+            else
+                std.fmt.bufPrint(&self.cost_buf, "${d:.4}", .{cost}) catch "";
             if (cost_text.len > 0) {
                 writeRowAt(surface, 0, &scol, dot, dim);
                 writeRowAt(surface, 0, &scol, cost_text, dim);
