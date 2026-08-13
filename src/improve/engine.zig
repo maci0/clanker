@@ -2564,6 +2564,20 @@ fn lastProposalJson(arena: std.mem.Allocator, text: []const u8) ?[]const u8 {
     return null;
 }
 
+/// True when `stdout` contains a `name: <score> PASS` or `FAIL` line.
+/// Prefix is `name:` so `read_file` does not match `read_file_large`.
+fn capabilityLineReports(stdout: []const u8, name: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, stdout, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len < name.len + 2) continue;
+        if (!std.mem.startsWith(u8, line, name)) continue;
+        if (line[name.len] != ':') continue;
+        if (std.mem.endsWith(u8, line, " PASS") or std.mem.endsWith(u8, line, " FAIL")) return true;
+    }
+    return false;
+}
+
 /// Parses eval names out of the capability gate output. The staged binary
 /// prints lines like `calculator: 0.00 FAIL`, one per case. Returns the
 /// names of every case that reported FAIL (arena-owned).
@@ -2823,6 +2837,19 @@ test "parseFailedEvalNames handles empty input" {
 
     const names = try parseFailedEvalNames(arena, "");
     try std.testing.expectEqual(@as(usize, 0), names.len);
+}
+
+test "capabilityLineReports requires a named PASS or FAIL line" {
+    const out =
+        \\calculator: 1.00 PASS
+        \\read_file_large: 0.00 FAIL
+    ;
+    try std.testing.expect(capabilityLineReports(out, "calculator"));
+    try std.testing.expect(capabilityLineReports(out, "read_file_large"));
+    try std.testing.expect(!capabilityLineReports(out, "read_file"));
+    try std.testing.expect(!capabilityLineReports(out, "lsp"));
+    try std.testing.expect(!capabilityLineReports("", "calculator"));
+    try std.testing.expect(!capabilityLineReports("no results", "calculator"));
 }
 
 test "errorTail keeps the diagnosis, not the build-runner noise" {
@@ -3428,6 +3455,89 @@ test "a patch that bypasses merge-back CAS is rejected" {
     try staged.writeFile(io, .{ .sub_path = "src/improve/worktree.zig", .data = bypassed });
     const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
     try std.testing.expectEqualStrings(cas_call, bad.needle);
+}
+
+test "a patch that flips improve defaults in src/config.zig is rejected" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var engine = Engine{
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = undefined,
+        .cfg = undefined,
+        .hist = undefined,
+        .instructions = "",
+    };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const staged = tmp.dir;
+    try staged.createDirPath(io, "src");
+
+    var keeps: std.ArrayList(u8) = .empty;
+    for (gate_invariants) |inv| {
+        if (!std.mem.eql(u8, inv.file, "src/config.zig")) continue;
+        try keeps.appendSlice(arena, inv.needle);
+        try keeps.appendSlice(arena, "\n");
+    }
+    try staged.writeFile(io, .{ .sub_path = "src/config.zig", .data = keeps.items });
+    const changes = [_]proposal_mod.Change{.{ .file = "src/config.zig", .old = "", .new = "" }};
+    try std.testing.expect(try engine.brokenInvariant(staged, &changes) == null);
+
+    const gutted = try std.mem.replaceOwned(u8, arena, keeps.items, "capability_gate: bool = true", "capability_gate: bool = false");
+    try staged.writeFile(io, .{ .sub_path = "src/config.zig", .data = gutted });
+    const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
+    try std.testing.expectEqualStrings("capability_gate: bool = true", bad.needle);
+}
+
+test "uncoveredCapabilityTasks fails closed on empty eval output" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var engine = Engine{
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = undefined,
+        .cfg = undefined,
+        .hist = undefined,
+        .instructions = "",
+    };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "evals");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "evals/calculator.task.json",
+        .data = "{\"name\":\"calculator\",\"kind\":\"task\",\"prompt\":\"p\",\"criteria\":[{\"equals\":\"1\"}]}",
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "evals/selfhost_build.task.json",
+        .data = "{\"name\":\"selfhost_build\",\"kind\":\"selfhost_build\"}",
+    });
+
+    // loadAll opens evals_dir from cwd, so point staging at the tmp path.
+    const staging = try tmp.dir.realpathAlloc(io, arena, ".");
+    const missing = try engine.uncoveredCapabilityTasks(staging, "");
+    try std.testing.expect(missing != null);
+    try std.testing.expect(std.mem.find(u8, missing.?, "calculator") != null);
+
+    const covered = try engine.uncoveredCapabilityTasks(staging, "calculator: 1.00 PASS\n");
+    try std.testing.expect(covered == null);
 }
 
 test "capability gate fails closed when the staged binary is missing" {
