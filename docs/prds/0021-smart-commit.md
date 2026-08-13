@@ -2,9 +2,12 @@
 
 ## Status
 
-Draft. No source files yet. New WASM tool at `tools/zig/smart_commit.zig` with
-manifest `tools/manifests/smart_commit.tool.json`. CLI subcommand `clanker
-commit` in `src/cli.zig`. All logic lives in the guest; no host module.
+Shipped. `smart_commit` groups a staged (or `--all`) diff via `ck_llm`,
+validates conventional commit messages, topo-sorts on a grep graph, and
+falls back to one commit + `note` on a degenerate cycle. `clanker commit`
+dry-runs, confirms, then executes. Sources of truth:
+`tools/zig/smart_commit.zig`, `tools/zig/commit_logic.zig`,
+`src/cli.zig` (`cmdCommit`).
 
 ## Problem
 
@@ -231,27 +234,27 @@ were merged before confirming.
 
 ## Acceptance criteria
 
-- [ ] `smart_commit` with `dry_run = true` returns a list of proposed commits
+- [x] `smart_commit` with `dry_run = true` returns a list of proposed commits
       without executing any git commands.
-- [ ] Lock files (`*.lock`, `go.sum`) are excluded from the diff sent to the LLM
+- [x] Lock files (`*.lock`, `go.sum`) are excluded from the diff sent to the LLM
       and never appear in a commit group.
-- [ ] A commit message not matching the conventional commit regex causes an error
+- [x] A commit message not matching the conventional commit regex causes an error
       before any git operation; the error names the offending message.
-- [ ] The dependency graph is built and topological sort produces a valid order;
+- [x] The dependency graph is built and topological sort produces a valid order;
       verify with a two-group test where group A imports a file from group B.
-- [ ] A partial dependency cycle returns a clear error naming the cycle; no
+- [x] A partial dependency cycle returns a clear error naming the cycle; no
       commits are made.
-- [ ] A degenerate cycle spanning all groups falls back to a single commit with
+- [x] A degenerate cycle spanning all groups falls back to a single commit with
       a `note` naming the merged groups; no error loop; dry-run and CLI proposal
       both surface the `note`.
-- [ ] Source files appear before test files within the same topological level.
-- [ ] `clanker commit` prints the proposed list, asks for confirmation, and
+- [x] Source files appear before test files within the same topological level.
+- [x] `clanker commit` prints the proposed list, asks for confirmation, and
       executes only on `y`.
-- [ ] A pre-commit hook failure is reported and the partial commit list is
+- [x] A pre-commit hook failure is reported and the partial commit list is
       returned; subsequent groups are not attempted.
-- [ ] `max_commits` cap merges excess groups into the last one.
+- [x] `max_commits` cap merges excess groups into the last one.
 - [ ] Optional `commit.model` is honored when set; unset uses the main provider.
-- [ ] Unit tests cover: lock-file filtering, conventional commit regex, topological
+- [x] Unit tests cover: lock-file filtering, conventional commit regex, topological
       sort, partial cycle detection, degenerate-cycle fallback, source-before-tests
       ordering.
 

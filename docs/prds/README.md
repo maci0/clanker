@@ -41,7 +41,7 @@ and Implementation lists checkable file-level phases.
 | [0018](0018-snapcompact.md) | Snapcompact | Draft | Opt-in; default stays LLM compact |
 | [0019](0019-github-fs.md) | GitHub filesystem | Shipped | `gh_read` + file cache; sqlite still open |
 | [0020](0020-auto-thinking.md) | Auto thinking | Shipped | Opt-in classifier; selects a 0024 row |
-| [0021](0021-smart-commit.md) | Smart commit | Draft | |
+| [0021](0021-smart-commit.md) | Smart commit | Shipped | `clanker commit` + guest grouping |
 | [0022](0022-out-of-tree-tools.md) | Out-of-tree tools | Shipped | `tools_dir` is a list; last-listed wins |
 | [0023](0023-webui-model-config.md) | Web UI model config | Shipped | Writes `config.local.toml` only |
 | [0024](0024-sampling-profiles.md) | Sampling profiles | Shipped | Use-case table fills empty knobs |

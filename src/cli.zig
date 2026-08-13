@@ -88,6 +88,7 @@ pub const Command = enum {
     improve_self,
     revert,
     git,
+    commit,
     mcp,
     goal,
     notify,
@@ -666,6 +667,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 opts.command = .revert;
             } else if (std.mem.eql(u8, a, "git")) {
                 opts.command = .git;
+            } else if (std.mem.eql(u8, a, "commit")) {
+                opts.command = .commit;
             } else if (std.mem.eql(u8, a, "mcp")) {
                 opts.command = .mcp;
             } else if (std.mem.eql(u8, a, "goal")) {
@@ -1466,6 +1469,7 @@ const specs = [_]Spec{
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
     .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own; the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields: minute hour day-of-month month day-of-week, each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
     .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
+    .{ .command = .commit, .usage = "commit [--yes] [--dry-run]", .blurb = "group the working tree into conventional commits", .group = .maintain, .flags = &.{ .yes, .dry_run }, .detail = "Calls the smart_commit tool: groups staged (or --all) files, validates conventional commit messages, then asks before committing.\n\n--yes       skip the confirmation prompt\n--dry-run   print the proposal only" },
 };
 
 fn specFor(cmd: Command) ?*const Spec {
@@ -1514,6 +1518,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .improve_self => try cmdImproveSelf(init, opts),
         .revert => try cmdRevert(init, opts),
         .git => try cmdGit(init, opts),
+        .commit => try cmdCommit(init, opts),
         .mcp => try cmdMcp(init, opts),
         .goal => try cmdGoal(init, opts),
         .notify => try cmdNotify(init, opts),
@@ -4454,6 +4459,34 @@ fn cmdStats(init: std.process.Init) !void {
     const stats = try token_stats.aggregate(std.Io.Dir.cwd(), init.io, init.gpa, arena, cfg.agent.state_dir);
     const text = try token_stats.renderTable(arena, stats, token_stats.totals(stats));
     try writeStdOut(init.io, text);
+}
+
+fn cmdCommit(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    const dry = opts.dry_run;
+    const args = if (dry)
+        "{\"dry_run\":true,\"scope\":\"staged\"}"
+    else
+        "{\"dry_run\":true,\"scope\":\"staged\"}";
+    const preview = try toolText(io, init.gpa, arena, &cfg, init.environ_map, "smart_commit", args);
+    try writeStdOut(io, preview);
+    try writeStdOut(io, "\n");
+    if (dry) return;
+    if (!opts.apply) {
+        try writeStdOut(io, "Proceed? [y/N] ");
+        var buf: [8]u8 = undefined;
+        const n = std.Io.File.stdin().readStreaming(io, &buf) catch 0;
+        const ans = std.mem.trim(u8, buf[0..n], " \t\r\n");
+        if (!(std.mem.eql(u8, ans, "y") or std.mem.eql(u8, ans, "Y") or std.mem.eql(u8, ans, "yes"))) {
+            try writeStdOut(io, "aborted\n");
+            return;
+        }
+    }
+    const done = try toolText(io, init.gpa, arena, &cfg, init.environ_map, "smart_commit", "{\"dry_run\":false,\"scope\":\"staged\"}");
+    try writeStdOut(io, done);
+    try writeStdOut(io, "\n");
 }
 
 fn cmdGit(init: std.process.Init, opts: Options) !void {

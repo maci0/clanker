@@ -54,6 +54,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - `gh_read` fetches GitHub issues/PRs via `gh://` URLs with an
   allowlisted `GITHUB_TOKEN`. Repeat reads within 5 minutes hit
   `state/gh_cache/`. `read_file` stays network-free.
+- `clanker commit` / `smart_commit` groups a staged diff into
+  conventional commits. A dense import cycle becomes one commit with a
+  note instead of looping.
 
 ### Changed
 
