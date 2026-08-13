@@ -188,6 +188,11 @@ loads, so flipping a default there is the same as writing `= false` in
 config. The loop rejects that, and `clanker eval --tasks` with no result
 lines is a failed capability gate, not a pass.
 
+`src/gate/checks.zig` is writable so the loop can strengthen its own gates.
+A substring needle still matches if the real work is skipped by an early
+`return .{ .ok = true }` left above it as dead code; `checksZigShapeBroken`
+refuses that shape (same idea as `cmdEvalShapeBroken` for `cmdEval`).
+
 ## Living document
 
 This file and the `docs/prompts/*-review.md` prompts are living documents.
