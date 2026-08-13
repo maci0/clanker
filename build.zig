@@ -119,6 +119,11 @@ pub fn build(b: *std.Build) void {
         .target = test_target,
         .optimize = optimize,
     });
+    const ui_vendor_test_mod = b.createModule(.{
+        .root_source_file = b.path("ui/vendor.zig"),
+        .target = test_target,
+        .optimize = optimize,
+    });
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = test_target,
@@ -128,6 +133,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "build_options", .module = build_options.createModule() },
             .{ .name = "vaxis", .module = vaxis_test_dep.module("vaxis") },
             .{ .name = "toml", .module = toml_test_mod },
+            .{ .name = "vendor", .module = ui_vendor_test_mod },
         },
     });
     const exe_tests = b.addTest(.{ .root_module = test_mod, .use_llvm = true });
