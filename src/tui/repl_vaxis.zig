@@ -1401,9 +1401,8 @@ test "longestCommonPrefix completes toward the shared stem or nowhere" {
 
 /// `CLANKER_THEME` picks a palette by name ("mocha"/"catppuccin", "latte",
 /// "frappe", "macchiato", "tokyonight", "storm", "day", "mono", "default").
-/// An env var rather than a flag because the REPL is also reached
-/// through `clanker` with no arguments, and a theme is a property of the
-/// terminal you are sitting at rather than of one invocation.
+/// The environment provides the persistent terminal default; `--theme`
+/// overrides it for one invocation and `/theme` for the current session.
 fn themeName(environ_map: *const std.process.Environ.Map) ?[]const u8 {
     const v = environ_map.get("CLANKER_THEME") orelse return null;
     return if (v.len > 0) v else null;
@@ -1780,7 +1779,7 @@ const Model = struct {
         bridge_mutex.lockUncancelable(bridge_io);
         defer bridge_mutex.unlock(bridge_io);
         if (!bridge_streaming) {
-            self.lines.append(self.arena, .{ .text = "[no run to steer; the turn already ended]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "notice: no run to steer; the turn already ended", .dim = true }) catch {};
             return;
         }
         // Same framing POST /api/steer applies server-side, so the model reads
@@ -2211,7 +2210,7 @@ const Model = struct {
         var it = std.mem.splitScalar(u8, body, '\n');
         while (it.next()) |raw| {
             if (budget.* == 0) {
-                self.lines.append(self.arena, .{ .text = "[! output truncated]", .dim = true }) catch {};
+                self.lines.append(self.arena, .{ .text = "notice: ! output truncated", .dim = true }) catch {};
                 return;
             }
             budget.* -= 1;
@@ -2225,12 +2224,12 @@ const Model = struct {
     fn runWorkflowsTool(self: *Model, name: []const u8) bool {
         const workflows_mod = @import("../agent/workflows.zig");
         const wfs = workflows_mod.loadAllMerged(self.arena, self.io, self.cfg.agent.workflows_dir) catch {
-            self.lines.append(self.arena, .{ .text = "[could not list workflows]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "error: could not list workflows", .dim = true }) catch {};
             return true;
         };
         if (name.len == 0) {
             if (wfs.len == 0) {
-                self.lines.append(self.arena, .{ .text = "[no workflows found, add markdown files to workflows/]", .dim = true }) catch {};
+                self.lines.append(self.arena, .{ .text = "notice: no workflows found; add Markdown files to workflows/", .dim = true }) catch {};
                 return true;
             }
             for (wfs) |wf| {
@@ -2264,7 +2263,7 @@ const Model = struct {
             .{intent},
         ) catch return true;
         self.submitTask(ctx, task) catch {
-            self.lines.append(self.arena, .{ .text = "[could not start the goal task]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "error: could not start the goal task", .dim = true }) catch {};
             return true;
         };
         return true;
@@ -4761,6 +4760,8 @@ pub const ReplOptions = struct {
     /// what lets `tui.mascot` be a real default rather than something the flag
     /// always overrides with "off".
     mascot: ?[]const u8 = null,
+    /// Initial palette for this invocation, overriding `CLANKER_THEME`.
+    theme: ?[]const u8 = null,
 };
 
 /// Resolves the mascot mode from the flag and the config key, flag winning.
@@ -5052,6 +5053,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         .session_id = session_id,
         .session_created = session_created,
         .session_title = session_title,
+        .theme_override = opts.theme,
     };
     // The easter egg. `--mascot` beats `tui.mascot`; both off is the default
     // and costs nothing beyond one `.off` branch per frame.
@@ -5090,11 +5092,20 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         model.lines.append(arena, .{
             .text = std.fmt.allocPrint(
                 arena,
-                "[mascot: '{s}' is not one of off, type, loop; mascot is off]",
+                "error: mascot mode '{s}' is not one of off, type, loop; mascot is off",
                 .{bad},
-            ) catch "[mascot: unknown mode; mascot is off]",
-            .dim = true,
+            ) catch "error: unknown mascot mode; mascot is off",
+            .is_error = true,
         }) catch {};
+    }
+    if (opts.theme) |name| {
+        if (!theme_mod.isKnown(name)) {
+            model.theme_override = null;
+            model.lines.append(arena, .{
+                .text = std.fmt.allocPrint(arena, "error: unknown theme '{s}'; type /theme to list available themes", .{name}) catch "error: unknown theme; type /theme to list available themes",
+                .is_error = true,
+            }) catch {};
+        }
     }
     model.model_candidates = buildModelCandidates(arena, &model.cfg) catch &.{};
     model.command_candidates = buildCommandCandidates(arena) catch &.{};
