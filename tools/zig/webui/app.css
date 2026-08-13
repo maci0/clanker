@@ -2154,6 +2154,7 @@ button:active:not(:disabled) {
 .run-options > label { flex-basis: 100%; margin-bottom: 0; font-size: var(--step--1); }
 .composer .run-options { margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px solid color-mix(in srgb, var(--rule) 45%, transparent); }
 .composer .run-options > label[for="model-select"] { flex-basis: auto; }
+.composer .run-options > label[for="fallback-provider"] { flex-basis: auto; }
 .composer .model-select {
   min-height: 30px; border-radius: 999px; background: var(--surface-2);
   padding: 0.25rem 0.75rem; font-size: var(--step--1); border: 1px solid var(--rule);
