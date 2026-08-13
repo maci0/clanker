@@ -726,6 +726,39 @@ fails 10 of its 12 assertions, so it is testing the fix and not the harness.
 Gate: `zig build`, `zig build tools`, `zig build test --summary all` —
 163/163 steps, 763/765 tests (2 skipped, the expected worktree pair).
 
+## The digit shortcut says what it does (2026-08-13)
+
+Three places describe "a digit jumps to a view" and all three knew a different
+number:
+
+- `core/dialog.js`'s shortcut table — the `?` overlay, the page's own answer to
+  "what are the keys?" — still said **1 – 8**, from when there were eight views.
+- `core/palette.js` numbered **every** view, so Ctrl/⌘+K listed
+  `Schedule (10)` … `System (14)`. There is no "10" keystroke; those five were
+  advertising a key that does nothing, on the surface whose job is to teach
+  the keys.
+- Only `app.js`'s handler was right, and only by accident: `n <= VIEWS.length`
+  reads as "all fourteen", and it stops at nine because `parseInt(e.key)` on a
+  single keypress cannot be more.
+
+There are fourteen views and nine usable digits, so a fifth of the tablist was
+never going to have one; the tenth view onward is reached by the palette or by
+the tablist arrows, both of which already work. The fix is to stop claiming
+otherwise: `view_digit_max` in `core/utils.js` is the one number, the help
+table builds its row from it, the palette prints the `(n)` only below it, and
+the handler bounds on `Math.min(view_digit_max, VIEWS.length)` so the intent is
+in the code rather than in an arithmetic coincidence.
+
+### Verified
+
+`node` reads all three surfaces and checks they agree: it evaluates the
+handler's guard expression over 1–20, keeping only lone digits, and asserts the
+help table's printed range and `view_digit_max` both equal the resulting count
+(9 of 14), and that the palette's label is gated rather than unconditional.
+Against `main` five of the nine assertions fail. Gate: `zig build`,
+`zig build tools`, `zig build test --summary all` — 163/163 steps,
+763/765 tests (2 skipped, the expected worktree pair).
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.

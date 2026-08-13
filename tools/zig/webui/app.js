@@ -1,4 +1,4 @@
-import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, isSafeLinkUrl as utilIsSafeLinkUrl, splitRow as utilSplitRow, prettyJsonIfPossible as utilPrettyJsonIfPossible, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml } from "./core/utils.js";
+import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, isSafeLinkUrl as utilIsSafeLinkUrl, splitRow as utilSplitRow, prettyJsonIfPossible as utilPrettyJsonIfPossible, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, view_digit_max } from "./core/utils.js";
 import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt } from "./core/ui.js";
 import { ICON_PATHS as iconPaths, icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, reducedMotion as reducedMotionMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
@@ -4307,13 +4307,16 @@ window.addEventListener("hashchange", function () {
 });
 
 /* A digit jumps straight to a view, but never while someone is typing into
-   the composer or a filter. */
+   the composer or a filter. Only the first `view_digit_max` views, because a
+   digit is one key: the rest are reached by the palette or the tablist arrows,
+   and the two surfaces that describe this shortcut read the same cap from
+   core/utils.js so they cannot drift from it again. */
 document.addEventListener("keydown", function (e) {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   var t = e.target;
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
   var n = parseInt(e.key, 10);
-  if (n >= 1 && n <= VIEWS.length) {
+  if (n >= 1 && n <= Math.min(view_digit_max, VIEWS.length)) {
     showView(VIEWS[n - 1], false);
     document.getElementById("tab-" + VIEWS[n - 1]).focus();
   }

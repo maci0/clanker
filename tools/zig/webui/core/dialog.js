@@ -1,8 +1,10 @@
 // Vanilla, no bundler. Text prompt dialog + shortcut table — no app state.
+import { view_digit_max } from "./utils.js";
+
 export var SHORTCUTS = [
   ["Ctrl/\u2318 + K", "Jump to a view, conversation, run, tool or action"],
   ["?", "This list"],
-  ["1 \u2013 8", "Go to a view by number"],
+  ["1 \u2013 " + view_digit_max, "Go to one of the first " + view_digit_max + " views by number"],
   ["\u2190 \u2192 / \u2191 \u2193", "Move between tabs when one is focused"],
   ["Ctrl/\u2318 + Enter", "Run the task in the composer"],
   ["Ctrl/\u2318 + \u2190 \u2192", "Move the focused board card between columns"],
