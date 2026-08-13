@@ -140,7 +140,7 @@ the whole point of it.
 
 | Form | Resolved against | Example |
 |---|---|---|
-| Contains `/` | the process's working directory | `zig-out/tools/calculator.wasm`, `tools/bin/calc_ts.wasm` |
+| Contains `/` | the process's working directory | `zig-out/tools/calculator.wasm`, `tools/ts/dist/calc_ts.wasm` |
 | Bare filename | the manifest's own directory | `word_count.wasm` beside `word_count.tool.json` |
 
 Every in-tree manifest uses the first form, because the harness runs from the

@@ -70,7 +70,7 @@ pair named by the runner or user.
   checking every caller (`toolText`/`toolJson` in `cli.zig`, the web UI, MCP)
   — a shape change is a breaking change for anyone already parsing the old
   one.
-- **`tools/manifests/examples/*.tool.json` are not loaded** (the
+- **`tools/examples/manifests/*.tool.json` are not loaded** (the
   AssemblyScript-calculator-equivalent pattern) — don't flag them as broken
   tools; they're reference descriptors.
 

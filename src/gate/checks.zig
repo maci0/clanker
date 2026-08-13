@@ -180,7 +180,7 @@ test "lintGate flags forbidden markers only in changed .zig files" {
 /// It is intentionally pure file/JSON inspection, no npm, no zig build, so
 /// it is deterministic and cheap to run for every proposal. The engine runs it
 /// after `toolsGate`, by which point `zig-out/tools/*.wasm` exist in the
-/// staged tree; `tools/bin/*.wasm` are committed and must be present.
+/// staged tree; `tools/ts/dist/*.wasm` are committed and must be present.
 pub fn toolDescriptorGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, tools_dir: []const u8) !GateResult {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -258,7 +258,7 @@ pub fn toolDescriptorGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, t
 
 /// True when `rel` (e.g. "zig-out/tools/x.wasm") resolves to an existing
 /// regular file under `dir`. The wasm paths in descriptors are relative to
-/// the repository root (`tools/bin/...`, `zig-out/tools/...`), not to the
+/// the repository root (`tools/ts/dist/...`, `zig-out/tools/...`), not to the
 /// manifests directory they are declared in.
 fn fileExistsIn(io: std.Io, dir: std.Io.Dir, rel: []const u8) bool {
     var f = dir.openFile(io, rel, .{}) catch return false;

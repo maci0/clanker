@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "asc calc_ts.ts -o ../bin/calc_ts.wasm --optimize --bindings raw --noExportMemory",
-    "build:all": "for f in *.ts; do case \"$f\" in env.d.ts|lib.ts|json.ts) continue;; esac; asc \"$f\" -o \"../bin/${f%.ts}.wasm\" --optimize --bindings raw --noExportMemory; done"
+    "build": "asc calc_ts.ts -o ../dist/calc_ts.wasm --optimize --bindings raw --noExportMemory",
+    "build:all": "for f in *.ts; do case \"$f\" in env.d.ts|lib.ts|json.ts) continue;; esac; asc \"$f\" -o \"../dist/${f%.ts}.wasm\" --optimize --bindings raw --noExportMemory; done"
   },
   "devDependencies": {
     "assemblyscript": "0.28.20"

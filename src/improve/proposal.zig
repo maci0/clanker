@@ -91,9 +91,9 @@ pub fn validatePath(path: []const u8) bool {
             // into tools/manifests/ must not drop a .wasm or anything else the
             // registry would then try to load.
             if (std.mem.startsWith(u8, path, "tools/manifests/") and !std.mem.endsWith(u8, path, ".tool.json")) return false;
-            // tools/bin holds committed AssemblyScript build output; it is
+            // tools/ts/dist holds committed AssemblyScript build output; it is
             // produced by the TS toolchain, never hand-patched.
-            if (std.mem.startsWith(u8, path, "tools/bin/")) return false;
+            if (std.mem.startsWith(u8, path, "tools/ts/dist/")) return false;
             return true;
         }
     }
@@ -134,7 +134,7 @@ const readable_extensions = [_][]const u8{ ".zig", ".zon", ".json", ".toml", ".m
 pub fn validateReadPath(path: []const u8) bool {
     if (hasUnsafeSegment(path)) return false;
     // Committed build output: bytes, not source, and megabytes of it.
-    if (std.mem.startsWith(u8, path, "tools/bin/")) return false;
+    if (std.mem.startsWith(u8, path, "tools/ts/dist/")) return false;
     var ext_ok = false;
     for (readable_extensions) |e| {
         if (std.mem.endsWith(u8, path, e)) ext_ok = true;
@@ -319,7 +319,7 @@ test "validatePath" {
     try std.testing.expect(validatePath("evals/math.task.json"));
     try std.testing.expect(!validatePath("state/foo"));
     try std.testing.expect(!validatePath("tools/manifests/calculator.wasm"));
-    try std.testing.expect(!validatePath("tools/bin/calc_ts.wasm"));
+    try std.testing.expect(!validatePath("tools/ts/dist/calc_ts.wasm"));
     try std.testing.expect(!validatePath("../etc/passwd"));
     try std.testing.expect(!validatePath("vendor/foo"));
     // A path that starts inside an allowed prefix but climbs out of it via
@@ -455,8 +455,8 @@ test "the readable surface is wider than the writable one, and still closed" {
 
     // Not text, or not source.
     try std.testing.expect(!validateReadPath("tools/manifests/calculator.wasm"));
-    try std.testing.expect(!validateReadPath("tools/bin/calc_ts.wasm"));
-    try std.testing.expect(!validateReadPath("tools/bin/calc_ts.json"));
+    try std.testing.expect(!validateReadPath("tools/ts/dist/calc_ts.wasm"));
+    try std.testing.expect(!validateReadPath("tools/ts/dist/calc_ts.json"));
     try std.testing.expect(!validateReadPath("vendor/toml/src/root.zig"));
 }
 

@@ -22,7 +22,7 @@
 4. Operator scripts live under `scripts/`, not the repo root.
 5. Docs shelves: `docs/{prds,adrs,reviews,prompts,digests,assets,plans}/`. Review writeups are not loose `docs/WEBUI_*.md`.
 6. Web UI app sources hoist to `tools/webui/`; plugins stay `tools/webui-plugins/`; vendored JS colocate under `tools/webui/vendor/` when practical.
-7. AssemblyScript build output: `tools/ts/dist/` (not `tools/bin/`).
+7. AssemblyScript build output: `tools/ts/dist/` (not `tools/ts/dist/`).
 8. Example manifests: `tools/examples/manifests/` (out of the live load path).
 9. Tool identity: manifest stem == wasm stem == catalog name. Drop the `cmd_` prefix; internal harness guests keep `"internal": true`.
 10. Do not renumber PRDs. ROADMAP may cite PRD ids; build order stays in `docs/prds/README.md`.
@@ -47,8 +47,8 @@ docs/
 tools/
   webui/                 # was tools/zig/webui/
   webui-plugins/         # unchanged home
-  examples/manifests/    # was tools/manifests/examples/
-  ts/dist/               # was tools/bin/
+  examples/manifests/    # was tools/examples/manifests/
+  ts/dist/               # was tools/ts/dist/
   zig/                   # guest Zig; no nested webui app
   manifests/             # live *.tool.json only
 
@@ -124,7 +124,7 @@ If `tools` as a guest name is too ambiguous beside `tools/` the directory, prefe
 
 1. **Docs shelf** — create `docs/reviews/`, move WEBUI reviews, fix links, optional ROADMAP PRD-id citations.
 2. **Scripts home** — create `scripts/`, move root shell scripts, fix CI/docs references.
-3. **Tools examples + AS dist** — move examples and `tools/bin` → `tools/ts/dist`; update manifests/`wasm` fields and AS verify scripts; opencv path tidy.
+3. **Tools examples + AS dist** — move examples and `tools/ts/dist` → `tools/ts/dist`; update manifests/`wasm` fields and AS verify scripts; opencv path tidy.
 4. **Web UI hoist** — `tools/zig/webui` → `tools/webui`; update embed/allow-list/build; vendor move only if clean.
 5. **Guest catalog clarity** — drop `cmd_` stems; rename search tools; rewrite evals/skills/autolearn/docs refs; `zig build tools`.
 6. **Util + TUI names** — snake_case util + `repl` + `turn_stats` + smashed auto_* host modules; update imports and `main.zig` test registry.

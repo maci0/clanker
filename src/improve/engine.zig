@@ -330,7 +330,7 @@ const staging_runtime_files = [_][]const u8{ "config.local.toml", ".env" };
 /// Repeated verbatim to the model whenever it writes somewhere it may not, so
 /// the retry has the whole rule and not just the refusal.
 const surface_rules =
-    \\You may change: src/ (but not src/evals/, src/improve/, or src/tools/builder.zig), tools/ (but not tools/bin/, and under tools/manifests/ only *.tool.json), skills/, tests/, docs/, README.md, AGENTS.md, build.zig, build.zig.zon, config.toml.
+    \\You may change: src/ (but not src/evals/, src/improve/, or src/tools/builder.zig), tools/ (but not tools/ts/dist/, and under tools/manifests/ only *.tool.json), skills/, tests/, docs/, README.md, AGENTS.md, build.zig, build.zig.zon, config.toml.
     \\You may CREATE a new evals/<name>.task.json, which adds a case to the suite your work is graded against. You may never modify or delete an eval that already exists.
 ;
 
@@ -858,7 +858,7 @@ pub const Engine = struct {
 
         // Descriptor consistency: no duplicate tool names and every descriptor's
         // wasm must exist. Runs after toolsGate so zig-out/tools/*.wasm are
-        // present; tools/bin/*.wasm are committed. Catches a proposal that
+        // present; tools/ts/dist/*.wasm are committed. Catches a proposal that
         // shadows a tool or ships a manifest for a wasm that was never built.
         var desc_check = try gate_checks.toolDescriptorGate(self.ctx.gpa, self.ctx.io, staged_dir, "tools/manifests");
         defer desc_check.deinit(self.ctx.gpa);

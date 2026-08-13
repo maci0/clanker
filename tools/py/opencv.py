@@ -4,7 +4,7 @@
 The WASM guest cannot link OpenCV, so the tool shells out to this script and
 uv supplies cv2 in an ephemeral environment (nothing is installed on the host).
 
-Usage:  opencv_tool.py <op> <image-path> [json-options]
+Usage:  opencv.py <op> <image-path> [json-options]
 Ops:    info | edges | faces | resize | grayscale | contours
 Prints one JSON object on stdout. Failures print {"ok": false, "error": ...}
 and exit non-zero.
@@ -129,7 +129,7 @@ OPS = {
 
 def main(argv):
     if len(argv) < 3:
-        raise ValueError(f"usage: opencv_tool.py <{'|'.join(OPS)}> <image> [json-options]")
+        raise ValueError(f"usage: opencv.py <{'|'.join(OPS)}> <image> [json-options]")
     op, path = argv[1], argv[2]
     opts = json.loads(argv[3]) if len(argv) > 3 and argv[3] else {}
     if op not in OPS:

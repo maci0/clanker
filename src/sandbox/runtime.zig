@@ -1207,7 +1207,7 @@ test "assemblyscript calc_ts tool executes" {
     var env_map = std.process.Environ.Map.init(std.testing.allocator);
     defer env_map.deinit();
 
-    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "tools/bin/calc_ts.wasm", std.testing.allocator, .limited(1 << 20));
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "tools/ts/dist/calc_ts.wasm", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(wasm);
 
     var sb = host.Sandbox{
@@ -1231,7 +1231,7 @@ test "assemblyscript calc_ts tool executes" {
 }
 
 fn loadAsTool(gpa: std.mem.Allocator, io: std.Io, sb: *host.Sandbox, name: []const u8) !*ToolModule {
-    const path = try std.fmt.allocPrint(gpa, "tools/bin/{s}.wasm", .{name});
+    const path = try std.fmt.allocPrint(gpa, "tools/ts/dist/{s}.wasm", .{name});
     defer gpa.free(path);
     const wasm = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 20));
     defer gpa.free(wasm);
@@ -1481,7 +1481,7 @@ test "a tool with a tiny fuel budget runs out of fuel; the default budget answer
     var env_map = std.process.Environ.Map.init(std.testing.allocator);
     defer env_map.deinit();
 
-    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "tools/bin/calc_ts.wasm", std.testing.allocator, .limited(1 << 20));
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "tools/ts/dist/calc_ts.wasm", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(wasm);
 
     // 15k is measured to cover this module's instantiation and arena

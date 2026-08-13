@@ -2,7 +2,7 @@
   "name": "text_diff",
   "description": "Unified diff between two text blobs (AssemblyScript), the way `diff -u` shows one. WHEN TO USE: comparing two versions of text you already have in hand (two tool outputs, two file reads, a before/after) without writing either to disk first. Not for applying a patch — see patch_apply for that. Input: {\"a\": \"...\", \"b\": \"...\", \"context\": 3, \"a_name\": \"a\", \"b_name\": \"b\"}. Capped at 800 lines per side.",
   "llm_description": "Unified diff (like `diff -u`) between two text blobs already in hand, no disk write needed. Not for applying patches (use patch_apply). Input: {a, b, context (default 3), a_name (default \"a\"), b_name (default \"b\")}. Capped at 800 lines/side.",
-  "wasm": "tools/bin/text_diff.wasm",
+  "wasm": "tools/ts/dist/text_diff.wasm",
   "input_schema": {
     "type": "object",
     "properties": {

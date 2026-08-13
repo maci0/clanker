@@ -99,7 +99,7 @@ src/gate/*           deterministic gate checks (build/test/tools/fmt/lint)
 src/improve/*        self-improvement engine (protected)
 tools/zig/, tools/ts/  WASM tool sources (Zig, AssemblyScript)
 tools/manifests/     tool descriptors (*.tool.json)
-tools/bin/           committed AssemblyScript build output
+tools/ts/dist/           committed AssemblyScript build output
 state/                runtime state: sessions, runs, history, staging (not source)
 ```
 

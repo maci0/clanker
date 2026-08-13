@@ -211,7 +211,7 @@ pub const Registry = struct {
     ///
     /// Every path is read relative to the process's working directory, which
     /// is what the in-tree manifests want (`zig-out/tools/x.wasm`,
-    /// `tools/bin/x.wasm`) and exactly what an out-of-tree plugin cannot use:
+    /// `tools/ts/dist/x.wasm`) and exactly what an out-of-tree plugin cannot use:
     /// a directory someone unpacked somewhere has no idea what clanker's cwd
     /// will be. So a `wasm` with no path separator is resolved beside its own
     /// manifest instead, which makes `{name.tool.json, name.wasm}` in one

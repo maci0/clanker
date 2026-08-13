@@ -2933,7 +2933,7 @@ fn uvVerbAllowed(argv: []const []const u8) bool {
     var saw_script = false;
     for (argv[1..]) |a| {
         if (std.mem.eql(u8, a, "-c") or std.mem.eql(u8, a, "--script") or std.mem.eql(u8, a, "-")) return false;
-        if (std.mem.eql(u8, a, "tools/py/opencv_tool.py")) saw_script = true;
+        if (std.mem.eql(u8, a, "tools/py/opencv.py")) saw_script = true;
     }
     return saw_script;
 }
@@ -3115,7 +3115,7 @@ pub const ExecDenial = union(enum) {
     git_verb,
     /// `zig`, but not ast-check / fmt --check / test / build.
     zig_verb,
-    /// `uv`, but not `uv run` of tools/py/opencv_tool.py.
+    /// `uv`, but not `uv run` of tools/py/opencv.py.
     uv_verb,
     /// `exec_pattern_allow` names this command, which makes it strict, and no
     /// pattern matched the argv.
@@ -3889,7 +3889,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         switch (d) {
             .git_verb => log.log(.warn, "[sandbox] ck_exec denied unlisted git verb", .{}),
             .zig_verb => log.log(.warn, "[sandbox] ck_exec denied unlisted zig verb", .{}),
-            .uv_verb => log.log(.warn, "[sandbox] ck_exec denied uv argv; only uv run of tools/py/opencv_tool.py is allowed", .{}),
+            .uv_verb => log.log(.warn, "[sandbox] ck_exec denied uv argv; only uv run of tools/py/opencv.py is allowed", .{}),
             .no_pattern_match => log.log(.warn, "[sandbox] ck_exec denied '{s}': exec_pattern_allow makes this command strict and no pattern matches", .{cmd}),
             .deny_token => |x| log.log(.warn, "[sandbox] ck_exec denied token '{s}' in arg '{s}'", .{ x.token, x.arg }),
             .shell_operator => |x| log.log(.warn, "[sandbox] ck_exec denied shell operator '{s}' in arg '{s}'", .{ x.token, x.arg }),
@@ -4643,7 +4643,7 @@ test "execDenial: the argv-level gate ckExec and the REPL escape share" {
     try std.testing.expect(execDenial(&sb, "zig", &.{ "/usr/bin/zig", "run", "src/main.zig" }).? == .zig_verb);
     try std.testing.expect(execDenial(&sb, "zig", &.{ "/usr/bin/zig", "fmt", "src" }).? == .zig_verb);
 
-    const uv_ok = [_][]const u8{ "/usr/bin/uv", "run", "--quiet", "--with", "opencv-python-headless~=4.14", "python3", "tools/py/opencv_tool.py", "info", "pic.png" };
+    const uv_ok = [_][]const u8{ "/usr/bin/uv", "run", "--quiet", "--with", "opencv-python-headless~=4.14", "python3", "tools/py/opencv.py", "info", "pic.png" };
     try std.testing.expect(execDenial(&sb, "uv", &uv_ok) == null);
     try std.testing.expect(execDenial(&sb, "uv", &.{ "/usr/bin/uv", "pip", "install", "pwn" }).? == .uv_verb);
     try std.testing.expect(execDenial(&sb, "uv", &.{ "/usr/bin/uv", "run", "python3", "-c", "print(1)" }).? == .uv_verb);

@@ -5,14 +5,14 @@
 //! Output: the analysis JSON, or {"ok": false, "error": "..."}
 //!
 //! A wasm32-freestanding guest cannot link OpenCV, and no in-process binding
-//! exists, so this shells out to tools/py/opencv_tool.py through ck_exec. uv
+//! exists, so this shells out to tools/py/opencv.py through ck_exec. uv
 //! supplies cv2 in an ephemeral environment, so nothing is installed on the
 //! host. The descriptor's `exec_allow` limits this tool to `uv` alone.
 
 const std = @import("std");
 const lib = @import("lib.zig");
 
-const script = "tools/py/opencv_tool.py";
+const script = "tools/py/opencv.py";
 
 const Request = struct {
     op: []const u8 = "info",

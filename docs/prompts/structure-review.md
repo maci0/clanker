@@ -54,7 +54,7 @@ those and move on when a finding belongs to them. This review is about the
   move a protected surface. When a placement finding touches those, say so and
   defer the trust question to `self-improve-safety-review.md`/`wasm-review.md`.
 - **Deliberately parked is not cruft.** Some things look like leftovers and are
-  not: `tools/manifests/examples/` holds descriptors intentionally shelved until
+  not: `tools/examples/manifests/` holds descriptors intentionally shelved until
   their source exists; `evals/` is add-only; gitignored `state/`, `.env`,
   `config.local.toml`, `.zig-cache/`, `.clanker-worktrees/` are runtime/local by
   design. Confirm a file is actually unreferenced and actually unwanted before
@@ -105,7 +105,7 @@ pairing), `docs/` (numbering, stale cross-references), and the repository root
       is not.
 - [ ] Tools whose three parts do not line up: a `tools/manifests/*.tool.json`
       with no matching `tools/zig/*.zig` source (and not deliberately parked in
-      `manifests/examples/`), or a `tools/zig/*.zig` with no descriptor, or a
+      `examples/manifests/`), or a `tools/zig/*.zig` with no descriptor, or a
       descriptor pointing at a `wasm` path the build does not produce.
 - [ ] A tracked file that matches a `.gitignore` intent (generated, local, or
       runtime state) and should never have been committed.
@@ -181,7 +181,7 @@ Return these sections in the captured response:
       the doc)
 - [ ] Every proposed deletion backed by a grep showing it is unreferenced, and
       every proposed move names the imports and the `main.zig` line to update
-- [ ] Deliberately-parked things (`manifests/examples/`, add-only `evals/`,
+- [ ] Deliberately-parked things (`examples/manifests/`, add-only `evals/`,
       gitignored runtime state) explicitly excluded, not flagged
 - [ ] The `main.zig` test-import registry cross-checked against files with test
       blocks

@@ -3,7 +3,7 @@
 zig-out/
 zig-pkg/
 
-# AssemblyScript toolchain and its build output (tools/bin/ IS committed)
+# AssemblyScript toolchain and its build output (tools/ts/dist/ IS committed)
 tools/ts/node_modules/
 tools/ts/build/
 

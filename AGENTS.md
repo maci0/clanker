@@ -98,7 +98,7 @@ through a gated loop. Follow these conventions when changing this codebase.
   clanker cannot modify `src/improve/`, `src/evals/`, `src/tools/builder.zig`,
   or `evals/` in a single pass (anti-cheat boundary).
 - `tools/zig/` — WASM tool sources (Zig); `tools/ts/` — AssemblyScript
-  sources; `tools/manifests/` — descriptors; `tools/bin/` — committed AS build output
+  sources; `tools/manifests/` — descriptors; `tools/ts/dist/` — committed AS build output
   (built via `npm run build:all` in `tools/ts/`; guest ABI: exports
   scratch/host_arena/run, imports env.ck_*); `zig-out/tools/` — Zig tool build
   output (`zig build tools`), gitignored. The web UI is that guest: `clanker serve`
@@ -128,13 +128,13 @@ So, when adding a capability:
 - Either language compiles to a guest, and the host cannot tell them apart:
   `tools/zig/<name>.zig`, built by `zig build tools` into `zig-out/tools/`
   (gitignored), or `tools/ts/<name>.ts` in AssemblyScript, built by
-  `npm run build:all` in `tools/ts/` into `tools/bin/` (committed, since not
+  `npm run build:all` in `tools/ts/` into `tools/ts/dist/` (committed, since not
   everyone building clanker has a node toolchain). The descriptor's `wasm`
   field points at whichever path. Zig is the default because the harness is
   Zig and `lib.zig` carries the host bindings; reach for AssemblyScript when
   the logic is easier to express in TypeScript or already exists there.
   `clanker gate` never rebuilds `tools/ts/`, so a `.ts` edit not followed by
-  `npm run build:all` ships a stale `tools/bin/*.wasm` silently; run
+  `npm run build:all` ships a stale `tools/ts/dist/*.wasm` silently; run
   `tools/ts/verify.sh` (rebuilds into a scratch dir and diffs against what is
   committed) before committing a `tools/ts/` change.
 - Migrate what is already native when you touch it. `patch_apply`, `peers`, and

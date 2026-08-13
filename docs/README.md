@@ -471,7 +471,7 @@ dependency cache location is controlled by the Zig installation/environment.
 - `tools/webui-plugins/` — web UI plugin apps, served under `/webui/plugins/<name>`.
 - `tools/manifests/*.tool.json` — tool descriptors, with optional `"internal": true` flag for internal tools (like `webui`). Full field reference: [docs/manifest.md](manifest.md).
 - `zig-out/tools/` — built WASM binaries from `zig build tools`.
-- `tools/bin/` — committed AssemblyScript artifacts (compiled JS/WASM).
+- `tools/ts/dist/` — committed AssemblyScript artifacts (compiled JS/WASM).
 
 Tools are discovered by the registry (`src/tools/registry.zig`) from the configured `tools_dir` (default `tools/manifests`).
 
@@ -484,7 +484,7 @@ Tools are discovered by the registry (`src/tools/registry.zig`) from the configu
 | `zig build test` | Run the unit and integration tests |
 | `zig fmt --check src/ tools/zig/` | Verify formatting |
 | `clanker gate` | Run all of the above the way the self-improvement gate does |
-| `tools/ts/verify.sh` | Rebuild `tools/ts/*.ts` into a scratch dir and diff against the committed `tools/bin/*.wasm`, to catch drift `clanker gate` cannot see (requires node) |
+| `tools/ts/verify.sh` | Rebuild `tools/ts/*.ts` into a scratch dir and diff against the committed `tools/ts/dist/*.wasm`, to catch drift `clanker gate` cannot see (requires node) |
 
 All of them must pass before a change is promoted, so a tool source that fails to compile blocks the whole loop, not just its own tool. `tools/ts/verify.sh` is not part of `clanker gate` (a node toolchain is not guaranteed) and must be run by hand after editing `tools/ts/`.
 
@@ -557,7 +557,7 @@ Internal tools, never offered to the model:
 | `statusline_clock` | none | Demo statusline plugin: current UTC time as a status-bar segment |
 | `turn_hook_echo` | none | Demo turn-hook plugin: prints a line into the transcript after every turn |
 
-`tools/manifests/examples/` holds descriptors that are not loaded, such as `calc_ts.tool.json` (the AssemblyScript build of the calculator).
+`tools/examples/manifests/` holds descriptors that are not loaded, such as `calc_ts.tool.json` (the AssemblyScript build of the calculator).
 
 ## Plugins
 
@@ -596,7 +596,7 @@ Two descriptor keys widen a tool's reach, both opt-in per tool:
 
 `exec_allow` is the complete list of commands a tool may run through `ck_exec`, matched against `argv[0]` exactly. There is no default set to narrow: a tool that names nothing gets no exec at all (`host.execAllowed`). The `opencv` tool declares `"exec_allow": ["uv"]`, so it can run exactly one binary and not, say, `git`.
 
-The `opencv` tool is the shape to copy when a capability has no in-process WASM binding: a `wasm32-freestanding` guest cannot link OpenCV, so the tool shells out to `tools/py/opencv_tool.py` and `uv run --with` supplies `cv2` in a throwaway environment, leaving the host untouched. Path traversal is refused in the guest before the script ever sees the path, and written images land under `state/opencv/`.
+The `opencv` tool is the shape to copy when a capability has no in-process WASM binding: a `wasm32-freestanding` guest cannot link OpenCV, so the tool shells out to `tools/py/opencv.py` and `uv run --with` supplies `cv2` in a throwaway environment, leaving the host untouched. Path traversal is refused in the guest before the script ever sees the path, and written images land under `state/opencv/`.
 
 ### Execution graphs in the web UI
 

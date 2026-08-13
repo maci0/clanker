@@ -138,7 +138,7 @@ test "parsePlan reads ideas, drops unreadable paths, caps the list" {
 
     const raw =
         \\{"ideas": [
-        \\  {"idea": "cache the tool registry between attempts", "files": ["src/tools/registry.zig", "../etc/passwd", "tools/bin/x.wasm", "src/tools/registry.zig"]},
+        \\  {"idea": "cache the tool registry between attempts", "files": ["src/tools/registry.zig", "../etc/passwd", "tools/ts/dist/x.wasm", "src/tools/registry.zig"]},
         \\  {"idea": "   ", "files": ["src/cli.zig"]},
         \\  {"idea": "retry transient provider errors", "files": []},
         \\  {"idea": "third", "files": ["src/main.zig"]},

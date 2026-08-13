@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Verify tools/bin/*.wasm matches a clean rebuild of tools/ts/*.ts.
+# Verify tools/ts/dist/*.wasm matches a clean rebuild of tools/ts/*.ts.
 #
-# tools/bin/ is committed (see AGENTS.md: not every clanker checkout has a
+# tools/ts/dist/ is committed (see AGENTS.md: not every clanker checkout has a
 # node toolchain), which means nothing else catches a source edit that was
 # not followed by `npm run build:all` before commit. This rebuilds into a
 # scratch directory and diffs it against what is committed, so drift is
@@ -25,14 +25,14 @@ for f in *.ts; do
   case "$f" in env.d.ts|lib.ts|json.ts) continue;; esac
   stem="${f%.ts}"
   npx --no-install asc "$f" -o "$scratch/$stem.wasm" --optimize --bindings raw --noExportMemory
-  if ! cmp -s "$scratch/$stem.wasm" "../bin/$stem.wasm"; then
-    printf 'drift: ../bin/%s.wasm does not match a clean rebuild of %s\n' "$stem" "$f" >&2
+  if ! cmp -s "$scratch/$stem.wasm" "../dist/$stem.wasm"; then
+    printf 'drift: ../dist/%s.wasm does not match a clean rebuild of %s\n' "$stem" "$f" >&2
     status=1
   fi
 done
 
 if [ "$status" -eq 0 ]; then
-  printf 'ok: tools/bin/*.wasm matches tools/ts/*.ts\n'
+  printf 'ok: tools/ts/dist/*.wasm matches tools/ts/*.ts\n'
 else
   printf '  run: (cd tools/ts && npm run build:all) and commit the result\n' >&2
 fi

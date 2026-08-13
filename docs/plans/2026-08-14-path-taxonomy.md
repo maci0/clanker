@@ -71,9 +71,9 @@ git push origin main
 ### Task 3: Tools examples + AS dist
 
 **Files:**
-- Move: `tools/manifests/examples/` → `tools/examples/manifests/`
-- Move: `tools/bin/` → `tools/ts/dist/`
-- Modify: every `*.tool.json` `wasm` field pointing at `tools/bin/`; `tools/ts/verify.sh`; build docs; `tools/py/opencv_tool.py` → `tools/py/opencv.py` if safe
+- Move: `tools/examples/manifests/` → `tools/examples/manifests/`
+- Move: `tools/ts/dist/` → `tools/ts/dist/`
+- Modify: every `*.tool.json` `wasm` field pointing at `tools/ts/dist/`; `tools/ts/verify.sh`; build docs; `tools/py/opencv.py` → `tools/py/opencv.py` if safe
 
 - [ ] **Step 1:** `git mv` examples and bin tree
 - [ ] **Step 2:** Rewrite manifest wasm paths and verify script

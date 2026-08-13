@@ -2,7 +2,7 @@
   "name": "csv_json",
   "description": "Convert between CSV and a JSON array (AssemblyScript), quoted fields and embedded commas/newlines handled per RFC 4180. WHEN TO USE: a tool or the user handed you CSV and you need it as structured data, or vice versa. Input: {\"csv\": \"...\"} (first row is the header; each following row becomes a {header: value} object) or {\"json\": \"...\"} (an array of objects, union of keys becomes the header row, or an array of arrays written as rows with no header). Direction is inferred from which field is set; pass \"mode\": \"to_json\"|\"to_csv\" to be explicit.",
   "llm_description": "Convert CSV <-> JSON array (RFC 4180 quoting). {csv} (header row -> {header:value} objects) or {json} (array of objects -> CSV with union-of-keys header, or array of arrays -> rows with no header). mode?:'to_json'|'to_csv' to disambiguate when both could apply.",
-  "wasm": "tools/bin/csv_json.wasm",
+  "wasm": "tools/ts/dist/csv_json.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
