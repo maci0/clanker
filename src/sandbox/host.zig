@@ -1096,6 +1096,26 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
                     try s.objectField("cost_per_1m_output");
                     try s.write(c);
                 }
+                if (m.temperature) |t| {
+                    try s.objectField("temperature");
+                    try s.write(t);
+                }
+                if (m.top_p) |t| {
+                    try s.objectField("top_p");
+                    try s.write(t);
+                }
+                if (m.reasoning_effort) |r| {
+                    try s.objectField("reasoning_effort");
+                    try s.write(r);
+                }
+                if (m.capabilities.len > 0) {
+                    try s.objectField("capabilities");
+                    try s.write(m.capabilities);
+                }
+                if (m.category.len > 0) {
+                    try s.objectField("category");
+                    try s.write(m.category);
+                }
                 try s.endObject();
             }
             try s.endObject();

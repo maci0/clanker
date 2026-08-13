@@ -167,6 +167,7 @@ overrides how it is *shown* (never what is *sent*).
 | `cost_per_1m_input` | float | unset | USD per 1M input tokens, for run cost accounting. |
 | `cost_per_1m_output` | float | unset | USD per 1M output tokens. |
 | `capabilities` | string[] | `[]` | `"tool_use"`, `"image_in"`, `"video_in"`, `"audio_in"`, `"thinking"`, `"always_thinking"`. Self-documents what the model supports. A model that declares its capabilities but omits `image_in` is treated as non-vision: the webui refuses image attachments to it up front (instead of sending `image_url` blocks that a text-only endpoint such as DeepSeek v4-flash rejects), so declare `image_in` on any model that accepts images. A model with no `capabilities` declared is left unknown and the attachment is attempted. |
+| `category` | string | `""` | Free-form grouping (`"flagship"`, `"fast"`, `"reasoning"`, `"cheap"`, ...) used to sort/group the model list in the webui picker, the TUI's `/model` picker, and the CLI. Purely presentational, never sent to a provider. Empty sorts last within its provider. |
 
 ```toml
 [models."deepseek/deepseek-v4-flash"]
