@@ -46,15 +46,11 @@ jobs:
           cache: npm
           cache-dependency-path: tools/ts/package-lock.json
 
+      # Glob from the index instead of a hand-kept list: a new script is
+      # checked from its first commit, not from when someone remembers to
+      # add it here.
       - name: Check shell scripts
-        run: |
-          shellcheck \
-            clanker-improve.sh \
-            clanker-merge-worktree.sh \
-            clanker-review.sh \
-            release-check.sh \
-            tools/grammars/build.sh \
-            tools/ts/verify.sh
+        run: git ls-files -z '*.sh' | xargs -0 -r shellcheck
 
       - name: Audit AssemblyScript toolchain
         working-directory: tools/ts
@@ -75,3 +71,31 @@ jobs:
         run: |
           zig build -Doptimize=ReleaseSafe
           ./release-check.sh "${GITHUB_REF_NAME}" zig-out/bin/clanker
+
+  # build.zig once hard-pinned x86_64-linux and produced unrunnable binaries
+  # on arm64 macs; this job is the regression guard for that promise.
+  # `zig build test` pulls in the wasm tools build (the sandbox tests load
+  # zig-out/tools/*.wasm), so this covers native + wasm compilation and the
+  # full unit-test suite. Lint, shellcheck, npm audit and e2e stay
+  # linux-only: they check sources, not the host target.
+  verify-macos:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      NO_COLOR: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.16.0
+          use-cache: true
+
+      - name: Build and run unit tests
+        run: |
+          zig build
+          zig build test
