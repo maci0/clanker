@@ -1345,6 +1345,7 @@ const ScheduleFire = struct {
     }
 
     fn call(ctx: *anyopaque, entry: *const schedule_store.Entry) anyerror!void {
+        // callback() boxed this ScheduleFire as Fire.ctx.
         const self: *ScheduleFire = @ptrCast(@alignCast(ctx));
         var run_opts = self.opts;
         run_opts.command = .run;
@@ -3078,7 +3079,9 @@ fn execSelf(gpa: std.mem.Allocator, exe_path: [:0]const u8, argv_tail: []const [
     const exe_z: [*:0]const u8 = exe_path.ptr;
     argv.append(gpa, exe_z) catch return;
     for (argv_tail) |a| {
-        argv.append(gpa, @as([*:0]const u8, @ptrCast(gpa.dupeZ(u8, a) catch return))) catch return;
+        // dupeZ returns [:0]u8; .ptr is already [*:0]u8 (no pointer recast).
+        const z = gpa.dupeZ(u8, a) catch return;
+        argv.append(gpa, z.ptr) catch return;
     }
     argv.append(gpa, null) catch return;
     // Mark every fd above stderr close-on-exec. The re-exec'd image reopens
@@ -3096,7 +3099,9 @@ fn execSelf(gpa: std.mem.Allocator, exe_path: [:0]const u8, argv_tail: []const [
         _ = std.c.fcntl(fd, std.c.F.SETFD, @as(c_int, std.c.FD_CLOEXEC));
     }
     const path_z: [*:0]const u8 = exe_path.ptr;
+    // argv ends with the null we just appended (C argv / execve contract).
     const argv_z: [*:null]const ?[*:0]const u8 = @ptrCast(argv.items.ptr);
+    // environ is [*:null]?[*:0]u8; execve wants the const form of that shape.
     _ = std.c.execve(path_z, argv_z, @ptrCast(std.c.environ));
 }
 
@@ -3198,6 +3203,7 @@ const HotReload = struct {
             var relevant = false;
             var i: usize = 0;
             while (i + @sizeOf(std.os.linux.inotify_event) <= n) {
+                // buf is aligned to inotify_event; i walks kernel-sized records.
                 const ev: *const std.os.linux.inotify_event = @ptrCast(@alignCast(&buf[i]));
                 if (ev.getName()) |name| {
                     if (std.mem.eql(u8, name, base_name)) relevant = true;

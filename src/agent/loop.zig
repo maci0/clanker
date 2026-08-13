@@ -20,6 +20,12 @@ const toolout = @import("../util/toolout.zig");
 const utf8 = @import("../util/utf8.zig");
 const mock_server = @import("../llm/mock_server.zig");
 
+/// Each chatroom inbox line injected into a run. Long enough to see what a
+/// peer said, short enough that a burst of rooms cannot fill the context.
+const max_chat_inbox_preview_bytes: usize = 300;
+/// What the human is shown when asked to allow a tool call.
+const max_args_preview_bytes: usize = 400;
+
 /// Appended to the system prompt so a model asked for an exact-format answer
 /// (a string, a number, JSON) does not wrap it in prose or markdown fences.
 const exact_format_suffix = "\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim, preserving exact capitalization and punctuation.";
@@ -461,7 +467,7 @@ pub const Agent = struct {
                 defer chat_buf.deinit(self.ctx.gpa);
                 try chat_buf.appendSlice(self.ctx.gpa, "[chatroom inbox]\n");
                 for (inbox) |m| {
-                    const preview = if (m.text.len > 300) m.text[0..300] else m.text;
+                    const preview = utf8.cap(m.text, max_chat_inbox_preview_bytes);
                     const line = try std.fmt.allocPrint(self.ctx.gpa, "- [{s}] {s}: \"{s}\"\n", .{ m.room, m.from, preview });
                     defer self.ctx.gpa.free(line);
                     try chat_buf.appendSlice(self.ctx.gpa, line);
@@ -484,6 +490,8 @@ pub const Agent = struct {
         // gets a synthetic error result instead of another execution.
         var call_counts: std.ArrayHashMapUnmanaged(u64, u32, struct {
             pub fn hash(_: @This(), key: u64) u32 {
+                // ArrayHashMap's hash is u32; the key is already a mixed
+                // 64-bit fingerprint, so dropping the high half is intended.
                 return @truncate(key);
             }
             pub fn eql(_: @This(), a: u64, b: u64, _: usize) bool {
@@ -2391,6 +2399,7 @@ fn parentAskTrampoline(
     question: []const u8,
     options: []const []const u8,
 ) anyerror![]const u8 {
+    // ParentAsk.call boxes the Agent as *anyopaque; we are that Agent.
     const self: *Agent = @ptrCast(@alignCast(ctx_ptr));
     const msgs: []const types.Message = if (self.current_messages) |m| m.items else &.{};
     return answerAsParent(self.ctx.io, gpa, self.ctx.environ_map, self.cfg, self.provider, self.current_task, msgs, question, options);
@@ -2555,13 +2564,13 @@ const ToolWorker = struct {
 /// is re-encoded as JSON for the stream event, and a split code point there
 /// is not a smaller preview but a malformed one.
 fn argsPreview(args: []const u8) []const u8 {
-    return utf8.cap(args, 400);
+    return utf8.cap(args, max_args_preview_bytes);
 }
 
 test argsPreview {
     try std.testing.expectEqualStrings("short", argsPreview("short"));
     const long = "x" ** 500;
-    try std.testing.expectEqual(@as(usize, 400), argsPreview(long).len);
+    try std.testing.expectEqual(max_args_preview_bytes, argsPreview(long).len);
     // A multi-byte code point straddling the cap is dropped whole.
     const emoji = ("y" ** 399) ++ "\u{1F600}";
     try std.testing.expectEqualStrings("y" ** 399, argsPreview(emoji));

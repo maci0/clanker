@@ -3140,6 +3140,9 @@ h2#session-title {
   transition: transform 100ms ease, border-color 100ms ease;
   position: relative;
 }
+@media (pointer: coarse) {
+  .label-picker-item { height: 44px; min-width: 44px; min-height: 44px; }
+}
 .label-picker-item:hover { transform: scale(1.12); }
 .label-picker-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .label-picker-item[data-selected="true"] { border-color: var(--fg); box-shadow: inset 0 0 0 2px var(--surface); }

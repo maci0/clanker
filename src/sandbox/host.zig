@@ -17,6 +17,7 @@ const registry = @import("../tools/registry.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
 const private_todos_mod = @import("../agent/private_todos.zig");
 const filelock = @import("../util/filelock.zig");
+const utf8 = @import("../util/utf8.zig");
 const token_stats = @import("../stats/tokens.zig");
 const build_options = @import("build_options");
 const zwasm = @import("zwasm");
@@ -1420,6 +1421,9 @@ fn directMessageRoom(arena: std.mem.Allocator, from_raw: []const u8, to_raw: []c
 /// a complete log can tell whether another page exists without guessing from
 /// a full final page.
 const chat_history_page_size = 20;
+/// Per-message text in the history JSON: enough to read, short enough that
+/// a page of messages cannot blow the guest arena.
+const chat_history_text_preview_bytes = 600;
 
 /// ck_chat(op_json), chatroom operations for the chat_* tools, plus the
 /// private-list todo_* ops (see below).
@@ -1552,7 +1556,7 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             s.objectField("from") catch return Err.too_large;
             s.write(m.from) catch return Err.too_large;
             s.objectField("text") catch return Err.too_large;
-            s.write(if (m.text.len > 600) m.text[0..600] else m.text) catch return Err.too_large;
+            s.write(utf8.cap(m.text, chat_history_text_preview_bytes)) catch return Err.too_large;
             s.objectField("ts") catch return Err.too_large;
             s.print("{d}", .{m.ts}) catch return Err.too_large;
             s.objectField("id") catch return Err.too_large;

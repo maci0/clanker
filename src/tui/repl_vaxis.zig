@@ -2498,6 +2498,7 @@ const Model = struct {
     }
 
     fn typeErasedEventHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
+        // vxfw stores the Model as *anyopaque on the widget.
         const self: *Model = @ptrCast(@alignCast(ptr));
         switch (event) {
             .init => try ctx.requestFocus(self.text_field.widget()),
@@ -2977,6 +2978,7 @@ const Model = struct {
     }
 
     fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) std.mem.Allocator.Error!vxfw.Surface {
+        // vxfw stores the Model as *anyopaque on the widget.
         const self: *Model = @ptrCast(@alignCast(ptr));
         const max = ctx.max.size();
 

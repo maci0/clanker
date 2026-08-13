@@ -18,6 +18,7 @@ const config_mod = @import("../config.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const filelock = @import("../util/filelock.zig");
+const utf8 = @import("../util/utf8.zig");
 const build_options = @import("build_options");
 
 /// Guards the read-modify-write in `append`. Separate from the log so that
@@ -29,6 +30,8 @@ pub const log_path = "chatrooms.jsonl";
 pub const sub_path = "chatrooms-sub.json";
 pub const cursor_path = "chatrooms-cursor.json";
 pub const max_text_len = 4096;
+/// Room list last-message preview. Distinct from max_text_len (the send cap).
+const last_text_preview_bytes = 120;
 /// Newest messages injected into the agent inbox per run.
 pub const inbox_limit = 5;
 
@@ -213,7 +216,7 @@ pub fn listRooms(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
         if (m.ts >= gop.value_ptr.last_ts) {
             gop.value_ptr.last_ts = m.ts;
             gop.value_ptr.last_from = m.from;
-            gop.value_ptr.last_text = if (m.text.len > 120) m.text[0..120] else m.text;
+            gop.value_ptr.last_text = utf8.cap(m.text, last_text_preview_bytes);
         }
     }
     // Enrich with room metadata (topic, pins)

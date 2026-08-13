@@ -283,6 +283,7 @@ const Recorder = struct {
     }
 
     fn call(ctx: *anyopaque, entry: *const store.Entry) anyerror!void {
+        // fire() boxed this Recorder as Fire.ctx.
         const self: *Recorder = @ptrCast(@alignCast(ctx));
         try self.calls.append(self.alloc, entry.id);
         if (self.fail_with) |e| return e;
@@ -536,6 +537,7 @@ test "an entry disabled while its run was in flight keeps the disable" {
             return .{ .ctx = self, .call = call };
         }
         fn call(ctx: *anyopaque, _: *const store.Entry) anyerror!void {
+            // fire() boxed this Disabler as Fire.ctx.
             const self: *@This() = @ptrCast(@alignCast(ctx));
             var a = std.heap.ArenaAllocator.init(std.testing.allocator);
             defer a.deinit();
