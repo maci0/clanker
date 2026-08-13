@@ -3586,9 +3586,31 @@ function stopChatPoll() {
   if (chatPoll) { window.clearTimeout(chatPoll); chatPoll = null; }
 }
 
+/* Hiding the tab stops every standing timer, and showing it starts back only
+   what the view on screen actually wants.
+ *
+ * This handler predates the view-aware stops in showView and never learned
+ * about them. It restarted the rooms poll on `el.chatRoom.value` alone, which
+ * survives leaving Rooms, so: open Rooms, switch to Board (showView stops the
+ * poll), switch browser tabs away and back, and the poll restarts while Board
+ * is showing. Nothing then stops it, because showView only stops it on the way
+ * *out* of Rooms and Rooms is not where you are. That is a permanent
+ * background fetch of a chat log nobody is looking at, which is the same thing
+ * the comment in showView calls out as not allowed.
+ *
+ * The arena had the opposite half missing: its poll and animation loop are
+ * stopped when you navigate away, but nothing stopped them when the tab itself
+ * went away, so a hidden tab kept polling a running match. */
 document.addEventListener("visibilitychange", function () {
-  if (document.hidden) stopChatPoll();
-  else if (el.chatRoom.value) startChatPoll(el.chatRoom.value);
+  if (document.hidden) {
+    stopChatPoll();
+    if (arenaModulePromise) arenaModulePromise.then(function (arena) { arena.stopArena(); });
+    return;
+  }
+  if (currentView === "rooms" && el.chatRoom.value) startChatPoll(el.chatRoom.value);
+  if (currentView === "arena" && arenaModulePromise) {
+    arenaModulePromise.then(function (arena) { arena.loadArenaView(); });
+  }
 });
 
 el.chatRoom.addEventListener("change", function () {
