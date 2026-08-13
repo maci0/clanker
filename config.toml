@@ -200,7 +200,7 @@ max_history = 500
 
 [tui]
 # The REPL mascot: a small robot that runs along the top of the input box.
-# Purely decorative, and off by default -- it costs 10 rows of transcript
+# Purely decorative, and off by default -- it costs 5 rows of transcript
 # while it is on, which is a real price on a short terminal.
 #
 #   off    no mascot, no rows claimed (the default)
@@ -212,6 +212,6 @@ max_history = 500
 #
 # Rendered with kitty graphics where the terminal supports it (Ghostty, kitty,
 # iTerm2) and with unicode half-blocks everywhere else. Needs a terminal at
-# least 23 columns wide and 13 rows tall, and is skipped below that rather
+# least 12 columns wide and 13 rows tall, and is skipped below that rather
 # than clipped.
 mascot = "off"
