@@ -62,7 +62,6 @@ Constraints that shape the design (not just the desired outcome):
 - Agave-only paths (`/v1/chat`, `/v1/conversations` as agave's own store, `/v1/tokenize`, `/v1/detokenize`, `/v1/kv_cache`). Those are inference-server features, not OpenAI/Anthropic. OpenAI's own `/v1/conversations` (the Responses-adjacent resource) *is* forwarded.
 - WebSocket / WebRTC Realtime (`Upgrade: websocket` on `/v1/realtime`). HTTP 1:1 cannot carry a socket upgrade. Local `501` with `unknown_endpoint`.
 - OpenAI Administration / org-management hosts that are not `api.openai.com/v1/…` (a different origin). A client that hits `/v1/organization/…` on this proxy is forwarded to the configured `openai_compat` base; if that host is not OpenAI, upstream 404s.
-- Injecting clanker's system prompt, tool catalog, or `agent.tool_catalog` hot-tool subset into proxied requests. The proxy is not the agent.
 - CORS `Access-Control-Allow-Origin`. Same as serve today: no CORS. A browser on another origin uses a reverse proxy if it must.
 - Rate limiting, request queues, or per-client quotas. A 64-connection cap already exists process-wide (`max_connection_threads` in `src/cli.zig`).
 - Extracting all of `cmdServe` / `handleConnection` out of `cli.zig`. The proxy is a new file under `src/serve/`; the accept loop stays where it is until a later split.
@@ -494,7 +493,7 @@ api_key_env = "MOONSHOT_API_KEY"
 provider = "kimi-k3"
 ```
 
-**Module layout.** New `src/serve/proxy.zig` (routes, lookup, forward, envelopes, discovery, `authorize`, the 8-slot header buffer, prefix strip). Tests live in that file. `src/main.zig`'s `comptime` block must reference it or `zig build test` never runs them. `cli.zig` grows flags (including `--no-proxy`), `resolveListen` fields (`proxy_enabled`, `proxy_port` optional), a second listen/accept only when `proxy_port` differs from `webui_port`, `Connection.surface: enum { webui, proxy, both }`, the reserved-slot check in `serveConnection` (dedicated listener only), and the Host → `proxy.authorize` → CSRF → dispatch order in `handleConnection`. No `switch (provider.kind)` is added anywhere; kind checks go through `providers.forKind` and compare `impl.kind`.
+**Module layout.** `src/serve/proxy.zig` (routes, lookup including Claude Code size fallback, 1:1 forward, envelopes, discovery, `authorize`, deadlines). `src/serve/proxy_transcode.zig` (OpenAI↔Anthropic request/response/SSE, Vertex body swap). Both are in `src/main.zig`'s `comptime` test import. `cli.zig` grows flags (including `--no-proxy`), `resolveListen` fields (`proxy_enabled`, `proxy_port` optional), a second listen/accept only when `proxy_port` differs from `webui_port`, `Connection.surface: enum { webui, proxy, both }`, the reserved-slot check in `serveConnection` (dedicated listener only), and the Host → `proxy.authorize` → CSRF → dispatch order in `handleConnection`. No `switch (provider.kind)` is added anywhere; kind checks go through `providers.forKind` and compare `impl.kind`.
 
 **What a caller types.**
 
