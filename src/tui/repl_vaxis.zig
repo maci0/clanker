@@ -4063,10 +4063,7 @@ const Model = struct {
             writeRowAt(surface, row, &ocol, opts[idx], style);
             row += 1;
         }
-        writeRow(surface, row, switch (pending_ask.kind) {
-            .ask => "  Up/Down or 1-9 pick  \xc2\xb7  Enter answer  \xc2\xb7  Esc decline",
-            .confirm => "  Enter answer  \xc2\xb7  Esc deny  \xc2\xb7  Ctrl-C deny and stop",
-        }, .{ .dim = true });
+        writeRow(surface, row, askGuide(pending_ask.kind, surface.size.width), .{ .dim = true });
     }
 
     /// Draws the `/model` picker as a modal box over the tail of the
@@ -4318,6 +4315,28 @@ fn pickerGuide(kind: PickerKind, empty: bool, width: u16) []const u8 {
     return if (width >= width_mod.displayWidth("  Esc cancel")) "  Esc cancel" else "";
 }
 
+/// The safe exit stays visible even when the decision modal is only eight
+/// columns wide. Detail returns progressively; no variant is clipped into a
+/// misleading partial action such as "Enter ans" with denial off-screen.
+fn askGuide(kind: AskKind, width: u16) []const u8 {
+    const full: []const u8 = switch (kind) {
+        .ask => "  Up/Down or 1-9 pick · Enter answer · Esc decline",
+        .confirm => "  Up/Down pick · Enter answer · Esc deny · Ctrl-C deny and stop",
+    };
+    const compact: []const u8 = switch (kind) {
+        .ask => "  Enter answer · Esc decline",
+        .confirm => "  Enter answer · Esc deny",
+    };
+    const recovery: []const u8 = switch (kind) {
+        .ask => " Esc decline",
+        .confirm => "  Esc deny",
+    };
+    if (width_mod.displayWidth(full) <= width) return full;
+    if (width_mod.displayWidth(compact) <= width) return compact;
+    if (width_mod.displayWidth(recovery) <= width) return recovery;
+    return if (width >= 3) "Esc" else "";
+}
+
 fn pickerHeight(count: usize, max_rows: u16) u16 {
     const rows_shown: u16 = @intCast(@min(count, max_rows));
     return @max(rows_shown, 1) + 4;
@@ -4363,6 +4382,17 @@ test "picker guides preserve recovery at constrained widths" {
             }
         }
     }
+}
+
+test "ask and confirmation guides preserve a safe exit" {
+    for ([_]AskKind{ .ask, .confirm }) |kind| {
+        for ([_]u16{ 8, 10, 12, 24, 40, 80 }) |width| {
+            const guide = askGuide(kind, width);
+            try std.testing.expect(width_mod.displayWidth(guide) <= width);
+            try std.testing.expect(std.mem.find(u8, guide, "Esc") != null);
+        }
+    }
+    try std.testing.expect(std.mem.find(u8, askGuide(.confirm, 80), "Ctrl-C deny and stop") != null);
 }
 
 test "empty picker reserves separate result and guide rows" {
