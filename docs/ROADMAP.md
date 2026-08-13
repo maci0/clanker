@@ -111,5 +111,6 @@
 
 Automatically observed from usage patterns (state/autolearn.jsonl, last 7 days). Refresh with `clanker autolearn`.
 
-- No actionable observations yet — run a few tasks, then `clanker autolearn`.
+- Optimize the most-used tools: read_file,search_code,list_files (usage tracked in state/autolearn.jsonl).
+- Improve prompt-cache hit rate (55% across 1 run(s)): keep the system prompt and skill context byte-stable so providers cache more of the prefix.
 
