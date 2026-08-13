@@ -3912,7 +3912,10 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
     }
     if (std.mem.eql(u8, sub, "validate")) {
         if (opts.plugin_target) |path| {
-            try pluginsValidate(init, path);
+            pluginsValidate(init, path) catch |err| switch (err) {
+                error.PluginsValidateFailed => std.process.exit(1),
+                else => return err,
+            };
             return;
         }
         return pluginsValidateAll(init, cfg.agent.tools_dir);
