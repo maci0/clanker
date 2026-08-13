@@ -260,6 +260,28 @@ way its own non-goal requires.
   `prefers-reduced-motion` session gets instead of the animation. No new
   a11y surface to design, the pattern already exists and already passed the
   axe-core sweep once.
+
+- **Arena v2: the 3D stage (shipped 2026-08-14).** A `3D` toggle in the
+  view's header swaps the pixel canvas for a three.js scene
+  (`features/arena3d.js`), per-browser via `localStorage`, defaulting off.
+  Same decorative contract, inherited rather than restated: the scene lives
+  inside the same `aria-hidden` `#arena-stage`, carries nothing the
+  transcript and status line do not, renders one still frame under reduced
+  motion, and stops its rAF the moment the view hides. The scene: a ringed
+  dais in theme-fog; one solid per combatant slot (icosahedron, octahedron,
+  torus knot, …) with the hue the 2D view and Fleet derive from the same
+  label hash, so identity survives the dimension change; HP as a depleting
+  floor arc; moves as effects (attack/counter arc a glowing bolt,
+  block flashes a shield shell, final_stand raises a light pillar, a
+  concession sinks and dims, an elimination shatters the solid into
+  particles that spiral into the centre — the compactor as a vortex); the
+  winner gets an orbiting halo. Camera slow-orbits, drag to steer, wheel to
+  zoom. three.js 0.180 is vendored (`src/webui_vendor/three.module.min.js`
+  + `three.core.min.js` — the minified module build is split in two and the
+  first imports the second), served under `/webui/vendor/` like mermaid,
+  and loaded by dynamic `import()` on first toggle only, so a session that
+  never opens 3D never fetches it. A load failure (no WebGL, old browser)
+  falls back to the 2D stage and says so in the status line.
 - **Stage layout.** Two combatants only (pairwise, per Non-goals), facing
   each other left and right across a ground plane drawn with the same
   tiled-fill technique as Fleet's desk floor, backdrop in `--surface-2` with
