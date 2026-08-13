@@ -17,6 +17,8 @@
   --bg: #f7f7f8;
   --surface: #ffffff;
   --surface-2: #f4f4f5;
+  --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
+  --surface-raised: var(--surface-2);
   --border: #e5e5e5;
   --rule: #ececec;
   --fg: #0d0d0d;
@@ -1094,7 +1096,7 @@ textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--a
   box-shadow: none; outline: none; field-sizing: content;
 }
 .composer textarea:focus-visible { border-color: transparent; outline: none; }
-::placeholder { color: var(--fg-muted); opacity: 0.65; }
+::placeholder { color: var(--fg-muted); }
 .composer textarea::placeholder { font-size: 13px; }
 .toolbar {
   display: flex; flex-wrap: wrap; justify-content: space-between;
@@ -1104,7 +1106,7 @@ textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--a
 .composer .toolbar { border-top-color: color-mix(in srgb, var(--rule) 35%, transparent); }
 .composer .toolbar #submit { border-radius: 999px; padding-inline: 1rem; min-height: 34px; font-size: 13px; }
 .composer .toolbar #cancel { border-radius: 999px; min-height: 34px; font-size: 13px; }
-.toolbar > .meta { margin-right: auto; font-size: 11px; opacity: 0.85; }
+.toolbar > .meta { margin-right: auto; font-size: 11px; opacity: 1; }
 .toolbar > .meta:empty { display: none; }
 .toolbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); min-width: 0; }
 /* The actuator: a real pressable button, bevelled, blue because blue is the
@@ -1828,6 +1830,14 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .skill-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); margin-right: var(--space-3); }
 .skill-meta { font-family: var(--mono); font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .skill-desc { margin: 0.2rem 0 0; font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted); overflow-wrap: anywhere; }
+/* Prompt cards mirror the skill-card pattern: a name + meta line up top,
+   description below. Used by the prompts catalogue. */
+.prompt-card {
+  padding: 0.6rem 0.1rem; border-bottom: 1px solid var(--rule);
+}
+.prompt-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); margin-right: var(--space-3); }
+.prompt-meta { font-family: var(--mono); font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.prompt-desc { margin: 0.2rem 0 0; font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted); overflow-wrap: anywhere; }
 .tool-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); min-width: 9rem; letter-spacing: -0.01em; line-height: 1.4; }
 button.tool-name:hover { color: var(--accent-text); }
 button.tool-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius-sm); }
@@ -2018,7 +2028,7 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   input[type="date"], select { min-height: 44px; }
   .rail-item, .rail-new, .chat-actions button, .chat-thread-bar button,
   .board-empty-slot button, .board-quick-add .board-add-actions button,
-  .card-quick-actions button, .slack-btn-icon { min-width: 44px; min-height: 44px; }
+  .card-quick-actions button, .slack-btn-icon, .label-picker-item { min-width: 44px; min-height: 44px; }
 }
 
 /* A pressed actuator travels; scale reads as shrinking, travel reads as a
@@ -2332,6 +2342,11 @@ mark {
 .board-list-view { margin-top: var(--space-3); overflow-x: auto; }
 .board-list-title { max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .board-lane-control { min-width: 32px; min-height: 32px; padding: 0 var(--space-2); font-size: 12px; border-radius: 999px; }
+/* The 32px base is the fine-pointer density compromise; coarse pointers need a
+   full 44px target, declared here (after the base) so this wins by source order. */
+@media (pointer: coarse) {
+  .board-lane-control { min-width: 44px; min-height: 44px; }
+}
 .board-empty {
   max-width: 42rem; margin: var(--space-5) auto; padding: var(--space-4) 0;
   display: flex; flex-direction: column; align-items: center; gap: var(--space-2); text-align: center; color: var(--fg-muted);
@@ -2777,15 +2792,15 @@ h2#session-title {
   padding: 0.15rem 0.55rem;
   border-radius: 4px;
 }
-.card-label[data-color="green"] { background: #22a24a; }
+.card-label[data-color="green"] { background: #22a24a; color: #111; }
 .card-label[data-color="yellow"] { background: #c9a50a; color: #111; }
-.card-label[data-color="orange"] { background: #e07a1a; }
-.card-label[data-color="red"] { background: #e04040; }
+.card-label[data-color="orange"] { background: #e07a1a; color: #111; }
+.card-label[data-color="red"] { background: #e04040; color: #000; }
 .card-label[data-color="purple"] { background: #8b55d4; }
-.card-label[data-color="blue"] { background: #2a7aed; }
+.card-label[data-color="blue"] { background: #2a7aed; color: #111; }
 .card-label[data-color="sky"] { background: #5ab5e8; color: #111; }
-.card-label[data-color="pink"] { background: #e85a9a; }
-.card-label[data-color="lime"] { background: #4caf50; }
+.card-label[data-color="pink"] { background: #e85a9a; color: #111; }
+.card-label[data-color="lime"] { background: #4caf50; color: #111; }
 .card-label[data-color="black"] { background: #444; }
 
 /* Cover color picker in card detail */
@@ -3119,6 +3134,17 @@ h2#session-title {
   font-size:11px; font-weight:700; letter-spacing:.02em;
   user-select:none; margin-top:2px;
 }
+/* Activity avatars pick a stable tone per name from the theme-aware chat-hue
+   palette. Background and foreground both come from per-theme tokens, never
+   literal hex, so the initials stay legible in light and dark themes. */
+.avatar-tone-0 { background: var(--chat-hue-0); color: var(--on-accent); }
+.avatar-tone-1 { background: var(--chat-hue-1); color: var(--on-accent); }
+.avatar-tone-2 { background: var(--chat-hue-2); color: var(--on-accent); }
+.avatar-tone-3 { background: var(--chat-hue-3); color: var(--on-accent); }
+.avatar-tone-4 { background: var(--chat-hue-4); color: var(--on-accent); }
+.avatar-tone-5 { background: var(--chat-hue-5); color: var(--on-accent); }
+.avatar-tone-6 { background: var(--chat-hue-6); color: var(--on-accent); }
+.avatar-tone-7 { background: var(--chat-hue-7); color: var(--on-accent); }
 .card-activity-content { flex:1; min-width:0; }
 .card-activity-who {
   font-weight:600; font-size:var(--step-0); color:var(--fg);

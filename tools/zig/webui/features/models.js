@@ -5,6 +5,12 @@
 // matching `providers fill`'s own never-writes-config stance.
 import { readJson, fmtInt } from "../core/utils.js";
 
+/* Generic grid builder. Shares only the .usage-wrap/.usage presentation classes
+   with core/usage.js — whose renderUsageTable is a fixed-column token-stat
+   renderer with a totals footer, built on the T factory. It cannot express these
+   heterogeneous columns, the per-row control cells (the "config.toml" buttons),
+   or the absence of a totals row, so this is deliberately its own grid rather
+   than a copy of that renderer. */
 function table(headers, rows) {
   var wrap = document.createElement("div");
   wrap.className = "usage-wrap";

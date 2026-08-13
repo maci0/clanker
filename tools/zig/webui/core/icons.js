@@ -23,6 +23,33 @@ export var ICON_PATHS = {
   chevron: ["M9 6l6 6-6 6"],
   // A question, drawn rather than typed.
   help: ["M9 9a3 3 0 114 2.8c-.8.4-1 1-1 1.7v.5", "M12 17.5v.01"],
+  // A pencil: the card quick-edit / open controls.
+  pencil: ["M15.5 4.5L19.5 8.5 8 20H4v-4L15.5 4.5z"],
+  // Close: dismiss a panel or an in-progress action.
+  close: ["M6.5 6.5l11 11", "M17.5 6.5l-11 11"],
+  // A rightward arrow: move to the next column / move card.
+  arrowRight: ["M4 12h16", "M13 5l7 7-7 7"],
+  // Up/down arrows: the priority ladder's high and low ends.
+  arrowUp: ["M12 19V5", "M6 12l6-6 6 6"],
+  arrowDown: ["M12 5v14", "M6 12l6 6 6-6"],
+  // A rule: the middle of the priority ladder.
+  minus: ["M6 12h12"],
+  // A calendar: due dates and the patient timeline.
+  calendar: ["M5 5h14v15H5z", "M5 10h14", "M8.5 3v4", "M15.5 3v4"],
+  // A trash can: delete, which cannot be undone.
+  trash: ["M6 6l.8 11.6a1.6 1.6 0 001.6 1.4h7.2a1.6 1.6 0 001.6-1.4L18 6", "M4 6h16", "M9 6V4h6v2", "M10 10.5v5", "M14 10.5v5"],
+  // A checklist: the subtasks box on a card.
+  checklist: ["M5 5h14v14H5z", "M9 12l1.8 1.8 3.6-3.9"],
+  // A struck circle: a card that something else is blocking.
+  blocked: ["M12 5.5a6.5 6.5 0 110 13 6.5 6.5 0 010-13z", "M8 8l8 8"],
+  // A target: the goal a card mirrors.
+  goal: ["M12 5.5a6.5 6.5 0 110 13 6.5 6.5 0 010-13z", "M12 9.5a2.5 2.5 0 110 5 2.5 2.5 0 010-5z"],
+  // A speech bubble: the activity feed on a card.
+  activity: ["M5 5h14v11H9l-4 3V5z"],
+  // A grid: the board layout toggle's board face.
+  grid: ["M4 5h6.5v6.5H4z", "M13.5 5H20v6.5h-6.5z", "M4 12.5h6.5V19H4z", "M13.5 12.5H20V19h-6.5z"],
+  // Three rules: the list layout toggle's list face.
+  list: ["M4 6.5h16", "M4 12h16", "M4 17.5h16"],
 };
 
 export function icon(name, size) {

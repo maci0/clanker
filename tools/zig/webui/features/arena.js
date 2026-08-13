@@ -22,11 +22,45 @@ function reducedMotion() {
 function _hash(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h >>> 0; }
 function colorFor(name) { var v = _hash(name || ""); return "hsl(" + (v % 360) + " 35% 62%)"; }
 
-// Fleet's existing bucket palette rather than new hex values.
-var HP_GOOD = "#2fae4d";
-var HP_WARN = "#e5b54a";
-var HP_LOW = "#dc4c3f";
-var INK = "#dfe5df";
+// The canvas palette is seeded from the active theme's computed tokens, not a
+// fixed dark ramp: Fleet's bucket hues map onto the theme's ok/warn/danger and
+// the stage neutrals onto surface/border, so a light data-theme draws a light
+// stage and the status colours stay re-tunable. The palette is re-read on every
+// draw/redraw; the theme observer in bindArena re-seeds static reduced-motion
+// frames.
+function themeVar(name) {
+  var root = document.documentElement;
+  if (!root) return "";
+  var v = (getComputedStyle(root).getPropertyValue(name) || "").trim();
+  // Some themes alias a token (mocha/latte set --surface: var(--paper)); resolve
+  // one level so the palette gets a concrete colour, not the var() string.
+  var m = /^var\(\s*([--A-Za-z0-9_]+)\s*\)$/.exec(v);
+  return m ? themeVar(m[1]) : v;
+}
+function hexRgb(hex) {
+  var s = (hex || "").trim();
+  if (s.charAt(0) === "#") s = s.slice(1);
+  if (s.length === 3) s = s.replace(/./g, function (c) { return c + c; });
+  if (s.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(s)) return null;
+  var n = parseInt(s, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function withAlpha(color, a) {
+  var rgb = hexRgb(color);
+  return rgb ? "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + a + ")" : color;
+}
+function arenaTheme() {
+  return {
+    bg: themeVar("--surface-2") || "#1d2225",
+    surface: themeVar("--surface") || "#2a3033",
+    border: themeVar("--border") || "#343b3f",
+    fg: themeVar("--fg") || "#ffffff",
+    muted: themeVar("--fg-muted") || "#8b948b",
+    ok: themeVar("--ok") || "#2fae4d",
+    warn: themeVar("--warn") || "#e5b54a",
+    danger: themeVar("--danger") || "#dc4c3f"
+  };
+}
 
 var state = {
   id: null,
@@ -368,11 +402,10 @@ function frame(ts) {
   state.raf = window.requestAnimationFrame(frame);
 }
 
-function hpColor(hp, max) {
-  var frac = max ? hp / max : 0;
-  if (frac > 0.5) return HP_GOOD;
-  if (frac > 0.2) return HP_WARN;
-  return HP_LOW;
+function hpColor(frac, pal) {
+  if (frac > 0.5) return pal.ok;
+  if (frac > 0.2) return pal.warn;
+  return pal.danger;
 }
 
 function drawFrame(ts) {

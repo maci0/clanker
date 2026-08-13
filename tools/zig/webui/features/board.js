@@ -5,7 +5,7 @@
 // wires the DOM and the app-level callbacks (tab counts, run opening, the
 // peer roster for @ mention hints).
 import { fmtInt, fmtCost, formatChatTime, fmtDeadline, readJson, clip } from "../core/utils.js";
-import { T, bind, state, add, uiConfirm, uiPrompt } from "../core/ui.js";
+import { T, bind, state, add, toast, uiConfirm, uiPrompt } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
 import { doneColumn as doneColumnOf, blockers as blockersOf, dueState, priorityRank } from "../lib/board.js";
@@ -16,29 +16,6 @@ var _setTabCount = null;
 var _openRun = null;
 var _getKnownPeers = null;
 var _renderBoardList = null;
-
-/* Lightweight toast notification for board actions */
-function boardToast(msg, kind) {
-  var container = document.getElementById("board-toast-container");
-  if (!container) {
-    container = document.createElement("div");
-    container.id = "board-toast-container";
-    container.style.cssText = "position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);z-index:10000;display:flex;flex-direction:column-reverse;gap:0.4rem;align-items:center;pointer-events:none;";
-    document.body.appendChild(container);
-  }
-  var t = document.createElement("div");
-  t.className = "board-toast" + (kind === "error" ? " board-toast-error" : "");
-  t.style.cssText = "padding:0.5rem 1.2rem;border-radius:8px;font-size:13px;font-weight:500;color:#fff;pointer-events:auto;opacity:0;transform:translateY(12px);transition:opacity 220ms,transform 220ms;max-width:360px;text-align:center;" +
-    (kind === "error" ? "background:#c0392b;" : "background:#27ae60;");
-  t.textContent = msg;
-  container.appendChild(t);
-  requestAnimationFrame(function(){ t.style.opacity = "1"; t.style.transform = "translateY(0)"; });
-  setTimeout(function(){
-    t.style.opacity = "0";
-    t.style.transform = "translateY(12px)";
-    setTimeout(function(){ t.remove(); }, 250);
-  }, 2400);
-}
 
 
 export var board = { columns: [], cards: [] };
@@ -68,7 +45,8 @@ export function setListMode(on) {
   if (listViewEl) listViewEl.hidden = !listMode;
   if (toggleBtn) {
     toggleBtn.setAttribute("aria-pressed", listMode ? "true" : "false");
-    toggleBtn.textContent = listMode ? "▦" : "☰";
+    toggleBtn.textContent = "";
+    toggleBtn.appendChild(icon(listMode ? "grid" : "list", 16));
     toggleBtn.title = listMode ? "Switch to board view" : "Switch to list view";
   }
   syncListControls();
@@ -171,13 +149,13 @@ export function postBoard(payload, status) {
       }
       if (status) {
         el.boardStatus.textContent = status;
-        boardToast(status, "ok");
+        toast(status);
       }
       return d;
     })
     .catch(function (err) {
       el.boardStatus.textContent = "Board: " + err.message;
-      boardToast(err.message, "error");
+      toast(err.message, "bad");
       return false;
     });
 }
@@ -305,7 +283,7 @@ function boardColumn(col, s) {
   var qaActions = document.createElement("div");
   qaActions.className = "board-add-actions";
   var qaSave = document.createElement("button"); qaSave.type = "button"; qaSave.className = "secondary"; qaSave.textContent = "Add card";
-  var qaCancel = document.createElement("button"); qaCancel.type = "button"; qaCancel.className = "board-add-cancel"; qaCancel.innerHTML = "✕";
+  var qaCancel = document.createElement("button"); qaCancel.type = "button"; qaCancel.className = "board-add-cancel"; qaCancel.appendChild(icon("close", 12));
   qaCancel.setAttribute("aria-label", "Cancel adding a goal to " + col.title);
   qaActions.appendChild(qaSave);
   qaActions.appendChild(qaCancel);
@@ -480,10 +458,9 @@ function boardColumn(col, s) {
                   shown.forEach(function(c){
                     postBoard({ op: "move", id: c.id, column: dest.id }, null);
                   });
-                  // boardToast, not the app-level toast(): this module never
-                  // imported that one, so the call threw a ReferenceError out of
-                  // the click handler every time a destination was picked.
-                  boardToast("Moved " + shown.length + " card" + (shown.length > 1 ? "s" : "") + " to " + dest.title, "ok");
+                  // The shared themed toast(): keep this off the app-level
+                  // error path and on the "moved" update status.
+                  toast("Moved " + shown.length + " card" + (shown.length > 1 ? "s" : "") + " to " + dest.title);
                 });
                 menu.appendChild(opt);
               });
@@ -542,7 +519,7 @@ function cardNode(c) {
   var pencil = document.createElement("button");
   pencil.type = "button";
   pencil.className = "card-quick-edit-btn";
-  pencil.innerHTML = "✏️";
+  pencil.appendChild(icon("pencil", 14));
   pencil.title = "Quick edit";
   pencil.setAttribute("aria-label", "Quick edit card");
   pencil.addEventListener("click", function(e) {
@@ -561,7 +538,7 @@ function cardNode(c) {
   qa.className = "card-quick-actions";
   var qaEdit = document.createElement("button");
   qaEdit.type = "button";
-  qaEdit.innerHTML = "✎";
+  qaEdit.appendChild(icon("pencil", 14));
   qaEdit.title = "Open card";
   qaEdit.setAttribute("aria-label", "Open card");
   qaEdit.addEventListener("click", function(e) {
@@ -573,7 +550,7 @@ function cardNode(c) {
   // Quick move to next column
   var qaMove = document.createElement("button");
   qaMove.type = "button";
-  qaMove.innerHTML = "→";
+  qaMove.appendChild(icon("arrowRight", 14));
   qaMove.title = "Move to next column";
   qaMove.setAttribute("aria-label", "Move to next column");
   qaMove.addEventListener("click", function(e) {
@@ -634,7 +611,7 @@ function cardNode(c) {
     var due = document.createElement("span");
     due.className = "card-badge";
     due.setAttribute("data-due", ds);
-    due.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M5 1v3M11 1v3M2 7h12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+    due.appendChild(icon("calendar", 14));
     due.appendChild(document.createTextNode(" " + (ds === "late" ? "Late · " : ds === "soon" ? "Soon · " : "") + fmtDeadline(c.deadline)));
     due.title = "Due " + c.deadline;
     badges.appendChild(due);
@@ -647,7 +624,7 @@ function cardNode(c) {
     var subBadge = document.createElement("span");
     subBadge.className = "card-badge";
     if (doneN === totalN && totalN > 0) subBadge.setAttribute("data-done", "true");
-    subBadge.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M5 8l2 2 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    subBadge.appendChild(icon("checklist", 14));
     subBadge.appendChild(document.createTextNode(" " + doneN + "/" + totalN));
     subBadge.title = doneN + " of " + totalN + " checklist items complete";
     badges.appendChild(subBadge);
@@ -659,7 +636,7 @@ function cardNode(c) {
     var bl = document.createElement("span");
     bl.className = "card-badge";
     bl.style.color = "var(--warn-text)";
-    bl.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/><path d="M4 12L12 4" stroke="currentColor" stroke-width="1.3"/></svg>';
+    bl.appendChild(icon("blocked", 14));
     bl.appendChild(document.createTextNode(" " + blocked.length));
     bl.title = "Blocked by " + blocked.length + " card(s)";
     badges.appendChild(bl);
@@ -670,7 +647,7 @@ function cardNode(c) {
     var gf = document.createElement("span");
     gf.className = "card-badge";
     gf.style.color = "var(--accent-text)";
-    gf.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="3" fill="currentColor"/></svg>';
+    gf.appendChild(icon("goal", 14));
     gf.title = "Mirrors a goal — kept in step with the Goals view";
     badges.appendChild(gf);
     // The same rocket that the "Start work" button shows on the open card,
@@ -692,7 +669,7 @@ function cardNode(c) {
   if ((c.activity || []).length) {
     var actBadge = document.createElement("span");
     actBadge.className = "card-badge";
-    actBadge.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 12V4a2 2 0 012-2h6a2 2 0 012 2v5a2 2 0 01-2 2H6l-3 3z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+    actBadge.appendChild(icon("activity", 14));
     actBadge.appendChild(document.createTextNode(" " + c.activity.length));
     actBadge.title = c.activity.length + " activity entries";
     badges.appendChild(actBadge);
@@ -768,7 +745,8 @@ function cardNode(c) {
       unBtn.type = "button";
       unBtn.className = "member-picker-opt";
       unBtn.style.cssText = "display:block;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg-muted);font-size:13px;border-radius:4px;";
-      unBtn.textContent = "✕ Remove assignee";
+      unBtn.appendChild(icon("close", 12));
+      unBtn.appendChild(document.createTextNode(" Remove assignee"));
       unBtn.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: "" }, "Unassigned."); });
       unBtn.addEventListener("mouseenter", function(){ unBtn.style.background = "var(--surface-2)"; });
       unBtn.addEventListener("mouseleave", function(){ unBtn.style.background = "none"; });
@@ -1007,7 +985,7 @@ function showCardDetail(id) {
   header.className = "card-detail-header";
   var headerIcon = document.createElement("span");
   headerIcon.className = "card-detail-icon";
-  headerIcon.textContent = "📋";
+  headerIcon.appendChild(icon("copy", 18));
   var headerTitle = document.createElement("h3");
   headerTitle.id = "card-detail-title";
   headerTitle.textContent = c.title;
@@ -1024,7 +1002,7 @@ function showCardDetail(id) {
   var close = document.createElement("button");
   close.type = "button";
   close.className = "card-detail-close";
-  close.innerHTML = "✕";
+  close.appendChild(icon("close", 14));
   close.title = "Close";
   close.setAttribute("aria-label", "Close card detail");
   close.addEventListener("click", function () {
@@ -1289,7 +1267,8 @@ function showCardDetail(id) {
     var unBtn = document.createElement("button");
     unBtn.type = "button";
     unBtn.style.cssText = "display:block;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg-muted);font-size:13px;border-radius:4px;";
-    unBtn.textContent = "✕ Remove member";
+    unBtn.appendChild(icon("close", 12));
+    unBtn.appendChild(document.createTextNode(" Remove member"));
     unBtn.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: "" }, "Unassigned."); });
     unBtn.addEventListener("mouseenter", function(){ unBtn.style.background = "var(--surface-2)"; });
     unBtn.addEventListener("mouseleave", function(){ unBtn.style.background = "none"; });
@@ -1323,10 +1302,11 @@ function showCardDetail(id) {
   var prioWrap = document.createElement("div");
   prioWrap.style.cssText = "position:relative;";
   var curPrio = c.priority || "normal";
-  var prioIcons = { low: "🔽", normal: "➖", high: "🔺" };
+  var prioIcons = { low: "arrowDown", normal: "minus", high: "arrowUp" };
   var prioBtn = document.createElement("button");
   prioBtn.type = "button";
-  prioBtn.innerHTML = (prioIcons[curPrio] || "➖") + " Priority: " + curPrio;
+  prioBtn.appendChild(icon(prioIcons[curPrio] || "minus", 14));
+  prioBtn.appendChild(document.createTextNode(" Priority: " + curPrio));
   prioBtn.addEventListener("click", function() {
     var existing = prioWrap.querySelector(".prio-picker-popup");
     if (existing) { existing.remove(); return; }
@@ -1341,7 +1321,8 @@ function showCardDetail(id) {
       var opt = document.createElement("button");
       opt.type = "button";
       opt.style.cssText = "display:flex;align-items:center;gap:0.5rem;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg);font-size:13px;border-radius:4px;";
-      opt.innerHTML = (prioIcons[p] || "") + " " + p.charAt(0).toUpperCase() + p.slice(1);
+      opt.appendChild(icon(prioIcons[p] || "minus", 14));
+      opt.appendChild(document.createTextNode(" " + p.charAt(0).toUpperCase() + p.slice(1)));
       if (p === curPrio) { opt.style.fontWeight = "700"; opt.style.background = "color-mix(in srgb, var(--accent) 12%, transparent)"; }
       opt.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, priority: p }, "Priority → " + p); });
       opt.addEventListener("mouseenter", function(){ opt.style.background = "var(--surface-2)"; });
@@ -1360,7 +1341,8 @@ function showCardDetail(id) {
   deadlineWrap.style.cssText = "position:relative;";
   var deadlineBtn = document.createElement("button");
   deadlineBtn.type = "button";
-  deadlineBtn.innerHTML = "📅 " + (c.deadline ? "Due: " + fmtDeadline(c.deadline) : "Dates");
+  deadlineBtn.appendChild(icon("calendar", 14));
+  deadlineBtn.appendChild(document.createTextNode(c.deadline ? " Due: " + fmtDeadline(c.deadline) : " Dates"));
   var deadlineInput = document.createElement("input");
   deadlineInput.type = "date";
   deadlineInput.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;cursor:pointer;";
@@ -1417,7 +1399,8 @@ function showCardDetail(id) {
   // Move column sidebar — dropdown instead of prompt
   var moveBtn = document.createElement("button");
   moveBtn.type = "button";
-  moveBtn.innerHTML = "➜ Move";
+  moveBtn.appendChild(icon("arrowRight", 14));
+  moveBtn.appendChild(document.createTextNode(" Move"));
   moveBtn.addEventListener("click", function() {
     if (!board || !board.columns) return;
     // Build a small dropdown
@@ -1445,7 +1428,8 @@ function showCardDetail(id) {
   // Copy card button
   var copyBtn = document.createElement("button");
   copyBtn.type = "button";
-  copyBtn.innerHTML = "📋 Copy";
+  copyBtn.appendChild(icon("copy", 14));
+  copyBtn.appendChild(document.createTextNode(" Copy"));
   copyBtn.addEventListener("click", function() {
     var newTitle = c.title + " (copy)";
     var payload = { op: "add", title: newTitle, column: c.column };
@@ -1459,7 +1443,8 @@ function showCardDetail(id) {
   // Archive/delete sidebar button
   var archiveBtn = document.createElement("button");
   archiveBtn.type = "button";
-  archiveBtn.innerHTML = "🗑 Delete";
+  archiveBtn.appendChild(icon("trash", 14));
+  archiveBtn.appendChild(document.createTextNode(" Delete"));
   archiveBtn.style.color = "var(--danger)";
   archiveBtn.addEventListener("click", function() {
     uiConfirm("Delete card \"" + c.title + "\"? This cannot be undone.", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
@@ -1893,10 +1878,10 @@ function showCardDetail(id) {
     // Set a unique color based on name hash
     var nameHash = 0;
     for (var ci = 0; ci < whoName.length; ci++) nameHash = ((nameHash << 5) - nameHash + whoName.charCodeAt(ci)) | 0;
-    var avatarColors = ["#0b5ab8","#0a7a2e","#c45a0a","#6b2fb8","#c23a7a","#c41212","#2a8ecc","#9a7a0a"];
-    var avatarBg = avatarColors[Math.abs(nameHash) % avatarColors.length];
-    avatar.style.background = avatarBg;
-    avatar.style.color = "#fff";
+    // One stable tone per name, from the theme-aware chat-hue palette (in
+    // app.css), which re-saturates per theme so the initials stay legible in
+    // light and dark alike. No literal hex or white-is-assumed text here.
+    avatar.classList.add("avatar-tone-" + (Math.abs(nameHash) % 8));
     item.appendChild(avatar);
     // Content
     var content = document.createElement("div");
@@ -2052,10 +2037,21 @@ export function bindBoard(deps) {
       })
       .finally(function () { el.boardResyncGoals.disabled = false; });
   });
+  // The text filter runs on every keystroke, so debounce it: a full board
+  // rebuild per keypress (bind() clears and re-renders every column) is what
+  // made typing lag. The structured filters change once, so they stay live.
+  var filterTimer = null;
   ["board-filter-input","board-filter-mine","board-filter-blocked","board-filter-priority","board-filter-assignee","board-filter-label"].forEach(function(id){
     var n=document.getElementById(id);
     if(!n) return;
-    n.addEventListener(id==="board-filter-input" ? "input" : "change", function(){ renderBoard(null); });
+    if (id === "board-filter-input") {
+      n.addEventListener("input", function () {
+        if (filterTimer) window.clearTimeout(filterTimer);
+        filterTimer = window.setTimeout(function () { renderBoard(null); }, 150);
+      });
+    } else {
+      n.addEventListener("change", function(){ renderBoard(null); });
+    }
   });
   var boardMine=document.getElementById("board-filter-mine");
   if(boardMine) boardMine.addEventListener("change", function(){ var top=document.getElementById("board-mine"); if(top) top.checked=boardMine.checked; renderBoard(null); });
