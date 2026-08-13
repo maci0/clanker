@@ -655,6 +655,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/sessions", .help = "list saved sessions", .action = .{ .tool = .{ .name = "cmd_sessions", .args = "" } } },
     .{ .name = "/graph", .help = "list recorded runs (same as clanker graph)", .action = .{ .tool = .{ .name = "cmd_graph", .args = "list" } } },
     .{ .name = "/status", .help = "show configuration and state status", .action = .{ .tool = .{ .name = "cmd_status", .args = "" } } },
+    .{ .name = "/tools", .help = "list registered tools (same as clanker tools)", .action = .{ .tool = .{ .name = "cmd_tools", .args = "" } } },
     .{ .name = "/plugins", .help = "list installed plugins", .action = .{ .tool = .{ .name = "cmd_plugins", .args = "" } } },
     .{ .name = "/goal", .takes_args = true, .arg_hint = "<intent>", .help = "design and persist a structured goal", .action = .goal },
     .{ .name = "/autoresearch", .takes_args = true, .arg_hint = "...", .help = "measurement loop (see /autoresearch --help)", .action = .autoresearch },
@@ -1160,6 +1161,17 @@ test "generated help mentions every command spelling and help line" {
             try std.testing.expect(std.mem.find(u8, text, alias) != null);
         }
         try std.testing.expect(std.mem.find(u8, text, spec.help) != null);
+    }
+}
+
+test "tools command routes through the same internal tool as the CLI" {
+    const pc = parseCommand("/tools") orelse return error.TestExpectedCommand;
+    switch (pc.spec.action) {
+        .tool => |tool| {
+            try std.testing.expectEqualStrings("cmd_tools", tool.name);
+            try std.testing.expectEqualStrings("", tool.args);
+        },
+        else => return error.TestExpectedToolCommand,
     }
 }
 
