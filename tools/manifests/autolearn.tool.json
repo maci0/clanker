@@ -1,5 +1,5 @@
 {
-  "name": "cmd_autolearn",
+  "name": "autolearn",
   "description": "aggregate usage observations into roadmap items",
   "wasm": "zig-out/tools/cmd_autolearn.wasm",
   "input_schema": {

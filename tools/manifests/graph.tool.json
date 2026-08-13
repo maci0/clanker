@@ -1,5 +1,5 @@
 {
-  "name": "cmd_graph",
+  "name": "graph",
   "description": "show the latest execution graph",
   "wasm": "zig-out/tools/cmd_graph.wasm",
   "input_schema": {

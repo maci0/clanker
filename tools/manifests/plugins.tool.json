@@ -1,5 +1,5 @@
 {
-  "name": "cmd_plugins",
+  "name": "plugins",
   "description": "list plugins and switch the optional ones on or off",
   "wasm": "zig-out/tools/cmd_plugins.wasm",
   "input_schema": {

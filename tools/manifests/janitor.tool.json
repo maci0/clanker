@@ -1,5 +1,5 @@
 {
-  "name": "cmd_janitor",
+  "name": "janitor",
   "description": "sweep up what old runs left behind",
   "wasm": "zig-out/tools/cmd_janitor.wasm",
   "input_schema": {

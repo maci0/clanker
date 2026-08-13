@@ -1,7 +1,7 @@
 {
-  "name": "cmd_sessions",
-  "description": "list saved conversations",
-  "wasm": "zig-out/tools/cmd_sessions.wasm",
+  "name": "tools",
+  "description": "list registered tools",
+  "wasm": "zig-out/tools/cmd_tools.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -11,7 +11,7 @@
     }
   },
   "fs_prefixes": [
-    "state/sessions/"
+    "tools/manifests/"
   ],
   "internal": true,
   "category": "harness"

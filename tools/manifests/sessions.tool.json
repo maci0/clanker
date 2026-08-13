@@ -1,7 +1,7 @@
 {
-  "name": "cmd_status",
-  "description": "show instance and peers",
-  "wasm": "zig-out/tools/cmd_status.wasm",
+  "name": "sessions",
+  "description": "list saved conversations",
+  "wasm": "zig-out/tools/cmd_sessions.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -10,7 +10,9 @@
       }
     }
   },
-  "fs_prefixes": [],
+  "fs_prefixes": [
+    "state/sessions/"
+  ],
   "internal": true,
   "category": "harness"
 }

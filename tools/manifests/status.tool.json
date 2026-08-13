@@ -1,7 +1,7 @@
 {
-  "name": "cmd_tools",
-  "description": "list registered tools",
-  "wasm": "zig-out/tools/cmd_tools.wasm",
+  "name": "status",
+  "description": "show instance and peers",
+  "wasm": "zig-out/tools/cmd_status.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -10,9 +10,7 @@
       }
     }
   },
-  "fs_prefixes": [
-    "tools/manifests/"
-  ],
+  "fs_prefixes": [],
   "internal": true,
   "category": "harness"
 }
