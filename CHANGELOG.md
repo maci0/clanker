@@ -17,6 +17,28 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `oauth_refresh`), selecting how a credential is acquired independently of the
   provider's `kind`. Unset keeps the existing auto-detection, so no existing
   config changes meaning.
+- `clanker serve`'s listener can now be set without flags, for a service file
+  or a container: a `[serve]` table (`host`, `webui_port`, `serve_as`) and the
+  `CLANKER_HOST` / `CLANKER_WEBUI_PORT` environment variables. Precedence is
+  config < environment < flags.
+
+### Changed
+
+- `serve --port` is now `serve --webui-port`, naming the surface it serves so
+  that a second surface added later gets its own name instead of forcing a
+  rename. `--port` is still accepted as an alias.
+
+### Fixed
+
+- `clanker serve` and the REPL exited immediately with signal 12 (`SIGSYS`) on
+  macOS and any other non-Linux host whenever `modules.hot_reload` was on (the
+  default). The hot-reload watcher issued raw Linux `inotify` syscalls
+  unconditionally, which trapped before the fallback that was supposed to
+  handle inotify being unavailable could run. The watcher now uses inotify only
+  on Linux and polls the binary's mtime elsewhere.
+- Hot reload never fired on macOS even once the watcher survived: a rebuild was
+  only recognised by an ELF header, which a Mach-O binary never has. The check
+  is now per-platform.
 
 ### Compatibility notes
 
