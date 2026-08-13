@@ -1389,10 +1389,11 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
   display: flex; flex-direction: column; overflow: hidden;
   transition: width 0.2s ease;
 }
-/* Children hold the open width so the collapse tween clips them instead of
-   reflowing text every frame; only the sidebar box and its flex row move.
+/* Children keep the sidebar's own floor width, so most of the collapse tween
+   clips them (cheap) instead of reflowing text every frame; at rest nothing
+   changes, since the sidebar never sits below its 200px min-width anyway.
    The 1px margin-left snaps rather than tweening — invisible either way. */
-.slack-sidebar > * { width: 260px; flex-shrink: 0; }
+.slack-sidebar > * { min-width: 200px; }
 .slack-sidebar.is-collapsed {
   width: 0; min-width: 0; margin-left: -1px; overflow: hidden;
 }
