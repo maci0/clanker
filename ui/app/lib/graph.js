@@ -2,6 +2,7 @@
 // Additive module — app.js still ships its own copy until cutover; this is the
 // canonical source for future imports. Imports only loadD3.
 import { loadD3 } from "../core/vendor.js";
+import { fmtInt, searchFold } from "../core/utils.js";
 
 export function metricsFor(n) {
   if (n.kind === "llm") return n.prompt_tokens + "/" + n.completion_tokens + " tok \u00b7 " + n.duration_ms + "ms";
@@ -70,9 +71,9 @@ export function graphSummaryText(built) {
   if (worth) {
     parts.push("The slowest step was the " + totals.slowestKind + " " + (worth.label || worth.detail || "") +
       " at " + worth.duration_ms + "ms, " + Math.round(worth.duration_ms / totals.total * 100) +
-      "% of the " + totals.total.toLocaleString("en-US") + "ms the steps took together.");
+      "% of the " + fmtInt(totals.total) + "ms the steps took together.");
   } else if (totals.total) {
-    parts.push("The steps took " + totals.total.toLocaleString("en-US") + "ms together, none of them dominating.");
+    parts.push("The steps took " + fmtInt(totals.total) + "ms together, none of them dominating.");
   }
   return parts.join(" ");
 }
@@ -196,8 +197,8 @@ export function layoutGraph(canvas, built, slowest, opts) {
   var onSelect = opts.onSelect || function () {};
   var statusEl = opts.statusEl || null;
   var minimap = opts.minimap || null;
-  var searchQuery = (opts.searchQuery || "").trim().toLowerCase();
-  var kindFilter = (opts.kindFilter || "").trim().toLowerCase();
+  var searchQuery = searchFold((opts.searchQuery || "").trim());
+  var kindFilter = searchFold((opts.kindFilter || "").trim());
   var nodeW = 152, hGap = 32, vGap = 48, pad = 14;
   var tagPad = 42;
   var containerW = canvas.clientWidth || (canvas.parentElement && canvas.parentElement.clientWidth) || 320;
@@ -251,8 +252,8 @@ export function layoutGraph(canvas, built, slowest, opts) {
     var hasKind = !!kindFilter;
     if (activeQuery || hasKind) {
       data.forEach(function(d){
-        var hay = ((d.node && d.node.label) || "") + " " + ((d.node && d.node.detail) || "") + " " + d.kind;
-        var hitsText = !activeQuery || hay.toLowerCase().indexOf(activeQuery) !== -1;
+        var hay = searchFold(((d.node && d.node.label) || "") + " " + ((d.node && d.node.detail) || "") + " " + d.kind);
+        var hitsText = !activeQuery || hay.indexOf(activeQuery) !== -1;
         var hitsKind = !hasKind || d.kind === kindFilter || (kindFilter === "failed" && d.node && d.node.ok === false);
         d._matches = hitsText && hitsKind;
         if (d._matches) { d.el.setAttribute("data-match", "true"); d.el.style.opacity = ""; }

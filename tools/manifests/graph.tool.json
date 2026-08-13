@@ -1,0 +1,21 @@
+{
+  "name": "graph",
+  "description": "show the latest execution graph",
+  "wasm": "zig-out/tools/graph.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "args": {
+        "type": "string"
+      },
+      "write": {
+        "type": "object"
+      }
+    }
+  },
+  "fs_prefixes": [
+    "state/runs/"
+  ],
+  "internal": true,
+  "category": "harness"
+}

@@ -5,21 +5,26 @@ const std = @import("std");
 const config = @import("../config.zig");
 const types = @import("../llm/types.zig");
 const client = @import("../llm/client.zig");
-const registry = @import("../tools/registry.zig");
-const tool_usage = @import("../tools/usage.zig");
+const providers = @import("../llm/registry.zig");
+const registry = @import("../toolhost/registry.zig");
+const tool_usage = @import("../toolhost/usage.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const host = @import("../sandbox/host.zig");
 const private_todos = @import("private_todos.zig");
 const system_prompt = @import("system_prompt.zig");
 const graph_mod = @import("graph.zig");
-const autolearn = @import("autolearn.zig");
+const autolearn = @import("auto_learn.zig");
 const chatrooms = @import("../peers/chatrooms.zig");
-const filelock = @import("../util/filelock.zig");
-const ensuredir = @import("../util/ensuredir.zig");
+const file_lock = @import("../util/file_lock.zig");
+const ensure_dir = @import("../util/ensure_dir.zig");
 const log = @import("../util/log.zig");
-const toolout = @import("../util/toolout.zig");
+const json_util = @import("../util/json.zig");
+const tool_out = @import("../util/tool_out.zig");
 const utf8 = @import("../util/utf8.zig");
 const mock_server = @import("../llm/mock_server.zig");
+const advisor = @import("advisor.zig");
+const thinking = @import("thinking.zig");
+const ttsr = @import("ttsr.zig");
 
 /// Each chatroom inbox line injected into a run. Long enough to see what a
 /// peer said, short enough that a burst of rooms cannot fill the context.
@@ -446,6 +451,23 @@ pub const Agent = struct {
         if (messages.items.len == 0 or messages.items[0].role != .system) {
             try messages.insert(self.arena, 0, .{ .role = .system, .content = self.system_prompt_text });
         }
+        var ttsr_rules: std.ArrayList(ttsr.Rule) = .empty;
+        for (self.cfg.ttsr.rules) |raw| {
+            const pat = ttsr.Pattern.compile(self.arena, raw.pattern) catch |err| {
+                log.log(.warn, "ttsr rule '{s}' ignored: {s}", .{ raw.name, @errorName(err) });
+                continue;
+            };
+            try ttsr_rules.append(self.arena, .{
+                .name = raw.name,
+                .pattern = pat,
+                .inject = raw.inject,
+                .max_fires = raw.max_fires,
+            });
+        }
+        if (ttsr_rules.items.len > 0 and !self.cfg.modules.streaming) {
+            log.log(.warn, "ttsr: {d} rule(s) configured but streaming is off; they will not fire", .{ttsr_rules.items.len});
+        }
+        var ttsr_retries: u32 = 0;
         // A resumed session may have been persisted mid-tool-call (crash or
         // atomic-rename rebuild between the assistant's tool_calls message
         // and the tool results). Providers reject tool_calls with no matching
@@ -509,6 +531,10 @@ pub const Agent = struct {
         // inherits a populated list does not re-announce items the viewer
         // already has.
         var last_todos_rev: u32 = if (self.private_todos) |l| l.rev else 0;
+        var advisor_note: ?advisor.Note = null;
+        defer if (advisor_note) |n| self.ctx.gpa.free(n.text);
+        var advisor_abort: ?[]const u8 = null;
+        defer if (advisor_abort) |t| self.ctx.gpa.free(t);
         while (iteration < self.max_iterations) : (iteration += 1) {
             if (self.stopRequested()) {
                 log.log(.info, "run stopped at iteration {d}", .{iteration + 1});
@@ -553,17 +579,100 @@ pub const Agent = struct {
             const utilization: f64 = if (ctx_window > 0) @as(f64, @floatFromInt(est_prompt_tokens)) / @as(f64, @floatFromInt(ctx_window)) * 100.0 else 0;
             log.log(.debug, "LLM call: ~{d} estimated prompt tokens ({d:.0}% of {d} context window)", .{ est_prompt_tokens, utilization, ctx_window });
 
+            var injected_advisor = false;
+            if (advisor_note) |note| {
+                const block = advisor.formatInjection(self.arena, note) catch null;
+                if (block) |b| {
+                    try messages.insert(self.arena, 0, .{ .role = .system, .content = b });
+                    injected_advisor = true;
+                }
+                self.ctx.gpa.free(note.text);
+                advisor_note = null;
+            }
+
             const llm_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
+            const effort = self.classifyEffort(messages.items);
+            var ttsr_hit: ?*ttsr.Rule = null;
             const resp = if (self.on_token) |cb| blk: {
-                if (!self.cfg.modules.streaming) break :blk try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0);
-                break :blk client.chatStream(self.ctx, self.arena, .{
+                if (!self.cfg.modules.streaming) break :blk try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0, effort);
+                const Guard = struct {
+                    inner: *const fn ([]const u8) void,
+                    rules: []ttsr.Rule,
+                    buf: []u8,
+                    len: usize = 0,
+                    hit: *?*ttsr.Rule,
+                    stop: ?*std.atomic.Value(bool),
+                    retries: u32,
+                    max_retries: u32,
+
+                    fn feed(self_g: *@This(), delta: []const u8) void {
+                        self_g.inner(delta);
+                        if (self_g.hit.* != null) return;
+                        if (self_g.retries >= self_g.max_retries) return;
+                        if (delta.len >= self_g.buf.len) {
+                            @memcpy(self_g.buf, delta[delta.len - self_g.buf.len ..]);
+                            self_g.len = self_g.buf.len;
+                        } else if (self_g.len + delta.len <= self_g.buf.len) {
+                            @memcpy(self_g.buf[self_g.len..][0..delta.len], delta);
+                            self_g.len += delta.len;
+                        } else {
+                            const drop = self_g.len + delta.len - self_g.buf.len;
+                            std.mem.copyForwards(u8, self_g.buf, self_g.buf[drop..self_g.len]);
+                            self_g.len -= drop;
+                            @memcpy(self_g.buf[self_g.len..][0..delta.len], delta);
+                            self_g.len += delta.len;
+                        }
+                        if (ttsr.firstMatch(self_g.rules, self_g.buf[0..self_g.len])) |rule| {
+                            self_g.hit.* = rule;
+                            if (self_g.stop) |f| f.store(true, .release);
+                        }
+                    }
+                };
+                // No room for the rolling window: take the same unguarded turn
+                // the `streaming` module being off takes, rather than failing
+                // the run over a buffer that only exists to match rules.
+                const guard_buf = self.arena.alloc(u8, self.cfg.ttsr.buffer_bytes) catch
+                    break :blk try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0, effort);
+                var guard = Guard{
+                    .inner = cb,
+                    .rules = ttsr_rules.items,
+                    .buf = guard_buf,
+                    .hit = &ttsr_hit,
+                    .stop = self.stop_flag,
+                    .retries = ttsr_retries,
+                    .max_retries = self.cfg.ttsr.max_retries_per_turn,
+                };
+                const wrap = struct {
+                    var gptr: *Guard = undefined;
+                    fn call(delta: []const u8) void {
+                        gptr.feed(delta);
+                    }
+                };
+                wrap.gptr = &guard;
+                break :blk chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
                     .provider = self.provider,
                     .messages = messages.items,
                     .tools = self.tool_defs,
-                }, err_detail, cb, self.stop_flag) catch |err| {
+                    .reasoning_effort = effort,
+                }, err_detail, wrap.call, self.stop_flag) catch |err| {
                     if (err != error.Interrupted) {
                         try self.recordFailedLlm(&g, iteration, llm_t0, err, err_detail.*);
                         return err;
+                    }
+                    if (ttsr_hit) |rule| {
+                        _ = self.stopRequested();
+                        if (self.stop_flag) |f| f.store(false, .release);
+                        ttsr_retries += 1;
+                        rule.fires += 1;
+                        const tag = try std.fmt.allocPrint(self.arena, "\n[ttsr:{s}]\n{s}\n[/ttsr]\n", .{ rule.name, rule.inject });
+                        if (messages.items.len > 0 and messages.items[0].role == .system) {
+                            const cur = messages.items[0].content orelse "";
+                            if (std.mem.indexOf(u8, cur, tag) == null) {
+                                messages.items[0].content = try std.fmt.allocPrint(self.arena, "{s}{s}", .{ cur, tag });
+                            }
+                        }
+                        log.log(.info, "ttsr: rule '{s}' fired; retrying turn ({d}/{d})", .{ rule.name, ttsr_retries, self.cfg.ttsr.max_retries_per_turn });
+                        continue;
                     }
                     // Same outcome as the between-iterations stopRequested()
                     // check above, for a Ctrl-C that instead landed mid-stream.
@@ -578,7 +687,7 @@ pub const Agent = struct {
                     });
                     return .{ .message = .{ .role = .assistant, .content = "[stopped]" } };
                 };
-            } else try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0);
+            } else try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0, effort);
             try g.add(self.ctx.gpa, .{
                 .kind = .llm,
                 .iteration = iteration + 1,
@@ -612,6 +721,10 @@ pub const Agent = struct {
             // produced it crossed the session budget: the caller wants that exact
             // answer (and the answer_format eval asserts it). Return it before the
             // budget check below, which can then only terminate a run that still
+            if (injected_advisor and messages.items.len > 0) {
+                _ = messages.orderedRemove(0);
+            }
+
             // wants to call tools.
             if (maybe_calls == null or maybe_calls.?.len == 0) {
                 try g.add(self.ctx.gpa, .{
@@ -713,6 +826,20 @@ pub const Agent = struct {
             if (self.on_tool_result) |cb| {
                 const tool_ms: u64 = @intCast(@divTrunc(tool_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
                 cb(tool_ms);
+            }
+            if (self.cfg.advisor.enabled) {
+                if (advisor_note) |old| self.ctx.gpa.free(old.text);
+                advisor_note = self.reviewTurn(messages.items, calls, &advisor_abort);
+                if (advisor_abort) |text| {
+                    try g.add(self.ctx.gpa, .{
+                        .kind = .final,
+                        .iteration = iteration + 1,
+                        .label = "advisor abort",
+                        .output = graph_mod.truncatedPreview(text),
+                        .ok = false,
+                    });
+                    return .{ .message = .{ .role = .assistant, .content = text } };
+                }
             }
             // The batch has joined, so the private list is quiescent again and
             // this thread is the only reader. Serializing it costs nothing
@@ -959,10 +1086,10 @@ pub const Agent = struct {
     /// the previous version re-read and rewrote the entire log on every LLM
     /// call, making per-call cost and total I/O grow with the log's size
     /// (quadratic over a session), and lost records under concurrent writers
-    /// since it bypassed the lock other state logs use (see filelock.zig).
+    /// since it bypassed the lock other state logs use (see file_lock.zig).
     fn recordReasoning(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8, task: []const u8, reasoning: []const u8) void {
         _ = arena;
-        ensuredir.ensureDir(std.Io.Dir.cwd(), io, "state") catch return;
+        ensure_dir.ensureDir(std.Io.Dir.cwd(), io, "state") catch return;
         const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         var buf: [reasoning_record_buf_bytes]u8 = undefined;
         var w: std.Io.Writer = .fixed(&buf);
@@ -984,7 +1111,7 @@ pub const Agent = struct {
     }
 
     fn appendReasoningLine(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, line: []const u8) void {
-        var guard = filelock.acquire(io, base, "state", "reasoning", gpa);
+        var guard = file_lock.acquire(io, base, "state", "reasoning", gpa);
         defer guard.release();
 
         // Trim before opening for append below: trimming rewrites the file
@@ -1314,11 +1441,11 @@ pub const Agent = struct {
 
         const sum_messages = [_]types.Message{.{ .role = .user, .content = prompt }};
         var err_detail: ?[]const u8 = null;
-        const resp = try client.chat(self.ctx, self.arena, .{
+        const resp = try chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
             .provider = self.provider,
             .messages = &sum_messages,
             .max_tokens = 512,
-        }, &err_detail);
+        }, &err_detail, null, null);
         const content = resp.message.content orelse return error.EmptyResponse;
         if (content.len == 0) return error.EmptyResponse;
         // Track the summarization cost.
@@ -1620,7 +1747,7 @@ pub const Agent = struct {
         // A tool that named no provider of its own follows the agent, which may
         // itself be running under a --provider override rather than the default.
         if (sb.llm) |*access| {
-            if (host.pluginStr(tool.config, "provider") == null and host.pluginStr(tool.config, "model") == null) {
+            if (json_util.pluginStr(tool.config, "provider") == null and json_util.pluginStr(tool.config, "model") == null) {
                 access.provider = self.provider;
             }
         }
@@ -1851,9 +1978,76 @@ pub const Agent = struct {
         self.tool_defs = self.reg.lazyToolDefs(self.arena, core.items, &self.revealed) catch return;
     }
 
+    fn reviewTurn(self: *Agent, messages: []const types.Message, calls: []const types.ToolCall, abort_out: *?[]const u8) ?advisor.Note {
+        var redact_buf: [32][]const u8 = undefined;
+        var n: usize = 0;
+        for (calls) |tc| {
+            if (n >= redact_buf.len) break;
+            if (self.reg.get(tc.name)) |tool| {
+                if (tool.fs_prefixes.len > 0 or tool.exec_allow.len > 0) {
+                    redact_buf[n] = tc.name;
+                    n += 1;
+                }
+            }
+        }
+        const window = if (std.mem.eql(u8, self.cfg.advisor.scope, "session"))
+            lastTurns(messages, self.cfg.advisor.context_turns)
+        else
+            lastTurns(messages, 1);
+        const summary = advisor.summarizeTurn(self.arena, window, redact_buf[0..n]) catch return null;
+        var note = advisor.review(self.ctx.io, self.ctx.gpa, self.ctx.environ_map, self.cfg, summary) orelse return null;
+        if (note.severity == .blocker) {
+            if (self.ask_fn) |ask| {
+                const opts = [_][]const u8{ "proceed", "abort" };
+                // AskFn hands back gpa-owned bytes, as ck_ask's own caller in
+                // host.zig does. An ask that cannot reach its human (no tab,
+                // timeout) has nothing to free and reads as "proceed": the
+                // advisor gate must not strand a run nobody is watching.
+                const picked: ?[]const u8 = ask(note.text, &opts) catch null;
+                defer if (picked) |p| self.ctx.gpa.free(@constCast(p));
+                const answer = picked orelse "proceed";
+                if (std.mem.eql(u8, std.mem.trim(u8, answer, " \t\r\n"), "abort")) {
+                    abort_out.* = note.text;
+                    return null;
+                }
+            }
+            note.severity = .concern;
+        }
+        return note;
+    }
+
+    fn lastTurns(messages: []const types.Message, want: u32) []const types.Message {
+        if (want == 0 or messages.len == 0) return messages;
+        var seen: u32 = 0;
+        var i = messages.len;
+        while (i > 0) {
+            i -= 1;
+            if (messages[i].role == .user) {
+                seen += 1;
+                if (seen >= want) return messages[i..];
+            }
+        }
+        return messages;
+    }
+
     /// One blocking completion. On failure the graph still gets a node so a
     /// run that dies on the provider is visible in `clanker graph` and the
     /// web UI, not only as a stack trace on stderr.
+    fn classifyEffort(self: *Agent, messages: []const types.Message) ?[]const u8 {
+        if (!self.cfg.agent.auto_thinking) return null;
+        var i = messages.len;
+        while (i > 0) {
+            i -= 1;
+            if (messages[i].role == .user) {
+                if (thinking.classify(self.ctx.io, self.ctx.gpa, self.ctx.environ_map, self.cfg, messages[i].content orelse "")) |level| {
+                    return thinking.effortFor(level);
+                }
+                return null;
+            }
+        }
+        return null;
+    }
+
     fn llmChat(
         self: *Agent,
         messages: []const types.Message,
@@ -1861,12 +2055,14 @@ pub const Agent = struct {
         g: *graph_mod.Graph,
         iteration: u32,
         started: std.Io.Timestamp,
+        effort: ?[]const u8,
     ) !types.ChatResponse {
-        return client.chat(self.ctx, self.arena, .{
+        return chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
             .provider = self.provider,
             .messages = messages,
             .tools = self.tool_defs,
-        }, err_detail) catch |err| {
+            .reasoning_effort = effort,
+        }, err_detail, null, null) catch |err| {
             try self.recordFailedLlm(g, iteration, started, err, err_detail.*);
             return err;
         };
@@ -1893,7 +2089,7 @@ pub const Agent = struct {
         });
     }
 
-    /// Persists a finished run's graph through the sandboxed `cmd_graph`
+    /// Persists a finished run's graph through the sandboxed `graph`
     /// WASM tool (fs_prefixes: ["state/runs/"]) instead of a native
     /// file-write path. Nodes accumulate natively during the run (`g.add`
     /// runs once per LLM/tool step, too hot for a WASM round-trip); this is
@@ -1906,7 +2102,7 @@ pub const Agent = struct {
     }
 
     fn persistGraphOrErr(self: *Agent, g: *const graph_mod.Graph) !void {
-        const mod = try runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, self.reg, "cmd_graph", null);
+        const mod = try runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, self.reg, "graph", null);
         defer mod.deinit();
 
         var enc: std.Io.Writer.Allocating = .init(self.arena);
@@ -1977,7 +2173,7 @@ pub const Agent = struct {
         const raw = try mod.executeTool(enc.written());
         defer self.ctx.gpa.free(raw);
         const resp = std.json.parseFromSliceLeaky(struct { ok: bool = false, @"error": []const u8 = "" }, self.arena, raw, .{ .ignore_unknown_fields = true }) catch return;
-        if (!resp.ok) log.log(.warn, "cmd_graph write: {s}", .{resp.@"error"});
+        if (!resp.ok) log.log(.warn, "graph write: {s}", .{resp.@"error"});
     }
 
     fn executeTool(self: *Agent, tc: types.ToolCall) ![]const u8 {
@@ -2034,7 +2230,7 @@ pub const Agent = struct {
         // tool messages on the sequential path (use-after-free).
         const owned = try self.arena.dupe(u8, out);
         log.log(.info, "tool '{s}' -> {d} bytes in {d}ms", .{ tc.name, out.len, ms });
-        toolout.warnIfMalformed(self.ctx.gpa, tc.name, owned);
+        tool_out.warnIfMalformed(self.ctx.gpa, tc.name, owned);
 
         // Run after-transforms on the result (output filtering / post-processing).
         const transformed = self.runChain(tc.name, .after, owned) catch owned;
@@ -2365,6 +2561,117 @@ fn parentAnswerPrompt(
     return buf.toOwnedSlice(arena);
 }
 
+/// Walks `cfg.agent.fallback_providers` after the current provider's own
+/// retry budget is exhausted. Streaming that already emitted content does
+/// not advance the chain. `current` is updated to whoever actually served
+/// the request so later cost/stats reads stay honest.
+const StreamTally = struct {
+    n: usize = 0,
+    inner: ?*const fn ([]const u8) void = null,
+
+    fn wrap(self: *StreamTally, delta: []const u8) void {
+        self.n += delta.len;
+        if (self.inner) |cb| cb(delta);
+    }
+};
+
+threadlocal var stream_tally: StreamTally = .{};
+
+fn streamTallyWrap(delta: []const u8) void {
+    stream_tally.wrap(delta);
+}
+
+fn chatWithFallbackChain(
+    ctx: *client.Ctx,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    current: **const config.Provider,
+    params: providers.RequestParams,
+    err_detail: *?[]const u8,
+    on_delta: ?*const fn ([]const u8) void,
+    stop_flag: ?*std.atomic.Value(bool),
+) !types.ChatResponse {
+    var p = params;
+    p.provider = current.*;
+    var last_err: anyerror = error.ApiError;
+    var reports: std.ArrayList(u8) = .empty;
+    defer reports.deinit(ctx.gpa);
+
+    var names_tried: std.ArrayList([]const u8) = .empty;
+    defer names_tried.deinit(ctx.gpa);
+
+    const primary = p.provider.name;
+    try names_tried.append(ctx.gpa, primary);
+
+    var chain_i: usize = 0;
+    while (true) {
+        stream_tally = .{ .n = 0, .inner = on_delta };
+        const result = if (on_delta != null)
+            client.chatStream(ctx, arena, p, err_detail, streamTallyWrap, stop_flag)
+        else
+            client.chat(ctx, arena, p, err_detail);
+
+        if (result) |resp| {
+            if (!std.mem.eql(u8, p.provider.name, primary)) {
+                log.log(.info, "fallback: '{s}' served after '{s}' failed", .{ p.provider.name, primary });
+            }
+            current.* = p.provider;
+            return resp;
+        } else |err| {
+            last_err = err;
+            if (err == error.Interrupted) return err;
+            if (on_delta != null and stream_tally.n > 0) return err;
+            if (reports.items.len > 0) try reports.appendSlice(ctx.gpa, "; ");
+            try reports.appendSlice(ctx.gpa, p.provider.name);
+            try reports.appendSlice(ctx.gpa, "=");
+            try reports.appendSlice(ctx.gpa, @errorName(err));
+            if (err_detail.*) |d| {
+                try reports.appendSlice(ctx.gpa, " (");
+                try reports.appendSlice(ctx.gpa, utf8.cap(d, 160));
+                try reports.appendSlice(ctx.gpa, ")");
+            }
+        }
+
+        const next = nextFallbackProvider(cfg, p.provider.name, cfg.agent.fallback_providers, names_tried.items, &chain_i) orelse {
+            if (reports.items.len > 0) {
+                err_detail.* = try std.fmt.allocPrint(arena, "fallback chain exhausted: {s}", .{reports.items});
+            }
+            return last_err;
+        };
+        log.log(.warn, "fallback: '{s}' failed ({s}); trying '{s}'", .{ p.provider.name, @errorName(last_err), next.name });
+        try names_tried.append(ctx.gpa, next.name);
+        p.provider = next;
+    }
+}
+
+/// Next unused, configured name in `chain` after `chain_i`. Unknown names
+/// are skipped with a warning. The current provider is never returned.
+fn nextFallbackProvider(
+    cfg: *const config.Config,
+    current_name: []const u8,
+    chain: []const []const u8,
+    already: []const []const u8,
+    chain_i: *usize,
+) ?*const config.Provider {
+    while (chain_i.* < chain.len) {
+        const name = chain[chain_i.*];
+        chain_i.* += 1;
+        if (name.len == 0) continue;
+        if (std.mem.eql(u8, name, current_name)) continue;
+        var seen = false;
+        for (already) |a| {
+            if (std.mem.eql(u8, a, name)) {
+                seen = true;
+                break;
+            }
+        }
+        if (seen) continue;
+        if (cfg.providers.getPtr(name)) |p| return p;
+        log.log(.warn, "fallback: '{s}' is not a configured provider; skipping", .{name});
+    }
+    return null;
+}
+
 /// Answers a sub-agent's question with one bounded completion on the parent's
 /// provider, the re-entrant path host.ParentAsk documents. Runs on the
 /// sub-agent's thread while the parent is parked in ck_subagent's join, so it
@@ -2430,7 +2737,7 @@ fn parentAskTrampoline(
 ///
 /// DO NOT LOWER THIS. The interpreter's native call depth is not shallow: it
 /// recurses per WASM frame, and a host call at the bottom recurses again (the
-/// ck_exec JSON result is parsed there). A `search_code` call segfaulted the
+/// ck_exec JSON result is parsed there). A `repo_search` call segfaulted the
 /// process outright at 2 MiB, a stack overflow, not a catchable trap, and
 /// the reasoning that "the host-side call depth is shallow" was written into
 /// this comment once already and was wrong both times.
@@ -2441,7 +2748,7 @@ comptime {
         "parallel_tool_stack_bytes must stay >= 32 MiB: it is a lazily-mapped " ++
             "reservation (shrinking it frees nothing) and the wasm interpreter " ++
             "recursing into a host JSON parse overflowed a smaller stack, " ++
-            "segfaulting the run. Measure a deep search_code call before changing it.",
+            "segfaulting the run. Measure a deep repo_search call before changing it.",
     );
 }
 
@@ -2528,7 +2835,7 @@ const ToolWorker = struct {
             // make a worker safer, it made it wrong: a tool ran with no
             // commands and no environment on the parallel path and the same
             // tool ran with its descriptor's on the sequential one, so
-            // search_code was refused ripgrep for as long as it ran in
+            // repo_search was refused ripgrep for as long as it ran in
             // parallel with anything.
             .exec_allow = self.tool.exec_allow,
             .git_remote_ops = self.cfg.agent.git_remote_ops,
@@ -2565,7 +2872,7 @@ const ToolWorker = struct {
         // Checked where the result is produced rather than where it is
         // consumed: the consumers are three different paths, and instrumenting
         // the two obvious ones missed the one that actually runs.
-        toolout.warnIfMalformed(self.ctx.gpa, self.tool.name, out);
+        tool_out.warnIfMalformed(self.ctx.gpa, self.tool.name, out);
         self.out = out;
     }
 };
@@ -2805,7 +3112,7 @@ test "wasmBytes reads each wasm path from disk only once (cached slice)" {
 
 test "the parallel-tool stack reservation stays above the observed crash floor" {
     // Regression: successive "reduce the stack size" changes took this
-    // reservation from 64 MiB down to 2 MiB, and a search_code call, the
+    // reservation from 64 MiB down to 2 MiB, and a repo_search call, the
     // zwasm interpreter recursing, then ck_exec's JSON result parsing on top
     // of it, overflowed the worker stack and segfaulted the whole run. The
     // reservation is lazily mapped, so a smaller number frees no real memory;
@@ -3344,6 +3651,24 @@ test "parentAnswerPrompt clips the transcript to a bounded recent tail" {
     const over = try arena.alloc(u8, parent_answer_max_msg_bytes + 1);
     @memset(over, 'x');
     try std.testing.expect(std.mem.find(u8, prompt, over) == null);
+}
+
+test "nextFallbackProvider skips unknown names and already-tried ones" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var cfg = config.Config{};
+    try cfg.providers.put(arena, "a", try config.Provider.single(arena, "a", "https://a.test", .openai_compat, "ma", .{}));
+    try cfg.providers.put(arena, "b", try config.Provider.single(arena, "b", "https://b.test", .openai_compat, "mb", .{}));
+    try cfg.providers.put(arena, "c", try config.Provider.single(arena, "c", "https://c.test", .openai_compat, "mc", .{}));
+
+    var i: usize = 0;
+    const first = nextFallbackProvider(&cfg, "a", &.{ "missing", "a", "b", "c" }, &.{"a"}, &i).?;
+    try std.testing.expectEqualStrings("b", first.name);
+    const second = nextFallbackProvider(&cfg, "b", &.{ "missing", "a", "b", "c" }, &.{ "a", "b" }, &i).?;
+    try std.testing.expectEqualStrings("c", second.name);
+    try std.testing.expect(nextFallbackProvider(&cfg, "c", &.{ "missing", "a", "b", "c" }, &.{ "a", "b", "c" }, &i) == null);
 }
 
 test "answerAsParent answers through the parent's provider" {

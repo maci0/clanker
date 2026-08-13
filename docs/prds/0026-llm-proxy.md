@@ -213,7 +213,7 @@ Unknown keys that have no counterpart on the other wire are dropped. That is una
 
 **1:1 forward (same family).** For every `/v1/*` that is not the local models catalog and does not need transcode, the proxy:
 
-1. Reads the raw body bytes already buffered by `handleConnection` (same `rawhttp.max_body_bytes` cap, 24 MiB). A 413 at this layer is the existing serve JSON (see Trust model). Multipart (audio transcriptions, image edits, file uploads) is forwarded as-is: `Content-Type` including the boundary is allowlisted.
+1. Reads the raw body bytes already buffered by `handleConnection` (same `raw_http.max_body_bytes` cap, 24 MiB). A 413 at this layer is the existing serve JSON (see Trust model). Multipart (audio transcriptions, image edits, file uploads) is forwarded as-is: `Content-Type` including the boundary is allowlisted.
 2. If the body is JSON, parses *only* enough to read `model` (optional string) and `stream` (optional). If `stream` is absent, treat it as `false` unless `Accept` is `text/event-stream` or the path ends in `/events/stream`. If `stream` is present and is not a JSON bool (`"true"`, `1`, an object, …): `400 malformed_request`, no upstream call. The parse is a read. The bytes that go upstream are the bytes that arrived, except the one `model` rewrite below. Non-JSON bodies (multipart, empty GET/DELETE) skip the parse.
 3. Resolves the provider (Model routing). A JSON `model` uses the lookup below. A request with no `model` (GET/DELETE, list, files, multipart without a JSON body) uses the unique configured provider of that family, or `400 missing_required_parameter` if more than one provider speaks it. On mismatch or unknown model, returns a local `400` and does not contact upstream. The inbound method (GET/POST/PUT/PATCH/DELETE/HEAD) and query string are preserved on the upstream request.
 4. Builds upstream headers from scratch (see **Upstream headers**). Never copies the inbound header set.
@@ -252,7 +252,7 @@ Leaving `Accept-Encoding` out of `extra_headers` is **not** enough. Zig 0.16 `st
 - Copy upstream status and `Content-Type` (default `application/json` if the provider omitted it).
 - Always set `X-Content-Type-Options: nosniff` and `X-Request-ID` (serve already does this on `respond`).
 - Do not copy `Content-Encoding` or `Transfer-Encoding`. We frame the inbound response ourselves and we did not ask for gzip.
-- `stream: true`, same family: no `Content-Length`, `Connection: close`, write body chunks as they arrive. Cap the *accumulated* stream at `rawhttp.max_body_bytes` (24 MiB). A missing `[DONE]` is preserved.
+- `stream: true`, same family: no `Content-Length`, `Connection: close`, write body chunks as they arrive. Cap the *accumulated* stream at `raw_http.max_body_bytes` (24 MiB). A missing `[DONE]` is preserved.
 - `stream: true`, cross-family: same framing, but each upstream SSE payload is parsed and rewritten (`OpenaiStream` / `AnthropicStream`). OpenAI clients get `[DONE]` when the Anthropic stream ends. Anthropic clients get `message_stop` when the OpenAI stream ends.
 - `stream: false`: read the upstream body into a buffer capped at 24 MiB (same inbound cap, not `resp_cap`'s 8 MiB), then send `Content-Length` and `Connection: close`. Over the cap: local `502` agave envelope, no partial body.
 - On inbound client close or a write error mid-pipe: cancel the upstream request (`client.Abort.trigger`, `shutdown(2)`) and release the connection slot. Do not wait for the provider to finish.
@@ -454,7 +454,7 @@ Stay clanker-native:
 - `config.Provider` / `Model` / `distributeModels`
 - `unexpectedHost` / `crossOriginRequest` / `--serve-as`
 - `token_stats.append` at the existing Record shape
-- `cmdServe` accept pool, hot reload, `rawhttp` body cap
+- `cmdServe` accept pool, hot reload, `raw_http` body cap
 
 **Usage recording without rewriting.** `client.recordUsage` / `recordFailure` (`src/llm/client.zig` `~L346-389`) are private and tied to `types.Usage` after a parse. The proxy calls `token_stats.append` directly with the same `Record`. It does **not** call `parseResponse` (that rebuilds a `ChatResponse`). It peeks usage fields only:
 
@@ -765,7 +765,7 @@ Exposed on the existing `GET /api/metrics` of the web UI port, not on the proxy 
 | No token, `--host 0.0.0.0` | Accepted (serve is unauthenticated). Startup warning. Anyone on the LAN spends the operator's keys. |
 | Browser POST from a foreign `Origin`, no token | `403` CSRF, same as `/api/run`. |
 | `unexpectedHost` | `421` serve JSON `{"ok":false,"error":"invalid host"}`. Not an agave envelope. |
-| Body larger than `rawhttp.max_body_bytes` (24 MiB) | `413` serve JSON, existing `handleConnection` path. |
+| Body larger than `raw_http.max_body_bytes` (24 MiB) | `413` serve JSON, existing `handleConnection` path. |
 | 64 connections already in flight (`.webui` / `.both`) | `503` serve JSON, existing pool. |
 | `GET /proxy/v1/models` (shared) or `GET /v1/models` (dedicated) | Every configured model. Envelope shape from `anthropic-version`. No upstream. Empty `data` if none. Token required when `proxy_token_env` is set. |
 | `GET /v1/models` on the shared socket (no `/proxy` prefix) | Existing generic 404. Not a proxy route. |

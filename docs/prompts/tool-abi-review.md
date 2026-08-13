@@ -45,7 +45,7 @@ prompt and move on for authority findings.
 | `AGENTS.md` ("WASM by default", "Tool ABI" sections) | Guest exports (`scratch`, `host_arena`, `run`), when native vs. guest is correct |
 | `docs/README.md` ("WASM tool ABI", "Tool catalog", "Plugins" sections) | The full descriptor key reference, the tool catalog (what each shipped tool claims to do) |
 | `tools/zig/lib.zig` | The guest-side response helpers (`fail`, `failErr`, `okText`, `json`) that define the `{"ok": true/false, ...}` shape every tool is expected to follow |
-| `src/tools/registry.zig` | How descriptors are loaded/validated, what `internal`/`enabled`/`category` actually gate |
+| `src/toolhost/registry.zig` | How descriptors are loaded/validated, what `internal`/`enabled`/`category` actually gate |
 | `evals/*.task.json` | The behavioral contract a tool is graded against, when one exists |
 
 ## Read first
@@ -108,7 +108,7 @@ every `tools/manifests/*.tool.json` alongside its `tools/zig/*.zig` or
       and the corresponding `tools/zig/<name>.zig` / `tools/ts/<name>.ts`
       filename (per the house convention).
 - [ ] `internal: true` tools are genuinely unreachable from the model's
-      catalog (verify in `src/tools/registry.zig`'s catalog-building path,
+      catalog (verify in `src/toolhost/registry.zig`'s catalog-building path,
       not just by reading the flag) — an internal tool the model can
       somehow still select is a P1: it exists specifically because a slash
       command or HTTP route needs it, not the model.
@@ -208,7 +208,7 @@ rg -n 'std\.fmt\.allocPrint.*\{.*"' tools/zig -t zig
 
 # internal flag vs actual catalog exposure
 rg -n '"internal": true' tools/manifests/*.tool.json
-rg -n 'internal' src/tools/registry.zig
+rg -n 'internal' src/toolhost/registry.zig
 
 # Schema field vs struct field drift (manual cross-check per tool)
 rg -n '"input_schema"' -A 20 tools/manifests/<name>.tool.json
@@ -244,7 +244,7 @@ Return the following in the captured response:
 - [ ] Every reviewed tool's descriptor cross-checked against its actual
       request struct and response paths, not read in isolation
 - [ ] `internal`/catalog exposure explicitly verified against
-      `src/tools/registry.zig`, not assumed from the flag alone
+      `src/toolhost/registry.zig`, not assumed from the flag alone
 - [ ] Response shape checked for every success and failure path, not just
       the happy path
 - [ ] No recommendation changes a tool's response shape without listing

@@ -14,9 +14,9 @@
 
 const std = @import("std");
 const config = @import("config.zig");
-const registry = @import("tools/registry.zig");
+const registry = @import("toolhost/registry.zig");
 const log = @import("util/log.zig");
-const ensuredir = @import("util/ensuredir.zig");
+const ensure_dir = @import("util/ensure_dir.zig");
 
 const Status = enum {
     ok,
@@ -140,8 +140,15 @@ fn runChecks(
     if (usable == 0) rep.line(.fail, "any usable provider", "no provider has a credential");
 
     rep.section("directories");
+    for (cfg.agent.tools_dir) |tools_dir| {
+        const present = dirExists(io, tools_dir);
+        rep.line(
+            if (present) .ok else .fail,
+            "tools_dir",
+            if (present) tools_dir else try std.fmt.allocPrint(arena, "{s} missing; run `clanker setup`", .{tools_dir}),
+        );
+    }
     inline for (.{
-        .{ "tools_dir", cfg.agent.tools_dir },
         .{ "skills_dir", cfg.agent.skills_dir },
         .{ "state_dir", cfg.agent.state_dir },
         .{ "sandbox_root", cfg.agent.sandbox_root },
@@ -245,7 +252,7 @@ pub fn cmdSetup(init: std.process.Init) !void {
         out.interface.flush() catch {};
         std.process.exit(1);
     }
-    ensuredir.ensureDir(dir, io, "state") catch |err| {
+    ensure_dir.ensureDir(dir, io, "state") catch |err| {
         log.log(.warn, "setup: mkdir 'state' failed: {s}", .{@errorName(err)});
         w.print("  state/ could not be created: {s}. Check the directory is writable.\n", .{@errorName(err)}) catch {};
     };

@@ -9,14 +9,16 @@
 
 const std = @import("std");
 const log = @import("../util/log.zig");
+const redact = @import("../util/redact.zig");
+const json_util = @import("../util/json.zig");
 const protocol = @import("protocol.zig");
 const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
 const config_mod = @import("../config.zig");
-const registry = @import("../tools/registry.zig");
+const registry = @import("../toolhost/registry.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
 const private_todos_mod = @import("../agent/private_todos.zig");
-const filelock = @import("../util/filelock.zig");
+const file_lock = @import("../util/file_lock.zig");
 const utf8 = @import("../util/utf8.zig");
 const token_stats = @import("../stats/tokens.zig");
 const build_options = @import("build_options");
@@ -254,8 +256,8 @@ fn pluginProvider(
     cfg: *const config_mod.Config,
     tool: *const registry.Tool,
 ) !*const config_mod.Provider {
-    const want_provider = pluginStr(tool.config, "provider");
-    const want_model = pluginStr(tool.config, "model");
+    const want_provider = json_util.pluginStr(tool.config, "provider");
+    const want_model = json_util.pluginStr(tool.config, "model");
     const base = cfg.provider(want_provider) catch blk: {
         log.log(.warn, "plugin '{s}': unknown provider, using the default", .{tool.name});
         break :blk try cfg.provider(null);
@@ -265,21 +267,6 @@ fn pluginProvider(
     copy.* = base.*;
     copy.default_model = want_model.?;
     return copy;
-}
-
-pub fn pluginStr(cfg_value: std.json.Value, key: []const u8) ?[]const u8 {
-    if (cfg_value != .object) return null;
-    const v = cfg_value.object.get(key) orelse return null;
-    return if (v == .string and v.string.len > 0) v.string else null;
-}
-
-fn pluginU32(cfg_value: std.json.Value, key: []const u8) ?u32 {
-    if (cfg_value != .object) return null;
-    const v = cfg_value.object.get(key) orelse return null;
-    // Reject out-of-u32-range values instead of panicking in @intCast (a
-    // plugin's tool.json is not trusted input).
-    if (v == .integer and v.integer > 0 and v.integer <= std.math.maxInt(u32)) return @intCast(v.integer);
-    return null;
 }
 
 /// The single place a tool's sandbox policy is assembled from its descriptor.
@@ -310,7 +297,7 @@ pub fn sandboxFor(
         if (llm_ctx) |ctx| llm_access = .{
             .ctx = ctx,
             .provider = try pluginProvider(arena, cfg, tool),
-            .max_tokens = pluginU32(tool.config, "max_tokens") orelse 1024,
+            .max_tokens = json_util.pluginU32(tool.config, "max_tokens") orelse 1024,
         };
     }
 
@@ -330,7 +317,7 @@ pub fn sandboxFor(
         .tool_self_name = tool.name,
         .tool_registry = null,
         .tool_call_depth = 0,
-        .fs_prefixes = tool.fs_prefixes,
+        .fs_prefixes = try fsPrefixesFor(arena, tool, cfg),
         .fuel = tool.fuel,
         .environ_map = environ_map,
         .seed = cfg.agent.seed,
@@ -344,6 +331,34 @@ pub fn sandboxFor(
         else
             tool.config_json,
     };
+}
+
+/// Descriptor `fs_prefixes` plus any extra `agent.tools_dir` entries the
+/// plugins/tools guests need to list. Extra entries stay relative to the
+/// sandbox root: a host-absolute path is refused by `safeJoin` and so is
+/// only useful to `Registry.load` on the host, not to a guest walk.
+fn fsPrefixesFor(
+    arena: std.mem.Allocator,
+    tool: *const registry.Tool,
+    cfg: *const config_mod.Config,
+) ![]const []const u8 {
+    if (!std.mem.eql(u8, tool.name, "plugins") and !std.mem.eql(u8, tool.name, "tools")) {
+        return tool.fs_prefixes;
+    }
+    var out: std.ArrayList([]const u8) = .empty;
+    try out.appendSlice(arena, tool.fs_prefixes);
+    for (cfg.agent.tools_dir) |dir| {
+        if (dir.len == 0) continue;
+        var seen = false;
+        for (out.items) |have| {
+            if (std.mem.eql(u8, have, dir)) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen) try out.append(arena, dir);
+    }
+    return try out.toOwnedSlice(arena);
 }
 
 /// Builds the `config` object handed to an exec-capable tool, merging its
@@ -365,33 +380,10 @@ pub fn execPolicyConfig(
     try out.appendSlice(arena, ",\"exec_pattern_allow\":[");
     for (cfg.agent.exec_pattern_allow, 0..) |p, i| {
         if (i > 0) try out.append(arena, ',');
-        try appendJsonString(arena, &out, p);
+        try json_util.appendJsonString(arena, &out, p);
     }
     try out.appendSlice(arena, "]}");
     return out.toOwnedSlice(arena);
-}
-
-fn appendJsonString(arena: std.mem.Allocator, out: *std.ArrayList(u8), s: []const u8) !void {
-    try out.append(arena, '"');
-    for (s) |c| {
-        switch (c) {
-            '"' => try out.appendSlice(arena, "\\\""),
-            '\\' => try out.appendSlice(arena, "\\\\"),
-            '\n' => try out.appendSlice(arena, "\\n"),
-            '\r' => try out.appendSlice(arena, "\\r"),
-            '\t' => try out.appendSlice(arena, "\\t"),
-            0x08 => try out.appendSlice(arena, "\\b"),
-            0x0c => try out.appendSlice(arena, "\\f"),
-            0x00...0x07, 0x0b, 0x0e...0x1f => {
-                try out.appendSlice(arena, "\\u00");
-                const hex = "0123456789abcdef";
-                try out.append(arena, hex[c >> 4]);
-                try out.append(arena, hex[c & 0x0f]);
-            },
-            else => try out.append(arena, c),
-        }
-    }
-    try out.append(arena, '"');
 }
 
 fn appendNetworkAllow(
@@ -442,24 +434,6 @@ test "execPolicyConfig injects git_remote_ops and exec_pattern_allow for exec to
         "{\"git_remote_ops\":false,\"exec_pattern_allow\":[]}",
         out3,
     );
-}
-
-test "appendJsonString escapes all JSON control characters" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var out: std.ArrayList(u8) = .empty;
-    try appendJsonString(arena, &out, "a\x00b\x08c\x0cd\x1fe");
-    try std.testing.expectEqualStrings("\"a\\u0000b\\bc\\fd\\u001fe\"", out.items);
-
-    out.clearRetainingCapacity();
-    try appendJsonString(arena, &out, "\x01\x0b\x0e\x1f");
-    try std.testing.expectEqualStrings("\"\\u0001\\u000b\\u000e\\u001f\"", out.items);
-
-    out.clearRetainingCapacity();
-    try appendJsonString(arena, &out, "clean");
-    try std.testing.expectEqualStrings("\"clean\"", out.items);
 }
 
 test "sandboxFor adds web.allow only to research tools and keeps static hosts" {
@@ -655,16 +629,9 @@ fn parseCkLlmRequest(arena: std.mem.Allocator, raw: []const u8) ?CkLlmRequest {
     if (v.object.get("prompt")) |p| {
         if (p == .string) req.prompt = p.string;
     }
-    if (v.object.get("max_tokens")) |m| {
-        // Reject out-of-u32-range values instead of panicking in @intCast.
-        if (m == .integer and m.integer > 0 and m.integer <= std.math.maxInt(u32)) req.max_tokens = @intCast(m.integer);
-    }
-    if (v.object.get("provider")) |pn| {
-        if (pn == .string and pn.string.len > 0) req.provider = pn.string;
-    }
-    if (v.object.get("model")) |mn| {
-        if (mn == .string and mn.string.len > 0) req.model = mn.string;
-    }
+    req.max_tokens = json_util.pluginU32(v, "max_tokens");
+    req.provider = json_util.pluginStr(v, "provider");
+    req.model = json_util.pluginStr(v, "model");
     if (v.object.get("system")) |sp| {
         if (sp == .string and sp.string.len > 0) req.system = sp.string;
     }
@@ -747,7 +714,8 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         .max_tokens = max_tokens,
     }, &err_detail) catch |err| {
         const failed_ms = @divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(h.sandbox.io, .awake)).nanoseconds, std.time.ns_per_ms);
-        log.log(.warn, "[llm] ✗ ck_llm … {d}ms: {s} ({s})", .{ failed_ms, @errorName(err), err_detail orelse "" });
+        var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+        log.log(.warn, "[llm] ✗ ck_llm … {d}ms: {s} ({s})", .{ failed_ms, @errorName(err), redact.forLog(&log_detail_buf, err_detail orelse "") });
         return Err.network;
     };
     const content = resp.message.content orelse "";
@@ -882,9 +850,7 @@ pub fn ckLlmMany(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         if (s == .string and s.string.len > 0) system = s.string;
     }
     var max_tokens = access.max_tokens;
-    if (obj.get("max_tokens")) |m| {
-        if (m == .integer and m.integer > 0 and m.integer <= std.math.maxInt(u32)) max_tokens = @intCast(m.integer);
-    }
+    if (json_util.pluginU32(parsed, "max_tokens")) |mt| max_tokens = mt;
 
     const targets_val = obj.get("targets") orelse return Err.invalid;
     if (targets_val != .array) return Err.invalid;
@@ -1030,7 +996,7 @@ pub fn ckConfig(caller: *zwasm.Caller) u32 {
 /// JSON. Guests need this because a wasm32-freestanding module carries no
 /// TOML parser: reading config.toml's raw bytes directly only works for
 /// tools that just display the file (config_view's whole-dump path); a tool
-/// that needs structured fields (peers, providers, cmd_status, ask_user)
+/// that needs structured fields (peers, providers, status, ask_user)
 /// goes through the host, which already parsed it once at startup.
 pub fn ckHarnessConfig(caller: *zwasm.Caller) u32 {
     const h = getHost(caller);
@@ -1048,7 +1014,7 @@ pub fn ckHarnessConfig(caller: *zwasm.Caller) u32 {
     return h.writeResult(bytes, json_out);
 }
 
-const HarnessConfigAccess = enum { full, providers, peers, workflows, chains };
+const HarnessConfigAccess = enum { full, providers, peers, workflows, chains, tools_dir, kernel };
 
 /// ck_harness_config is a privileged structured view, independent of
 /// fs_prefixes. Grant each shipped caller only the section it consumes and
@@ -1064,9 +1030,11 @@ fn harnessConfigAccess(tool_name: []const u8) ?HarnessConfigAccess {
     // which one is free to judge, i.e. is not itself an entrant.
     if (std.mem.eql(u8, tool_name, "providers") or std.mem.eql(u8, tool_name, "arena") or
         std.mem.eql(u8, tool_name, "compare")) return .providers;
-    if (std.mem.eql(u8, tool_name, "peers") or std.mem.eql(u8, tool_name, "cmd_status") or std.mem.eql(u8, tool_name, "ask_user")) return .peers;
+    if (std.mem.eql(u8, tool_name, "peers") or std.mem.eql(u8, tool_name, "status") or std.mem.eql(u8, tool_name, "ask_user")) return .peers;
     if (std.mem.eql(u8, tool_name, "workflows")) return .workflows;
     if (std.mem.eql(u8, tool_name, "chain")) return .chains;
+    if (std.mem.eql(u8, tool_name, "plugins") or std.mem.eql(u8, tool_name, "tools")) return .tools_dir;
+    if (std.mem.eql(u8, tool_name, "kernel")) return .kernel;
     return null;
 }
 
@@ -1159,7 +1127,7 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
             }
         }
         try s.endObject();
-    } else if (access == .workflows or access == .chains) {
+    } else if (access == .workflows or access == .chains or access == .tools_dir) {
         try s.objectField("agent");
         try s.beginObject();
         if (access == .workflows) {
@@ -1169,6 +1137,14 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
         if (access == .chains) {
             try s.objectField("chains_dir");
             try s.write(cfg.agent.chains_dir);
+        }
+        if (access == .tools_dir) {
+            try s.objectField("tools_dir");
+            // One deterministic write/scaffold destination (plugins new).
+            try s.write(config_mod.firstToolsDir(cfg.agent.tools_dir));
+            try s.objectField("tools_dirs");
+            // Full scan list so /plugins and `tools list` match Registry.load.
+            try s.write(cfg.agent.tools_dir);
         }
         try s.endObject();
     }
@@ -1194,6 +1170,12 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
         try s.write(cfg.chatrooms);
         try s.objectField("tui");
         try s.write(cfg.tui);
+        try s.objectField("kernel");
+        try s.write(cfg.kernel);
+    }
+    if (access == .kernel) {
+        try s.objectField("kernel");
+        try s.write(cfg.kernel);
     }
 
     try s.endObject();
@@ -1400,6 +1382,105 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
 
 fn dockerAccessAllowed(sb: *const Sandbox) bool {
     return std.mem.eql(u8, sb.tool_self_name, "docker");
+}
+
+/// Privileged one-shot kernel eval. Import existing is not a grant: only the
+/// `kernel` guest may call this, and only when `kernel.enabled` is true.
+pub fn ckKernel(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
+    const h = getHost(caller);
+    if (!std.mem.eql(u8, h.sandbox.tool_self_name, "kernel")) {
+        log.log(.warn, "[sandbox] ck_kernel denied for tool '{s}'", .{h.sandbox.tool_self_name});
+        return Err.denied;
+    }
+    const cfg = h.sandbox.cfg orelse return Err.denied;
+    if (!cfg.kernel.enabled) return Err.denied;
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const json_input = sliceOf(bytes, ptr, len) orelse return Err.invalid;
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, json_input, .{}) catch return Err.invalid;
+    const obj = switch (parsed) {
+        .object => |o| o,
+        else => return Err.invalid,
+    };
+    const kind = switch (obj.get("kernel") orelse std.json.Value{ .string = "python" }) {
+        .string => |s| s,
+        else => "python",
+    };
+    const cell = switch (obj.get("cell") orelse return Err.invalid) {
+        .string => |s| s,
+        else => return Err.invalid,
+    };
+    if (!std.mem.eql(u8, kind, "python")) {
+        const msg = "{\"ok\":false,\"error\":\"js kernel not started: bun worker is still landing\"}";
+        return h.writeResult(bytes, msg);
+    }
+    const out = runPythonCell(h.sandbox, arena, cell) catch |err| {
+        const msg = std.fmt.allocPrint(arena, "{{\"ok\":false,\"error\":\"{s}\"}}", .{@errorName(err)}) catch
+            "{\"ok\":false,\"error\":\"kernel failed\"}";
+        return h.writeResult(bytes, msg);
+    };
+    return h.writeResult(bytes, out);
+}
+
+fn runPythonCell(sb: *const Sandbox, arena: std.mem.Allocator, cell: []const u8) ![]const u8 {
+    const script =
+        \\import ast, io, json, sys, traceback
+        \\src = sys.stdin.read()
+        \\stdout = io.StringIO()
+        \\stderr = io.StringIO()
+        \\result = None
+        \\ok = True
+        \\try:
+        \\    tree = ast.parse(src, mode="exec")
+        \\    body, last = (tree.body[:-1], tree.body[-1]) if tree.body else ([], None)
+        \\    g = {"__name__": "__main__"}
+        \\    if body:
+        \\        exec(compile(ast.Module(body=body, type_ignores=[]), "<cell>", "exec"), g, g)
+        \\    if last is not None:
+        \\        if isinstance(last, ast.Expr):
+        \\            result = eval(compile(ast.Expression(last.value), "<cell>", "eval"), g, g)
+        \\        else:
+        \\            exec(compile(ast.Module(body=[last], type_ignores=[]), "<cell>", "exec"), g, g)
+        \\except Exception:
+        \\    ok = False
+        \\    traceback.print_exc(file=stderr)
+        \\print(json.dumps({"ok": ok, "stdout": stdout.getvalue(), "stderr": stderr.getvalue(), "result": None if result is None else repr(result)}))
+    ;
+    var child = std.process.spawn(sb.io, .{
+        .argv = &.{ "python3", "-c", script },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    }) catch |err| switch (err) {
+        error.FileNotFound => return error.Python3NotFound,
+        else => return err,
+    };
+    defer child.kill(sb.io);
+    if (child.stdin) |stdin_file| {
+        var wbuf: [4096]u8 = undefined;
+        var writer = stdin_file.writer(sb.io, &wbuf);
+        writer.interface.writeAll(cell) catch {};
+        writer.interface.flush() catch {};
+        stdin_file.close(sb.io);
+        child.stdin = null;
+    }
+    var out: std.ArrayList(u8) = .empty;
+    if (child.stdout) |stdout_file| {
+        var rbuf: [8192]u8 = undefined;
+        var reader = stdout_file.reader(sb.io, &rbuf);
+        while (true) {
+            const chunk = reader.interface.peekGreedy(1) catch break;
+            try out.appendSlice(arena, chunk);
+            reader.interface.toss(chunk.len);
+            if (out.items.len > 512 * 1024) break;
+        }
+    }
+    _ = child.wait(sb.io) catch {};
+    if (out.items.len == 0) return error.Python3NotFound;
+    return out.items;
 }
 
 fn methodFromDockerInput(obj: std.json.ObjectMap) []const u8 {
@@ -1907,7 +1988,7 @@ fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
     // The janitor announces what it pruned into the room. Like the board it
     // ignores a failed chat call, so being denied here cost it its
     // announcements silently rather than failing the prune.
-    if (std.mem.eql(u8, tool_name, "cmd_janitor")) return std.mem.eql(u8, op, "send");
+    if (std.mem.eql(u8, tool_name, "janitor")) return std.mem.eql(u8, op, "send");
 
     const allowed_ops: ?[]const []const u8 = if (std.mem.eql(u8, tool_name, "chat_send"))
         &.{"send"}
@@ -2697,8 +2778,8 @@ fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
 pub fn appendLocked(io: std.Io, base: std.Io.Dir, rel: []const u8, data: []const u8) u32 {
     // Through the retrying create: racing creates of a not-yet-existing log
     // spuriously fail ENOENT on macOS, and mapping that to Err.invalid here
-    // silently dropped the append (filelock.createFileRetry has the story).
-    var file = filelock.createFileRetry(io, base, rel, .{ .truncate = false, .lock = .exclusive }) catch |err| switch (err) {
+    // silently dropped the append (file_lock.createFileRetry has the story).
+    var file = file_lock.createFileRetry(io, base, rel, .{ .truncate = false, .lock = .exclusive }) catch |err| switch (err) {
         error.NoSpaceLeft => return Err.too_large,
         else => return Err.invalid,
     };
@@ -3142,7 +3223,7 @@ pub const ExecDenial = union(enum) {
 /// argv passes.
 ///
 /// The second caller is the REPL's `!` shell escape
-/// (`src/tui/repl_vaxis.zig`): a line typed at the prompt is refused by
+/// (`src/tui/repl.zig`): a line typed at the prompt is refused by
 /// exactly the rules that refuse a tool, rather than by a second, drifting
 /// copy of them.
 pub fn execDenial(sb: *const Sandbox, cmd: []const u8, argv: []const []const u8) ?ExecDenial {
@@ -3208,7 +3289,7 @@ fn runsAShell(cmd: []const u8) bool {
 /// bump when APIs may have changed.  The search is a literal substring match
 /// (not fuzzy), so pass the shortest unambiguous fragment (e.g.
 /// "splitScalar" not "std.mem.splitScalar").  Do NOT use this for non-std
-/// symbols or project-internal code; use search_code / read_file instead.
+/// symbols or project-internal code; use repo_search / read_file instead.
 pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
     const h = getHost(caller);
     if (!std.mem.eql(u8, h.sandbox.tool_self_name, "std_api")) return Err.denied;
@@ -3373,6 +3454,7 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     linker.defineFuncCtx("env", "ck_swarm", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckSwarm) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_ask", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckAsk) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_docker", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckDocker) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_kernel", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckKernel) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_llm", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckLlm) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_llm_many", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckLlmMany) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_chat", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckChat) catch return Err.invalid;
@@ -4286,7 +4368,7 @@ fn isSecretDotenv(sub_path: []const u8) bool {
 }
 
 fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
-    if (sub_path[0..@min(sub_path.len, 1)].len > 0 and sub_path[0] == '/') return error.PathOutsideSandbox;
+    if (sub_path.len > 0 and sub_path[0] == '/') return safeJoinAbsolute(sb, sub_path);
     // .env is where the process loads API keys. env_allow exists so those
     // values never cross into guest memory via ck_env; reading the file
     // through ck_fs_* with fs_prefixes ["."] was the same leak by another
@@ -4349,6 +4431,34 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
         if (!allowed) return error.PathOutsideSandbox;
     }
     return std.fmt.allocPrint(sb.gpa, "{s}/{s}", .{ std.mem.trimEnd(u8, rootForPath(sb, sub_path), "/"), sub_path });
+}
+
+/// An absolute guest path is allowed only when some `fs_prefixes` entry is
+/// itself absolute and the path sits on or under that prefix. This is how a
+/// plugins/tools guest lists an out-of-tree `agent.tools_dir` without opening
+/// every host-absolute path.
+fn safeJoinAbsolute(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
+    if (isSecretDotenv(sub_path)) return error.PathOutsideSandbox;
+    var it = std.mem.splitScalar(u8, sub_path[1..], '/');
+    while (it.next()) |comp| {
+        if (comp.len == 0) return error.PathOutsideSandbox;
+        if (std.mem.eql(u8, comp, "..") or std.mem.eql(u8, comp, ".")) return error.PathOutsideSandbox;
+    }
+    var allowed = false;
+    for (sb.fs_prefixes) |p| {
+        if (p.len == 0 or p[0] != '/') continue;
+        const prefix = std.mem.trimEnd(u8, p, "/");
+        if (std.mem.eql(u8, sub_path, prefix)) {
+            allowed = true;
+            break;
+        }
+        if (std.mem.startsWith(u8, sub_path, prefix) and sub_path.len > prefix.len and sub_path[prefix.len] == '/') {
+            allowed = true;
+            break;
+        }
+    }
+    if (!allowed) return error.PathOutsideSandbox;
+    return sb.gpa.dupe(u8, sub_path);
 }
 
 test "secure filesystem paths refuse symlink escapes" {
@@ -5022,6 +5132,19 @@ test "safeJoin rejects escapes" {
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "a/../../b"));
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "a//b"));
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "other/foo.txt"));
+
+    var abs = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = "/tmp/sandbox",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"/home/user/.config/clanker/plugins"},
+        .environ_map = undefined,
+    };
+    const abs_ok = try safeJoin(&abs, "/home/user/.config/clanker/plugins/echo.tool.json");
+    defer std.testing.allocator.free(abs_ok);
+    try std.testing.expectEqualStrings("/home/user/.config/clanker/plugins/echo.tool.json", abs_ok);
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&abs, "/home/user/.config/clanker/secrets"));
     const ok = try safeJoin(&sb, "notes/foo.txt");
     defer std.testing.allocator.free(ok);
     try std.testing.expectEqualStrings("/tmp/sandbox/notes/foo.txt", ok);
@@ -5298,32 +5421,6 @@ test "a \".\" prefix authorizes the whole sandbox root" {
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&narrow, "src/main.zig"));
 }
 
-test "pluginStr and pluginU32 fall back to null on missing, empty, or wrong-typed fields" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"provider\":\"kimi\",\"model\":\"m1\",\"max_tokens\":512}", .{});
-    try std.testing.expectEqualStrings("kimi", pluginStr(v, "provider").?);
-    try std.testing.expectEqualStrings("m1", pluginStr(v, "model").?);
-    try std.testing.expect(pluginStr(v, "missing") == null);
-    try std.testing.expectEqual(@as(?u32, 512), pluginU32(v, "max_tokens"));
-
-    // Non-object values yield null for every key.
-    const arr = try std.json.parseFromSliceLeaky(std.json.Value, arena, "[1,2]", .{});
-    try std.testing.expect(pluginStr(arr, "provider") == null);
-    try std.testing.expect(pluginU32(arr, "max_tokens") == null);
-
-    // Empty strings and non-positive integers are treated as unset.
-    const bad = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"provider\":\"\",\"max_tokens\":0}", .{});
-    try std.testing.expect(pluginStr(bad, "provider") == null);
-    try std.testing.expect(pluginU32(bad, "max_tokens") == null);
-
-    // A value beyond u32 range must be ignored, not panic @intCast.
-    const huge = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"max_tokens\":9000000000}", .{});
-    try std.testing.expect(pluginU32(huge, "max_tokens") == null);
-}
-
 test "a tool cannot read an environment variable it was not allowed" {
     // The process environment holds this project's API keys. Before this the
     // env_allow field in a manifest was decorative and any guest could ask for
@@ -5419,6 +5516,8 @@ test "harness config access is scoped to each tool's consumed fields" {
     try std.testing.expectEqual(HarnessConfigAccess.peers, harnessConfigAccess("peers").?);
     try std.testing.expectEqual(HarnessConfigAccess.workflows, harnessConfigAccess("workflows").?);
     try std.testing.expectEqual(HarnessConfigAccess.chains, harnessConfigAccess("chain").?);
+    try std.testing.expectEqual(HarnessConfigAccess.tools_dir, harnessConfigAccess("plugins").?);
+    try std.testing.expectEqual(HarnessConfigAccess.tools_dir, harnessConfigAccess("tools").?);
     try std.testing.expect(harnessConfigAccess("unrelated") == null);
 
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -5454,6 +5553,14 @@ test "harness config access is scoped to each tool's consumed fields" {
     try std.testing.expect(std.mem.find(u8, peers, "instance") != null);
     try std.testing.expect(std.mem.find(u8, peers, "providers") == null);
     try std.testing.expect(std.mem.find(u8, peers, "agent") == null);
+
+    cfg.agent.tools_dir = &.{ "vendor/my-tools", "vendor/overrides" };
+    const tools_dir_json = try harnessConfigJSON(arena, &cfg, .tools_dir);
+    try std.testing.expect(std.mem.find(u8, tools_dir_json, "tools_dir") != null);
+    try std.testing.expect(std.mem.find(u8, tools_dir_json, "vendor/my-tools") != null);
+    try std.testing.expect(std.mem.find(u8, tools_dir_json, "vendor/overrides") != null);
+    try std.testing.expect(std.mem.find(u8, tools_dir_json, "providers") == null);
+    try std.testing.expect(std.mem.find(u8, tools_dir_json, "max_iterations") == null);
 
     const full = try harnessConfigJSON(arena, &cfg, .full);
     try std.testing.expect(std.mem.find(u8, full, "\"modules\"") != null);
@@ -5543,8 +5650,8 @@ test "ck_chat access covers every shipped caller, one op at a time" {
     try std.testing.expect(board_names >= 11);
 
     // The janitor announces what it pruned, and only that.
-    try std.testing.expect(chatAccessAllowed("cmd_janitor", "send"));
-    try std.testing.expect(!chatAccessAllowed("cmd_janitor", "history"));
+    try std.testing.expect(chatAccessAllowed("janitor", "send"));
+    try std.testing.expect(!chatAccessAllowed("janitor", "history"));
 
     // Fail closed for anything else, including a name that merely looks close.
     for ([_][]const u8{ "", "chat", "boardroom", "unrelated", "arena" }) |tool| {

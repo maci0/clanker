@@ -2,11 +2,11 @@
 
 ## Status
 
-Shipped. Sources of truth: `src/tools/manifest.zig` (the schema, the validator,
-the scaffold templates) and `src/tools/registry.zig` (the loader, which is what
+Shipped. Sources of truth: `src/toolhost/manifest.zig` (the schema, the validator,
+the scaffold templates) and `src/toolhost/registry.zig` (the loader, which is what
 the schema is derived from). Surfaces: CLI `clanker plugins list|validate|new`
 (`Command.plugins`, `cmdPlugins` in `src/cli.zig`), REPL `/plugins` and
-`GET/POST /api/plugins` (both unchanged, both still the `cmd_plugins` guest).
+`GET/POST /api/plugins` (both unchanged, both still the `plugins` guest).
 Reference doc: `docs/manifest.md`. Scope decision on distribution:
 `docs/adrs/0007-plugin-manifests-are-declarative-and-unsigned.md`.
 
@@ -112,7 +112,7 @@ skip path handles it with no new code. Reading a v2 file with v1 rules would
 mean registering a tool whose sandbox policy is not the one its author wrote,
 which is the failure the key exists to prevent.
 
-**The validator is pure.** `src/tools/manifest.zig` takes a filename and bytes
+**The validator is pure.** `src/toolhost/manifest.zig` takes a filename and bytes
 and returns a `Report` of `Finding{severity, key, message}`. No I/O, no
 dependency past `std`, so every rule is a unit test over a string literal. A
 malformed manifest is a finding and never an error return, so one bad file in a
@@ -147,7 +147,7 @@ for the existing one. It is the whole of the packaging slice: it makes
 
 **The CLI is one noun.** `plugins` was already the name of this surface in the
 REPL (`/plugins`) and over HTTP (`/api/plugins`), so `clanker plugins list`
-delegates to the same `cmd_plugins` guest rather than becoming a second
+delegates to the same `plugins` guest rather than becoming a second
 listing. `validate` and `new` are the new verbs. There is no `clanker manifest`
 or `clanker tool` competing for the same idea.
 
@@ -188,7 +188,7 @@ existing docs:
   bare-filename form now makes the "beside the manifest" reading true for the
   case that wanted it.
 - **`category` was undocumented.** Present in 82 of 93 manifests and read by the
-  `cmd_tools` and `cmd_plugins` guests for grouping, but absent from every
+  `tools` and `plugins` guests for grouping, but absent from every
   reference and from `registry.zig` entirely. Documented, including the part
   that surprises: the registry does not parse it.
 
@@ -234,23 +234,23 @@ existing docs:
 
 - [x] `manifest_version` parsed; absent means 1; unsupported is refused, not downgraded
 - [x] All 93 shipped manifests load unchanged and validate with zero errors and zero warnings, pinned by a test
-- [x] Pure validator in `src/tools/manifest.zig`, 11 unit tests, no I/O
+- [x] Pure validator in `src/toolhost/manifest.zig`, 11 unit tests, no I/O
 - [x] Findings carry the file and the offending key, and say what the key does or fails to do
 - [x] Fuel ceiling, `network_allow`/`fs_prefixes`/`exec_allow` shape, and the model-call declaration rule are all checked
-- [x] `clanker plugins list|validate|new`, with `list` delegating to the existing `cmd_plugins` guest
+- [x] `clanker plugins list|validate|new`, with `list` delegating to the existing `plugins` guest
 - [x] `validate` exits non-zero on errors, zero on warnings
 - [x] `plugins new` output builds under `zig build tools` and validates clean
 - [x] Bare `wasm` resolves beside its manifest; a path with a separator does not move
 - [x] `docs/manifest.md` written from the loader; three inaccurate claims in the old docs fixed
 - [x] Live-verified: a scaffolded tool was built, discovered through the lazy catalog, and called correctly by a real model run
 - [x] `zig build` / `zig build tools` / `zig build test` green
-- [ ] Out-of-tree loading verified end to end through `agent.tools_dir` (unit-tested at `Registry.load`; not exercised as a live run, because pointing `tools_dir` at a package replaces the built-in tools — see Non-goals)
+- [x] Out-of-tree loading verified end to end through `agent.tools_dir` (list form shipped in [PRD 0022](0022-out-of-tree-tools.md); unit-tested at `Registry.load`)
 
 ## Open questions / future work
 
-- **`agent.tools_dir` as a list: Moved to PRD 0022.** No longer an open ask
-  here. Design, acceptance criteria, and the `cmd_plugins` hardcoded-path fix
-  live in [PRD 0022 (out-of-tree tools)](0022-out-of-tree-tools.md).
+- **`agent.tools_dir` as a list: Shipped in PRD 0022.** A string or an array;
+  later-listed wins on a name collision. See
+  [PRD 0022 (out-of-tree tools)](0022-out-of-tree-tools.md).
 - **Should the validator run as part of `clanker gate`?** It is cheap and the
   tree is clean, so it would stay green — but it would also make the loader's
   forgiveness irrelevant inside this repo, which may be the point or may be a

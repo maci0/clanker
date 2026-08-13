@@ -1,6 +1,6 @@
 //! Execution graph: records how an agent run unfolded, each LLM call and
 //! tool invocation with timing, token usage, and outcome. `Agent.run` hands
-//! the assembled graph to the `cmd_graph` WASM tool once, at the end of the
+//! the assembled graph to the `graph` WASM tool once, at the end of the
 //! run, which persists it under `state/runs/<run-id>.json` and also renders
 //! it back (`clanker graph [run-id]` as an ASCII tree).
 

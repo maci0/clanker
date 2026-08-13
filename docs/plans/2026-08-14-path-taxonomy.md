@@ -124,12 +124,12 @@ git push origin main
 
 **Files:**
 - Rename smashed `src/util/*` per design table
-- `src/tui/repl_vaxis.zig` → `repl.zig`
+- `src/tui/repl.zig` → `repl.zig`
 - `src/tui/stats.zig` → `turn_stats.zig`
 - `src/agent/autolearn.zig` → `auto_learn.zig`
 - `src/research/autoresearch.zig` → `auto_research.zig`
 - `src/improve/inert.zig` → `inert_check.zig`
-- Update `@import` sites, `src/main.zig` comptime test registry, `build.zig` module names (`rawhttp` → `raw_http` if present)
+- Update `@import` sites, `src/main.zig` comptime test registry, `build.zig` module names (`raw_http` → `raw_http` if present)
 
 - [ ] **Step 1:** `git mv` files; update imports/module aliases
 - [ ] **Step 2:** `zig build` && `zig build test`

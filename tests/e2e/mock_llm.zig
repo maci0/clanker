@@ -10,7 +10,7 @@
 //! pending accept on stop) mirrors mock_server.zig's proven approach.
 
 const std = @import("std");
-const rawhttp = @import("rawhttp");
+const raw_http = @import("raw_http");
 
 pub const Server = struct {
     io: std.Io,
@@ -102,7 +102,7 @@ pub const Server = struct {
             if (n == 0) break;
             total.appendSlice(self.gpa, tmp[0..n]) catch break;
             if (total.items.len > (1 << 20)) break;
-            if (rawhttp.requestComplete(total.items)) break;
+            if (raw_http.requestComplete(total.items)) break;
         }
         var body: []const u8 = &.{};
         if (std.mem.indexOf(u8, total.items, "\r\n\r\n")) |hdr_end| body = total.items[hdr_end + 4 ..];
@@ -122,8 +122,8 @@ pub const Server = struct {
         const turn = self.script[@min(index, self.script.len - 1)];
         var hbuf: [4096]u8 = undefined;
         const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{turn.len}) catch return;
-        rawhttp.writeAllFd(stream.socket.handle, hdr);
-        rawhttp.writeAllFd(stream.socket.handle, turn);
+        raw_http.writeAllFd(stream.socket.handle, hdr);
+        raw_http.writeAllFd(stream.socket.handle, turn);
     }
 };
 

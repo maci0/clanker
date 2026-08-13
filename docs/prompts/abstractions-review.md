@@ -65,7 +65,7 @@ stdlib.
   - plain functions + structs
   - `anytype` / comptime only when the shape is clear
   - stdlib interfaces (`std.Io` vtable) when swappable I/O is needed
-  - the existing plugin/transform chain (`src/tools/registry.zig`,
+  - the existing plugin/transform chain (`src/toolhost/registry.zig`,
     descriptor `transform` key) for extensibility, not a second mechanism
 - **Streaming/loop-path abstractions must not allocate, hide unbounded
   growth, or force indirection on every token/iteration without need.**
@@ -88,7 +88,7 @@ Anything that **adds indirection or names a concept** above open code:
 |---|---|---|
 | **Stdlib use** | `std.Io.Dir`, `ArrayList`, `StringArrayHashMapUnmanaged` | Prefer; do not reimplement |
 | **Thin util** | `src/util/log.zig`, `src/util/dotenv.zig` | OK when 3+ call sites or one policy |
-| **Subsystem facade** | `src/agent/loop.zig` (`Agent`), `src/tools/registry.zig` (`Registry`), `src/config.zig` (`Config`) | OK for imports / public surface |
+| **Subsystem facade** | `src/agent/loop.zig` (`Agent`), `src/toolhost/registry.zig` (`Registry`), `src/config.zig` (`Config`) | OK for imports / public surface |
 | **Domain type** | `RunStats`, `ToolCall`, `MdStream`, `ProviderKind` | OK when it makes illegal states harder |
 | **Callback / hook** | `Agent.on_token`, `Agent.on_tool_call`, `Agent.on_tool_result` | OK at a real streaming/status boundary (REPL and `run` both consume the same three hooks; that's the proof they earned their keep) |
 | **Sandboxed extension point** | The WASM tool ABI (`ck_*` + `tools/manifests/*.tool.json`); the `transform` chain (`before`/`after`, `phase`+`order`) | **The one sanctioned instance**; no second mechanism |
@@ -174,7 +174,7 @@ fn compactMessages(messages: *std.ArrayList(types.Message), max_chars: usize) vo
 
 - `Agent.on_token` / `on_tool_call` / `on_tool_result`: one hook shape, three
   real consumers (REPL, `clanker run`, `clanker serve`'s `/api/run` stream)
-- `src/tools/registry.zig`: one place that knows how to discover, load, and
+- `src/toolhost/registry.zig`: one place that knows how to discover, load, and
   dispatch a tool, so `cli.zig`/`loop.zig` never open-code that
 - `src/agent/session.zig`: one session format, used by REPL `--session`,
   `run --session`, and `/api/run`'s `session` field
@@ -322,7 +322,7 @@ If you cannot name it without "Manager", "Helper", "Util2", "Base", rethink.
 | `src/llm/` | Provider adapters, SSE client | Tool dispatch, sandbox policy |
 | `src/sandbox/` | `ck_*` host functions, zwasm wrapper, policy | Agent-loop orchestration |
 | `src/agent/` | Agent loop, session store, system prompt, execution graphs | Raw socket/process I/O beyond what the loop needs |
-| `src/tools/` | Registry (discovery/dispatch), WASM build pipeline (protected) | Agent orchestration logic |
+| `src/toolhost/` | Registry (discovery/dispatch), WASM build pipeline (protected) | Agent orchestration logic |
 | `src/cli.zig` | Command dispatch, REPL/HTTP glue, streaming-status orchestration (spinner; feeds `src/tui/transcript.zig`'s `MdStream`) | A second tool-dispatch or session mechanism |
 | `src/improve/` | Self-improvement engine (protected) | - |
 | `src/gate/` | Deterministic verification | Anything that could grade its own change |

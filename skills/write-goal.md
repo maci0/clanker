@@ -1,16 +1,18 @@
 # Writing a goal
 
 When asked to write, define or set a goal (including `clanker goal "<intent>"`),
-interview first, then persist. A one-line intent never contains all five fields,
-and inventing them produces a goal that reads well and cannot be checked.
+draft first with `write_goal`, present the draft, and only then persist. A
+one-line intent never contains all five fields, and inventing them produces a
+goal that reads well and cannot be checked.
 
-Use `ask_user` for the forks where guessing wastes the work: what counts as
-done, which surface is in scope, whether existing behaviour may change. Concrete
-options, one question per fork. Skip what the intent already answers. When
-nobody answers (headless runs, the improve loop, sub-agents), write the goal
-anyway and record the assumption in `boundaries`.
+Call `write_goal` with the intent (and any workspace facts you already
+inspected). It asks only the material forks via `ask_user`, or records
+assumptions when nobody is reachable. It never writes `state/goals.json`.
 
-Then call the `goal` tool once:
+Present the returned markdown. Only after the user approves (or a headless
+run has no one to ask) call the `goal` tool once with the five fields.
+A well-formed goal carries these five fields
+(`objective, completion_criterion, proof, boundaries, stop_rule`):
 
 - `objective`: what will be true afterwards, not what you will do. "Runs survive
   a restart", not "add persistence to runs".

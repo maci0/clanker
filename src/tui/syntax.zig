@@ -1,6 +1,6 @@
 //! Dependency-free syntax highlighting for fenced code blocks, shared by the
 //! legacy REPL (ANSI via MdStream in transcript.zig) and the vaxis REPL
-//! (styled vaxis.Segment spans in repl_vaxis.zig). Both flavors share the
+//! (styled vaxis.Segment spans in repl.zig). Both flavors share the
 //! same hand-rolled tokenizer below.
 //!
 //! Scope is deliberately small: this colors the fenced code blocks an LLM
@@ -536,7 +536,7 @@ const writeSanitized = sanitize.writeSanitized;
 const sanitizeAlloc = sanitize.sanitizeAlloc;
 
 /// One full line of code highlighted straight to vaxis segments, for the
-/// cell-based renderer in repl_vaxis.zig. Controls are stripped per token;
+/// cell-based renderer in repl.zig. Controls are stripped per token;
 /// segment text borrows `line` unless it needed sanitizing (then it is
 /// `gpa`-owned, and the caller's arena lifetime covers it).
 pub fn spansVaxis(state: *State, style: *const Style, gpa: std.mem.Allocator, line: []const u8, out: *std.ArrayList(vaxis.Segment)) !void {

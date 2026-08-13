@@ -18,13 +18,12 @@ const std = @import("std");
 /// exactly this string so reviewers and the model agree on the shape.
 pub const field_list = "objective, completion_criterion, proof, boundaries, stop_rule";
 
-/// The directive given to the executing agent: draft the five fields, then
-/// persist through the `goal` tool. `write_goal` (a sandboxed guest) is what
-/// turns the intent into a draft; the `goal` tool itself stays a pure append.
+/// The directive given to the executing agent: draft via `write_goal`, then
+/// persist through the `goal` tool only after the draft is reviewable.
 pub const template =
-    "Design and persist a structured goal for: {s}\n" ++
+    "Design a structured goal for: {s}\n" ++
     "\n" ++
-    "Define all five fields ({s}) and call the goal tool to persist it.";
+    "Call write_goal first. Define all five fields ({s}). Present the draft, then call the goal tool to persist it.";
 
 /// Render the full task prompt for an intent. `alloc` is the caller's arena.
 pub fn task(alloc: std.mem.Allocator, intent: []const u8) ![]const u8 {
@@ -37,6 +36,7 @@ test "template carries the field list and the intent" {
     try std.testing.expect(std.mem.indexOf(u8, out, "a rough idea") != null);
     // The five fields appear, comma-separated, exactly once.
     try std.testing.expect(std.mem.count(u8, out, field_list) == 1);
+    try std.testing.expect(std.mem.indexOf(u8, out, "Call write_goal first") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "call the goal tool to persist it") != null);
 }
 
@@ -45,9 +45,11 @@ test "skills/write-goal.md stays in agreement with the field list" {
     // drifts from the code-rendered field list, the two surfaces disagree on
     // what a goal contains. Pin them together.
     const path = "skills/write-goal.md";
-    const skill = std.fs.cwd().readFileAlloc(std.testing.allocator, path, 1 << 20) catch
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const skill = std.Io.Dir.cwd().readFileAlloc(threaded.io(), path, std.testing.allocator, .limited(1 << 20)) catch
         return error.SkipZigTest; // not present in every cwd; gate runs in-repo
     defer std.testing.allocator.free(skill);
     try std.testing.expect(std.mem.indexOf(u8, skill, field_list) != null);
-    try std.testing.expect(std.mem.indexOf(u8, skill, "call the goal tool once") != null);
+    try std.testing.expect(std.mem.indexOf(u8, skill, "call the `goal` tool once") != null);
 }

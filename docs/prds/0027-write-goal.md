@@ -2,12 +2,12 @@
 
 ## Status
 
-Draft. No `write_goal` tool exists; nothing in `src/` or `tools/manifests/`
-names one. What does exist is `skills/write-goal.md` — 32 lines of prompt
-guidance folded into the system prompt by
-`src/agent/system_prompt.zig:338-376` — which tells the model to interview
-with `ask_user` and then call the `goal` tool. This PRD promotes that
-guidance into a capability with a fixed output contract.
+Shipped. The five-field list is the shipped one (`objective,
+completion_criterion, proof, boundaries, stop_rule`). `write_goal` drafts
+without persisting; `proof`/`stop_rule` now reach the run preamble;
+`goal_prompt` + the skill drive `write_goal` then `goal`. Sources of
+truth: `tools/zig/write_goal.zig`, `src/agent/goal_prompt.zig`,
+`src/cli.zig` (`GoalContext`).
 
 **`write-goal` and `goal` are different things and this PRD does not
 conflate them.** `goal` (`tools/zig/goal.zig`,
@@ -48,10 +48,10 @@ Premature completion and endless polishing are the same missing field seen
 from two sides — fix one without the other and the failure just moves.
 
 Clanker feels this concretely. `clanker goal "<intent>"` (`src/cli.zig:4134`)
-and `/goal <intent>` (`src/tui/repl_vaxis.zig:640`) both synthesize the same
+and `/goal <intent>` (`src/tui/repl.zig:640`) both synthesize the same
 literal prompt — *"Define all five fields (objective, completion_criterion,
 proof, boundaries, stop_rule) and call the goal tool to persist it"*
-(`src/cli.zig:4142`, `src/tui/repl_vaxis.zig:2201`) — and then hand the whole
+(`src/cli.zig:4142`, `src/tui/repl.zig:2201`) — and then hand the whole
 job to a normal turn. The quality bar for a goal lives in one duplicated
 string plus a skill file, with no structured intermediate anyone can inspect,
 reuse, or refuse. Whatever the model produces is appended to
@@ -123,7 +123,12 @@ rather than a style guide:
 | Execution loop | How should it iterate toward the criteria? | Agent stops at the first failed attempt |
 | Stop rule | When must it stop and report? | Agent forces past a real blocker, or grinds |
 
-**Which five is not decided.** The table above is six rows because the repo
+**Which five is decided: keep the shipped five.** The table above is six
+rows because an earlier draft framed a sixth `execution_loop`. That is
+not a persisted field. The closed list is `objective,
+completion_criterion, proof, boundaries, stop_rule`.
+
+**Historical note.** The table above is six rows because the repo
 disagrees with itself about the grouping. `skills/write-goal.md`,
 `goal.tool.json`, and both command prompts say the five are *objective,
 completion_criterion, proof, boundaries, stop_rule* — splitting end-state
@@ -269,7 +274,7 @@ the review moment the split exists to create.
    improve a draft nothing reads.
 3. Tool: `tools/zig/write_goal.zig` + `tools/manifests/write_goal.tool.json`
    (no `build.zig` edit — `build.zig:153-182` auto-discovers; no registry
-   edit — `src/tools/registry.zig:189` scans the manifest dir). Input
+   edit — `src/toolhost/registry.zig:189` scans the manifest dir). Input
    `{intent, context?, existing_goal?}`; output the structured record under
    the `{"ok":true,…}` envelope (`tools/zig/lib.zig:187`). No `fs_prefixes`
    — drafting writes nothing.
@@ -277,7 +282,7 @@ the review moment the split exists to create.
    replacing the current "interview then call `goal`" flow with "interview,
    draft, present, and only then hand to `goal` on approval".
 5. Deduplicate the two command prompts (`src/cli.zig:4142`,
-   `src/tui/repl_vaxis.zig:2201`) into one shared constant so the field list
+   `src/tui/repl.zig:2201`) into one shared constant so the field list
    cannot drift between surfaces again, then point both at the drafting step.
 6. Host-side type for the draft next to its consumer, matching house
    convention (`StoredGoal` at `src/cli.zig:8960`); flatten arrays to
@@ -322,7 +327,7 @@ the review moment the split exists to create.
   (`src/improve/retire.zig:60-75`, `:164`) and so tolerates schema growth by
   design. Undecided; see Design.
 - **The goal-designing prompt is duplicated verbatim.** `src/cli.zig:4142`
-  and `src/tui/repl_vaxis.zig:2201` hold the same string, including the field
+  and `src/tui/repl.zig:2201` hold the same string, including the field
   list. Changing the fields in one and not the other is a silent surface
   split. Fix: one shared constant (Implementation phase 5).
 - **PRD 0027 is absent from the inventory.** `docs/prds/README.md`'s table

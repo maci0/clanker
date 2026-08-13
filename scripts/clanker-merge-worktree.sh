@@ -45,12 +45,13 @@
 # does its own fast-forward/CAS step.
 
 set -euo pipefail
-cd "$(dirname "$0")"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
 
 info() { printf '==> %s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '2,/^$/!d; s/^# \?//p' "$0"; }
+usage() { sed -En '2,/^$/{s/^# ?//p;}' "$0"; }
 
 BASE=""
 MESSAGE=""

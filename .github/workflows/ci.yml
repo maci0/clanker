@@ -24,6 +24,11 @@ jobs:
     timeout-minutes: 30
     env:
       NO_COLOR: "1"
+      LC_ALL: C
+      TZ: UTC
+      # Fixed epoch so release and debug timestamps in artifacts do not vary
+      # with the calendar day the CI job ran.
+      SOURCE_DATE_EPOCH: "1704067200"
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -83,6 +88,11 @@ jobs:
     timeout-minutes: 30
     env:
       NO_COLOR: "1"
+      LC_ALL: C
+      TZ: UTC
+      # Fixed epoch so release and debug timestamps in artifacts do not vary
+      # with the calendar day the CI job ran.
+      SOURCE_DATE_EPOCH: "1704067200"
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

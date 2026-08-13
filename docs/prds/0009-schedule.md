@@ -95,13 +95,13 @@ system's own cron.
 
 **Store.** `state/schedule.json` is an array of entries, written pretty-printed
 so it can be read and edited by hand. Every read-modify-write goes through
-`store.Session`: it takes `util/filelock.zig` on `state/schedule.lock` — a lock
+`store.Session`: it takes `util/file_lock.zig` on `state/schedule.lock` — a lock
 file of its own, never the file being rewritten — and writes back through
 `util/atomic_write.zig`, exactly as `state/goals.json` and
 `state/notifications.jsonl` do. A concurrency test in `store.zig` spawns four
 threads doing ten read-modify-writes each and asserts all forty entries
 survive; without the lock this is the silent lost-update that motivated
-`filelock.zig` in the first place. `schedule list` reads without the lock, so
+`file_lock.zig` in the first place. `schedule list` reads without the lock, so
 printing a table cannot block behind a run that takes minutes.
 
 | Field | Meaning |
@@ -176,7 +176,7 @@ lock on `state/schedule/run-due.lock` for its whole duration. A second
 invocation prints `another 'schedule run-due' is still working` and exits 0 —
 not an error, because a per-minute cron overlapping a run that takes longer
 than a minute is the expected shape, and exiting non-zero would mail the
-operator about it every time. Deliberately not `util/runlock.zig`: that one
+operator about it every time. Deliberately not `util/run_lock.zig`: that one
 decides staleness by looking the owning pid up in `/proc`, which does not
 exist on macOS, so every lock there reads as abandoned and is taken over. A
 kernel-held flock needs no liveness check.
@@ -186,7 +186,7 @@ kernel-held flock needs no liveness check.
 `{ts, id, cron, task, trigger, due_at, skipped, ok, duration_ms, err}`.
 `trigger` is `"due"` or `"manual"`. `due_at` is the window that made it due,
 distinct from `ts` because cron granularity is a minute and `run-due` may be
-seconds late. Appends are serialised by the same `filelock` discipline and
+seconds late. Appends are serialised by the same `file_lock` discipline and
 trimmed oldest-first, on a line boundary, at 4 MiB. A removed entry's history
 stays: what ran is a fact about the past.
 

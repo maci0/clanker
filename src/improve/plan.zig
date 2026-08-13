@@ -138,7 +138,7 @@ test "parsePlan reads ideas, drops unreadable paths, caps the list" {
 
     const raw =
         \\{"ideas": [
-        \\  {"idea": "cache the tool registry between attempts", "files": ["src/tools/registry.zig", "../etc/passwd", "tools/ts/dist/x.wasm", "src/tools/registry.zig"]},
+        \\  {"idea": "cache the tool registry between attempts", "files": ["src/toolhost/registry.zig", "../etc/passwd", "tools/ts/dist/x.wasm", "src/toolhost/registry.zig"]},
         \\  {"idea": "   ", "files": ["src/cli.zig"]},
         \\  {"idea": "retry transient provider errors", "files": []},
         \\  {"idea": "third", "files": ["src/main.zig"]},
@@ -151,7 +151,7 @@ test "parsePlan reads ideas, drops unreadable paths, caps the list" {
     // The traversal and the committed-bytes path are dropped, the duplicate
     // is kept once.
     try std.testing.expectEqual(@as(usize, 1), ideas[0].files.len);
-    try std.testing.expectEqualStrings("src/tools/registry.zig", ideas[0].files[0]);
+    try std.testing.expectEqualStrings("src/toolhost/registry.zig", ideas[0].files[0]);
     // The blank idea is skipped entirely, so "retry ..." is second.
     try std.testing.expectEqualStrings("retry transient provider errors", ideas[1].text);
     try std.testing.expectEqual(@as(usize, 0), ideas[1].files.len);

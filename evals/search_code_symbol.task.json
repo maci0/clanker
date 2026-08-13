@@ -1,9 +1,9 @@
 {
-  "name": "search_code_symbol",
+  "name": "repo_search_symbol",
   "kind": "task",
-  "description": "search_code must find a symbol and say where it is. The answer asserted is a path rather than a count: a criterion of \"1\" is a substring of 10 and 21, so a wrong count passed. A path is unambiguous, and if it ever changes the eval should be updated deliberately rather than quietly matching something else.",
-  "prompt": "Use the search_code tool with engine 'rg' to search for the string 'parallel_tool_stack_floor_bytes' in path 'src'. Reply with only the path of the file that contains it, exactly as the tool reports it.",
-  "requires_tool": "search_code",
+  "description": "repo_search must find a symbol and say where it is. The answer asserted is a path rather than a count: a criterion of \"1\" is a substring of 10 and 21, so a wrong count passed. A path is unambiguous, and if it ever changes the eval should be updated deliberately rather than quietly matching something else.",
+  "prompt": "Use the repo_search tool with engine 'rg' to search for the string 'parallel_tool_stack_floor_bytes' in path 'src'. Reply with only the path of the file that contains it, exactly as the tool reports it.",
+  "requires_tool": "repo_search",
   "criteria": [
     {
       "includes": [

@@ -3,10 +3,10 @@
 const std = @import("std");
 const json = std.json;
 const log = @import("../util/log.zig");
-const filelock = @import("../util/filelock.zig");
+const file_lock = @import("../util/file_lock.zig");
 const atomic_write = @import("../util/atomic_write.zig");
-const ensuredir = @import("../util/ensuredir.zig");
-const inert = @import("inert.zig");
+const ensure_dir = @import("../util/ensure_dir.zig");
+const inert = @import("inert_check.zig");
 
 pub const Status = enum {
     accepted,
@@ -165,7 +165,7 @@ pub const History = struct {
         // Read-modify-write over the same file `append` serialises on, for
         // the same reason: a concurrent writer starting from the pre-flip
         // contents would resurrect the accepted status this just retired.
-        var guard = filelock.acquire(self.io, self.base, self.state_dir, "improvements", self.gpa);
+        var guard = file_lock.acquire(self.io, self.base, self.state_dir, "improvements", self.gpa);
         defer guard.release();
 
         const raw = self.dir().readFileAlloc(self.io, self.logPath(), self.gpa, .limited(1 << 24)) catch return 0;
@@ -300,15 +300,15 @@ pub const History = struct {
         /// one anyway would put guesses into the record the next run reads.
         class: ?inert.Class,
     ) !void {
-        ensuredir.ensureDir(self.base, self.io, self.state_dir) catch |err|
+        ensure_dir.ensureDir(self.base, self.io, self.state_dir) catch |err|
             log.log(.warn, "mkdir {s} failed: {t}", .{ self.state_dir, err });
-        ensuredir.ensureDir(self.base, self.io, self.history_dir) catch |err|
+        ensure_dir.ensureDir(self.base, self.io, self.history_dir) catch |err|
             log.log(.warn, "mkdir {s} failed: {t}", .{ self.history_dir, err });
 
         // Serialised: an improve run and the staged evals a gate spawns are
         // separate processes sharing this file, and a lost entry is a run the
         // next prompt never learns about.
-        var guard = filelock.acquire(self.io, self.base, self.state_dir, "improvements", self.gpa);
+        var guard = file_lock.acquire(self.io, self.base, self.state_dir, "improvements", self.gpa);
         defer guard.release();
 
         var out: std.Io.Writer.Allocating = .init(self.gpa);
@@ -375,7 +375,7 @@ pub const History = struct {
         for (files) |f| {
             const dst = try std.fmt.allocPrint(self.gpa, "{s}/{s}/{s}", .{ self.history_dir, id, f });
             defer self.gpa.free(dst);
-            ensuredir.ensureDir(self.base, self.io, dirName(dst)) catch {};
+            ensure_dir.ensureDir(self.base, self.io, dirName(dst)) catch {};
             copyFile(self.io, self.gpa, self.base, f, dst) catch |err| {
                 // A new file has no previous version to snapshot; that is not
                 // a failure and should not hide real snapshot problems.
