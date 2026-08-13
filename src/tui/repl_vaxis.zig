@@ -1677,6 +1677,10 @@ const Model = struct {
     history: std.ArrayList([]const u8) = .empty,
     hist_idx: usize = 0,
     hist_draft: []const u8 = "",
+    /// Readline-style text removed by Ctrl-U, Ctrl-K, or Ctrl-W. Ctrl-Y
+    /// reinserts it at the cursor; this is deliberately separate from the
+    /// system clipboard used by Ctrl-Shift-C/V.
+    kill_ring: std.ArrayList(u8) = .empty,
 
     /// Non-null while an OSC 52 clipboard read is awaited (some terminals
     /// answer on a delay, some never answer). A second paste shortcut while
@@ -2580,6 +2584,7 @@ const Model = struct {
             \\  Ctrl-C            stop the current turn, or quit when idle
             \\  Ctrl-Shift-C      copy the selection (or the input line)
             \\  Ctrl-Shift-V, Shift-Insert   paste from the system clipboard
+            \\  Ctrl-U/K/W, Ctrl-Y   kill to start/end/word, then yank
             \\  mouse wheel       scroll the transcript
             \\  mouse drag        select text in the transcript (copies on release)
         ;
@@ -3182,6 +3187,33 @@ const Model = struct {
                     self.awaiting_clipboard = true;
                     return ctx.consumeEvent();
                 }
+                // Keep readline editing separate from the system clipboard:
+                // Ctrl-U/K/W replace this session's kill ring, and Ctrl-Y
+                // yanks it at the cursor. TextField implements the deletions
+                // but has no kill ring of its own, so intercept them here.
+                if (key.matches('u', .{ .ctrl = true })) {
+                    try self.replaceKillRing(self.text_field.buf.firstHalf());
+                    self.text_field.deleteToStart();
+                    return ctx.consumeAndRedraw();
+                }
+                if (key.matches('k', .{ .ctrl = true })) {
+                    try self.replaceKillRing(self.text_field.buf.secondHalf());
+                    self.text_field.deleteToEnd();
+                    return ctx.consumeAndRedraw();
+                }
+                if (key.matches('w', .{ .ctrl = true })) {
+                    const before = try self.text_field.buf.dupe();
+                    defer self.text_field.buf.allocator.free(before);
+                    const old_cursor = self.text_field.byteOffsetToCursor();
+                    self.text_field.deleteWordBeforeWhitespace();
+                    const new_cursor = self.text_field.byteOffsetToCursor();
+                    try self.replaceKillRing(before[new_cursor..old_cursor]);
+                    return ctx.consumeAndRedraw();
+                }
+                if (key.matches('y', .{ .ctrl = true })) {
+                    try self.text_field.insertSliceAtCursor(self.kill_ring.items);
+                    return ctx.consumeAndRedraw();
+                }
                 if (key.matches('c', .{ .ctrl = true })) {
                     bridge_mutex.lockUncancelable(bridge_io);
                     const streaming = bridge_streaming;
@@ -3195,13 +3227,6 @@ const Model = struct {
                         ctx.quit = true;
                     }
                     return;
-                }
-                // Readline-style line kill, including what Ctrl+U removes:
-                // yanked by Ctrl+Y, the one emacs chord TextField doesn't
-                // already implement.
-                if (key.matches('y', .{ .ctrl = true })) {
-                    self.yankInputToClipboard(ctx) catch {};
-                    return ctx.consumeAndRedraw();
                 }
                 // REPL history recall.
                 if (key.matches(vaxis.Key.up, .{})) {
@@ -3363,14 +3388,9 @@ const Model = struct {
         if (input.len > 0) try ctx.copyToClipboard(input);
     }
 
-    /// Ctrl+Y: send the whole input line to the system clipboard, so the
-    /// kill ring TextField already maintains (Ctrl+U/Ctrl+K/Ctrl+W deletions)
-    /// and any typed-but-unsent text is one OSC 52 away from the outside
-    /// world.
-    fn yankInputToClipboard(self: *Model, ctx: *vxfw.EventContext) !void {
-        const input = self.text_field.buf.dupe() catch return;
-        defer self.text_field.buf.allocator.free(input);
-        if (input.len > 0) try ctx.copyToClipboard(input);
+    fn replaceKillRing(self: *Model, text: []const u8) !void {
+        self.kill_ring.clearRetainingCapacity();
+        try self.kill_ring.appendSlice(self.gpa, text);
     }
 
     /// Up: walk one entry older in the history. First step parks the live
@@ -5337,6 +5357,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // which means it has to be released explicitly.
     defer model.search_query.deinit(gpa);
     defer model.search_hits.deinit(gpa);
+    defer model.kill_ring.deinit(gpa);
 
     // From here on, log.log writes straight to stderr with no coordination
     // with vaxis's owned alt-screen buffer, unlike the old REPL where stray
