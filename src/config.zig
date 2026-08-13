@@ -2277,6 +2277,11 @@ test "agent.tools_dir accepts a string or an array" {
 
     try std.testing.expectEqual(@as(usize, 1), (Agent{}).tools_dir.len);
     try std.testing.expectEqualStrings("tools/manifests", (Agent{}).tools_dir[0]);
+    try std.testing.expectEqualStrings("tools/manifests", firstToolsDir(&.{}));
+    try std.testing.expectEqualStrings("a", firstToolsDir(&.{ "a", "b" }));
+    try std.testing.expectEqualStrings("(empty)", try toolsDirDisplay(arena, &.{}));
+    try std.testing.expectEqualStrings("only", try toolsDirDisplay(arena, &.{"only"}));
+    try std.testing.expectEqualStrings("a, b", try toolsDirDisplay(arena, &.{ "a", "b" }));
 }
 
 test "the providers-check timeout has a short default, a global key, and a per-provider override" {

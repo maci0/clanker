@@ -234,12 +234,9 @@ behavior). No per-directory `enabled` toggle (remove the entry from
 
 ## Known issues
 
-- An isolated `--worktree` run still cannot list a host-absolute
-  `tools_dir` that sits outside both the worktree and `shared_root`. The
-  host registry loads it; the plugins/tools guest walk is denied unless
-  that path is also granted as an `fs_prefixes` extra (which
-  `fsPrefixesFor` now does). Relative extra directories under the
-  checkout work as designed.
+- `toolDescriptorGate` still walks one staged-worktree directory and never
+  opens an extra `tools_dir` entry. That is the anti-cheat boundary, not a
+  loader bug: an out-of-tree plugin is not part of a promoted checkout.
 
 ## Failure modes
 
