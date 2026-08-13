@@ -793,12 +793,20 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     // `clanker chat --help` asks what the subcommands are, so a missing
     // subcommand is the question rather than the error. A pending_sub of ""
     // (providers, chat) is an optional subcommand with a documented default
-    // ("check", "rooms") and never errors; only a named one still pending
-    // (e.g. "list" for `clanker tools`) is mandatory.
+    // ("check", "rooms") and never errors. `clanker tools` defaults to the
+    // list the same way `clanker plugins` does. `clanker session` still
+    // needs `export`: the singular is not a listing (that is `sessions`).
     if (pending_sub) |sub| {
         if (sub.len > 0 and opts.command != .help) {
-            setDiag(diag, "<subcommand>");
-            return error.BadSubcommand;
+            if (opts.command == .tools_list) {
+                // Bare `clanker tools` is `clanker tools list`.
+            } else if (opts.command == .session_export) {
+                setDiag(diag, "export");
+                return error.MissingArg;
+            } else {
+                setDiag(diag, sub);
+                return error.BadSubcommand;
+            }
         }
     }
     // A flag the chosen command does not take is refused rather than ignored.
@@ -827,11 +835,11 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         return error.MissingArg;
     }
     if (opts.command == .revert and opts.task == null) {
-        setDiag(diag, "<id>");
+        setDiag(diag, "improvement id");
         return error.MissingArg;
     }
     if (opts.command == .session_export and opts.session == null) {
-        setDiag(diag, "<id>");
+        setDiag(diag, "conversation id");
         return error.MissingArg;
     }
     if (opts.command == .notify and opts.peer == null) {
@@ -1300,7 +1308,7 @@ const specs = [_]Spec{
     .{ .command = .session_export, .usage = "session export <id> [path]", .blurb = "write one conversation as a self-contained HTML file", .group = .inspect, .detail = "Writes state/exports/<id>.html unless a path is given. One file, no scripts and\nno external stylesheet, font or image, so it opens straight from file:// with no\nnetwork. Session text is model and tool output, so every field is HTML-escaped\non the way in; markup in a transcript renders as the characters that were typed.\n\nThere is deliberately no upload and no public URL. Sharing is copying the file." },
     .{ .command = .graph, .usage = "graph [run-id]", .blurb = "list runs, or draw one as a timeline", .group = .inspect, .detail = "With no argument, lists recorded runs (newest last). With a run id, renders\nthe execution graph as an ASCII timeline of LLM calls and tool invocations.\nThe web UI (clanker serve) shows the same graph interactively." },
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
-    .{ .command = .tools_list, .usage = "tools list", .blurb = "list the registered WASM tools", .group = .inspect },
+    .{ .command = .tools_list, .usage = "tools [list]", .blurb = "list the registered WASM tools", .group = .inspect },
     .{ .command = .plugins, .usage = "plugins [list|validate [path]|new <name>]", .blurb = "list plugins, check a manifest, or scaffold a new tool", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
     .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, caps it at\n                agent.provider_check_timeout_seconds, and ends with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the public models.dev directory by id/family\nfill <name>     print models.dev specs for a configured provider's models" },
 
@@ -11213,6 +11221,21 @@ test "history is the sessions alias people type first" {
     const opts = try parse(&.{ "clanker", "history" }, null);
     try std.testing.expectEqual(Command.sessions, opts.command);
     try std.testing.expectEqual(Command.sessions, commandForHelp("history").?);
+}
+
+test "bare tools lists, session without export names the next step" {
+    const tools = try parse(&.{ "clanker", "tools" }, null);
+    try std.testing.expectEqual(Command.tools_list, tools.command);
+    const listed = try parse(&.{ "clanker", "tools", "list" }, null);
+    try std.testing.expectEqual(Command.tools_list, listed.command);
+
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "session" }, &diag));
+    try std.testing.expectEqualStrings("export", diag);
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "session", "export" }, &diag));
+    try std.testing.expectEqualStrings("conversation id", diag);
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "revert" }, &diag));
+    try std.testing.expectEqualStrings("improvement id", diag);
 }
 
 test "stats table names the empty case and keeps columns aligned" {

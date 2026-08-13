@@ -146,7 +146,11 @@ fn runChecks(
         .{ "sandbox_root", cfg.agent.sandbox_root },
     }) |pair| {
         const present = dirExists(io, pair[1]);
-        rep.line(if (present) .ok else .fail, pair[0], pair[1]);
+        rep.line(
+            if (present) .ok else .fail,
+            pair[0],
+            if (present) pair[1] else try std.fmt.allocPrint(arena, "{s} missing; run `clanker setup`", .{pair[1]}),
+        );
     }
     rep.line(
         if (fileExists(io, cfg.agent.system_prompt_file)) .ok else .warn,

@@ -635,7 +635,7 @@ A line starting with `!` is a shell escape (see below), a line starting with `/`
 | `/workflows` | in-process | List reusable prompt workflows |
 | `/workflow <name> [args]` | in-process | Run a workflow (expands `{{args}}`, then runs it as a task) |
 | `/sessions` | `cmd_sessions` | List saved sessions |
-| `/graph` | `cmd_graph list` | List knowledge-graph entries |
+| `/graph` | `cmd_graph list` | List recorded runs (same as `clanker graph`) |
 | `/plugins` | `cmd_plugins` | List installed plugins. Takes no arguments — toggling is `POST /api/plugins` |
 | `/status` | `cmd_status` | Show configuration and state status |
 | `/theme [name]` | in-process | List or switch the color theme (`mocha`, `latte`, `tokyonight`, …) |
@@ -663,7 +663,7 @@ The commands it may run are the union of every registered tool's `exec_allow` (`
 
 Every agent run records an execution graph and writes it to `state/runs/run-<timestamp>.json` on exit (`src/agent/graph.zig`), unless `modules.graphs` is `false`.
 
-The REPL's `/graph` dispatches `cmd_graph` with the `list` argument (`command_registry`, `src/tui/repl_vaxis.zig`), so it prints **one line per recorded run**, not a single run's timeline. With nothing recorded yet it prints `(no runs yet — clanker run creates one)`.
+The REPL's `/graph` dispatches `cmd_graph` with the `list` argument (`command_registry`, `src/tui/repl_vaxis.zig`), so it prints **one line per recorded run**, not a single run's timeline. With nothing recorded yet it prints `(no runs yet; clanker run creates one)`.
 
 To render one run as an ASCII timeline, pass its id to the CLI — `clanker graph <run-id>` — which prints a header plus one line per node grouped by iteration:
 

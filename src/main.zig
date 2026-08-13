@@ -159,7 +159,24 @@ pub fn main(init: std.process.Init) !void {
                 cli.printUsageError(init.io, "unrecognized argument '{s}'; did you mean `{s}`?", .{ diag, suggestion })
             else
                 cli.printUsageError(init.io, "unrecognized argument '{s}'", .{diag}),
-            error.MissingArg => cli.printUsageError(init.io, "'{s}' needs a value", .{diag}),
+            error.MissingArg => if (std.mem.eql(u8, diag, "export"))
+                cli.printUsageError(init.io, "clanker session needs `export <id>`; to list conversations run `clanker sessions`", .{})
+            else if (std.mem.eql(u8, diag, "conversation id"))
+                cli.printUsageError(init.io, "clanker session export needs a conversation id; run `clanker sessions` for the list", .{})
+            else if (std.mem.eql(u8, diag, "improvement id"))
+                cli.printUsageError(init.io, "clanker revert needs an improvement id", .{})
+            else if (std.mem.eql(u8, diag, "<intent>"))
+                cli.printUsageError(init.io, "`clanker goal` needs an intent: clanker goal \"improve the REPL\"", .{})
+            else if (std.mem.eql(u8, diag, "<instructions>"))
+                cli.printUsageError(init.io, "`clanker improve-self` needs instructions", .{})
+            else if (std.mem.eql(u8, diag, "<peer>"))
+                cli.printUsageError(init.io, "`clanker notify` needs a peer name", .{})
+            else if (std.mem.eql(u8, diag, "<message>"))
+                cli.printUsageError(init.io, "`clanker notify` needs a message", .{})
+            else if (std.mem.eql(u8, diag, "<question>"))
+                cli.printUsageError(init.io, "`clanker arena` needs a question", .{})
+            else
+                cli.printUsageError(init.io, "'{s}' needs a value", .{diag}),
             error.BadIters => cli.printUsageError(init.io, "--iters wants a non-negative integer, got '{s}'", .{diag}),
             error.BadBudget => cli.printUsageError(init.io, "--budget wants a non-negative integer, got '{s}'", .{diag}),
             error.BadRounds => cli.printUsageError(init.io, "--rounds wants a non-negative integer, got '{s}'", .{diag}),

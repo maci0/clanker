@@ -99,7 +99,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     const fname = best orelse {
         if (args.len > 0) return lib.fail(out, "no such run");
-        try out.writeAll("{\"ok\":true,\"text\":\"(no runs yet — clanker run creates one)\"}");
+        try out.writeAll("{\"ok\":true,\"text\":\"(no runs yet; clanker run creates one)\"}");
         return;
     };
     const path = try std.fmt.allocPrint(lib.alloc, "state/runs/{s}", .{fname});
@@ -172,7 +172,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 /// each so a run id can be picked out and rendered.
 fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !void {
     if (names != .array or names.array.items.len == 0)
-        return lib.okText(out, "(no runs yet — clanker run creates one)");
+        return lib.okText(out, "(no runs yet; clanker run creates one)");
 
     var files: std.ArrayList([]const u8) = .empty;
     for (names.array.items) |item| {

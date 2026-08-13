@@ -233,6 +233,7 @@ var scrollTo = vendorScrollTo;
 var busy = false;
 var controller = null;
 var elapsedTimer = null;
+var runWaitLabel = "thinking";
 var sessionId = loadSession();
 
 function loadSession() {
@@ -984,9 +985,11 @@ function setBusy(next) {
 
 function startElapsed(startedAt) {
   stopElapsed();
-  elapsedTimer = window.setInterval(function () {
-    el.hint.textContent = "running… " + ((Date.now() - startedAt) / 1000).toFixed(1) + "s";
-  }, 200);
+  function tick() {
+    el.hint.textContent = runWaitLabel + " · " + ((Date.now() - startedAt) / 1000).toFixed(1) + "s";
+  }
+  tick();
+  elapsedTimer = window.setInterval(tick, 200);
 }
 
 function stopElapsed() {
@@ -1085,11 +1088,11 @@ function errorRecoveryHint(msg) {
   if (!msg) return "";
   var m = msg.toLowerCase();
   if (m.indexOf("401") !== -1 || m.indexOf("unauthorized") !== -1 || m.indexOf("authentication") !== -1)
-    return " (check API key; try clanker doctor)";
+    return " (check API key; run clanker doctor)";
   if (m.indexOf("429") !== -1 || m.indexOf("rate limit") !== -1 || m.indexOf("rate_limit") !== -1)
-    return " (rate limited; wait a moment or switch model)";
+    return " (rate limited; wait or switch model)";
   if (m.indexOf("not found") !== -1 || m.indexOf("model_not_found") !== -1)
-    return " (model not found; try a different model)";
+    return " (model not found; pick another in the model pill)";
   if (m.indexOf("timeout") !== -1 || m.indexOf("timed out") !== -1)
     return " (request timed out)";
   if (m.indexOf("onnection refused") !== -1 || m.indexOf("onnection reset") !== -1)
@@ -1775,6 +1778,7 @@ el.form.addEventListener("submit", function (e) {
   showCaret(turn, true);
   turn.root.setAttribute("data-live", "true");
   var startedAt = Date.now();
+  runWaitLabel = "thinking";
   startElapsed(startedAt);
   controller = new AbortController();
 
@@ -1803,8 +1807,8 @@ el.form.addEventListener("submit", function (e) {
     if (line.charCodeAt(0) === 1) {
       var evt;
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
-      if (evt.type === "tool_call") { addToolEvent(turn, evt.names, evt.calls); setTurnPhase(turn, "tool"); if(evt.names) pushLiveNode("tool", evt.names, evt.names, 0); bumpStatusTools(evt.calls); }
-      else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); if(evt.ms){
+      if (evt.type === "tool_call") { addToolEvent(turn, evt.names, evt.calls); setTurnPhase(turn, "tool"); if (evt.names) { runWaitLabel = "running " + evt.names; pushLiveNode("tool", evt.names, evt.names, 0); } bumpStatusTools(evt.calls); }
+      else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); runWaitLabel = "thinking"; if(evt.ms){
         var last = liveGraph.nodes[liveGraph.nodes.length-1]; if(last && last.kind==="tool") last.duration_ms = evt.ms;
       }}
       // The run's own private checklist (features/todos.js): pushed whenever a
