@@ -132,6 +132,7 @@ var el = {
   goalCriterion: document.getElementById("goal-criterion"),
   goalMaxIterations: document.getElementById("goal-max-iterations"),
   goalWorktree: document.getElementById("goal-worktree"),
+  worktreeMode: document.getElementById("worktree-mode"),
   goalsStatus: document.getElementById("goals-status"),
   goalAdd: document.getElementById("goal-add"),
   usage: document.getElementById("usage"),
@@ -1029,7 +1030,7 @@ function sendSteerChat() {
 }
 el.steerBtn.addEventListener("click", sendSteerChat);
 el.steerInput.addEventListener("keydown", function (e) {
-  if (e.key === "Enter") { e.preventDefault(); sendSteerChat(); }
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendSteerChat(); }
 });
 
 /* Each submitted task gets its own turn card, appended below the last —
@@ -1575,6 +1576,12 @@ function renderStatus(status) {
   var out = statusRenderInto(status, el);
   instanceName = out.instanceName;
   knownPeers = out.knownPeers;
+  var defaults = status && status.run_defaults;
+  if (defaults) {
+    window.clankerWorktreeDefault = !!defaults.webui_worktree;
+    if (el.worktreeMode) el.worktreeMode.checked = !!defaults.webui_worktree;
+    if (el.goalWorktree) el.goalWorktree.checked = !!defaults.goal_worktree;
+  }
 }
 
 function loadStatus() {
@@ -1874,6 +1881,7 @@ el.form.addEventListener("submit", function (e) {
       plan: isPlan,
       research: isResearch,
       max_iterations: noLimit ? 1000 : null,
+      worktree: !!(el.worktreeMode && el.worktreeMode.checked),
       knowledge: (typeof kbSelected !== "undefined" ? kbSelected.slice() : [])
     }),
     signal: controller.signal

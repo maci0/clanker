@@ -3200,6 +3200,10 @@ fn shouldIsolate(opts: Options, mode: config.WorktreeMode, cfg: *const config.Co
     // opts in regardless of `worktree`/`goal_worktree`; one left out (or an
     // empty list) keeps the historical default below.
     if (containsMode(cfg.agent.git_worktree_on, mode)) return true;
+    // An isolated CLI session is deliberately a compound default: it keeps
+    // its changes private and (at the resolveRunTask call site) declines the
+    // ambient active goal. Flags remain an escape hatch for either half.
+    if (mode == .run and cfg.agent.isolated_cli) return true;
     const def = if (opts.unattended or opts.goal != null)
         cfg.agent.goal_worktree
     else
@@ -3228,18 +3232,21 @@ test shouldIsolate {
     try std.testing.expect(!shouldIsolate(.{ .no_worktree = true }, .run, &force));
     // The default, opted out of.
     try std.testing.expect(!shouldIsolate(.{ .goal = "g1", .no_worktree = true }, .goal, &auto));
-    try std.testing.expect(!shouldIsolate(.{ .unattended = true, .no_worktree = true }, .schedule, &auto));
+    try std.testing.expect(!shouldIsolate(.{ .unattended = true, .no_worktree = true }, .goal, &auto));
     // Explicit --worktree wins over an explicit --no-worktree.
     try std.testing.expect(shouldIsolate(.{ .worktree = true, .no_worktree = true }, .run, &auto));
 
     // `git_worktree_on` names modes that isolate by default.
-    const listed = config.Config{ .agent = .{ .git_worktree_on = &.{ .goal, .schedule } } };
+    const listed = config.Config{ .agent = .{ .git_worktree_on = &.{ .goal, .webui } } };
     try std.testing.expect(shouldIsolate(.{}, .goal, &listed));
-    try std.testing.expect(shouldIsolate(.{ .unattended = true }, .schedule, &listed));
+    try std.testing.expect(shouldIsolate(.{ .unattended = true }, .goal, &listed));
     // A mode not named keeps the historical (auto) default: a typed run off.
     try std.testing.expect(!shouldIsolate(.{}, .run, &listed));
     // Explicit flag still beats the list.
     try std.testing.expect(!shouldIsolate(.{ .no_worktree = true }, .goal, &listed));
+    const isolated_cli = config.Config{ .agent = .{ .isolated_cli = true } };
+    try std.testing.expect(shouldIsolate(.{}, .run, &isolated_cli));
+    try std.testing.expect(!shouldIsolate(.{ .no_worktree = true }, .run, &isolated_cli));
 }
 
 fn cmdRun(init: std.process.Init, opts: Options) !void {
@@ -3308,7 +3315,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // where `git worktree add` cannot succeed at all.
     const isolation_required = opts.worktree;
     const mode: config.WorktreeMode = if (opts.unattended)
-        .schedule
+        .goal
     else if (opts.goal != null)
         .goal
     else
@@ -3397,13 +3404,17 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // Explicit `--goal <id>` wins; otherwise the newest active goal steers
     // the run automatically when the goal module is on (same rule the web UI
     // describes: the goal most recently set is what runs are steered toward).
+    // `--goal none` is the explicit escape hatch from ambient active-goal
+    // steering. It is intentionally a value (rather than a second flag) so
+    // scripts can substitute a goal id or `none` in one position.
+    const requested_goal = if (opts.goal) |id| if (std.mem.eql(u8, id, "none")) null else id else null;
     const resolved_task = try resolveRunTask(
         arena,
         io,
         std.Io.Dir.cwd(),
         opts.task.?,
-        opts.goal,
-        cfg.modules.goal and cfg.modules.goal_auto_steer and opts.goal == null,
+        requested_goal,
+        cfg.modules.goal and cfg.modules.goal_auto_steer and opts.goal == null and !cfg.agent.isolated_cli,
     );
     const task_text_ = resolved_task.task;
 
@@ -6452,6 +6463,9 @@ const RunRequestBody = struct {
     /// the goal. When empty and the goal module is on, the newest active
     /// goal steers the run automatically.
     goal: []const u8 = "",
+    /// Whether this one Web UI run receives a private worktree. Null means
+    /// use the configured default; false is the explicit checkbox opt-out.
+    worktree: ?bool = null,
     /// Images the composer attached to this task (multimodal runs).
     images: []const RunImage = &.{},
     /// Optional per-run overrides, the request-shaped equivalent of
@@ -7013,6 +7027,34 @@ fn setGoalStatusIf(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, goal_id:
         return;
     };
     log.log(.info, "goal '{s}' moved {s} -> {s} (run completed)", .{ goal_id, from, to });
+}
+
+/// Persist the concrete worktree branch on the goal as soon as a run is
+/// assigned one. This is deliberately server-side: a config-defaulted goal
+/// run has no checkbox write from the browser, but its card must still say
+/// where the work lives after a refresh or a later visit.
+fn markGoalWorktree(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, goal_id: []const u8, branch: []const u8) void {
+    var guard = file_lock.acquire(io, dir, "state", "goals", gpa);
+    defer guard.release();
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const raw = dir.readFileAlloc(io, goals_path, arena, .limited(1 << 20)) catch return;
+    const list = std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true }) catch return;
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    var hit = false;
+    for (list) |*g| {
+        if (!std.mem.eql(u8, g.id, goal_id)) continue;
+        g.worktree = branch;
+        g.updated = now;
+        hit = true;
+        break;
+    }
+    if (!hit) return;
+    var enc: std.Io.Writer.Allocating = .init(arena);
+    std.json.Stringify.value(list, .{ .emit_null_optional_fields = false }, &enc.writer) catch return;
+    atomic_write.writeFile(io, dir, goals_path, enc.written()) catch |err|
+        log.log(.warn, "goal '{s}' could not record worktree {s}: {s}", .{ goal_id, branch, @errorName(err) });
 }
 
 test "a finished run moves its goal to review, and only from active" {
@@ -10641,8 +10683,36 @@ fn handleStatus(cfg: *const config.Config, stream: std.Io.net.Stream) void {
         s.endObject() catch return;
     }
     s.endArray() catch return;
+    s.objectField("run_defaults") catch return;
+    s.beginObject() catch return;
+    s.objectField("webui_worktree") catch return;
+    s.write(cfg.agent.isolated_webui or containsMode(cfg.agent.git_worktree_on, .webui)) catch return;
+    s.objectField("goal_worktree") catch return;
+    s.write(containsMode(cfg.agent.git_worktree_on, .goal)) catch return;
+    s.endObject() catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", buf[0..w.end]);
+}
+
+/// Web UI worktree choice, shared by chat and goal-run requests. A checked or
+/// cleared checkbox is explicit; otherwise the Web UI / goal mode defaults
+/// are independent, so enabling goal isolation does not unexpectedly alter a
+/// normal chat.
+fn shouldWebuiIsolate(req: RunRequestBody, cfg: *const config.Config) bool {
+    if (req.worktree) |v| return v;
+    if (cfg.agent.isolated_webui or containsMode(cfg.agent.git_worktree_on, .webui)) return true;
+    return req.goal.len > 0 and containsMode(cfg.agent.git_worktree_on, .goal);
+}
+
+test shouldWebuiIsolate {
+    const plain = config.Config{};
+    try std.testing.expect(!shouldWebuiIsolate(.{}, &plain));
+    const web = config.Config{ .agent = .{ .git_worktree_on = &.{.webui} } };
+    try std.testing.expect(shouldWebuiIsolate(.{}, &web));
+    const goal = config.Config{ .agent = .{ .git_worktree_on = &.{.goal} } };
+    try std.testing.expect(shouldWebuiIsolate(.{ .goal = "g1" }, &goal));
+    try std.testing.expect(!shouldWebuiIsolate(.{ .goal = "g1", .worktree = false }, &goal));
+    try std.testing.expect(shouldWebuiIsolate(.{ .worktree = true }, &plain));
 }
 
 /// Whether a model can be handed image_url content blocks. A model that
@@ -10770,7 +10840,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         std.Io.Dir.cwd(),
         req.task,
         explicit_goal_id,
-        cfg.modules.goal and cfg.modules.goal_auto_steer and explicit_goal_id == null,
+        cfg.modules.goal and cfg.modules.goal_auto_steer and explicit_goal_id == null and !cfg.agent.isolated_webui,
     ) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"goal resolve failed\"}");
         return;
@@ -10853,7 +10923,55 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     }
 
-    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
+    // A Web UI request is served on its own thread, so changing the process
+    // cwd here would point every other request at this run's tree. Instead
+    // the copied config gives the agent's sandbox an absolute root while the
+    // server keeps reading sessions, goals and other shared state from the
+    // checkout. That is the same tracked/private versus untracked/shared
+    // split as cmdRun, without a global chdir race.
+    var run_cfg = cfg.*;
+    var wt: ?worktree_mod.Worktree = null;
+    defer if (wt) |*w| w.deinit(gpa);
+    if (shouldWebuiIsolate(req, cfg)) {
+        const root_z = std.process.currentPathAlloc(io, arena) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not read checkout path for worktree\"}");
+            return;
+        };
+        const root = arena.dupe(u8, root_z) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+            return;
+        };
+        const wt_id = std.fmt.allocPrint(gpa, "webui-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds}) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+            return;
+        };
+        defer gpa.free(wt_id);
+        const created = worktree_mod.createOn(gpa, io, wt_id, "clanker/webui-", .run) catch |err| {
+            log.log(.error_, "POST /api/run: worktree creation failed: {s}", .{@errorName(err)});
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not create isolated worktree\"}");
+            return;
+        };
+        run_cfg.agent.sandbox_root = created.path;
+        run_cfg.agent.shared_root = root;
+        wt = created;
+        if (resolved.goal_id) |gid| {
+            markGoalWorktree(io, gpa, std.Io.Dir.cwd(), gid, created.branch);
+            retire.register(gpa, io, std.Io.Dir.cwd(), .{
+                .path = created.path,
+                .branch = created.branch,
+                .base_branch = created.base_branch,
+                .goal_id = gid,
+                .created = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000)),
+            });
+        }
+        final_task = std.fmt.allocPrint(arena,
+            \\You are on a worktree run: this run lives in a separate git worktree on branch "{s}" (path {s}, based on "{s}"), isolated from the shared checkout. Make your edits, test, and commit here.
+            \\
+            \\{s}
+        , .{ created.branch, created.path, created.base_branch, final_task }) catch final_task;
+    }
+
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = &run_cfg };
     var provider = cfg.provider(if (req.provider.len > 0) req.provider else null) catch {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"no such provider\"}");
         return;
@@ -10893,11 +11011,26 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         provider_copy.models.put(arena, provider_copy.default_model, m) catch {};
     }
 
-    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
+    var run_dir = std.Io.Dir.cwd();
+    var run_dir_open = false;
+    if (wt) |w| {
+        run_dir = std.Io.Dir.cwd().openDir(io, w.path, .{}) catch |err| {
+            log.log(.error_, "POST /api/run: could not open worktree: {s}", .{@errorName(err)});
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"isolated worktree unavailable\"}");
+            return;
+        };
+        run_dir_open = true;
+    } else std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
         log.log(.warn, "run: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });
-    var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
+    defer if (run_dir_open) run_dir.close(io);
+    var reg = registry.Registry.load(io, arena, run_dir, cfg.agent.tools_dir) catch |err| {
         log.log(.error_, "POST /api/run: registry load failed: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tools registry unavailable\"}");
+        return;
+    };
+    if (wt != null) reg.rebaseWasmPaths(arena, run_cfg.agent.shared_root) catch |err| {
+        log.log(.error_, "POST /api/run: could not rebase worktree tools: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"isolated tool build unavailable\"}");
         return;
     };
     const tool_defs = reg.toToolDefs(arena) catch |err| {
@@ -10906,13 +11039,13 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     };
 
-    var a = agent.Agent.init(&ctx, arena, provider, cfg, &reg, tool_defs) catch |err| {
+    var a = agent.Agent.init(&ctx, arena, provider, &run_cfg, &reg, tool_defs) catch |err| {
         log.log(.error_, "POST /api/run: agent init failed: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"agent init failed\"}");
         return;
     };
     defer a.deinit();
-    a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
+    a.subagent_runner = if (run_cfg.modules.subagents) &subagent.runNested else null;
     // Plan mode makes the run a proposal: the agent loop refuses
     // write-capable tools and the system prompt says why, so the answer is
     // a plan the browser renders with an Apply action.

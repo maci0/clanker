@@ -253,7 +253,10 @@ repl_exec_allow = []
 # wins over both.
 # worktree = "auto"
 # goal_worktree = "auto"
-# git_worktree_on = []           # modes that isolate by default: run, goal, tui, schedule
+# git_worktree_on = []           # modes that isolate by default: run, goal, tui, webui
+# isolated_cli = false           # plain `clanker run`: no active-goal steering, own worktree
+# isolated_tui = false           # terminal REPL: own worktree for its session
+# isolated_webui = false         # Web UI chats: no active-goal steering, own worktree
 
 [instance]
 name = "clanker"

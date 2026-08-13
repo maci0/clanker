@@ -1656,8 +1656,9 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .slack-dialog::backdrop { background: rgba(0,0,0,.5); }
 .slack-dialog-form { padding: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
 .slack-dialog-form h3 { margin: 0; font-size: 16px; }
-.slack-dialog-form input { padding: 0.5rem; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--bg); color: var(--fg); font-size: 14px; }
-.slack-dialog-form input:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
+.slack-dialog-form input, .slack-dialog-form textarea { padding: 0.5rem; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--bg); color: var(--fg); font-size: 14px; }
+.slack-dialog-form input:focus-visible, .slack-dialog-form textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
+.ui-dialog-textarea { box-sizing: border-box; width: 100%; min-height: 6rem; max-height: 45vh; resize: vertical; line-height: 1.45; }
 .slack-dialog-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.5rem; }
 /* uiConfirm / uiPrompt (core/ui.js) reuse this dialog language for every
    confirmation and one-line input, replacing the browser's native chrome. */
@@ -2057,7 +2058,7 @@ button.tool-name:hover { color: var(--accent-text); }
   display: flex; gap: var(--space-3); align-items: center;
   padding: var(--space-2) var(--space-3); border-top: 1px solid var(--rule);
 }
-.goal-steer input { flex: 1; min-width: 0; }
+.goal-steer textarea { flex: 1; min-width: 0; min-height: 3.5rem; max-height: 8rem; resize: vertical; line-height: 1.4; }
 
 /* Chat-composer mid-run steering: one line in, shown only while a turn runs
    so the run can be course-corrected without waiting for it to finish. Same
@@ -2067,7 +2068,7 @@ button.tool-name:hover { color: var(--accent-text); }
   padding: var(--space-2) var(--space-3); border-top: 1px solid var(--rule);
 }
 .chat-steer[hidden] { display: none; }
-.chat-steer input { flex: 1; min-width: 0; }
+.chat-steer textarea { flex: 1; min-width: 0; min-height: 3.5rem; max-height: 8rem; resize: vertical; line-height: 1.4; }
 .chat-steer .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 dl { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 1rem; margin: 1.25rem 0 0; }

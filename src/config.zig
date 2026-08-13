@@ -303,8 +303,18 @@ pub const Agent = struct {
     /// by default (as if that mode's `worktree`/`goal_worktree` were `yes`);
     /// a mode left out keeps its historical default, and an empty list keeps
     /// every mode on those defaults. An explicit `--worktree`/`--no-worktree`
-    /// still wins over the list. Modes: `run`, `goal`, `tui`, `schedule`.
+    /// still wins over the list. Modes: `run`, `goal`, `tui`, `webui`.
     git_worktree_on: []const WorktreeMode = &.{},
+    /// Start plain `clanker run` calls as isolated work instead of attaching
+    /// the newest active goal. Isolation also defaults the run to a git
+    /// worktree; an explicit --goal/--no-worktree remains authoritative.
+    isolated_cli: bool = false,
+    /// Start the terminal REPL in its own worktree. A REPL has one live
+    /// conversation, so this protects every turn in that session.
+    isolated_tui: bool = false,
+    /// Start Web UI chat runs isolated by default: no implicit active-goal
+    /// steering and a private worktree. The checkbox can still opt a run out.
+    isolated_webui: bool = false,
 };
 
 /// Persistent eval kernels (PRD 0016). Off by default: a kernel is an
@@ -371,6 +381,9 @@ pub const AgentFields = struct {
     worktree: bool = false,
     goal_worktree: bool = false,
     git_worktree_on: bool = false,
+    isolated_cli: bool = false,
+    isolated_tui: bool = false,
+    isolated_webui: bool = false,
 };
 
 /// Who must approve a write-capable tool call before it runs.
@@ -381,7 +394,7 @@ pub const ConfirmWrites = enum { never, browser, always };
 /// goal/scheduled runs); `yes`/`no` force a default for that kind.
 pub const WorktreeDefault = enum { auto, yes, no };
 /// A session kind a `git_worktree_on` entry can name.
-pub const WorktreeMode = enum { run, goal, tui, schedule };
+pub const WorktreeMode = enum { run, goal, tui, webui };
 
 pub const Improve = struct {
     /// null (or 0 in the file) means the engine sizes the context from the
@@ -1371,8 +1384,8 @@ pub const Config = struct {
             "ask_timeout_seconds",       "confirm_writes",                 "provider_check_timeout_seconds",
             "fallback_provider",         "fallback_providers",             "auto_thinking",
             "thinking_classifier_model", "thinking_classifier_timeout_ms", "worktree",
-            "goal_worktree",
-            "git_worktree_on",
+            "goal_worktree",             "git_worktree_on",                "isolated_cli",
+            "isolated_tui",              "isolated_webui",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -1558,6 +1571,27 @@ pub const Config = struct {
             a.git_worktree_on = modes;
             f.git_worktree_on = true;
         }
+        if (obj.get("isolated_cli")) |k| {
+            a.isolated_cli = switch (k) {
+                .bool => |b| b,
+                else => return error.FieldNotBool,
+            };
+            f.isolated_cli = true;
+        }
+        if (obj.get("isolated_tui")) |k| {
+            a.isolated_tui = switch (k) {
+                .bool => |b| b,
+                else => return error.FieldNotBool,
+            };
+            f.isolated_tui = true;
+        }
+        if (obj.get("isolated_webui")) |k| {
+            a.isolated_webui = switch (k) {
+                .bool => |b| b,
+                else => return error.FieldNotBool,
+            };
+            f.isolated_webui = true;
+        }
         return .{ .agent = a, .fields = f };
     }
 
@@ -1593,6 +1627,9 @@ pub const Config = struct {
         if (fields.worktree) dst.worktree = src.worktree;
         if (fields.goal_worktree) dst.goal_worktree = src.goal_worktree;
         if (fields.git_worktree_on) dst.git_worktree_on = src.git_worktree_on;
+        if (fields.isolated_cli) dst.isolated_cli = src.isolated_cli;
+        if (fields.isolated_tui) dst.isolated_tui = src.isolated_tui;
+        if (fields.isolated_webui) dst.isolated_webui = src.isolated_webui;
     }
 
     fn applyModulesFields(dst: *Modules, src: Modules, fields: ModulesFields) void {
@@ -2262,7 +2299,7 @@ test "worktree and goal_worktree parse and default to auto" {
     try std.testing.expectError(error.WorktreeDefaultInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
 }
 
-test "agent.git_worktree_on parses per-mode list and rejects unknown modes" {
+test "agent.git_worktree_on and isolated defaults parse" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -2287,15 +2324,22 @@ test "agent.git_worktree_on parses per-mode list and rejects unknown modes" {
         \\provider = "ollama"
         \\
         \\[agent]
-        \\git_worktree_on = ["goal", "schedule"]
+        \\git_worktree_on = ["goal", "webui"]
+        \\isolated_cli = true
+        \\isolated_tui = false
+        \\isolated_webui = true
         \\
         ,
     });
     const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
-    try std.testing.expectEqualSlices(WorktreeMode, &.{ .goal, .schedule }, cfg.agent.git_worktree_on);
+    try std.testing.expectEqualSlices(WorktreeMode, &.{ .goal, .webui }, cfg.agent.git_worktree_on);
+    try std.testing.expect(cfg.agent.isolated_cli);
+    try std.testing.expect(!cfg.agent.isolated_tui);
+    try std.testing.expect(cfg.agent.isolated_webui);
 
     // Left out, the list defaults to empty (the historical per-run-kind behaviour).
     try std.testing.expectEqualSlices(WorktreeMode, &.{}, (Agent{}).git_worktree_on);
+    try std.testing.expect(!(Agent{}).isolated_cli);
 
     // An unknown mode fails the load rather than being silently ignored.
     try dir.writeFile(io, .{
