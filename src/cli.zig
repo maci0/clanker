@@ -10074,7 +10074,7 @@ fn providerVisionModel(p: *const config.Provider) ?[]const u8 {
 /// configured provider with one. Returns null when nothing can take the image.
 /// The copy's `default_model` is set to a vision-capable model of that provider.
 fn visionFallbackProvider(cfg: *const config.Config, current_name: []const u8, prefer: ?[]const u8) ?config.Provider {
-    const prefer_name = if (prefer) |p| p else cfg.agent.fallback_provider;
+    const prefer_name = if (prefer) |p| p else config.firstFallbackProvider(cfg.agent.fallback_providers);
     if (prefer_name.len > 0 and !std.mem.eql(u8, prefer_name, current_name)) {
         if (cfg.providers.getPtr(prefer_name)) |p| {
             if (providerVisionModel(p)) |m| {
@@ -12007,7 +12007,7 @@ test "visionFallbackProvider prefers the configured secondary then any other vis
     var cfg = config.Config{
         .providers = .empty,
         .default_provider = "deepseek",
-        .agent = .{ .fallback_provider = "kimi" },
+        .agent = .{ .fallback_providers = &.{"kimi"} },
     };
     try cfg.providers.put(arena, "deepseek", try config.Provider.single(arena, "deepseek", "https://api.deepseek.com", .openai_compat, "deepseek-v4-flash", .{ .capabilities = &.{ "thinking", "tool_use" } }));
     try cfg.providers.put(arena, "ollama", try config.Provider.single(arena, "ollama", "http://127.0.0.1:11434/v1", .openai_compat, "qwen3-vl", .{ .capabilities = &.{"image_in"} }));
@@ -12019,12 +12019,12 @@ test "visionFallbackProvider prefers the configured secondary then any other vis
     try std.testing.expect(imageAttachmentsSupported(preferred.activeModel()));
 
     // A per-run prefer (webui fallback_provider) overrides the configured one.
-    cfg.agent.fallback_provider = "kimi";
+    cfg.agent.fallback_providers = &.{"kimi"};
     const per_run = visionFallbackProvider(&cfg, "deepseek", "ollama").?;
     try std.testing.expectEqualStrings("ollama", per_run.name);
 
     // Without a configured fallback, the first other vision provider is picked.
-    cfg.agent.fallback_provider = "";
+    cfg.agent.fallback_providers = &.{};
     const first = visionFallbackProvider(&cfg, "deepseek", null).?;
     try std.testing.expectEqualStrings("ollama", first.name);
 

@@ -259,12 +259,18 @@ pub const Agent = struct {
     /// gated, whatever this says: a confirm nobody can answer would deny
     /// every write instead of protecting anything.
     confirm_writes: ConfirmWrites = .never,
-    /// Preferred secondary provider, used when the selected/default provider
-    /// cannot serve the request (e.g. an image attached to a model that does
-    /// not declare vision). When empty, the harness picks the first other
-    /// configured provider that can. Names a `[providers.<name>]` entry.
-    fallback_provider: []const u8 = "",
+    /// Ordered fallback providers, tried after the selected provider cannot
+    /// serve a request. Config accepts `fallback_provider` (string or array)
+    /// or `fallback_providers` (array); a bare string becomes one entry so
+    /// existing configs keep working. Empty means no reactive chain.
+    fallback_providers: []const []const u8 = &.{},
 };
+
+/// First configured fallback, used by the pre-emptive vision router. Empty
+/// when no chain is configured.
+pub fn firstFallbackProvider(dirs: []const []const u8) []const u8 {
+    return if (dirs.len > 0) dirs[0] else "";
+}
 
 /// First configured manifest directory, used by `plugins new` and similar
 /// "write into one place" surfaces. An empty list is treated as the in-tree
@@ -1239,7 +1245,7 @@ pub const Config = struct {
             "chains_dir",          "git_commit",              "git_remote_ops",
             "exec_pattern_allow",  "repl_exec_allow",         "seed",
             "ask_timeout_seconds", "confirm_writes",          "provider_check_timeout_seconds",
-            "fallback_provider",
+            "fallback_provider",   "fallback_providers",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -1384,8 +1390,8 @@ pub const Config = struct {
                 return error.ConfirmWritesInvalid;
             f.confirm_writes = true;
         }
-        if (obj.get("fallback_provider")) |k| {
-            a.fallback_provider = try jsonStr(k, "fallback_provider");
+        if (obj.get("fallback_providers") orelse obj.get("fallback_provider")) |k| {
+            a.fallback_providers = try jsonNameList(arena, k, "fallback_provider");
             f.fallback_provider = true;
         }
         return .{ .agent = a, .fields = f };
@@ -1416,7 +1422,7 @@ pub const Config = struct {
         if (fields.ask_timeout_seconds) dst.ask_timeout_seconds = src.ask_timeout_seconds;
         if (fields.provider_check_timeout_seconds) dst.provider_check_timeout_seconds = src.provider_check_timeout_seconds;
         if (fields.confirm_writes) dst.confirm_writes = src.confirm_writes;
-        if (fields.fallback_provider) dst.fallback_provider = src.fallback_provider;
+        if (fields.fallback_provider) dst.fallback_providers = src.fallback_providers;
     }
 
     fn applyModulesFields(dst: *Modules, src: Modules, fields: ModulesFields) void {
@@ -1627,11 +1633,12 @@ pub const Config = struct {
         };
     }
 
-    /// `agent.tools_dir` is a string or an array of strings. A bare string
-    /// becomes a one-element slice so every consumer only ever sees a list.
-    fn jsonToolsDir(arena: std.mem.Allocator, v: json.Value) ![]const []const u8 {
+    /// A string or an array of strings. A bare string becomes a one-element
+    /// slice so every consumer only ever sees a list.
+    fn jsonNameList(arena: std.mem.Allocator, v: json.Value, key: []const u8) ![]const []const u8 {
         switch (v) {
             .string => |s| {
+                if (s.len == 0) return &.{};
                 const one = try arena.alloc([]const u8, 1);
                 one[0] = s;
                 return one;
@@ -1639,14 +1646,20 @@ pub const Config = struct {
             .array => |arr| {
                 var out: std.ArrayList([]const u8) = .empty;
                 for (arr.items) |item| {
-                    const s = try jsonStr(item, "tools_dir[]");
+                    const s = try jsonStr(item, key);
                     if (s.len == 0) continue;
                     try out.append(arena, s);
                 }
                 return try out.toOwnedSlice(arena);
             },
-            else => return error.ToolsDirInvalid,
+            else => return error.NameListInvalid,
         }
+    }
+
+    /// `agent.tools_dir` is a string or an array of strings. A bare string
+    /// becomes a one-element slice so every consumer only ever sees a list.
+    fn jsonToolsDir(arena: std.mem.Allocator, v: json.Value) ![]const []const u8 {
+        return jsonNameList(arena, v, "tools_dir") catch error.ToolsDirInvalid;
     }
 
     fn jsonInt(v: json.Value, key: []const u8) !i64 {
@@ -1961,7 +1974,43 @@ test "agent.fallback_provider parses and is not reset by a partial local overrid
         \\
     });
     const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
-    try std.testing.expectEqualStrings("ollama", cfg.agent.fallback_provider);
+    try std.testing.expectEqual(@as(usize, 1), cfg.agent.fallback_providers.len);
+    try std.testing.expectEqualStrings("ollama", cfg.agent.fallback_providers[0]);
+    try std.testing.expectEqualStrings("ollama", firstFallbackProvider(cfg.agent.fallback_providers));
+}
+
+test "agent.fallback_providers accepts an array" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+        \\default_provider = "deepseek"
+        \\
+        \\[providers.deepseek]
+        \\base_url = "https://api.deepseek.com"
+        \\default_model = "deepseek-v4-flash"
+        \\
+        \\[models."deepseek/deepseek-v4-flash"]
+        \\provider = "deepseek"
+        \\capabilities = ["thinking", "tool_use"]
+        \\
+        \\[agent]
+        \\fallback_providers = ["ollama", "kimi-k3"]
+        \\
+    });
+    const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(@as(usize, 2), cfg.agent.fallback_providers.len);
+    try std.testing.expectEqualStrings("ollama", cfg.agent.fallback_providers[0]);
+    try std.testing.expectEqualStrings("kimi-k3", cfg.agent.fallback_providers[1]);
 }
 
 test "a config.local.json sibling is ignored: TOML is canonical" {

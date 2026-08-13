@@ -3995,7 +3995,7 @@ const Model = struct {
     /// the result, so a tall modal would only cover the thing being searched.
     fn drawSearchBar(self: *Model, surface: vxfw.Surface, rule_style: vaxis.Style, accent: vaxis.Style) void {
         if (surface.size.width < 12) return;
-        const h: u16 = 3;
+        const h: u16 = 4;
         const y = self.transcript_bottom -| h;
         clearBoxInterior(surface, 0, y, surface.size.width, h);
         drawBox(surface, 0, y, surface.size.width, h, rule_style);
@@ -4005,23 +4005,14 @@ const Model = struct {
         writeRowAt(surface, y + 1, &col, self.search_query.items, .{ .bold = true });
         writeRowAt(surface, y + 1, &col, "\xe2\x96\x8f", .{ .bold = true });
 
-        // Right-aligned state: which hit of how many, or that there are
-        // none. "no match" while typing is information, not an error, so it
-        // sits in the same slot rather than replacing the query.
-        const status: []const u8 = if (self.search_query.items.len == 0)
-            "Up/Down step \xc2\xb7 Enter stay \xc2\xb7 Esc back"
-        else if (self.search_hits.items.len == 0)
-            "no match"
-        else
-            std.fmt.bufPrint(&self.search_pos_buf, "{d}/{d} \xc2\xb7 Up/Down step \xc2\xb7 Esc back", .{
-                self.search_idx + 1,
-                self.search_hits.items.len,
-            }) catch "";
-        const w = width_mod.displayWidth(status);
-        if (w > 0 and surface.size.width > w + 4 and col + 2 < surface.size.width - w) {
-            var status_col: u16 = @intCast(surface.size.width - w - 2);
-            writeRowAt(surface, y + 1, &status_col, status, if (self.search_hits.items.len == 0 and self.search_query.items.len > 0) rule_style else accent);
-        }
+        const guide = searchGuide(
+            &self.search_pos_buf,
+            self.search_query.items.len == 0,
+            self.search_idx,
+            self.search_hits.items.len,
+            surface.size.width,
+        );
+        writeRow(surface, y + 2, guide, if (self.search_hits.items.len == 0 and self.search_query.items.len > 0) rule_style else accent);
     }
 
     /// Draws the ask/confirm modal, same box style and position as the
@@ -4337,6 +4328,24 @@ fn askGuide(kind: AskKind, width: u16) []const u8 {
     return if (width >= 3) "Esc" else "";
 }
 
+fn searchGuide(buf: []u8, query_empty: bool, hit_index: usize, hit_count: usize, width: u16) []const u8 {
+    const full = if (query_empty)
+        "  type to search · Up/Down step · Enter stay · Esc back"
+    else if (hit_count == 0)
+        "  no match · type or Backspace to edit · Esc back"
+    else
+        std.fmt.bufPrint(buf, "  {d}/{d} · Up/Down step · Enter stay · Esc back", .{ hit_index + 1, hit_count }) catch "";
+    if (width_mod.displayWidth(full) <= width) return full;
+    const compact = if (query_empty)
+        "  type to search · Esc back"
+    else if (hit_count == 0)
+        "  no match · Esc back"
+    else
+        std.fmt.bufPrint(buf, "  {d}/{d} · Esc back", .{ hit_index + 1, hit_count }) catch "";
+    if (width_mod.displayWidth(compact) <= width) return compact;
+    return if (width >= width_mod.displayWidth("  Esc back")) "  Esc back" else "";
+}
+
 fn pickerHeight(count: usize, max_rows: u16) u16 {
     const rows_shown: u16 = @intCast(@min(count, max_rows));
     return @max(rows_shown, 1) + 4;
@@ -4393,6 +4402,24 @@ test "ask and confirmation guides preserve a safe exit" {
         }
     }
     try std.testing.expect(std.mem.find(u8, askGuide(.confirm, 80), "Ctrl-C deny and stop") != null);
+}
+
+test "search guides preserve state and recovery at constrained widths" {
+    for ([_]u16{ 12, 20, 32, 48, 80 }) |width| {
+        var buf: [96]u8 = undefined;
+        for ([_]struct { empty: bool, index: usize, count: usize }{
+            .{ .empty = true, .index = 0, .count = 0 },
+            .{ .empty = false, .index = 0, .count = 0 },
+            .{ .empty = false, .index = 2, .count = 7 },
+        }) |state| {
+            const guide = searchGuide(&buf, state.empty, state.index, state.count, width);
+            try std.testing.expect(width_mod.displayWidth(guide) <= width);
+            try std.testing.expect(std.mem.find(u8, guide, "Esc back") != null);
+        }
+    }
+    var buf: [96]u8 = undefined;
+    try std.testing.expect(std.mem.find(u8, searchGuide(&buf, false, 2, 7, 80), "3/7") != null);
+    try std.testing.expect(std.mem.find(u8, searchGuide(&buf, false, 0, 0, 32), "no match") != null);
 }
 
 test "empty picker reserves separate result and guide rows" {
