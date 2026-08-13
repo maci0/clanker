@@ -25,6 +25,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   third-party plugin can live beside the built-in tools instead of replacing
   them. Later-listed wins on a name collision; a missing directory warns and
   continues. Existing `tools_dir = "tools/manifests"` configs are unchanged.
+- `agent.fallback_provider` is now an ordered list (`fallback_providers`
+  also accepted). After the selected provider exhausts its own retries with
+  no content delivered, the next configured name is tried. A bare string
+  still means one fallback. Vision routing stays pre-emptive and unchanged.
 
 ### Changed
 
