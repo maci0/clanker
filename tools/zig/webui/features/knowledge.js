@@ -76,10 +76,48 @@ export function loadKnowledge(){
     updateHint(); refreshBadge();
   }).catch(function(err){ if(status) status.textContent="Could not load knowledge: "+err.message; });
 }
+/* Folder-linked collections: which server-side folder a collection mirrors.
+   The link lives in this browser (localStorage) rather than in the
+   collection itself — the sync endpoint is stateless, and the collection's
+   own schema stays untouched. */
+var syncOpenId = null;
+function savedSyncPath(id){ try { return window.localStorage.getItem("clanker.kbSync." + id) || ""; } catch(_){ return ""; } }
+function rememberSyncPath(id, path){ try { window.localStorage.setItem("clanker.kbSync." + id, path); } catch(_){} }
+function showSyncRow(id){
+  var row = document.getElementById("knowledge-sync-row");
+  var input = document.getElementById("knowledge-sync-path");
+  if(!row || !input) return;
+  syncOpenId = id;
+  input.value = savedSyncPath(id);
+  row.hidden = false;
+}
+function runFolderSync(){
+  var input = document.getElementById("knowledge-sync-path");
+  var prune = document.getElementById("knowledge-sync-prune");
+  var btn = document.getElementById("knowledge-sync-btn");
+  var status = document.getElementById("knowledge-status");
+  if(!syncOpenId || !input) return;
+  var path = input.value.trim();
+  if(!path){ if(status) status.textContent = "Enter the folder path on the server."; return; }
+  rememberSyncPath(syncOpenId, path);
+  btn.disabled = true;
+  fetch("/api/knowledge/"+encodeURIComponent(syncOpenId)+"/sync", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ path: path, prune: !!(prune && prune.checked) })
+  }).then(function(r){ return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||("HTTP "+r.status)); return d; }); })
+    .then(function(d){
+      if(status) status.textContent = "Synced " + d.synced + " document(s)" + (d.removed ? ", removed " + d.removed : "") + (d.skipped ? ", skipped " + d.skipped : "") + ".";
+      openCollection(syncOpenId); loadKnowledge();
+    })
+    .catch(function(err){ if(status) status.textContent = "Sync failed: " + err.message; })
+    .finally(function(){ btn.disabled = false; });
+}
+
 function openCollection(id){
   fetch("/api/knowledge/"+encodeURIComponent(id)).then(function(r){return r.json();}).then(function(data){
     var detail=document.getElementById("knowledge-detail"); if(!detail) return;
     detail.hidden=false; detail.textContent="";
+    showSyncRow(id);
     var head=document.createElement("div"); head.className="run-detail-head";
     var t=document.createElement("span"); t.className="run-detail-title"; t.textContent=data.title||id; head.appendChild(t);
     var share=document.createElement("button"); share.type="button"; share.className="secondary"; share.textContent="Copy link"; share.style.marginLeft="0.5rem";
@@ -142,6 +180,8 @@ function deleteCollection(id,title){
   });
 }
 export function bindKnowledge(){
+  var syncBtn=document.getElementById("knowledge-sync-btn");
+  if(syncBtn) syncBtn.addEventListener("click", runFolderSync);
   var createBtn=document.getElementById("knowledge-create");
   var titleInput=document.getElementById("knowledge-title");
   var descInput=document.getElementById("knowledge-desc");

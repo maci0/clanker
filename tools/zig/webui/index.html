@@ -76,6 +76,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <button type="button" class="rail-tab" role="tab" id="tab-compare" aria-controls="view-compare" aria-selected="false" tabindex="-1" data-view="compare">Compare</button>
     <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
     <p class="rail-group" role="presentation">Set up</p>
+    <button type="button" class="rail-tab" role="tab" id="tab-models" aria-controls="view-models" aria-selected="false" tabindex="-1" data-view="models">Models</button>
     <button type="button" class="rail-tab" role="tab" id="tab-knowledge" aria-controls="view-knowledge" aria-selected="false" tabindex="-1" data-view="knowledge">Knowledge</button>
     <button type="button" class="rail-tab" role="tab" id="tab-prompts" aria-controls="view-prompts" aria-selected="false" tabindex="-1" data-view="prompts">Prompts</button>
     <button type="button" class="rail-tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
@@ -536,6 +537,32 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
 
   </div>
+  <div class="view" id="view-models" role="tabpanel" aria-labelledby="tab-models" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Models</h2>
+        <button type="button" class="secondary" id="models-refresh">Refresh</button>
+      </div>
+      <p class="meta">What each configured provider offers, and the public models.dev directory for discovering models to add to config.toml.</p>
+      <h3 class="detail-head">Configured</h3>
+      <div id="models-configured"></div>
+      <h3 class="detail-head" style="margin-top: var(--space-5);">Live from provider</h3>
+      <div class="transcript-tools">
+        <label for="models-live-provider">Provider</label>
+        <select id="models-live-provider"></select>
+        <button type="button" class="secondary" id="models-live-btn">List models</button>
+      </div>
+      <div id="models-live-out" style="margin-top: var(--space-3);"></div>
+      <h3 class="detail-head" style="margin-top: var(--space-5);">Discover (models.dev)</h3>
+      <div class="transcript-tools">
+        <label for="models-catalog-q">Search</label>
+        <input type="search" id="models-catalog-q" placeholder="e.g. kimi, deepseek, gemma…" autocomplete="off">
+        <button type="button" class="secondary" id="models-catalog-btn">Search</button>
+      </div>
+      <div id="models-catalog-out" style="margin-top: var(--space-3);"></div>
+      <p class="sr-only" id="models-status" role="status" aria-live="polite"></p>
+    </section>
+  </div>
   <div class="view" id="view-knowledge" role="tabpanel" aria-labelledby="tab-knowledge" tabindex="-1" hidden>
     <section>
       <div class="section-head">
@@ -556,6 +583,18 @@ lamps carry further). The seven named palettes ride the same tokens.
         <button type="button" class="secondary" id="knowledge-search-btn">Search</button>
       </div>
       <div id="knowledge-search-out" style="margin-top: 0.5rem;"></div>
+      <!-- Folder-linked collections: mirror a server-side folder's text files
+           into the selected collection. The path is a path on the machine
+           running `clanker serve`, not this browser. -->
+      <div class="transcript-tools" id="knowledge-sync-row" style="margin-top: var(--space-3);" hidden>
+        <label for="knowledge-sync-path">Linked folder</label>
+        <input type="text" id="knowledge-sync-path" placeholder="/path/on/server/docs" autocomplete="off">
+        <label class="checkbox-row" for="knowledge-sync-prune" title="Also remove synced documents whose files no longer exist in the folder">
+          <input type="checkbox" id="knowledge-sync-prune">
+          <span>Prune missing</span>
+        </label>
+        <button type="button" class="secondary" id="knowledge-sync-btn">Sync changes</button>
+      </div>
       <div id="knowledge-list" style="margin-top: var(--space-5);"></div>
       <div id="knowledge-detail" class="run-detail" role="region" aria-label="Collection detail" hidden></div>
       <p class="sr-only" id="knowledge-status" role="status" aria-live="polite"></p>
@@ -809,6 +848,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 <script type="module" src="/webui/features/knowledge.js"></script>
 <script type="module" src="/webui/features/prompts.js"></script>
 <script type="module" src="/webui/features/todos.js"></script>
+<script type="module" src="/webui/features/models.js"></script>
 <script type="module" src="/webui/app.js"></script>
 </body>
 </html>

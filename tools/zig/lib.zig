@@ -406,6 +406,15 @@ pub fn nowSeconds() f64 {
     return @as(f64, @floatFromInt(ck_now())) / 1e9;
 }
 
+/// Nanoseconds since the Unix epoch, raw. The entropy source for anything
+/// that must be unique across invocations: with agent.seed pinned (the
+/// default is 0, for reproducible runs), `random()` draws the same sequence
+/// in every fresh instantiation of the same tool, so an id built from
+/// randomness alone collides with the id the previous call generated.
+pub fn nowNanos() u64 {
+    return ck_now();
+}
+
 pub const HostError = error{ SandboxDenied, NoAccess, TooLarge, NetworkError, InvalidArg };
 
 fn hostResult(rc: u32) HostError![]const u8 {

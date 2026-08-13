@@ -1926,6 +1926,43 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
 /// by hand.
 const models_dev_url = "https://models.dev/api.json";
 
+/// Where the catalog body is cached on disk, and for how long a cached copy
+/// answers instead of re-downloading. The catalog runs to several MB and
+/// changes on the order of days, so every CLI invocation re-fetching it was
+/// pure waste; 24h keeps pricing/context data fresh enough for what it feeds
+/// (config authoring, discovery browsing), and a stale-but-present cache
+/// also answers when models.dev is unreachable.
+const models_dev_cache_path = "state/cache/models-dev.json";
+const models_dev_cache_ttl_ns: i128 = 24 * std.time.ns_per_hour;
+
+/// The models.dev catalog body, from the disk cache when fresh, the network
+/// otherwise (writing the cache back), and a stale cache as the fallback when
+/// the network fails. Never errors while any copy exists.
+fn fetchModelsDevCached(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator) ![]const u8 {
+    const cwd = std.Io.Dir.cwd();
+    const fresh: bool = blk: {
+        const st = cwd.statFile(io, models_dev_cache_path, .{}) catch break :blk false;
+        const now = std.Io.Timestamp.now(io, .real).nanoseconds;
+        break :blk now - st.mtime.nanoseconds < models_dev_cache_ttl_ns;
+    };
+    if (fresh) {
+        if (cwd.readFileAlloc(io, models_dev_cache_path, arena, .limited(64 * 1024 * 1024))) |cached| {
+            if (cached.len > 0) return cached;
+        } else |_| {}
+    }
+    const body = httpGet(io, gpa, arena, models_dev_url, null) catch |err| {
+        // Network down: a stale catalog still answers better than an error.
+        if (cwd.readFileAlloc(io, models_dev_cache_path, arena, .limited(64 * 1024 * 1024))) |cached| {
+            if (cached.len > 0) return cached;
+        } else |_| {}
+        return err;
+    };
+    cwd.createDirPath(io, "state/cache") catch {};
+    atomic_write.writeFile(io, cwd, models_dev_cache_path, body) catch |err|
+        log.log(.warn, "could not cache models.dev catalog: {s}", .{@errorName(err)});
+    return body;
+}
+
 /// `clanker providers catalog <query>`, search the models.dev directory for
 /// provider or model ids/families containing `query` (case-insensitive) and
 /// print what it knows about each match. Read-only; nothing here touches
@@ -1939,7 +1976,7 @@ fn cmdProvidersCatalog(init: std.process.Init, opts: Options) !void {
         return error.MissingCatalogQuery;
     };
 
-    const body = try httpGet(io, gpa, arena, models_dev_url, null);
+    const body = try fetchModelsDevCached(io, gpa, arena);
     const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
     if (catalog != .object) return error.CatalogNotObject;
 
@@ -2004,7 +2041,7 @@ fn cmdProvidersFill(init: std.process.Init, opts: Options) !void {
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     const p = try cfg.provider(provider_name);
 
-    const body = try httpGet(io, gpa, arena, models_dev_url, null);
+    const body = try fetchModelsDevCached(io, gpa, arena);
     const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
     const cat_provider = findCatalogProvider(catalog, p) orelse {
         log.log(.warn, "{s}: no models.dev entry matches base_url {s}", .{ provider_name, p.base_url });
@@ -3953,6 +3990,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_goals = std.mem.eql(u8, path, "/api/goals") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/providers");
+        const is_catalog = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/catalog");
+        const is_provider_models = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/providers/models");
         const is_janitor = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/janitor");
         const is_board = std.mem.eql(u8, path, "/api/board") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
@@ -4049,6 +4088,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleWorkflows(io, gpa, cfg, acceptsGzip(headers_raw), stream);
         } else if (is_goals) {
             handleGoals(io, gpa, cfg, method, body, stream);
+        } else if (is_provider_models) {
+            handleProviderModels(io, gpa, cfg, environ_map, target, stream);
+        } else if (is_catalog) {
+            handleCatalog(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (is_providers) {
             handleProviders(io, gpa, cfg, environ_map, stream);
         } else if (is_janitor) {
@@ -5839,6 +5882,7 @@ const webui_asset_paths = [_][]const u8{
     "/webui/features/knowledge.js",
     "/webui/features/prompts.js",
     "/webui/features/todos.js",
+    "/webui/features/models.js",
 };
 
 fn isWebuiAssetPath(path: []const u8) bool {
@@ -5887,6 +5931,7 @@ fn handleWebuiAsset(
     // 404'd until this line existed.
     const is_arena_view = std.mem.endsWith(u8, target, "features/arena.js");
     const is_todos_view = std.mem.endsWith(u8, target, "features/todos.js");
+    const is_models_view = std.mem.endsWith(u8, target, "features/models.js");
     const is_vendor = std.mem.endsWith(u8, target, "vendor.js");
     const is_chat = std.mem.endsWith(u8, target, "chat.js");
     const is_labels = std.mem.endsWith(u8, target, "labels.js");
@@ -5913,8 +5958,8 @@ fn handleWebuiAsset(
     const is_modelpicker = std.mem.endsWith(u8, target, "modelpicker.js");
     const is_tools = std.mem.endsWith(u8, target, "tools.js");
     const is_ui = std.mem.endsWith(u8, target, "ui.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_compare_view) &render_compare_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_todos_view) &render_todos_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_compare_view) &gzip_compare_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_todos_view) &gzip_todos_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_compare_view) &render_compare_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_todos_view) &render_todos_view else if (is_models_view) &render_models_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_compare_view) &gzip_compare_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_todos_view) &gzip_todos_view else if (is_models_view) &gzip_models_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -6076,6 +6121,202 @@ test "transcriptBytes counts tool call arguments, like the session listing" {
         .{ .role = .assistant, .content = null, .tool_calls = &calls },
     };
     try std.testing.expectEqual(@as(usize, 510), transcriptBytes(&msgs));
+}
+
+/// The models.dev catalog body, fetched once per process and reused: it runs
+/// to several MB, and re-downloading it per search keystroke would make the
+/// Models view's Discover tab unusable. Guarded because catalog searches
+/// arrive on connection threads.
+var catalog_cache_mutex: std.c.pthread_mutex_t = .{};
+var catalog_cache: ?[]const u8 = null;
+
+/// Returns a query-string value from `target` (e.g. `q` from
+/// `/api/catalog?q=kimi`), percent-decoded, or null when absent.
+fn queryParam(arena: std.mem.Allocator, target: []const u8, key: []const u8) ?[]const u8 {
+    const qmark = std.mem.findScalar(u8, target, '?') orelse return null;
+    var rest = target[qmark + 1 ..];
+    while (rest.len > 0) {
+        const pair_end = std.mem.findScalar(u8, rest, '&') orelse rest.len;
+        const pair = rest[0..pair_end];
+        if (std.mem.findScalar(u8, pair, '=')) |eq| {
+            if (std.mem.eql(u8, pair[0..eq], key)) {
+                return percentDecode(arena, pair[eq + 1 ..]) catch null;
+            }
+        }
+        if (pair_end == rest.len) break;
+        rest = rest[pair_end + 1 ..];
+    }
+    return null;
+}
+
+/// `GET /api/catalog?q=<query>` — search the public models.dev directory
+/// (the same source `clanker providers catalog` uses) so the web UI's Models
+/// view can offer discovery without a terminal. Results are capped: a broad
+/// query matching half the directory is a paging problem the search box
+/// solves better than a giant response would.
+fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const query = queryParam(arena, target, "q") orelse "";
+    if (query.len < 2) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"pass ?q= with at least 2 characters\"}");
+        return;
+    }
+
+    const body = blk: {
+        _ = std.c.pthread_mutex_lock(&catalog_cache_mutex);
+        defer _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
+        if (catalog_cache) |c| break :blk c;
+        // Disk-cached (24h TTL) so a serve restart, and every CLI catalog
+        // command, reuses the same download instead of pulling several MB
+        // from models.dev again.
+        const fetched = fetchModelsDevCached(io, gpa, arena) catch {
+            respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"could not reach models.dev\"}");
+            return;
+        };
+        catalog_cache = gpa.dupe(u8, fetched) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+            return;
+        };
+        break :blk catalog_cache.?;
+    };
+
+    const catalog = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"catalog is not JSON\"}");
+        return;
+    };
+    if (catalog != .object) {
+        respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"catalog is not an object\"}");
+        return;
+    }
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("models") catch return;
+    s.beginArray() catch return;
+    const max_results = 200;
+    var written: usize = 0;
+    var it = catalog.object.iterator();
+    outer: while (it.next()) |kv| {
+        const provider_id = kv.key_ptr.*;
+        const provider_entry = kv.value_ptr.*;
+        if (provider_entry != .object) continue;
+        const models_v = provider_entry.object.get("models") orelse continue;
+        if (models_v != .object) continue;
+        var mit = models_v.object.iterator();
+        while (mit.next()) |mkv| {
+            const model_id = mkv.key_ptr.*;
+            const m = mkv.value_ptr.*;
+            const family = if (m == .object) fieldStr(m.object, "family") orelse "" else "";
+            if (std.ascii.indexOfIgnoreCase(provider_id, query) == null and
+                std.ascii.indexOfIgnoreCase(model_id, query) == null and
+                std.ascii.indexOfIgnoreCase(family, query) == null) continue;
+            s.beginObject() catch return;
+            s.objectField("provider") catch return;
+            s.write(provider_id) catch return;
+            s.objectField("id") catch return;
+            s.write(model_id) catch return;
+            if (m == .object) {
+                if (m.object.get("limit")) |l| if (l == .object) {
+                    if (jsonNum(l.object, "context")) |ctx| {
+                        s.objectField("context") catch return;
+                        s.print("{d}", .{@as(i64, @intFromFloat(ctx))}) catch return;
+                    }
+                };
+                if (m.object.get("cost")) |c| if (c == .object) {
+                    if (jsonNum(c.object, "input")) |ci| {
+                        s.objectField("cost_in") catch return;
+                        s.print("{d:.2}", .{ci}) catch return;
+                    }
+                    if (jsonNum(c.object, "output")) |co| {
+                        s.objectField("cost_out") catch return;
+                        s.print("{d:.2}", .{co}) catch return;
+                    }
+                };
+                if (m.object.get("reasoning")) |r| if (r == .bool and r.bool) {
+                    s.objectField("reasoning") catch return;
+                    s.write(true) catch return;
+                };
+                if (m.object.get("tool_call")) |t| if (t == .bool and t.bool) {
+                    s.objectField("tool_call") catch return;
+                    s.write(true) catch return;
+                };
+            }
+            s.endObject() catch return;
+            written += 1;
+            if (written >= max_results) break :outer;
+        }
+    }
+    s.endArray() catch return;
+    s.objectField("truncated") catch return;
+    s.write(written >= max_results) catch return;
+    s.endObject() catch return;
+    respondCompressible(arena, stream, accepts_gzip, out.written());
+}
+
+/// `GET /api/providers/models?name=<provider>` — a configured provider's own
+/// live /models listing (the OpenAI-compat endpoint every configured kind
+/// serves), so the Models view can show what the backend actually offers
+/// next to what config.toml declares.
+fn handleProviderModels(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, target: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const name = queryParam(arena, target, "name") orelse cfg.default_provider;
+    const provider = cfg.provider(name) catch {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such provider\"}");
+        return;
+    };
+    const url = std.fmt.allocPrint(arena, "{s}/models", .{std.mem.trimEnd(u8, provider.base_url, "/")}) catch return;
+    const bearer = if (provider.api_key_env) |env_name| blk: {
+        const key = environ_map.get(env_name) orelse break :blk null;
+        break :blk std.fmt.allocPrint(arena, "Bearer {s}", .{key}) catch null;
+    } else null;
+    const body = httpGet(io, gpa, arena, url, bearer) catch {
+        respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"provider /models did not answer\"}");
+        return;
+    };
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"provider /models returned non-JSON\"}");
+        return;
+    };
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("provider") catch return;
+    s.write(name) catch return;
+    s.objectField("models") catch return;
+    s.beginArray() catch return;
+    if (parsed == .object) {
+        if (parsed.object.get("data")) |data| {
+            if (data == .array) {
+                for (data.array.items) |item| {
+                    if (item != .object) continue;
+                    const id = fieldStr(item.object, "id") orelse continue;
+                    s.beginObject() catch return;
+                    s.objectField("id") catch return;
+                    s.write(id) catch return;
+                    if (item.object.get("context_length")) |c| if (c == .integer) {
+                        s.objectField("context") catch return;
+                        s.print("{d}", .{c.integer}) catch return;
+                    };
+                    s.endObject() catch return;
+                }
+            }
+        }
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
 }
 
 /// Every configured provider and its models, so the composer can offer the
@@ -7591,6 +7832,17 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     const arena = arena_state.allocator();
     const rest = if (target.len > "/api/knowledge".len) target["/api/knowledge".len..] else "";
 
+    // Folder sync is host-side, not a tool-input translation: the knowledge
+    // guest's fs scope is state/knowledge/ only, and mirroring an operator's
+    // source folder means reading paths the sandbox rightly refuses. The
+    // serve process is the operator's own process, so it reads the folder
+    // directly and feeds each file through the same add_doc/delete_doc ops
+    // the manual UI uses.
+    if (std.mem.eql(u8, method, "POST") and std.mem.endsWith(u8, rest, "/sync") and rest.len > "/sync".len + 1) {
+        handleKnowledgeSync(io, gpa, arena, cfg, environ_map, rest[1 .. rest.len - "/sync".len], body, stream);
+        return;
+    }
+
     const tool_input = knowledgeRouteToToolInput(arena, method, rest, target, body) orelse {
         respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
         return;
@@ -7604,6 +7856,140 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         respondCompressible(arena, stream, true, result)
     else
         respond(stream, status, if (status == 200) "OK" else "Bad Request", result);
+}
+
+/// `POST /api/knowledge/<id>/sync {"path": "...", "prune": false}` — mirror
+/// a folder's text files into a collection: every readable .md/.txt/.json/
+/// .csv/.log at the folder's top level is upserted as a document named after
+/// its file (an existing doc of that name is replaced, not duplicated).
+/// With `prune`, documents whose names look file-synced but no longer exist
+/// in the folder are removed — opt-in, because a collection can also hold
+/// hand-added docs whose names happen to end in .md.
+fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, col_id: []const u8, body: []const u8, stream: std.Io.net.Stream) void {
+    if (!isSlug(col_id)) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad collection id\"}");
+        return;
+    }
+    const req = std.json.parseFromSliceLeaky(struct { path: []const u8 = "", prune: bool = false }, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request body\"}");
+        return;
+    };
+    if (req.path.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing folder path\"}");
+        return;
+    }
+
+    var dir = std.Io.Dir.cwd().openDir(io, req.path, .{ .iterate = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"folder does not exist or is not readable\"}");
+        return;
+    };
+    defer dir.close(io);
+
+    const synced_exts = [_][]const u8{ ".md", ".txt", ".json", ".csv", ".log" };
+    const max_doc_bytes: usize = 500_000;
+    const max_files: usize = 200;
+
+    // What the collection holds now, so files upsert instead of duplicating.
+    const get_input = std.fmt.allocPrint(arena, "{{\"action\":\"get\",\"id\":\"{s}\"}}", .{col_id}) catch return;
+    const col_raw = toolJson(io, gpa, arena, cfg, environ_map, "knowledge", get_input) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"knowledge tool unavailable\"}");
+        return;
+    };
+    const ExistingDoc = struct { id: []const u8 = "", name: []const u8 = "" };
+    const col = std.json.parseFromSliceLeaky(struct { ok: bool = false, docs: []const ExistingDoc = &.{} }, arena, col_raw, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such collection\"}");
+        return;
+    };
+    if (!col.ok) {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such collection\"}");
+        return;
+    }
+
+    var folder_names: std.ArrayList([]const u8) = .empty;
+    var synced: usize = 0;
+    var skipped: usize = 0;
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        const has_ext = for (synced_exts) |ext| {
+            if (std.ascii.endsWithIgnoreCase(entry.name, ext)) break true;
+        } else false;
+        if (!has_ext) continue;
+        if (folder_names.items.len >= max_files) {
+            skipped += 1;
+            continue;
+        }
+        const content = dir.readFileAlloc(io, entry.name, arena, .limited(max_doc_bytes)) catch {
+            skipped += 1;
+            continue;
+        };
+        if (std.mem.trim(u8, content, " \t\r\n").len == 0) {
+            skipped += 1;
+            continue;
+        }
+        const name = arena.dupe(u8, entry.name) catch return;
+        folder_names.append(arena, name) catch return;
+
+        // Upsert: replace the existing doc of this name, if any.
+        for (col.docs) |d| {
+            if (!std.mem.eql(u8, d.name, name)) continue;
+            const del = std.fmt.allocPrint(arena, "{{\"action\":\"delete_doc\",\"collection_id\":\"{s}\",\"doc_id\":\"{s}\"}}", .{ col_id, d.id }) catch return;
+            _ = toolJson(io, gpa, arena, cfg, environ_map, "knowledge", del) catch {};
+            break;
+        }
+        var w: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &w.writer };
+        s.beginObject() catch return;
+        s.objectField("action") catch return;
+        s.write("add_doc") catch return;
+        s.objectField("collection_id") catch return;
+        s.write(col_id) catch return;
+        s.objectField("name") catch return;
+        s.write(name) catch return;
+        s.objectField("content") catch return;
+        s.write(content) catch return;
+        s.endObject() catch return;
+        const add_out = toolJson(io, gpa, arena, cfg, environ_map, "knowledge", w.written()) catch {
+            skipped += 1;
+            continue;
+        };
+        if (std.mem.startsWith(u8, std.mem.trimStart(u8, add_out, " \t\r\n"), "{\"ok\":false")) {
+            skipped += 1;
+            continue;
+        }
+        synced += 1;
+    }
+
+    var removed: usize = 0;
+    if (req.prune) {
+        for (col.docs) |d| {
+            const looks_synced = for (synced_exts) |ext| {
+                if (std.ascii.endsWithIgnoreCase(d.name, ext)) break true;
+            } else false;
+            if (!looks_synced) continue;
+            const still_there = for (folder_names.items) |n| {
+                if (std.mem.eql(u8, n, d.name)) break true;
+            } else false;
+            if (still_there) continue;
+            const del = std.fmt.allocPrint(arena, "{{\"action\":\"delete_doc\",\"collection_id\":\"{s}\",\"doc_id\":\"{s}\"}}", .{ col_id, d.id }) catch return;
+            _ = toolJson(io, gpa, arena, cfg, environ_map, "knowledge", del) catch continue;
+            removed += 1;
+        }
+    }
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("synced") catch return;
+    s.print("{d}", .{synced}) catch return;
+    s.objectField("removed") catch return;
+    s.print("{d}", .{removed}) catch return;
+    s.objectField("skipped") catch return;
+    s.print("{d}", .{skipped}) catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
 }
 
 fn knowledgeRouteToToolInput(arena: std.mem.Allocator, method: []const u8, rest: []const u8, target: []const u8, body: []const u8) ?[]const u8 {
@@ -8748,6 +9134,7 @@ var render_knowledge_view: RenderCache = .{};
 var render_prompts_view: RenderCache = .{};
 var render_arena_view: RenderCache = .{};
 var render_todos_view: RenderCache = .{};
+var render_models_view: RenderCache = .{};
 var render_fleet: RenderCache = .{};
 var render_chat: RenderCache = .{};
 var render_labels: RenderCache = .{};
@@ -8786,6 +9173,7 @@ var gzip_knowledge_view: GzipCache = .{};
 var gzip_prompts_view: GzipCache = .{};
 var gzip_arena_view: GzipCache = .{};
 var gzip_todos_view: GzipCache = .{};
+var gzip_models_view: GzipCache = .{};
 var gzip_fleet: GzipCache = .{};
 var gzip_chat: GzipCache = .{};
 var gzip_labels: GzipCache = .{};
