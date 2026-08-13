@@ -27,7 +27,7 @@ pub const Note = struct {
 
 pub fn parseNote(arena: std.mem.Allocator, raw: []const u8) ?Note {
     const trimmed = std.mem.trim(u8, raw, " \t\r\n`");
-    const start = std.mem.indexOfScalar(u8, trimmed, '{') orelse return null;
+    const start = std.mem.findScalar(u8, trimmed, '{') orelse return null;
     const end = std.mem.lastIndexOfScalar(u8, trimmed, '}') orelse return null;
     const slice = trimmed[start .. end + 1];
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, slice, .{}) catch return null;
@@ -174,10 +174,10 @@ test "summarizeTurn redacts named tools and strips prior advisor blocks" {
         .{ .role = .system, .content = "[advisor: note]\nold\n[/advisor]\n" },
     };
     const out = try summarizeTurn(arena, &msgs, &.{"edit_file"});
-    try std.testing.expect(std.mem.indexOf(u8, out, "fix it") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "<redacted>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "/secret") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "[advisor:") == null);
+    try std.testing.expect(std.mem.find(u8, out, "fix it") != null);
+    try std.testing.expect(std.mem.find(u8, out, "<redacted>") != null);
+    try std.testing.expect(std.mem.find(u8, out, "/secret") == null);
+    try std.testing.expect(std.mem.find(u8, out, "[advisor:") == null);
 }
 
 test "formatInjection wraps severity and text" {

@@ -1123,7 +1123,7 @@ fn isWebsocketUpgrade(headers_raw: []const u8) bool {
 fn wantsEventStream(headers_raw: []const u8, path: []const u8) bool {
     if (std.mem.endsWith(u8, path, "/events/stream")) return true;
     const ac = headerValue(headers_raw, "accept") orelse return false;
-    return std.mem.indexOf(u8, ac, "text/event-stream") != null;
+    return std.mem.find(u8, ac, "text/event-stream") != null;
 }
 
 fn parseMethod(s: []const u8) ?std.http.Method {

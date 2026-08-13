@@ -33,11 +33,11 @@ pub fn task(alloc: std.mem.Allocator, intent: []const u8) ![]const u8 {
 test "template carries the field list and the intent" {
     const out = try task(std.testing.allocator, "a rough idea");
     defer std.testing.allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "a rough idea") != null);
+    try std.testing.expect(std.mem.find(u8, out, "a rough idea") != null);
     // The five fields appear, comma-separated, exactly once.
     try std.testing.expect(std.mem.count(u8, out, field_list) == 1);
-    try std.testing.expect(std.mem.indexOf(u8, out, "Call write_goal first") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "call the goal tool to persist it") != null);
+    try std.testing.expect(std.mem.find(u8, out, "Call write_goal first") != null);
+    try std.testing.expect(std.mem.find(u8, out, "call the goal tool to persist it") != null);
 }
 
 test "skills/write-goal.md stays in agreement with the field list" {
@@ -50,6 +50,6 @@ test "skills/write-goal.md stays in agreement with the field list" {
     const skill = std.Io.Dir.cwd().readFileAlloc(threaded.io(), path, std.testing.allocator, .limited(1 << 20)) catch
         return error.SkipZigTest; // not present in every cwd; gate runs in-repo
     defer std.testing.allocator.free(skill);
-    try std.testing.expect(std.mem.indexOf(u8, skill, field_list) != null);
-    try std.testing.expect(std.mem.indexOf(u8, skill, "call the `goal` tool once") != null);
+    try std.testing.expect(std.mem.find(u8, skill, field_list) != null);
+    try std.testing.expect(std.mem.find(u8, skill, "call the `goal` tool once") != null);
 }

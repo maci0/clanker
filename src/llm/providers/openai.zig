@@ -409,7 +409,7 @@ test "openai request body sends reasoning_effort and omits it when unset" {
         .messages = &messages,
     });
     defer arena.free(plain_body);
-    try std.testing.expect(std.mem.indexOf(u8, plain_body, "reasoning_effort") == null);
+    try std.testing.expect(std.mem.find(u8, plain_body, "reasoning_effort") == null);
 }
 
 test "openai response parse with tool call" {

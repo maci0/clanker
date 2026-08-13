@@ -193,7 +193,7 @@ fn mergeAll(groups: []const logic.Group) ![]logic.Group {
 }
 
 fn parseGroups(raw: []const u8, all_files: []const []const u8, max_commits: usize) ![]logic.Group {
-    const start = std.mem.indexOfScalar(u8, raw, '{') orelse return error.InvalidArg;
+    const start = std.mem.findScalar(u8, raw, '{') orelse return error.InvalidArg;
     const end = std.mem.lastIndexOfScalar(u8, raw, '}') orelse return error.InvalidArg;
     const v = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw[start .. end + 1], .{});
     if (v != .object) return error.InvalidArg;
@@ -257,7 +257,7 @@ fn groupDepends(a: logic.Group, b: logic.Group) bool {
         for (b.files) |bf| {
             const base = std.fs.path.basename(bf);
             const stem = if (std.mem.lastIndexOfScalar(u8, base, '.')) |dot| base[0..dot] else base;
-            if (logic.isTestPath(af) and std.mem.indexOf(u8, af, stem) != null)
+            if (logic.isTestPath(af) and std.mem.find(u8, af, stem) != null)
                 return true;
             if (logic.references(af, bf)) return true;
         }

@@ -21,7 +21,7 @@ pub fn validMessage(msg: []const u8) bool {
         if (!std.mem.startsWith(u8, msg, t)) continue;
         var rest = msg[t.len..];
         if (rest.len > 0 and rest[0] == '(') {
-            const close = std.mem.indexOfScalar(u8, rest, ')') orelse return false;
+            const close = std.mem.findScalar(u8, rest, ')') orelse return false;
             rest = rest[close + 1 ..];
         }
         if (rest.len < 3 or rest[0] != ':' or rest[1] != ' ') return false;
@@ -31,10 +31,10 @@ pub fn validMessage(msg: []const u8) bool {
 }
 
 pub fn isTestPath(path: []const u8) bool {
-    return std.mem.indexOf(u8, path, "test_") != null or
-        std.mem.indexOf(u8, path, "_test.") != null or
-        std.mem.indexOf(u8, path, ".test.") != null or
-        std.mem.indexOf(u8, path, "tests/") != null;
+    return std.mem.find(u8, path, "test_") != null or
+        std.mem.find(u8, path, "_test.") != null or
+        std.mem.find(u8, path, ".test.") != null or
+        std.mem.find(u8, path, "tests/") != null;
 }
 
 pub fn isDocPath(path: []const u8) bool {
@@ -46,7 +46,7 @@ pub fn isConfigPath(path: []const u8) bool {
     return std.mem.eql(u8, base, "config.toml") or
         std.mem.endsWith(u8, path, ".toml") or
         std.mem.endsWith(u8, path, ".yaml") or
-        (std.mem.endsWith(u8, path, ".json") and std.mem.indexOfScalar(u8, path, '/') == null);
+        (std.mem.endsWith(u8, path, ".json") and std.mem.findScalar(u8, path, '/') == null);
 }
 
 pub fn fileRank(path: []const u8) u8 {
@@ -110,12 +110,12 @@ pub fn topoSort(arena: std.mem.Allocator, n: usize, deps: []const []const usize)
 pub fn references(src: []const u8, other_file: []const u8) bool {
     const base = std.fs.path.basename(other_file);
     const stem = if (std.mem.lastIndexOfScalar(u8, base, '.')) |dot| base[0..dot] else base;
-    if (std.mem.indexOf(u8, src, other_file) != null) return true;
-    if (std.mem.indexOf(u8, src, stem) != null and
-        (std.mem.indexOf(u8, src, "import") != null or
-            std.mem.indexOf(u8, src, "@import") != null or
-            std.mem.indexOf(u8, src, "require") != null or
-            std.mem.indexOf(u8, src, "#include") != null)) return true;
+    if (std.mem.find(u8, src, other_file) != null) return true;
+    if (std.mem.find(u8, src, stem) != null and
+        (std.mem.find(u8, src, "import") != null or
+            std.mem.find(u8, src, "@import") != null or
+            std.mem.find(u8, src, "require") != null or
+            std.mem.find(u8, src, "#include") != null)) return true;
     return false;
 }
 

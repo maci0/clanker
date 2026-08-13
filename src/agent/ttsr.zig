@@ -55,12 +55,12 @@ pub const Pattern = struct {
     pub fn matches(self: Pattern, hay: []const u8) bool {
         if (self.parts.len == 0) return self.leading_star;
         if (self.parts.len == 1 and !self.leading_star and !self.trailing_star) {
-            return std.mem.indexOf(u8, hay, self.parts[0]) != null;
+            return std.mem.find(u8, hay, self.parts[0]) != null;
         }
         var rest = hay;
         for (self.parts, 0..) |part, idx| {
-            const at = std.mem.indexOf(u8, rest, part) orelse return false;
-            if (idx == 0 and !self.leading_star and at != 0 and std.mem.indexOf(u8, hay, part) == null)
+            const at = std.mem.find(u8, rest, part) orelse return false;
+            if (idx == 0 and !self.leading_star and at != 0 and std.mem.find(u8, hay, part) == null)
                 return false;
             rest = rest[at + part.len ..];
         }

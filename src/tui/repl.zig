@@ -4514,7 +4514,7 @@ fn foldShownLines(fold: Fold) usize {
     if (fold.anim >= 1) return fold.count;
     if (fold.anim <= 0) return 0;
     const eased = foldEase(fold.anim) * @as(f32, @floatFromInt(fold.count));
-    return @min(fold.count, @as(usize, @intFromFloat(@round(eased))));
+    return @min(fold.count, @as(usize, @round(eased)));
 }
 
 /// Ease curve for the fold animation (smoothstep): fast middle, eased ends.
@@ -5481,7 +5481,7 @@ fn writeWrappedPartial(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16
         }
         // The fractional tail row stops mid-row after `frac * width` columns.
         const frac = budget - rows_done;
-        if (frac < 1 and col + c.width > @as(u16, @intFromFloat(@round(frac * @as(f32, @floatFromInt(width)))))) break;
+        if (frac < 1 and col + c.width > @as(u16, @round(frac * @as(f32, @floatFromInt(width))))) break;
         surface.writeCell(col, row.*, .{ .char = .{ .grapheme = c.bytes, .width = @intCast(c.width) }, .style = style });
         col += c.width;
     }

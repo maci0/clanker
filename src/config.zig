@@ -3422,7 +3422,7 @@ fn documentsKey(text: []const u8, key: []const u8) bool {
         }
         // `[memory.chunk]`, `[[ttsr.rules]]`: the key names a table.
         if (std.mem.startsWith(u8, line, "[")) {
-            if (std.mem.indexOf(u8, line, key)) |at| {
+            if (std.mem.find(u8, line, key)) |at| {
                 const before = line[at - 1];
                 const after = line[at + key.len ..];
                 if ((before == '.' or before == '[') and (after.len > 0 and after[0] == ']')) return true;

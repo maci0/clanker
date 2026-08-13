@@ -59,7 +59,7 @@ pub fn cheapestProvider(cfg: *const config.Config) ?*const config.Provider {
 pub fn resolveClassifier(cfg: *const config.Config) ?*const config.Provider {
     const spec = cfg.agent.thinking_classifier_model;
     if (spec.len > 0) {
-        const slash = std.mem.indexOfScalar(u8, spec, '/');
+        const slash = std.mem.findScalar(u8, spec, '/');
         const name = if (slash) |i| spec[0..i] else spec;
         return cfg.providers.getPtr(name);
     }

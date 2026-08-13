@@ -242,9 +242,9 @@ const draft = struct {
         };
         const md = try renderMarkdown(std.testing.allocator, &d);
         defer std.testing.allocator.free(md);
-        try std.testing.expect(std.mem.indexOf(u8, md, "**objective:**") != null);
-        try std.testing.expect(std.mem.indexOf(u8, md, "**stop_rule:**") != null);
-        try std.testing.expect(std.mem.indexOf(u8, md, "assumed default") != null);
+        try std.testing.expect(std.mem.find(u8, md, "**objective:**") != null);
+        try std.testing.expect(std.mem.find(u8, md, "**stop_rule:**") != null);
+        try std.testing.expect(std.mem.find(u8, md, "assumed default") != null);
     }
 };
 
@@ -475,5 +475,5 @@ fn overlap(a: []const u8, b: []const u8) bool {
     const blen = @min(b.len, bbuf.len);
     const al = std.ascii.lowerString(abuf[0..alen], a[0..alen]);
     const bl = std.ascii.lowerString(bbuf[0..blen], b[0..blen]);
-    return std.mem.indexOf(u8, al, bl) != null or std.mem.indexOf(u8, bl, al) != null;
+    return std.mem.find(u8, al, bl) != null or std.mem.find(u8, bl, al) != null;
 }

@@ -39,7 +39,7 @@ pub fn annotate(alloc: std.mem.Allocator, text: []const u8, start_line: usize) !
     var i: usize = 0;
     while (i < text.len) {
         const rest = text[i..];
-        const nl = std.mem.indexOfScalar(u8, rest, '\n');
+        const nl = std.mem.findScalar(u8, rest, '\n');
         const raw = if (nl) |n| rest[0 .. n + 1] else rest;
         const hex = hashHex(raw);
         var buf: [32]u8 = undefined;
@@ -152,7 +152,7 @@ fn splitLines(alloc: std.mem.Allocator, src: []const u8) ![][]const u8 {
     var i: usize = 0;
     while (i < src.len) {
         const rest = src[i..];
-        const nl = std.mem.indexOfScalar(u8, rest, '\n');
+        const nl = std.mem.findScalar(u8, rest, '\n');
         const raw = if (nl) |n| rest[0 .. n + 1] else rest;
         try out.append(alloc, raw);
         i += raw.len;

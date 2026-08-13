@@ -48,7 +48,7 @@ fn findTableSpan(src: []const u8, header: []const u8) ?Span {
     var i: usize = 0;
     var found: ?Span = null;
     while (i < src.len) {
-        const nl = std.mem.indexOfScalarPos(u8, src, i, '\n') orelse src.len;
+        const nl = std.mem.findScalarPos(u8, src, i, '\n') orelse src.len;
         const line = std.mem.trimEnd(u8, src[i..nl], "\r");
         if (std.mem.eql(u8, line, header)) {
             const end = nextTableOffset(src, if (nl < src.len) nl + 1 else src.len);
@@ -63,7 +63,7 @@ fn findTableSpan(src: []const u8, header: []const u8) ?Span {
 fn nextTableOffset(src: []const u8, from: usize) usize {
     var i = from;
     while (i < src.len) {
-        const nl = std.mem.indexOfScalarPos(u8, src, i, '\n') orelse src.len;
+        const nl = std.mem.findScalarPos(u8, src, i, '\n') orelse src.len;
         const line = std.mem.trimEnd(u8, src[i..nl], "\r");
         if (line.len > 0 and line[0] == '[') return i;
         if (nl == src.len) return src.len;
@@ -75,7 +75,7 @@ fn nextTableOffset(src: []const u8, from: usize) usize {
 fn firstTableOffset(src: []const u8) ?usize {
     var i: usize = 0;
     while (i < src.len) {
-        const nl = std.mem.indexOfScalarPos(u8, src, i, '\n') orelse src.len;
+        const nl = std.mem.findScalarPos(u8, src, i, '\n') orelse src.len;
         const line = std.mem.trimEnd(u8, src[i..nl], "\r");
         if (line.len > 0 and line[0] == '[') return i;
         if (nl == src.len) return null;
@@ -89,7 +89,7 @@ fn findTopLevelKey(src: []const u8, key: []const u8) ?Span {
     var in_table = false;
     var found: ?Span = null;
     while (i < src.len) {
-        const nl = std.mem.indexOfScalarPos(u8, src, i, '\n') orelse src.len;
+        const nl = std.mem.findScalarPos(u8, src, i, '\n') orelse src.len;
         const line = std.mem.trimEnd(u8, src[i..nl], "\r");
         if (line.len > 0 and line[0] == '[') {
             in_table = true;
@@ -171,9 +171,9 @@ test "replaceTable replaces an existing table and leaves comments" {
     defer arena_state.deinit();
     const out = try replaceTable(arena_state.allocator(), src, block);
     try std.testing.expect(std.mem.startsWith(u8, out, "# keep me\n"));
-    try std.testing.expect(std.mem.indexOf(u8, out, "max_tokens = 99") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "max_tokens = 1") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "[agent]\nmax_iterations = 4") != null);
+    try std.testing.expect(std.mem.find(u8, out, "max_tokens = 99") != null);
+    try std.testing.expect(std.mem.find(u8, out, "max_tokens = 1") == null);
+    try std.testing.expect(std.mem.find(u8, out, "[agent]\nmax_iterations = 4") != null);
 }
 
 test "replaceTable appends a missing table" {
@@ -190,8 +190,8 @@ test "replaceTable appends a missing table" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const out = try replaceTable(arena_state.allocator(), src, block);
-    try std.testing.expect(std.mem.indexOf(u8, out, "[agent]\nmax_iterations = 4") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "[models.\"a/x\"]") != null);
+    try std.testing.expect(std.mem.find(u8, out, "[agent]\nmax_iterations = 4") != null);
+    try std.testing.expect(std.mem.find(u8, out, "[models.\"a/x\"]") != null);
 }
 
 test "setTopLevelString inserts before the first table" {
@@ -204,7 +204,7 @@ test "setTopLevelString inserts before the first table" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const out = try setTopLevelString(arena_state.allocator(), src, "default_provider", "ollama");
-    try std.testing.expect(std.mem.indexOf(u8, out, "default_provider = \"ollama\"\n[agent]") != null);
+    try std.testing.expect(std.mem.find(u8, out, "default_provider = \"ollama\"\n[agent]") != null);
     try std.testing.expect(std.mem.startsWith(u8, out, "# comment\n"));
 }
 
@@ -237,7 +237,7 @@ test "replaceTable last matching header wins" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const out = try replaceTable(arena_state.allocator(), src, block);
-    try std.testing.expect(std.mem.indexOf(u8, out, "provider = \"first\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "provider = \"second\"") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "provider = \"third\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "provider = \"first\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "provider = \"second\"") == null);
+    try std.testing.expect(std.mem.find(u8, out, "provider = \"third\"") != null);
 }

@@ -65,7 +65,7 @@ fn cacheGet(url: []const u8) ?[]const u8 {
         .integer => |n| n,
         else => return null,
     };
-    const now: i64 = @intFromFloat(lib.nowSeconds());
+    const now: i64 = @trunc(lib.nowSeconds());
     if (now - fetched > 300) return null;
     return switch (parsed.object.get("body") orelse return null) {
         .string => |s| s,
@@ -77,7 +77,7 @@ fn cachePut(url: []const u8, body: []const u8) void {
     lib.fsMkdir("state/gh_cache") catch {};
     var path_buf: [80]u8 = undefined;
     const path = std.fmt.bufPrint(&path_buf, "state/gh_cache/{x}.json", .{cacheKey(url)}) catch return;
-    const now: i64 = @intFromFloat(lib.nowSeconds());
+    const now: i64 = @trunc(lib.nowSeconds());
     var req: std.Io.Writer.Allocating = .init(lib.alloc);
     var s = std.json.Stringify{ .writer = &req.writer };
     s.beginObject() catch return;
@@ -92,12 +92,12 @@ fn cachePut(url: []const u8, body: []const u8) void {
 }
 
 fn looksLikeRateLimit(body: []const u8) bool {
-    return std.mem.indexOf(u8, body, "API rate limit exceeded") != null or
-        std.mem.indexOf(u8, body, "\"message\":\"You have exceeded a secondary rate limit") != null;
+    return std.mem.find(u8, body, "API rate limit exceeded") != null or
+        std.mem.find(u8, body, "\"message\":\"You have exceeded a secondary rate limit") != null;
 }
 
 fn looksLikeNotFound(body: []const u8) bool {
-    return std.mem.indexOf(u8, body, "\"message\":\"Not Found\"") != null;
+    return std.mem.find(u8, body, "\"message\":\"Not Found\"") != null;
 }
 
 fn formatBody(ref: gh_url.Ref, body: []const u8) ![]const u8 {
