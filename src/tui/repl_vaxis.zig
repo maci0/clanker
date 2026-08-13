@@ -401,6 +401,57 @@ fn isErrorLine(text: []const u8) bool {
     return std.mem.startsWith(u8, text, "error:");
 }
 
+const KillKind = enum { start, end, word };
+
+/// Apply one readline kill operation and retain exactly what it removed for
+/// Ctrl-Y. Kept independent of Model so cursor boundaries and UTF-8 text are
+/// unit-testable without a terminal event loop.
+fn killText(field: *vxfw.TextField, ring: *std.ArrayList(u8), alloc: std.mem.Allocator, kind: KillKind) !void {
+    ring.clearRetainingCapacity();
+    switch (kind) {
+        .start => {
+            try ring.appendSlice(alloc, field.buf.firstHalf());
+            field.deleteToStart();
+        },
+        .end => {
+            try ring.appendSlice(alloc, field.buf.secondHalf());
+            field.deleteToEnd();
+        },
+        .word => {
+            const before = try field.buf.dupe();
+            defer field.buf.allocator.free(before);
+            const old_cursor = field.byteOffsetToCursor();
+            field.deleteWordBeforeWhitespace();
+            const new_cursor = field.byteOffsetToCursor();
+            try ring.appendSlice(alloc, before[new_cursor..old_cursor]);
+        },
+    }
+}
+
+test "readline kill operations feed Ctrl-Y's private ring" {
+    var field = vxfw.TextField.init(std.testing.allocator);
+    defer field.deinit();
+    var ring: std.ArrayList(u8) = .empty;
+    defer ring.deinit(std.testing.allocator);
+
+    try field.insertSliceAtCursor("alpha βeta");
+    try killText(&field, &ring, std.testing.allocator, .word);
+    const shortened = try field.buf.dupe();
+    defer field.buf.allocator.free(shortened);
+    try std.testing.expectEqualStrings("alpha ", shortened);
+    try std.testing.expectEqualStrings("βeta", ring.items);
+    try field.insertSliceAtCursor(ring.items);
+    const restored = try field.buf.dupe();
+    defer field.buf.allocator.free(restored);
+    try std.testing.expectEqualStrings("alpha βeta", restored);
+
+    field.cursorLeft();
+    try killText(&field, &ring, std.testing.allocator, .start);
+    try std.testing.expectEqualStrings("alpha βet", ring.items);
+    try killText(&field, &ring, std.testing.allocator, .end);
+    try std.testing.expectEqualStrings("a", ring.items);
+}
+
 /// Recovery text for failures returned by the REPL's shared internal tools.
 /// A generic "not found" cannot imply sessions: graph, plugin, and tool
 /// failures use the same result envelope and need their own destination.
@@ -3192,22 +3243,15 @@ const Model = struct {
                 // yanks it at the cursor. TextField implements the deletions
                 // but has no kill ring of its own, so intercept them here.
                 if (key.matches('u', .{ .ctrl = true })) {
-                    try self.replaceKillRing(self.text_field.buf.firstHalf());
-                    self.text_field.deleteToStart();
+                    try killText(&self.text_field, &self.kill_ring, self.gpa, .start);
                     return ctx.consumeAndRedraw();
                 }
                 if (key.matches('k', .{ .ctrl = true })) {
-                    try self.replaceKillRing(self.text_field.buf.secondHalf());
-                    self.text_field.deleteToEnd();
+                    try killText(&self.text_field, &self.kill_ring, self.gpa, .end);
                     return ctx.consumeAndRedraw();
                 }
                 if (key.matches('w', .{ .ctrl = true })) {
-                    const before = try self.text_field.buf.dupe();
-                    defer self.text_field.buf.allocator.free(before);
-                    const old_cursor = self.text_field.byteOffsetToCursor();
-                    self.text_field.deleteWordBeforeWhitespace();
-                    const new_cursor = self.text_field.byteOffsetToCursor();
-                    try self.replaceKillRing(before[new_cursor..old_cursor]);
+                    try killText(&self.text_field, &self.kill_ring, self.gpa, .word);
                     return ctx.consumeAndRedraw();
                 }
                 if (key.matches('y', .{ .ctrl = true })) {
@@ -3386,11 +3430,6 @@ const Model = struct {
         const input = self.text_field.buf.dupe() catch return;
         defer self.text_field.buf.allocator.free(input);
         if (input.len > 0) try ctx.copyToClipboard(input);
-    }
-
-    fn replaceKillRing(self: *Model, text: []const u8) !void {
-        self.kill_ring.clearRetainingCapacity();
-        try self.kill_ring.appendSlice(self.gpa, text);
     }
 
     /// Up: walk one entry older in the history. First step parks the live
