@@ -189,6 +189,7 @@ export function uiPrompt(message, initial, opts) {
     if (opts.placeholder) input.placeholder = opts.placeholder;
     if (opts.maxlength) input.maxLength = opts.maxlength;
     if (multiline) {
+      input.wrap = "soft";
       input.rows = opts.rows || 4;
       input.className = "ui-dialog-textarea";
       input.addEventListener("keydown", function (e) {
