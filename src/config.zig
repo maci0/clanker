@@ -1371,8 +1371,7 @@ pub const Config = struct {
             "ask_timeout_seconds",       "confirm_writes",                 "provider_check_timeout_seconds",
             "fallback_provider",         "fallback_providers",             "auto_thinking",
             "thinking_classifier_model", "thinking_classifier_timeout_ms", "worktree",
-            "goal_worktree",
-            "git_worktree_on",
+            "goal_worktree",             "git_worktree_on",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");

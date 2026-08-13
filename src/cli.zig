@@ -203,6 +203,9 @@ pub const Options = struct {
     /// Set when `--help` followed a command: print that command's help rather
     /// than the whole list.
     help_for: ?Command = null,
+    /// Set when `-h`/`--help` immediately follows an option: print that
+    /// option's help rather than the command or the whole list.
+    help_for_flag: ?Flag = null,
     /// `--continue`/`-c`: pick up the most recently updated session instead of
     /// naming it with `--session`. Every other agent CLI has this; reaching for
     /// `clanker sessions`, reading an id and pasting it back is the workaround
@@ -415,12 +418,28 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             continue;
         }
 
+        // The nearest thing before `-h` is what the caller is asking about:
+        // `clanker repl -h` is command help, while `clanker repl --theme -h`
+        // is help for --theme. Do this before a value-taking flag calls
+        // takeValue, otherwise `--model -h` is only a missing-value error and
+        // the request for help never reaches the help branch above.
+        if (flagForHelp(a, opts.command)) |f| {
+            if (idx + 1 < args.len and isHelpFlag(args[idx + 1])) {
+                opts.command = .help;
+                opts.help_for_flag = f;
+                cmd_seen = true;
+                idx += 1; // Consume the help spelling as part of this request.
+                continue;
+            }
+        }
+
         // Flags may appear before or after the command; which command they
         // are legal for is checked once the command is known.
         if (a.len > 0 and a[0] == '-') {
             var used: ?Flag = null;
             if (std.mem.eql(u8, a, "--verbose") or std.mem.eql(u8, a, "-v")) {
                 opts.verbose = true;
+                used = .verbose;
             } else if (std.mem.eql(u8, a, "--dry-run")) {
                 opts.dry_run = true;
                 used = .dry_run;
@@ -1220,11 +1239,12 @@ pub fn suggestFlag(input: []const u8) ?[]const u8 {
     return best;
 }
 
-const extra_flag_spellings = [_][]const u8{ "--verbose", "--help", "--version", "--no-worktree", "--port", "--no-proxy" };
+const extra_flag_spellings = [_][]const u8{ "--help", "--version", "--no-worktree", "--port", "--no-proxy" };
 
 fn primaryFlagName(f: Flag) []const u8 {
     const n = f.name();
-    return if (std.mem.findScalar(u8, n, ',')) |i| n[0..i] else n;
+    const end = std.mem.findAny(u8, n, ",[ ") orelse n.len;
+    return n[0..end];
 }
 
 fn editDistance(a: []const u8, b: []const u8) usize {
@@ -1328,10 +1348,72 @@ fn renderCommandHelp(buf: []u8, cmd: Command) []const u8 {
     return buf[0..w.end];
 }
 
+/// `clanker --flag -h`: a focused option reference. This is deliberately
+/// separate from command help: an option may be valid on more than one
+/// command, and a value-taking option must be explainable before it has a
+/// value to parse.
+fn renderFlagHelp(buf: []u8, flag: Flag) []const u8 {
+    var w: std.Io.Writer = .fixed(buf);
+    w.print("usage: clanker {s} -h\n\n", .{flag.name()}) catch {};
+
+    if (flag == .mascot) {
+        w.writeAll(
+            "The REPL mascot is decorative and off by default. Bare --mascot\n" ++
+                "selects loop.\n\n" ++
+                "MODES\n" ++
+                "  loop   runs across the screen and wraps around\n" ++
+                "  type   runs with your typing and turns while you backspace\n" ++
+                "  place  runs on the spot above the input box\n" ++
+                "  input  runs inside the input box\n" ++
+                "  off    disables the mascot\n",
+        ) catch {};
+    } else {
+        w.print("{s}\n", .{flag.name()}) catch {};
+        writeWrappedFlagDescription(&w, flag.describe()) catch {};
+    }
+
+    if (flag.global()) {
+        w.writeAll("\nAvailable on every command.\n") catch {};
+    } else {
+        w.writeAll("\nAvailable on:\n") catch {};
+        for (specs) |spec| {
+            if (commandAccepts(spec.command, flag)) {
+                w.print("  clanker {s}\n", .{commandName(spec.command)}) catch {};
+            }
+        }
+    }
+    return buf[0..w.end];
+}
+
+fn writeWrappedFlagDescription(w: *std.Io.Writer, description: []const u8) !void {
+    const indent = "  ";
+    try w.writeAll(indent);
+    var column: usize = indent.len;
+    var words = std.mem.tokenizeScalar(u8, description, ' ');
+    while (words.next()) |word| {
+        const separator: usize = if (column == indent.len) 0 else 1;
+        if (column + separator + word.len > 80) {
+            try w.writeAll("\n" ++ indent);
+            column = indent.len;
+        } else if (separator == 1) {
+            try w.writeByte(' ');
+            column += 1;
+        }
+        try w.writeAll(word);
+        column += word.len;
+    }
+    try w.writeByte('\n');
+}
+
 fn printCommandHelp(io: std.Io, cmd: Command) void {
     if (specFor(cmd) == null) return printUsage(io);
     var buf: [8192]u8 = undefined;
     writeStdOut(io, renderCommandHelp(&buf, cmd)) catch {};
+}
+
+fn printFlagHelp(io: std.Io, flag: Flag) void {
+    var buf: [8192]u8 = undefined;
+    writeStdOut(io, renderFlagHelp(&buf, flag)) catch {};
 }
 
 /// Every flag the parser knows. A command declares the ones it accepts, so
@@ -1339,6 +1421,7 @@ fn printCommandHelp(io: std.Io, cmd: Command) void {
 /// that does nothing is worse than one that is rejected, because the user
 /// believes it took effect.
 const Flag = enum {
+    verbose,
     provider,
     model,
     session,
@@ -1385,6 +1468,7 @@ const Flag = enum {
 
     fn name(self: Flag) []const u8 {
         return switch (self) {
+            .verbose => "--verbose, -v",
             .provider => "--provider",
             .model => "--model",
             .session => "--session",
@@ -1437,6 +1521,7 @@ const Flag = enum {
     /// detail block.
     fn describe(self: Flag) []const u8 {
         return switch (self) {
+            .verbose => "log diagnostic progress while clanker runs",
             .provider => "use this provider instead of the configured default",
             .model => "the model to use, or <provider>/<model> (alias -m)",
             .session => "resume a saved conversation by id",
@@ -1482,7 +1567,35 @@ const Flag = enum {
             .schedule_tz => "read cron fields at a fixed offset from UTC (±HH:MM)",
         };
     }
+
+    fn global(self: Flag) bool {
+        return self == .verbose;
+    }
 };
+
+fn isHelpFlag(arg: []const u8) bool {
+    return std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help");
+}
+
+/// The parser's option spellings, centralized for the option-help fast path.
+/// The main parser still owns values and validation; this only recognizes an
+/// option long enough to let a following `-h` describe it.
+fn flagForHelp(arg: []const u8, command: Command) ?Flag {
+    if (std.mem.eql(u8, arg, "--judge")) {
+        return if (command == .compare) .compare_judge else .arena_judge;
+    }
+    for (std.enums.values(Flag)) |f| {
+        if (f == .arena_judge or f == .compare_judge) continue;
+        if (std.mem.eql(u8, arg, primaryFlagName(f))) return f;
+    }
+    if (std.mem.eql(u8, arg, "-v")) return .verbose;
+    if (std.mem.eql(u8, arg, "-m")) return .model;
+    if (std.mem.eql(u8, arg, "-c")) return .continue_last;
+    if (std.mem.eql(u8, arg, "-wt") or std.mem.eql(u8, arg, "--no-worktree")) return .worktree;
+    if (std.mem.eql(u8, arg, "--port")) return .webui_port;
+    if (std.mem.eql(u8, arg, "--no-proxy")) return .proxy;
+    return null;
+}
 
 /// Which section of `--help` a command is listed under. A flat list of 22
 /// commands makes the reader scan all of them to find the one they want.
@@ -1561,6 +1674,7 @@ fn specFor(cmd: Command) ?*const Spec {
 }
 
 fn commandAccepts(cmd: Command, flag: Flag) bool {
+    if (flag.global()) return true;
     const s = specFor(cmd) orelse return false;
     for (s.flags) |f| {
         if (f == flag) return true;
@@ -1572,7 +1686,9 @@ pub fn run(init: std.process.Init, opts: Options) !void {
     switch (opts.command) {
         // Requested output (--help, --version), not an error: stdout, exit 0.
         .help => {
-            if (opts.help_for) |c| {
+            if (opts.help_for_flag) |f| {
+                printFlagHelp(init.io, f);
+            } else if (opts.help_for) |c| {
                 printCommandHelp(init.io, c);
             } else {
                 var buf: [8192]u8 = undefined;
@@ -12345,6 +12461,61 @@ test "--help after a command asks about that command" {
     const conventional = try parse(&.{ "clanker", "help", "run" }, null);
     try std.testing.expectEqual(Command.help, conventional.command);
     try std.testing.expectEqual(Command.run, conventional.help_for.?);
+}
+
+test "a help flag after an option asks about that option" {
+    const mascot = try parse(&.{ "clanker", "--mascot", "-h" }, null);
+    try std.testing.expectEqual(Command.help, mascot.command);
+    try std.testing.expectEqual(Flag.mascot, mascot.help_for_flag.?);
+    try std.testing.expect(mascot.help_for == null);
+
+    // The fast path is before takeValue, so an option that requires a value
+    // can still explain itself rather than rejecting `-h` as that value.
+    const model = try parse(&.{ "clanker", "--model", "--help" }, null);
+    try std.testing.expectEqual(Flag.model, model.help_for_flag.?);
+
+    // A command remains useful context for an ambiguous option spelling.
+    const compare = try parse(&.{ "clanker", "compare", "--judge", "-h" }, null);
+    try std.testing.expectEqual(Flag.compare_judge, compare.help_for_flag.?);
+}
+
+test "every registered option routes a following help flag to itself" {
+    for (std.enums.values(Flag)) |flag| {
+        const opts = if (flag == .compare_judge)
+            try parse(&.{ "clanker", "compare", primaryFlagName(flag), "-h" }, null)
+        else
+            try parse(&.{ "clanker", primaryFlagName(flag), "-h" }, null);
+        try std.testing.expectEqual(Command.help, opts.command);
+        try std.testing.expectEqual(flag, opts.help_for_flag.?);
+    }
+
+    const aliases = [_]struct { []const u8, Flag }{
+        .{ "-v", .verbose },
+        .{ "-m", .model },
+        .{ "-c", .continue_last },
+        .{ "-wt", .worktree },
+        .{ "--no-worktree", .worktree },
+        .{ "--port", .webui_port },
+        .{ "--no-proxy", .proxy },
+    };
+    for (aliases) |alias| {
+        const opts = try parse(&.{ "clanker", alias[0], "-h" }, null);
+        try std.testing.expectEqual(alias[1], opts.help_for_flag.?);
+    }
+}
+
+test "every option can render its own help" {
+    var buf: [8192]u8 = undefined;
+    for (std.enums.values(Flag)) |flag| {
+        const help = renderFlagHelp(&buf, flag);
+        try std.testing.expect(std.mem.startsWith(u8, help, "usage: clanker "));
+        try std.testing.expect(std.mem.find(u8, help, primaryFlagName(flag)) != null);
+        var lines = std.mem.splitScalar(u8, help, '\n');
+        while (lines.next()) |line| try std.testing.expect(line.len <= 80);
+    }
+    const mascot = renderFlagHelp(&buf, .mascot);
+    try std.testing.expect(std.mem.find(u8, mascot, "MODES") != null);
+    try std.testing.expect(std.mem.find(u8, mascot, "clanker repl") != null);
 }
 
 test "mistyped commands get conservative suggestions" {

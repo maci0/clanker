@@ -184,7 +184,9 @@ slept through are counted into the ledger and dropped, not replayed. See
 ## Command reference
 
 `clanker` (no command) drops you into the REPL. `clanker <command>` runs one
-task; `clanker --help` prints usage.
+task; `clanker --help` lists commands. `clanker <command> --help` explains a
+command, while `clanker <option> -h` explains that option (for example,
+`clanker --mascot -h`).
 
 | Command | Description |
 |---------|-------------|
