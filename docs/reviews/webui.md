@@ -26,7 +26,7 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 ### P0 fixes (earlier)
 - `src/cli.zig:handleRuns` — accept `sub-<digits>` as well as `run-<digits>`
   (prefix_len branch). Makes nested runs linkable end-to-end.
-- `src/tui/repl_vaxis.zig:540` — `trimRight→trimEnd` (Zig 0.16 std.mem has no `trimRight`).
+- `src/tui/repl.zig:540` — `trimRight→trimEnd` (Zig 0.16 std.mem has no `trimRight`).
 
 ### ES-module split (no bundler)
 - `ui/app/core/utils.js` — `fmtBytes, clip, fuzzyMatch, escapeHtml, fmtMs, fmtInt, fmtCost, formatChatTime, fmtDeadline, fuzzyMatch`

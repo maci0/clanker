@@ -22,7 +22,7 @@ const proposal_mod = @import("proposal.zig");
 const plan_mod = @import("plan.zig");
 const history_mod = @import("history.zig");
 const reverts_mod = @import("reverts.zig");
-const inert = @import("inert.zig");
+const inert = @import("inert_check.zig");
 const gate_checks = @import("../gate/checks.zig");
 const sandbox_host = @import("../sandbox/host.zig");
 const runtime = @import("../sandbox/runtime.zig");
@@ -30,7 +30,7 @@ const registry = @import("../tools/registry.zig");
 const log = @import("../util/log.zig");
 const redact = @import("../util/redact.zig");
 const atomic_write = @import("../util/atomic_write.zig");
-const diskcap = @import("../util/diskcap.zig");
+const disk_cap = @import("../util/disk_cap.zig");
 const worktree_mod = @import("worktree.zig");
 
 pub const Options = struct {
@@ -2384,7 +2384,7 @@ pub const Engine = struct {
     /// Removes a directory tree rooted at `rel` under `base`. Split from
     /// removeTree so the unit test can operate on a tmpDir instead of cwd.
     fn removeTreeAt(self: *Engine, base: std.Io.Dir, rel: []const u8) void {
-        diskcap.removeTree(self.ctx.gpa, self.ctx.io, base, rel);
+        disk_cap.removeTree(self.ctx.gpa, self.ctx.io, base, rel);
     }
 
     /// Looks like an id this engine mints: "imp-" followed by digits.

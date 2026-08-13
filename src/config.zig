@@ -226,7 +226,7 @@ pub const Agent = struct {
     /// of every registered tool's `exec_allow`. Empty (the default) means `!`
     /// runs exactly the commands clanker's own tools may run and nothing more;
     /// listing `["ls", "cat"]` here widens the escape without widening any
-    /// tool, since nothing reads this field except `src/tui/repl_vaxis.zig`.
+    /// tool, since nothing reads this field except `src/tui/repl.zig`.
     /// The rest of the ck_exec policy (the deny tokens, git's verb allowlist,
     /// `exec_pattern_allow`) still applies to whatever is named here.
     repl_exec_allow: []const []const u8 = &.{},
@@ -250,7 +250,7 @@ pub const Agent = struct {
     /// today's behaviour; `browser` gates streaming web runs, where the
     /// question travels the run's own stream like ask_user. `always` is
     /// reserved for also gating interactive REPL sessions at the terminal,
-    /// but src/tui/repl_vaxis.zig has no prompt-rendering path to answer it
+    /// but src/tui/repl.zig has no prompt-rendering path to answer it
     /// yet (see docs/ROADMAP.md, "vaxis REPL: close the gap left by the
     /// deleted REPL"): only cli.zig's serve path reads this field, gated on
     /// `!= .never`, so `always` behaves identically to `browser` until the

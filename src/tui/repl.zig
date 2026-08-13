@@ -56,7 +56,7 @@ const width_mod = @import("width.zig");
 const sanitize = @import("sanitize.zig");
 // `_mod` because saveConversation has a local named `transcript`.
 const transcript_mod = @import("transcript.zig");
-const stats_mod = @import("stats.zig");
+const stats_mod = @import("turn_stats.zig");
 const mascot = @import("mascot.zig");
 
 /// Redraw cadence while a turn is streaming: ~30fps, so streamed tokens land
@@ -1919,7 +1919,7 @@ const Model = struct {
 
         // The turn's receipt, last line of the turn: tokens, wall time,
         // tok/s, cache hit rate, cost and how full the context now is. Same
-        // formatter `clanker run` prints on stderr (`tui/stats.zig`).
+        // formatter `clanker run` prints on stderr (`tui/turn_stats.zig`).
         if (turn) |t| {
             if (t.accounted()) {
                 self.session_tokens +|= t.prompt_tokens +| t.completion_tokens;

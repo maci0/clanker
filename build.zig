@@ -318,7 +318,7 @@ pub fn build(b: *std.Build) void {
     run_tests.step.dependOn(tools_step);
     // The pty-driven `tui-test` step (src/tui/testing/) drove the old
     // hand-rolled REPL (src/tui/*) over a real pty; removed with it when
-    // the REPL migrated to libvaxis (src/tui/repl_vaxis.zig).
+    // the REPL migrated to libvaxis (src/tui/repl.zig).
 
     // -------------------------------------------------------------- e2e tests
     // Black-box tests (tests/e2e/) that spawn the actual built `clanker`
@@ -338,8 +338,8 @@ pub fn build(b: *std.Build) void {
     // manifests directory absolutely, rather than duplicating either.
     e2e_options.addOption([]const u8, "zig_out_dir", b.pathFromRoot("zig-out"));
     e2e_options.addOption([]const u8, "tools_manifests_dir", b.pathFromRoot("tools/manifests"));
-    const rawhttp_mod = b.createModule(.{
-        .root_source_file = b.path("src/util/rawhttp.zig"),
+    const raw_http_mod = b.createModule(.{
+        .root_source_file = b.path("src/util/raw_http.zig"),
         .target = test_target,
         .optimize = optimize,
         .link_libc = true,
@@ -351,7 +351,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "e2e_options", .module = e2e_options.createModule() },
-            .{ .name = "rawhttp", .module = rawhttp_mod },
+            .{ .name = "raw_http", .module = raw_http_mod },
         },
     });
     const e2e_tests = b.addTest(.{ .root_module = e2e_mod });

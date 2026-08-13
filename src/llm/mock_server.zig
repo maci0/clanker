@@ -3,7 +3,7 @@
 //! without an external API key.
 
 const std = @import("std");
-const rawhttp = @import("../util/rawhttp.zig");
+const raw_http = @import("../util/raw_http.zig");
 
 pub const Mode = enum {
     openai_stream,
@@ -112,7 +112,7 @@ pub const MockServer = struct {
             if (n == 0) break; // EOF
             total.appendSlice(self.gpa, tmp[0..n]) catch break;
             if (total.items.len > (1 << 20)) break;
-            if (rawhttp.requestComplete(total.items)) break;
+            if (raw_http.requestComplete(total.items)) break;
         }
         if (std.mem.find(u8, total.items, "\r\n\r\n")) |hdr_end| {
             const headers_raw = total.items[0..hdr_end];
@@ -193,7 +193,7 @@ pub const MockServer = struct {
         const content_type = pair[3];
         var hbuf: [4096]u8 = undefined;
         const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ status, reason, content_type, body.len }) catch return;
-        rawhttp.writeAllFd(stream.socket.handle, hdr);
-        rawhttp.writeAllFd(stream.socket.handle, body);
+        raw_http.writeAllFd(stream.socket.handle, hdr);
+        raw_http.writeAllFd(stream.socket.handle, body);
     }
 };

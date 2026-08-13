@@ -209,7 +209,7 @@ not a finding.
 |---|---|---|
 | `src/peers/notify.zig` | Peer notify fan-out | **Already moved.** `src/patch/` and the notify half of `src/peers/` no longer exist; both live in `tools/zig/peers.zig` and `tools/zig/patch_apply.zig` per AGENTS.md. Confirm no native path was reintroduced rather than re-litigating the move. |
 | `src/patch/apply.zig` | Exact-match `old -> new` string replacement | **Already moved.** See above; the file is gone from `src/`. If `src/improve/engine.zig` still calls a native apply path, that's a regression to flag, not a fresh move proposal. |
-| `src/agent/autolearn.zig` | Reads/appends `state/autolearn.jsonl`, aggregates into roadmap suggestions | **Partial.** The read/aggregate side is the same shape as the existing `roadmap`/`history`/`learnings` tools (all fs-scoped readers): a natural sibling. The write-on-every-run hook inside `Agent.run`'s defer is call-frequency-sensitive (step 7); check whether it's cheap enough per run (not per token) before moving. |
+| `src/agent/auto_learn.zig` | Reads/appends `state/autolearn.jsonl`, aggregates into roadmap suggestions | **Partial.** The read/aggregate side is the same shape as the existing `roadmap`/`history`/`learnings` tools (all fs-scoped readers): a natural sibling. The write-on-every-run hook inside `Agent.run`'s defer is call-frequency-sensitive (step 7); check whether it's cheap enough per run (not per token) before moving. |
 | `src/agent/graph.zig` (`write`) | Serializes the execution graph to `state/runs/run-<id>.json` once per run | **Consider.** fs-write-only, once per run, low frequency: good shape. The graph *recording* (`g.add` calls threaded through the loop) stays native; only the final serialize-and-write is separable. |
 | `src/gate/checks.zig` | Shells out to `zig build`/`zig build test`/`zig build tools`/`zig fmt`/lint | **Native. Do not move.** It decides whether a self-authored change gets promoted, so moving it would let a future change alter its own gate. `tools/zig/gate.zig` runs the same commands on demand for an agent checking its own work, which is a different job: the tool answers a question, the native gate makes a decision. |
 | `src/llm/client.zig`, `src/llm/providers.zig` | The actual provider HTTP/SSE client the agent loop runs on, holds API keys via env | **Native. Do not move.** This is what `ck_llm` is *built on top of* for tools: it's the trust root for model access, and `Agent.on_token` streaming is tightly coupled to it. If a tool needs model access, it already has `ck_llm`; it does not need this. |
@@ -308,7 +308,7 @@ and whether any build or test command ran.
 ### Good: fs-scoped reader matching an existing pattern
 
 ```text
-The read/aggregate half of src/agent/autolearn.zig is the same shape as the
+The read/aggregate half of src/agent/auto_learn.zig is the same shape as the
 already-shipped `history`/`roadmap`/`learnings` tools: read under state/,
 return structured text. Natural sibling, not a stretch.
 ```

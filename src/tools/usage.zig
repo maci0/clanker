@@ -11,9 +11,9 @@
 //! which is small, mergeable by hand, and readable by anything.
 
 const std = @import("std");
-const ensuredir = @import("../util/ensuredir.zig");
+const ensure_dir = @import("../util/ensure_dir.zig");
 const atomic_write = @import("../util/atomic_write.zig");
-const filelock = @import("../util/filelock.zig");
+const file_lock = @import("../util/file_lock.zig");
 const log = @import("../util/log.zig");
 
 pub const path = "state/tool_usage.json";
@@ -94,11 +94,11 @@ pub const Usage = struct {
 
     pub fn save(self: *Usage, io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) void {
         if (!self.dirty) return;
-        ensuredir.ensureDir(base, io, "state") catch |err| {
+        ensure_dir.ensureDir(base, io, "state") catch |err| {
             log.log(.warn, "tool usage: could not create state directory: {s}", .{@errorName(err)});
             return;
         };
-        var guard = filelock.acquire(io, base, "state", "tool_usage", arena);
+        var guard = file_lock.acquire(io, base, "state", "tool_usage", arena);
         defer guard.release();
 
         // Another process may have saved after this Usage was loaded. Merge

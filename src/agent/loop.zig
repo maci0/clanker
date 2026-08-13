@@ -13,13 +13,13 @@ const host = @import("../sandbox/host.zig");
 const private_todos = @import("private_todos.zig");
 const system_prompt = @import("system_prompt.zig");
 const graph_mod = @import("graph.zig");
-const autolearn = @import("autolearn.zig");
+const autolearn = @import("auto_learn.zig");
 const chatrooms = @import("../peers/chatrooms.zig");
-const filelock = @import("../util/filelock.zig");
-const ensuredir = @import("../util/ensuredir.zig");
+const file_lock = @import("../util/file_lock.zig");
+const ensure_dir = @import("../util/ensure_dir.zig");
 const log = @import("../util/log.zig");
 const json_util = @import("../util/json.zig");
-const toolout = @import("../util/toolout.zig");
+const tool_out = @import("../util/tool_out.zig");
 const utf8 = @import("../util/utf8.zig");
 const mock_server = @import("../llm/mock_server.zig");
 const advisor = @import("advisor.zig");
@@ -1083,10 +1083,10 @@ pub const Agent = struct {
     /// the previous version re-read and rewrote the entire log on every LLM
     /// call, making per-call cost and total I/O grow with the log's size
     /// (quadratic over a session), and lost records under concurrent writers
-    /// since it bypassed the lock other state logs use (see filelock.zig).
+    /// since it bypassed the lock other state logs use (see file_lock.zig).
     fn recordReasoning(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8, task: []const u8, reasoning: []const u8) void {
         _ = arena;
-        ensuredir.ensureDir(std.Io.Dir.cwd(), io, "state") catch return;
+        ensure_dir.ensureDir(std.Io.Dir.cwd(), io, "state") catch return;
         const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         var buf: [reasoning_record_buf_bytes]u8 = undefined;
         var w: std.Io.Writer = .fixed(&buf);
@@ -1108,7 +1108,7 @@ pub const Agent = struct {
     }
 
     fn appendReasoningLine(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, line: []const u8) void {
-        var guard = filelock.acquire(io, base, "state", "reasoning", gpa);
+        var guard = file_lock.acquire(io, base, "state", "reasoning", gpa);
         defer guard.release();
 
         // Trim before opening for append below: trimming rewrites the file
@@ -2221,7 +2221,7 @@ pub const Agent = struct {
         // tool messages on the sequential path (use-after-free).
         const owned = try self.arena.dupe(u8, out);
         log.log(.info, "tool '{s}' -> {d} bytes in {d}ms", .{ tc.name, out.len, ms });
-        toolout.warnIfMalformed(self.ctx.gpa, tc.name, owned);
+        tool_out.warnIfMalformed(self.ctx.gpa, tc.name, owned);
 
         // Run after-transforms on the result (output filtering / post-processing).
         const transformed = self.runChain(tc.name, .after, owned) catch owned;
@@ -2863,7 +2863,7 @@ const ToolWorker = struct {
         // Checked where the result is produced rather than where it is
         // consumed: the consumers are three different paths, and instrumenting
         // the two obvious ones missed the one that actually runs.
-        toolout.warnIfMalformed(self.ctx.gpa, self.tool.name, out);
+        tool_out.warnIfMalformed(self.ctx.gpa, self.tool.name, out);
         self.out = out;
     }
 };

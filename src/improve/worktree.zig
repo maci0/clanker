@@ -460,7 +460,7 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
 
     for ([_][]const u8{ "state/learnings.md", "state/autolearn.jsonl", "state/plugin_config.json", "state/token_stats.jsonl", "state/reasoning.jsonl" }) |name| {
         // 16 MiB: autolearn's own log cap is 8 MiB (max_log_bytes,
-        // src/agent/autolearn.zig) and the trim triggers only past it, so a
+        // src/agent/auto_learn.zig) and the trim triggers only past it, so a
         // 4 MiB read limit here didn't truncate -- readFileAlloc errors on
         // oversize and the catch skipped the copy entirely, silently
         // dropping the shared memory exactly when it had grown most useful.

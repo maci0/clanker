@@ -14,9 +14,9 @@
 //! docs/ROADMAP.md with concrete, actionable items.
 
 const std = @import("std");
-const ensuredir = @import("../util/ensuredir.zig");
+const ensure_dir = @import("../util/ensure_dir.zig");
 const log = @import("../util/log.zig");
-const filelock = @import("../util/filelock.zig");
+const file_lock = @import("../util/file_lock.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const utf8 = @import("../util/utf8.zig");
 
@@ -59,7 +59,7 @@ pub fn record(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, type
 }
 
 fn recordTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, type_: []const u8, tool: []const u8, detail: []const u8) void {
-    ensuredir.ensureDir(base, io, "state") catch |err| {
+    ensure_dir.ensureDir(base, io, "state") catch |err| {
         log.log(.warn, "autolearn: failed to create state dir: {s}", .{@errorName(err)});
         return;
     };
@@ -92,7 +92,7 @@ fn recordTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem
 /// full read + rewrite of the whole log (quadratic over a session's calls).
 /// The lock still guards against two processes interleaving writes.
 fn appendLine(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, line: []const u8) void {
-    var guard = filelock.acquire(io, base, "state", "autolearn", gpa);
+    var guard = file_lock.acquire(io, base, "state", "autolearn", gpa);
     defer guard.release();
 
     // Trim before opening for append below: trimming rewrites the file and
@@ -152,7 +152,7 @@ pub fn recordRun(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, e
 }
 
 fn recordRunTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, e: RunEvent) void {
-    ensuredir.ensureDir(base, io, "state") catch |err| {
+    ensure_dir.ensureDir(base, io, "state") catch |err| {
         log.log(.warn, "autolearn: failed to create state dir: {s}", .{@errorName(err)});
         return;
     };

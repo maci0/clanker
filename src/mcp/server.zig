@@ -11,7 +11,7 @@ const runtime = @import("../sandbox/runtime.zig");
 const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
 const log = @import("../util/log.zig");
-const toolout = @import("../util/toolout.zig");
+const tool_out = @import("../util/tool_out.zig");
 
 const protocol_version = "2024-11-05";
 const max_line = 1 << 20;
@@ -325,7 +325,7 @@ fn handleToolCall(s: *json.Stringify, io: std.Io, gpa: std.mem.Allocator, cache_
     // The agent warns about malformed tool output on its own paths; a tool
     // driven over MCP reaches the caller without passing through any of them,
     // and this is the surface tools are usually probed from.
-    toolout.warnIfMalformed(gpa, name, out);
+    tool_out.warnIfMalformed(gpa, name, out);
     try respondText(s, out, false);
 }
 

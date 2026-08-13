@@ -18,25 +18,25 @@ const retire = @import("improve/retire.zig");
 const history = @import("improve/history.zig");
 const mcp = @import("mcp/server.zig");
 const session = @import("agent/session.zig");
-const autolearn = @import("agent/autolearn.zig");
+const autolearn = @import("agent/auto_learn.zig");
 const subagent = @import("agent/subagent.zig");
 const private_todos = @import("agent/private_todos.zig");
 const graph = @import("agent/graph.zig");
 const goal_prompt = @import("agent/goal_prompt.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
-const rawhttp = @import("util/rawhttp.zig");
+const raw_http = @import("util/raw_http.zig");
 const toml_edit = @import("util/toml_edit.zig");
 // tui/transcript.zig's MdStream is still used by cmdRun's own run_md; the
 // rest of tui/* (input, region, statusbar, palette, approval, term) was
-// exclusive to the REPL that's now src/tui/repl_vaxis.zig, and was
+// exclusive to the REPL that's now src/tui/repl.zig, and was
 // removed with it.
 const tui_transcript = @import("tui/transcript.zig");
 // The per-turn stats line and the byte/token weight of a conversation, shared
 // with the vaxis REPL so `clanker run`'s footer and the REPL's transcript
 // report a turn in one dialect rather than two.
-const tui_stats = @import("tui/stats.zig");
-const repl_vaxis = @import("tui/repl_vaxis.zig");
+const tui_stats = @import("tui/turn_stats.zig");
+const repl = @import("tui/repl.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const phonebook = @import("peers/phonebook.zig");
 const doctor_mod = @import("doctor.zig");
@@ -44,10 +44,10 @@ const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
 const redact = @import("util/redact.zig");
 const atomic_write = @import("util/atomic_write.zig");
-const diskcap = @import("util/diskcap.zig");
-const ensuredir = @import("util/ensuredir.zig");
-const runlock = @import("util/runlock.zig");
-const filelock = @import("util/filelock.zig");
+const disk_cap = @import("util/disk_cap.zig");
+const ensure_dir = @import("util/ensure_dir.zig");
+const run_lock = @import("util/run_lock.zig");
+const file_lock = @import("util/file_lock.zig");
 const utf8 = @import("util/utf8.zig");
 const gate_checks = @import("gate/checks.zig");
 const schedule_cmd = @import("schedule/command.zig");
@@ -95,7 +95,7 @@ pub const Command = enum {
     stats,
     phonebook,
     serve,
-    /// The libvaxis-backed REPL (docs/ROADMAP.md migration). `src/tui/repl_vaxis.zig`.
+    /// The libvaxis-backed REPL (docs/ROADMAP.md migration). `src/tui/repl.zig`.
     repl,
     graph,
     gate,
@@ -1521,7 +1521,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .stats => try cmdStats(init),
         .phonebook => try phonebook.cmdPhonebook(init),
         .serve => try cmdServe(init, opts),
-        .repl => try repl_vaxis.cmdReplVaxis(init, .{
+        .repl => try repl.cmdReplVaxis(init, .{
             .provider = opts.provider,
             .model = opts.model,
             .session = opts.session,
@@ -1618,7 +1618,7 @@ fn cmdGate(init: std.process.Init, opts: Options) !void {
     // The other place that compiles repeatedly, and so the other place the
     // build cache grows without bound.
     const cfg = config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch config.Config{};
-    _ = diskcap.capBuildCache(gpa, io, std.Io.Dir.cwd(), ".zig-cache", cfg.improve.max_cache_bytes);
+    _ = disk_cap.capBuildCache(gpa, io, std.Io.Dir.cwd(), ".zig-cache", cfg.improve.max_cache_bytes);
     try verifyGates(gpa, io, arena);
 }
 
@@ -1783,7 +1783,7 @@ fn cmdInit(init: std.process.Init, announce: bool) !void {
         },
         else => return err,
     };
-    ensuredir.ensureDir(dir, io, "state") catch |err|
+    ensure_dir.ensureDir(dir, io, "state") catch |err|
         log.log(.warn, "init: mkdir 'state' failed: {s}", .{@errorName(err)});
     if (announce) log.log(.info, "clanker initialized. Run `clanker setup` to check it over.", .{});
 }
@@ -2290,7 +2290,7 @@ fn fetchModelsDevCached(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloc
         } else |_| {}
         return err;
     };
-    ensuredir.ensureDir(cwd, io, "state/cache") catch {};
+    ensure_dir.ensureDir(cwd, io, "state/cache") catch {};
     atomic_write.writeFile(io, cwd, models_dev_cache_path, body) catch |err|
         log.log(.warn, "could not cache models.dev catalog: {s}", .{@errorName(err)});
     return body;
@@ -3254,7 +3254,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
 /// The turn's receipt on stderr: prompt/completion tokens, wall time, tok/s,
 /// cache hit rate, cost, and how full the context now is. The vaxis REPL
 /// appends the identical string to its transcript, both through
-/// `tui/stats.zig`, so the two surfaces cannot drift into two dialects of the
+/// `tui/turn_stats.zig`, so the two surfaces cannot drift into two dialects of the
 /// same numbers.
 ///
 /// Two guards, both about not writing a line nobody wants: stderr must be a
@@ -3272,7 +3272,7 @@ fn printTurnStats(
     if (!(std.Io.File.stderr().isTty(io) catch false)) return;
     const model = provider.activeModel();
     // An unpriced model has an unknown price, not a free one: null drops the
-    // cost segment rather than printing $0.0000 (see tui/stats.zig).
+    // cost segment rather than printing $0.0000 (see tui/turn_stats.zig).
     const priced = model.cost_per_1m_input != null or model.cost_per_1m_output != null;
     const elapsed = started.durationTo(std.Io.Timestamp.now(io, .awake));
     const turn: tui_stats.TurnStats = .{
@@ -4222,16 +4222,16 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
 
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
         log.log(.warn, "improve-self: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });
-    ensuredir.ensureDir(std.Io.Dir.cwd(), io, "state") catch |err|
+    ensure_dir.ensureDir(std.Io.Dir.cwd(), io, "state") catch |err|
         log.log(.warn, "improve-self: mkdir 'state' failed: {s}", .{@errorName(err)});
-    ensuredir.ensureDir(std.Io.Dir.cwd(), io, "state/staging") catch |err|
+    ensure_dir.ensureDir(std.Io.Dir.cwd(), io, "state/staging") catch |err|
         log.log(.warn, "improve-self: mkdir 'state/staging' failed: {s}", .{@errorName(err)});
 
     // Before any staging or gate work: two runs against one tree gate each
     // other's half-applied patches and promote over each other.
     var holder: ?u32 = null;
-    var lock = runlock.acquire(io, gpa, std.Io.Dir.cwd(), "state/improve.lock", &holder) catch |err| switch (err) {
-        runlock.Error.Busy => {
+    var lock = run_lock.acquire(io, gpa, std.Io.Dir.cwd(), "state/improve.lock", &holder) catch |err| switch (err) {
+        run_lock.Error.Busy => {
             if (holder) |pid| {
                 log.log(.warn, "another improve-self is already running (process {d}); nothing was changed", .{pid});
             } else {
@@ -4282,7 +4282,7 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     // as many iterations as it is given. Capped here, after the chdir, so it
     // is the worktree's own cache that is measured and dropped rather than the
     // shared checkout's.
-    _ = diskcap.capBuildCache(gpa, io, std.Io.Dir.cwd(), ".zig-cache", cfg.improve.max_cache_bytes);
+    _ = disk_cap.capBuildCache(gpa, io, std.Io.Dir.cwd(), ".zig-cache", cfg.improve.max_cache_bytes);
     var eng = improve.Engine{
         .ctx = &ctx,
         .arena = arena,
@@ -4886,11 +4886,11 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // against max_body_bytes made a body at the advertised boundary
         // impossible to send, and the old 1 MiB literal also made the 4 MiB
         // image attachment feature unreachable after base64 expansion.
-        if (total.items.len > rawhttp.max_body_bytes + 64 * 1024) {
+        if (total.items.len > raw_http.max_body_bytes + 64 * 1024) {
             respond(stream, 413, "Content Too Large", "{\"ok\":false,\"error\":\"request body too large\"}");
             return;
         }
-        if (rawhttp.requestComplete(total.items)) break;
+        if (raw_http.requestComplete(total.items)) break;
     }
     if (std.mem.find(u8, total.items, "\r\n\r\n")) |hdr_end| {
         const headers_raw = total.items[0..hdr_end];
@@ -5189,8 +5189,8 @@ const NotificationRecord = struct {
 const notifications_max_bytes = 1 << 20;
 
 fn storeNotification(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, record: NotificationRecord) !void {
-    try ensuredir.ensureDir(base, io, "state");
-    var guard = filelock.acquire(io, base, "state", "notifications", gpa);
+    try ensure_dir.ensureDir(base, io, "state");
+    var guard = file_lock.acquire(io, base, "state", "notifications", gpa);
     defer guard.release();
 
     const file_path = "state/notifications.jsonl";
@@ -6251,7 +6251,7 @@ threadlocal var run_stream_socket: ?std.posix.fd_t = null;
 
 fn runStreamDelta(delta: []const u8) void {
     if (run_stream_socket) |fd| {
-        rawhttp.writeAllFd(fd, delta);
+        raw_http.writeAllFd(fd, delta);
     }
 }
 
@@ -6277,7 +6277,7 @@ fn writeStreamEvent(fd: std.posix.fd_t, event_type: []const u8, extra: anytype) 
     }
     s.endObject() catch return;
     w.writeAll("\n") catch return;
-    rawhttp.writeAllFd(fd, buf[0..w.end]);
+    raw_http.writeAllFd(fd, buf[0..w.end]);
 }
 
 fn runStreamToolCall(calls: []const types.ToolCall) void {
@@ -6322,7 +6322,7 @@ fn runStreamToolCall(calls: []const types.ToolCall) void {
     s.endArray() catch return;
     s.endObject() catch return;
     w.writeAll("\n") catch return;
-    rawhttp.writeAllFd(fd, buf[0..w.end]);
+    raw_http.writeAllFd(fd, buf[0..w.end]);
 }
 
 fn runStreamToolResult(ms: u64) void {
@@ -6342,7 +6342,7 @@ fn runStreamTodos(todos_json: []const u8) void {
     const gpa = serve_gpa orelse return;
     const line = std.fmt.allocPrint(gpa, "{s}{{\"type\":\"todos\",\"todos\":{s}}}\n", .{ stream_event_prefix, todos_json }) catch return;
     defer gpa.free(line);
-    rawhttp.writeAllFd(fd, line);
+    raw_http.writeAllFd(fd, line);
 }
 
 // ---- ask bridge: ask_user over the /api/run stream ------------------------
@@ -7129,7 +7129,7 @@ fn handleWebuiAsset(
         request_status = 304;
         var hbuf: [256]u8 = undefined;
         const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\n{s}\r\n", .{ etag, connHeader() }) catch return;
-        rawhttp.writeAllFd(stream.socket.handle, hdr);
+        raw_http.writeAllFd(stream.socket.handle, hdr);
         return;
     }
     // 187 KB of script over a connection that closes afterwards is the single
@@ -7140,8 +7140,8 @@ fn handleWebuiAsset(
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [512]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, etag, connHeader() }) catch return;
-    rawhttp.writeAllFd(stream.socket.handle, hdr);
-    rawhttp.writeAllFd(stream.socket.handle, out);
+    raw_http.writeAllFd(stream.socket.handle, hdr);
+    raw_http.writeAllFd(stream.socket.handle, out);
 }
 
 fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, accepts_gzip: bool, headers_raw: []const u8, stream: std.Io.net.Stream) void {
@@ -7300,7 +7300,7 @@ fn handleSessionSearch(io: std.Io, arena: std.mem.Allocator, target: []const u8,
 /// transcript full of tool calls could be "compacted" and barely move.
 ///
 /// One implementation, shared with the REPL's compaction notice
-/// (`tui/stats.zig`): the bytes this server reports and the bytes the REPL
+/// (`tui/turn_stats.zig`): the bytes this server reports and the bytes the REPL
 /// says a compaction freed have to be the same measure.
 const transcriptBytes = tui_stats.historyBytes;
 
@@ -8086,8 +8086,8 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [512]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, connHeader() }) catch return;
-    rawhttp.writeAllFd(stream.socket.handle, hdr);
-    rawhttp.writeAllFd(stream.socket.handle, out);
+    raw_http.writeAllFd(stream.socket.handle, hdr);
+    raw_http.writeAllFd(stream.socket.handle, out);
 }
 
 /// `GET /api/janitor`, how much litter is lying around, so the office view can
@@ -10572,12 +10572,12 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     // messages, both append their own turn, and the second save would
     // silently discard the first turn's messages (a lost update). The lock
     // is per session id, so unrelated sessions never contend.
-    var session_lock: filelock.Guard = .{ .io = io };
+    var session_lock: file_lock.Guard = .{ .io = io };
     defer session_lock.release();
     if (has_session) {
-        ensuredir.ensureDir(std.Io.Dir.cwd(), io, "state/sessions") catch |err|
+        ensure_dir.ensureDir(std.Io.Dir.cwd(), io, "state/sessions") catch |err|
             log.log(.warn, "run: mkdir 'state/sessions' failed: {s}", .{@errorName(err)});
-        session_lock = filelock.acquire(io, std.Io.Dir.cwd(), "state/sessions", req.session, gpa);
+        session_lock = file_lock.acquire(io, std.Io.Dir.cwd(), "state/sessions", req.session, gpa);
         if (session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), req.session)) |s| {
             created = s.created;
             for (s.messages) |m| {
@@ -10592,7 +10592,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // they are produced; the final newline + Connection: close ends the
         // stream on the client side.
         request_status = 200;
-        rawhttp.writeAllFd(stream.socket.handle, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n");
+        raw_http.writeAllFd(stream.socket.handle, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n");
         run_stream_socket = stream.socket.handle;
         defer run_stream_socket = null;
         // A streaming run in flight is steerable (POST /api/steer) for exactly
@@ -10648,7 +10648,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // so nothing was streamed, write the answer directly or the client
         // would receive an empty body (just the trailer) for a successful run.
         if (!cfg.modules.streaming) {
-            if (resp.message.content) |c| rawhttp.writeAllFd(stream.socket.handle, c);
+            if (resp.message.content) |c| raw_http.writeAllFd(stream.socket.handle, c);
         }
         // The run this goal carried completed: the goal moves to review and
         // waits for a human verdict. Server-side, so the flip happens even
@@ -10768,8 +10768,8 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
         std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\nX-Request-ID: {s}\r\nConnection: close\r\n\r\n", .{ status, reason, body.len, request_id }) catch return
     else
         std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
-    rawhttp.writeAllFd(stream.socket.handle, hdr);
-    rawhttp.writeAllFd(stream.socket.handle, body);
+    raw_http.writeAllFd(stream.socket.handle, hdr);
+    raw_http.writeAllFd(stream.socket.handle, body);
 }
 
 /// The web UI ships its CSS and JS inline in one embedded file, so the policy
@@ -10813,7 +10813,7 @@ fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
         request_status = 304;
         var hbuf: [256]u8 = undefined;
         const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\n{s}\r\n", .{ etag, connHeader() }) catch return;
-        rawhttp.writeAllFd(stream.socket.handle, hdr);
+        raw_http.writeAllFd(stream.socket.handle, hdr);
         return;
     }
     const gzipped = if (accepts_gzip) gzipCached(gpa, &gzip_page, body) else null;
@@ -10822,8 +10822,8 @@ fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [4096]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-cache\r\n{s}\r\n", .{ out.len, encoding, etag, webui_csp, connHeader() }) catch return;
-    rawhttp.writeAllFd(stream.socket.handle, hdr);
-    rawhttp.writeAllFd(stream.socket.handle, out);
+    raw_http.writeAllFd(stream.socket.handle, hdr);
+    raw_http.writeAllFd(stream.socket.handle, out);
 }
 
 /// A gzipped vendor asset, compressed on first request and kept for the rest of
@@ -10975,8 +10975,8 @@ fn respondCompressible(arena: std.mem.Allocator, stream: std.Io.net.Stream, acce
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [4096]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ out.len, encoding }) catch return;
-    rawhttp.writeAllFd(stream.socket.handle, hdr);
-    rawhttp.writeAllFd(stream.socket.handle, out);
+    raw_http.writeAllFd(stream.socket.handle, hdr);
+    raw_http.writeAllFd(stream.socket.handle, out);
 }
 
 fn gzipCached(gpa: std.mem.Allocator, cache: *GzipCache, raw: []const u8) ?[]const u8 {
@@ -11044,7 +11044,7 @@ fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
         request_status = 304;
         var hbuf: [256]u8 = undefined;
         const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: public, max-age=3600, must-revalidate\r\n{s}\r\n", .{ etag, connHeader() }) catch return;
-        rawhttp.writeAllFd(stream.socket.handle, hdr);
+        raw_http.writeAllFd(stream.socket.handle, hdr);
         return;
     }
     var hbuf: [4096]u8 = undefined;
@@ -11053,8 +11053,8 @@ fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
     request_status = 200;
     const encoding = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/javascript; charset=utf-8\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: public, max-age=3600, must-revalidate\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ out.len, encoding, etag, connHeader() }) catch return;
-    rawhttp.writeAllFd(stream.socket.handle, hdr);
-    rawhttp.writeAllFd(stream.socket.handle, out);
+    raw_http.writeAllFd(stream.socket.handle, hdr);
+    raw_http.writeAllFd(stream.socket.handle, out);
 }
 
 /// True when the request's Accept-Encoding lists gzip. Scoped to that header's
@@ -11390,11 +11390,11 @@ test "ifNoneMatchHits matches only its own header line and exact value" {
 }
 
 test "fuzz: header parsing never panics on bytes straight off the socket" {
-    // headers_raw here is attacker-controlled the same way rawhttp.zig's
+    // headers_raw here is attacker-controlled the same way raw_http.zig's
     // framing input is: it comes from the raw bytes of an unauthenticated
     // connection to the listener, before any validation. These functions all
     // slice on colons/commas/semicolons/brackets found in that input, the same
-    // category of bug that overflowed rawhttp's Content-Length check.
+    // category of bug that overflowed raw_http's Content-Length check.
     const Ctx = struct {
         fn one(_: void, smith: *std.testing.Smith) anyerror!void {
             var buf: [4096]u8 = undefined;
@@ -13040,7 +13040,7 @@ fn cmdAutoresearch(init: std.process.Init, opts: Options) !void {
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
     var provider_val = try resolveProvider(&cfg, opts);
     const provider = &provider_val;
-    const autoresearch_mod = @import("research/autoresearch.zig");
+    const autoresearch_mod = @import("research/auto_research.zig");
     var eng = autoresearch_mod.Loop{ .ctx = &ctx, .arena = arena, .provider = provider, .cfg = &cfg };
     try eng.run(.{ .targets = targets.items, .harness_argv = harness_argv.items, .metric_name = opts.research_metric orelse "score", .metric_pattern = opts.research_pattern orelse "", .direction = opts.research_direction, .iters = opts.iters, .dry_run = false, .research_dir = "state/autoresearch", .budget_seconds = opts.research_budget });
 }

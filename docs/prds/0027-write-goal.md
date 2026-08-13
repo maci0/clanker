@@ -48,10 +48,10 @@ Premature completion and endless polishing are the same missing field seen
 from two sides — fix one without the other and the failure just moves.
 
 Clanker feels this concretely. `clanker goal "<intent>"` (`src/cli.zig:4134`)
-and `/goal <intent>` (`src/tui/repl_vaxis.zig:640`) both synthesize the same
+and `/goal <intent>` (`src/tui/repl.zig:640`) both synthesize the same
 literal prompt — *"Define all five fields (objective, completion_criterion,
 proof, boundaries, stop_rule) and call the goal tool to persist it"*
-(`src/cli.zig:4142`, `src/tui/repl_vaxis.zig:2201`) — and then hand the whole
+(`src/cli.zig:4142`, `src/tui/repl.zig:2201`) — and then hand the whole
 job to a normal turn. The quality bar for a goal lives in one duplicated
 string plus a skill file, with no structured intermediate anyone can inspect,
 reuse, or refuse. Whatever the model produces is appended to
@@ -277,7 +277,7 @@ the review moment the split exists to create.
    replacing the current "interview then call `goal`" flow with "interview,
    draft, present, and only then hand to `goal` on approval".
 5. Deduplicate the two command prompts (`src/cli.zig:4142`,
-   `src/tui/repl_vaxis.zig:2201`) into one shared constant so the field list
+   `src/tui/repl.zig:2201`) into one shared constant so the field list
    cannot drift between surfaces again, then point both at the drafting step.
 6. Host-side type for the draft next to its consumer, matching house
    convention (`StoredGoal` at `src/cli.zig:8960`); flatten arrays to
@@ -322,7 +322,7 @@ the review moment the split exists to create.
   (`src/improve/retire.zig:60-75`, `:164`) and so tolerates schema growth by
   design. Undecided; see Design.
 - **The goal-designing prompt is duplicated verbatim.** `src/cli.zig:4142`
-  and `src/tui/repl_vaxis.zig:2201` hold the same string, including the field
+  and `src/tui/repl.zig:2201` hold the same string, including the field
   list. Changing the fields in one and not the other is a silent surface
   split. Fix: one shared constant (Implementation phase 5).
 - **PRD 0027 is absent from the inventory.** `docs/prds/README.md`'s table

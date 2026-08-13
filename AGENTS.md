@@ -174,7 +174,7 @@ Promoted changes are committed as `clanker: <summary> [imp-<id>]`. Run the
 whole gate manually with `clanker gate`.
 
 Those gates all answer the same question — is this change *safe*? A change that
-does nothing is maximally safe, so `src/improve/inert.zig` asks the other one.
+does nothing is maximally safe, so `src/improve/inert_check.zig` asks the other one.
 It classifies each proposal from the staged source (never from the summary the
 model wrote about it) as `behavior`, `test_only`, `docs_only` or `inert`, and
 the engine refuses two shapes:

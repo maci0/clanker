@@ -5,12 +5,12 @@ const vaxis = @import("vaxis");
 const cli = @import("cli.zig");
 const log = @import("util/log.zig");
 const dotenv = @import("util/dotenv.zig");
-const autolearn = @import("agent/autolearn.zig");
+const auto_learn = @import("agent/auto_learn.zig");
 const host = @import("sandbox/host.zig");
 const vertex_token = @import("llm/vertex_token.zig");
 const config = @import("config.zig");
 
-// `clanker repl` (src/tui/repl_vaxis.zig) puts the terminal in raw mode with
+// `clanker repl` (src/tui/repl.zig) puts the terminal in raw mode with
 // an alt-screen buffer. Without this, a panic there leaves the terminal
 // broken (raw mode, alt-screen, mouse tracking all still on) with the panic
 // message invisible inside the alt-screen that never gets popped, so the
@@ -59,24 +59,24 @@ comptime {
     _ = @import("util/log.zig");
     _ = @import("util/redact.zig");
     _ = @import("util/atomic_write.zig");
-    _ = @import("util/filelock.zig");
-    _ = @import("util/diskcap.zig");
-    _ = @import("util/ensuredir.zig");
+    _ = @import("util/file_lock.zig");
+    _ = @import("util/disk_cap.zig");
+    _ = @import("util/ensure_dir.zig");
     _ = @import("util/json.zig");
-    _ = @import("util/rawhttp.zig");
-    _ = @import("util/runlock.zig");
+    _ = @import("util/raw_http.zig");
+    _ = @import("util/run_lock.zig");
     _ = @import("util/toml_bridge.zig");
     _ = @import("util/toml_edit.zig");
-    _ = @import("util/toolout.zig");
+    _ = @import("util/tool_out.zig");
     _ = @import("util/utf8.zig");
-    _ = @import("agent/autolearn.zig");
+    _ = @import("agent/auto_learn.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("evals/runner.zig");
     _ = @import("improve/proposal.zig");
     _ = @import("improve/plan.zig");
     _ = @import("improve/history.zig");
     _ = @import("improve/reverts.zig");
-    _ = @import("improve/inert.zig");
+    _ = @import("improve/inert_check.zig");
     _ = @import("improve/engine.zig");
     _ = @import("improve/retire.zig");
     _ = @import("gate/checks.zig");
@@ -91,9 +91,9 @@ comptime {
     _ = @import("tui/transcript.zig");
     _ = @import("tui/theme.zig");
     _ = @import("tui/syntax.zig");
-    _ = @import("tui/stats.zig");
+    _ = @import("tui/turn_stats.zig");
     _ = @import("tui/mascot.zig");
-    _ = @import("tui/repl_vaxis.zig");
+    _ = @import("tui/repl.zig");
     _ = @import("serve/proxy.zig");
     _ = @import("serve/proxy_transcode.zig");
     _ = @import("cli.zig");
@@ -101,7 +101,7 @@ comptime {
     _ = @import("research/engine.zig");
     _ = @import("research/ledger.zig");
     _ = @import("research/harness.zig");
-    _ = @import("research/autoresearch.zig");
+    _ = @import("research/auto_research.zig");
     _ = @import("agent/workflows.zig");
     _ = @import("agent/goal_prompt.zig");
     _ = @import("schedule/cron.zig");

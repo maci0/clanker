@@ -23,8 +23,8 @@ This PRD is only about loading more than one already-trusted local directory.
 `"tools/manifests"`), and `registry.Registry.load` takes exactly one directory
 (`src/tools/registry.zig:167`). Nineteen non-test call sites across nine files
 pass it straight through, ten of them in `src/cli.zig` alone:
-`src/cli.zig`, `src/tui/repl_vaxis.zig`, `src/agent/subagent.zig`,
-`src/peers/phonebook.zig`, `src/mcp/server.zig`, `src/research/autoresearch.zig`,
+`src/cli.zig`, `src/tui/repl.zig`, `src/agent/subagent.zig`,
+`src/peers/phonebook.zig`, `src/mcp/server.zig`, `src/research/auto_research.zig`,
 `src/doctor.zig`, `src/improve/engine.zig` (`:1230`, `:1467`, `:1725`: three
 sites in the self-improve engine, the consumer most likely to break silently),
 `src/gate/checks.zig` (`toolDescriptorGate`).
@@ -147,9 +147,9 @@ support changes *which directories get scanned for manifests*, not how a
 found manifest's own `wasm` path is resolved — worth stating explicitly since
 it is easy to assume otherwise.
 
-**Call sites.** `src/cli.zig`, `src/tui/repl_vaxis.zig`,
+**Call sites.** `src/cli.zig`, `src/tui/repl.zig`,
 `src/agent/subagent.zig`, `src/peers/phonebook.zig`, `src/mcp/server.zig`,
-`src/research/autoresearch.zig`, `src/doctor.zig`, and `src/improve/engine.zig`
+`src/research/auto_research.zig`, `src/doctor.zig`, and `src/improve/engine.zig`
 (three sites: `:1230`, `:1467`, `:1725`) all pass
 `cfg.agent.tools_dir` straight to `Registry.load` today; each becomes a
 mechanical no-op change once the type is a slice, since none of them branch on
@@ -217,8 +217,8 @@ behavior). No per-directory `enabled` toggle (remove the entry from
    scan each in order, last-listed wins on cross-directory `name` collision
    with a warning naming both paths; missing entry warns and continues.
 3. Call sites: mechanical type adjustment across `src/cli.zig`,
-   `src/tui/repl_vaxis.zig`, `src/agent/subagent.zig`, `src/peers/phonebook.zig`,
-   `src/mcp/server.zig`, `src/research/autoresearch.zig`, `src/doctor.zig`,
+   `src/tui/repl.zig`, `src/agent/subagent.zig`, `src/peers/phonebook.zig`,
+   `src/mcp/server.zig`, `src/research/auto_research.zig`, `src/doctor.zig`,
    `src/improve/engine.zig` (three sites), `src/gate/checks.zig`: no new
    branching on directory count.
 4. `plugins` harness_config: replace hardcoded
@@ -260,7 +260,7 @@ behavior). No per-directory `enabled` toggle (remove the entry from
       logged naming both source paths.
 - [x] A missing directory in the list logs a warning and does not prevent the
       remaining directories from loading.
-- [x] Every existing call site (`cli.zig`, `repl_vaxis.zig`, `subagent.zig`,
+- [x] Every existing call site (`cli.zig`, `repl.zig`, `subagent.zig`,
       `phonebook.zig`, `mcp/server.zig`, `autoresearch.zig`, `doctor.zig`,
       `improve/engine.zig`, `gate/checks.zig`) compiles against the new
       signature with no added branching on directory count.

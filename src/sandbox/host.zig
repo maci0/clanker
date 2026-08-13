@@ -18,7 +18,7 @@ const config_mod = @import("../config.zig");
 const registry = @import("../tools/registry.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
 const private_todos_mod = @import("../agent/private_todos.zig");
-const filelock = @import("../util/filelock.zig");
+const file_lock = @import("../util/file_lock.zig");
 const utf8 = @import("../util/utf8.zig");
 const token_stats = @import("../stats/tokens.zig");
 const build_options = @import("build_options");
@@ -2679,8 +2679,8 @@ fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
 pub fn appendLocked(io: std.Io, base: std.Io.Dir, rel: []const u8, data: []const u8) u32 {
     // Through the retrying create: racing creates of a not-yet-existing log
     // spuriously fail ENOENT on macOS, and mapping that to Err.invalid here
-    // silently dropped the append (filelock.createFileRetry has the story).
-    var file = filelock.createFileRetry(io, base, rel, .{ .truncate = false, .lock = .exclusive }) catch |err| switch (err) {
+    // silently dropped the append (file_lock.createFileRetry has the story).
+    var file = file_lock.createFileRetry(io, base, rel, .{ .truncate = false, .lock = .exclusive }) catch |err| switch (err) {
         error.NoSpaceLeft => return Err.too_large,
         else => return Err.invalid,
     };
@@ -3124,7 +3124,7 @@ pub const ExecDenial = union(enum) {
 /// argv passes.
 ///
 /// The second caller is the REPL's `!` shell escape
-/// (`src/tui/repl_vaxis.zig`): a line typed at the prompt is refused by
+/// (`src/tui/repl.zig`): a line typed at the prompt is refused by
 /// exactly the rules that refuse a tool, rather than by a second, drifting
 /// copy of them.
 pub fn execDenial(sb: *const Sandbox, cmd: []const u8, argv: []const []const u8) ?ExecDenial {

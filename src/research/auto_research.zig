@@ -12,7 +12,7 @@ const runtime = @import("../sandbox/runtime.zig");
 const log = @import("../util/log.zig");
 const redact = @import("../util/redact.zig");
 const atomic_write = @import("../util/atomic_write.zig");
-const filelock = @import("../util/filelock.zig");
+const file_lock = @import("../util/file_lock.zig");
 pub const Options = struct { targets: []const []const u8 = &.{}, harness_argv: []const []const u8 = &.{}, metric_name: []const u8 = "score", metric_pattern: []const u8 = "", direction: []const u8 = "min", iters: u32 = 3, dry_run: bool = false, research_dir: []const u8 = "state/autoresearch", budget_seconds: u32 = 300 };
 fn isTarget(path: []const u8, targets: []const []const u8) bool {
     for (targets) |targ| {
@@ -47,7 +47,7 @@ pub const Loop = struct {
         std.Io.Dir.cwd().createDirPath(io, opts.research_dir) catch {};
         const lock_path = try std.fmt.allocPrint(gpa, "{s}/run.lock", .{opts.research_dir});
         defer gpa.free(lock_path);
-        const run_lock = filelock.createFileRetry(io, std.Io.Dir.cwd(), lock_path, .{
+        const run_lock = file_lock.createFileRetry(io, std.Io.Dir.cwd(), lock_path, .{
             .truncate = false,
             .lock = .exclusive,
             .lock_nonblocking = true,

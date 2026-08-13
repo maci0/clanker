@@ -5,7 +5,7 @@
 //! of that would otherwise print straight to the user's terminal.
 //!
 //! This module owns the single predicate and the two output paths (writer,
-//! allocating) so transcript.zig, syntax.zig and repl_vaxis.zig share one
+//! allocating) so transcript.zig, syntax.zig and repl.zig share one
 //! definition instead of three that must stay in sync by comment.
 
 const std = @import("std");
