@@ -32,8 +32,9 @@ taking an action, not after.
    proceed or abort. Without a channel (headless run), the blocker is logged and
    the turn proceeds, with the blocker injected into context.
 4. At `severity = "note"` or `"concern"`, the advisor text is injected into the
-   top of the next turn's user message as a fenced block
-   (`[advisor: concern] ...`). The main agent reads it before acting.
+   system context for the next think call only (one turn), as a fenced block
+   (`[advisor: concern] ...`). It is not added to the user message or to
+   `session.messages`. After that think call, the injection is removed.
 5. Advisor is disabled by default. Enabled via `advisor.enabled = true` in
    `config.toml`. Fails open (disabled) if the advisor model call errors.
 6. Advisor runs on its own context (no tool access, no shared session history
@@ -50,15 +51,20 @@ taking an action, not after.
 - Not a second agent with tools. The advisor calls `ck_llm` (one bounded
   completion), not `ck_subagent`. It cannot read files, run commands, or issue
   corrections as tool calls.
-- Not always-on telemetry. The advisor is session-scoped. It has no persistent
-  log, no stats integration, no `GET /api/advisor` endpoint. Advisory notes are
-  only visible in the current run's transcript.
+- Not always-on telemetry. The advisor is session-scoped. Advisory notes are
+  only visible in the current run's transcript. Token accounting may record an
+  optional `advisor_tokens` field on the stats `Record`; there is no dedicated
+  `GET /api/advisor` endpoint in v1.
 - Not a code reviewer. The advisor sees the turn summary, not the full file
   contents of every read. Deep code review belongs in Arena (PRD 0008) or a
   dedicated subagent.
 - Not a mid-stream interceptor. The advisor fires after a completed turn and
   only annotates the next one; TTSR (PRD 0013) fires during a stream and aborts
   it. Different interception points, deliberately.
+- Not `advisor.skip_tools` in v1. Skipping the advisor when a turn only used
+  read-only tools is deferred.
+- Not a dedicated web UI advisor event in v1. Surfacing an amber `[advisor]`
+  badge on the `/api/run` stream is deferred.
 
 ## Design
 
@@ -76,6 +82,10 @@ scope    = "turn"            # "turn" (default) or "session" (full history)
 the last N turns (configurable as `advisor.context_turns`, default 3). Session
 scope costs more but gives the advisor enough history to notice drift across
 turns, not just within one.
+
+When `scope = "session"`, prior advisor injection blocks are stripped from the
+history before the advisor call (decided). The advisor evaluates the agent's
+work, not its own previous notes.
 
 The `[advisor]` section is distinct from the shipped `improve.arena_advisory`
 flag (`src/config.zig`, `src/improve/engine.zig`): `arena_advisory` is a
@@ -102,6 +112,11 @@ at the start of the next think phase. If the join takes longer than
 `advisor.timeout_ms` (default 5000), the advisor result is dropped and the turn
 proceeds without it.
 
+Prefer the shared fail-open side-channel wrapper from PRD 0020 (auto-thinking)
+once it exists: same timeout/budget pattern for a secondary model call. Until
+then, implement the join/timeout locally and extract when 0020 lands (or land
+the wrapper here if advisor ships first).
+
 **Severity handling.**
 
 `note`: The advisor text is formatted as:
@@ -113,10 +128,12 @@ proceeds without it.
 ```
 
 and prepended to the assistant's system context for the next think call, not
-added to the conversation history. It disappears after one turn.
+added to the conversation history or the user message. It disappears after one
+turn.
 
-`concern`: Same format but with `concern` in the tag. The web UI highlights the
-tag in amber in the turn card (same color as the `tool` status line).
+`concern`: Same format but with `concern` in the tag. Web UI highlighting of
+the tag is deferred (see Non-goals); the injection still happens in system
+context.
 
 `blocker`: The advisor text is presented via the `ask_user` path with two
 options: `proceed` and `abort`. If `proceed` is chosen (or if there is no channel
@@ -128,9 +145,42 @@ arguments are replaced with `<redacted>` for any tool whose manifest has
 `"fs_prefixes"` or `"exec_allow"` non-empty. Tool names and result summaries
 (first 200 bytes of result) are included unredacted.
 
+**Stats (decided).** Add an optional `advisor_tokens` field on the closed
+`Record` struct in `src/stats/tokens.zig`. Omitted when unset so existing
+records and readers are unaffected. `clanker stats` may show the column when
+present.
+
 **Failure isolation.** Any error in the advisor call (provider error, timeout,
 JSON parse failure) is caught, logged at debug level, and produces no injection.
 The main agent loop never sees an exception from the advisor path.
+
+**Dependencies.**
+
+- Hard boundary with PRD 0013 (TTSR): advisor is post-turn annotation; TTSR is
+  mid-stream abort. Do not merge the interception points.
+- Soft dependency on PRD 0020 (auto-thinking): shared fail-open, budgeted,
+  per-turn side-channel call to a secondary model. Whichever ships first should
+  extract the timeout/budget wrapper; the other reuses it.
+- `src/agent/loop.zig` think/join points; existing `ask_user` path for blockers.
+- Stats `Record` schema (`src/stats/tokens.zig`) for optional `advisor_tokens`.
+- Distinct from `improve.arena_advisory` / Arena (PRD 0008).
+
+**Implementation.**
+
+1. **`src/agent/advisor.zig`**: build advisor input (with redaction), call
+   secondary model, parse severity JSON, format injection blocks, strip prior
+   advisor notes under `scope = "session"`.
+2. **Config**: parse `[advisor]`; treat missing provider/key as disabled with a
+   startup warning.
+3. **Loop integration**: spawn after completed turn; join with
+   `advisor.timeout_ms` before next think; inject into system context for one
+   turn only (not user message / not `session.messages`).
+4. **Blocker path**: wire `ask_user` proceed/abort; headless falls through as
+   concern.
+5. **Stats**: optional `advisor_tokens` on `Record`.
+6. **Shared side-channel (with 0020)**: extract or adopt the timeout/budget
+   wrapper once either PRD lands the helper.
+7. **Deferred**: `advisor.skip_tools`; web UI `/api/run` advisor event.
 
 ## Failure modes
 
@@ -149,8 +199,11 @@ The main agent loop never sees an exception from the advisor path.
       produce a clear startup error.
 - [ ] With `advisor.enabled = true`, an advisor `ck_llm` call is made after
       each completed turn; the provider and model match config.
-- [ ] A `note` or `concern` response is visible at the top of the next turn's
-      system injection and absent from `session.messages`.
+- [ ] A `note` or `concern` response is visible in the next turn's system
+      context injection and absent from the user message and from
+      `session.messages`; cleared after that one think call.
+- [ ] Under `scope = "session"`, prior `[advisor: ...]` blocks are stripped
+      from history before the advisor call.
 - [ ] A `blocker` response triggers the `ask_user` flow with `proceed`/`abort`
       options in an interactive session.
 - [ ] A `blocker` in a headless run is logged and treated as a `concern` (loop
@@ -163,31 +216,17 @@ The main agent loop never sees an exception from the advisor path.
       main loop.
 - [ ] `advisor.enabled = false` (default) causes zero advisor calls; no
       performance impact on the main loop.
+- [ ] Optional `advisor_tokens` may appear on stats `Record` when advisor ran.
 - [ ] Unit tests in `src/agent/advisor.zig` cover: severity parsing, argument
-      redaction, timeout handling, injection formatting.
+      redaction, timeout handling, injection formatting, prior-note stripping.
 
 ## Open questions / future work
 
-- **Advisor seeing its own prior notes.** Under `scope = "session"`, the advisor
-  sees turns that already had an advisor note injected. This could cause the
-  advisor to amplify its own previous concerns rather than evaluating the agent
-  independently. Whether to strip prior advisor blocks from the history before
-  sending is unresolved.
-- **Cost and billing.** Advisor calls are on a separate provider/model and are
-  not counted against the main session's token budget. Whether they should appear
-  in `clanker stats` under a separate `advisor_tokens` column is unresolved.
-- **Per-tool advisor bypass.** Some tools (e.g., read-only reads) are low-risk
-  and not worth advising on. A `advisor.skip_tools = ["read_file", "search_code"]`
-  list would skip the advisor call when the last turn only used those tools.
-- **Web UI visibility.** The advisor note injected into context is not currently
-  surfaced in the web UI's turn card (it would require a new event type on the
-  `/api/run` stream). Surfacing it with an amber `[advisor]` badge is a natural
-  follow-on to the web UI's existing tool-card style.
-- **Shared plumbing with PRD 0020 (auto-thinking).** Both features add a
-  fail-open, budgeted, per-turn side-channel call to a separately configured
-  secondary model; whichever builds first should extract that timeout/budget
-  wrapper so the other reuses it rather than implementing its own.
-- **Advisor as Arena combatant.** The advisor role and the Arena combatant role
-  share the "read a transcript, produce a structured critique" shape. Whether the
-  advisor's system prompt and severity schema should be unified with Arena's judge
-  protocol is worth investigating before either is changed.
+- **`skip_tools`.** `advisor.skip_tools = [...]` remains future work.
+- **Web UI event.** Amber `[advisor]` badge on `/api/run` remains future work.
+- **Shared plumbing with PRD 0020.** Extract the fail-open side-channel wrapper
+  when either feature lands; track as a hard shared dependency, not an open
+  product question.
+- **Advisor as Arena combatant.** Whether the advisor's system prompt and
+  severity schema should unify with Arena's judge protocol remains open before
+  either is changed.

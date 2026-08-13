@@ -16,9 +16,11 @@ uses the `git` tool to stage files coarsely and typically produces one commit pe
 session regardless of how many logical changes are present.
 
 omp's `omp commit` reads the working tree, groups unrelated hunks into atomic
-commits, orders them by dependency, rejects cycles, and places source files above
-tests, docs, and config files. The model does the grouping; deterministic code
-enforces ordering and cycles.
+commits, orders them by dependency, and places source files above tests, docs,
+and config files. The model does the grouping; deterministic code enforces
+ordering. On this Zig codebase, dense `@import` graphs make a full-graph cycle
+the common case, so a single-commit fallback with a clear `note` is the expected
+primary path when the heuristic collapses, not a rare error.
 
 ## Goals
 
@@ -29,8 +31,10 @@ enforces ordering and cycles.
    of file paths and a conventional commit message.
 3. The guest builds a dependency graph from the groupings (group A depends on
    group B if A's files import or reference B's files, determined by a simple
-   static grep) and performs a topological sort. Cycles are rejected with an error
-   naming the cycle.
+   static grep) and performs a topological sort. A partial cycle (some groups
+   remain orderable) is rejected with an error naming the cycle. A degenerate
+   cycle that spans every group falls back to a single commit with a `note`
+   naming the merged groups (expected primary path on dense-import Zig trees).
 4. Source files are ordered before tests, docs, and config files within each
    topological level (same convention as omp's ordering heuristic).
 5. Commit messages are validated against the 11 conventional commit types
@@ -82,6 +86,12 @@ unstaged tracked files). `dry_run = true` returns the proposed groupings without
 executing any `git` commands. `max_commits` caps how many commits the LLM may
 propose; excess groups are merged into the last one.
 
+**Optional `commit.model`.** Grouping may use a provider/model distinct from the
+main agent via an optional config key (e.g. `[commit] model =
+"provider/model"` or a tool-level override). When unset, grouping uses the main
+provider. Large diffs can be cheaper on a small model; quality-sensitive
+repos can pin a stronger one.
+
 **Step 1: diff collection.** The guest calls `ck_exec` with:
 
 ```
@@ -116,25 +126,26 @@ added for:
   placed after the non-test file it shares a basename with, if that file is in
   a different group.
 
-**Step 4: topological sort.** Kahn's algorithm on the dependency graph. If a
-cycle is detected (the output queue is shorter than the input node count), the
-tool returns:
+**Step 4: topological sort and cycle handling.** Kahn's algorithm on the
+dependency graph.
 
-```
-{"ok": false, "error": "dependency cycle: group 0 (feat: add cache) -> group 2 (refactor: restructure module) -> group 0"}
-```
+- **Partial cycle:** if some groups remain orderable but a cycle among a
+  subset blocks the rest, the tool returns an error naming the cycle and
+  makes no commits. The model must revise the grouping.
+  ```
+  {"ok": false, "error": "dependency cycle: group 0 (feat: add cache) -> group 2 (refactor: restructure module) -> group 0"}
+  ```
+- **Degenerate cycle (expected primary path on Zig):** when the graph
+  collapses into one cyclic cluster spanning all groups (common here because
+  `const x = @import("y.zig")` appears in nearly every source file, so the
+  grep gives almost every pair of src groups an edge), repeatedly asking the
+  model to revise cannot converge. The tool falls back to a **single commit**
+  containing every group's files, with a `note` field naming the merged
+  groups, instead of error-looping. This is the expected primary path for
+  dense-import Zig trees in v1, not an exceptional failure.
 
-No commits are made; the model must revise the grouping.
-
-An honest caveat about the edge heuristic on this codebase: in a Zig repo,
-`const x = @import("y.zig")` appears in nearly every source file, so the grep
-gives almost every pair of src groups an edge, and mutual references make the
-cycle path the common case, not the exception. When the graph collapses into
-one cyclic cluster spanning all groups, repeatedly asking the model to revise
-cannot converge, so the tool falls back to a single commit containing every
-group's files (with a `note` field naming the merged groups) instead of
-error-looping. A smarter boundary for edges (per-directory, or per-manifest
-for `tools/`) is the likely v2 of this step.
+A smarter boundary for edges (per-directory, or per-manifest for `tools/`) is
+the likely v2 of the graph step.
 
 **Step 5: source-before-tests ordering within levels.** Within each topological
 level (nodes with the same depth), source files (`src/`, `lib/`, non-test files)
@@ -173,7 +184,36 @@ Proceed? [y/N]
 If confirmed, calls `smart_commit` with `dry_run = false`. In a terminal the
 prompt is a plain stdin read; under a browser session the confirmation goes
 through `serveConfirm` (`src/cli.zig`), the same path the `agent.confirm_writes`
-config uses to confirm tool writes.
+config uses to confirm tool writes. When the degenerate single-commit fallback
+fired, the printed proposal includes the `note` so the user sees why groups
+were merged before confirming.
+
+**Dependencies.**
+
+- Hard: guest `ck_exec` / `ck_llm` surface (existing WASM host ABI); conventional
+  commit validation is guest-local string work.
+- Soft: [PRD 0010 (plugin manifest SDK)](0010-plugin-manifest-sdk.md) for
+  packaging the new tool manifest; [PRD 0022](0022-out-of-tree-tools.md) only
+  if the tool is installed out-of-tree rather than under `tools/manifests`.
+- Existing: `src/cli.zig` (`serveConfirm`, subcommand registration),
+  `tools/zig/` guest build pattern.
+
+**Implementation.**
+
+1. Scaffold `tools/zig/smart_commit.zig` + `tools/manifests/smart_commit.tool.json`
+   (input schema: `dry_run`, `max_commits`, `scope`).
+2. Diff collection + lock-file filter via `ck_exec`.
+3. LLM grouping via `ck_llm`, optional `commit.model` resolution, conventional
+   commit regex validation before any git write.
+4. Dependency graph (grep heuristic) + Kahn topo sort; partial-cycle error;
+   degenerate all-groups cycle → single-commit fallback with `note`.
+5. Source-before-tests ordering within levels; execute `git add` / `git commit`
+   per group; stop on first failure with partial list.
+6. `clanker commit` CLI: dry-run print, confirm (`serveConfirm` when browser),
+   then execute; surface fallback `note` in the proposal list.
+7. Tests: lock-file filtering, conventional commit regex, topo sort, partial
+   cycle error, degenerate-cycle single-commit fallback + `note`,
+   source-before-tests, `max_commits` merge, pre-commit hook failure stop.
 
 ## Failure modes
 
@@ -181,8 +221,8 @@ config uses to confirm tool writes.
 |---|---|
 | LLM returns malformed JSON | Tool returns the raw LLM output as an error; no commits made |
 | LLM proposes a file not in the diff | That file is silently removed from the group; if the group becomes empty, it is dropped |
-| Dependency cycle detected | Tool returns a cycle error; no commits made |
-| Cycle spans all groups (degenerate graph) | Single-commit fallback: all files in one commit, `note` names the merged groups |
+| Partial dependency cycle detected | Tool returns a cycle error naming the cycle; no commits made |
+| Cycle spans all groups (degenerate graph) | Single-commit fallback: all files in one commit, `note` names the merged groups (expected primary path on dense-import Zig trees) |
 | `git add` fails (e.g., a file was deleted since the diff was collected) | Tool stops and reports the error; lists which commits succeeded before the failure |
 | Pre-commit hook fails | Tool stops and reports the hook's output; no rollback |
 | `max_commits` exceeded | Groups beyond the cap are merged into the last group |
@@ -199,16 +239,21 @@ config uses to confirm tool writes.
       before any git operation; the error names the offending message.
 - [ ] The dependency graph is built and topological sort produces a valid order;
       verify with a two-group test where group A imports a file from group B.
-- [ ] A dependency cycle returns a clear error naming the cycle; no commits are
-      made.
+- [ ] A partial dependency cycle returns a clear error naming the cycle; no
+      commits are made.
+- [ ] A degenerate cycle spanning all groups falls back to a single commit with
+      a `note` naming the merged groups; no error loop; dry-run and CLI proposal
+      both surface the `note`.
 - [ ] Source files appear before test files within the same topological level.
 - [ ] `clanker commit` prints the proposed list, asks for confirmation, and
       executes only on `y`.
 - [ ] A pre-commit hook failure is reported and the partial commit list is
       returned; subsequent groups are not attempted.
 - [ ] `max_commits` cap merges excess groups into the last one.
+- [ ] Optional `commit.model` is honored when set; unset uses the main provider.
 - [ ] Unit tests cover: lock-file filtering, conventional commit regex, topological
-      sort, cycle detection, source-before-tests ordering.
+      sort, partial cycle detection, degenerate-cycle fallback, source-before-tests
+      ordering.
 
 ## Open questions / future work
 
@@ -217,16 +262,15 @@ config uses to confirm tool writes.
   hunk selection would solve this but requires parsing the diff into hunks and
   staging them individually via `git apply --cached`. The complexity is
   significant; file-level grouping is the right starting point.
-- **Commit ordering across providers.** The LLM grouping step uses the main
-  provider. For large diffs (many files, long histories), a cheaper model might
-  produce worse groupings. Whether `smart_commit` should use a configurable
-  `commit.model` separate from the main agent model is unresolved.
+- **Smarter edge boundaries.** Per-directory or per-manifest edges would reduce
+  how often the degenerate fallback fires. v2 of the graph step.
 - **Amendment mode.** If the last commit needs an additional related change,
   `smart_commit` could detect that and offer `--amend` instead of a new commit.
   Risky (amend rewrites history); out of scope for v1.
 - **Push gate.** After committing, a post-commit hook or an explicit `--push`
   flag could trigger `git push`. Deliberately excluded: mixing local history
   operations with remote operations in one command is error-prone.
-- **Cycle resolution suggestions.** When a cycle is detected, the tool currently
-  just names it. A follow-on improvement would suggest which group boundary to
-  move to break the cycle (e.g., "move file X from group A to group B").
+- **Cycle resolution suggestions.** When a partial cycle is detected, the tool
+  currently just names it. A follow-on improvement would suggest which group
+  boundary to move to break the cycle (e.g., "move file X from group A to
+  group B").

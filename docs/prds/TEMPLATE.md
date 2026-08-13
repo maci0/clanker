@@ -39,6 +39,16 @@ If a table of ops/fields/endpoints exists in code, mirror it here exactly;
 treat a mismatch between this table and the code as a bug in the PRD, not
 a stylistic choice, and fix it the same day it's noticed.
 
+For a **Draft** (or partially shipped) PRD, Design must also settle build
+blockers and sequencing — do not leave "must decide before coding" items
+only under Open questions:
+
+- **Dependencies.** Other PRDs, ADRs, and existing code this rides on.
+  Hard blockers first; soft/related after.
+- **Implementation.** Numbered phases with concrete file paths (create /
+  edit). Each phase should be independently checkable. Put "decide X"
+  work in Design policy above, not as a phase that re-opens the decision.
+
 ## Known issues
 
 Only needed when verification against code turned up real drift between
@@ -69,3 +79,7 @@ history can tell what's actually being asked and why it's still open
 (what would resolving it cost or break?). Distinguish a genuine open
 design question from a plain bug that just hasn't been fixed yet — a bug
 belongs in Known issues, not here, even if fixing it is future work.
+
+Do not park build blockers here. If implementation cannot start until a
+choice is made, make the choice in Design (and say why), then leave only
+follow-on / optional refinements in this section.

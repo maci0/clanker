@@ -2,25 +2,24 @@
 
 ## Status
 
-Partially shipped, never documented until now. **Web UI plugins already exist
-and are live** — `tools/webui-plugins/<name>/` (`plugin.json` + `app.js` +
-optional `app.css`), discovered by `handleWebuiPlugins`
+**Web UI plugins: Shipped.** `tools/webui-plugins/<name>/` (`plugin.json` +
+`app.js` + optional `app.css`), discovered by `handleWebuiPlugins`
 (`src/cli.zig:7206-7299`), served same-origin from `/webui/plugins/<name>/*`
 (`handleWebuiPluginAsset`, `src/cli.zig:7305-7355`), registered client-side
 via `window.clanker.registerView()` (`tools/zig/webui/core/plugins.js:171-221`),
 toggled in System → Web UI plugins, state in `state/webui_plugins.json`. Four
 real plugins ship today: `activity`, `office`, `files`, `health`. No PRD or ADR
-covered it before this one; its prior documentation was
+covered the web UI half before this one; its prior documentation was
 `tools/webui-plugins/README.md` plus the review log
 `docs/WEBUI_PLUGINS_REVIEW.md`, which is why its design decisions (CSP-only
 trust, no declared-capability sandboxing) were never written down where a
 future editor would find them.
-This PRD is that missing writeup, plus the design for the two surfaces that
-have nothing yet: **TUI plugins and CLI plugins do not exist** — confirmed by
-grepping for any directory-scan, config-driven, or PATH-based extension point
-feeding `command_registry` (`src/tui/repl_vaxis.zig:492-507`, a hardcoded
-array) or the `Command` enum (`src/cli.zig:68-105`, a closed compile-time
-set). Both are designed below and remain Draft until built.
+
+**TUI plugins / CLI plugins: Draft.** Confirmed absent by grepping for any
+directory-scan, config-driven, or PATH-based extension point feeding
+`command_registry` (`src/tui/repl_vaxis.zig:492-507`, a hardcoded array) or
+the `Command` enum (`src/cli.zig:68-105`, a closed compile-time set). Designed
+below; do not treat TUI/CLI acceptance criteria as shipped.
 
 ## Problem
 
@@ -84,6 +83,22 @@ one.
   future work (see Open questions), not this revision's job.
 
 ## Design
+
+**Design decisions (locked for TUI/CLI).**
+
+- **CLI argv→JSON.** Tier 1 passes remaining argv as
+  `{"args":[...]}`, a raw argv string array, unless the manifest declares
+  typed flags (future; not in v1). Matches how `chain`/`gh`/`git` tools
+  already take `{"args":[...]}`; no third mapping invented here.
+- **Tier-2 discovery.** External `clanker-<name>` binaries are found on
+  `PATH` **and** under `~/.clanker/plugins/` (git-style local plugin dir).
+  `clanker help` lists both sources, marked external, with the directory of
+  origin so an operator can tell PATH from home-dir installs.
+- **State files for TUI/CLI.** `state/tui_plugins.json` and
+  `state/cli_plugins.json` are enabled-lists (`{"enabled":[...]}`), default
+  off — same stance as `state/webui_plugins.json`. Presence of a manifest or
+  PATH binary is not consent to run it; the operator enables each name
+  explicitly. (Promoted from the Known issues recommendation below.)
 
 ### Web UI plugins (documenting what is shipped)
 
@@ -152,7 +167,8 @@ one manifest per file, no code:
 **Discovery.** On REPL start, scan `tui-plugins/` (config key
 `agent.tui_plugins_dir`, default `"tui-plugins"`, mirroring
 `agent.workflows_dir`/`agent.skills_dir`) and append one `CommandSpec` per
-manifest to the in-memory table alongside the hardcoded
+**enabled** manifest (see Design decisions: `state/tui_plugins.json`
+enabled-list, default off) to the in-memory table alongside the hardcoded
 `command_registry` — same shape the hardcoded entries already use
 (`.action = .{ .tool = .{ .name = m.tool, .args = m.args } }`,
 `repl_vaxis.zig:492-507`), so `/help`, tab-complete, and dispatch all see a
@@ -185,25 +201,24 @@ matching how a tool manifest with a name collision is refused today
 `clanker myreport --since 7d` resolves to a manifest in `cli-plugins/`
 (config `agent.cli_plugins_dir`, default `"cli-plugins"`) before falling
 through to Tier 2, and invokes `my_report_tool` non-interactively with the
-remaining argv passed through as the tool's JSON input's `args` field (exact
-argv→JSON mapping is an implementation detail for whoever builds this, not a
-PRD-level decision). Same trust story as the TUI tier: the plugin can only
-name a tool the sandbox already trusts. Tier 1 resolves tool names against
-whatever directories `agent.tools_dir` names (PRD 0022 makes that a list);
-this PRD adds no tool-discovery path of its own, and any new `*_plugins_dir`
-key inherits 0022's string-or-array parse rather than introducing a second
+remaining argv passed as `{"args":["--since","7d"]}` (see Design decisions).
+Same trust story as the TUI tier: the plugin can only name a tool the
+sandbox already trusts. Tier 1 resolves tool names against whatever
+directories `agent.tools_dir` names (PRD 0022 makes that a list); this PRD
+adds no tool-discovery path of its own, and any new `*_plugins_dir` key
+inherits 0022's string-or-array parse rather than introducing a second
 convention.
 
-**Tier 2 — external binary, `PATH`-based, operator-trusted.** If no Tier 1
-manifest matches, and the name is not a built-in `Command`, `clanker` checks
-`PATH` for `clanker-<name>` (git/cargo/kubectl's own convention) and execs
-it with the remaining argv, inheriting stdio. This is real code execution
-with no sandbox at all — the same trust an operator already extends to
-anything else they put on their own `PATH`. `clanker help` lists discovered
-Tier-2 plugins (scanning `PATH` for `clanker-*` once at startup, cached for
-the process lifetime) alongside built-ins, clearly marked as external so a
-reader can tell "ships with clanker" from "this machine's operator added
-it."
+**Tier 2 — external binary, operator-trusted.** If no Tier 1 manifest
+matches, and the name is not a built-in `Command`, `clanker` checks `PATH`
+and `~/.clanker/plugins/` for `clanker-<name>` (see Design decisions) and
+execs it with the remaining argv, inheriting stdio. This is real code
+execution with no sandbox at all — the same trust an operator already
+extends to anything else they put on their own `PATH`. `clanker help` lists
+discovered Tier-2 plugins (scanned once at startup, cached for the process
+lifetime) alongside built-ins, clearly marked as external, with origin
+(`PATH` vs `~/.clanker/plugins/`) so a reader can tell "ships with clanker"
+from "this machine's operator added it."
 
 **Order.** Built-in `Command` enum first (never shadowable by a plugin, so a
 plugin cannot silently redefine `clanker run`), then Tier 1 (sandboxed,
@@ -221,19 +236,56 @@ Tier 2 (deliberately, for parity with the tools this pattern is borrowed
 from) carry unsandboxed trust, and both are opt-in and locally sourced, never
 fetched.
 
+**Dependencies.** (TUI/CLI half)
+
+- Web UI plugin enabled-list pattern (`state/webui_plugins.json`,
+  `handleWebuiPlugins`) as the state-file precedent.
+- TUI `command_registry` / `CommandSpec` (`src/tui/repl_vaxis.zig`) for
+  slash-command registration shape.
+- CLI `Command` enum + dispatch (`src/cli.zig`) for built-in-first ordering.
+- Tool registry + sandbox (`src/tools/registry.zig`, PRD 0010 / 0022) for
+  Tier 1 / TUI tool-backed plugins.
+- [PRD 0022](0022-out-of-tree-tools.md) for `agent.tools_dir` as a list (Tier 1
+  name resolution) and string-or-array parse inherited by `*_plugins_dir`.
+
+**Implementation.** (TUI/CLI half, phased)
+
+1. **TUI plugins.** Config `agent.tui_plugins_dir`; scan + validate
+   manifests; `state/tui_plugins.json` enabled-list; append enabled entries
+   to `command_registry` at REPL start; refuse built-in collisions; wire
+   enable/disable (REPL command or config-adjacent CLI later).
+2. **CLI Tier 1.** Config `agent.cli_plugins_dir`; resolve unknown
+   subcommands against enabled manifests before Tier 2; invoke named tool
+   with `{"args":[...]}`; `state/cli_plugins.json` enabled-list; never
+   shadow `Command`.
+3. **CLI Tier 2.** Discover `clanker-*` on `PATH` and
+   `~/.clanker/plugins/`; exec with remaining argv; list in `clanker help`
+   as external with origin; Tier 1 still wins on name ties.
+
+Web UI half is already shipped (see Status); no implementation work there
+except failure-mode polish called out above (corrupt state warn, mount
+throw → tab error) if not already true in code.
+
 ## Known issues
 
-- **State-file shape disagrees between the two mechanisms that exist
-  today.** `state/webui_plugins.json` is an enabled-list
-  (`{"enabled":[...]}`); the tool system's `state/plugins.json` is a
-  disabled-list (`{"disabled":[...], "enabled":[...]}`, read at
-  `src/tools/registry.zig:156,288`). Both are defensible defaults (off by
-  default vs. on by default) for their own surface, but a reader has no way
-  to guess which shape a new `state/tui_plugins.json` or
-  `state/cli_plugins.json` should follow without this note. Recommend: new
-  surfaces default off (matching web UI's stance, and matching Tier 1/2 CLI
-  plugins being something an operator deliberately dropped a file for)
-  unless a concrete reason argues otherwise when built.
+- **State-file shape disagrees between the tool system and surface plugins.**
+  `state/webui_plugins.json` is an enabled-list (`{"enabled":[...]}`); the
+  tool system's `state/plugins.json` is a disabled-list
+  (`{"disabled":[...], "enabled":[...]}`, read at
+  `src/tools/registry.zig:156,288`). For TUI/CLI the choice is now locked in
+  Design decisions: enabled-list, default off, matching web UI. The tool
+  system's on-by-default shape stays as-is for WASM tools; do not "unify"
+  them without a separate PRD.
+- **Corrupt `state/webui_plugins.json` currently stays silent.**
+  `handleWebuiPlugins` already falls back to an empty enabled-list on parse
+  failure (`catch WebuiPluginState{}`), matching Failure modes, but it does
+  not warn. Failure modes require a warn once on load; fix belongs beside
+  that catch in `src/cli.zig`.
+- **Plugin `mount` throw is uncaught.** `registerView`'s view loader calls
+  `spec.mount` with no try/catch (`tools/zig/webui/core/plugins.js`), so a
+  throwing mount can break the tab switch rather than show the tab error
+  Failure modes describe. Fix belongs in the view loader: catch, render an
+  error into the panel, keep the rest of the page alive.
 
 ## Failure modes
 
@@ -248,6 +300,9 @@ fetched.
 | CLI Tier 2 binary not executable / not found after passing the `PATH` scan (removed mid-session) | Reported as a normal exec failure, not a crash |
 | CLI Tier 1 and Tier 2 both could resolve the same name | Tier 1 wins (sandboxed beats unsandboxed) |
 | Built-in command name requested as a plugin (any tier, any surface) | Refused; built-ins are never shadowable |
+| Corrupt / unparseable `state/webui_plugins.json` | Treated as empty enabled-list; warn once on load (server log / System status). Next successful toggle rewrites a clean file |
+| Web UI plugin `mount` throws | Tab still appears; the view panel shows a tab error naming the plugin and the exception message, instead of a blank panel or a broken page |
+| Corrupt `state/tui_plugins.json` / `state/cli_plugins.json` (once built) | Same as web UI: empty enabled-list + warn; no plugin commands dispatched until re-enabled |
 
 ## Acceptance criteria
 
@@ -266,14 +321,15 @@ fetched.
 
 ## Open questions / future work
 
-- **Declared-capability sandboxing for web UI plugins.** Today's CSP-only
-  trust model means an enabled plugin's JS can call any same-origin
-  `fetch()` the browser session is authorized for, not just what its own
-  `api` surface hands it deliberately. Worth a `fs_prefixes`/
+
+- **Declared-capability sandboxing for web UI plugins (future breaking
+  change).** Today's CSP-only trust model means an enabled plugin's JS can
+  call any same-origin `fetch()` the browser session is authorized for, not
+  just what its own `api` surface hands it deliberately. A `fs_prefixes`/
   `network_allow`-style manifest field the page enforces before handing a
-  plugin its `api` object? This is a real design change to something
-  already shipped and in use, not a green-field decision — costs a breaking
-  change to the three existing plugins if the answer is yes.
+  plugin its `api` object would be a real design change to something already
+  shipped and in use: labeled here as a future breaking change, not a v1
+  task for this PRD. Still open as product scope; do not silently tighten.
 - **TUI plugin directory vs. single-file manifests.** Sketched above as
   `tui-plugins/<name>.json` for simplicity (no code alongside the manifest,
   unlike web UI's directory-per-plugin). If a future TUI plugin needs more
@@ -285,14 +341,3 @@ fetched.
   scope above; would need the TUI to expose a drawing/input API to a plugin
   the way the web UI's `api.van`/`api.preact` does, which the TUI has no
   analog of today.
-- **Argv-to-tool-input mapping for CLI Tier 1.** Sketched as "remaining argv
-  passed as `args`" above but not fully specified — does a manifest declare
-  named flags that map to specific JSON fields, or does the tool itself
-  parse a raw string the way `chain`/`gh`/`git` tools already take
-  `{"args":[...]}`? Whoever implements this should decide by matching
-  whichever existing tool convention is closest, not inventing a third.
-- **Should Tier 2 external CLI plugins get a namespace beyond bare
-  `clanker-<name>` on `PATH`** — e.g. also checking
-  `~/.clanker/plugins/<name>` — to avoid every plugin author needing global
-  `PATH` placement? Git supports both; worth deciding before Tier 2 ships
-  rather than after operators start depending on `PATH`-only discovery.

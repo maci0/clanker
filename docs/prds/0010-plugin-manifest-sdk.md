@@ -178,11 +178,10 @@ existing docs:
   and nothing else, and `host.zig`'s own test ("a tool may run only the commands
   its manifest names") pins that an empty list allows nothing. Three docs
   described a tool as having exec authority it has never had. All three docs
-  are fixed; a fourth copy survives in code, unfixed:
+  are fixed; a fourth copy survives in code (see Known issues):
   `src/sandbox/host.zig:209-210`'s field comment still reads "Empty falls back
   to the harness default set below" while `host.execAllowed` in the same file
-  allows nothing for an empty list. A reader who greps for the old claim
-  should know that surviving hit is the stale one, not a fourth doc.
+  allows nothing for an empty list.
 - **`wasm` is not "relative to the tools directory".** The field comment said
   it was; it has always been read relative to the process's working directory
   (`loop.zig`'s `wasmBytes`, `cli.zig`, `host.zig`). Comment corrected, and the
@@ -192,6 +191,23 @@ existing docs:
   `cmd_tools` and `cmd_plugins` guests for grouping, but absent from every
   reference and from `registry.zig` entirely. Documented, including the part
   that surprises: the registry does not parse it.
+
+## Known issues
+
+- **`src/sandbox/host.zig:209-210` still carries a stale `exec_allow` comment.**
+  The field comment reads "Empty falls back to the harness default set below"
+  while `host.execAllowed` in the same file allows nothing for an empty list
+  (pinned by the test "a tool may run only the commands its manifest names").
+  Docs and `registry.zig` were corrected in Bugs fixed above; this surviving
+  code comment is the remaining drift. Fix belongs on those two lines in
+  `host.zig`, not a fourth doc pass.
+- **`plugins new` refuses colliding files, not colliding registered tool ids.**
+  Failure modes below state the contract: a name that already identifies a
+  registered tool is refused before write. Today `pluginsNew` only
+  `statFile`s the destination manifest/guest paths (`src/cli.zig`), so an id
+  loaded from another directory (especially once PRD 0022 lands) can still be
+  scaffolded. Fix belongs in `pluginsNew`: consult the registry (or scan
+  configured `tools_dir`s) before writing.
 
 ## Failure modes
 
@@ -207,7 +223,8 @@ existing docs:
 | `validate` finds errors | Prints each with file and key, prints a count, exits 1 |
 | `validate` finds only warnings | Prints them, exits 0 |
 | `validate` on a directory with no `*.tool.json` | Usage error, exit 2 |
-| `plugins new` on an existing name | Refuses both writes, exit 2; nothing is clobbered |
+| `plugins new` on an existing name (scaffold files already on disk) | Refuses both writes, exit 2; nothing is clobbered |
+| `plugins new` with a name that already identifies a registered tool id | Refused before write, exit 2, naming the colliding id; the scaffolder never creates a second descriptor for an id the registry already owns |
 | `plugins new` with a name outside `[a-z0-9_]` | Usage error, exit 2 |
 | `plugins <unknown-sub>` | Usage error naming the three subcommands, exit 2 |
 | Guest source calls the model without `llm`/`sequential` | `validate` error (and, in this repo, a red `registry.zig` conformance test) |
@@ -231,13 +248,9 @@ existing docs:
 
 ## Open questions / future work
 
-- **Should `agent.tools_dir` become a list?** It is the one thing standing
-  between the packaging slice and actually installing a third-party plugin
-  alongside the built-in ones. The cost is not the config change; it is that
-  `Registry.load` takes one directory today and several callers pass it, and
-  name collisions between directories need a documented precedence rule.
-  Since taken up by
-  [PRD 0022 (out-of-tree tools)](0022-out-of-tree-tools.md).
+- **`agent.tools_dir` as a list: Moved to PRD 0022.** No longer an open ask
+  here. Design, acceptance criteria, and the `cmd_plugins` hardcoded-path fix
+  live in [PRD 0022 (out-of-tree tools)](0022-out-of-tree-tools.md).
 - **Should the validator run as part of `clanker gate`?** It is cheap and the
   tree is clean, so it would stay green — but it would also make the loader's
   forgiveness irrelevant inside this repo, which may be the point or may be a

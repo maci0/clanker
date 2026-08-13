@@ -7,6 +7,11 @@ Shipped (libvaxis-based), with known gaps tracked below. Source of truth:
 run`: `src/tui/transcript.zig`, `theme.zig`, `syntax.zig`, `width.zig`.
 Surface: `clanker repl`.
 
+**Critical gap:** `ask_user` and `confirm_writes=always` are ungated in the
+REPL. No `ask_fn` / `confirm_fn` is wired, so questions fall through to the
+headless "nobody attached" default and write-capable tools run without a
+prompt. A one-line startup warning says so; that is not a gate.
+
 The REPL this replaces (`src/tui/{input,region,statusbar,palette,approval,
 term}.zig`, `cmdRepl`, `util/lineedit.zig`, the pty `tui-test` suite — about
 1,100 lines of `cli.zig` plus eight files) was deleted outright when the
@@ -141,14 +146,16 @@ call sites carry it.
 **Closing the remaining gaps — widget mapping.** Most open items below have a
 specific `vxfw` shape, not an open-ended "figure it out":
 
-| Gap | `vxfw` mechanism |
-|---|---|
-| Slash-command search (fuzzy palette) | The same `cmd_*` internal-tool catalog the web UI's palette drew from; needs a modal keystroke-owning loop like `/model`'s (`picker_open`/`handlePickerKey`) reused for command lookup, not a new one. Tab-complete's prefix match over `command_registry` already shipped (see Acceptance) and is a separate, narrower mechanism |
-| Inline `ask_user`/confirm-before-write | `/model`'s modal machinery again — a prompt that owns keystrokes until answered, wired to `AskFn`/`confirm_fn` the same way the web UI's ask bridge is |
-| Real markdown outside fences | `transcript.zig`'s `MdStream` already does this for `clanker run`; wire its output into a `RichText`/`Text` widget instead of a raw `Io.Writer` |
-| Multi-line input | `vxfw.TextField` has no multi-line mode; needs either a custom widget or accepting Shift+Enter has no vaxis primitive to hook |
-| Plan mode | `Agent.plan_mode` and the `needsConfirm` gate already exist (web UI drives both); needs a REPL-side toggle key and system-prompt block, no new backend |
-| Visible stats/compaction | **Shipped.** `src/tui/stats.zig` is the one formatter; the status bar gained the web UI's context meter and the transcript gained a per-turn line and two compaction notices |
+| Gap / feature | Status | `vxfw` mechanism / notes |
+|---|---|---|
+| Slash-command fuzzy palette (Ctrl-P) | **Shipped** | Third `PickerKind` over `command_registry`, same modal as `/model`/`/theme`; Tab-complete remains a separate prefix match |
+| Transcript search (Ctrl-R) | **Shipped** | Incremental case-insensitive search over `lines`; drives `view_end` like paging |
+| Line-level markdown outside fences | **Shipped** | `mdLineSegments`: bold/italic/code/headings/bullets on completed + live stream |
+| Multi-line markdown constructs | **Gap** | Tables, block quotes, nested/ordered lists, setext headings still unstyled; `clanker run`'s `MdStream` stays richer |
+| Inline `ask_user`/confirm-before-write | **Gap (critical)** | Reuse `/model`'s modal (`picker_open`/`handlePickerKey`) wired to `AskFn`/`confirm_fn`; today ungated |
+| Multi-line input | **Gap** | `vxfw.TextField` has no multi-line mode; Shift+Enter has no vaxis primitive to hook |
+| Plan mode | **Gap** | `Agent.plan_mode` + `needsConfirm` exist (web UI); needs a REPL toggle |
+| Visible stats/compaction | **Shipped** | `src/tui/stats.zig`; status-bar context meter + per-turn line + compaction notices |
 
 ## Failure modes
 
@@ -161,6 +168,7 @@ specific `vxfw` shape, not an open-ended "figure it out":
 | Ctrl-C, mid-stream | Sets the same `stop_flag` `client.chatStream` already checks |
 | `ask_user` invoked here | No `ask_fn` is wired; falls back to the same "nobody attached" default (`not_found`) a headless run gets. No prompt-rendering path exists yet (tracked below) |
 | `confirm_writes = "always"` invoked here | No `confirm_fn` is wired either, so write-capable tool calls run **ungated**, not declined. A one-line warning prints once at startup so the operator isn't left believing they're protected. That warning is emitted *before* `log.setLevel(.error_)`, which is deliberate: the clamp exists to keep stray stderr off vaxis's alt screen, so it belongs immediately before `app.run`, not at the top of the command. Raised at the top it swallowed this warning (logged at `.warn`) outright, along with config parse warnings and `--session` id complaints |
+| Session file corrupt / unreadable on resume (`--session` / `--continue`) | `loadSession` errors other than `FileNotFound` abort REPL startup; the corrupt file is left untouched |
 | CJK / fullwidth text in a rendered line | Occupies two columns, wraps whole rather than across the edge, and the row it lands on matches what `lineRows` reserved (`nextCell`) |
 | Decomposed text (base + combining mark) | One cell carrying both codepoints, so the accent sits on its letter instead of pushing the line right |
 | Control bytes in LLM/tool output | Stripped before render, per Design. Covers the streamed deltas, the provider's final `message.content`, its `err_detail` on a failed turn, internal `cmd_*` tool `text`, `!` escape output, and clipboard payloads |

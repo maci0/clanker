@@ -16,15 +16,17 @@ loop's future research capabilities (pulled in only by a test-only import in
 `main.zig`); the autoresearch loop never imports it and it is not part of
 this surface, despite the similar name.
 
-One thing this doc used to claim that the code does not do: `--budget`
-is accepted but never enforced as a wall-clock cutoff. See Known issues.
+`--budget` is accepted and logged as an advisory pacing hint only in v1;
+the harness owns its own timeout. See Design and Known issues.
 
 ## Problem
 
 Manual edit -> run -> measure -> keep/discard costs a human every iteration
-and never runs overnight. A first-class loop targets `12 experiments/hour`
-unattended (one per default 300s budget) with a ledger to read in the
-morning. The contract is generic `command -> scalar`, not just GPU kernels.
+and never runs overnight. A first-class loop runs unattended proposal/patch/
+measure iterations with a ledger to read in the morning. `--budget` defaults
+to 300s as a logged pacing hint (about 12 iters/hour if the harness cooperates);
+it is not a wall-clock kill. The contract is generic `command -> scalar`, not
+just GPU kernels.
 
 ## Goals
 
@@ -52,8 +54,24 @@ morning. The contract is generic `command -> scalar`, not just GPU kernels.
 **Harness contract.** Any shell command must (a) exit 0, (b) emit the
 metric as `<pattern><number>` in stdout/stderr, or as `metric.json`
 `{"<name>": <number>}` (checked first), both implemented in
-`harness.zig`'s `extractMetric`. A `--budget` is accepted and logged but not
-enforced (see Known issues).
+`harness.zig`'s `extractMetric`. `--budget` is **logged advisory only in
+v1**: stored on `Options`, written into the run's `config.json` / logs, and
+not used as a wall-clock kill. The harness owns its own timeout; do not
+claim a subprocess cutoff until `runHarness` enforces one.
+
+**CLI flags** (`clanker autoresearch`, mirrored by REPL `/autoresearch` help):
+
+| Flag | Meaning | Default |
+|---|---|---|
+| `--target <file>` | File the loop may edit (repeatable / comma-separated) | required (non dry-run) |
+| `--harness "<cmd>"` | Shell command whose output holds the metric | required (non dry-run) |
+| `--metric <name>` | Metric key | `score` |
+| `--direction min|max` | Whether lower or higher is better | `min` |
+| `--pattern <sub>` | Substring before the number to extract | empty (first float) |
+| `--budget <sec>` | Logged advisory pacing hint only; not a kill switch | `300` |
+| `--iters <n>` | Max experiments | `3` |
+| `--dry-run` | Validate/log options; no LLM, no harness | off |
+| `--provider` / `--model` | Provider/model for proposals | config default |
 
 **Loop.** `Loop.run` creates `state/autoresearch/<run-id>/`, writes
 `config.json`, then for `--iters` iterations calls `iterOnce`: read target
@@ -79,11 +97,10 @@ surface.
 
 ## Known issues
 
-- `--budget`/`budget_seconds` is parsed, stored on `Options`, and logged,
-  but never enforced: `harness.zig`'s `runHarness` calls `std.process.run`
-  with no timeout, so a hung or slow harness command runs to completion (or
-  forever) instead of being cut off at the advertised wall-clock budget.
-  Fix belongs in `src/research/harness.zig`'s `runHarness`.
+- `--budget` is advisory only (see Design). `runHarness` still calls
+  `std.process.run` with no timeout, so a hung harness runs until it exits.
+  Not a kill switch until code enforces one; CLI `--help` detail that still
+  reads like "wall seconds" should stay aligned with advisory semantics.
 
 ## Failure modes
 
@@ -97,7 +114,7 @@ surface.
 | `patch_apply` WASM tool fails | Iteration warning-logged, treated as no improvement |
 | Harness exits non-zero | `ok=false` in the ledger entry, not an improvement |
 | Harness produces no parseable metric | `metric=null` in the ledger entry, `isBetter` treats it as not an improvement |
-| Harness runs long past `--budget` | Not cut off (see Known issues); runs until it exits on its own |
+| Harness runs long past `--budget` | Not cut off: budget is advisory; harness runs until it exits on its own (see Known issues) |
 | `ledger.jsonl` already over 10 MiB | `appendEntry` returns `error.StreamTooLong`, existing file left untouched (test-covered) |
 
 ## Acceptance criteria
@@ -109,11 +126,10 @@ surface.
 - [x] Append-only ledger (`ledger.jsonl`), including the oversized-file edge case
 - [x] WASM tool `autoresearch` lists runs and tails a ledger, reachable from any agent conversation
 - [x] Skill (`skills/autoresearch.md`) + REPL `/autoresearch` + eval coverage (`evals/autoresearch_*.task.json`)
-- [ ] `--budget` enforced as a wall-clock cutoff on the harness subprocess (accepted, not enforced; see Known issues)
+- [x] `--budget` documented as logged advisory only in v1 (CLI help/docs match advisory semantics; not a kill switch — see Known issues)
 - [x] `zig build` / `zig build tools` / `zig fmt --check` green
 
 ## Open questions / future work
 
-- Whether the budget should become a real subprocess timeout (kill after N
-  seconds) or the harness contract should instead just document "the
-  harness is responsible for its own budget."
+- v1 decision: `--budget` stays logged advisory; the harness owns its own
+  timeout. A real subprocess kill remains future work if operators need it.

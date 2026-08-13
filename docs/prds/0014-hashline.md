@@ -42,12 +42,17 @@ tokens in the hashline mode and Grok Code Fast improved pass@1 from 6.7% to
    field) are unchanged.
 5. Hash computation uses the xxHash32 algorithm (already available via the Zig
    standard library's `std.hash.XxHash32`) formatted as exactly 4 lowercase hex
-   characters (lower 16 bits, zero-padded).
+   characters (lower 16 bits, zero-padded). v1 is 4-hex only; no wide-hash mode.
+6. On a successful `hashline` edit, the tool returns the new 4-hex hashes (and
+   line numbers) for the written region so the model can chain a follow-up edit
+   without re-reading the whole file.
+7. System prompt / tool manifests always mention `hashes: true` and the
+   `hashline` op so the model knows the pairing exists without requesting it.
 
 ## Non-goals
 
 - Not replacing the existing `{path, old, new}` replacement. Both coexist; the
-  system prompt can recommend `hashline` for any file read via `read_file` with
+  system prompt recommends `hashline` for any file read via `read_file` with
   `hashes: true`.
 - Not a general diff format. Hashline anchors identify lines to replace; the
   replacement content is still plain text. Structural merge (3-way, patch hunks)
@@ -58,15 +63,20 @@ tokens in the hashline mode and Grok Code Fast improved pass@1 from 6.7% to
 - Not a version-control primitive. Hashline detects staleness within a single
   agent turn; it is not a substitute for git-level conflict detection across
   concurrent writers.
+- Not 8-hex / full 32-bit hashes in v1. Width stays 4 hex chars; a wider mode
+  is future work only if false-positive anchors show up in practice.
 
 ## Design
 
-**Hash format.** xxHash32 over the line's bytes (not including `\n` or `\r\n`),
-lower 16 bits, formatted as exactly four lowercase hex digits. Example:
-`a3f1`. The 16-bit truncation keeps the output short (omp uses 4 hex chars) while
-remaining sufficient to catch accidental mismatches in practice; a deliberate
-collision attack is irrelevant here because the attacker is the LLM itself and
-would have to corrupt its own patch.
+**Hash format (decided: 4-hex only).** xxHash32 over the line's bytes (not
+including `\n` or `\r\n`), lower 16 bits, formatted as exactly four lowercase
+hex digits. Example: `a3f1`. The 16-bit truncation keeps the output short (omp
+uses 4 hex chars) while remaining sufficient to catch accidental mismatches in
+practice; a deliberate collision attack is irrelevant here because the attacker
+is the LLM itself and would have to corrupt its own patch.
+
+**Tolerance (decided).** Search window is `edit.hashline_tolerance` (default
+±10 lines around `anchor_line`). Configured once; not per call in v1.
 
 **`read_file` output with `hashes: true`.**
 
@@ -79,7 +89,7 @@ would have to corrupt its own patch.
 Format per line: `{line_number:04} {hash:4}  {content}`. The line number and
 hash are separated from content by two spaces so a human can visually parse them.
 The hash covers only `content` (the bytes after the two-space separator are not
-part of the hash input — `content` is the raw file bytes for that line).
+part of the hash input; `content` is the raw file bytes for that line).
 
 **`edit_file` hashline operation.** Input JSON:
 
@@ -107,14 +117,30 @@ part of the hash input — `content` is the raw file bytes for that line).
 used to narrow the search, not as the authoritative location. The host:
 
 1. Opens the file and computes hashes for all lines.
-2. For each hunk, searches for `anchor_hash` starting at `anchor_line - 1` (with
-   a small tolerance window, default ±10 lines) to handle minor shifts.
+2. For each hunk, searches for `anchor_hash` starting at `anchor_line` with
+   window `edit.hashline_tolerance` (default ±10) to handle minor shifts.
 3. Verifies that `old_count` consecutive lines starting at the found anchor all
    match the hashes the model would have seen (recomputed from the file's current
    bytes).
 4. If all anchors verify: applies the hunks in reverse line-number order (largest
    offset first) so earlier hunks do not shift later anchors.
 5. If any anchor fails: rejects the entire patch without writing anything.
+6. On success: returns the new hashes and line numbers for each applied region
+   (write-back), so a chained edit can proceed without a full re-read.
+
+**Success response (decided: write-back hashes).** Example:
+
+```json
+{
+  "ok": true,
+  "hunks": [
+    {
+      "start_line": 1,
+      "hashes": ["a3f1", "b91c", "0012"]
+    }
+  ]
+}
+```
 
 **Rejection message.** On mismatch:
 
@@ -129,10 +155,44 @@ not appear in the file": actionable enough for the model to re-read and retry.
 **Multi-hunk atomicity.** All hunks are validated before any write. A partial
 write (first hunk applied, second fails) is not possible.
 
+**System / manifest mention (decided: always).** Both tool manifests'
+`llm_description` (and the default system prompt) always describe `hashes: true`
+and `op: "hashline"`. The pairing is not gated on the model "requesting" an
+edit first.
+
 **Manifest changes.** Both tools stay WASM with the same sandbox policy. The
 manifests gain a new `hashline` entry in their `description` and the
 model-facing text in each manifest's `llm_description` field is updated to
 mention `hashes: true` and the `hashline` operation.
+
+**Config.**
+
+```toml
+[edit]
+hashline_tolerance = 10
+```
+
+**Dependencies.**
+
+- `tools/zig/read_file.zig` and `tools/zig/edit_file.zig` (and their manifests).
+- `std.hash.XxHash32` (already in the Zig stdlib); no new hash dependency.
+- Default system prompt / tool description injection path so hashline is always
+  advertised.
+- Existing `edit_file` `{path, old, new}` path must keep working unchanged
+  (regression surface for evals).
+
+**Implementation.**
+
+1. **Hash helper**: shared xxHash32 → 4-hex formatting used by both tools;
+   unit-test against a known input/output pair.
+2. **`read_file`**: add `hashes: true` output format; binary-file error path
+   unchanged.
+3. **`edit_file`**: add `op` dispatch; implement `hashline` validate-then-apply
+   with `edit.hashline_tolerance`; return write-back hashes on success.
+4. **Manifests + system prompt**: always mention hashes/hashline.
+5. **Config**: parse `edit.hashline_tolerance` (default 10).
+6. **Tests / evals**: tolerance window, multi-hunk reverse apply, mismatch
+   rejection, returned hashes, no regression on plain edits.
 
 ## Failure modes
 
@@ -142,7 +202,7 @@ mention `hashes: true` and the `hashline` operation.
 | `old_count` extends past end of file | Patch rejected; message names the hunk and file length |
 | Multiple lines match the anchor hash | First match within the tolerance window is used; if two are equally near, the one closest to `anchor_line` wins |
 | File modified between `read_file` and `edit_file` calls | Hash mismatch detected and patch rejected with a staleness message |
-| `hashes: true` on a file with lines longer than 1 MB | Line is hashed normally; no special treatment — the hash covers the raw bytes regardless of length |
+| `hashes: true` on a file with lines longer than 1 MB | Line is hashed normally; no special treatment (the hash covers the raw bytes regardless of length) |
 | `op: "hashline"` on a file that was not read with `hashes: true` | No error; the model just has to supply correct hashes. If it supplies wrong hashes it gets a mismatch error |
 
 ## Acceptance criteria
@@ -153,33 +213,27 @@ mention `hashes: true` and the `hashline` operation.
       lowercase hex, verified by a unit test against a known input/output pair.
 - [ ] `edit_file` with `op: "hashline"` applies a valid patch to a file and
       produces the correct result.
+- [ ] A successful `hashline` edit returns new hashes (and start line) for each
+      applied hunk so a follow-up edit can proceed without re-reading.
 - [ ] A hunk with a wrong `anchor_hash` is rejected with an error naming the
       line and the hash mismatch; the file is not modified.
 - [ ] A multi-hunk patch with one valid and one invalid hunk is rejected in
       full; the file is not modified.
 - [ ] Plain `{path, old, new}` edits and plain `read_file` (no `hashes`)
       continue to work unchanged; no regression in existing eval coverage.
-- [ ] The tolerance window (default ±10) finds an anchor that shifted by 5
+- [ ] `edit.hashline_tolerance` (default ±10) finds an anchor that shifted by 5
       lines from `anchor_line`.
+- [ ] System prompt and tool manifests always mention `hashes: true` /
+      `hashline` (not opt-in advertising).
 - [ ] Unit tests cover: hash computation, read output format, single-hunk apply,
       multi-hunk apply in reverse order, mismatch rejection, tolerance-window
-      search.
+      search, write-back hash response.
 
 ## Open questions / future work
 
-- **Tolerance window size.** ±10 is a guess. omp's choice is unknown. Too wide
-  risks matching the wrong anchor in dense repetitive files; too narrow breaks on
-  files with many preceding edits. Worth measuring against the existing `evals/`
-  edit cases.
-- **Hash width.** 16 bits gives 1/65536 false-positive rate per line. For files
-  with tens of thousands of identical-hash lines (highly unlikely in practice),
-  this could cause wrong-anchor matches. A `wide_hash: true` option emitting
-  full 32-bit (8 hex chars) could address this if it becomes a real issue.
-- **System prompt recommendation.** Should the default system prompt always
-  include the `read_file` + `hashline` pairing, or only when the model requests
-  an edit? A skill or transform that automatically upgrades a plain read-then-
-  edit sequence is worth exploring.
-- **Write-back hash update.** After a successful `hashline` edit, should the
-  tool return the new hashes for the affected lines so the model can chain a
-  second edit without re-reading? This would save one `read_file` call per
-  multi-pass edit.
+- **Wide hash mode.** An 8-hex / `wide_hash` option if 4-hex false positives
+  appear in dense files.
+- **Auto-upgrade transform.** A skill or transform that upgrades a plain
+  read-then-edit sequence to hashline automatically remains future work.
+- **Tolerance retune.** Revisit `edit.hashline_tolerance` (±10) only if evals
+  show systematic misses or wrong-anchor hits.

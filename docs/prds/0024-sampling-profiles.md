@@ -36,7 +36,7 @@ whether they have an opinion about it.
 `top_k` does not exist anywhere in the codebase today — not in `Model`, not
 in `RequestParams` (`src/llm/providers/api.zig:20-29`), not written by any
 provider's `buildRequest`. Any design that includes it is new surface, not a
-wiring gap.
+wiring gap. v1 does not add it; see Non-goals / Open questions.
 
 ## Goals
 
@@ -56,9 +56,6 @@ wiring gap.
    (`modelpicker.js:175-177`) move out of the default chat flow — available
    somewhere for the user who wants to hand-tune, but not a control every
    user sees on every run.
-4. `top_k` is explicitly scoped: added only where a configured provider's
-   wire codec actually accepts it (see Design — this varies by vendor), not
-   assumed universal.
 
 ## Non-goals
 
@@ -80,6 +77,9 @@ wiring gap.
   the existing `RunRequest.temperature`/`top_p` per-run override available
   (Goal 1's "never overrides explicit config" applies here identically — an
   explicit per-run value still wins over the automatic default).
+- **`top_k` in v1.** Deferred until a vendor wire-codec matrix exists
+  (which configured kinds actually accept `top_k`). Not in Goals, not in
+  Acceptance criteria, not in the v1 table.
 
 ## Design
 
@@ -93,16 +93,24 @@ vs generic "tool_use") needs a real signal to key off — see Open questions;
 this PRD's Design section only commits to the two-way split the loop already
 has for free.
 
-**The table.** A small `sampling_profiles.zig` (or similar), mapping
-`(use_case, model.capabilities)` to a `{temperature: ?f64, top_p: ?f64,
-reasoning_effort: ?[]const u8}` recommendation. Keyed off `capabilities`
-(already on every `Model`, e.g. `"thinking"`, `"tool_use"`,
-`src/config.zig:83`) rather than provider/model name, so the same three or
-four rows cover every configured model without a per-model entry: a
-`"thinking"` model gets no explicit temperature (most reasoning-model APIs
+**The table (v1 hardcoded numbers).** A small `sampling_profiles.zig` (or
+similar), mapping `(use_case, model.capabilities)` to a
+`{temperature: ?f64, top_p: ?f64, reasoning_effort: ?[]const u8}`
+recommendation. Keyed off `capabilities` (already on every `Model`, e.g.
+`"thinking"`, `"tool_use"`, `src/config.zig:83`) rather than provider/model
+name. v1 ships a **hardcoded** table (no `config.toml` surface for the
+rows):
+
+| use case | capability | temperature | top_p | reasoning_effort |
+|---|---|---|---|---|
+| chat | non-thinking | `0.7` | `null` | n/a |
+| tool_use | non-thinking | `0.0` | `null` | n/a |
+| chat | thinking | `null` | `null` | `"medium"` |
+| tool_use | thinking | `null` | `null` | `"high"` |
+
+A `"thinking"` model gets no explicit temperature (most reasoning-model APIs
 reject or ignore it) and a use-case-appropriate `reasoning_effort` instead; a
-plain chat-completions model gets a use-case-appropriate temperature/top_p
-pair.
+plain chat-completions model gets the temperature/`top_p` pair above.
 
 Boundary against [PRD 0020 (auto-thinking)](0020-auto-thinking.md): this PRD
 owns writing `reasoning_effort` (the capability-keyed table is the one place
@@ -117,21 +125,17 @@ capabilities. Still: if a user wrote `temperature = 0.2` in `config.toml`,
 that value is what ships, exactly as today — the table only fires into the
 gap that currently sends nothing.
 
-Boundary against [PRD 0025 (fallback provider chain)](0025-fallback-provider-chain.md):
-both PRDs touch the same four `loop.zig` dispatch sites (`~L544`, `~L549`,
+**Sequencing.** Lands **after** [PRD 0025 (fallback provider chain)](0025-fallback-provider-chain.md).
+Both PRDs touch the same four `loop.zig` dispatch sites (`~L544`, `~L549`,
 `~L568`, `~L1303`). 0025 owns the call-site restructure (the provider swap
 around `client.chat`/`chatStream`) and lands first; this PRD only extends
 `writeSamplingParams`'s `orelse` chain and touches no call site.
 
-**`top_k`.** Not every wire codec has a slot for it — needs a per-provider
-check (does `buildRequest` for this vendor's kind accept `top_k`?) before it
-can be part of the recommendation table, or it silently has nowhere to go for
-providers whose codec doesn't write it (matching how `temperature`/`top_p`
-already silently drop when null, but this would be "drops even when set" for
-an unsupported vendor, a different and worse failure mode — see Failure
-modes). Scoping this precisely (which of the configured wire kinds actually
-accept `top_k`) is real work this PRD defers to Open questions rather than
-assuming it slots in beside temperature/top_p for free.
+**`top_k`.** Deferred. Not every wire codec has a slot for it. v1 does not
+add `top_k` to the table, `RequestParams`, or any `buildRequest`. Revisit
+once a vendor matrix enumerates which configured kinds accept it; until
+then, assuming it slots in beside temperature/`top_p` would silently drop
+even when set for unsupported vendors.
 
 **Manual controls (Goal 3).** `modelpicker.js`'s temperature/top_p fields
 move out of the picker's default view into wherever the web UI's advanced/
@@ -145,9 +149,32 @@ config-file-writing surface) belongs to
 [PRD 0023 (web UI model configuration)](0023-webui-model-config.md), and
 relocating the picker fields must not reach into it.
 
-## Known issues
+**Dependencies.**
 
-None — draft, nothing built yet.
+- Hard: [PRD 0025](0025-fallback-provider-chain.md) lands first (call-site
+  restructure around `client.chat`/`chatStream`). This PRD must not reshape
+  those sites.
+- Soft: [PRD 0020](0020-auto-thinking.md) consumes the table as its
+  `reasoning_effort` writer; can land after this PRD's write path exists.
+- Existing: `src/llm/providers/common.zig` (`writeSamplingParams`),
+  `src/config.zig` (`Model` capabilities / sampling fields),
+  `src/agent/loop.zig` (use-case signal), `tools/zig/webui/core/modelpicker.js`.
+
+**Implementation.**
+
+1. Add `sampling_profiles.zig` with the hardcoded v1 table above
+   (chat/tool_use × thinking/non-thinking).
+2. Extend `writeSamplingParams` (`src/llm/providers/common.zig`) with a third
+   `orelse` tier that consults the table; ensure `reasoning_effort` is written
+   through the shared path (or a clearly owned companion) for thinking rows.
+3. Pass use-case (`.chat` / `.tool_use`) from `src/agent/loop.zig` into the
+   request params without restructuring the 0025-owned call sites.
+4. Relocate webui temperature/top_p fields in `core/modelpicker.js` behind an
+   advanced control; do not touch `features/models.js`.
+5. Tests: no-config model gets chat vs tool_use defaults; explicit
+   `config.toml` temperature unchanged; thinking model gets
+   `reasoning_effort` and null temperature; per-run override still wins. No
+   `top_k` coverage in v1.
 
 ## Failure modes
 
@@ -156,26 +183,24 @@ None — draft, nothing built yet.
 | Model has an explicit `config.toml` `temperature`/`top_p` | Unchanged: that value ships, the use-case table never consulted |
 | Model has neither, tools offered this turn | Use-case table's `.tool_use` row for this model's capabilities ships |
 | Model has neither, no tools offered | Use-case table's `.chat` row ships |
-| Model declares `"thinking"` capability | Table sends `reasoning_effort` (if the row has one), not `temperature` — matches existing DeepSeek-style handling (`common.zig`'s own doc comment: temperature and top_p narrow the same distribution, adjust one) |
-| `top_k` requested for a provider whose codec doesn't write it | Silently has no effect (matches how an unsupported/unwritten field already behaves for other params) — must not be mistaken for "was applied"; UI/logging should not claim it took effect if it can't verify the wire codec accepts it |
+| Model declares `"thinking"` capability | Table sends `reasoning_effort` (chat=`medium`, tool_use=`high`), not `temperature` |
 | Per-run override set (`RunRequest.temperature`) | Unchanged: still wins over everything, including the use-case table |
 
 ## Acceptance criteria
 
-- [ ] A model with no configured `temperature`/`top_p` gets a use-case-
-      appropriate default when tools are offered vs. not, verified by
-      inspecting the built request body in a unit test (mirrors how
-      `common.zig`'s existing sampling-param tests work today).
+- [ ] A model with no configured `temperature`/`top_p` gets the v1 table
+      defaults: chat non-thinking → temperature `0.7`, top_p unset; tool_use
+      non-thinking → temperature `0.0`, top_p unset. Verified by inspecting
+      the built request body in a unit test.
 - [ ] A model with an explicit `config.toml` `temperature` ships that value
       unchanged regardless of use case.
-- [ ] A `"thinking"`-capability model never gets an automatic `temperature`,
-      only (optionally) `reasoning_effort`.
-- [ ] `top_k` is only ever written for a provider wire kind whose codec
-      declares support for it; a test enumerates the configured kinds and
-      confirms which do.
+- [ ] A `"thinking"`-capability model never gets an automatic `temperature`;
+      chat gets `reasoning_effort = "medium"`, tool_use gets `"high"`.
 - [ ] The webui default chat/composer flow no longer shows manual
       temperature/top_p fields; they remain reachable from an explicit
       advanced control.
+- [ ] No `top_k` field is added to the v1 table, `RequestParams`, or wire
+      codecs as part of this work.
 
 ## Open questions / future work
 
@@ -187,14 +212,13 @@ None — draft, nothing built yet.
   file-editing tools specifically?) before a three-way split is honest
   rather than guessed. Two-way (`chat` / `tool_use`) ships first; revisit
   once a concrete signal exists.
-- **Where do the table's actual numbers come from?** This PRD proposes the
-  mechanism (a capability-keyed table, consulted as the last tier of
-  existing precedence) but not the specific recommended values — those
-  should be sourced from each vendor's own documented guidance at
-  implementation time, not invented here, and will need periodic revisiting
-  as vendors change their own recommendations.
+- **`top_k` vendor matrix.** Build an enumeration of which configured wire
+  kinds accept `top_k` before adding it to the table. Until then it stays
+  out of Goals and AC.
 - **Should the use-case table itself be `config.toml`-overridable** (a user
   who disagrees with the shipped defaults can tune the table, not just
-  disable it)? Left open; the simplest version of this PRD ships a
-  hardcoded table with no config surface, which is enough to test whether
-  the mechanism helps before deciding it needs to be user-tunable too.
+  disable it)? Left open; v1 ships the hardcoded table above, which is
+  enough to test whether the mechanism helps before deciding it needs to be
+  user-tunable too.
+- **Revisit the concrete numbers** as vendors change documented guidance.
+  The mechanism is stable; the row values are not sacred.

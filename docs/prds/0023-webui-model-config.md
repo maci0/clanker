@@ -88,8 +88,9 @@ just a papercut.
    explicit confirm, matching the confirm-before-write posture the harness
    already applies to its own file-writing tool calls.
 7. The UI states plainly, after a successful write, that the change takes
-   effect on the next `clanker serve` restart — not live. `Config.load` runs
-   once at process start; nothing about this feature adds hot-reload.
+   effect on the next `clanker serve` restart — not live. Text notice only;
+   no in-UI restart action in v1. `Config.load` runs once at process start;
+   nothing about this feature adds hot-reload.
 
 ## Non-goals
 
@@ -114,6 +115,7 @@ just a papercut.
   a lock or a compare-and-swap check for a single-user local tool is not
   justified by this PRD; noted as an open question if it ever becomes a
   real complaint.
+- An in-UI "restart now" control after save. v1 is a text notice only.
 
 ## Design
 
@@ -124,11 +126,13 @@ missing, same as `cmdInit`'s existing first-write case.
 **Table replace.** Text-based span replacement, not a TOML round-trip:
 
 1. Read `config.local.toml` (empty string if it doesn't exist).
-2. Scan lines for one that is *exactly* `[models."<provider>/<model>"]` (or
-   `[providers.<name>]`) — the literal header text `renderModelSnippet`
-   already produces. A TOML table's body is everything from its header line
-   up to (not including) the next line that starts with `[`, or EOF; that
-   span is the table's full extent.
+2. Scan lines for one that is *exactly* the literal header text
+   `renderModelSnippet` already produces (e.g.
+   `[models."<provider>/<model>"]` or `[providers.<name>]`). v1 matching is
+   **literal**, not a normalized/format-tolerant parse of the header. A TOML
+   table's body is everything from its header line up to (not including) the
+   next line that starts with `[`, or EOF; that span is the table's full
+   extent.
 3. Found: replace the whole span with the freshly rendered block.
    Not found: append the block at EOF (with a leading blank line if the
    file is non-empty and doesn't already end in one).
@@ -137,6 +141,13 @@ missing, same as `cmdInit`'s existing first-write case.
    target span through unchanged and substituting only the target span, so
    the *effect* is a single-table edit even though the mechanism is a whole-
    file write.
+
+**Duplicate tables: last table wins.** If a hand-edited header uses different
+spacing (e.g. `[ models."x/y" ]`) and the literal scan misses it, a second
+table with the same effective key is appended. Pin against the vendored TOML
+parser: **last table wins**. That outcome is accepted for v1 (the UI-written
+block is the one that takes effect after restart). Format-tolerant matching
+is deferred; see Open questions.
 
 **Top-level keys (`default_provider`, `default_model`).** Not inside a
 table, so the span rule differs: a line matching `^default_provider = ` (or
@@ -170,18 +181,49 @@ searching for an existing table, or a name containing a quote would never
 match its own prior block and would append a duplicate instead of replacing
 it.
 
+**Restart notice.** After a successful write the UI shows a text notice that
+the change applies on the next `clanker serve` restart. No "restart now"
+button or self-restart in v1.
+
+**Dependencies.**
+
+- Hard: existing `renderModelSnippet` / catalog-match path in `src/cli.zig`
+  (shared with `providers fill` and `/api/catalog`); `src/util/atomic_write.zig`
+  `writeFile`; vendored TOML parser behavior for duplicate tables (must be
+  pinned by test before shipping).
+- Soft: [PRD 0024](0024-sampling-profiles.md) / [PRD 0020](0020-auto-thinking.md)
+  do not block this; Models write path is independent of sampling.
+- Existing: `tools/zig/webui/features/models.js` (read-only UI to extend),
+  `Config.load` base+local merge (`src/config.zig`).
+
+**Implementation.**
+
+1. Span-replace primitive (host): literal header match against
+   `renderModelSnippet` output, replace or append table span; top-level key
+   replace/insert-before-first-`[`; write via `atomic_write.writeFile`.
+2. Endpoints: `POST /api/config/model` and `POST /api/config/default` in the
+   serve path (`src/cli.zig`), reusing catalog-match + `renderModelSnippet`.
+3. Pin duplicate-table behavior: unit test that two tables with the same
+   header parse as last-wins under the vendored TOML parser.
+4. Models UI: confirm-before-write using the existing snippet preview; Save
+   calls the endpoint; success response shows text-only restart notice.
+5. Tests: surgical replace leaves unrelated lines byte-identical; append when
+   missing; top-level key insert before first `[`; crash mid-write leaves
+   prior content; quote/backslash names round-trip through the same escaping;
+   last-wins duplicate-table pin.
+
 ## Failure modes
 
 | Condition | Behavior |
 |---|---|
 | `config.local.toml` does not exist | Created fresh, containing just the new block or key |
 | Target table/key already present, exact header match | Replaced in place; rest of file untouched |
-| Target table present but written with different formatting (e.g. `[ models."x/y" ]` with extra spaces) | Literal-match scan misses it; a second table with the same effective key is appended — TOML's own duplicate-table handling then decides which one the parser honors (needs pinning against the vendored TOML parser's actual behavior before shipping; see Acceptance criteria) |
+| Target table present but written with different formatting (e.g. `[ models."x/y" ]` with extra spaces) | Literal-match scan misses it; a second table with the same effective key is appended; vendored TOML parser: **last table wins** (pinned by AC test) |
 | Provider or model name contains a quote or backslash | Must round-trip through the same escaping `renderModelSnippet` already applies, or the header match silently fails (see Design) |
 | Two browser tabs write different models at nearly the same time | Read-modify-write race; the later write's full-file content wins and can silently drop the earlier tab's change. Accepted risk (see Non-goals), not mitigated |
 | Process killed mid-write | `atomic_write.writeFile`'s temp+rename leaves the old file intact — no partial/corrupt file |
 | File not writable (permissions) | Endpoint returns an error; UI surfaces it; no partial write (nothing is attempted past the failed `createFileAtomic`) |
-| Write succeeds | Running `clanker serve` process keeps its already-loaded config; UI must say "restart to apply", not imply it took effect live |
+| Write succeeds | Running `clanker serve` process keeps its already-loaded config; UI shows a text notice to restart; no live apply, no restart button |
 
 ## Acceptance criteria
 
@@ -196,33 +238,26 @@ it.
 - [ ] Writing a table that doesn't exist yet appends it; writing a
       top-level key that doesn't exist yet inserts it before the first
       `[` header.
+- [ ] Header match is literal against `renderModelSnippet` output (spacing
+      variants are not treated as the same table).
 - [ ] A killed process mid-write (simulated in a test) leaves the previous
       file content intact.
 - [ ] The vendored TOML parser's behavior on a file with two tables sharing
-      the same header text is pinned by a test, so the "different
-      formatting misses the match" failure mode above has a known, tested
-      outcome rather than an assumed one.
+      the same header text is pinned by a test as **last table wins**.
 - [ ] The Models view shows the exact block to be written and requires an
       explicit second action before the endpoint is called.
-- [ ] A successful save's UI response states the change applies on next
-      restart.
+- [ ] A successful save's UI response is a text notice that the change
+      applies on next restart (no restart button).
 
 ## Open questions / future work
 
-- **Format-normalizing the match.** Right now the table-header scan is a
-  literal string match against exactly what `renderModelSnippet` produces.
-  If a user hand-edits the spacing of a table header clanker itself wrote
-  earlier, the next save from the UI won't recognize it and will append a
-  duplicate rather than replace. Worth revisiting if pinning the TOML
-  parser's duplicate-table behavior (see Acceptance criteria) turns out to
-  be unsafe rather than merely redundant.
+- **Format-normalizing the match.** v1 is literal-only. If hand-edited header
+  spacing causes duplicate appends often enough to hurt, revisit a normalized
+  match. Last-wins makes the duplicate safe; normalization is convenience, not
+  a correctness fix.
 - **Concurrent-write protection.** Noted as a Non-goal for now; if this
   becomes a real annoyance (multiple tabs, or a user editing
   `config.local.toml` by hand while the web UI is open), the fix is likely
   a compare-and-swap on the file's content hash before writing — the same
   pattern `ck_fs_write_if` already uses for guest tool writes
   (`src/sandbox/host.zig:2624`) — rather than a lock file.
-- **Restart affordance.** Should a successful save offer a "restart now"
-  action from the web UI itself, or is a text notice enough? Left open;
-  depends on whether `clanker serve` already has (or should have) any
-  self-restart mechanism, which this PRD does not investigate.

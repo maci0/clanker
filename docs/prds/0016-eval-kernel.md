@@ -39,30 +39,47 @@ kernel can read a file or call another tool mid-execution.
 4. Magic prefixes in cells: `%pip install <pkg>` installs into the kernel's
    venv, `%time` wraps execution in a timer, `%%bash` runs the cell body as a
    shell command via `ck_exec`, `!cmd` runs a single command.
-5. Kernel state directories (`state/kernels/<session-id>/`) hold the venv and
-   any files the kernel writes. They are cleaned up when the session ends (or
-   manually via a `kernel` call with `reset: true`).
+5. Kernel state directories (`state/kernels/<session-id>/<type>/`) hold the
+   venv and any files the kernel writes. Each kernel's cwd is that directory.
+   They are cleaned up when the session ends (or manually via a `kernel` call
+   with `reset: true`).
 6. The tool returns structured output: stdout, stderr, a `result` field (the last
    expression value, repr'd), and a `duration_ms` field.
+7. Extract a session-scoped subprocess registry (keyed by session, SIGTERM on
+   session end) that PRD 0017 (DAP) reuses. This registry is a hard dependency
+   for DAP and ships as part of this PRD's host work, not as a later refactor.
 
 ## Non-goals
 
 - Not a Jupyter server. There is no `.ipynb` format, no cell IDs, no checkpoint
   files. The kernel is a stateful process; clanker manages it, not a notebook
   server.
-- Not sandboxed by the WASM runtime. The kernel runs a real Python or Bun
-  process with the ambient filesystem permissions. The `kernel` tool manifest
-  sets `"confirm": true` (the manifest schema has no `dangerous` key; per-call
-  confirmation is the existing mechanism) and it is disabled by default
-  (`kernel.enabled = false` in config).
+- Not sandboxed by the WASM runtime. The kernel is a named, opt-in unsandboxed
+  tool class: a real Python or Bun process with ambient filesystem permissions.
+  The `kernel` tool manifest sets `"confirm": true` and the feature stays off by
+  default (`kernel.enabled = false`). That pair is the gate; once running, the
+  process is not bounded by `fs_prefixes`.
 - Not persistent across clanker restarts. Kernel state is in-memory plus the
   kernel directory; a clanker restart kills the process. The directory survives
-  for inspection but re-running the session starts a fresh kernel.
+  for inspection but re-running the session starts a fresh kernel. JS kernel
+  state is ephemeral (no serialize-to-disk on each cell).
 - Not a general MCP bridge. The loopback bridge exposes only the host's
   registered WASM tools, not arbitrary HTTP endpoints. It uses the same
   descriptor-gated dispatch as the normal tool call path.
+- Not default-on. Resource quotas (CPU/memory via cgroups or equivalent) must be
+  documented and preferably implemented before `kernel.enabled` is flipped to
+  true in any recommended/default config. Quotas are a pre-default-on
+  requirement, not a v1 ship blocker while the feature remains opt-in.
 
 ## Design
+
+**ADR 0007 carve-out (decided).** ADR 0007's posture is that the manifest is the
+security boundary and it is enforced. A kernel is an unsandboxed subprocess with
+the host's ambient filesystem permission: the inverse of that posture once the
+process is running. v1 treats kernels as a named, opt-in unsandboxed tool class,
+gated by `kernel.enabled = false` (default) plus manifest `"confirm": true`.
+Prefer a short ADR that records this carve-out (and points at this PRD) rather
+than only a paragraph here; the PRD states the policy either way.
 
 **Tool input schema.**
 
@@ -80,7 +97,8 @@ and starts fresh. `timeout_ms` caps cell execution; default 10000.
 
 **Python kernel.** Started via `python3 -c` wrapping a small supervisor script
 that reads cell text from stdin and writes JSON to stdout. The supervisor runs in
-a venv at `state/kernels/<session-id>/python/venv/`. The supervisor loop:
+a venv at `state/kernels/<session-id>/python/venv/`. Working directory is
+`state/kernels/<session-id>/python/`. The supervisor loop:
 
 1. Reads a JSON line: `{"cell": "..."}`.
 2. Executes in the interpreter's `__main__` namespace (persistent across calls).
@@ -90,10 +108,17 @@ a venv at `state/kernels/<session-id>/python/venv/`. The supervisor loop:
 The venv is created with `python3 -m venv` on first use. `%pip install <pkg>`
 translates to a `pip install` in the venv (via subprocess inside the supervisor).
 
-**JS kernel.** A Bun worker script at `state/kernels/<session-id>/js/worker.ts`.
-The host spawns `bun run <script>` and communicates over stdio JSON in the same
-protocol as the Python supervisor. State is maintained in a JS module-level Map
-that persists across cells.
+**JS kernel (decided: ephemeral state).** A Bun worker script at
+`state/kernels/<session-id>/js/worker.ts`. The host spawns `bun run <script>`
+and communicates over stdio JSON in the same protocol as the Python supervisor.
+State lives in a JS module-level Map for the life of the process. No
+serialize-to-disk on cell completion; a crash or restart loses in-memory state
+(cwd files on disk remain). Working directory is
+`state/kernels/<session-id>/js/`.
+
+**cwd (decided).** Each kernel's process cwd is
+`state/kernels/<session-id>/<type>/`, isolating file writes without changing
+`fs_prefixes`.
 
 **Loopback bridge.** The host starts an HTTP server on `localhost:0` at clanker
 startup (or lazily on first `kernel` call). It listens for `POST /tool/<name>` with
@@ -123,14 +148,50 @@ exactly as for WASM tool calls.
 or not `undefined` (JS). Output is capped at `kernel.max_output_bytes` (default
 65536) before returning.
 
-**Kernel lifecycle.** The host tracks a `KernelRegistry` (a `std.StringHashMap`
-keyed by `<session-id>/<kernel-type>`) mapping to OS process handles. On session
-end (detected by the session cleanup path in `src/agent/loop.zig`), all kernels
-for that session are sent SIGTERM and their directories are scheduled for
-deletion after `kernel.cleanup_delay_ms` (default 5000, to allow in-flight
-reads). PRD 0017 (DAP) needs this same session-scoped, host-managed subprocess
-lifecycle (registry keyed by session, SIGTERM on session end); the lifecycle
-machinery should be designed once here and shared, not implemented twice.
+**Session subprocess registry (decided: extract here).** The host tracks a
+shared `SessionSubprocessRegistry` (a `std.StringHashMap` keyed by
+`<session-id>/<kind>`) mapping to OS process handles. On session end (detected
+by the session cleanup path in `src/agent/loop.zig`), all processes for that
+session are sent SIGTERM and their directories are scheduled for deletion after
+`kernel.cleanup_delay_ms` (default 5000, to allow in-flight reads). PRD 0017
+(DAP) hard-depends on this registry; design and land it once here, then have DAP
+register adapters under the same lifecycle.
+
+**Quotas (pre-default-on).** Document that cgroups-based (or equivalent)
+CPU/memory limits per kernel are required before recommending
+`kernel.enabled = true` as a default. Opt-in use without quotas is allowed; making
+the feature default-on without quotas is not.
+
+**Dependencies.**
+
+- Prefer a short ADR recording the ADR 0007 unsandboxed-tool carve-out (named
+  opt-in class, `enabled=false` + `confirm:true`). If the ADR is delayed, this
+  PRD's Design section is the interim policy of record.
+- Shared `SessionSubprocessRegistry` is a hard deliverable of this PRD and a
+  hard dependency for PRD 0017 (DAP).
+- Loopback bridge uses existing descriptor-gated dispatch
+  (`src/sandbox/runtime.zig`).
+- Host needs `python3` and/or `bun` on PATH for the respective kernels; absence
+  is a soft runtime error, not a build dependency.
+- Session cleanup path in `src/agent/loop.zig`.
+
+**Implementation.**
+
+1. **Session subprocess registry**: extract/create shared registry API (register,
+   SIGTERM on session end, keyed by session+kind). Land tests that DAP can
+   reuse the same surface.
+2. **Config + gate**: `kernel.enabled = false` default; manifest `"confirm":
+   true`; clear disabled error when called while off.
+3. **Python supervisor + venv**: cwd under `state/kernels/<session>/python/`;
+   persistent `__main__`; `%pip` support.
+4. **JS Bun worker**: ephemeral Map state; same stdio JSON protocol; cwd under
+   `.../js/`.
+5. **Loopback bridge**: localhost token auth; dispatch through normal tool path.
+6. **Magic prefixes + output caps** in the WASM guest.
+7. **ADR 0007 carve-out** (short ADR preferred) and quota docs before any
+   default-on flip.
+8. **Deferred / pre-default-on**: cgroups quotas; stdout streaming over
+   `/api/run`; rich matplotlib/Vega output.
 
 ## Failure modes
 
@@ -143,15 +204,21 @@ machinery should be designed once here and shared, not implemented twice.
 | Loopback bridge returns an error for a tool call | The error text is returned to the kernel as an exception/rejected promise; the cell fails with the bridge error |
 | `reset: true` while a cell is mid-execution | Not possible: the tool call is synchronous; `reset` only applies at the start of a new call |
 | `state/kernels/` directory not writable | Tool returns a setup error; kernel does not start |
+| `kernel.enabled = false` | Tool returns a disabled error; no process started |
 
 ## Acceptance criteria
 
 - [ ] `kernel.enabled = false` (default): the tool is present in the registry
       but returns a "disabled" error when called; no kernel is started.
+- [ ] Manifest sets `"confirm": true`; tool is documented as a named opt-in
+      unsandboxed class (ADR 0007 carve-out referenced).
 - [ ] With `kernel.enabled = true` and Python installed: `{"kernel": "python",
       "cell": "1 + 1"}` returns `{"result": "2", "ok": true}`.
 - [ ] Python state persists across calls in the same session: define `x = 10` in
       one call, read `x` in the next, get `10`.
+- [ ] JS state is process-ephemeral: survives cells in one process life, lost on
+      crash/restart (no disk serialize of the Map).
+- [ ] Kernel process cwd is `state/kernels/<session-id>/<type>/`.
 - [ ] `%pip install requests` installs into the kernel's venv (not the system
       Python); verify `import requests` works in the next call.
 - [ ] `reset: true` clears kernel state; a variable defined before reset is not
@@ -164,33 +231,20 @@ machinery should be designed once here and shared, not implemented twice.
 - [ ] Cell execution exceeding `timeout_ms` kills the kernel and returns a
       timeout error; the next call starts a fresh kernel.
 - [ ] Session cleanup removes `state/kernels/<session-id>/` within
-      `kernel.cleanup_delay_ms`.
+      `kernel.cleanup_delay_ms` and SIGTERMs registered subprocesses via the
+      shared registry.
+- [ ] Session subprocess registry is usable by PRD 0017 without a second
+      lifecycle implementation.
+- [ ] Quota requirement is documented as a blocker for default-on, not for
+      opt-in v1.
 - [ ] Unit tests cover: magic prefix parsing, kernel registry lifecycle, bridge
       auth token check.
 
 ## Open questions / future work
 
-- **ADR 0007 reconciliation.** ADR 0007's posture is that the manifest is the
-  security boundary and it is enforced. A kernel is an unsandboxed subprocess
-  running with the host's ambient filesystem permission, the inverse of that
-  posture: the manifest gates whether the tool runs, but nothing bounds what
-  the process does once running. The `confirm` flag and the `kernel.enabled`
-  config gate mitigate but do not resolve this tension. Landing the feature
-  needs either an explicit carve-out paragraph in this PRD (unsandboxed tools
-  as a named, opt-in class) or its own ADR.
-- **JS kernel state.** Bun worker module scope is wiped on restart. Whether to
-  serialize the state Map to disk on each cell completion (for crash recovery)
-  or accept ephemeral state is unresolved.
-- **Output streaming.** Cell output currently returned as a single chunk after
-  completion. Long-running cells (training loops, slow HTTP calls) would benefit
-  from streaming partial stdout back via the `/api/run` SSE channel, using the
-  same `\x01{"type":"kernel_output",...}` protocol the tool-status events use.
-- **Rich output (matplotlib, Vega).** Python cells that produce figure objects
-  currently return only the repr text. Detecting `plt.show()` or a Vega spec and
-  returning a base64 PNG or JSON for the web UI to render is a natural follow-on.
-- **Kernel quota.** Nothing prevents a runaway cell from consuming unbounded CPU
-  or memory. `cgroups`-based resource limits per kernel directory are worth
-  adding before the feature is enabled by default.
-- **Per-kernel working directory.** Currently kernels inherit the clanker
-  process's cwd. Setting cwd to `state/kernels/<session-id>/<type>/` per kernel
-  would isolate file writes without any fs_prefix changes.
+- **Output streaming.** Long-running cells streaming partial stdout via
+  `/api/run` SSE remains future work.
+- **Rich output (matplotlib, Vega).** Detecting figures / Vega specs for the web
+  UI remains future work.
+- **Quotas before default-on.** cgroups quotas remain required before flipping
+  `kernel.enabled` default; not a v1 opt-in ship blocker.

@@ -20,7 +20,7 @@ ships, the transport half of this document becomes historical.
 **Since this was written, the `todo_*` ops' shared/room-scoped path was
 removed in favor of the board** (see Design below and
 `docs/prds/0003-run-todos.md`). This revision updates the ops table and Design
-section to match; see Open questions for what that removal leaves unresolved.
+section to match; Open questions records the room-scoped todo question as closed.
 
 ## Problem
 
@@ -46,9 +46,6 @@ and must double as the replication layer for the Kanban board.
 
 - End-to-end encryption or authentication between peers beyond configured
   trust. Peers are configured explicitly.
-- ~~Message editing or deletion. The log is append-only.~~ This non-goal fell
-  when `chat_edit`/`chat_delete` shipped (`src/sandbox/host.zig`'s
-  `editMessage`/`deleteMessage`); the log is no longer append-only.
 - Presence/typing indicators. No sockets; live updates are polling.
 
 ## Design
@@ -136,6 +133,8 @@ a restart is needed.
 | Condition | Behaviour |
 |---|---|
 | Peer unreachable | Local log still written; the peer misses the message until it is sent something later — there is no redelivery |
+| Peer HTTP 4xx/5xx | Local write already succeeded; the status is logged and the peer is left alone. No redelivery, no rollback of the local append |
+| Malformed peer URL | Fan-out skips that peer (fetch/`allocPrint` fails, error logged); local append stands, no redelivery |
 | Unsubscribed peer | Keeps nothing: a peer retains a message only for rooms it subscribes to |
 | Missing room/text | Named error per op, no write |
 | `todo_*` called with a `room` | Hard error: room todo lists are gone, use the board |
@@ -148,7 +147,9 @@ a restart is needed.
 - [x] A message sent in a room appears in `state/chatrooms.jsonl` and at
       every subscribed peer.
 - [x] `dm:<a>|<b>` requires no special-casing by senders.
-- [x] Thirteen descriptors share one wasm module via descriptor `config`.
+- [x] Thirteen descriptors share one wasm module via descriptor `config`
+      (`chat_*` plus `todo_*`); each pins its op in config and is marked
+      `sequential` so concurrent calls never race the log file.
 - [x] Sub-agent private todos never leak to a room.
 
 ## Open questions / future work
@@ -161,8 +162,5 @@ a restart is needed.
   inbox cursor covers agent runs but not ad-hoc polling loops.
 - No redelivery to a peer that was down; a catch-up sync would need a
   history fetch on reconnect.
-- Is a shared, room-scoped todo list still wanted for any case the board
-  doesn't cover (e.g. something more transient than a card but more durable
-  than a private list), or was removing it in favor of the board a complete
-  substitution? If the latter, this PRD's history is settled; if not, that's
-  a real design gap, not just the doc catch-up this revision already did.
+- Room-scoped todo lists. Closed: removed in favor of board (ADR 0002 /
+  PRD 0003). No reopen planned.

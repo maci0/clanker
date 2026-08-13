@@ -2,9 +2,10 @@
 
 ## Status
 
-Draft. No source files yet. Affects `tools/zig/read_file.zig` and its manifest
-`tools/manifests/read_file.tool.json`. New cache module in `src/gh/cache.zig`.
-Requires `GITHUB_TOKEN` in the environment.
+Draft. No source files yet. New WASM tool at `tools/zig/gh_read.zig` with
+manifest `tools/manifests/gh_read.tool.json`. New cache module in
+`src/gh/cache.zig`. Requires `GITHUB_TOKEN` in the environment.
+`read_file` stays network-free.
 
 ## Problem
 
@@ -28,40 +29,41 @@ access":
 omp's github-fs addresses this by extending the `read` tool to accept URL
 schemes: `issue://`, `pr://`, `pr://<owner>/<repo>/<number>/diff/<file>`. The
 model uses the same tool for local files and GitHub resources, with transparent
-caching.
+caching. Clanker deliberately does **not** extend `read_file` that way: network
+on the most-called tool is too wide a grant. This PRD uses a dedicated
+`gh_read` tool instead.
 
 ### Why not just the gh tool
 
 The gh tool remains the full-surface escape hatch (including writes, gated by
 pattern). This PRD earns its place only on what gh does not give: a read cache
 with TTLs and ETag revalidation, stable structured output shapes, and
-availability in sandboxes where exec or the gh binary is absent. If review
-finds those three insufficient to justify a parallel API client, the honest
-narrowing is to scope this PRD down to the caching layer alone and keep gh as
-the fetch mechanism. Either way, the feature is the cache plus a uniform read
-path; plain GitHub access already exists.
+availability in sandboxes where exec or the gh binary is absent. The feature is
+the cache plus a uniform read path on `gh_read`; plain GitHub access already
+exists via `gh`.
 
 ## Goals
 
-1. `read_file` recognizes the `gh://` and `github://` URL schemes and routes them
-   through the GitHub API (via `ck_http` with `GITHUB_TOKEN`).
+1. A dedicated `gh_read` tool recognizes the `gh://` and `github://` URL schemes
+   and routes them through the GitHub API (via `ck_http` with `GITHUB_TOKEN`).
+   `read_file` is unchanged and remains network-free.
 2. Supported resource types in the first version:
-   - `gh://issue/<owner>/<repo>/<number>` — issue title, body, state, labels,
+   - `gh://issue/<owner>/<repo>/<number>` : issue title, body, state, labels,
      comments (paginated, up to `gh.max_comments`, default 50).
-   - `gh://pr/<owner>/<repo>/<number>` — PR title, body, state, head/base,
+   - `gh://pr/<owner>/<repo>/<number>` : PR title, body, state, head/base,
      mergeable status, review summary.
-   - `gh://pr/<owner>/<repo>/<number>/diff` — unified diff of the entire PR.
-   - `gh://pr/<owner>/<repo>/<number>/diff/<path>` — diff of a single file in
+   - `gh://pr/<owner>/<repo>/<number>/diff` : unified diff of the entire PR.
+   - `gh://pr/<owner>/<repo>/<number>/diff/<path>` : diff of a single file in
      the PR.
-   - `gh://issue/<owner>/<repo>?state=open&label=bug` — list of matching issues
+   - `gh://issue/<owner>/<repo>?state=open&label=bug` : list of matching issues
      (up to `gh.max_list`, default 30), one per line: `#<number> <state>
      <title>`.
-3. Responses are cached in `state/gh_cache.db` (SQLite via `ck_exec sqlite3` or
-   a native Zig SQLite binding) with a soft TTL (return cached + trigger
-   background refresh) and a hard TTL (return error, force re-fetch).
-4. `GITHUB_TOKEN` is read from the environment (same as the existing `ck_http`
-   pattern for authenticated calls). If absent, `gh://` calls return a clear
-   error.
+3. Responses are cached in `state/gh_cache.db` via `ck_exec sqlite3` in v1, with
+   a soft TTL (return cached + trigger background refresh) and a hard TTL
+   (return error, force re-fetch).
+4. `GITHUB_TOKEN` is read through an allowlisted env path (existing
+   allowlisted `ck_env` / harness pattern), not a general `ck_env_get` that can
+   read arbitrary variables. If absent, `gh_read` returns a clear error.
 5. A `gh.cache_ttl_soft_s` (default 300) and `gh.cache_ttl_hard_s` (default
    3600) config knob. After the soft TTL, the cached value is returned
    immediately and a background `ck_http` refresh is queued. After the hard TTL,
@@ -70,9 +72,13 @@ path; plain GitHub access already exists.
 ## Non-goals
 
 - Not a write interface. `gh://` URLs are read-only. Creating issues, posting
-  comments, and merging PRs belong to a separate write tool (or the existing
-  `git` + `ck_http` combination). Commit creation and any GitHub write path is
-  PRD 0021's territory; this PRD stays read-only.
+  comments, and merging PRs are out of scope for this PRD (future / separate
+  work). They are **not** PRD 0021: that PRD covers git commit creation, not
+  GitHub write APIs.
+- Not extending `read_file` with network. `network_allow` for GitHub lives only
+  on `gh_read`'s manifest so `read_file` stays network-free.
+- Not a general `ck_env_get` host function. Token access uses the allowlisted
+  `ck_env` / harness path already established for sensitive env vars.
 - Not a full GitHub API client. Only the resource types listed in Goals are
   supported. GraphQL, Actions, releases, and repository metadata are out of scope.
 - Not `git clone` or raw file access via the GitHub API (`GET /repos/.../
@@ -83,13 +89,19 @@ path; plain GitHub access already exists.
   keeps the cache warm between sessions.
 - Not a GitHub App. Authentication is a personal access token or a fine-grained
   token in `GITHUB_TOKEN`.
+- Not a native Zig SQLite binding in v1. Cache I/O goes through `ck_exec
+  sqlite3`; a native binding is future optimization.
 
 ## Design
 
-**URL scheme dispatch.** `read_file`'s WASM guest inspects the `path` argument
-for a `gh://` or `github://` prefix before any filesystem access. If matched, it
-parses the URL into `{resource_type, owner, repo, number, subpath, query}` and
-calls `ck_http` to reach the GitHub API.
+**Dedicated tool (decided).** `gh_read` owns URL-scheme dispatch and the
+`network_allow: ["api.github.com"]` manifest grant. `read_file` never sees
+`gh://` paths and never gains network.
+
+**URL scheme dispatch.** The `gh_read` WASM guest parses the `path` (or
+dedicated `url`) argument for a `gh://` or `github://` prefix, parses into
+`{resource_type, owner, repo, number, subpath, query}`, and calls `ck_http` to
+reach the GitHub API.
 
 **URL parsing.** A pure-Zig URL parser in the guest handles the small subset of
 GitHub URL shapes. Malformed URLs (missing `owner`, non-numeric `number`) return
@@ -131,7 +143,7 @@ For a PR diff file:
 ```
 (Raw unified diff, unchanged from the API response.)
 
-**Cache (SQLite).** Schema:
+**Cache (decided: `ck_exec sqlite3`).** Schema:
 
 ```sql
 CREATE TABLE gh_cache (
@@ -146,32 +158,47 @@ On a soft-TTL hit: return `body`, trigger a background `ck_http` GET with
 `If-None-Match: <etag>`. On a 304 response, update `fetched`; on a 200, update
 both. On a hard-TTL hit: fetch synchronously (block the tool call).
 
-The cache database is created on first use. `ck_exec sqlite3 state/gh_cache.db`
-or a native binding (prefer native if Zig's sqlite3 bindings are available as a
-build dep without adding a new library; otherwise `ck_exec`).
+The cache database is created on first use via `ck_exec sqlite3
+state/gh_cache.db`. Native Zig SQLite remains a later optimization if spawn cost
+shows up in profiles.
 
-**GitHub token.** `ck_http` already supports `Authorization` headers. The guest
-reads `GITHUB_TOKEN` via a new `ck_env_get` host function (minimal: reads one
-named environment variable, returns empty string if absent, added alongside this
-feature). If empty, return: `{"ok": false, "error": "GITHUB_TOKEN not set"}`.
+**GitHub token (decided: allowlisted env, no general `ck_env_get`).** Read
+`GITHUB_TOKEN` through the existing allowlisted `ck_env` / harness mechanism
+(only named, approved keys). If empty, return:
+`{"ok": false, "error": "GITHUB_TOKEN not set"}`. Do not add a general-purpose
+env-read host function for this feature.
 
 **Rate limit handling.** On a 403 or 429 response from GitHub, check the
 `X-RateLimit-Remaining` header. If 0, return an error with the reset time from
 `X-RateLimit-Reset`. No automatic retry; let the model decide.
 
-**Manifest.** `read_file`'s manifest gains `"network_allow": ["api.github.com"]`
-for `gh://` calls. Local filesystem access is unchanged; the existing `fs_prefixes`
-remain in effect for non-gh paths.
+**Manifest.** `gh_read.tool.json` carries `"network_allow":
+["api.github.com"]`. `read_file`'s manifest is untouched.
 
-That one manifest line deserves more weight than one sentence. `read_file` is
-the single most-called tool in the system and today has no network surface at
-all; adding `network_allow` makes every invocation of it a potential network
-actor from the sandbox's point of view, and any future bug in the URL-scheme
-dispatch becomes an exfiltration path from the most-trusted tool. The grant
-must be its own decision: a separate manifest change, flagged explicitly in
-review, not a rider on the feature commit. If reviewers reject it, the
-fallback is a dedicated `gh_read` tool carrying the same URL scheme and its
-own manifest, leaving `read_file` network-free.
+**Dependencies.**
+
+- New `gh_read` WASM tool + manifest (network grant isolated here).
+- Existing `ck_http` for GitHub REST calls.
+- Allowlisted `ck_env` / harness for `GITHUB_TOKEN` (no new general env ABI).
+- `ck_exec` with `sqlite3` on PATH for `state/gh_cache.db` in v1.
+- Coexists with the existing `gh` CLI tool; does not replace write-capable gh
+  flows.
+- Explicit non-dependency: PRD 0021 (smart commit) is git commit UX, not GitHub
+  writes.
+
+**Implementation.**
+
+1. **`gh_read` tool skeleton**: URL parse, resource dispatch table, structured
+   text formatters; leave `read_file` alone.
+2. **Auth**: allowlisted env read for `GITHUB_TOKEN`; clear error if missing.
+3. **`ck_http` mapping** for the five resource shapes; rate-limit error path.
+4. **Cache module** (`src/gh/cache.zig`): soft/hard TTL + ETag refresh via
+   `ck_exec sqlite3`.
+5. **Manifest**: `network_allow: ["api.github.com"]` on `gh_read` only.
+6. **Tests**: URL parsing, endpoint mapping, output format, TTL logic, token
+   missing, 429 handling.
+7. **Deferred:** GraphQL endpoint; GitHub writes (separate future PRD, not
+   0021); Enterprise `api_base_url`; native SQLite binding.
 
 ## Failure modes
 
@@ -180,46 +207,36 @@ own manifest, leaving `read_file` network-free.
 | `GITHUB_TOKEN` not set | `{"ok": false, "error": "GITHUB_TOKEN not set; export it or set gh.token in config"}` |
 | Non-existent issue or PR (404) | `{"ok": false, "error": "not found: gh://issue/<owner>/<repo>/999"}` |
 | Rate limit exhausted | `{"ok": false, "error": "GitHub rate limit exhausted; resets at <ISO8601>"}` |
-| Cache database not writable | `gh://` calls succeed but without caching; a warning is logged once per session |
+| Cache database not writable / sqlite3 missing | `gh_read` calls succeed but without caching; a warning is logged once per session |
 | Hard TTL expired and network unavailable | `{"ok": false, "error": "cache expired and GitHub unreachable: <http error>"}` |
 | Diff for a PR with >300 files | Returns the first `gh.max_diff_files` (default 100) files' diffs and a note: `[truncated: 200 more files]` |
 
 ## Acceptance criteria
 
-- [ ] `read_file` with `gh://issue/<owner>/<repo>/<number>` returns a structured
+- [ ] `gh_read` with `gh://issue/<owner>/<repo>/<number>` returns a structured
       plain-text issue summary including title, state, labels, and comments.
-- [ ] `read_file` with `gh://pr/<owner>/<repo>/<number>/diff` returns the unified
+- [ ] `gh_read` with `gh://pr/<owner>/<repo>/<number>/diff` returns the unified
       diff for the PR.
-- [ ] `read_file` with `gh://issue/<owner>/<repo>?state=open&label=bug` returns
+- [ ] `gh_read` with `gh://issue/<owner>/<repo>?state=open&label=bug` returns
       a list of matching issues (one per line).
 - [ ] A second call to the same URL within `gh.cache_ttl_soft_s` returns the
       cached response without a network call (verify via a test that counts
-      `ck_http` invocations).
+      `ck_http` invocations); cache uses `ck_exec sqlite3`.
 - [ ] A call after `gh.cache_ttl_hard_s` makes a fresh network request.
-- [ ] `GITHUB_TOKEN` absent produces a clear error, not a panic.
+- [ ] `GITHUB_TOKEN` absent produces a clear error, not a panic; token is read
+      via allowlisted env, not a general `ck_env_get`.
 - [ ] A 429 rate-limit response returns an error with the reset time, not a retry
       loop.
-- [ ] Non-gh paths (`read_file` with a local path) are unaffected.
+- [ ] `read_file` remains network-free: no `network_allow`, no `gh://` dispatch.
 - [ ] Unit tests cover: URL parsing (valid and malformed forms), API endpoint
       mapping, output formatting, cache TTL logic.
 
 ## Open questions / future work
 
-- **`ck_env_get` design.** This PRD introduces a new host function for reading
-  environment variables. Whether to expose this generally (any env var by name)
-  or restrict it to a config allowlist (`gh.allowed_env = ["GITHUB_TOKEN"]`) is
-  a security tradeoff worth resolving in an ADR before implementation.
-- **GraphQL.** The REST API has pagination limits and missing fields for some
-  resources. A `gh://graphql` endpoint that accepts a query string and returns
-  the raw JSON would cover the gap, but adds GraphQL-specific complexity.
-- **Write support.** `gh://issue/<o>/<r>?op=comment&body=...` or a dedicated
-  `gh_write` tool for creating comments, labels, and reviews. Natural follow-on
-  once reads are stable.
-- **Enterprise GitHub.** `api.github.com` is the assumed endpoint.
-  `gh.api_base_url = "https://github.example.com/api/v3"` would cover GitHub
-  Enterprise users, but changes the `network_allow` manifest entry at deploy time.
-- **SQLite binding vs. ck_exec.** Using `ck_exec sqlite3` for cache access adds
-  a process spawn per read (or per cache miss). A native Zig SQLite binding
-  (e.g., `nektro/zig-sqlite`) would eliminate this cost but adds a build
-  dependency. The right call depends on whether zig-sqlite can be vendored cleanly
-  without touching the existing `build.zig`.
+- **Native SQLite cache.** Replace `ck_exec sqlite3` with native Zig SQLite as
+  a later optimization.
+- **GraphQL.** A `gh://graphql` passthrough remains future work.
+- **Write support.** Dedicated write tool or gh-pattern writes remain future
+  work after reads are stable.
+- **Enterprise GitHub.** `gh.api_base_url` and matching `network_allow` remain
+  future work.

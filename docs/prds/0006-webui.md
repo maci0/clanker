@@ -263,13 +263,6 @@ The listing is ledger-derived like the tool's own (`state/compare/log.jsonl`),
 so it cannot mark which comparisons you have already picked without reading
 every document; "judged" is what a single ledger row can honestly say.
 
-## Known issues
-
-None currently known. The cache-aliasing bug mentioned above under ES module
-split (modules missing their dedicated `RenderCache`/`GzipCache` pair) was
-caught and fixed; if a new module split lands without wiring all three
-pieces, it reproduces the same class of bug.
-
 ## Failure modes
 
 | Condition | Behaviour |
@@ -287,6 +280,8 @@ pieces, it reproduces the same class of bug.
 | `POST /api/compare/<id>` with a letter nobody answered under, or with no letter at all | `400 Bad Request`; the route refuses a blank or absent pick before the tool is loaded, and the tool refuses a letter that is not on the table rather than rounding it to A |
 | `POST /api/compare` with no id | `405 Method Not Allowed` — a pick has to name the comparison it is a pick in, and "the newest one" would let a stale tab vote on a comparison it never read |
 | A comparison id that could climb out of `state/compare/` | Carried to the tool as JSON data, never joined into a path, and refused there by the same `isSafeId` the CLI path uses |
+| Mermaid fence fails to render / renderer fails to load | Fence box gets `md-mermaid-error` and an alert role; text names the failure (`Diagram failed to render: …` or `Could not load the diagram renderer.`) instead of a blank card |
+| `POST /api/steer` when no run is working that goal/session | `404` with `"no run is currently working that goal or session"`; nothing is queued |
 
 ## Acceptance criteria
 

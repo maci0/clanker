@@ -110,6 +110,7 @@ printing a table cannot block behind a run that takes minutes.
 | `cron` | the 5-field spec, stored as written |
 | `task` | the prompt, 1–4000 bytes; what `clanker run` would take |
 | `provider` / `model` | optional overrides, absent when unset (no `null` keys in the file) |
+| `goal` | optional goal id (string) or `null`/absent. When set to an id, that goal steers the fired run. When unset/`null`, inherit active-goal steering identical to `clanker run` (see Design decisions) |
 | `tz_offset_minutes` | minutes east of UTC the fields are read at |
 | `enabled` | a disabled entry is never due |
 | `created` | when it was added; the first window is computed from here |
@@ -196,15 +197,33 @@ one: it copies the parsed options, sets `command = .run` and the entry's task,
 applies the entry's provider/model over the invocation's, clears any session
 (a scheduled run is a fresh conversation every time — resuming would grow one
 transcript forever on a timer) and calls `cmdRun`. A scheduled run is
-otherwise an ordinary run: `modules.goal` steers it toward the newest active
-goal exactly as it steers a hand-typed `clanker run`.
+otherwise an ordinary run, including goal steering (see Design decisions).
+
+**Design decisions.**
+
+- **Goal steering (operator-visible).** Scheduled runs are goal-steered the
+  same way `clanker run` is when an active goal exists. That is deliberate,
+  not an accident of going through `cmdRun`: a timer that advances the
+  instance's active goal is useful, and inventing a second "unsteered run"
+  kind would diverge from every other entry point. The inherit-active path
+  is already live today. Per-entry control is the optional `goal` field
+  (locked schema above): a string id pins that goal for the fire; omit the
+  field (or set it `null`) to inherit whatever is active at fire time,
+  identical to CLI. Operators see the binding: `schedule list` shows the
+  entry's `goal` (or `(active)` when unset), `schedule add` accepts
+  `--goal <id>` / `--goal none`, and the web UI Schedule view surfaces the
+  same value beside the task. An entry that names a goal id that no longer
+  exists falls back to unsteered for that fire and records the miss in the
+  ledger `err`, rather than inventing a goal. Landing the field in
+  `store.Entry` / CLI / web UI is follow-through against this locked
+  decision (see Acceptance).
 
 **Subcommands.**
 
 | Subcommand | Behaviour |
 |---|---|
 | `list` (default) | every entry with its next fire time, or `(disabled)`, `(bad spec)`, `(never)`, `due now` |
-| `add "<cron>" "<task>"` | validates spec and task, assigns the next `sch-N`. The first window is the first one *after* the add, so adding at 12:03 does not fire immediately |
+| `add "<cron>" "<task>"` | validates spec and task, assigns the next `sch-N`. Optional `--goal <id>` pins steering; omit to inherit active-goal behavior. The first window is the first one *after* the add, so adding at 12:03 does not fire immediately |
 | `remove <id>` | drops the entry; its ledger history stays |
 | `enable <id>` / `disable <id>` | re-enabling sets `last_run = now`, so an entry parked for a month does not come back owing a run |
 | `run <id>` | fires one entry immediately whatever its schedule says. Counts as a real run: it advances the window and lands in the ledger as `"manual"`. A disabled entry still runs — the operator asked for it by id |
@@ -212,8 +231,9 @@ goal exactly as it steers a hand-typed `clanker run`.
 | `log` | the last 20 ledger records, newest first |
 
 Flags: `--provider`, `--model` (recorded on the entry by `add`, an override
-for everything else) and `--tz-offset` (`+02:00`, `-05:00`, `UTC`, or a plain
-minute count).
+for everything else), `--goal` (recorded on the entry by `add`; see Design
+decisions), and `--tz-offset` (`+02:00`, `-05:00`, `UTC`, or a plain minute
+count).
 
 **Installation is the user's.** Nothing fires on its own. `schedule add` says
 so on every add, and `schedule --help` gives the crontab line:
@@ -238,6 +258,8 @@ so on every add, and `schedule --help` gives the crontab line:
 | Ledger over 4 MiB | Trimmed oldest-first on a line boundary |
 | An entry disabled while its run is in flight | The disable survives; the outcome is still recorded |
 | The run hits `MaxIterationsExceeded` | `cmdRun` exits the process, which ends the sweep. Later entries in that sweep are not fired and will be picked up next invocation — see Known issues |
+| Web UI `POST /api/schedule/<id>` for an unknown id | `404` with `{"ok":false,"error":"no such entry"}` |
+| Web UI enable/disable of a non-slug id | `400` with `{"ok":false,"error":"bad entry id"}` |
 
 ## Known issues
 
@@ -272,8 +294,12 @@ so on every add, and `schedule --help` gives the crontab line:
   ledger)
 - [x] `zig build`, `zig build tools`, `zig build test` green
 - [ ] A `MaxIterationsExceeded` run does not end the sweep (see Known issues)
+- [ ] Optional per-entry `goal` field (string id or null) in `state/schedule.json`,
+  with `--goal` on `add`, visible in `schedule list` and the Schedule web UI
+  (see Design decisions)
 
 ## Open questions / future work
+
 
 - **A read-only WASM tool over the schedule**, in the shape of the
   `autoresearch` tool (list entries, tail the ledger), so an agent
@@ -283,19 +309,13 @@ so on every add, and `schedule --help` gives the crontab line:
   be a guest should be one; the firing side cannot (ADR 0008), but the
   reading side plainly can, and not building it yet is a scope call rather
   than a design one.
-- **Whether a scheduled run should be goal-steered.** Today it is, because it
-  goes through `cmdRun` unchanged and `modules.goal` steers every run. That is
-  consistent, but it also means an entry's prompt is silently rewritten by
-  whatever goal happens to be active at 03:00, which is not obviously what the
-  person who wrote the entry meant. Resolving it means either a per-entry
-  `goal` field (explicit, more surface) or suppressing goal steering for
-  scheduled runs (a second kind of run, which is worse).
-- **Whether `skipped` should be able to trigger something.** An entry that has
-  slept through 500 windows is a fact worth surfacing more loudly than a
-  number in a JSONL file — a peer notification, or a line in `clanker doctor`.
-- **Overlap between entries.** One sweep runs its due entries strictly
-  sequentially, so a slow entry delays the ones behind it in the same sweep.
-  Running them concurrently is possible (`ck_llm_many` and `ck_swarm` both
-  establish that the host does fan-out) but would need a per-entry budget
-  first, and the sequential version has not been a problem at the scale this
-  is used at.
+- **Whether `skipped` should be able to trigger a notify / doctor signal.**
+  An entry that has slept through 500 windows is a fact worth surfacing more
+  loudly than a number in a JSONL file — a peer notification, or a line in
+  `clanker doctor`. Still open.
+- **Overlap / concurrent fires between entries.** One sweep runs its due
+  entries strictly sequentially, so a slow entry delays the ones behind it
+  in the same sweep. Running them concurrently is possible (`ck_llm_many`
+  and `ck_swarm` both establish that the host does fan-out) but would need a
+  per-entry budget first, and the sequential version has not been a problem
+  at the scale this is used at. Still open.

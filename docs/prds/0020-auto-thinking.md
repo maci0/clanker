@@ -3,8 +3,11 @@
 ## Status
 
 Draft. No source files yet. Change is in `src/agent/loop.zig` (pre-turn
-classifier call) and `src/llm/client.zig` (per-turn `reasoning_effort` override).
-New config section `[agent.auto_thinking]`.
+classifier call) and the request path that feeds each provider's
+`reasoning_effort` serialization. Config keys live under **`[agent]`**
+(`auto_thinking`, `thinking_classifier_model`,
+`thinking_classifier_timeout_ms`), not a nested `[agent.auto_thinking]`
+section.
 
 ## Problem
 
@@ -24,8 +27,8 @@ a separate, small model call — fast and inexpensive.
    `ck_llm` call before each main turn, sending the user's message text to a
    small classifier model.
 2. The classifier returns one of four effort levels: `low`, `medium`, `high`,
-   `xhigh`. This overrides the main provider's `reasoning_effort` for that turn
-   only.
+   `xhigh`. This selects which sampling-profile row (PRD 0024) applies for
+   that turn's `reasoning_effort`.
 3. The classifier model is configurable as `agent.thinking_classifier_model`
    (provider name and model name). Defaults to the cheapest/fastest configured
    provider if unset.
@@ -35,7 +38,8 @@ a separate, small model call — fast and inexpensive.
    a new optional `thinking_level` field added to the record schema
    (`src/stats/tokens.zig`) alongside the existing token counts.
 6. The feature is opt-in: `agent.auto_thinking = false` is the default. When
-   disabled, `reasoning_effort` behaves as today.
+   disabled, `reasoning_effort` behaves as today. It stays opt-in until a
+   calibration eval justifies recommending it as a default.
 
 ## Non-goals
 
@@ -52,10 +56,13 @@ a separate, small model call — fast and inexpensive.
   outcome.
 - Not changing provider routing. The same provider is used for the main turn
   regardless of effort level. Effort routing to a different model is out of scope.
+- Not writing `reasoning_effort` onto the wire. PRD 0024's capability-keyed
+  profile table owns that write; this PRD only selects which profile row
+  applies.
 
 ## Design
 
-**Config.**
+**Config.** Keys live flat under `[agent]`:
 
 ```toml
 [agent]
@@ -88,31 +95,34 @@ The user's message text is appended verbatim after "Message:". The classifier
 call has `max_tokens = 5` and `temperature = 0`. A response that is not one of
 the four words is treated as `medium`.
 
-**Effort level mapping.** Each provider's `reasoning_effort` field already
-accepts a string. The per-turn override sets:
+**History window (v1).** The classifier sees the current user message only.
+Short follow-ups that depend on prior context ("do it") can be misclassified;
+a 2-3 message window is deferred until calibration data shows that cost is
+worth paying. v1 deliberately keeps the classifier input small and independent.
 
-| Classifier result | `reasoning_effort` |
+**Effort level mapping.** Classifier results map to profile-row selectors, not
+to a second writer of `reasoning_effort`:
+
+| Classifier result | Profile / effort selection |
 |---|---|
-| `low` | `"low"` (or the provider's equivalent minimum) |
-| `medium` | `"medium"` |
-| `high` | `"high"` |
-| `xhigh` | `"high"` (most providers cap here; if the provider has an `xhigh` tier, it is used) |
+| `low` | select the table's low-effort row (or provider minimum) |
+| `medium` | select the medium row |
+| `high` | select the high row |
+| `xhigh` | select `high`, unless the provider sets `max_reasoning_effort` to a higher tier (e.g. `"xhigh"`); then that value is used |
 
-The override is applied only for the current turn's request build. It does
-not mutate the provider config.
+The selection applies only for the current turn. It does not mutate the
+provider config.
 
 Wiring note: `reasoning_effort` is not written by the shared
 `writeSamplingParams` (`src/llm/providers/common.zig`), which emits only
 `temperature` and `top_p`; each provider file serializes it in its own
-vendor-specific shape. The per-turn override therefore threads through
-`src/llm/client.zig`'s request path into each provider's request builder,
-rather than being set at one shared choke point.
+vendor-specific shape. PRD 0024 extends the shared sampling path to own
+writing the field; this PRD's classifier only chooses which 0024 profile
+row the turn uses.
 
-**Precedence vs. sampling profiles (PRD 0024).** PRD 0024's capability-keyed
-profile table owns writing `reasoning_effort`; this PRD's classifier, if built,
-selects WHICH row of that table applies to the turn (e.g. its `.chat` vs
-`.tool_use` vs `.reasoning` row). It is not a second independent writer of the
-field.
+**Precedence vs. sampling profiles (PRD 0024).** PRD 0024 owns writing
+`reasoning_effort`; this PRD's classifier selects WHICH row of that table
+applies to the turn. It is not a second independent writer of the field.
 
 **Classifier call mechanics.** The classifier `ck_llm` call is made with:
 - `system`: the hardcoded prompt above.
@@ -127,8 +137,15 @@ record format has no source or event discriminator today.
 
 **Timeout and failure.** If the classifier call exceeds
 `thinking_classifier_timeout_ms` (default 3000 ms) or errors, the turn proceeds
-with the main provider's default `reasoning_effort`. The failure is logged at
-debug level; no error surfaces to the user.
+with the main provider's default `reasoning_effort` (0024's normal row
+selection without a classifier override). The failure is logged at debug
+level; no error surfaces to the user.
+
+**Opt-in until calibrated.** Default remains `auto_thinking = false`. Shipping
+as a recommended default requires a calibration eval (N labeled tasks,
+agreement between classifier output and human ground truth) across the
+classifier models people actually use. Until that lands, the feature stays
+opt-in.
 
 **Logging.** `token_stats.jsonl` records are the closed `Record` struct in
 `src/stats/tokens.zig` (ts, provider, model, token counts, cache hit/miss,
@@ -150,6 +167,41 @@ the Logging schema change lands in `Record`. With that in place, the endpoint
 and `clanker stats` expose the distribution (how many turns at each level) as
 a `thinking_distribution` field in the session summary.
 
+**Dependencies.**
+
+- Hard: [PRD 0024 (sampling profiles)](0024-sampling-profiles.md) owns writing
+  `reasoning_effort`. This PRD selects the profile row; build 0024's table and
+  write path first (or in lockstep), or the classifier has nowhere to put its
+  result.
+- Soft: [PRD 0015 (advisor)](0015-advisor.md) also needs a fail-open, budgeted,
+  per-turn side-channel model call. Extract a shared wrapper once either
+  feature is built rather than duplicating the pattern.
+- Existing: `src/agent/loop.zig` (turn dispatch), `src/llm/client.zig` (request
+  path), `src/stats/tokens.zig` (`Record`), provider request builders that
+  already serialize `reasoning_effort` in vendor-specific shapes.
+
+**Implementation.**
+
+1. Config keys under `[agent]` in `src/config.zig`: `auto_thinking` (default
+   false), `thinking_classifier_model`, `thinking_classifier_timeout_ms`
+   (default 3000). No nested `[agent.auto_thinking]` table.
+2. Classifier call helper (host-side): hardcoded system prompt, current-message
+   only, `max_tokens = 5`, `temperature = 0`, timeout, fail-open to default
+   effort. Prefer extracting a shared side-channel wrapper if 0015 lands
+   nearby.
+3. Wire into `src/agent/loop.zig` pre-turn: when `auto_thinking`, run
+   classifier, map result to a 0024 profile-row selector (including
+   `xhigh` → `high` unless `max_reasoning_effort` is set), pass that into the
+   sampling-profile lookup. Do not write `reasoning_effort` here.
+4. Optional `provider.max_reasoning_effort` config key for providers that
+   expose a tier above `high`.
+5. Extend `src/stats/tokens.zig` `Record` with optional `thinking_level` and
+   `thinking_classifier_ms`; surface `thinking_distribution` in
+   `GET /api/stats` / `clanker stats`.
+6. Tests: effort mapping (incl. `max_reasoning_effort`), timeout fallback,
+   unexpected-response → `medium`, empty-message skip, opt-in default (zero
+   classifier calls when disabled).
+
 ## Failure modes
 
 | Condition | Behaviour |
@@ -166,13 +218,15 @@ a `thinking_distribution` field in the session summary.
 - [ ] `agent.auto_thinking = false` (default): zero classifier calls; no behavior
       change on any existing test.
 - [ ] `agent.auto_thinking = true`: a classifier `ck_llm` call is made before
-      each main turn; the main turn's `reasoning_effort` matches the classifier
-      result.
-- [ ] A message classified as `low` sends `reasoning_effort = "low"` to the main
-      provider; a message classified as `high` sends `"high"`.
+      each main turn; the main turn's profile row / `reasoning_effort` matches
+      the classifier result via PRD 0024's writer.
+- [ ] A message classified as `low` selects the low-effort profile row; a
+      message classified as `high` selects `"high"`.
+- [ ] `xhigh` selects `"high"` unless `max_reasoning_effort` is set higher.
 - [ ] A classifier timeout (inject a fake 10s delay in tests) causes the turn to
       proceed with the default `reasoning_effort`, not hang.
 - [ ] A classifier response that is not one of the four words results in `medium`.
+- [ ] Classifier input is the current user message only (no history).
 - [ ] `token_stats.jsonl` entries include `thinking_level` and
       `thinking_classifier_ms` when `auto_thinking = true`.
 - [ ] `clanker stats` shows a `thinking_distribution` breakdown.
@@ -183,20 +237,11 @@ a `thinking_distribution` field in the session summary.
 
 ## Open questions / future work
 
-- **Message history context.** The classifier currently sees only the current
-  user message, not the conversation history. A hard problem ("refactor this
-  module") phrased as a short follow-up ("do it") would be misclassified as
-  `low`. Whether to send a 2-3 message window to the classifier, at extra cost,
-  is unresolved.
-- **Calibration.** The four example descriptions in the system prompt are
-  heuristic. Whether they produce well-calibrated classifications across different
-  models (especially small/local models) is unknown. A calibration eval (N labeled
-  tasks, measure agreement between classifier output and a human's ground-truth
-  label) is worth running before recommending this as a default.
-- **xhigh tier.** Anthropic's extended thinking and some providers' equivalent
-  offer a budget beyond `high`. The mapping `xhigh -> "high"` is conservative.
-  A `provider.max_reasoning_effort` config key that the `xhigh` level maps to
-  would let users who have access to extended-budget tiers use them.
+- **Wider history window.** v1 is current-message only. Revisit a 2-3 message
+  window after calibration if short follow-ups are a real misclassification
+  source.
+- **Calibration eval.** Required before recommending `auto_thinking = true` as
+  a default. Not a build blocker for the opt-in path.
 - **Session-level learning.** If the user overrides the effort level manually for
   several turns in a row (e.g., always bumps `low` to `medium`), the classifier
   could learn within the session. This would require storing the override history
@@ -207,5 +252,5 @@ a `thinking_distribution` field in the session summary.
 - **Cost accounting.** Classifier calls add a fixed per-turn cost. For a session
   with 50 turns and a `gpt-4o-mini`-class classifier at $0.15/1M tokens, the
   overhead is negligible. For a local on-device classifier (Ollama), it approaches
-  zero. The cost is worth measuring and documenting per classifier model before
-  recommending specific defaults.
+  zero. Measure and document per classifier model before recommending specific
+  defaults.

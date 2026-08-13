@@ -1,0 +1,72 @@
+# PRDs
+
+Product requirement docs for clanker. Schema and quality bar:
+[`TEMPLATE.md`](TEMPLATE.md). Roadmap narrative and Done/Planned index:
+[`../ROADMAP.md`](../ROADMAP.md). Architecture decisions that constrain
+PRDs: [`../adrs/`](../adrs/).
+
+## How to read Status
+
+| Status | Meaning |
+|---|---|
+| **Shipped** | Code is the source of truth; PRD tracks behavior + known drift |
+| **In progress** | Partially built; Status names what is live vs open |
+| **Draft** | Not built; Design must settle blockers + Implementation phases |
+
+A Draft is not "planned properly" until: Dependencies are named, blocking
+open questions are decided in Design (not parked under Open questions),
+and Implementation lists checkable file-level phases.
+
+## Inventory
+
+| PRD | Title | Status | Notes |
+|---|---|---|---|
+| [0001](0001-chatrooms.md) | Chatrooms & peer messaging | Shipped | Transport may become historical if 0011 ships |
+| [0002](0002-kanban-board.md) | Shared kanban board | Shipped | |
+| [0003](0003-run-todos.md) | Run todo checklists | Shipped | Private vs shared; room todos removed |
+| [0004](0004-autoresearch.md) | Autoresearch | Shipped | |
+| [0005](0005-repl-tui.md) | REPL / TUI | Shipped (gaps) | Critical gap: ask/confirm ungated |
+| [0006](0006-webui.md) | Web UI | Shipped | |
+| [0007](0007-memory.md) | Memory layer | In progress | Dead config keys; overflow Known issue |
+| [0008](0008-arena.md) | Arena | In progress | Phase 3 (multi-instance) open |
+| [0009](0009-schedule.md) | Scheduled runs | Shipped | Sweep-exit Known issue |
+| [0010](0010-plugin-manifest-sdk.md) | Plugin manifest SDK | Shipped | Out-of-tree list → 0022 |
+| [0011](0011-clanker-mesh.md) | Clanker mesh | Draft | Admission/TLS decided in Design |
+| [0012](0012-surface-plugins.md) | Surface plugins | Partial | Web UI shipped; TUI/CLI draft |
+| [0013](0013-ttsr.md) | TTSR | Draft | Substring/`*` matcher (no full regex v1) |
+| [0014](0014-hashline.md) | Hashline edit format | Draft | |
+| [0015](0015-advisor.md) | Advisor | Draft | Shares side-channel pattern with 0020 |
+| [0016](0016-eval-kernel.md) | Eval kernel | Draft | Hard prereq for 0017 |
+| [0017](0017-dap.md) | DAP | Draft | Needs 0016 subprocess registry |
+| [0018](0018-snapcompact.md) | Snapcompact | Draft | Opt-in; default stays LLM compact |
+| [0019](0019-github-fs.md) | GitHub filesystem | Draft | Dedicated `gh_read` tool |
+| [0020](0020-auto-thinking.md) | Auto thinking | Draft | Selects effort; 0024 writes params |
+| [0021](0021-smart-commit.md) | Smart commit | Draft | |
+| [0022](0022-out-of-tree-tools.md) | Out-of-tree tools | Draft | Unblocks third-party alongside builtins |
+| [0023](0023-webui-model-config.md) | Web UI model config | Draft | Read half shipped; write half open |
+| [0024](0024-sampling-profiles.md) | Sampling profiles | Draft | After 0025 |
+| [0025](0025-fallback-provider-chain.md) | Fallback provider chain | Draft | Before 0024 |
+
+## Recommended build order (Drafts)
+
+Packaging and reliability first, then agent-loop quality, then heavy
+optional subsystems:
+
+1. **0022** — `tools_dir` as a list (unblocks third-party plugins)
+2. **0025** — fallback provider chain (before sampling call-site work)
+3. **0023** — web UI model config writes
+4. **0014** — hashline (edit reliability)
+5. **0015** / **0020** — advisor + auto thinking (shared side-channel)
+6. **0024** — sampling profiles (after 0025; after numbers pinned)
+7. **0013** — TTSR (substring engine)
+8. **0016** then **0017** — eval kernel, then DAP
+9. **0019** — `gh_read`
+10. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
+
+## Editing rules (short)
+
+1. Goals ↔ Acceptance must cover each other.
+2. Never leave empty Known issues.
+3. Bugs go in Known issues; unresolved product choices go in Open questions
+   only when they do **not** block starting Implementation.
+4. When code drifts, fix the PRD the same day (Status + Design + Acceptance).

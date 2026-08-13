@@ -2,11 +2,14 @@
 
 ## Status
 
-Draft. Nothing described below is implemented. Single source of truth once
-built: a new `src/peers/mesh.zig` (host-side, mirroring `src/peers/chatrooms.zig`'s
-shape) plus a `mesh` host function and `mesh`/`mesh_join`/`mesh_leave`-style
-guest tools. This PRD extends, and where noted **replaces**, the existing
-static-peer HTTP plumbing described in `docs/prds/0001-chatrooms.md`.
+Draft. **Do not implement until Design decisions below are locked.** Those
+decisions are now locked in this revision (admission default, TLS phasing,
+frame versioning, `[[peers]]` dual-path). Nothing described below is
+implemented yet. Single source of truth once built: a new `src/peers/mesh.zig`
+(host-side, mirroring `src/peers/chatrooms.zig`'s shape) plus a `mesh` host
+function and `mesh`/`mesh_join`/`mesh_leave`-style guest tools. This PRD
+extends, and where noted **replaces**, the existing static-peer HTTP plumbing
+described in `docs/prds/0001-chatrooms.md`.
 
 ## Problem
 
@@ -76,8 +79,9 @@ and the A2A agent card already describe.
   mutually reachable (same LAN, VPN, or public IP with an open port) at the
   address they advertise; making unreachable members reachable is a
   deployment concern, not this PRD's.
-- End-to-end encryption beyond what TLS-on-the-socket provides. See Open
-  questions for whether the initial version even gets TLS.
+- End-to-end encryption beyond what TLS-on-the-socket provides. v1 is plain
+  TCP for LAN-only (see Design decisions); TLS+pinning is Phase 2, not a v1
+  deliverable.
 - A UI for browsing the whole mesh's combined file/workspace state as one
   tree. The webui gets per-member visibility (whose workspace, whose file);
   a unified cross-member view is future work if wanted at all.
@@ -94,8 +98,10 @@ instance's address can change; its id should not).
 
 **Membership is a protocol, not a config list.** `config.toml` keeps
 `[[peers]]` for the "instances I trust enough to auto-admit" bootstrap set
-(today's static list becomes the mesh's seed/allowlist, not its whole
-membership). Joining beyond that set goes through an explicit handshake:
+(today's static list is the mesh's seed/allowlist under the default
+`admission = "allowlist"`, not its whole membership — and it remains an
+independent HTTP path in v1; see Design decisions). Joining beyond that set
+goes through an explicit handshake:
 
 1. Instance A dials instance B's mesh port with a `JOIN` frame carrying A's
    agent card (reusing the existing `/.well-known/agent.json` shape, over
@@ -168,6 +174,71 @@ timeout defaults). Three missed pongs → the member is marked `unreachable`
 (not removed from membership — it can still catch up when it comes back) and
 its connection is retried with backoff, not torn down and forgotten.
 
+**Design decisions (locked).**
+
+- **`mesh.admission` default = `allowlist`.** Auto-admit only peers named in
+  `[[peers]]`. `prompt` and `open` are explicit opt-in (`admission = "prompt"`
+  / `"open"` in config). An open mesh is never the surprise default.
+- **TLS: v1 plain TCP for LAN-only.** Binding beyond localhost/private nets
+  without TLS is operator risk and must be called out in `clanker doctor` /
+  mesh status when the listen address is not loopback or RFC1918. TLS with
+  per-peer pinning is Phase 2 (see Implementation), not a blocker for a
+  same-LAN mesh.
+- **Protocol versioning.** Every frame carries a `version` field. A mismatched
+  major version is refused with a clear error (no subset negotiation). Minor
+  version differences may add optional fields; unknown optional fields are
+  ignored, unknown required kinds are refused.
+- **`[[peers]]` dual-path.** Mesh membership and `[[peers]]` HTTP remain
+  independent in v1. `[[peers]]` is still the admission allowlist seed and
+  still the static HTTP fan-out path for non-meshed peers. Phonebook lists
+  both (mesh members and configured HTTP peers), labeled by path. Mesh does
+  not auto-rewrite `[[peers]]` on join/leave.
+
+**Frame kinds → payload fields.** Every frame is length-prefixed JSON with
+common envelope `{version, kind, from, to?, ts}` plus a `payload` object:
+
+| Kind | Payload fields |
+|---|---|
+| `JOIN` | `card` (A2A agent card), `share.workspaces[]`, `share.rooms[]`, `listen` (advertised `host:port`) |
+| `JOIN_ACK` | `accepted` (bool), `reason?`, `members[]` (`{id,name,address,state}`), `share` echoed |
+| `LEAVE` | `reason?` |
+| `PING` | `nonce` |
+| `PONG` | `nonce` (echo) |
+| `CHAT` | chatroom message body identical to today's `POST /api/chat/message` (`room`, `text`, `id`, `sender`, …) |
+| `WORKSPACE_SYNC` | `workspace`, `cursor`, `sessions[]` (metadata: id/title/updated; full transcript only on pull) |
+| `FILE_OFFER` | `path`, `size`, `sha256`, `prefix_ok` (offerer asserts local `fs_prefixes` allow) |
+| `FILE_REQUEST` | `path`, `offer_id`, `offset?` |
+| `FILE_CHUNK` | `offer_id`, `offset`, `data` (base64), `last` (bool) |
+
+**Dependencies.**
+
+- [PRD 0001 (chatrooms)](0001-chatrooms.md): message shape, HTTP fan-out fallback,
+  `ck_chat` host-function precedent.
+- `config.toml` `[[peers]]` + `Instance{name,id}` (`src/config.zig`),
+  `/.well-known/agent.json` A2A card (`src/peers/phonebook.zig`).
+- `src/peers/chatrooms.zig` delivery path (mesh becomes an alternate pipe,
+  not a second chat system).
+- Sandbox host-function registration pattern (`ck_chat` / thin guest tools).
+- Phase 2 TLS+pinning additionally depends on a per-peer cert store under
+  `state/mesh/` (new); no existing TLS peer stack to reuse.
+
+**Implementation.** Phased, file-level:
+
+1. **Phase 1: framing + membership (LAN TCP).** `src/peers/mesh.zig`
+   (listen/dial, frame codec, membership table, ping/liveness, JOIN/LEAVE),
+   config `[mesh]` in `src/config.zig`, CLI `clanker mesh …` arms in
+   `src/cli.zig`, guest tools `tools/zig/mesh.zig` + manifests
+   (`mesh_join`/`mesh_leave`/`mesh_status`), phonebook dual-list labeling.
+   Chat fan-out prefers mesh when the target is a member (`chatrooms.zig`
+   call site). No TLS.
+2. **Phase 2: TLS + pinning.** TLS wrapper on the same framing; pin store
+   under `state/mesh/pins.json`; doctor warning for non-private bind without
+   TLS remains from Phase 1 and clears when TLS is on.
+3. **Phase 3: workspace + file share.** `WORKSPACE_SYNC` /
+   `FILE_OFFER`/`REQUEST`/`CHUNK` paths, `workspace_share`/`file_share`
+   guests, mesh-scoped write root `state/mesh/<peer-id>/`, backfill on
+   reconnect.
+
 ## Usage sketch (once built)
 
 Illustrative only — nothing below exists yet (see Status). Shown so the
@@ -182,12 +253,14 @@ module (`cfg.modules.*`):
 enabled = true
 listen_port = 7420
 ping_interval_seconds = 15
-admission = "allowlist"   # "allowlist" | "prompt" | "open"
+admission = "allowlist"   # default (locked); "prompt" | "open" are opt-in
+max_members = 32
 ```
 
 `[[peers]]` keeps its existing shape (`docs/prds/0001-chatrooms.md`) and
-becomes the allowlist `admission = "allowlist"` auto-admits from, per
-Design's "membership is a protocol, not a config list".
+is the allowlist `admission = "allowlist"` auto-admits from. It also remains
+an independent HTTP path in v1 (see Design decisions); mesh join/leave does
+not rewrite it.
 
 **CLI**, under the existing `.peers` command group alongside `chat`/`notify`/
 `phonebook` (`src/cli.zig:1235-1237`), following `chat <subcommand> ...`'s own
@@ -217,10 +290,6 @@ view (`docs/prds/0006-webui.md`), a pending-`JOIN` notification when
 `mesh_status` reachable from `/mesh` the way `/plugins` reaches
 `cmd_plugins` today.
 
-## Known issues
-
-None yet — nothing is built.
-
 ## Failure modes
 
 | Condition | Behaviour |
@@ -235,6 +304,11 @@ None yet — nothing is built.
 | Member rejoins after being offline | Gets a `WORKSPACE_SYNC`/room backfill from its last known cursor, not just new traffic going forward — this is the redelivery gap `docs/prds/0001-chatrooms.md`'s Open questions left unresolved for plain chatrooms; mesh membership is what finally needs it fixed, since "was offline, came back" is now a first-class state instead of just "peer unreachable, oh well" |
 | Mesh module disabled in config | All mesh tools/host functions refuse with an actionable message (config key to flip, restart needed) — same pattern the board uses today when chatrooms are off |
 | Untrusted/unrecognized `JOIN` | Refused outright, or queued for operator decision, depending on `mesh.admission` config — never silently admitted |
+| Listen bind failure (port in use / permission) | Mesh module starts disabled for this process; `mesh status` and mesh tools report the bind error and the config key to fix; process otherwise continues |
+| `LEAVE` arrives mid-`CHAT` / mid-`FILE_CHUNK` | In-flight frame is dropped; sender sees deliver failure for that message/chunk; membership removes the peer; no partial chat line is appended on the receiver |
+| Membership at `mesh.max_members` (default 32) | Further `JOIN`s refused with `reason="max_members"`; operator must raise the cap or leave an existing member |
+| Frame with mismatched major `version` | Connection refused/closed with a version-mismatch error naming both versions; no membership change |
+| Bind address is public and TLS is off (v1) | Allowed, but `clanker doctor` / `mesh status` warn that this is operator risk (Design decisions) |
 
 ## Acceptance criteria
 
@@ -258,43 +332,15 @@ None yet — nothing is built.
 
 ## Open questions / future work
 
-- **Admission policy default.** Auto-accept anyone whose agent card resolves
-  (convenient, but an open mesh), allowlist-only (safe, but back to
-  hand-editing config, the thing this PRD exists to avoid), or
-  operator-prompted by default with allowlist as an opt-in fast path? This
-  is the single biggest security-shaped decision in this PRD and should be
-  settled before any code lands, not discovered after a mesh is already
-  running open in someone's deployment.
-- **Transport security.** Plain TCP, or TLS from the start? If TLS, whose
-  certificate authority — self-signed pinned per-peer (matches the
-  "explicitly trusted" model chatrooms already uses), or something heavier?
-  Listed as a non-goal above for v1, but worth a real answer before this
-  ships past a LAN/VPN deployment, since "peers configured explicitly"
-  stops being true once JOIN makes membership dynamic.
-- **NAT/reachability.** Explicitly out of scope above, but worth naming the
-  actual limitation: two members both behind NAT with no port forwarding
-  cannot mesh directly under this design at all. Is that acceptable for the
-  intended deployments (same LAN, same VPN), or does a relay/rendezvous
-  member (one reachable member other members dial, gossiping the rest)
-  become necessary sooner than "future work"?
-- **Protocol versioning.** What happens when a `JOIN` arrives from a
-  clanker build that speaks a different frame version — refuse with a clear
-  "version mismatch" (safe, matches how `zig build` itself refuses a
-  mismatched toolchain rather than guessing) or attempt to negotiate a
-  common subset? Needs an answer before there are two shipped versions in
-  the wild to actually be incompatible.
+- **NAT/reachability / relay.** Explicitly out of scope above, but still
+  open as product scope: two members both behind NAT with no port forwarding
+  cannot mesh directly under this design. Acceptable for same-LAN/VPN, or
+  does a relay/rendezvous member become necessary sooner than "future work"?
 - **Large file transfer and backpressure.** `FILE_CHUNK` chunking is named
   in Design to keep pings unblocked, but the actual chunk size, concurrent
   transfer cap, and what happens when a receiving member is out of disk
   space are unresolved.
-- **Per-workspace share granularity.** Is sharing all-or-nothing per
-  workspace, or can specific sessions within a shared workspace be excluded?
-  The Design above assumes whole-workspace sharing; per-session exclusion
-  would need its own field on `Session` beyond the existing `workspace`
-  string.
-- **Relationship to `[[peers]]` once mesh ships.** Does the static list
-  become purely the admission allowlist (as Design assumes), or does it stay
-  a fully independent, non-mesh HTTP path for operators who want the old
-  static behavior and never want dynamic membership at all? Both configured
-  peers and mesh members need to resolve to one coherent picture in
-  `phonebook`/`mesh_status`, not two disagreeing lists.
+- **Per-session share granularity.** Design assumes whole-workspace sharing.
+  Can specific sessions within a shared workspace be excluded? Would need
+  its own field on `Session` beyond the existing `workspace` string. Still
+  open.

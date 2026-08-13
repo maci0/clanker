@@ -87,7 +87,8 @@ be fixed as part of this work, not filed separately.
   boundary (ADR 0007); which directory a manifest was read from does not
   change what it is allowed to declare.
 - A `clanker plugins new --dir` flag on day one. Default behavior (see
-  Design) covers the common cases; the flag is Open questions, not Goals.
+  Design) covers the common cases; the flag is confirmed non-blocking for
+  v1 (Open questions), not Goals.
 - Making a loaded tool reachable as `clanker <name>`. Which directories the
   registry scans is this PRD; making a loaded tool invocable as a CLI
   subcommand is PRD 0012's CLI Tier 1. Non-goal here.
@@ -186,6 +187,50 @@ every configured directory in `tools_dir` (today: just the one), and exits
 non-zero if *any* directory has *any* error — matching today's single-directory
 exit semantics, just applied per-directory then OR'd together.
 
+**v1 scope pins (non-blocking OQs closed).** No `clanker plugins new --dir`
+flag in v1 (scaffold into first-listed, move files if needed). No
+`doctor.zig` warning for an empty-but-present configured directory (missing
+path already warns; empty stays silent, matching today's single-directory
+behavior). No per-directory `enabled` toggle (remove the entry from
+`tools_dir` instead).
+
+**Dependencies.**
+
+- Hard: [ADR 0007](../adrs/0007-plugin-manifests-are-declarative-and-unsigned.md)
+  (local trusted directories only; no fetch/signing). Existing
+  `Registry.load` single-dir scan and `toolDescriptorGate` last-insert-wins
+  semantics.
+- Soft: [PRD 0010](0010-plugin-manifest-sdk.md) already named `tools_dir` as a
+  list as the remaining packaging gap; this PRD is that resolution. PRD 0012
+  (CLI Tier 1 / `clanker <name>`) stays out of scope.
+- Existing: `src/config.zig` (`Agent.tools_dir`), `src/tools/registry.zig`,
+  `tools/zig/cmd_plugins.zig` (hardcoded default to replace via
+  `ck_harness_config`), the nine call-site files listed under Design.
+
+**Implementation.**
+
+1. Config parse: change `Agent.tools_dir` to `[]const []const u8` in
+   `src/config.zig`; accept string or array; normalize a bare string to a
+   one-element slice at parse time.
+2. Registry load: update `Registry.load` to take `tools_dirs: []const []const u8`,
+   scan each in order, last-listed wins on cross-directory `name` collision
+   with a warning naming both paths; missing entry warns and continues.
+3. Call sites: mechanical type adjustment across `src/cli.zig`,
+   `src/tui/repl_vaxis.zig`, `src/agent/subagent.zig`, `src/peers/phonebook.zig`,
+   `src/mcp/server.zig`, `src/research/autoresearch.zig`, `src/doctor.zig`,
+   `src/improve/engine.zig` (three sites), `src/gate/checks.zig`: no new
+   branching on directory count.
+4. `cmd_plugins` harness_config: replace hardcoded
+   `tools_dir = "tools/manifests"` in `tools/zig/cmd_plugins.zig` with the
+   configured list via `ck_harness_config`; list/merge with the same
+   last-wins rule as `Registry.load`.
+5. `plugins new` / `validate`: multi-dir `new` writes into the first-listed
+   directory; `validate` with no path validates every configured directory
+   and OR's exit status.
+6. Tests: bare-string config; two-entry list loads both; cross-directory
+   same-name collision → later wins + warning; missing list entry does not
+   empty the registry; `cmd_plugins` list reflects all configured dirs.
+
 ## Known issues
 
 - `tools/zig/cmd_plugins.zig:13` hardcodes `tools_dir = "tools/manifests"`
@@ -237,26 +282,14 @@ exit semantics, just applied per-directory then OR'd together.
 
 ## Open questions / future work
 
-- **`clanker plugins new --dir <path>`.** Scaffolding directly into a
-  non-first configured directory needs an explicit target once "first
-  directory" stops being obviously correct — e.g. a user who lists their own
-  plugin directory first specifically so their overrides win. Left open
-  because the default (first-listed) covers the common ordering from this
-  PRD's own example and does not block anything; add the flag when someone
-  hits the workaround (scaffold, then move the two files) often enough to
-  ask for it.
-- **Should `doctor.zig` warn when a configured directory contains zero
-  manifests**, as distinct from "directory does not exist"? An empty
-  directory is not an error today for the single-directory case (an empty
-  `tools/manifests` is a valid, if unusual, checkout) — whether an *added*
-  directory that turns out empty deserves a louder signal than a missing one
-  is a judgment call about what a user configuring `tools_dir` for the first
-  time is more likely to have gotten wrong: a typo'd path (already warned,
-  "not found") or an empty one they meant to populate later (currently
-  silent). Worth revisiting once real usage shows which mistake is common.
-- **Per-directory `enabled` toggle**, independent of `state/plugins.json`'s
-  per-tool-name toggles. Not proposed here — a whole directory going dark is
-  equivalent to removing it from the `tools_dir` list, which is already the
-  mechanism, so a second on/off switch for the same outcome would be a
-  parallel mechanism for the same job. Noted only because it is the obvious
-  next question a reader might have.
+- **`clanker plugins new --dir <path>`.** Confirmed non-blocking for v1: no
+  flag; scaffold into the first-listed directory and move the two files when
+  targeting another. Add the flag when that workaround is hit often enough
+  to ask for it.
+- **Empty-directory doctor warning.** Confirmed non-blocking for v1: no
+  warn when a configured directory exists but contains zero manifests.
+  Missing paths already warn; empty stays silent (same as today's
+  single-directory case). Revisit once real usage shows which mistake is
+  common.
+- **Per-directory `enabled` toggle.** Confirmed out of scope: removing the
+  entry from `tools_dir` is already the off switch. No parallel mechanism.

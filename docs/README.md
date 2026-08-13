@@ -1,6 +1,8 @@
 # clanker — Reference Documentation
 
 External-project digests (what we can learn from them) live in [docs/digests/](digests/).
+Product requirement docs live in [docs/prds/](prds/) ([index](prds/README.md), [template](prds/TEMPLATE.md));
+the Done/Planned narrative is [docs/ROADMAP.md](ROADMAP.md).
 
 
 ## Architecture

@@ -2,35 +2,27 @@
 
 ## Status
 
-Everything except phase 3 is built: the pairwise match core, `clanker arena` /
-`/arena`, third-party judging, the web UI arena view, design-review seeding
-(with a worked example below), the advisory `improve-self` read, and Battle
-Royale mode. Phase 3 (multi-instance over a chatroom) is not: it needs two
-reachable `clanker serve` peers to mean anything, and the PRD's own open
-question about ordering under a partition is unresolved.
+In progress (Phase 3 open). Sources of truth: `tools/zig/arena.zig`,
+`tools/zig/arena_match.zig`, `tools/zig/webui/features/arena.js`, and the
+CLI/HTTP routes in `src/cli.zig` (`cmdArena`, `GET /api/arena/<id>`).
+Surfaces: `clanker arena`, REPL `/arena`, Arena web UI view.
 
-Two deliberate deviations from the design as first written (combatant turns
-go through `ck_llm` rather than `ck_subagent`, and an untargeted move above
-two combatants is retargeted rather than refused) are recorded in Known
-issues below and reflected in Design.
+**Shipped:** Phases 1–2 and 4–8 — pairwise match core, CLI/REPL, third-party
+judging, web UI arena view, advisory `improve-self` read, design-review
+seeding (`--defend` / `--alternative`), Battle Royale mode. Two deliberate
+deviations from the first draft (combatant turns go through `ck_llm` rather
+than `ck_subagent`; an untargeted move above two combatants is retargeted
+rather than refused) are recorded in Known issues and reflected in Design.
 
-Builds on shipped primitives: `ck_subagent`
-and `ck_swarm` (`src/sandbox/host.zig`) for nested bounded agent runs,
-`src/peers/chatrooms.zig` + the peer HTTP fan-out (`POST /api/chat/message`)
-for the multi-instance transport, the Fleet pixel floor's canvas technique
-(`tools/zig/webui/features/fleet.js`, `_floorFrame`) as the rendering
-substrate, and the run graph's own-file persistence pattern
-(`state/runs/<run-id>.json`, per `src/agent/loop.zig`) for match state. This
-PRD's job is to scope those into one coherent feature before any code is
-written.
+**Not shipped:** Phase 3 (multi-instance over a chatroom). Needs two reachable
+`clanker serve` peers; partition ordering is decided in Design below.
 
 ## Problem
 
 Clanker already lets several agents look at the same question — `providers
-check` sweeps for connectivity, the planned blind side-by-side comparison
-(`docs/ROADMAP.md`, Pi/Odysseus audit) would show independent answers side
-by side, `ck_swarm` fans a task out to up to 8 parallel members. None of
-these put two positions in the same room. A model that is confidently wrong
+check` sweeps for connectivity, shipped `clanker compare` shows independent
+answers side by side unlabeled, `ck_swarm` fans a task out to up to 8
+parallel members. None of these put two positions in the same room. A model that is confidently wrong
 reads identically to a model that is confidently right until something
 forces it to answer a specific rebuttal, and clanker has no primitive for
 that: `ck_swarm`'s own doc comment is explicit that "members cannot see each
@@ -58,7 +50,8 @@ the pixel art.
    producing their next one, until a match ends.
 2. One protocol that works whether combatants are same-process subagents or
    separate peer clanker instances — the caller picks the shape per match,
-   the move log and judging logic don't change.
+   the move log and judging logic don't change. **Phase 3 (peer/chatroom
+   shape) is open; same-process is shipped.**
 3. A verdict at the end: a synthesized answer to the original question,
    traceable to the transcript that produced it, consumable by a human
    (`/arena`, `clanker arena`) or by another process (see Self-improve
@@ -156,9 +149,13 @@ to how `todo_*` used to ride chat messages before the board took over
 guarantee this needs is weaker than a general chat log's: a round doesn't
 start until every combatant's move for the previous round is visible, so as
 long as each peer waits for its cue before moving (rather than racing to
-post), out-of-order delivery across peers is a non-issue — worth a real look
-under an actual network partition before this ships (see Open questions),
-not asserted safe here.
+post), out-of-order delivery across peers is a non-issue in the happy path.
+
+**Decision (before Phase 3):** under a network partition, chatroom delivery
+is best-effort. A missing peer move is a forfeit after timeout (reuse
+`agent.ask_timeout_seconds`, or an arena-specific timeout if one is added),
+not a reorder of the round. The match file records the forfeit explicitly;
+there is no attempt to invent an alternate move order from partial delivery.
 
 **Judging and HP.** Each combatant starts at 100 HP. After each move, a
 judge call scores it: did the attack land, did the block actually answer the
@@ -342,6 +339,20 @@ line per move (matching tool-call card style), ending in a verdict block.
 `clanker arena` mirrors it non-interactively for scripting, same pattern as
 `clanker autoresearch` alongside `/autoresearch`.
 
+**Phase 3 implementation.** Multi-instance / room-backed mode only (Phases 1–2
+and 4–8 already shipped):
+
+1. Wire combatant turns to an `arena-<id>` chatroom via `chatrooms.append` and
+   peer fan-out (`src/peers/chatrooms.zig`, `POST /api/chat/message`), reading
+   room messages since the last move as the turn transcript.
+2. Extend `tools/zig/arena_match.zig` (and CLI/HTTP start paths) with a
+   room-backed match mode that waits for each peer's cue before posting the
+   next move; reuse the partition/forfeit timeout decided above.
+3. Record peer forfeits in the match file (`state/arena/<id>.json`) the same
+   way timeouts already do; no new transport.
+4. Keep canvas / CLI / REPL consumers on `GET /api/arena/<id>` unchanged; they
+   already read the shared match file.
+
 ## Known issues
 
 Two deliberate deviations from this PRD as first written, kept here so a
@@ -371,6 +382,10 @@ reader diffing doc against code knows they are decisions, not drift:
 | A peer goes unreachable mid-match (room-backed mode) | That combatant forfeits remaining rounds the same as a timeout; the match file records it explicitly rather than hanging |
 | Third-party judge configured but no extra provider available | Falls back to self-reported judging, logged as a downgrade so the verdict's confidence can be read accordingly |
 | A match is asked to start with only 1 position, or with a duplicate position | Refused at the tool boundary — a debate needs at least two distinct sides |
+| Battle Royale `positions` length | `<2` → too few; `>8` → `"at most 8 positions"`; blank or duplicate stance refused the same way |
+| Invalid `--defend` / design-review input | Tool refuses unless both `defend` and `alternative` are present; do not also pass `for`/`against`/`positions`. A `--defend` value that looks path-shaped but is missing is treated as literal text (CLI `arenaArtifact`), not an error |
+| Match file write fails (`state/arena/<id>.json`) | Logged (`persist` catch); the in-process match continues / finishes and still returns a verdict. Spectators polling the file see a stall or a missing final |
+| Peer move missing past timeout (Phase 3) | Forfeit for that combatant (see Design partition decision); no reorder |
 
 ## Acceptance criteria
 
@@ -496,8 +511,6 @@ combatant forfeited a round to an empty completion.
   Whether to allow the same provider to judge with a different persona (weak
   isolation) or refuse third-party judging entirely below three configured
   providers is open.
-- **Multi-instance ordering under a real network partition**, not just the
-  cue-based happy path described in Design.
 - **Replay/spectator mode.** Watching a finished match's rounds play back in
   the pixel view, distinct from the live-match case Phase 5 covers.
 - **Crossover with autoresearch.** Could a match's verdict feed into

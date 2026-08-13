@@ -82,6 +82,25 @@ working. `create`/`kanban_add` takes `assignee` too, so a card can be put on
 someone the moment it exists; the assignment folds as if stamped by the add
 itself, and a later `assign` or `claim` outranks it by the usual rule.
 
+**Ops ↔ tools.** Eight agent-facing tools pin their op in descriptor
+`config`; `kanban_subtask` and `kanban_depend` take `op` as a request field.
+The internal multiplexed `board` entry point (web UI / `/api/board`) always
+names the op in the request. Same wasm (`board.wasm`) for all of them.
+
+| Tool | Op(s) | Key fields |
+|---|---|---|
+| `kanban_list` | `list` | optional `who`, `room` |
+| `kanban_add` | `create` | `title` (req); optional `column`, `priority`, `body`, `assignee`, `deadline`, `labels`, `goal`, `room` |
+| `kanban_update` | `update` | `id`; optional `title`, `body`, `who`/`assignee`, `priority`, `deadline`, `column`, `goal`, `labels`, `room` |
+| `kanban_move` | `move` | `id`, `column`; optional `room` |
+| `kanban_claim` | `claim` | `id`; optional `room` |
+| `kanban_log` | `log` | `id`, `what`; optional `room` |
+| `kanban_subtask` | `subtask_add` / `subtask_toggle` / `subtask_remove` / `subtask_depend` | `id`, `op`; `text` / `subtask_id` / `parent_subtask_id` / `depends_on` / `off` / `done` as needed |
+| `kanban_depend` | `depend_add` / `depend_remove` | `id`, `op`, `depends_on`; optional `room` |
+| `kanban_cost` | `usage` | `id`; optional `prompt_tokens`, `completion_tokens`, `cost`, `run_id`, `room` |
+| `kanban_delete` | `delete` | `id`; optional `room` |
+| `board` (internal) | any op above, plus `assign` / `close` | `op` required; fields as for that op |
+
 **Validation lives in the guest.** Title 1–512 chars, bounded body, known
 column, priority in {low, normal, high}, existing card id, no
 self-dependency, non-negative finite cost. A request wrong in both op and id
@@ -105,15 +124,6 @@ whose dependencies are unfinished — shown as blocked, not forbidden),
 `completion_tokens`, `cost`, and a `runs[]` breakdown; totals add up across
 runs — this one field is not itself an array, unlike the others above).
 
-## Known issues
-
-None currently known. Previously resolved: `kanban_add`/`kanban_update` now
-honour the `assignee` field they used to silently drop; `kanban_move`'s no-op
-`position` field was removed from the manifest (card ordering stays future
-work); and the newest-first history fold that silently
-lost older cards was fixed by requesting oldest-first pages (see Paging bound
-above).
-
 ## Failure modes
 
 | Condition | Behaviour |
@@ -121,6 +131,9 @@ above).
 | Chatrooms disabled | `list` fails with an actionable message: the board is a chatroom, so it names the config keys to enable (`modules.chatrooms`, `chatrooms.on`) and the restart needed |
 | Log exceeds page cap | Named error; the board refuses to fold a partial log |
 | Claim race lost | Answer shows who holds the claim |
+| Claim vs assign race | First claim stands among claims (claim is a mutex on the card). A newer assign outranks a claim for the assignee field; an older assign does not |
+| Self-dependency or dependency cycle | Rejected before write (`a card cannot wait on itself` / checklist cycle error) |
+| Invalid priority or empty/overlong title | Named error before any write (`priority must be low, normal or high`; `title must be 1-512 characters`) |
 | Move to unknown column / unknown card | Named error before any write |
 | Delete | Permanent; peers that already dropped it never restore it |
 

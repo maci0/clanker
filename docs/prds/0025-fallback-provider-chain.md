@@ -73,6 +73,8 @@ implemented; the sentence it's attached to reads as the general one.
    against the next provider.
 5. Exhausting the entire chain (every configured fallback also fails) is a
    normal, clearly-reported terminal failure, not a crash or a silent hang.
+6. Cost/latency of a chain-triggered swap is visible via log plus the
+   serving provider on the turn record / stats. No webui badge in v1.
 
 ## Non-goals
 
@@ -94,9 +96,9 @@ implemented; the sentence it's attached to reads as the general one.
   existing same-provider loop already assumes (it retries whole failed
   attempts, not partial streams). This PRD's chain only engages for a turn
   that failed with **no content yet delivered** to the caller.
-- A user-facing "which fallback served this turn" indicator beyond a log
-  line. Surfacing that in the webui/REPL transcript is a reasonable
-  follow-up, not required to ship the mechanism.
+- A webui/REPL "which fallback served this turn" badge. v1 records the
+  serving provider on the turn record/stats and logs the swap; a transcript
+  badge is follow-up.
 
 ## Design
 
@@ -134,14 +136,33 @@ Each of the loop's `client.chat`/`chatStream` call sites (`~L544`, `~L549`,
 eligible failure (previous paragraph) with `self.cfg.agent.fallback_providers`
 non-empty, advance `self.provider` to the next entry not yet tried this
 turn and retry the same built request against it; on success, log which
-provider actually served the turn; on exhausting the whole chain, propagate
-the last error as today.
+provider actually served the turn and record that serving provider on the
+turn's stats/record; on exhausting the whole chain, propagate the last error
+as today.
 
-Sequencing against [PRD 0024 (sampling profiles)](0024-sampling-profiles.md),
-which touches the same four dispatch sites: this PRD owns the call-site
-restructure (the provider swap around `client.chat`/`chatStream`) and lands
-first; 0024 only extends `writeSamplingParams`'s `orelse` chain and rides on
-top afterwards, touching no call site.
+**Order.** Configured list order only. No live reordering, capacity
+preferencing, or "skip recently failed" logic in v1.
+
+**Cost/latency signaling (v1).** A chain-triggered swap emits a log line and
+writes the serving provider onto the turn record / stats path (so cost
+accounting and `clanker stats` show who actually served the turn). No webui
+transcript badge in v1.
+
+**Provider-read audit (required before mid-run swap).** Making
+`Agent.provider` mid-run-mutable is new structural surface. Before the swap
+ships, audit every read site of `self.provider` (and related
+`self.provider.name` uses, including cost accounting around
+`src/agent/loop.zig:386-404`) for the assumption "provider never changes
+after `Agent.init`". Sites that already read per-event are likely safe;
+sites that snapshot the name once at run start must be fixed or documented.
+This audit is Implementation phase 1 and a hard prerequisite, not optional
+cleanup.
+
+**Sequencing against [PRD 0024 (sampling profiles)](0024-sampling-profiles.md).**
+This PRD owns the call-site restructure (the provider swap around
+`client.chat`/`chatStream`) and lands **before** 0024; 0024 only extends
+`writeSamplingParams`'s `orelse` chain and rides on top afterwards, touching
+no call site.
 
 **`self.provider` becomes swappable mid-run.** Today it is set once at
 `Agent.init` and never reassigned (`src/agent/loop.zig:68`, every read site
@@ -153,9 +174,39 @@ constructed pointing at the fallback from the start); this PRD is the first
 case where the swap has to happen **after** `Agent.init`, mid-run, which is
 new structural surface on `Agent`, not a copy of the existing mechanism.
 
-## Known issues
+**Dependencies.**
 
-None — draft, nothing built yet.
+- Hard: existing `client.zig` retry / `isRetryable` contract; `loop.zig`
+  ownership of `self.cfg` + `self.provider`. Provider-read audit (phase 1)
+  before enabling mid-run swap.
+- Soft / sequencing: lands **before** [PRD 0024](0024-sampling-profiles.md)
+  (same four dispatch sites). Vision path (`visionFallbackProvider`) stays
+  independent.
+- Existing: `src/config.zig` (`fallback_provider`), `src/stats/tokens.zig`
+  (turn record fields for serving provider), log path used elsewhere for
+  provider identity.
+
+**Implementation.**
+
+1. **Provider-read audit (prerequisite):** enumerate every `self.provider`
+   (and name) read in `src/agent/loop.zig` and adjacent cost/stats code;
+   fix or document any "set once at init" assumption. Do not enable mid-run
+   swap until this is done.
+2. Config: parse `fallback_provider` string or `fallback_providers` array
+   into `[]const []const u8` in `src/config.zig`; pluralize
+   `RunRequest.fallback_provider` equivalently.
+3. Chain wrapper in `src/agent/loop.zig` around the four
+   `client.chat`/`chatStream` sites: on chain-eligible failure with no
+   content delivered, advance to next configured provider in list order;
+   skip unknown names with a warning; exhaust → report every provider tried
+   and each terminal error.
+4. On successful fallback serve: log the swap; write serving provider onto
+   the turn record / stats.
+5. Leave `visionFallbackProvider` untouched; keep its existing tests green.
+6. Tests: primary exhausts retries → second provider receives the request;
+   mid-stream failure does not advance the chain; unknown name skipped with
+   warning; full-chain exhaust reports all errors; bare-string config still
+   behaves as today's single fallback.
 
 ## Failure modes
 
@@ -187,22 +238,14 @@ None — draft, nothing built yet.
       skipped with a warning; the chain continues past it.
 - [ ] The pre-emptive vision-routing path (`visionFallbackProvider`) is
       unchanged by this work — its own existing tests still pass unmodified.
+- [ ] A successful chain swap logs and records the serving provider on the
+      turn record/stats (no webui badge required).
+- [ ] Provider-read audit is completed before mid-run swap is enabled
+      (Implementation phase 1).
 
 ## Open questions / future work
 
-- **Ordering intelligence.** The chain is tried in configured order only.
-  Whether a smarter order (skip a fallback that failed recently, prefer one
-  with capacity) is worth the added state is future work, not blocking this
-  PRD's mechanism.
-- **Cost/latency signaling.** A fallback provider may be meaningfully more
-  expensive or slower than the primary. Should a chain-triggered swap be
-  logged more loudly than a debug line (e.g. surfaced in the run's cost
-  accounting, or the webui transcript) so a user notices they silently paid
-  more for a turn? Left open; the mechanism should ship with at least a log
-  line (Design) and grow louder reporting if that turns out to be needed.
-- **Does `Agent.provider` becoming mid-run-mutable open any other assumption
-  elsewhere** (cost accounting keyed by `self.provider.name` at run start,
-  `src/agent/loop.zig:386-404`, reads it per-event already, so it may already
-  be safe — but every read site enumerated in Problem needs auditing for
-  "assumes provider never changes after `Agent.init`" before this ships, not
-  just the four call sites that dispatch requests).
+- **Smarter chain ordering** (skip a fallback that failed recently, prefer
+  one with capacity). v1 is configured order only — see Design.
+- **Webui / REPL badge** for "which fallback served this turn" as a follow-on
+  to the log + turn-record/stats path Design already requires.

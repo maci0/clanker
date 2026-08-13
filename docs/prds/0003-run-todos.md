@@ -30,8 +30,9 @@ be both; conflating them was the original `state/board.json` mistake.
 
 1. A private checklist scoped to a single run (or sub-agent run), zero
    persistence, zero fan-out.
-2. A shared, replicated board for durable work, with claims, subtasks,
-   deadlines, and cost accrual.
+2. A clear split: private in-memory checklists here; shared durable work
+   on the board (`docs/prds/0002-kanban-board.md`), including claims,
+   subtasks, deadlines, and cost accrual owned by that PRD.
 3. `todo_add`/`todo_claim`/`todo_close`/`todo_list` keep one vocabulary for
    private todos; shared durable work uses the board's own verbs, not a
    room-scoped variant of these four.
@@ -54,12 +55,21 @@ the run returns; `subagent.runNested` attaches a distinct list for its nested
 run. A missing list is therefore a host wiring error, not a cue to pass
 `room` (see Failure modes).
 
-**Lifecycle.** Private: open → claimed → closed, per run, in memory, capped
-at 100 items (error: "private todo list is full; close items instead of
-adding more") and 512-char titles. Shared: backlog → ready → doing → review
-→ done, with archive as a second terminal state reachable from done rather
-than a further step (six fixed columns total), claims race and the first
-stands, cost accrues per run against the card.
+**Private todo fields / caps / lifecycle.**
+
+| Field / rule | Value |
+|---|---|
+| Id | `p1`, `p2`, … (`p` marks private; not a chat message id) |
+| Title | 1–512 chars |
+| Cap | 100 items per run (`"private todo list is full; close items instead of adding more"`) |
+| Lifecycle | open → claimed → closed |
+| Storage | in-memory only; discarded when the run returns |
+| Fan-out | never; no room log, no peers |
+
+Shared durable work stays on the board: backlog → ready → doing → review →
+done, with archive as a second terminal state reachable from done (six fixed
+columns), claims race and the first stands, deadlines and cost accrue per
+card — see `docs/prds/0002-kanban-board.md`.
 
 **Choosing the layer.** Rule of thumb in the tool catalog: a private todo is
 your working plan, gone when the run ends; if another clanker should see or
@@ -84,6 +94,10 @@ though the room-scoped middle ground it used to also cover is gone.
       the run; the list's final state is appended to the sub-agent's answer
       whenever the list is non-empty (in practice this covers, but is not
       conditioned on, hitting the iteration cap).
+- [x] Vocabulary split: `todo_*` is private-only (`room` hard-errors and
+      points at the board); shared durable work uses `kanban_*`.
+- [x] Deadlines and cost accrual live on the board, not on private todos
+      (see `docs/prds/0002-kanban-board.md`).
 - [x] Board claims resolve races deterministically across peers.
 - [x] A top-level run can use private todos.
 

@@ -38,18 +38,20 @@ a second, differently-scoped store.
 1. A deterministic, fully offline default: chunk stored Knowledge docs,
    embed with a zero-dependency hash embedder, rank by cosine similarity,
    for useful recall with no network call.
-2. Configurable chunking (size, overlap, fixed vs. markdown-aware) exposed
-   through `[memory]` config.
-3. A sandboxed `memory` WASM tool (chunk/embed/search) usable directly by
+2. A sandboxed `memory` WASM tool (chunk/embed/search) usable directly by
    agents and chain steps, scoped to `state/knowledge`.
-4. `/api/run`'s `final_task` augmented with top-k memory hits for selected
+3. `/api/run`'s `final_task` augmented with top-k memory hits for selected
    Knowledge collections, additive to the existing Knowledge injection and
    size-capped.
-5. A pluggable embedder trait so a real provider can replace the hash
-   embedder for better recall.
 
 ## Non-goals
 
+- **Not configurable chunking yet.** Former Goal 2 (`chunk.size` /
+  `overlap` / `strategy`) is deferred. Config keys remain for
+  forward-compat until deleted; nothing reads them (Known issues).
+- **Not a pluggable embedder yet.** Former Goal 5 (provider embedder
+  trait) is deferred the same way: `embedding.provider` / `embedding.model`
+  stay parsed and unused until a guest-reachable embed path exists.
 - **Not a persistent vector index.** The builtin backend re-embeds cached
   chunk text at query time on every search; there is no stored vector. Fine
   at single-user Knowledge scale; building an index is only worth it once
@@ -108,21 +110,28 @@ keyword), and matches the guest tool's accepted fields.
 
 **Config (`src/config.zig`, `Memory` struct and `parseMemory`).**
 
+> **Parsed only / unused:** `embedding.provider`, `embedding.model`,
+> `chunk.size`, `chunk.overlap`, `chunk.strategy`, and `vector.backend` are
+> accepted by the parser and ignored at runtime (Known issues). Kept for
+> forward-compat until a real guest-reachable embed/chunk path exists; do
+> not implement fake backends that pretend to honor them.
+
 ```toml
 [memory]
-backend = "hybrid"          # hybrid | vector | keyword
-chunk.size = 800
-chunk.overlap = 120
-chunk.strategy = "markdown" # markdown | fixed
-embedding.provider = ""     # parsed, never read (Known issues 2)
-embedding.model = ""
-vector.backend = "builtin"  # parsed, never read; only the builtin path exists
-vector.top_k = 5
-vector.threshold = 0.35
+backend = "hybrid"          # hybrid | vector | keyword — actually read
+chunk.size = 800            # parsed only / unused
+chunk.overlap = 120         # parsed only / unused
+chunk.strategy = "markdown" # parsed only / unused (markdown | fixed)
+embedding.provider = ""     # parsed only / unused
+embedding.model = ""        # parsed only / unused
+vector.backend = "builtin"  # parsed only / unused; only builtin path exists
+vector.top_k = 5            # read by /api/run injection
+vector.threshold = 0.35     # read by /api/run injection
 ```
 
-Parsed with unknown-key warnings. Which of these fields anything downstream
-actually reads is narrower than the table suggests; see Known issues.
+Parsed with unknown-key warnings. Live keys today: `backend`,
+`vector.top_k`, `vector.threshold`. Everything else in this block is dead
+config until the deferred Non-goals ship.
 
 **Knowledge chunk cache (`tools/zig/knowledge.zig`, `deriveChunks` /
 `invalidateChunks`).** `add_doc` calls `deriveChunks`, which runs its own
@@ -203,12 +212,13 @@ Knowledge document injection (itself capped at 100,000 bytes).
       fallback for `hybrid`, additive to Knowledge injection, size-capped
       (`src/cli.zig` `handleRun`)
 - [ ] A configured `embedding.provider` actually reaches a real embedding
-      call at runtime; today nothing reads the key and no provider embedder
-      exists in the tree (Known issues 2)
-- [ ] `chunk.size`/`overlap`/`strategy` actually govern chunking; currently
-      ignored by every call site that writes `.chunks.json` (Known issues 3)
-- [ ] A real `muninndb` or `sqlite-vec` vector backend; currently nothing
-      reads `vector.backend` at all (Known issues 4)
+      call at runtime — deferred (Non-goals); keys stay unused on purpose
+      (Known issues 2)
+- [ ] `chunk.size`/`overlap`/`strategy` actually govern chunking — deferred
+      (Non-goals); currently ignored by every call site that writes
+      `.chunks.json` (Known issues 3)
+- [ ] A real `muninndb` or `sqlite-vec` vector backend — deferred; currently
+      nothing reads `vector.backend` at all (Known issues 4)
 - [ ] Bigram buffer overflow fixed in `tools/zig/memory.zig`'s
       `hashEmbedInto`, the one remaining copy; still unfixed (Known issues 1)
 - [ ] The two remaining chunkers consolidated to one, or a documented reason
@@ -216,14 +226,9 @@ Knowledge document injection (itself capped at 100,000 bytes).
 
 ## Open questions / future work
 
-- Is a real embedding provider actually wanted on the `/api/run` path? The
-  `embedOpenAICompat` trait was built ahead of a real caller and then
-  deleted in the WASM migration, so answering yes now means implementing an
-  embedding call reachable from the guest tool (or a host seam feeding it),
-  not just wiring an existing function. If no, the
-  `embedding.provider`/`embedding.model` config keys should come out rather
-  than imply a feature that doesn't run.
 - Should chunk re-embedding on every `/api/run` request (no vector cache)
   be replaced by storing embeddings alongside chunk text in `.chunks.json`,
   once a real embedder makes re-embedding non-free? Not worth doing while
-  the hash embedder is the only reachable path.
+  the hash embedder is the only reachable path. (Dead `embedding.*` /
+  `chunk.*` / `vector.backend` keys stay documented-unused until that path
+  exists — see Non-goals / Design.)
