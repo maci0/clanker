@@ -112,9 +112,20 @@ fn keywordScore(query: []const u8, text: []const u8) f32 {
     return hits / total;
 }
 
+fn inferAction(obj: std.json.Value) []const u8 {
+    if (lib.optStr(obj, "query") != null) return "search";
+    if (obj == .object) {
+        if (obj.object.get("texts")) |v| {
+            if (v == .array) return "embed";
+        }
+    }
+    if (lib.optStr(obj, "text") != null) return "chunk";
+    return "search";
+}
+
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const obj = try lib.object(input);
-    const action = lib.optStr(obj, "action") orelse "search";
+    const action = lib.optStr(obj, "action") orelse inferAction(obj);
     if (std.mem.eql(u8, action, "chunk")) {
         const text = lib.optStr(obj, "text") orelse "";
         if (text.len == 0) {
@@ -211,6 +222,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         const top_k: usize = @trunc(top_k_f);
         const threshold: f32 = @as(f32, @floatCast(lib.optNum(obj, "threshold") orelse 0));
         const mode = lib.optStr(obj, "mode") orelse "vector";
+        if (!std.mem.eql(u8, mode, "vector") and !std.mem.eql(u8, mode, "keyword"))
+            return lib.fail(out, "mode must be \"vector\" or \"keyword\"");
         const use_keyword = std.mem.eql(u8, mode, "keyword");
         const dim_f: f64 = lib.optNum(obj, "dim") orelse @as(f64, @floatFromInt(default_dim));
         const dim: usize = @trunc(dim_f);

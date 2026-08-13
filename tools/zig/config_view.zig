@@ -47,13 +47,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         // Section filter over the host-merged config: ck_harness_config
         // returns it as JSON however it was stored on disk, and already has
         // the local override applied.
-        const v = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, lib.harnessConfig(), .{ .ignore_unknown_fields = true }) catch return lib.fail(out, "parse");
+        const v = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, lib.harnessConfig(), .{ .ignore_unknown_fields = true }) catch return lib.fail(out, "could not parse the merged harness config");
         if (v == .object) {
             if (v.object.get(section)) |sec| {
                 var buf: [65536]u8 = undefined;
                 var w: std.Io.Writer = .fixed(&buf);
                 var s = std.json.Stringify{ .writer = &w, .options = .{} };
-                s.write(sec) catch return lib.fail(out, "write");
+                s.write(sec) catch return lib.fail(out, "section JSON did not fit in the output buffer");
                 try text.appendSlice(lib.alloc, buf[0..w.end]);
             } else {
                 try text.appendSlice(lib.alloc, "(no section '");

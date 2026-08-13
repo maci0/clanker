@@ -28,6 +28,7 @@
       },
       "severity": {
         "type": "string",
+        "enum": ["critical", "high", "normal", "medium", "low", "minor"],
         "description": "critical, high, normal (default), medium (alias for normal), low, or minor (alias for low)"
       },
       "component": {

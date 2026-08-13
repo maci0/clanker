@@ -169,7 +169,15 @@ fn executeSteps(out: *lib.Out, alloc: std.mem.Allocator, cfg: Config, steps: []c
         }
         const args_json = try argsToJsonWithSubst(alloc, st.args, prev_json, prev_raw, vars_val);
         const result = lib.toolCall(tool_name, args_json) catch |err| {
-            const msg = try std.fmt.allocPrint(alloc, "tool {s} failed: {s}", .{ tool_name, @errorName(err) });
+            const why: []const u8 = switch (err) {
+                error.SandboxDenied => "refused by this tool's sandbox policy",
+                error.NotFound => "not found (no such tool, or tool_call is not granted)",
+                error.TooLarge => "too large for one call",
+                error.NetworkError => "the request did not complete",
+                error.InvalidArg => "the arguments were rejected",
+                else => @errorName(err),
+            };
+            const msg = try std.fmt.allocPrint(alloc, "tool {s} failed: {s}", .{ tool_name, why });
             try trace.append(alloc, .{ .index = idx, .kind = "tool", .ok = false, .output = msg, .tool = tool_name });
             if (st.stop_on_error orelse true) break else continue;
         };

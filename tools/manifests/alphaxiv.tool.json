@@ -26,6 +26,9 @@
   "network_allow": [
     "api.alphaxiv.org"
   ],
+  "env_allow": [
+    "ALPHAXIV_API_KEY"
+  ],
   "fs_prefixes": [],
   "category": "web"
 }

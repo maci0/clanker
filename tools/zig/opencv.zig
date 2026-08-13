@@ -30,6 +30,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return lib.fail(out, "input must be {\"op\": ..., \"path\": ...}");
 
     if (req.path.len == 0) return lib.fail(out, "path is required");
+    const known_ops = [_][]const u8{ "info", "edges", "faces", "contours", "grayscale", "resize" };
+    var op_ok = false;
+    for (known_ops) |k| {
+        if (std.mem.eql(u8, req.op, k)) op_ok = true;
+    }
+    if (!op_ok) return lib.fail(out, "op must be info, edges, faces, contours, grayscale, or resize");
     // The script reads whatever path it is handed, so the traversal check
     // belongs here rather than in Python: keep it inside the project.
     if (std.mem.startsWith(u8, req.path, "/") or std.mem.find(u8, req.path, "..") != null)

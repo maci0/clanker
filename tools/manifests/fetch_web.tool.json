@@ -1,7 +1,7 @@
 {
   "name": "fetch_web",
-  "description": "HTTP GET a URL and return its body (truncated). The host must be allowlisted for this tool. Input: {\"url\": \"https://...\"}. Returns {\"ok\": true, \"bytes\": N, \"body\": \"...\"}.",
-  "llm_description": "HTTP GET a URL, return its (truncated) body. Host must be allowlisted for this tool. {url}.",
+  "description": "HTTP GET a URL and return its body (truncated). Only api.github.com and raw.githubusercontent.com are allowlisted; any other host is refused. Input: {\"url\": \"https://...\"}. Returns {\"ok\": true, \"bytes\": N, \"body\": \"...\"}.",
+  "llm_description": "HTTP GET a URL, return its (truncated) body. Only api.github.com and raw.githubusercontent.com are allowlisted. {url}.",
   "wasm": "zig-out/tools/fetch_web.wasm",
   "input_schema": {
     "type": "object",

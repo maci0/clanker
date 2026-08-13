@@ -47,7 +47,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   `ck_harness_config`; `config_view`'s whole-file dump still reads
   `config.toml` / `config.local.toml` as raw bytes, so those two names must
   stay on its `fs_prefixes` (emptying them makes every dump fail as
-  "config.toml unreadable").
+  "config.toml unreadable"). Empty `env_allow` is the safe defaults (PWD,
+  HOME, PATH, ...), never API keys; a tool that reads a secret via
+  `ck_getenv` must name it.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   execution graphs, sub-agents, autolearn, workflows.
 - `src/schedule/` — `clanker schedule`: the cron dialect and next-fire
