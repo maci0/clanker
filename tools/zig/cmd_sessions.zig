@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const utf8 = @import("utf8");
 
 const SessionMeta = struct {
     id: []const u8,
@@ -96,7 +97,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         while (col < id_w + 2) : (col += 1) try buf.append(lib.alloc, ' ');
         const first_nl = std.mem.findScalar(u8, m.title, '\n') orelse m.title.len;
         const one_line = m.title[0..first_nl];
-        const title = if (one_line.len > 60) one_line[0..60] else one_line;
+        const title = utf8.cap(one_line, 60);
         try buf.appendSlice(lib.alloc, title);
         if (one_line.len > 60) try buf.appendSlice(lib.alloc, "...");
         if (m.updated > 0) {
