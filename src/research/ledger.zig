@@ -108,7 +108,13 @@ test "isBetter respects direction" {
 }
 test "tail keeps last lines" {
     try std.testing.expectEqualStrings("hello", tail("hello", 10));
-    try std.testing.expectEqualStrings("f", tail("a\nb\nc\nd\ne\nf", 4));
+    // The last `keep` bytes, minus the partial line they start inside. For
+    // "a\nb\nc\nd\ne\nf" (11 bytes) the last 3 are "e\nf", whose first line is
+    // the partial "e", so only "f" survives; the last 4 are "\ne\nf", where the
+    // partial line is empty and "e\nf" survives whole. 5 lands mid-"d" and so
+    // keeps the same two lines as 4.
+    try std.testing.expectEqualStrings("f", tail("a\nb\nc\nd\ne\nf", 3));
+    try std.testing.expectEqualStrings("e\nf", tail("a\nb\nc\nd\ne\nf", 4));
     try std.testing.expectEqualStrings("e\nf", tail("a\nb\nc\nd\ne\nf", 5));
 }
 test "bestMetric reads ledger" {
