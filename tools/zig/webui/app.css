@@ -2192,6 +2192,31 @@ h2#session-title {
 .board-col-count { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .board-col-count[data-over="true"] { color: var(--warn-text); }
 .board-col[data-over="true"] { box-shadow: inset 0 0 0 1.5px var(--warn); }
+
+/* Trello-style column options "⋯" menu */
+.board-col-menu-btn { font-size: 16px; padding: 0 0.3rem; line-height: 1; border-radius: var(--radius); min-width: auto; }
+.board-col-menu-btn:hover { background: var(--surface-hover); }
+.board-col-menu {
+  position: absolute; top: 100%; right: 0; z-index: 50;
+  min-width: 220px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 8px); box-shadow: 0 8px 16px rgba(0,0,0,.25);
+  padding: 0.25rem 0; display: none;
+}
+.board-col-menu.is-open { display: block; }
+.board-col-menu-title {
+  padding: 0.5rem 0.75rem; font-size: 12px; font-weight: 700;
+  color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.04em;
+}
+.board-col-menu-sep { border: none; border-top: 1px solid var(--border); margin: 0.15rem 0; }
+.board-col-menu-item {
+  display: block; width: 100%; text-align: left; padding: 0.45rem 0.75rem;
+  background: none; border: none; color: var(--fg); font-size: 13px;
+  cursor: pointer; border-radius: 0;
+}
+.board-col-menu-item:hover:not(:disabled) { background: var(--surface-hover); color: var(--accent); }
+.board-col-menu-item:disabled { cursor: default; }
+.board-col-menu-backdrop { position: fixed; inset: 0; z-index: 49; }
+
 .board-wip-banner { font-size: 11px; font-weight: 600; color: var(--warn-text); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); border: 1px solid var(--warn); border-radius: var(--radius); padding: 0.25rem 0.5rem; margin: 0.3rem 0.5rem; text-align: center; }
 .board-cards {
   list-style: none; margin: 0; padding: 0.25rem var(--space-2) var(--space-2);
@@ -2337,7 +2362,7 @@ h2#session-title {
 }
 .card-badge .icon { width: 14px; height: 14px; opacity: 0.65; }
 .card-badge[data-due="soon"] { color: var(--on-danger); background: var(--warn); }
-.card-badge[data-due="late"] { color: var(--on-danger); background: var(--danger); }
+.card-badge[data-due="late"] { color: var(--on-danger); background: var(--danger); animation: pulse 2s ease-in-out infinite; }
 .card-badge[data-done="true"] { color: var(--ok); }
 .card-badge[data-done="true"] .icon { opacity: 1; }
 .card-badge[data-goal-run="true"] { color: var(--accent-text); animation: pulse 1.2s ease-in-out infinite; }

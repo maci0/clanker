@@ -363,6 +363,127 @@ function boardColumn(col, s) {
           var wrap = document.createElement("span");
           wrap.appendChild(add);
           return wrap;
+        })(),
+        /* Trello-style column options "⋯" menu */
+        (function(){
+          var menuBtn = document.createElement("button");
+          menuBtn.type = "button"; menuBtn.className = "secondary board-lane-control board-col-menu-btn";
+          menuBtn.textContent = "⋯"; menuBtn.title = "Column actions";
+          menuBtn.setAttribute("aria-label", "Actions for " + col.title);
+          menuBtn.setAttribute("aria-haspopup", "true");
+          menuBtn.addEventListener("click", function(e){
+            e.stopPropagation();
+            /* close any other open column menu */
+            document.querySelectorAll(".board-col-menu.is-open").forEach(function(m){ m.classList.remove("is-open"); });
+            var menu = document.createElement("div");
+            menu.className = "board-col-menu is-open";
+            menu.setAttribute("role", "menu");
+            var title = document.createElement("div");
+            title.className = "board-col-menu-title";
+            title.textContent = "List actions";
+            menu.appendChild(title);
+
+            var sep1 = document.createElement("hr");
+            sep1.className = "board-col-menu-sep";
+            menu.appendChild(sep1);
+
+            /* Sort by priority */
+            var sortPri = document.createElement("button");
+            sortPri.type = "button"; sortPri.className = "board-col-menu-item";
+            sortPri.textContent = "Sort by priority";
+            sortPri.setAttribute("role", "menuitem");
+            sortPri.addEventListener("click", function(){
+              menu.remove(); backdrop.remove();
+              var priOrder = { high: 0, normal: 1, low: 2 };
+              var cards = shown.slice().sort(function(a,b){
+                return (priOrder[a.priority || "normal"] || 1) - (priOrder[b.priority || "normal"] || 1);
+              });
+              var listEl = document.getElementById("board-cards-" + col.id);
+              if (!listEl) return;
+              cards.forEach(function(c){ var el = listEl.querySelector("[data-id='" + c.id + "']"); if (el) listEl.appendChild(el); });
+            });
+            menu.appendChild(sortPri);
+
+            /* Sort by date created (newest first) */
+            var sortDate = document.createElement("button");
+            sortDate.type = "button"; sortDate.className = "board-col-menu-item";
+            sortDate.textContent = "Sort by date created";
+            sortDate.setAttribute("role", "menuitem");
+            sortDate.addEventListener("click", function(){
+              menu.remove(); backdrop.remove();
+              var cards = shown.slice().sort(function(a,b){
+                return (b.created || 0) - (a.created || 0);
+              });
+              var listEl = document.getElementById("board-cards-" + col.id);
+              if (!listEl) return;
+              cards.forEach(function(c){ var el = listEl.querySelector("[data-id='" + c.id + "']"); if (el) listEl.appendChild(el); });
+            });
+            menu.appendChild(sortDate);
+
+            /* Sort alphabetically */
+            var sortAlpha = document.createElement("button");
+            sortAlpha.type = "button"; sortAlpha.className = "board-col-menu-item";
+            sortAlpha.textContent = "Sort alphabetically";
+            sortAlpha.setAttribute("role", "menuitem");
+            sortAlpha.addEventListener("click", function(){
+              menu.remove(); backdrop.remove();
+              var cards = shown.slice().sort(function(a,b){
+                return (a.title || "").localeCompare(b.title || "");
+              });
+              var listEl = document.getElementById("board-cards-" + col.id);
+              if (!listEl) return;
+              cards.forEach(function(c){ var el = listEl.querySelector("[data-id='" + c.id + "']"); if (el) listEl.appendChild(el); });
+            });
+            menu.appendChild(sortAlpha);
+
+            var sep2 = document.createElement("hr");
+            sep2.className = "board-col-menu-sep";
+            menu.appendChild(sep2);
+
+            /* Move all cards to… (quick-move to another column) */
+            var moveAll = document.createElement("button");
+            moveAll.type = "button"; moveAll.className = "board-col-menu-item";
+            moveAll.textContent = "Move all cards in this list…";
+            moveAll.setAttribute("role", "menuitem");
+            if (shown.length === 0) { moveAll.disabled = true; moveAll.style.opacity = "0.5"; }
+            moveAll.addEventListener("click", function(){
+              /* replace menu contents with column picker */
+              while (menu.firstChild) menu.removeChild(menu.firstChild);
+              var pickTitle = document.createElement("div");
+              pickTitle.className = "board-col-menu-title";
+              pickTitle.textContent = "Move all to…";
+              menu.appendChild(pickTitle);
+              var sep = document.createElement("hr");
+              sep.className = "board-col-menu-sep";
+              menu.appendChild(sep);
+              s.columns.forEach(function(dest){
+                if (dest.id === col.id) return;
+                var opt = document.createElement("button");
+                opt.type = "button"; opt.className = "board-col-menu-item";
+                opt.textContent = dest.title;
+                opt.setAttribute("role", "menuitem");
+                opt.addEventListener("click", function(){
+                  menu.remove(); backdrop.remove();
+                  shown.forEach(function(c){
+                    postBoard({ op: "move", id: c.id, column: dest.id }, null);
+                  });
+                  toast("Moved " + shown.length + " card" + (shown.length > 1 ? "s" : "") + " → " + dest.title);
+                });
+                menu.appendChild(opt);
+              });
+            });
+            menu.appendChild(moveAll);
+
+            /* close backdrop */
+            var backdrop = document.createElement("div");
+            backdrop.className = "board-col-menu-backdrop";
+            backdrop.addEventListener("click", function(){ menu.remove(); backdrop.remove(); });
+
+            menuBtn.parentElement.style.position = "relative";
+            menuBtn.parentElement.appendChild(menu);
+            document.body.appendChild(backdrop);
+          });
+          return menuBtn;
         })()
       ),
       count),
