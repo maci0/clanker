@@ -1,5 +1,5 @@
 // Vanilla, no bundler. Command palette — entries + rendering + keyboard.
-import { fuzzyMatch as utilFuzzyMatch } from "./utils.js";
+import { fuzzyMatch as utilFuzzyMatch, view_digit_max } from "./utils.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, trapOverlayTab as overlayTrapTab } from "./overlay.js";
 
 var _VIEWS = null;
@@ -19,7 +19,12 @@ var paletteIndex = 0;
 export function paletteEntries() {
   var out = [];
   _VIEWS.forEach(function (v, i) {
-    out.push({ kind: "view", label: v.charAt(0).toUpperCase() + v.slice(1) + "  (" + (i + 1) + ")", run: function () { _showView(v, true); } });
+    // The number is a promise that a key does this, so it is only printed for
+    // the views a key can actually reach. Past the ninth it read "(10)" …
+    // "(14)" — a shortcut nobody can type, on the one surface whose job is to
+    // teach the shortcuts.
+    var digit = i < view_digit_max ? "  (" + (i + 1) + ")" : "";
+    out.push({ kind: "view", label: v.charAt(0).toUpperCase() + v.slice(1) + digit, run: function () { _showView(v, true); } });
   });
   out.push({ kind: "action", label: "New chat", run: function () { _el.newChat.click(); } });
   out.push({ kind: "action", label: "Fork this conversation", run: function () { _el.sessionFork.click(); } });

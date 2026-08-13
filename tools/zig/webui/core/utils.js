@@ -1,6 +1,17 @@
 // Pure helpers — importable as ES module. No DOM, no `el`, no page state —
 // anything here must be callable from another module or a node test without a
 // page around it.
+/* How many views a digit can reach. A digit is one key, so nine is the whole
+   of it — there is no "10" keystroke, and the tenth view onward is reached by
+   the palette or the tablist arrows instead.
+
+   Shared rather than restated because all three places that knew this number
+   knew a different one: the shortcut table still said "1 – 8" from when there
+   were eight views, the palette labelled all fourteen with a number, and only
+   the key handler was right. Two of the three were advertising a key that does
+   nothing. */
+export var view_digit_max = 9;
+
 export function fmtBytes(n) {
   var value = n;
   var unit = "byte";
