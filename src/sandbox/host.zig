@@ -3406,16 +3406,13 @@ pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
 /// descent counts" has happened twice now, each time leaving the function and
 /// its own test asserting opposite things, and main red.
 fn pathHasWorktreeDir(path: []const u8) bool {
+    // Any component, the last one included. Do not narrow this to "only a
+    // descent counts" without changing the test below in the same commit --
+    // see the paragraphs above for why the container itself is refused, and
+    // the history for what happens when only one of the two moves.
     var it = std.mem.splitScalar(u8, path, '/');
     while (it.next()) |comp| {
-        if (std.mem.eql(u8, comp, ".clanker-worktrees")) {
-            // "Through, not at": naming the container is allowed; only
-            // descending into a child (another run's worktree) is refused.
-            while (it.next()) |next| {
-                if (next.len > 0) return true;
-            }
-            return false;
-        }
+        if (std.mem.eql(u8, comp, ".clanker-worktrees")) return true;
     }
     return false;
 }
