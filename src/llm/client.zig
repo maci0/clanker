@@ -29,6 +29,79 @@ const user_agent = "clanker/" ++ build_options.version;
 /// number rather than an actual block count.
 const max_tool_call_slots: usize = 256;
 
+/// Lets a caller on another thread rescue a `chat` that is blocked reading a
+/// response which is never going to arrive.
+///
+/// **Why this has to exist.** `Io.Future.cancel` does not rescue it.
+/// `Threaded.waitForCancelWithSignaling` only signals a thread it believes is
+/// parked in a *cancelable* syscall, and a blocking read on an established
+/// connection is not one, so cancel itself futex-waits with a null timeout and
+/// never returns — the canceller wedges alongside the thread it was trying to
+/// cancel. `std.http.Client` has no read timeout to fall back on either:
+/// `ConnectTcpOptions.timeout` is declared and never referenced. So a host that
+/// accepts a connection and then says nothing hangs `clanker providers check`
+/// forever, which is the failure `pingWithTimeout` exists to prevent.
+///
+/// **The lever.** `shutdown(2)` on the socket makes the blocked read return
+/// end-of-stream. Verified on this platform in isolation before this was built:
+/// a thread blocked in `recv` returns `b''` 0.5s after another thread calls
+/// `shutdown(SHUT_RDWR)`. `close` also unblocks it, with `EBADF`, but closing an
+/// fd another thread is actively reading invites the descriptor-reuse race;
+/// shutting the socket down leaves the fd valid and lets its owner free it on
+/// its own unwind.
+///
+/// **Why this is not a use-after-free.** `trigger` only shuts sockets down. It
+/// frees nothing and closes nothing. The worker still owns its `http.Client`
+/// and still runs its own `defer client.deinit()`; all it sees is a read that
+/// ends early, which it already handles as a transport error. `disarm` takes
+/// the same mutex `trigger` holds, so a `chat` returning cannot pull the client
+/// out from under an in-flight `trigger` — it blocks until that call is done.
+///
+/// Lock order is `Abort.mutex` then `ConnectionPool.mutex`, and nothing takes
+/// them the other way round: the worker touches the pool alone during normal
+/// operation and `Abort.mutex` alone at arm/disarm.
+pub const Abort = struct {
+    mutex: std.Io.Mutex = .init,
+    /// Non-null only while a `chat` on some thread is using this client.
+    client: ?*std.http.Client = null,
+
+    /// Point this handle at the client `chat` is about to use.
+    fn arm(self: *Abort, io: std.Io, c: *std.http.Client) void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        self.client = c;
+    }
+
+    /// Stop pointing at a client that is about to be destroyed. Blocks until
+    /// any concurrent `trigger` has finished with it.
+    fn disarm(self: *Abort, io: std.Io) void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        self.client = null;
+    }
+
+    /// Shut down every connection the armed client currently holds, so a read
+    /// blocked on any of them returns instead of waiting forever. Safe to call
+    /// when nothing is armed (does nothing) and safe to call more than once.
+    pub fn trigger(self: *Abort, io: std.Io) void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        const c = self.client orelse return;
+
+        c.connection_pool.mutex.lockUncancelable(io);
+        defer c.connection_pool.mutex.unlock(io);
+        var it = c.connection_pool.used.first;
+        while (it) |node| : (it = node.next) {
+            const conn: *std.http.Client.Connection = @alignCast(@fieldParentPtr("pool_node", node));
+            // Both directions: the read is what is stuck, but a half-written
+            // request should not be left to dribble out either. A connection
+            // that has already been torn down reports an error here, which is
+            // exactly the state we were trying to reach.
+            conn.stream_reader.stream.shutdown(io, .both) catch {};
+        }
+    }
+};
+
 pub const Ctx = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -37,6 +110,10 @@ pub const Ctx = struct {
     /// recording (modules.token_stats); null callers (e.g. a provider ping)
     /// simply don't record.
     cfg: ?*const config.Config = null,
+    /// Set by a caller that enforces its own deadline and needs a way to stop
+    /// a wedged read (see `Abort`). Null everywhere else, which leaves the
+    /// behaviour of every other call site exactly as it was.
+    abort: ?*Abort = null,
 
     /// The slice of this context credential resolution needs.
     fn authEnv(self: *Ctx) auth.Env {
@@ -132,6 +209,12 @@ pub fn chat(
 
     var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
     defer client.deinit();
+    // Ordering here is load-bearing: defers unwind last-in-first-out, so
+    // `disarm` runs *before* `client.deinit()`. A caller's timeout thread can
+    // therefore never be inside `trigger` holding this client at the moment it
+    // is destroyed — `disarm` blocks until that call finishes.
+    if (ctx.abort) |a| a.arm(ctx.io, &client);
+    defer if (ctx.abort) |a| a.disarm(ctx.io);
 
     noteRequest();
     var attempt: u32 = 0;
@@ -426,6 +509,12 @@ pub fn chatStream(
 
     var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
     defer client.deinit();
+    // Ordering here is load-bearing: defers unwind last-in-first-out, so
+    // `disarm` runs *before* `client.deinit()`. A caller's timeout thread can
+    // therefore never be inside `trigger` holding this client at the moment it
+    // is destroyed — `disarm` blocks until that call finishes.
+    if (ctx.abort) |a| a.arm(ctx.io, &client);
+    defer if (ctx.abort) |a| a.disarm(ctx.io);
 
     noteRequest();
 
