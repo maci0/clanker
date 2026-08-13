@@ -25,7 +25,6 @@ const graph = @import("agent/graph.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
 const rawhttp = @import("util/rawhttp.zig");
-const atomic_write = @import("util/atomic_write.zig");
 const toml_edit = @import("util/toml_edit.zig");
 // tui/transcript.zig's MdStream is still used by cmdRun's own run_md; the
 // rest of tui/* (input, region, statusbar, palette, approval, term) was
