@@ -1175,6 +1175,14 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 section { margin-top: var(--space-3); border-top: 0; padding-top: 0; }
 .view > section + section { margin-top: var(--space-5); border-top: 1px solid var(--rule); padding-top: var(--space-4); }
 .section-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3); min-width: 0; }
+.subsection-head { margin-top: var(--space-5); }
+.subsection-head-row {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--space-2) var(--space-3); margin-top: var(--space-3);
+}
+.subsection-head-row .detail-head { margin: 0; }
+.section-output { margin-top: var(--space-3); }
+.section-list { margin-top: var(--space-5); }
 h2 {
   font-family: var(--sans);
   font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
@@ -1188,6 +1196,12 @@ h2 {
    the composer's Task label does — otherwise one wraps above and the other
    lands beside its field. */
 .run-picker label { margin: 0; flex-basis: 100%; color: var(--fg-muted); }
+.run-compare {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3);
+}
+.run-compare[hidden] { display: none; }
+.run-compare label { margin: 0; }
 .session-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; min-width: 0; }
 .session-actions .secondary { min-height: 30px; padding: 0.25rem 0.6rem; font-size: 12px; border-radius: 999px; }
 .session-actions .more > summary { min-height: 30px; padding: 0.25rem 0.6rem; font-size: 12px; border-radius: 999px; }
@@ -1227,6 +1241,12 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
   overflow-wrap: anywhere; white-space: pre-line;
 }
 .run-empty { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); line-height: 1.6; max-width: var(--measure); margin-left: auto; margin-right: auto; text-align: center; }
+.pixel-canvas {
+  display: block; width: 100%; height: auto;
+  image-rendering: pixelated;
+  background: var(--surface-2);
+  border: 1px solid var(--rule); border-radius: var(--radius);
+}
 .knowledge-empty {
   max-width: 34rem;
   margin: var(--space-6) auto 0;
@@ -2313,6 +2333,23 @@ mark {
 }
 .goal-form label { color: var(--fg); font-family: var(--mono); font-size: var(--step--1); font-weight: 600; letter-spacing: 0.02em; }
 .goal-form input { flex: 1 1 16rem; min-width: 0; }
+.progress-log {
+  max-height: 18rem; overflow: auto; white-space: pre-wrap;
+  font-family: var(--mono); font-size: var(--step--1);
+}
+.settings-grid {
+  display: grid; gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+}
+.settings-panel {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--surface);
+}
+.settings-panel-title { margin-bottom: var(--space-2); font-weight: 600; }
+.settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.settings-actions-spaced { margin-top: var(--space-2); }
+.settings-note { margin-top: var(--space-2); }
 .board-goal-form {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 9rem auto;
   align-items: end; gap: var(--space-2) var(--space-3);
