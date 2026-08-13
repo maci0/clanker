@@ -4090,7 +4090,7 @@ const Model = struct {
         const rows_shown: u16 = @intCast(@min(count, max_rows));
         // The picker commits on Enter, so teach its controls at the decision
         // point instead of expecting the user to remember the /help prose.
-        const h: u16 = rows_shown + 4; // border + query + rows + key guide + border
+        const h = pickerHeight(count, max_rows); // border + query + rows/empty + guide + border
         if (surface.size.width < 8) return;
         const y = self.transcript_bottom -| h;
         clearBoxInterior(surface, 0, y, surface.size.width, h);
@@ -4112,45 +4112,46 @@ const Model = struct {
                 .model => "  no matching provider/model",
                 .command => "  no matching command",
             }, .{ .dim = true });
-            return;
+        } else {
+            const sel = @min(self.picker_selected, count - 1);
+            // The window scrolls with the selection. `i` used to index the list
+            // directly, so only entries 0..7 were ever drawn while Up/Down walked
+            // `picker_selected` across the whole list: past the eighth match the
+            // highlight left the box and the picker committed on Enter to a row
+            // that had never been on screen. Any real config reaches this — the
+            // repo's own has well over eight models.
+            const first = pickerWindowStart(sel, count, max_rows);
+            var row: u16 = y + 2;
+            var i: usize = 0;
+            while (i < rows_shown) : (i += 1) {
+                const idx = first + i;
+                const marker: []const u8 = if (idx == sel) "\xe2\x80\xba " else "  ";
+                const style = if (idx == sel) sel_style else vaxis.Style{};
+                writeRow(surface, row, marker, style);
+                var col: u16 = 2;
+                const label = switch (self.picker_kind) {
+                    .theme => theme_matches[idx],
+                    .model => model_matches[idx].label,
+                    .command => command_matches[idx].label,
+                };
+                writeRowAt(surface, row, &col, label, style);
+                row += 1;
+            }
         }
-        const sel = @min(self.picker_selected, count - 1);
-        // The window scrolls with the selection. `i` used to index the list
-        // directly, so only entries 0..7 were ever drawn while Up/Down walked
-        // `picker_selected` across the whole list: past the eighth match the
-        // highlight left the box and the picker committed on Enter to a row
-        // that had never been on screen. Any real config reaches this — the
-        // repo's own has well over eight models.
-        const first = pickerWindowStart(sel, count, max_rows);
-        var row: u16 = y + 2;
-        var i: usize = 0;
-        while (i < rows_shown) : (i += 1) {
-            const idx = first + i;
-            const marker: []const u8 = if (idx == sel) "\xe2\x80\xba " else "  ";
-            const style = if (idx == sel) sel_style else vaxis.Style{};
-            writeRow(surface, row, marker, style);
-            var col: u16 = 2;
-            const label = switch (self.picker_kind) {
-                .theme => theme_matches[idx],
-                .model => model_matches[idx].label,
-                .command => command_matches[idx].label,
-            };
-            writeRowAt(surface, row, &col, label, style);
-            row += 1;
-        }
-        const guide: []const u8 = switch (self.picker_kind) {
-            .theme => "  Up/Down preview  \xc2\xb7  Enter keep  \xc2\xb7  Esc cancel",
-            .model => "  Up/Down move  \xc2\xb7  Enter select  \xc2\xb7  Esc cancel",
-            .command => "  Up/Down move  \xc2\xb7  Enter run (or fill in args)  \xc2\xb7  Esc cancel",
-        };
+        const sel = if (count > 0) @min(self.picker_selected, count - 1) else 0;
+        const pos = if (count > max_rows)
+            std.fmt.bufPrint(&self.picker_pos_buf, "{d}/{d}", .{ sel + 1, count }) catch ""
+        else
+            "";
+        const guide_width = surface.size.width -| @as(u16, @intCast(if (pos.len > 0) pos.len + 3 else 0));
+        const guide = pickerGuide(self.picker_kind, count == 0, guide_width);
         writeRow(surface, y + h - 2, guide, .{ .dim = true });
         // Position within the list, right-aligned on the guide row: with a
         // scrolling window the eight visible rows no longer say how much list
         // there is or where in it you are. Only shown when something is off
         // screen. A Model field because vaxis cells borrow the slice until
         // the frame flushes, which is after this function has returned.
-        if (count > max_rows) {
-            const pos = std.fmt.bufPrint(&self.picker_pos_buf, "{d}/{d}", .{ sel + 1, count }) catch "";
+        if (pos.len > 0) {
             if (pos.len > 0 and surface.size.width > pos.len + 3) {
                 var pos_col: u16 = @intCast(surface.size.width - pos.len - 2);
                 writeRowAt(surface, y + h - 2, &pos_col, pos, .{ .dim = true });
@@ -4292,6 +4293,36 @@ fn pickerWindowStart(selected: usize, count: usize, max_rows: u16) usize {
     return @min(start, count - max_rows);
 }
 
+/// Key guide that fits as a whole. Recovery (`Esc cancel`) is never the
+/// clipped suffix: constrained pickers progressively drop navigation detail
+/// while retaining the way out, including when a filter has zero results.
+fn pickerGuide(kind: PickerKind, empty: bool, width: u16) []const u8 {
+    const full: []const u8 = if (empty) switch (kind) {
+        .theme => "  no match · type or Backspace to edit · Esc cancel",
+        .model => "  no match · type or Backspace to edit · Esc cancel",
+        .command => "  no match · type or Backspace to edit · Esc cancel",
+    } else switch (kind) {
+        .theme => "  Up/Down preview · Enter keep · Esc cancel",
+        .model => "  Up/Down move · Enter select · Esc cancel",
+        .command => "  Up/Down move · Enter run or fill args · Esc cancel",
+    };
+    const compact: []const u8 = if (empty)
+        "  edit query · Esc cancel"
+    else switch (kind) {
+        .theme => "  Enter keep · Esc cancel",
+        .model => "  Enter select · Esc cancel",
+        .command => "  Enter run · Esc cancel",
+    };
+    if (width_mod.displayWidth(full) <= width) return full;
+    if (width_mod.displayWidth(compact) <= width) return compact;
+    return if (width >= width_mod.displayWidth("  Esc cancel")) "  Esc cancel" else "";
+}
+
+fn pickerHeight(count: usize, max_rows: u16) u16 {
+    const rows_shown: u16 = @intCast(@min(count, max_rows));
+    return @max(rows_shown, 1) + 4;
+}
+
 test "pickerWindowStart keeps the selection on screen and the window in range" {
     // Everything fits: no scrolling, ever.
     try std.testing.expectEqual(@as(usize, 0), pickerWindowStart(0, 5, 8));
@@ -4320,6 +4351,25 @@ test "pickerWindowStart keeps the selection on screen and the window in range" {
     // Degenerate inputs stay in range rather than underflowing.
     try std.testing.expectEqual(@as(usize, 0), pickerWindowStart(3, 24, 0));
     try std.testing.expectEqual(@as(usize, 0), pickerWindowStart(0, 0, 8));
+}
+
+test "picker guides preserve recovery at constrained widths" {
+    for ([_]PickerKind{ .model, .theme, .command }) |kind| {
+        for ([_]u16{ 12, 24, 40, 80 }) |width| {
+            for ([_]bool{ false, true }) |empty| {
+                const guide = pickerGuide(kind, empty, width);
+                try std.testing.expect(width_mod.displayWidth(guide) <= width);
+                try std.testing.expect(std.mem.find(u8, guide, "Esc cancel") != null);
+            }
+        }
+    }
+}
+
+test "empty picker reserves separate result and guide rows" {
+    try std.testing.expectEqual(@as(u16, 5), pickerHeight(0, 8));
+    try std.testing.expectEqual(@as(u16, 5), pickerHeight(1, 8));
+    try std.testing.expectEqual(@as(u16, 12), pickerHeight(8, 8));
+    try std.testing.expectEqual(@as(u16, 12), pickerHeight(20, 8));
 }
 
 // ---------------------------------------------------------------------
