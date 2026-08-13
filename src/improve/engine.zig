@@ -1948,33 +1948,19 @@ pub const Engine = struct {
         // an empty list (or an early return before runAll) exits 0 with no
         // result lines. Fail closed unless every staged task produced one.
         if (exited_ok) {
-            if (try self.uncoveredCapabilityTasks(staging, result.stdout)) |missing| {
+            const evals_path = try std.fmt.allocPrint(self.ctx.gpa, "{s}/evals", .{staging});
+            defer self.ctx.gpa.free(evals_path);
+            const evals = scorers.Eval.loadAll(self.arena, self.ctx.io, evals_path) catch {
+                const detail = try std.fmt.allocPrint(self.arena, "capability evals: could not load staged evals/\n{s}\n{s}", .{ result.stdout, result.stderr });
+                return .{ .ok = false, .label = "capability evals", .detail = detail, .stdout = result.stdout, .stderr = result.stderr };
+            };
+            if (try uncoveredCapabilityTasks(self.arena, result.stdout, evals)) |missing| {
                 const detail = try std.fmt.allocPrint(self.arena, "{s}\n{s}\n{s}", .{ missing, result.stdout, result.stderr });
                 return .{ .ok = false, .label = "capability evals", .detail = detail, .stdout = result.stdout, .stderr = result.stderr };
             }
         }
         const detail: []const u8 = if (exited_ok) "" else try std.fmt.allocPrint(self.arena, "{s}\n{s}", .{ result.stdout, result.stderr });
         return .{ .ok = exited_ok, .label = "capability evals", .detail = detail, .stdout = result.stdout, .stderr = result.stderr };
-    }
-
-    /// True when `stdout` has a `name: <score> PASS|FAIL` line for every
-    /// staged `.task` eval. The names come from this process's loader
-    /// (src/evals is protected), so a gutted staged `cmdEval` cannot hide
-    /// a case by simply not printing it.
-    fn uncoveredCapabilityTasks(self: *Engine, staging: []const u8, stdout: []const u8) !?[]const u8 {
-        const evals_path = try std.fmt.allocPrint(self.ctx.gpa, "{s}/evals", .{staging});
-        defer self.ctx.gpa.free(evals_path);
-        const evals = scorers.Eval.loadAll(self.arena, self.ctx.io, evals_path) catch
-            return "capability evals: could not load staged evals/";
-        var expected: usize = 0;
-        for (evals) |e| {
-            if (e.kind != .task) continue;
-            expected += 1;
-            if (!capabilityLineReports(stdout, e.name))
-                return try std.fmt.allocPrint(self.arena, "capability evals: staged task \"{s}\" produced no result line", .{e.name});
-        }
-        if (expected == 0) return "capability evals: staged tree has no task evals";
-        return null;
     }
 
     /// Re-runs only the named eval cases (the ones that failed on the first
@@ -2561,6 +2547,22 @@ fn lastProposalJson(arena: std.mem.Allocator, text: []const u8) ?[]const u8 {
             }
         }
     }
+    return null;
+}
+
+/// True when `stdout` has a `name: <score> PASS|FAIL` line for every
+/// staged `.task` eval. Names come from this process's loader (`src/evals`
+/// is protected), so a gutted staged `cmdEval` cannot hide a case by not
+/// printing it. Selfhost evals are skipped: `eval --tasks` does not run them.
+fn uncoveredCapabilityTasks(arena: std.mem.Allocator, stdout: []const u8, evals: []const scorers.Eval) !?[]const u8 {
+    var expected: usize = 0;
+    for (evals) |e| {
+        if (e.kind != .task) continue;
+        expected += 1;
+        if (!capabilityLineReports(stdout, e.name))
+            return try std.fmt.allocPrint(arena, "capability evals: staged task \"{s}\" produced no result line", .{e.name});
+    }
+    if (expected == 0) return "capability evals: staged tree has no task evals";
     return null;
 }
 
@@ -3503,41 +3505,20 @@ test "uncoveredCapabilityTasks fails closed on empty eval output" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var env = std.process.Environ.Map.init(std.testing.allocator);
-    defer env.deinit();
-    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
-    var engine = Engine{
-        .ctx = &ctx,
-        .arena = arena,
-        .provider = undefined,
-        .cfg = undefined,
-        .hist = undefined,
-        .instructions = "",
+    const evals = [_]scorers.Eval{
+        .{ .name = "calculator", .kind = .task },
+        .{ .name = "selfhost_build", .kind = .selfhost_build },
     };
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "evals");
-    try tmp.dir.writeFile(io, .{
-        .sub_path = "evals/calculator.task.json",
-        .data = "{\"name\":\"calculator\",\"kind\":\"task\",\"prompt\":\"p\",\"criteria\":[{\"equals\":\"1\"}]}",
-    });
-    try tmp.dir.writeFile(io, .{
-        .sub_path = "evals/selfhost_build.task.json",
-        .data = "{\"name\":\"selfhost_build\",\"kind\":\"selfhost_build\"}",
-    });
-
-    // loadAll opens evals_dir from cwd, so point staging at the tmp path.
-    const staging = try tmp.dir.realpathAlloc(io, arena, ".");
-    const missing = try engine.uncoveredCapabilityTasks(staging, "");
+    const missing = try uncoveredCapabilityTasks(arena, "", &evals);
     try std.testing.expect(missing != null);
     try std.testing.expect(std.mem.find(u8, missing.?, "calculator") != null);
 
-    const covered = try engine.uncoveredCapabilityTasks(staging, "calculator: 1.00 PASS\n");
+    const covered = try uncoveredCapabilityTasks(arena, "calculator: 1.00 PASS\n", &evals);
     try std.testing.expect(covered == null);
+
+    const none = try uncoveredCapabilityTasks(arena, "anything", &.{});
+    try std.testing.expect(none != null);
+    try std.testing.expect(std.mem.find(u8, none.?, "no task evals") != null);
 }
 
 test "capability gate fails closed when the staged binary is missing" {
