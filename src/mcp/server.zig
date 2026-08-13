@@ -16,6 +16,16 @@ const toolout = @import("../util/toolout.zig");
 const protocol_version = "2024-11-05";
 const max_line = 1 << 20;
 
+/// Wire names include slashes (`tools/list`), so stringToEnum cannot be the
+/// table. Same closed-set map as `log.Level.fromStr`.
+const Method = enum { initialize, ping, tools_list, tools_call };
+const methods = std.StaticStringMap(Method).initComptime(.{
+    .{ "initialize", .initialize },
+    .{ "ping", .ping },
+    .{ "tools/list", .tools_list },
+    .{ "tools/call", .tools_call },
+});
+
 /// Compiled tool modules, keyed by tool name and kept for the life of the
 /// stdio session. Without this, every `tools/call` re-read the .wasm file and
 /// re-parsed/re-linked/re-instantiated it from scratch, the agent loop
@@ -150,7 +160,7 @@ fn handleLine(io: std.Io, gpa: std.mem.Allocator, cache_arena: std.mem.Allocator
         if (std.mem.startsWith(u8, m, "notifications/")) return;
     }
 
-    var out_buf: [1 << 20]u8 = undefined;
+    var out_buf: [max_line]u8 = undefined;
     var w: std.Io.Writer = .fixed(&out_buf);
     var s = json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
     try s.beginObject();
@@ -162,43 +172,7 @@ fn handleLine(io: std.Io, gpa: std.mem.Allocator, cache_arena: std.mem.Allocator
     try s.beginObject();
 
     if (req.method) |m| {
-        if (std.mem.eql(u8, m, "initialize")) {
-            try s.objectField("protocolVersion");
-            try s.write(protocol_version);
-            try s.objectField("capabilities");
-            try s.beginObject();
-            try s.objectField("tools");
-            try s.beginObject();
-            try s.objectField("listChanged");
-            try s.write(false);
-            try s.endObject();
-            try s.endObject();
-            try s.objectField("serverInfo");
-            try s.beginObject();
-            try s.objectField("name");
-            try s.write("clanker");
-            try s.objectField("version");
-            try s.write(build_options.version);
-            try s.endObject();
-        } else if (std.mem.eql(u8, m, "ping")) {
-            // empty result object
-        } else if (std.mem.eql(u8, m, "tools/list")) {
-            try s.objectField("tools");
-            try s.beginArray();
-            for (tool_defs) |t| {
-                try s.beginObject();
-                try s.objectField("name");
-                try s.write(t.name);
-                try s.objectField("description");
-                try s.write(t.description);
-                try s.objectField("inputSchema");
-                try s.write(t.input_schema);
-                try s.endObject();
-            }
-            try s.endArray();
-        } else if (std.mem.eql(u8, m, "tools/call")) {
-            try handleToolCall(&s, io, gpa, cache_arena, cfg, environ_map, reg, module_cache, llm_ctx, req.params);
-        } else {
+        const method = methods.get(m) orelse {
             // Unknown method: a JSON-RPC response must not contain both
             // "result" and "error". Discard the half-written result object
             // and restart the buffer with a proper error response.
@@ -213,6 +187,46 @@ fn handleLine(io: std.Io, gpa: std.mem.Allocator, cache_arena: std.mem.Allocator
             try s.endObject();
             writeResponse(io, out_buf[0..w.end]);
             return;
+        };
+        switch (method) {
+            .initialize => {
+                try s.objectField("protocolVersion");
+                try s.write(protocol_version);
+                try s.objectField("capabilities");
+                try s.beginObject();
+                try s.objectField("tools");
+                try s.beginObject();
+                try s.objectField("listChanged");
+                try s.write(false);
+                try s.endObject();
+                try s.endObject();
+                try s.objectField("serverInfo");
+                try s.beginObject();
+                try s.objectField("name");
+                try s.write("clanker");
+                try s.objectField("version");
+                try s.write(build_options.version);
+                try s.endObject();
+            },
+            .ping => {},
+            .tools_list => {
+                try s.objectField("tools");
+                try s.beginArray();
+                for (tool_defs) |t| {
+                    try s.beginObject();
+                    try s.objectField("name");
+                    try s.write(t.name);
+                    try s.objectField("description");
+                    try s.write(t.description);
+                    try s.objectField("inputSchema");
+                    try s.write(t.input_schema);
+                    try s.endObject();
+                }
+                try s.endArray();
+            },
+            .tools_call => {
+                try handleToolCall(&s, io, gpa, cache_arena, cfg, environ_map, reg, module_cache, llm_ctx, req.params);
+            },
         }
     }
     try s.endObject();
