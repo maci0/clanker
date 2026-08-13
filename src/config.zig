@@ -621,8 +621,11 @@ pub const Tui = struct {
     /// to the identical failure from `--mascot=<junk>`, instead of failing
     /// config load for every non-REPL subcommand.
     mascot: []const u8 = "off",
-    /// `small`, `medium` or `large`. Empty means "not set", so the flag and
-    /// then the built-in default decide. Same raw-string reasoning as above.
+    /// `mini`, `xsmall`, `small`, `medium` or `large`. Empty means "not set",
+    /// so the flag and then the built-in default decide -- and that default is
+    /// per mode, so an empty value is not the same as writing "medium":
+    /// `mascot = "input"` with no size gets `mini`, which is the size that
+    /// fits the composer. Same raw-string reasoning as above.
     mascot_size: []const u8 = "",
     /// `left` or `right`. Empty means "not set", which matters more here than
     /// elsewhere: the default depends on the mode, so an empty value is not

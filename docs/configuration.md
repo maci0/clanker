@@ -353,7 +353,7 @@ chatrooms = false
   | Key | Default | Values |
   | --- | --- | --- |
   | `mascot` | `"off"` | `off`, `type`, `loop`, `place`, `input` |
-  | `mascot_size` | `""` (= medium) | `small`, `medium`, `large` |
+  | `mascot_size` | `""` (= per mode) | `mini`, `xsmall`, `small`, `medium`, `large` |
   | `mascot_facing` | `""` (= per mode) | `left`, `right` |
 
   The modes differ in where the robot lives and what moves it:
@@ -364,15 +364,22 @@ chatrooms = false
     ignoring what you are doing.
   - `place` — runs on the spot, bottom right above the box, facing left by
     default.
-  - `input` — runs on the spot *inside* the box, at its bottom right. The box
-    grows to make room and the text field is narrowed by the robot's width, so
-    a long line can never run underneath it. The only mode that costs no
-    transcript rows.
+  - `input` — runs on the spot *inside* the box, at its bottom right. At its
+    default size the box keeps the three rows it has with no mascot at all; a
+    larger size grows it. Either way the text field is narrowed by the robot's
+    width, so a long line can never run underneath it. The only mode that costs
+    no transcript rows.
 
-  `mascot_size` picks an 8x4, 10x5 or 21x10 cell grid, needing a terminal of at
-  least 10x12, 12x13 or 23x18 respectively; below that the mascot is skipped
-  rather than clipped. `small` is a floor rather than a preference — under
-  roughly 8x4 the eye and legs stop surviving the downsample.
+  `mascot_size` picks a 6x1, 7x2, 8x4, 10x5 or 21x10 cell grid, needing a
+  terminal of at least 8x9, 9x10, 10x12, 12x13 or 23x18 respectively; below
+  that the mascot is skipped rather than clipped.
+
+  Unset means "per mode", not "medium": `input` defaults to `mini`, the one
+  size that fits the ordinary composer, and every other mode defaults to
+  `medium`, where the rows come out of the transcript and shrinking the robot
+  buys nothing. Below `small` the robot is a silhouette and its eye — the
+  generator drops its emptiness threshold and leans harder on the eye to keep
+  even that (`src/tui/mascot/gen_frames.py`).
 
   `mascot_facing` applies only to `loop` and `place`. `type` sets its own
   orientation and `input` is never mirrored.
