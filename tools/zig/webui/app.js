@@ -3,7 +3,7 @@ import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkelet
 import { ICON_PATHS as iconPaths, icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, reducedMotion as reducedMotionMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { THEMES as THEMESMod, loadTheme as loadThemeMod, applyTheme as applyThemeMod } from "./core/theme.js";
-import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod } from "./core/chat.js";
+import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod, messageKey as chatMessageKey, hasServerId as chatHasServerId } from "./core/chat.js";
 import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
 import { makeLineSplitter as makeLineSplitterMod } from "./core/stream.js";
 import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as mdParagraphInto, tableRow as mdTableRow, renderMarkdown as mdRenderMarkdown, highlightInto as mdHighlightInto, buildCodeBlock as mdBuildCodeBlock, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
@@ -3165,8 +3165,12 @@ function pollChat(room) {
         chatFailing = false;
         el.chatStatus.textContent = "Reconnected.";
       }
+      // Keyed on messageKey rather than m.id: an id-less message (a peer too
+      // old to send one — chatrooms.zig defaults the field to "" and accepts
+      // it) otherwise registered "" as seen, and every later id-less message
+      // was discarded as a duplicate of it.
       var fresh = (data.messages || [])
-        .filter(function (m) { return !chatSeen[m.id]; })
+        .filter(function (m) { return !chatSeen[chatMessageKey(m)]; })
         .sort(function (a, b) { return a.ts - b.ts; });
       var following = el.chatLog.scrollHeight - el.chatLog.scrollTop - el.chatLog.clientHeight < 40;
       // Only sender grouping resets across batches; the day key must persist
@@ -3174,7 +3178,7 @@ function pollChat(room) {
       if (fresh.length) { _lastChatFrom = null; _lastChatTs = 0; }
       var _unreadDividerPlaced = false;
       fresh.forEach(function (m) {
-        rememberChatId(m.id);
+        rememberChatId(chatMessageKey(m));
         if (m.ts > chatLastTs) chatLastTs = m.ts;
         lastSeenAt[m.from] = m.ts;
         /* Slack-style "New messages" divider: shown once, before the first
@@ -3368,6 +3372,13 @@ function buildChatMessage(m) {
   wrap.className = "chat-msg" + (m.from === instanceName ? " mine" : "");
   if (grouped) wrap.setAttribute("data-grouped", "true");
   if (m.id) wrap.dataset.msgId = m.id;
+  /* Every action that names a message to the server — react, pin, edit,
+     delete — matches on the id, and an id-less message would send "", which
+     the server resolves to whichever id-less message it holds first. Acting on
+     a message that is not the one clicked is worse than not offering the
+     action, so the ones that need an id are left out. Copy is client-side and
+     stays. */
+  var canAct = chatHasServerId(m);
 
   // day separator (Slack-style)
   var dayKey = _chatDayKey(m.ts);
@@ -3480,6 +3491,7 @@ function buildChatMessage(m) {
   }
   function toggleReact(emoji){
     // Call the server-side react endpoint
+    if (!canAct) return;
     fetch("/api/chat/react", { method: "POST", headers: {"Content-Type":"application/json"},
       body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id, emoji: emoji })
     }).then(function(r){ return r.json(); }).then(function(d){
@@ -3498,7 +3510,7 @@ function buildChatMessage(m) {
   // ---- threads (Slack-style, local grouping by replyTo) ----
   var threadStore = (function(){ try{ return JSON.parse(localStorage.getItem("clanker.threads")||"{}"); }catch(_){ return {}; }})();
   function saveThreads(){ try{ localStorage.setItem("clanker.threads", JSON.stringify(threadStore)); }catch(_){} }
-  var threadKey = m.id || msgKey;
+  var threadKey = chatMessageKey(m);
   var replies = threadStore[threadKey] || [];
   var threadBar = document.createElement("div"); threadBar.className = "chat-thread-bar";
   var threadCount = document.createElement("button"); threadCount.type="button"; threadCount.className="secondary";
@@ -3541,26 +3553,28 @@ function buildChatMessage(m) {
   copyBtn.setAttribute("aria-label", "Copy message");
   copyBtn.addEventListener("click", function(e){ e.stopPropagation(); try{ navigator.clipboard.writeText(m.text); }catch(_){} });
   actions.appendChild(copyBtn);
-  EMOJIS.forEach(function(emoji){
+  if (canAct) EMOJIS.forEach(function(emoji){
     var b=document.createElement("button"); b.type="button"; b.className="secondary"; b.textContent=emoji; b.title="React "+emoji;
     b.setAttribute("aria-label", "React " + emoji);
     b.addEventListener("click", function(e){ e.stopPropagation(); toggleReact(emoji); });
     actions.appendChild(b);
   });
   // Pin button
-  var pinBtn = document.createElement("button");
-  pinBtn.type = "button"; pinBtn.className = "secondary"; pinBtn.textContent = "📌"; pinBtn.title = "Pin/Unpin";
-  pinBtn.setAttribute("aria-label", "Pin message");
-  pinBtn.addEventListener("click", function(e){ e.stopPropagation();
-    fetch("/api/chat/pin", { method: "POST", headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
-    }).then(function(r){ return r.json(); }).then(function(d){
-      if(d.ok) pollChat(el.chatRoom.value);
-    }).catch(function(){});
-  });
-  actions.appendChild(pinBtn);
+  if (canAct) {
+    var pinBtn = document.createElement("button");
+    pinBtn.type = "button"; pinBtn.className = "secondary"; pinBtn.textContent = "📌"; pinBtn.title = "Pin/Unpin";
+    pinBtn.setAttribute("aria-label", "Pin message");
+    pinBtn.addEventListener("click", function(e){ e.stopPropagation();
+      fetch("/api/chat/pin", { method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
+      }).then(function(r){ return r.json(); }).then(function(d){
+        if(d.ok) pollChat(el.chatRoom.value);
+      }).catch(function(){});
+    });
+    actions.appendChild(pinBtn);
+  }
   // Edit + Delete only for own messages
-  if (m.from === instanceName) {
+  if (m.from === instanceName && canAct) {
     var editBtn = document.createElement("button");
     editBtn.type = "button"; editBtn.className = "secondary"; editBtn.textContent = "✏️"; editBtn.title = "Edit message";
     editBtn.setAttribute("aria-label", "Edit message");
