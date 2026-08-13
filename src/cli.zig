@@ -6589,20 +6589,8 @@ var catalog_cache: ?[]const u8 = null;
 /// Returns a query-string value from `target` (e.g. `q` from
 /// `/api/catalog?q=kimi`), percent-decoded, or null when absent.
 fn queryParam(arena: std.mem.Allocator, target: []const u8, key: []const u8) ?[]const u8 {
-    const qmark = std.mem.findScalar(u8, target, '?') orelse return null;
-    var rest = target[qmark + 1 ..];
-    while (rest.len > 0) {
-        const pair_end = std.mem.findScalar(u8, rest, '&') orelse rest.len;
-        const pair = rest[0..pair_end];
-        if (std.mem.findScalar(u8, pair, '=')) |eq| {
-            if (std.mem.eql(u8, pair[0..eq], key)) {
-                return percentDecode(arena, pair[eq + 1 ..]) catch null;
-            }
-        }
-        if (pair_end == rest.len) break;
-        rest = rest[pair_end + 1 ..];
-    }
-    return null;
+    const raw = extractQueryParam(target, key) orelse return null;
+    return percentDecode(arena, raw) catch null;
 }
 
 /// `GET /api/catalog?q=<query>` — search the public models.dev directory

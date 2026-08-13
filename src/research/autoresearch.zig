@@ -228,4 +228,5 @@ test "isTarget exact and glob" {
     try std.testing.expect(isTarget("src/foo.zig", &.{ "src/foo.zig", "other" }));
     try std.testing.expect(!isTarget("src/bar.zig", &.{"src/foo.zig"}));
     try std.testing.expect(isTarget("src/a/b.zig", &.{"src/*"}));
+    try std.testing.expect(!isTarget("other/b.zig", &.{"src/*"}));
 }
