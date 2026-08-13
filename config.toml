@@ -260,9 +260,10 @@ name = "clanker"
 id = "main"
 
 # What `clanker serve` binds, for a deployment that cannot pass flags.
-# CLANKER_HOST / CLANKER_WEBUI_PORT override these, and --host /
-# --webui-port / --serve-as override those in turn. Commented out because
-# the default (loopback, 17921) is the one that is safe unattended.
+# CLANKER_HOST / CLANKER_WEBUI_PORT / CLANKER_PROXY_PORT override these, and
+# --host / --webui-port / --serve-as / --proxy / --no-proxy / --proxy-port
+# override those in turn. Commented out because the default (loopback, 17921)
+# is the one that is safe unattended.
 # [serve]
 # host = "0.0.0.0"
 # webui_port = 17921
@@ -450,7 +451,8 @@ max_history = 500
 # on a terminal too small for the chosen size.
 # mascot = "off"
 
-# mini, xsmall, small, medium or large.
+# Canonical values: mini, xsmall, small, medium or large. `tiny`/`xxs` are
+# accepted aliases for mini; `xs`/`extra-small`/`extrasmall` for xsmall.
 #
 # Unset means "per mode", not "medium": `input` gets mini, the one size that
 # fits the ordinary three-row composer, and every other mode gets medium, where
