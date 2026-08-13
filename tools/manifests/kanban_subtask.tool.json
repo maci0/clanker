@@ -16,6 +16,7 @@
       },
       "op": {
         "type": "string",
+        "enum": ["subtask_add", "subtask_toggle", "subtask_remove", "subtask_depend"],
         "description": "subtask_add, subtask_toggle, subtask_remove or subtask_depend"
       },
       "text": {

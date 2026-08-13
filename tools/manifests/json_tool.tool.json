@@ -12,6 +12,7 @@
       },
       "mode": {
         "type": "string",
+        "enum": ["validate", "pretty", "minify"],
         "description": "validate, pretty, or minify. Defaults to pretty."
       }
     },

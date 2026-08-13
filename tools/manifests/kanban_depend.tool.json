@@ -16,6 +16,7 @@
       },
       "op": {
         "type": "string",
+        "enum": ["depend_add", "depend_remove"],
         "description": "depend_add or depend_remove"
       },
       "depends_on": {
