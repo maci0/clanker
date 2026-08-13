@@ -2791,8 +2791,17 @@ fn findCodeLine(body: []const u8, required: []const u8) ?usize {
     var lines = std.mem.splitScalar(u8, body, '\n');
     while (lines.next()) |line| {
         const trimmed = std.mem.trimLeft(u8, line, " \t");
-        if (!std.mem.startsWith(u8, trimmed, "//")) {
-            if (std.mem.find(u8, line, required)) |column| return offset + column;
+        if (!std.mem.startsWith(u8, trimmed, "//") and
+            !std.mem.startsWith(u8, trimmed, "/*") and
+            !std.mem.startsWith(u8, trimmed, "*"))
+        {
+            if (std.mem.find(u8, line, required)) |column| {
+                const prefix = line[0..column];
+                if (std.mem.findScalar(u8, prefix, '"') == null and
+                    std.mem.find(u8, prefix, "//") == null and
+                    std.mem.find(u8, prefix, "/*") == null)
+                    return offset + column;
+            }
         }
         offset += line.len + 1;
     }
