@@ -309,6 +309,19 @@ was started, not something the agent can opt into mid-run.
 5. On green, promote and commit the changes in that worktree, then merge the
    commit back into the original checkout as `clanker: <summary> [imp-<id>]`.
 
+Separately from the staged proposal's gates, the loop also tracks the state of
+the *live* tree it is patching — the baseline it reports at startup, the number
+recorded against each promotion, and the build errors it shows the model when
+the tree it is working from is already broken. That measurement is another full
+`zig build` + `zig build tools` + `zig build test`, so it is taken once and
+reused until something changes the live tree. Only promotion does: writing the
+promoted files, and the merge-back, which can fast-forward the worktree onto a
+merge commit carrying work from another session. A failed attempt writes
+nothing outside `state/staging/<id>`, so every retry within an iteration reuses
+the same measurement instead of rebuilding the project to recompute it.
+`improve.max_cache_bytes` caps the `.zig-cache` this all produces, applied to
+the worktree's cache at the start of each run.
+
 The history is stored in `state/history/` and can be reverted with `clanker
 revert <id>`. Human reverts are a feedback channel, not just an undo: at
 startup the loop detects promoted improvements that a person later reverted,
@@ -892,7 +905,7 @@ Fields:
   - `plan_phase`: plan-then-patch — propose a deduplicated idea list once per run, then implement one idea per iteration (default true).
   - `inert_gate`: reject changes classified as doing nothing observable (default true).
   - `max_consecutive_test_only`: how many test-only changes may land in a row before one must touch behavior (default 3).
-  - `max_cache_bytes`: cap on the staging build cache before it is dropped.
+  - `max_cache_bytes`: cap on the build cache before it is dropped, applied at the start of `improve-self` and of `clanker gate` — the two commands that compile repeatedly.
 
 ### Environment variables
 

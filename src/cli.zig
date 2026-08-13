@@ -3911,6 +3911,15 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     }
 
     if (cfg.improve.max_context_bytes) |n| log.log(.debug, "improve.max_context_bytes = {d} (config override)", .{n});
+    // `improve.max_cache_bytes` existed with exactly one caller, `cmdGate`,
+    // whose own comment calls itself "the OTHER place that compiles
+    // repeatedly" -- the first place being this one, which never applied the
+    // cap. The improve loop is the thing that fills `.zig-cache`: it builds
+    // and tests the tree once per promotion plus once per staged proposal, for
+    // as many iterations as it is given. Capped here, after the chdir, so it
+    // is the worktree's own cache that is measured and dropped rather than the
+    // shared checkout's.
+    _ = diskcap.capBuildCache(gpa, io, std.Io.Dir.cwd(), ".zig-cache", cfg.improve.max_cache_bytes);
     var eng = improve.Engine{
         .ctx = &ctx,
         .arena = arena,
