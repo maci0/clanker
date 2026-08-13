@@ -102,9 +102,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (std.mem.eql(u8, p.name, name)) target = p;
     }
     const plugin = target orelse
-        return textJson(out, alloc, "no such tool: ", name);
+        return textJson(out, alloc, "error: no such tool: ", name);
     if (plugin.core)
-        return textJson(out, alloc, "core tool, cannot be switched off: ", name);
+        return textJson(out, alloc, "error: core tool, cannot be switched off: ", name);
     if (plugin.enabled == want_enabled)
         return textJson(out, alloc, if (want_enabled) "already on: " else "already off: ", name);
 

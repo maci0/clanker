@@ -3825,7 +3825,15 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
         const name = opts.plugin_target orelse
             usageExit(io, "plugins {s} needs a plugin name: clanker plugins {s} <name>", .{ sub, sub });
         const args = try std.fmt.allocPrint(arena, "{s} {s}", .{ sub, name });
-        return printInternalTool(init, &cfg, "cmd_plugins", args);
+        const text = try toolText(io, init.gpa, arena, &cfg, init.environ_map, "cmd_plugins", args);
+        if (pluginToggleFailed(text)) {
+            try writeStdErr(io, text);
+            if (!std.mem.endsWith(u8, text, "\n")) try writeStdErr(io, "\n");
+            std.process.exit(1);
+        }
+        try std.Io.File.stdout().writeStreamingAll(io, text);
+        if (!std.mem.endsWith(u8, text, "\n")) try std.Io.File.stdout().writeStreamingAll(io, "\n");
+        return;
     }
     if (std.mem.eql(u8, sub, "validate")) {
         return pluginsValidate(init, opts.plugin_target orelse cfg.agent.tools_dir);
@@ -3836,6 +3844,13 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
         return pluginsNew(init, cfg.agent.tools_dir, name);
     }
     usageExit(io, "unknown plugins subcommand '{s}' (list, on, off, validate, new)", .{sub});
+}
+
+/// Toggle responses are otherwise ordinary rendered tool text. Keeping the
+/// failure marker explicit lets the interactive REPL render it inline while
+/// the CLI also gives scripts a non-zero exit status.
+fn pluginToggleFailed(text: []const u8) bool {
+    return std.mem.startsWith(u8, text, "error: ");
 }
 
 /// A usage mistake caught after parsing: same message shape and same exit code
@@ -11544,6 +11559,10 @@ test "plugin switches have the same command shape as the REPL" {
     try std.testing.expectEqual(Command.plugins, disabled.command);
     try std.testing.expectEqualStrings("off", disabled.plugins_sub.?);
     try std.testing.expectEqualStrings("translate", disabled.plugin_target.?);
+
+    try std.testing.expect(pluginToggleFailed("error: no such tool: translate"));
+    try std.testing.expect(!pluginToggleFailed("already off: translate"));
+    try std.testing.expect(!pluginToggleFailed("disabled: translate"));
 }
 
 test "bare tools lists, session without export names the next step" {
