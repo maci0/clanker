@@ -3,6 +3,7 @@
 External-project digests (what we can learn from them) live in [docs/digests/](digests/).
 Product requirement docs live in [docs/prds/](prds/) ([index](prds/README.md), [template](prds/TEMPLATE.md));
 the Done/Planned narrative is [docs/ROADMAP.md](ROADMAP.md).
+Working review logs live in [docs/reviews/](reviews/); design/implementation plans in [docs/plans/](plans/).
 
 
 ## Architecture
@@ -768,7 +769,7 @@ Flags: `--provider <p>` / `--model <m>` are recorded on the entry by `add`, so a
 
 **Ledger.** `state/schedule/log.jsonl`, one JSON object per line, the same shape `state/arena/log.jsonl` uses: `{ts, id, cron, task, trigger, due_at, skipped, ok, duration_ms, err}`. `trigger` is `due` or `manual`; `due_at` is the window that made the entry due, which differs from `ts` because cron granularity is a minute and `run-due` may be seconds late. Trimmed oldest-first at 4 MiB.
 
-The shell scripts `clanker-improve.sh` and `clanker-review.sh` are still driven from outside the binary; nothing in them has moved into `schedule`. What `schedule` replaces is a crontab line calling `clanker run "<prompt>"`.
+The shell scripts `scripts/clanker-improve.sh` and `scripts/clanker-review.sh` are still driven from outside the binary; nothing in them has moved into `schedule`. What `schedule` replaces is a crontab line calling `clanker run "<prompt>"`.
 
 ## Configuration
 

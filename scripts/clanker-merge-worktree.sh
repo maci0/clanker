@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# clanker-merge-worktree.sh — land a branch into another at the ref level,
+# scripts/clanker-merge-worktree.sh — land a branch into another at the ref level,
 # without checking out or touching any working tree on either side.
 #
 # This is the pattern src/improve/worktree.zig's mergeBack implements
@@ -9,7 +9,7 @@
 # disturbing whatever files anyone else has open there.
 #
 # Usage:
-#   ./clanker-merge-worktree.sh <branch> [options]
+#   ./scripts/clanker-merge-worktree.sh <branch> [options]
 #
 # Options:
 #   --base <branch>     branch to merge into (default: current branch)
@@ -127,7 +127,7 @@ while [ "$attempt" -lt 3 ]; do
     printf '  git worktree add /tmp/merge-%s %s\n' "$BRANCH" "$BASE" >&2
     printf '  git -C /tmp/merge-%s merge --no-commit --no-ff %s\n' "$BRANCH" "$BRANCH" >&2
     printf '  # fix conflicts, git add, git commit\n' >&2
-    printf '  ./clanker-merge-worktree.sh <that-commit> --base %s\n' "$BASE" >&2
+    printf '  ./scripts/clanker-merge-worktree.sh <that-commit> --base %s\n' "$BASE" >&2
     exit 3
   fi
 

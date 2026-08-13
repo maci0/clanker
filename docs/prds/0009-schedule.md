@@ -23,8 +23,8 @@ deliberate; see Non-goals.
 
 Everything recurring about clanker today happens outside clanker. `docs/
 ROADMAP.md`'s Pi/Odysseus audit put it plainly: recurring runs depend entirely
-on an external cron calling `clanker run`, `clanker-improve.sh` or
-`clanker-review.sh`, so the harness has no idea any of it exists. Three
+on an external cron calling `clanker run`, `scripts/clanker-improve.sh` or
+`scripts/clanker-review.sh`, so the harness has no idea any of it exists. Three
 concrete costs:
 
 - **Nothing is recorded.** A crontab line that fires at 03:00 and fails leaves

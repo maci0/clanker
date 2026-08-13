@@ -70,7 +70,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           zig build -Doptimize=ReleaseSafe
-          ./release-check.sh "${GITHUB_REF_NAME}" zig-out/bin/clanker
+          ./scripts/release-check.sh "${GITHUB_REF_NAME}" zig-out/bin/clanker
 
   # build.zig once hard-pinned x86_64-linux and produced unrunnable binaries
   # on arm64 macs; this job is the regression guard for that promise.

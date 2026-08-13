@@ -3311,7 +3311,7 @@ test "errorTail falls back to the end when nothing looks like an error" {
 test "a granted file reaches the context, once, in the focus block" {
     // The whole point of the request round: docs/ is never collected, so
     // docs/ROADMAP.md cannot reach the model any other way, which is why
-    // clanker-improve.sh pastes the planned items into the instruction by hand.
+    // scripts/clanker-improve.sh pastes the planned items into the instruction by hand.
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();

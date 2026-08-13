@@ -58,7 +58,7 @@ git push origin main
 
 **Files:**
 - Create: `scripts/`
-- Move: `clanker-improve.sh`, `clanker-merge-worktree.sh`, `clanker-review.sh`, `release-check.sh` → `scripts/`
+- Move: `scripts/clanker-improve.sh`, `scripts/clanker-merge-worktree.sh`, `scripts/clanker-review.sh`, `release-check.sh` → `scripts/`
 - Modify: `.github/workflows/*`, `README.md`, `AGENTS.md`, `RELEASES.md`, any docs citing root scripts
 
 - [ ] **Step 1:** `mkdir -p scripts && git mv clanker-*.sh release-check.sh scripts/`

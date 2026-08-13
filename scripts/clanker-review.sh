@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# clanker-review.sh — have clanker review its own source with the review
+# scripts/clanker-review.sh — have clanker review its own source with the review
 # prompts from ~/review-prompts/prompts.
 #
 # Usage:
-#   ./clanker-review.sh [options] [prompt ...]
+#   ./scripts/clanker-review.sh [options] [prompt ...]
 #
 # Prompts are named without the -review.md suffix (see --list), e.g.
-#   ./clanker-review.sh sec concurrency
-#   ./clanker-review.sh --all --provider vertex-opus
+#   ./scripts/clanker-review.sh sec concurrency
+#   ./scripts/clanker-review.sh --all --provider vertex-opus
 #
 # Options:
 #   --provider NAME     provider to review with (default: config default)
@@ -17,7 +17,7 @@
 #   --all               run every prompt in the directory
 #   --list              list available prompts and exit
 #   --fix               after each review, hand its findings to
-#                       clanker-improve.sh so clanker implements one of them
+#                       scripts/clanker-improve.sh so clanker implements one of them
 #   --iters N           iterations for --fix (default 1)
 #   --skip-build        don't rebuild clanker + tools first
 #   -h, --help          show this help
@@ -144,7 +144,7 @@ $FRAMING"
     # the empty string as a provider name and fails with UnknownProvider, so
     # every fix run without an explicit --provider died here.
     [ -n "$PROVIDER" ] && IMPROVE_ARGS=(--provider "$PROVIDER" "${IMPROVE_ARGS[@]}")
-    ./clanker-improve.sh "${IMPROVE_ARGS[@]}"
+    ./scripts/clanker-improve.sh "${IMPROVE_ARGS[@]}"
     rc=$?
     if [ "$rc" -eq 75 ]; then
       warn "$name: another improve-self holds the lock; the finding was not applied"

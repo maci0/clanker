@@ -33,7 +33,7 @@ test against a live listener is the kind of coverage that gets disabled.
 
 Against that, the system's cron is: already running on every machine this
 targets, already restarted after a reboot without anyone's help, already the
-mechanism `clanker-improve.sh` and `clanker-review.sh` are driven by today, and
+mechanism `scripts/clanker-improve.sh` and `scripts/clanker-review.sh` are driven by today, and
 it turns "did it fire?" into "did this process exit 0?", which is a subprocess
 test.
 

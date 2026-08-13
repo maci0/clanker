@@ -31,10 +31,10 @@
 
 ```
 scripts/
-  clanker-improve.sh
-  clanker-merge-worktree.sh
-  clanker-review.sh
-  release-check.sh
+  scripts/clanker-improve.sh
+  scripts/clanker-merge-worktree.sh
+  scripts/clanker-review.sh
+  scripts/release-check.sh
 
 docs/
   reviews/

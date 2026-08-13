@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# clanker-improve.sh — run clanker and instruct it to improve itself.
+# scripts/clanker-improve.sh — run clanker and instruct it to improve itself.
 #
 # Usage:
-#   ./clanker-improve.sh [instruction] [options]
+#   ./scripts/clanker-improve.sh [instruction] [options]
 #
 # The instruction can be given positionally, via --instruction, or via
 # --instruction-file (recommended for anything with quotes/backticks — shell
