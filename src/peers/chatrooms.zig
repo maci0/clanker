@@ -633,10 +633,13 @@ const PeerCooldown = struct {
 };
 
 var cooldown_mutex: std.Io.Mutex = .init;
+var cooldown_mutex: std.Io.Mutex = .init;
 var peer_cooldowns: ?std.ArrayList(PeerCooldown) = null;
 
 /// True when `name` is still inside its backoff window.
 fn inCooldown(io: std.Io, name: []const u8) bool {
+    cooldown_mutex.lockUncancelable(io);
+    defer cooldown_mutex.unlock(io);
     cooldown_mutex.lockUncancelable(io);
     defer cooldown_mutex.unlock(io);
     const list = peer_cooldowns orelse return false;
@@ -655,6 +658,10 @@ fn inCooldown(io: std.Io, name: []const u8) bool {
 fn recordFailure(io: std.Io, gpa: std.mem.Allocator, name: []const u8, now: i128) i64 {
     cooldown_mutex.lockUncancelable(io);
     defer cooldown_mutex.unlock(io);
+    if (peer_cooldowns == null) peer_cooldowns = std.ArrayList(PeerCooldown).init(gpa);
+fn recordFailure(io: std.Io, gpa: std.mem.Allocator, name: []const u8, now: i128) i64 {
+    cooldown_mutex.lockUncancelable(io);
+    defer cooldown_mutex.unlock(io);
     if (peer_cooldowns == null) peer_cooldowns = .empty;
     const list = &peer_cooldowns.?;
     for (list.items) |*c| {
@@ -669,6 +676,9 @@ fn recordFailure(io: std.Io, gpa: std.mem.Allocator, name: []const u8, now: i128
 
 /// Record a successful delivery; clears any cooldown for `name`. Returns true
 /// when the peer was previously down (a recovery worth noting).
+fn recordSuccess(io: std.Io, name: []const u8) bool {
+    cooldown_mutex.lockUncancelable(io);
+    defer cooldown_mutex.unlock(io);
 fn recordSuccess(io: std.Io, name: []const u8) bool {
     cooldown_mutex.lockUncancelable(io);
     defer cooldown_mutex.unlock(io);
@@ -757,6 +767,7 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg
             .response_writer = &rw,
         }) catch |err| {
             const window_s = recordFailure(io, gpa, peer.name, std.Io.Timestamp.now(io, .real).nanoseconds);
+            const window_s = recordFailure(io, gpa, peer.name, std.Io.Timestamp.now(io, .real).nanoseconds);
             if (window_s > 0) {
                 log.log(.error_, "chat to '{s}' failed: {s}; marking peer down, backing off {d}s", .{ peer.name, @errorName(err), window_s });
             } else {
@@ -769,6 +780,7 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg
         // worth surfacing at the default log level; a status code is enough to
         // know the send worked, and skipping the body keeps a peer echoing
         // message text (or anything else) out of this instance's logs.
+        if (recordSuccess(io, peer.name)) {
         if (recordSuccess(io, peer.name)) {
             log.log(.info, "chat {s}: HTTP {d} (peer back up)", .{ peer.name, @intFromEnum(status) });
         } else {
