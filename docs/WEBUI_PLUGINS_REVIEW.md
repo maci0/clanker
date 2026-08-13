@@ -84,3 +84,60 @@ the failed directory and leaves none of the previous one behind; and a response
 from a superseded navigation does not paint over the newer one. Against
 unmodified `main` the same harness fails 11 of the 26. Gate: `zig build`,
 `zig build tools`, `zig build test --summary all`.
+
+## The Office janitor never stopped talking (2026-08-13)
+
+The janitor is written to say very little — the header calls him "the comedic
+relief, not a status lamp", and `janitor.zig` records why the lines are dry.
+On screen he never shut up. One deadline was doing two jobs: `quipUntil` was
+only ever read as *when may he say the next thing*, so the rounds branch was
+
+    if (now > janitor.quipUntil) { janitor.quip = <line>; janitor.quipUntil = now + 9000 }
+
+and nothing ever assigned `janitor.quip = null`. `drawJanitor` draws a bubble
+whenever `janitor.quip` is truthy, so from the first line onward there was a
+speech bubble over him on every frame for as long as the view stayed open, the
+text swapping every nine seconds. The character with one joke for every
+occasion is the one the header says he is not.
+
+A line now has a lifetime as well as a successor: `quipUntil` is when it comes
+down, `nextQuipAt` is the earliest he may start another, and one helper sets
+all of it so no quip can be assigned without a deadline to remove it. The check
+that takes a line down sits above the pile branch, so a line outlives neither a
+rush to fresh garbage nor a scrub — it used to outlive both, and everything
+after them. `nextQuipAt` starts unset and the first line waits out a gap, so
+opening the Office is quiet instead of opening mid-sentence. The clean-up line
+after he sweeps a pile goes through the same helper, so it expires too; it
+previously set `quipUntil = now + 6000`, which under the old reading only
+delayed his *next* line and left that one up forever as well.
+
+The measured effect: over 400 frames he now has a bubble up on 114 of them, the
+4.5 s line against the 9 s gap. On `main` it is 400 of 400.
+
+Second bug in the same file, unrelated but found by the same harness.
+`load()` sets `offices`, then fetches `/api/goals`, and it was that
+continuation which first assigned `o.piles` and `o.index`. The three-second
+message poll gates only on `offices.length`, so a poll landing in the window
+between the two reached `applyMessage` with `o.piles` still undefined. The
+guard there reads `(o.piles || []).length < 3` and the next line is
+`o.piles.push(...)`, so the guard passed and the push threw — into `poll()`'s
+per-room `.catch(function () {})`, which swallowed it. The visible result was
+not an error: the card action was logged, no pile appeared, and every later
+message in the same batch was dropped while `o.cursor` had already advanced
+past it, so those messages were never retried. Both fields now exist from the
+moment an office object does; the `/api/goals` continuation only settles
+`index`, which is a position rather than an existence.
+
+### Verified
+
+`node` + the DOM stub driving the real `office/app.js`, with the sprite sheets
+deliberately never loading so the fallback drawing path runs and every speech
+bubble arrives as a recorded `fillText` call. 15 assertions: the view opens with
+no bubble, a line appears, it comes down again, it stays down for a real gap,
+another and different line follows, and over 400 frames he is silent for most
+of them; and, with `/api/goals` held pending while the poll fires, a `@todo`
+action both records its pile and does not eat the next message in the batch,
+while an action whose id does not land on the 1-in-3 leaves the floor clean.
+Against unmodified `main` the same harness fails 6 of the 15. Gate: `zig build`,
+`zig build tools`, `zig build test --summary all` — 163/163 steps, 2 skipped
+tests, the expected worktree pair.
