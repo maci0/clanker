@@ -208,7 +208,9 @@ deleting it. Keep the board tool as the card/room implementation and
 card `goal` id instead of adding a third store. Card checklist items form an
 arbitrarily deep parent tree and may also depend on any other item in the same
 card; dependency cycles are invalid, and a card cannot enter Done until every
-checklist item at every depth is complete.
+checklist item at every depth is complete. Those predicates live in
+`tools/zig/cards.zig` so `zig build test` runs them; `board.zig` only enforces
+them.
 
 ## Local operator rules (optional)
 
