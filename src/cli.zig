@@ -281,6 +281,22 @@ fn appendRepeatable(dest: *[]const []const u8, value: []const u8) !void {
     if (prev.len > 0) gpa.free(prev);
 }
 
+/// Joins extra positional tokens onto a previously captured slice. The first
+/// token is borrowed from argv; later joins live on `page_allocator` (`parse`
+/// has no allocator) and the previous owned join is freed so `a b c` does
+/// not leak `a b`.
+fn joinOwned(dest: *?[]const u8, owned: *bool, value: []const u8) !void {
+    const gpa = std.heap.page_allocator;
+    if (dest.*) |prev| {
+        const joined = try std.fmt.allocPrint(gpa, "{s} {s}", .{ prev, value });
+        if (owned.*) gpa.free(prev);
+        dest.* = joined;
+        owned.* = true;
+    } else {
+        dest.* = value;
+    }
+}
+
 /// The value belonging to `flag`, taken from `--flag=value` when that is how it
 /// was written and from the next argument otherwise.
 fn takeValue(
@@ -321,6 +337,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     var pending_sub: ?[]const u8 = null;
     var seen_flags: [16]Flag = undefined;
     var seen_flags_len: usize = 0;
+    var workflow_args_owned = false;
 
     // `--flag=value` is written as often as `--flag value`; the parser only
     // understood the second. Split here so every flag below sees the value the
@@ -764,11 +781,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 }
             } else if (opts.workflow_name == null) {
                 opts.workflow_name = a;
-            } else if (opts.workflow_args == null) {
-                opts.workflow_args = a;
             } else {
-                const prev = opts.workflow_args.?;
-                opts.workflow_args = try std.fmt.allocPrint(std.heap.page_allocator, "{s} {s}", .{ prev, a });
+                try joinOwned(&opts.workflow_args, &workflow_args_owned, a);
             }
         } else {
             setDiag(diag, a);
@@ -11326,6 +11340,19 @@ test "a bare invocation starts the REPL, and --help still asks for help" {
     try std.testing.expectEqual(Command.version, (try parse(&.{ "clanker", "--version" }, null)).command);
     // A typo is still a typo, not a silent REPL start.
     try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "runn" }, null));
+}
+
+test "workflow run joins extra positional args without leaking prior joins" {
+    const one = try parse(&.{ "clanker", "workflow", "run", "myflow", "alpha" }, null);
+    try std.testing.expectEqual(Command.workflow, one.command);
+    try std.testing.expectEqualStrings("run", one.workflow_sub.?);
+    try std.testing.expectEqualStrings("myflow", one.workflow_name.?);
+    try std.testing.expectEqualStrings("alpha", one.workflow_args.?);
+
+    const many = try parse(&.{ "clanker", "workflow", "run", "myflow", "a", "b", "c" }, null);
+    try std.testing.expectEqualStrings("a b c", many.workflow_args.?);
+    // The joined slice is page_allocator-owned (parse has no allocator).
+    std.heap.page_allocator.free(many.workflow_args.?);
 }
 
 test "parse reports the offending token via the diag out-param" {
