@@ -700,3 +700,20 @@ test "a year of minutes agrees with a brute-force scan" {
         }
     }
 }
+
+test "fuzz: no byte sequence crashes the cron parser" {
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [256]u8 = undefined;
+            const len = smith.slice(&buf);
+            const input = buf[0..len];
+            if (parse(input)) |spec| {
+                _ = spec.nextAfter(0, 0);
+                _ = spec.nextAfter(-1, 0);
+                _ = spec.nextAfter(0, 330);
+            } else |_| {}
+            _ = parseOffset(input) catch 0;
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{});
+}

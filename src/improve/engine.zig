@@ -95,6 +95,7 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig build tools\")" },
     .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig fmt --check\")" },
     .{ .file = "src/gate/checks.zig", .needle = "if (hits > 0) {" },
+    .{ .file = "src/gate/checks.zig", .needle = "\"TO\" ++ \"DO\"" },
     .{ .file = "src/gate/checks.zig", .needle = "if (problems.items.len > 0) {" },
     .{ .file = "src/gate/checks.zig", .needle = "exec_pattern_allow must not name git commands" },
     .{ .file = "src/gate/checks.zig", .needle = "capability_gate must not be disabled" },

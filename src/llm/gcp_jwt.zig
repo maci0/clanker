@@ -207,3 +207,17 @@ test "trimLeadingZeros strips sign padding but keeps a zero value" {
     // An empty slice is returned as-is rather than indexing out of bounds.
     try std.testing.expectEqualSlices(u8, &.{}, trimLeadingZeros(&.{}));
 }
+
+test "fuzz: no byte sequence crashes the PEM/PKCS8 parser" {
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [512]u8 = undefined;
+            const len = smith.slice(&buf);
+            const input = buf[0..len];
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            _ = parsePkcs8(arena_state.allocator(), input) catch {};
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{});
+}

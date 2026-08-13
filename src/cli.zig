@@ -6341,7 +6341,7 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
                 if (m.object.get("limit")) |l| if (l == .object) {
                     if (jsonNum(l.object, "context")) |ctx| {
                         s.objectField("context") catch return;
-                        s.print("{d}", .{@as(i64, @intFromFloat(ctx))}) catch return;
+                        s.print("{d}", .{@as(i64, @trunc(ctx))}) catch return;
                     }
                 };
                 if (m.object.get("cost")) |c| if (c == .object) {
