@@ -1252,6 +1252,62 @@ empty list reports `-1` rather than throwing. The keydown handler is checked as
 source shape — including that no bare `prompts.splice(prompts.indexOf(...))` is
 left in the file — since importing `app.js` boots the page. 32 assertions
 green; against unmodified `main` the same harness fails 25 of its 32.
+
+## The composer keeps what you were writing (2026-08-13)
+
+A half-written task had no owner. Reloading the page threw it away, and so did
+opening another conversation — which is precisely what you do when the question
+needs something you have to go and look up first. The composer text was the one
+thing on the page with nowhere to live: the transcript is on the server, and the
+model, theme, view, rail state and selected knowledge collections are all in
+`localStorage`. The sentence you were in the middle of was not.
+
+A draft now belongs to the conversation it was written for.
+
+- **`core/composer.js: loadDrafts()`, `saveDrafts(drafts)`,
+  `draftFor(drafts, sessionId)`, `setDraft(drafts, sessionId, text, now)`** —
+  pure but for the one `localStorage` read and write, and the whole shape of the
+  store. One key (`clanker.drafts`), not one per conversation: a profile that
+  has seen a thousand conversations should not carry a thousand entries, so
+  `setDraft` bounds the store to the `max_drafts` (20) most recently touched and
+  drops the rest by age. Whitespace is not a draft — an empty or blank composer
+  deletes the entry rather than storing it, so restoring can never replace a
+  cleared box with blanks. Storage that is unparseable, an array, `null`, or an
+  entry of the wrong shape all read as "no draft" rather than throwing.
+- **`app.js`** — `rememberDraft` on `input`, debounced 400 ms because
+  `localStorage` is synchronous and this is every keystroke; `flushDraft` on
+  `beforeunload` so a closed tab is not a special case. `switchSession` flushes
+  *before* the id moves — otherwise the text would be filed against the
+  conversation being opened — and restores after the transcript lands, or after
+  a failed load, where an empty composer would otherwise read as the draft
+  having been lost. New chat banks the draft against the conversation it leaves
+  and opens with an empty box. Boot restores.
+- **When a draft stops existing** — a run that finishes drops it: it was asked
+  and answered. A run that *doesn't* finish deliberately does not; the existing
+  "the run ended before it finished; your task is still in the composer" branch
+  leaves the task in the box, and that is exactly a draft worth keeping.
+  Deleting a conversation drops its draft, since there is nothing left for it to
+  belong to.
+- **Restore never overwrites.** It fills an empty composer only. Dropping a
+  saved draft on top of a sentence someone is writing is the same loss in the
+  other direction.
+
+### Verified
+
+`node` driving the real `core/composer.js` against the DOM stub's
+`localStorage`. A draft written for one conversation comes back from a fresh
+read of storage (a reload); two conversations keep their own and a third gets
+nothing; an empty text and a whitespace-only text both clear the entry rather
+than storing it. The bound: `max_drafts + 5` conversations leave exactly
+`max_drafts` entries, the oldest is the one dropped, the newest is kept, and
+touching an old draft stops it being evicted for its age. Storage that is
+unparseable, an array, `null`, an entry with no `text` and an entry that is a
+bare string all read as no draft. The `app.js` wiring is checked as source shape
+— the debounce, the `beforeunload` flush, flush-before-id-moves, restore after
+load and after a failed load, the New chat and delete paths, and that restore
+returns early when the box is not empty — since importing `app.js` boots the
+page. 37 assertions green; against unmodified `main` the same harness fails 20
+of its 33.
 Gate: `zig build`, `zig build tools`, `zig build test --summary all`.
 
 ## Left / next
