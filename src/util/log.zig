@@ -32,6 +32,11 @@ test "Level.fromStr accepts operator spellings" {
 
 var current_level = std.atomic.Value(u8).init(@intFromEnum(Level.info));
 
+/// Serialises the final stderr write. Each call formats into a thread-local
+/// buffer first, but without this two connection threads can still interleave
+/// their `write(2)` calls and produce unreadable log lines.
+var log_mutex: std.c.pthread_mutex_t = .{};
+
 /// Correlation context is thread-local so concurrent HTTP connections can
 /// attach their request id to logs emitted deep in the agent/sandbox stack.
 /// Keep this deliberately small and opaque: callers must not put request
@@ -92,5 +97,7 @@ pub fn log(level: Level, comptime fmt: []const u8, args: anytype) void {
         buf[buf.len - 1] = '\n';
         w.end = buf.len;
     };
+    _ = std.c.pthread_mutex_lock(&log_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&log_mutex);
     std.debug.print("{s}", .{buf[0..w.end]});
 }

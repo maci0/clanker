@@ -6961,6 +6961,8 @@ fn handleSteer(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io
 /// cannot leave finished work marked active. Best-effort, a goal already
 /// moved by hand (or deleted) is left alone, and failures only log.
 fn setGoalStatusIf(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, goal_id: []const u8, from: []const u8, to: []const u8) void {
+    var guard = file_lock.acquire(io, dir, "state", "goals", gpa);
+    defer guard.release();
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -7014,6 +7016,50 @@ test "a finished run moves its goal to review, and only from active" {
     try std.testing.expectEqualStrings("review", goals[0].status);
     try std.testing.expect(goals[0].updated > 1);
     try std.testing.expectEqualStrings("done", goals[1].status);
+}
+
+test "concurrent goal status updates do not lose each other" {
+    // serve runs one thread per connection; two runs finishing at once both
+    // call setGoalStatusIf. Without the goals lock they read the same file,
+    // each flip one goal, and the second write drops the first.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.writeFile(io, .{ .sub_path = goals_path, .data =
+        \\[{"id":"g1","objective":"a","completion_criterion":"b","status":"active","created":1,"updated":1},
+        \\ {"id":"g2","objective":"c","completion_criterion":"d","status":"active","created":1,"updated":1}]
+    });
+
+    const Worker = struct {
+        dir: std.Io.Dir,
+        io: std.Io,
+        id: []const u8,
+        fn go(self: *@This()) void {
+            setGoalStatusIf(self.io, std.testing.allocator, self.dir, self.id, "active", "review");
+        }
+    };
+
+    var workers: [2]Worker = .{
+        .{ .dir = tmp.dir, .io = io, .id = "g1" },
+        .{ .dir = tmp.dir, .io = io, .id = "g2" },
+    };
+    var threads: [2]std.Thread = undefined;
+    for (&workers, 0..) |*w, i| {
+        threads[i] = try std.Thread.spawn(.{}, Worker.go, .{w});
+    }
+    for (&threads) |*t| t.join();
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const raw = try tmp.dir.readFileAlloc(io, goals_path, arena, .limited(1 << 20));
+    const goals = try std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqualStrings("review", goals[0].status);
+    try std.testing.expectEqualStrings("review", goals[1].status);
 }
 
 test "steer registry: register by goal or session, steer, poll, release" {
@@ -8411,7 +8457,9 @@ const goals_path = "state/goals.json";
 /// Adding a goal and changing one's status, the two things the `goal` tool and
 /// `clanker run --goal` already assume someone can do. One POST shape covers
 /// both: an objective creates, an id updates.
-fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+    var guard = file_lock.acquire(io, std.Io.Dir.cwd(), "state", "goals", gpa);
+    defer guard.release();
     const req = std.json.parseFromSliceLeaky(GoalPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
@@ -10416,7 +10464,7 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, me
     const arena = arena_state.allocator();
 
     if (std.mem.eql(u8, method, "POST")) {
-        handleGoalWrite(io, arena, body, stream);
+        handleGoalWrite(io, gpa, arena, body, stream);
         return;
     }
 
