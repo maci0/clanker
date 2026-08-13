@@ -53,6 +53,34 @@ export function boardIsLoaded() { return boardLoaded; }
 
 export function setOpenCardId(id) { openCardId = id; }
 
+/* Board (columns) or list (one sortable table). Module state rather than a
+   closure variable because the board's own render has to know it too: the
+   Sort control belongs to the list and has to stay hidden behind the board,
+   and that render runs on every card change, not only when the toggle is
+   clicked. */
+var listMode = false;
+export function setListMode(on) {
+  listMode = !!on;
+  var grid = document.getElementById("board-grid");
+  var listViewEl = document.getElementById("board-list-view");
+  var toggleBtn = document.getElementById("board-toggle-list");
+  if (grid) grid.hidden = listMode;
+  if (listViewEl) listViewEl.hidden = !listMode;
+  if (toggleBtn) {
+    toggleBtn.setAttribute("aria-pressed", listMode ? "true" : "false");
+    toggleBtn.textContent = listMode ? "▦" : "☰";
+    toggleBtn.title = listMode ? "Switch to board view" : "Switch to list view";
+  }
+  syncListControls();
+}
+/* The Sort control is the list's, so it follows the mode as well as the card
+   count. It used to follow only the count, which left it sitting under the
+   columns in board mode sorting a table nobody could see. */
+function syncListControls() {
+  var listControls = document.getElementById("board-list-controls");
+  if (listControls) listControls.hidden = !listMode || (boardState.val.cards || []).length === 0;
+}
+
 function doneColumn() { return doneColumnOf(board); }
 function blockers(card) { return blockersOf(card, board, cardById); }
 
@@ -1986,8 +2014,7 @@ export function bindBoard(deps) {
     });
     _setTabCount("board", open);
     el.boardEmpty.hidden = s.cards.length > 0;
-    var listControls = document.getElementById("board-list-controls");
-    if (listControls) listControls.hidden = s.cards.length === 0;
+    syncListControls();
 
     // The detail panel is rebuilt with the board because it shows one of these
     // cards; the edit draft and the focus snapshot carry across it.
@@ -2046,8 +2073,17 @@ export function bindBoard(deps) {
   // ---- Keyboard shortcuts (Trello-style) ----
   // n = new card, / = focus filter, ? = show shortcuts, Escape = close detail
   document.addEventListener("keydown", function(e) {
-    // Only when the board view is visible and no input is focused
-    if (el.board.hidden) return;
+    // Only when the board view is visible and no input is focused.
+    //
+    // This used to read el.board, which is #board-grid — the columns, which
+    // nothing ever hid. The test was therefore always false and these
+    // shortcuts were live on every view, so `/` on the Runs view jumped focus
+    // into the board's filter. #view-board is the panel showView() toggles,
+    // which is the thing "the board view is visible" actually means, and it
+    // keeps the shortcuts working in list mode, where the grid is hidden but
+    // the view is not.
+    var panel = document.getElementById("view-board");
+    if (!panel || panel.hidden) return;
     var tag = (document.activeElement || {}).tagName || "";
     var isInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 
@@ -2063,10 +2099,16 @@ export function bindBoard(deps) {
     }
     if (isInput) return;
 
-    // n = focus quick-add title
+    // n = open the first column's quick-add and put the cursor in it.
+    //
+    // This asked for #card-qa-title, an id nothing defines: the quick-add is
+    // built per column in boardColumn() and its textarea carries no id at all,
+    // so `n` had silently done nothing since the composer was added. Clicking
+    // the trigger rather than focusing the textarea directly is what expands
+    // the collapsed form — openQuickAdd() does both.
     if (e.key === "n") {
-      var qa = document.getElementById("card-qa-title");
-      if (qa) { qa.focus(); e.preventDefault(); }
+      var trigger = el.board && el.board.querySelector(".board-add-trigger");
+      if (trigger) { trigger.click(); e.preventDefault(); }
       return;
     }
     // / = focus filter
@@ -2077,21 +2119,28 @@ export function bindBoard(deps) {
     }
   });
 
-  // Wire header list toggle button
+  // Wire header list toggle button.
+  //
+  // The columns live in #board-grid. This asked for #board-columns, which no
+  // markup has ever defined, so the lookup was null and the grid was never
+  // hidden: the list rendered under a board that stayed where it was, both at
+  // once, while the button's icon and aria-pressed flipped as if it had
+  // worked. The id is deliberately not "board" — see index.html on why the
+  // route and the element cannot share that name.
   (function(){
     var toggleBtn = document.getElementById("board-toggle-list");
-    var columns = document.getElementById("board-columns");
+    var columns = document.getElementById("board-grid");
     var listViewEl = document.getElementById("board-list-view");
     if (!toggleBtn) return;
-    var isListMode = false;
     toggleBtn.addEventListener("click", function(){
-      isListMode = !isListMode;
-      toggleBtn.setAttribute("aria-pressed", isListMode ? "true" : "false");
-      toggleBtn.textContent = isListMode ? "▦" : "☰";
-      toggleBtn.title = isListMode ? "Switch to board view" : "Switch to list view";
-      if (columns) columns.hidden = isListMode;
-      if (listViewEl) listViewEl.hidden = !isListMode;
+      setListMode(!listMode);
     });
+    // Draw the starting state rather than assume it: #board-list-view carries
+    // no `hidden` in the markup and renderList() fills it on every board
+    // render, so without this the list is already on screen before the button
+    // has been touched.
+    setListMode(false);
+    if (columns) columns.hidden = false;
   })();
 
   // board list view (full-fledged todo list)
