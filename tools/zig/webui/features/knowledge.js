@@ -9,8 +9,7 @@ function ensureBadge(){
   var composer = document.getElementById("task-form");
   var badge = document.createElement("div");
   badge.id = "knowledge-badge";
-  badge.className = "meta";
-  badge.style.cssText = "display:none;margin:0.35rem 0 0;padding:0.35rem 0.55rem;border:1px dashed var(--rule);border-radius:8px;background:var(--surface-2)";
+  badge.className = "meta knowledge-badge";
   if (composer) composer.insertBefore(badge, composer.querySelector(".toolbar") || null);
   return badge;
 }
@@ -24,8 +23,7 @@ function refreshBadge(){
   var msg = hint ? hint.textContent : (selectedKnowledge.length + " collection(s) will be included in the next prompt.");
   badge.textContent = msg + " ";
   var clear = document.createElement("button");
-  clear.type="button"; clear.className="secondary"; clear.textContent="Clear";
-  clear.style.cssText="margin-left:0.4rem;padding:0.15rem 0.45rem;min-height:22px;font-size:11px";
+  clear.type="button"; clear.className="secondary knowledge-badge-clear"; clear.textContent="Clear";
   clear.addEventListener("click", function(){ selectedKnowledge.length=0; persistKnowledge(); updateHint(); refreshBadge(); });
   badge.appendChild(clear);
 }

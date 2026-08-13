@@ -2039,7 +2039,23 @@ pub const Engine = struct {
         // whatever the pins took. Unbounded, one request for src/cli.zig would
         // swallow the run; sharing the churn budget, a request would silently
         // push out the files recent promotions actually touched.
-        const request_limit = focus.items.len + max_bytes / 4;
+        //
+        // Half the budget, not a quarter. A granted file that overruns the
+        // quota is not truncated, it is dropped entirely (appendWholeFile),
+        // and nothing tells the model why: it asks again, and a run's three
+        // requests go on re-asking for a file it will never be shown.
+        //
+        // docs/ROADMAP.md is the case that proved this is not hypothetical.
+        // It is the file the roadmap-driven flow is built around, docs/ is
+        // never collected into the bulk, so a grant is the ONLY way it can
+        // reach the model -- and it crossed the quarter-budget quota by 204
+        // bytes (65,393 -> 65,740 against 65,536) during ordinary doc edits.
+        // No logic changed; a threshold nobody was watching silently made the
+        // file unreachable, and the only visible symptom was one test
+        // flipping. Half the budget clears every document in docs/ with room
+        // to grow, and still refuses the 310 KB src/cli.zig this quota exists
+        // to keep out.
+        const request_limit = focus.items.len + max_bytes / 2;
         for (cands.items) |c| {
             if (c.score < request_score or c.score >= pin_score) continue;
             included_any = true;
@@ -2763,6 +2779,27 @@ test "a granted file reaches the context, once, in the focus block" {
 
     const budget: usize = 256 * 1024;
     const header = "===== FILE: docs/ROADMAP.md =====";
+
+    // Checked separately from the assertions below, because when this is what
+    // broke, the failure downstream is "the granted file is not in the focus
+    // block" -- which reads as a bug in granting and is not one. A granted
+    // file over the quota is dropped whole and silently, so the only signal
+    // is this test flipping. It flipped for real: ordinary doc edits took
+    // ROADMAP.md from 65,393 to 65,740 bytes, past a then-65,536-byte quota,
+    // and made the one file the roadmap flow depends on unreachable.
+    // Fail here, saying so, rather than three assertions later.
+    const roadmap = try std.Io.Dir.cwd().readFileAlloc(io, "docs/ROADMAP.md", arena, .limited(1 << 24));
+    const quota = budget / 2;
+    if (roadmap.len + header.len >= quota) {
+        std.debug.print(
+            "\ndocs/ROADMAP.md is {d} bytes, at or over the {d}-byte granted-file quota.\n" ++
+                "It can no longer be granted into context, and docs/ is never collected,\n" ++
+                "so nothing can show it to the model. Raise the quota in collectContext\n" ++
+                "or split the file -- do not just relax this test.\n",
+            .{ roadmap.len, quota },
+        );
+        return error.GrantedFileQuotaTooSmall;
+    }
 
     {
         var hist = history_mod.History.init(std.testing.allocator, io, std.Io.Dir.cwd(), "state");
