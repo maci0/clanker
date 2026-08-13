@@ -359,12 +359,13 @@ function cardNode(c) {
   b.setAttribute("data-card", c.id);
   if (c.id === openCardId) b.setAttribute("aria-current", "true");
 
-  // Trello cover strip — priority or label-color tint at top edge
+  // Trello cover strip — priority or label-color tint at top edge; also cover_color
   var labels = c.labels || [];
-  if (labels.length && labels[0].color) {
+  var coverColor = c.cover_color || (labels.length && labels[0].color ? labels[0].color : null);
+  if (coverColor) {
     var cover = document.createElement("div");
     cover.className = "card-cover";
-    cover.setAttribute("data-color", labels[0].color);
+    cover.setAttribute("data-color", coverColor);
     b.appendChild(cover);
   } else if (c.priority && c.priority !== "normal") {
     var cover2 = document.createElement("div");
@@ -372,6 +373,20 @@ function cardNode(c) {
     cover2.setAttribute("data-priority", c.priority);
     b.appendChild(cover2);
   }
+
+  // Quick edit pencil — always present, shown on hover via CSS
+  var pencil = document.createElement("button");
+  pencil.type = "button";
+  pencil.className = "card-quick-edit-btn";
+  pencil.innerHTML = "✏️";
+  pencil.title = "Quick edit";
+  pencil.setAttribute("aria-label", "Quick edit card");
+  pencil.addEventListener("click", function(e) {
+    e.stopPropagation();
+    openCardId = c.id;
+    renderBoard(board);
+  });
+  b.appendChild(pencil);
 
   // Card body wrapper (inside padding)
   var body = document.createElement("div");
@@ -813,6 +828,15 @@ function showCardDetail(id) {
   header.appendChild(headerIcon);
   header.appendChild(headerTitle);
   header.appendChild(close);
+
+  // ---- Cover color bar at top of panel ----
+  var coverColor = c.cover_color || (c.labels && c.labels.length && c.labels[0].color ? c.labels[0].color : null);
+  if (coverColor) {
+    var coverDiv = document.createElement("div");
+    coverDiv.className = "card-detail-cover";
+    coverDiv.setAttribute("data-color", coverColor);
+    panel.appendChild(coverDiv);
+  }
   panel.appendChild(header);
 
   // ---- Two-column layout: main + sidebar ----
@@ -927,16 +951,58 @@ function showCardDetail(id) {
   });
   sidebarCol.appendChild(prioBtn);
 
-  // Deadline sidebar button
+  // Deadline sidebar — native date picker
+  var deadlineWrap = document.createElement("div");
+  deadlineWrap.style.cssText = "position:relative;";
   var deadlineBtn = document.createElement("button");
   deadlineBtn.type = "button";
-  deadlineBtn.textContent = c.deadline ? "Due: " + fmtDeadline(c.deadline) : "Set due date";
-  deadlineBtn.addEventListener("click", function() {
-    var dd = prompt("Deadline (YYYY-MM-DD, empty to clear):", c.deadline || "");
-    if (dd === null) return;
-    postBoard({ op: "update", id: c.id, deadline: dd.trim() || null }, dd.trim() ? "Due " + dd.trim() : "Deadline cleared.");
+  deadlineBtn.innerHTML = "📅 " + (c.deadline ? "Due: " + fmtDeadline(c.deadline) : "Dates");
+  var deadlineInput = document.createElement("input");
+  deadlineInput.type = "date";
+  deadlineInput.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;cursor:pointer;";
+  if (c.deadline) {
+    // Convert deadline to YYYY-MM-DD if it's a unix timestamp
+    try {
+      var dDate = typeof c.deadline === "number" ? new Date(c.deadline * 1000) : new Date(c.deadline);
+      if (!isNaN(dDate.getTime())) deadlineInput.value = dDate.toISOString().slice(0, 10);
+    } catch(e) {}
+  }
+  deadlineInput.addEventListener("change", function() {
+    var val = deadlineInput.value;
+    if (!val) {
+      postBoard({ op: "update", id: c.id, deadline: null }, "Deadline cleared.");
+    } else {
+      postBoard({ op: "update", id: c.id, deadline: val }, "Due " + val);
+    }
   });
-  sidebarCol.appendChild(deadlineBtn);
+  deadlineWrap.appendChild(deadlineBtn);
+  deadlineWrap.appendChild(deadlineInput);
+  sidebarCol.appendChild(deadlineWrap);
+
+  // Cover color picker
+  var coverTitle = document.createElement("div");
+  coverTitle.className = "card-detail-sidebar-title";
+  coverTitle.style.marginTop = "var(--space-2)";
+  coverTitle.textContent = "Cover";
+  sidebarCol.appendChild(coverTitle);
+  var coverPicker = document.createElement("div");
+  coverPicker.className = "cover-color-picker";
+  var coverColors = ["green", "yellow", "orange", "red", "purple", "blue", "sky", "pink", "none"];
+  var currentCover = c.cover_color || "";
+  coverColors.forEach(function(clr) {
+    var sw = document.createElement("button");
+    sw.type = "button";
+    sw.className = "cover-color-swatch";
+    sw.setAttribute("data-color", clr);
+    sw.title = clr === "none" ? "Remove cover" : clr;
+    if (clr === currentCover || (clr === "none" && !currentCover)) sw.setAttribute("data-selected", "true");
+    sw.addEventListener("click", function() {
+      var val = clr === "none" ? "" : clr;
+      postBoard({ op: "update", id: c.id, cover_color: val }, val ? "Cover → " + val : "Cover removed.");
+    });
+    coverPicker.appendChild(sw);
+  });
+  sidebarCol.appendChild(coverPicker);
 
   var sideTitle2 = document.createElement("div");
   sideTitle2.className = "card-detail-sidebar-title";
@@ -944,25 +1010,52 @@ function showCardDetail(id) {
   sideTitle2.textContent = "Actions";
   sidebarCol.appendChild(sideTitle2);
 
-  // Move column sidebar button
+  // Move column sidebar — dropdown instead of prompt
   var moveBtn = document.createElement("button");
   moveBtn.type = "button";
-  moveBtn.textContent = "Move card";
+  moveBtn.innerHTML = "➜ Move";
   moveBtn.addEventListener("click", function() {
     if (!board || !board.columns) return;
-    var names = board.columns.map(function(col){ return col.title; }).join(", ");
-    var dest = prompt("Move to column (" + names + "):", colName);
-    if (!dest) return;
-    var destCol = board.columns.find(function(col){ return col.title.toLowerCase() === dest.trim().toLowerCase() || col.id === dest.trim(); });
-    if (!destCol) { alert("Column not found."); return; }
-    postBoard({ op: "move", id: c.id, column: destCol.id }, "Moved to " + destCol.title + ".");
+    // Build a small dropdown
+    var existing = moveBtn.parentNode.querySelector(".card-detail-move-menu");
+    if (existing) { existing.remove(); return; }
+    var menu = document.createElement("div");
+    menu.className = "card-detail-move-menu";
+    menu.style.cssText = "display:flex;flex-direction:column;gap:2px;margin-top:4px;";
+    board.columns.forEach(function(col) {
+      var opt = document.createElement("button");
+      opt.type = "button";
+      opt.textContent = col.title + (col.id === c.column ? " ✓" : "");
+      opt.style.cssText = "text-align:left;min-height:28px;font-size:12px;border-radius:4px;padding:0.25rem 0.5rem;border:none;background:" + (col.id === c.column ? "var(--accent)" : "var(--surface-2)") + ";color:" + (col.id === c.column ? "var(--on-accent)" : "var(--fg)") + ";cursor:pointer;";
+      opt.addEventListener("click", function() {
+        if (col.id === c.column) { menu.remove(); return; }
+        postBoard({ op: "move", id: c.id, column: col.id }, "Moved to " + col.title + ".");
+        menu.remove();
+      });
+      menu.appendChild(opt);
+    });
+    moveBtn.parentNode.appendChild(menu);
   });
   sidebarCol.appendChild(moveBtn);
+
+  // Copy card button
+  var copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.innerHTML = "📋 Copy";
+  copyBtn.addEventListener("click", function() {
+    var newTitle = c.title + " (copy)";
+    var payload = { op: "add", title: newTitle, column: c.column };
+    if (c.assignee) payload.assignee = c.assignee;
+    if (c.priority) payload.priority = c.priority;
+    if (c.body) payload.body = c.body;
+    postBoard(payload, "Card copied.");
+  });
+  sidebarCol.appendChild(copyBtn);
 
   // Archive/delete sidebar button
   var archiveBtn = document.createElement("button");
   archiveBtn.type = "button";
-  archiveBtn.textContent = "Delete card";
+  archiveBtn.innerHTML = "🗑 Delete";
   archiveBtn.style.color = "var(--danger)";
   archiveBtn.addEventListener("click", function() {
     if (!confirm("Delete card \"" + c.title + "\"? This cannot be undone.")) return;
@@ -1370,39 +1463,83 @@ function showCardDetail(id) {
     });
   }
 
-  // ---- log ----
+  // ---- Activity timeline (Trello-style) ----
   var logBox = detailSection(mainCol, "Activity");
   var entries = (c.log || []).slice().reverse();
   if (!entries.length) {
     var empty = document.createElement("p");
     empty.className = "meta";
+    empty.style.cssText = "font-style:italic;color:var(--fg-muted);padding:0.5rem 0;";
     empty.textContent = "No activity yet. Moving, assigning, or commenting on this card will build its history here.";
     logBox.appendChild(empty);
   }
+  var activityList = document.createElement("div");
+  activityList.className = "card-activity";
   entries.forEach(function (e) {
-    var row = document.createElement("p");
-    row.className = "log-entry";
-    var when = document.createElement("span");
-    when.className = "log-when";
-    when.textContent = e.ts ? formatChatTime(e.ts) : "";
-    var who = document.createElement("span");
-    who.className = "log-who";
-    who.textContent = e.who || "someone";
-    var what = document.createElement("span");
-    what.textContent = e.what || "";
-    row.appendChild(when);
-    row.appendChild(who);
-    row.appendChild(what);
-    logBox.appendChild(row);
+    var item = document.createElement("div");
+    item.className = "card-activity-item";
+    // Avatar
+    var avatar = document.createElement("div");
+    avatar.className = "card-activity-avatar";
+    var whoName = e.who || "?";
+    avatar.textContent = whoName.slice(0, 2).toUpperCase();
+    // Set a unique color based on name hash
+    var nameHash = 0;
+    for (var ci = 0; ci < whoName.length; ci++) nameHash = ((nameHash << 5) - nameHash + whoName.charCodeAt(ci)) | 0;
+    var avatarColors = ["#0b5ab8","#0a7a2e","#c45a0a","#6b2fb8","#c23a7a","#c41212","#2a8ecc","#9a7a0a"];
+    var avatarBg = avatarColors[Math.abs(nameHash) % avatarColors.length];
+    avatar.style.background = avatarBg;
+    avatar.style.color = "#fff";
+    item.appendChild(avatar);
+    // Content
+    var content = document.createElement("div");
+    content.className = "card-activity-content";
+    var line1 = document.createElement("div");
+    var whoSpan = document.createElement("span");
+    whoSpan.className = "card-activity-who";
+    whoSpan.textContent = whoName;
+    var whenSpan = document.createElement("span");
+    whenSpan.className = "card-activity-when";
+    whenSpan.textContent = e.ts ? formatChatTime(e.ts) : "";
+    line1.appendChild(whoSpan);
+    line1.appendChild(whenSpan);
+    content.appendChild(line1);
+    var whatDiv = document.createElement("div");
+    whatDiv.className = "card-activity-text";
+    whatDiv.textContent = e.what || "";
+    content.appendChild(whatDiv);
+    item.appendChild(content);
+    activityList.appendChild(item);
   });
-  var noteIn = input("card-f-log", "text", "", "Record what you did…");
+  logBox.appendChild(activityList);
+  // Activity input with send button
+  var noteWrap = document.createElement("div");
+  noteWrap.style.cssText = "display:flex;gap:0.4rem;align-items:center;margin-top:0.5rem;";
+  var noteAvatar = document.createElement("div");
+  noteAvatar.className = "card-activity-avatar";
+  noteAvatar.textContent = "ME";
+  noteAvatar.style.cssText = "flex:none;background:var(--accent);color:var(--on-accent);";
+  noteWrap.appendChild(noteAvatar);
+  var noteIn = input("card-f-log", "text", "", "Write a comment…");
   noteIn.maxLength = 2000;
+  noteIn.style.cssText = "flex:1;min-width:0;";
   noteIn.addEventListener("keydown", function (e) {
     if (e.key !== "Enter" || !noteIn.value.trim()) return;
     e.preventDefault();
     postBoard({ op: "log", id: c.id, what: noteIn.value.trim() }, "Recorded.");
   });
-  logBox.appendChild(noteIn);
+  noteWrap.appendChild(noteIn);
+  var noteSend = document.createElement("button");
+  noteSend.type = "button";
+  noteSend.className = "card-detail-save-btn";
+  noteSend.textContent = "Save";
+  noteSend.style.cssText = "flex:none;min-height:32px;";
+  noteSend.addEventListener("click", function() {
+    if (!noteIn.value.trim()) return;
+    postBoard({ op: "log", id: c.id, what: noteIn.value.trim() }, "Recorded.");
+  });
+  noteWrap.appendChild(noteSend);
+  logBox.appendChild(noteWrap);
 
   // ---- Assemble layout ----
   layout.appendChild(mainCol);
