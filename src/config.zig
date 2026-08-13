@@ -489,6 +489,19 @@ pub const Web = struct {
     allow: []const []const u8 = &.{},
 };
 
+/// REPL appearance. Only the mascot for now, which is why there is no
+/// `theme` key here: the theme is still an env var (`CLANKER_THEME`) plus the
+/// session-scoped `/theme`, and moving it would change behaviour rather than
+/// just add a key.
+pub const Tui = struct {
+    /// `off`, `type`, or `loop`. Kept as the raw string rather than the
+    /// `tui/mascot.zig` enum so config.zig owes nothing to the TUI: an
+    /// unparseable value is reported where the flag is resolved, next to the
+    /// identical failure from `--mascot=<junk>`, instead of failing config
+    /// load for every non-REPL subcommand.
+    mascot: []const u8 = "off",
+};
+
 pub const Config = struct {
     agent_present: bool = false,
     /// Which keys inside `"agent"` were set when this Config was parsed.
@@ -503,6 +516,7 @@ pub const Config = struct {
     instance: Instance = .{},
     serve: Serve = .{},
     notify: Notify = .{},
+    tui: Tui = .{},
     chatrooms: Chatrooms = .{},
     memory: Memory = .{},
     modules: Modules = .{},
@@ -516,6 +530,7 @@ pub const Config = struct {
     peers_present: bool = false,
     web_present: bool = false,
     notify_present: bool = false,
+    tui_present: bool = false,
     /// Path of the file that set `default_provider`, as actually read, the
     /// `.json` sibling when that is what answered. Null means no config named
     /// one and the struct fallback above is in force. Reported by `providers
@@ -620,7 +635,7 @@ pub const Config = struct {
             "default_provider", "agent",    "improve", "providers",
             "models",           "instance", "peers",   "notify",
             "chatrooms",        "modules",  "web",     "memory",
-            "serve",
+            "serve",            "tui",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -676,6 +691,10 @@ pub const Config = struct {
         if (obj.get("notify")) |v| {
             cfg.notify = try parseNotify(arena, v);
             cfg.notify_present = true;
+        }
+        if (obj.get("tui")) |v| {
+            cfg.tui = try parseTui(arena, v);
+            cfg.tui_present = true;
         }
         if (obj.get("chatrooms")) |v| {
             cfg.chatrooms = try parseChatrooms(arena, v);
@@ -1017,6 +1036,18 @@ pub const Config = struct {
         return n;
     }
 
+    fn parseTui(arena: std.mem.Allocator, v: json.Value) !Tui {
+        _ = arena;
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.TuiNotObject,
+        };
+        var t = Tui{};
+        warnUnknownKeys(obj, &.{"mascot"}, "tui");
+        if (obj.get("mascot")) |k| t.mascot = try jsonStr(k, "mascot");
+        return t;
+    }
+
     fn parseChatrooms(arena: std.mem.Allocator, v: json.Value) !Chatrooms {
         const obj = switch (v) {
             .object => |o| o,
@@ -1353,6 +1384,7 @@ pub const Config = struct {
             if (src.serve.serve_as.len > 0) dst.serve.serve_as = src.serve.serve_as;
         }
         if (src.notify_present) dst.notify = src.notify;
+        if (src.tui_present) dst.tui = src.tui;
         if (src.chatrooms_present) dst.chatrooms = src.chatrooms;
         if (src.memory_present) dst.memory = src.memory;
         if (src.modules_present) applyModulesFields(&dst.modules, src.modules, src.modules_fields);

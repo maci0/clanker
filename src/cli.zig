@@ -194,6 +194,11 @@ pub const Options = struct {
     /// `clanker sessions`, reading an id and pasting it back is the workaround
     /// it replaces.
     continue_last: bool = false,
+    /// `--mascot[=off|type|loop]`: the REPL easter egg. Null means the flag was
+    /// absent and `tui.mascot` decides; the value is left as a string here and
+    /// parsed in the REPL, so a bad spelling is one error message rather than
+    /// two spellings of the same enum in two files.
+    mascot: ?[]const u8 = null,
     research_targets: []const []const u8 = &.{},
     research_harness: ?[]const u8 = null,
     research_metric: ?[]const u8 = null,
@@ -374,6 +379,12 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else if (std.mem.eql(u8, a, "--continue") or std.mem.eql(u8, a, "-c")) {
                 opts.continue_last = true;
                 used = .continue_last;
+            } else if (std.mem.eql(u8, a, "--mascot")) {
+                // Inline value only, never the following token: bare `--mascot`
+                // is a valid spelling that means "on, pick the default mode",
+                // so consuming the next argv would eat a task or a subcommand.
+                opts.mascot = inline_value orelse "on";
+                used = .mascot;
             } else if (std.mem.eql(u8, a, "--model") or std.mem.eql(u8, a, "-m")) {
                 opts.model = try takeValue(args, &idx, inline_value, a, diag);
                 used = .model;
@@ -1069,6 +1080,7 @@ const Flag = enum {
     model,
     session,
     continue_last,
+    mascot,
     goal,
     iters,
     dry_run,
@@ -1109,6 +1121,7 @@ const Flag = enum {
             .model => "--model",
             .session => "--session",
             .continue_last => "--continue, -c",
+            .mascot => "--mascot[=<mode>]",
             .goal => "--goal",
             .iters => "--iters",
             .dry_run => "--dry-run",
@@ -1155,6 +1168,7 @@ const Flag = enum {
             .model => "the model to use, or <provider>/<model> (alias -m)",
             .session => "resume a saved conversation by id",
             .continue_last => "pick up the most recently touched session",
+            .mascot => "run the mascot above the input: off, type, or loop",
             .goal => "run against a persisted goal by id",
             .iters => "cap the number of attempts (default 3)",
             .dry_run => "propose changes without applying them",
@@ -1226,7 +1240,7 @@ const Spec = struct {
 /// so are not listed per command.
 const specs = [_]Spec{
     .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal, .worktree }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        run against a persisted goal\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
-    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
+    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .mascot }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--mascot[=<mode>]  run the mascot above the input box (tui.mascot in config):\n                   loop  runs across and wraps around, the bare default\n                   type  runs along as you type, still when you stop\n                   off   no mascot\n                   Needs a terminal at least 23 columns wide and 13 rows tall" },
     .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
     .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--iters <n>        cap the number of attempts (default 3)\n--dry-run          propose changes without applying them" },
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
@@ -1318,6 +1332,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
             .model = opts.model,
             .session = opts.session,
             .continue_last = opts.continue_last,
+            .mascot = opts.mascot,
         }),
         .graph => try cmdGraph(init, opts),
         .autolearn => try cmdAutolearn(init, opts),

@@ -57,10 +57,19 @@ const sanitize = @import("sanitize.zig");
 // `_mod` because saveConversation has a local named `transcript`.
 const transcript_mod = @import("transcript.zig");
 const stats_mod = @import("stats.zig");
+const mascot = @import("mascot.zig");
 
 /// Redraw cadence while a turn is streaming: ~30fps, so streamed tokens land
 /// smoothly instead of in visible 50ms (20fps) batches. Idle, no timer runs.
 const stream_tick_ms: u32 = 33;
+
+/// Redraw cadence the mascot's `loop` mode runs at, ~20fps: one animation
+/// frame and one column of travel per tick, so it crosses a 100-column
+/// terminal in about five seconds. Slower than `stream_tick_ms` on purpose --
+/// this timer runs while the REPL is otherwise *idle*, so every wakeup here is
+/// one the app would not otherwise make, and 20fps is already smooth for an
+/// eleven-frame run cycle.
+const mascot_tick_ms: u32 = 50;
 
 /// Control-strips untrusted text before it can reach a cell (CWE-150).
 ///
@@ -1226,6 +1235,26 @@ const Model = struct {
     /// Counts stream-redraw ticks so the spinner advances every third one
     /// while the transcript itself repaints at the full ~30fps tick rate.
     tick_count: u32 = 0,
+    /// The opt-in mascot (`--mascot`, `tui.mascot`). `.off` claims no rows and
+    /// costs nothing; see `src/tui/mascot.zig`.
+    mascot: mascot.State = .{},
+    /// Whether this model already has a `ctx.tick` pending.
+    ///
+    /// Exists because two things now want a heartbeat -- a streaming turn and
+    /// the mascot's `loop` mode -- and vxfw's timer list holds every tick
+    /// scheduled, with no way to ask whether one is already there. Arming a
+    /// second while the first is pending is not self-correcting: each delivery
+    /// re-arms one, so two pending timers stay two, and the animation runs at
+    /// double speed for the rest of the session. Submitting a task while the
+    /// mascot was already ticking did exactly that.
+    ///
+    /// So: cleared on delivery, set on arm, and consulted by every site that
+    /// might arm one that is already there.
+    timer_armed: bool = false,
+    /// The vaxis handle, for the kitty-graphics transmit. Borrowed from the
+    /// `vxfw.App` that outlives this model; null until `cmdReplVaxis` sets it,
+    /// and null forever when the mascot is off (nothing else needs it).
+    app: ?*vxfw.App = null,
     status_buf: [192]u8 = undefined,
     scroll_buf: [32]u8 = undefined,
     /// The status line's " running <tool>" phase text. A field rather than a
@@ -2076,8 +2105,14 @@ const Model = struct {
         }
         self.thread = try std.Thread.spawn(.{}, runThreadMain, .{RunThreadArgs{ .model = self, .task = owned_task }});
 
-        // Kick off the tick heartbeat that picks up streamed deltas.
-        try ctx.tick(stream_tick_ms, self.widget());
+        // Kick off the tick heartbeat that picks up streamed deltas -- unless
+        // the mascot's own heartbeat is already running, in which case the
+        // tick arm re-aims it at `stream_tick_ms` on its next delivery. Arming
+        // a second one here is what left two timers running forever.
+        if (!self.timer_armed) {
+            self.timer_armed = true;
+            try ctx.tick(stream_tick_ms, self.widget());
+        }
     }
 
     /// Writes the conversation to `state/sessions/<id>.json` so a later
@@ -2501,7 +2536,18 @@ const Model = struct {
         // vxfw stores the Model as *anyopaque on the widget.
         const self: *Model = @ptrCast(@alignCast(ptr));
         switch (event) {
-            .init => try ctx.requestFocus(self.text_field.widget()),
+            .init => {
+                try ctx.requestFocus(self.text_field.widget());
+                // `loop` animates with nothing else going on, so it needs the
+                // first tick of its heartbeat from here; the `.tick` arm
+                // re-arms it after that. `typing` deliberately gets no timer:
+                // a keystroke is already a redraw, and the robot is supposed
+                // to stand still between them.
+                if (self.mascot.mode == .loop) {
+                    self.timer_armed = true;
+                    try ctx.tick(mascot_tick_ms, self.widget());
+                }
+            },
             .tick => {
                 // finishTurn only publishes transcript state. The worker may
                 // still be running Agent.deinit after that, so reclaim it on
@@ -2525,6 +2571,9 @@ const Model = struct {
                 bridge_mutex.lockUncancelable(bridge_io);
                 const still_streaming = bridge_streaming;
                 bridge_mutex.unlock(bridge_io);
+                // This delivery consumed the pending timer. Anything below that
+                // still wants one has to arm it again.
+                self.timer_armed = false;
                 if (still_streaming) {
                     // Redraw at ~30fps so streamed text lands smoothly instead
                     // of in visible 50ms (20fps) batches, but advance the
@@ -2532,7 +2581,26 @@ const Model = struct {
                     // readable ~100ms/step rather than a blur.
                     self.tick_count +%= 1;
                     if (self.tick_count % 3 == 0) self.spinner_frame +%= 1;
-                    try ctx.tick(stream_tick_ms, self.widget());
+                }
+                // Only `loop` is timer-driven. `typing` advances in the draw
+                // path instead, off the redraw a keystroke already causes --
+                // advancing it here as well would step it twice per frame
+                // during a streaming turn and not at all when idle.
+                if (self.mascot.mode == .loop) self.mascot.advance(self.inputLen());
+                // Exactly one timer, at the faster of the rates anything wants:
+                // a streaming turn needs ~30fps for smooth text, the mascot
+                // only 20, and while both are live the stream's rate serves
+                // both (the robot simply runs a little faster while the model
+                // is working, which is not a bad look for it).
+                const want_tick: ?u32 = if (still_streaming)
+                    stream_tick_ms
+                else if (self.mascot.mode == .loop)
+                    mascot_tick_ms
+                else
+                    null;
+                if (want_tick) |ms| {
+                    self.timer_armed = true;
+                    try ctx.tick(ms, self.widget());
                 }
                 ctx.redraw = true;
             },
@@ -2977,6 +3045,37 @@ const Model = struct {
         return self.transcript_bottom -| self.transcript_top;
     }
 
+    /// Bytes currently in the composer. Read straight off the gap buffer's two
+    /// halves rather than via `buf.dupe()`, because the mascot asks for this on
+    /// every frame and does not need to own the text -- only its length.
+    ///
+    /// Bytes, not graphemes: this only feeds the mascot's position, where the
+    /// difference is invisible (a multi-byte character advances the robot a
+    /// little further) and not worth a grapheme walk per frame.
+    fn inputLen(self: *const Model) usize {
+        return self.text_field.buf.firstHalf().len + self.text_field.buf.secondHalf().len;
+    }
+
+    /// Paints the mascot into the rows reserved for it above the input box.
+    ///
+    /// The kitty transmit is resolved here rather than at startup because the
+    /// capability answer to `queryTerminal` is still in flight while the model
+    /// is being built: asking earlier reliably reports no graphics support and
+    /// latches the fallback for the whole session. `ensureGraphics` is a no-op
+    /// after the first call, so this costs one branch per frame.
+    fn drawMascot(self: *Model, surface: vxfw.Surface, row: u16) void {
+        if (self.app) |app| {
+            self.mascot.ensureGraphics(self.gpa, &app.vx, app.tty.writer());
+        }
+        const typed = self.inputLen();
+        // `typing` mode's whole animation clock: it is a no-op unless the
+        // input length changed since the last frame, which is exactly "a key
+        // was pressed". `loop` is stepped by the tick handler instead, and
+        // `advance` ignores this call for that mode.
+        if (self.mascot.mode == .typing) self.mascot.advance(typed);
+        self.mascot.draw(surface, self.mascot.column(surface.size.width, typed), row);
+    }
+
     fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) std.mem.Allocator.Error!vxfw.Surface {
         // vxfw stores the Model as *anyopaque on the widget.
         const self: *Model = @ptrCast(@alignCast(ptr));
@@ -3016,7 +3115,15 @@ const Model = struct {
         const box_h: u16 = 3;
         const box_y = max.height -| box_h;
         const top: u16 = 1;
-        const bottom = box_y -| 1;
+        const frame_bottom = box_y -| 1;
+        // The mascot claims the rows directly above the input box, so it runs
+        // along the box's top border. Rows are *reserved* rather than drawn
+        // over: the transcript ends where the robot begins, so nothing is
+        // occluded and a selection can still reach every visible line.
+        const mascot_on = self.mascot.enabled() and
+            mascot.fits(max.width, frame_bottom -| top);
+        const mascot_row: u16 = frame_bottom -| mascot.rows;
+        const bottom = if (mascot_on) mascot_row else frame_bottom;
         self.transcript_top = top;
         self.transcript_bottom = bottom;
         const avail_rows: u16 = if (bottom > top) bottom - top else 0;
@@ -3220,6 +3327,10 @@ const Model = struct {
         if (self.has_selection) highlightSelection(surface, self.sel_start, self.sel_end);
         if (self.search_open) self.drawSearchBar(surface, rule_style, accent_style);
         if (self.picker_open) self.drawModelPicker(surface, rule_style, tool_style);
+        // Last, and only into rows the transcript was already shortened out
+        // of: drawn earlier, the wrapped-text writers above would paint over
+        // it on any frame where the transcript happened to reach this far.
+        if (mascot_on) self.drawMascot(surface, mascot_row);
         self.last_surface = surface;
 
         surface.children = children;
@@ -4286,7 +4397,53 @@ pub const ReplOptions = struct {
     model: ?[]const u8 = null,
     session: ?[]const u8 = null,
     continue_last: bool = false,
+    /// `--mascot[=<mode>]`, unparsed. Null means the flag was absent, which is
+    /// what lets `tui.mascot` be a real default rather than something the flag
+    /// always overrides with "off".
+    mascot: ?[]const u8 = null,
 };
+
+/// Resolves the mascot mode from the flag and the config key, flag winning.
+///
+/// A spelling neither of them understands is *not* an error: this is an easter
+/// egg, and refusing to open the REPL over it would be a worse trade than
+/// starting without it. The caller reports the fallback on the transcript so
+/// the typo is still visible.
+fn resolveMascot(flag: ?[]const u8, configured: []const u8) struct { mode: mascot.Mode, bad: ?[]const u8 } {
+    if (flag) |text| {
+        return if (mascot.Mode.parse(text)) |m|
+            .{ .mode = m, .bad = null }
+        else
+            .{ .mode = .off, .bad = text };
+    }
+    if (configured.len == 0) return .{ .mode = .off, .bad = null };
+    return if (mascot.Mode.parse(configured)) |m|
+        .{ .mode = m, .bad = null }
+    else
+        .{ .mode = .off, .bad = configured };
+}
+
+test "resolveMascot prefers the flag and tolerates junk from either side" {
+    // Neither set: off, quietly.
+    try std.testing.expectEqual(mascot.Mode.off, resolveMascot(null, "off").mode);
+    try std.testing.expectEqual(mascot.Mode.off, resolveMascot(null, "").mode);
+    // Config alone decides when the flag is absent.
+    try std.testing.expectEqual(mascot.Mode.typing, resolveMascot(null, "type").mode);
+    // The flag wins, in both directions.
+    try std.testing.expectEqual(mascot.Mode.loop, resolveMascot("loop", "off").mode);
+    try std.testing.expectEqual(mascot.Mode.off, resolveMascot("off", "loop").mode);
+    // Bare `--mascot` still beats a config that says off.
+    try std.testing.expectEqual(mascot.Mode.bare_default, resolveMascot("on", "off").mode);
+    // Junk falls back to off and is reported, not swallowed.
+    const bad_flag = resolveMascot("sideways", "loop");
+    try std.testing.expectEqual(mascot.Mode.off, bad_flag.mode);
+    try std.testing.expectEqualStrings("sideways", bad_flag.bad.?);
+    const bad_cfg = resolveMascot(null, "backwards");
+    try std.testing.expectEqual(mascot.Mode.off, bad_cfg.mode);
+    try std.testing.expectEqualStrings("backwards", bad_cfg.bad.?);
+    // A good value reports nothing.
+    try std.testing.expectEqual(@as(?[]const u8, null), resolveMascot("loop", "off").bad);
+}
 
 /// Session ids become path fragments under `state/sessions/`, so only the
 /// same slug shape the rest of clanker accepts is allowed here (alphanumeric,
@@ -4541,6 +4698,13 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         .session_created = session_created,
         .session_title = session_title,
     };
+    // The easter egg. `--mascot` beats `tui.mascot`; both off is the default
+    // and costs nothing beyond one `.off` branch per frame.
+    const mascot_choice = resolveMascot(opts.mascot, cfg.tui.mascot);
+    model.mascot = .{ .mode = mascot_choice.mode };
+    // Only borrowed when there is something to draw, so nothing else in this
+    // model can quietly start depending on a live app handle.
+    if (mascot_choice.mode != .off) model.app = &app;
     for (loaded_messages) |m| {
         // The agent rebuilds its own system prompt per run; a stored one
         // would fight it (same rule as `clanker run --session`).
@@ -4568,6 +4732,18 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     if (model.lines.items.len == 0) {
         model.lines.append(arena, .{
             .text = "Type a task, or /help for commands. Tab completes /commands.",
+            .dim = true,
+        }) catch {};
+    }
+    // Appended after the opening hint so a typo in the mode does not cost the
+    // hint its "nothing has happened yet" test above.
+    if (mascot_choice.bad) |bad| {
+        model.lines.append(arena, .{
+            .text = std.fmt.allocPrint(
+                arena,
+                "[mascot: '{s}' is not one of off, type, loop; mascot is off]",
+                .{bad},
+            ) catch "[mascot: unknown mode; mascot is off]",
             .dim = true,
         }) catch {};
     }
