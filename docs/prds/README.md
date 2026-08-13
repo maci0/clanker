@@ -39,7 +39,7 @@ and Implementation lists checkable file-level phases.
 | [0016](0016-eval-kernel.md) | Eval kernel | Partial | Registry + disabled guest; supervisors open |
 | [0017](0017-dap.md) | DAP | Draft | Needs 0016 subprocess registry |
 | [0018](0018-snapcompact.md) | Snapcompact | Draft | Opt-in; default stays LLM compact |
-| [0019](0019-github-fs.md) | GitHub filesystem | Draft | Dedicated `gh_read` tool |
+| [0019](0019-github-fs.md) | GitHub filesystem | Shipped | `gh_read` + file cache; sqlite still open |
 | [0020](0020-auto-thinking.md) | Auto thinking | Shipped | Opt-in classifier; selects a 0024 row |
 | [0021](0021-smart-commit.md) | Smart commit | Draft | |
 | [0022](0022-out-of-tree-tools.md) | Out-of-tree tools | Shipped | `tools_dir` is a list; last-listed wins |
@@ -54,11 +54,10 @@ and Implementation lists checkable file-level phases.
 Packaging and reliability first, then agent-loop quality, then heavy
 optional subsystems:
 
-1. **0016** then **0017** — eval kernel, then DAP
-2. **0019** — `gh_read`
-3. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
-4. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
-5. **0027** — `write-goal` (field-list blocker still open)
+1. **0016** supervisors / **0017** DAP
+2. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
+3. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
+4. **0027** — `write-goal` (field-list blocker still open)
 
 ## Editing rules (short)
 
