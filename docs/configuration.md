@@ -226,6 +226,8 @@ Run-loop and path settings. The commonly-touched keys:
 | `git_commit` | true | Commit promoted self-improvements with git. |
 | `exec_pattern_allow` | `[]` | Extra `ck_exec` command patterns to permit. |
 | `repl_exec_allow` | `[]` | Extra commands the REPL's `!cmd` escape may run, on top of the union of every tool's `exec_allow`. Widens the escape only, never a tool; the deny tokens and git's verb allowlist still apply. |
+| `worktree` | `auto` | Default worktree isolation for a plain `clanker run` when neither `--worktree` nor `--no-worktree` is given. `yes`/`no` force a default for typed runs; `auto` keeps them unisolated. An explicit flag still wins. |
+| `goal_worktree` | `auto` | Same, but for `--goal` runs and scheduled (`unattended`) runs. `auto` keeps those isolated by default; `yes`/`no` force a default. |
 | `seed` | 0 | RNG seed for reproducibility (`0` = time-seeded). |
 
 ## `[advisor]`

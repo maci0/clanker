@@ -3035,35 +3035,60 @@ fn runIterationBudget(
 /// `--worktree` forces it on, `--no-worktree` forces it off, and an explicit
 /// flag is also what decides whether a failure to create the worktree is fatal;
 /// see the call site.
-fn isolateByDefault(opts: Options) bool {
-    return opts.unattended or opts.goal != null;
+fn isolateByDefault(opts: Options, def: config.WorktreeDefault) bool {
+    return switch (def) {
+        .yes => true,
+        .no => false,
+        .auto => opts.unattended or opts.goal != null,
+    };
 }
 
 test isolateByDefault {
     // Typed, no goal: the two surprises above apply, so no isolation.
-    try std.testing.expect(!isolateByDefault(.{}));
+    try std.testing.expect(!isolateByDefault(.{}, .auto));
     // Fired by the scheduler, or carrying a goal.
-    try std.testing.expect(isolateByDefault(.{ .unattended = true }));
-    try std.testing.expect(isolateByDefault(.{ .goal = "g1" }));
+    try std.testing.expect(isolateByDefault(.{ .unattended = true }, .auto));
+    try std.testing.expect(isolateByDefault(.{ .goal = "g1" }, .auto));
+    // A config default forces isolation either way.
+    try std.testing.expect(isolateByDefault(.{}, .yes));
+    try std.testing.expect(!isolateByDefault(.{ .goal = "g1" }, .no));
+    try std.testing.expect(isolateByDefault(.{ .unattended = true }, .yes));
 }
 
-/// Resolves the flags and the default into one answer. Explicit beats implicit,
-/// and `--worktree` beats `--no-worktree` so a config or wrapper that passes the
-/// negative cannot silently defeat someone asking for isolation by hand.
-fn shouldIsolate(opts: Options) bool {
+/// Resolves the flags and the config default into one answer. Explicit beats
+/// implicit, and `--worktree` beats `--no-worktree` so a config or wrapper that
+/// passes the negative cannot silently defeat someone asking for isolation by
+/// hand. With no flag, the `[agent]` default for this run kind decides:
+/// `goal_worktree` for goal-driven and scheduled runs, `worktree` for a typed
+/// run.
+fn shouldIsolate(opts: Options, cfg: *const config.Config) bool {
     if (opts.worktree) return true;
     if (opts.no_worktree) return false;
-    return isolateByDefault(opts);
+    const def = if (opts.unattended or opts.goal != null)
+        cfg.agent.goal_worktree
+    else
+        cfg.agent.worktree;
+    return isolateByDefault(opts, def);
 }
 
 test shouldIsolate {
-    try std.testing.expect(!shouldIsolate(.{}));
-    try std.testing.expect(shouldIsolate(.{ .worktree = true }));
+    const auto = config.Config{};
+    const force = config.Config{ .agent = .{ .worktree = .yes, .goal_worktree = .yes } };
+    const optout = config.Config{ .agent = .{ .worktree = .no, .goal_worktree = .no } };
+
+    try std.testing.expect(!shouldIsolate(.{}, &auto));
+    try std.testing.expect(shouldIsolate(.{ .goal = "g1" }, &auto));
+    try std.testing.expect(shouldIsolate(.{ .worktree = true }, &auto));
+    // A config `.yes` isolates a plain run by default, `.no` opts a goal out.
+    try std.testing.expect(shouldIsolate(.{}, &force));
+    try std.testing.expect(!shouldIsolate(.{ .goal = "g1" }, &optout));
+    // A flag still wins over the config default.
+    try std.testing.expect(!shouldIsolate(.{ .no_worktree = true }, &force));
     // The default, opted out of.
-    try std.testing.expect(!shouldIsolate(.{ .unattended = true, .no_worktree = true }));
-    try std.testing.expect(!shouldIsolate(.{ .goal = "g1", .no_worktree = true }));
+    try std.testing.expect(!shouldIsolate(.{ .goal = "g1", .no_worktree = true }, &auto));
+    try std.testing.expect(!shouldIsolate(.{ .unattended = true, .no_worktree = true }, &auto));
     // Explicit --worktree wins over an explicit --no-worktree.
-    try std.testing.expect(shouldIsolate(.{ .worktree = true, .no_worktree = true }));
+    try std.testing.expect(shouldIsolate(.{ .worktree = true, .no_worktree = true }, &auto));
 }
 
 fn cmdRun(init: std.process.Init, opts: Options) !void {
@@ -3131,7 +3156,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // and --goal runs would have made clanker unusable outside a git repo,
     // where `git worktree add` cannot succeed at all.
     const isolation_required = opts.worktree;
-    if (shouldIsolate(opts)) isolate: {
+    if (shouldIsolate(opts, &cfg)) isolate: {
         harness_root = std.process.currentPathAlloc(io, arena) catch |err| {
             log.log(.error_, "run --worktree: could not read the current directory: {s}", .{@errorName(err)});
             return err;
