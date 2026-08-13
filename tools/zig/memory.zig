@@ -121,8 +121,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try lib.fail(out, "chunk needs {\"text\": \"...\"}");
             return;
         }
-        const size: usize = @trunc(lib.optNum(obj, "size") orelse 800.0);
-        const overlap: usize = @trunc(lib.optNum(obj, "overlap") orelse 120.0);
+        const size_f: f64 = lib.optNum(obj, "size") orelse 800;
+        const overlap_f: f64 = lib.optNum(obj, "overlap") orelse 120;
+        const size: usize = @trunc(size_f);
+        const overlap: usize = @trunc(overlap_f);
         const cap = @min(size, 800);
         const ov = @min(overlap, 120);
         var chunks: std.ArrayList([]const u8) = .empty;
@@ -150,7 +152,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return;
     }
     if (std.mem.eql(u8, action, "embed")) {
-        const dim: usize = @trunc(lib.optNum(obj, "dim") orelse @as(f64, @floatFromInt(default_dim)));
+        const dim_f: f64 = lib.optNum(obj, "dim") orelse @as(f64, @floatFromInt(default_dim));
+        const dim: usize = @trunc(dim_f);
         const d = @min(@max(dim, 16), 1024);
         var w = lib.writer(out);
         var s = lib.json(&w);
@@ -204,11 +207,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try lib.fail(out, "search needs {\"query\": \"...\"}");
             return;
         }
-        const top_k: usize = @trunc(lib.optNum(obj, "top_k") orelse 5.0);
+        const top_k_f: f64 = lib.optNum(obj, "top_k") orelse 5;
+        const top_k: usize = @trunc(top_k_f);
         const threshold: f32 = @as(f32, @floatCast(lib.optNum(obj, "threshold") orelse 0));
         const mode = lib.optStr(obj, "mode") orelse "vector";
         const use_keyword = std.mem.eql(u8, mode, "keyword");
-        const dim: usize = @trunc(lib.optNum(obj, "dim") orelse @as(f64, @floatFromInt(default_dim)));
+        const dim_f: f64 = lib.optNum(obj, "dim") orelse @as(f64, @floatFromInt(default_dim));
+        const dim: usize = @trunc(dim_f);
         const d = @min(@max(dim, 16), 1024);
         var qvec: ?[]f32 = null;
         if (!use_keyword) {
