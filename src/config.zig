@@ -271,6 +271,15 @@ pub const Agent = struct {
     /// provider by `cost_per_1m_input`, then first alphabetically.
     thinking_classifier_model: []const u8 = "",
     thinking_classifier_timeout_ms: u32 = 3000,
+    /// Default worktree isolation for a plain typed `clanker run` (not
+    /// goal-driven, not scheduled). `auto` keeps the historical behaviour:
+    /// off for a run at the terminal. `yes`/`no` force the default without an
+    /// explicit `--worktree`/`--no-worktree`; an explicit flag still wins.
+    worktree: WorktreeDefault = .auto,
+    /// Same, but for `--goal` runs and scheduled (`unattended`) runs, which
+    /// have historically isolated by default. `auto` keeps that; `yes`/`no`
+    /// force a default.
+    goal_worktree: WorktreeDefault = .auto,
 };
 
 /// Persistent eval kernels (PRD 0016). Off by default: a kernel is an
@@ -334,10 +343,17 @@ pub const AgentFields = struct {
     auto_thinking: bool = false,
     thinking_classifier_model: bool = false,
     thinking_classifier_timeout_ms: bool = false,
+    worktree: bool = false,
+    goal_worktree: bool = false,
 };
 
 /// Who must approve a write-capable tool call before it runs.
 pub const ConfirmWrites = enum { never, browser, always };
+
+/// Default worktree isolation when the CLI flag is not given. `auto` keeps
+/// each command kind's historical default (off for a plain run, on for
+/// goal/scheduled runs); `yes`/`no` force a default for that kind.
+pub const WorktreeDefault = enum { auto, yes, no };
 
 pub const Improve = struct {
     /// null (or 0 in the file) means the engine sizes the context from the
@@ -1311,7 +1327,8 @@ pub const Config = struct {
             "exec_pattern_allow",        "repl_exec_allow",                "seed",
             "ask_timeout_seconds",       "confirm_writes",                 "provider_check_timeout_seconds",
             "fallback_provider",         "fallback_providers",             "auto_thinking",
-            "thinking_classifier_model", "thinking_classifier_timeout_ms",
+            "thinking_classifier_model", "thinking_classifier_timeout_ms", "worktree",
+            "goal_worktree",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -1475,6 +1492,18 @@ pub const Config = struct {
             a.thinking_classifier_timeout_ms = try jsonUnsigned(u32, k, "thinking_classifier_timeout_ms");
             f.thinking_classifier_timeout_ms = true;
         }
+        if (obj.get("worktree")) |k| {
+            const s = try jsonStr(k, "worktree");
+            a.worktree = std.meta.stringToEnum(WorktreeDefault, s) orelse
+                return error.WorktreeDefaultInvalid;
+            f.worktree = true;
+        }
+        if (obj.get("goal_worktree")) |k| {
+            const s = try jsonStr(k, "goal_worktree");
+            a.goal_worktree = std.meta.stringToEnum(WorktreeDefault, s) orelse
+                return error.GoalWorktreeDefaultInvalid;
+            f.goal_worktree = true;
+        }
         return .{ .agent = a, .fields = f };
     }
 
@@ -1507,6 +1536,8 @@ pub const Config = struct {
         if (fields.auto_thinking) dst.auto_thinking = src.auto_thinking;
         if (fields.thinking_classifier_model) dst.thinking_classifier_model = src.thinking_classifier_model;
         if (fields.thinking_classifier_timeout_ms) dst.thinking_classifier_timeout_ms = src.thinking_classifier_timeout_ms;
+        if (fields.worktree) dst.worktree = src.worktree;
+        if (fields.goal_worktree) dst.goal_worktree = src.goal_worktree;
     }
 
     fn applyModulesFields(dst: *Modules, src: Modules, fields: ModulesFields) void {
@@ -2116,6 +2147,64 @@ test "confirm_writes parses its three values and rejects anything else" {
     try std.testing.expectError(error.ConfirmWritesInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
 }
 
+test "worktree and goal_worktree parse and default to auto" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "ollama"
+        \\
+        \\[providers.ollama]
+        \\base_url = "http://127.0.0.1:11434/v1"
+        \\
+        \\[models."ollama/llama3.1"]
+        \\provider = "ollama"
+        \\
+        \\[agent]
+        \\worktree = "yes"
+        \\goal_worktree = "no"
+        \\
+        ,
+    });
+    const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(WorktreeDefault.yes, cfg.agent.worktree);
+    try std.testing.expectEqual(WorktreeDefault.no, cfg.agent.goal_worktree);
+
+    // Left out, both default to auto (the historical per-run-kind behaviour).
+    try std.testing.expectEqual(WorktreeDefault.auto, (Agent{}).worktree);
+    try std.testing.expectEqual(WorktreeDefault.auto, (Agent{}).goal_worktree);
+
+    // A typo must fail the load rather than silently isolate differently.
+    try dir.writeFile(io, .{
+        .sub_path = "bad.toml",
+        .data =
+        \\default_provider = "ollama"
+        \\
+        \\[providers.ollama]
+        \\base_url = "http://127.0.0.1:11434/v1"
+        \\
+        \\[models."ollama/llama3.1"]
+        \\provider = "ollama"
+        \\
+        \\[agent]
+        \\worktree = "sometimes"
+        \\
+        ,
+    });
+    try std.testing.expectError(error.WorktreeDefaultInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
+}
+
 test "agent.fallback_provider parses and is not reset by a partial local override" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -2706,6 +2795,71 @@ test "agent.repl_exec_allow parses, defaults empty, and rejects a non-array" {
     });
     try std.testing.expectError(
         error.ReplExecAllowNotArray,
+        Config.load(io, arena3.allocator(), tmp3.dir, "config.toml", "config.local.toml"),
+    );
+}
+
+test "agent.worktree and goal_worktree parse and reject bad values" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\agent = { worktree = "yes", goal_worktree = "no" }
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(WorktreeDefault.yes, cfg.agent.worktree);
+    try std.testing.expectEqual(WorktreeDefault.no, cfg.agent.goal_worktree);
+
+    // Absent: both default to auto (run off, goal/scheduled on).
+    var arena2 = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena2.deinit();
+    var tmp2 = std.testing.tmpDir(.{});
+    defer tmp2.cleanup();
+    try tmp2.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        ,
+    });
+    const cfg2 = try Config.load(
+        io,
+        arena2.allocator(),
+        tmp2.dir,
+        "config.toml",
+        "config.local.toml",
+    );
+    try std.testing.expectEqual(WorktreeDefault.auto, cfg2.agent.goal_worktree);
+
+    // A bad value fails loudly rather than silently falling back.
+    var arena3 = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena3.deinit();
+    var tmp3 = std.testing.tmpDir(.{});
+    defer tmp3.cleanup();
+    try tmp3.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\agent = { worktree = "sometimes" }
+        ,
+    });
+    try std.testing.expectError(
+        error.WorktreeDefaultInvalid,
         Config.load(io, arena3.allocator(), tmp3.dir, "config.toml", "config.local.toml"),
     );
 }
