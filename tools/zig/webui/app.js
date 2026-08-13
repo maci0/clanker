@@ -2100,8 +2100,8 @@ function loadRun(id) {
     })
     .catch(function (err) {
       var msg = err && err.message ? err.message : "unknown error";
-      showRunsError(msg === "no such run"
-        ? "No run by that id. Open Runs to pick one."
+      showRunsError(msg === "graph read failed"
+        ? "Could not load that run. It may have been removed; open Runs to pick another."
         : "Could not load that run: " + msg);
     });
 }

@@ -149,25 +149,16 @@ pub fn main(init: std.process.Init) !void {
             log.log(.error_, "out of memory", .{});
             std.process.exit(1);
         }
-        var suggested = false;
         switch (err) {
             error.MissingTask => cli.printUsageError(init.io, "`clanker run` needs a task: clanker run \"fix the build\" (or just clanker \"fix the build\")", .{}),
-            error.UnknownCommand => {
-                if (cli.suggestCommand(diag)) |suggestion| {
-                    cli.printUsageError(init.io, "unknown command '{s}'; did you mean `clanker {s}`?", .{ diag, suggestion });
-                    suggested = true;
-                } else {
-                    cli.printUsageError(init.io, "unknown command '{s}' (see the command list below)", .{diag});
-                }
-            },
-            error.UnknownArg => {
-                if (cli.suggestFlag(diag)) |suggestion| {
-                    cli.printUsageError(init.io, "unrecognized argument '{s}'; did you mean `{s}`?", .{ diag, suggestion });
-                    suggested = true;
-                } else {
-                    cli.printUsageError(init.io, "unrecognized argument '{s}'", .{diag});
-                }
-            },
+            error.UnknownCommand => if (cli.suggestCommand(diag)) |suggestion|
+                cli.printUsageError(init.io, "unknown command '{s}'; did you mean `clanker {s}`?", .{ diag, suggestion })
+            else
+                cli.printUsageError(init.io, "unknown command '{s}' (see the command list below)", .{diag}),
+            error.UnknownArg => if (cli.suggestFlag(diag)) |suggestion|
+                cli.printUsageError(init.io, "unrecognized argument '{s}'; did you mean `{s}`?", .{ diag, suggestion })
+            else
+                cli.printUsageError(init.io, "unrecognized argument '{s}'", .{diag}),
             error.MissingArg => if (std.mem.eql(u8, diag, "export"))
                 cli.printUsageError(init.io, "clanker session needs `export <id>`; to list conversations run `clanker sessions`", .{})
             else if (std.mem.eql(u8, diag, "conversation id"))
@@ -200,9 +191,7 @@ pub fn main(init: std.process.Init) !void {
             error.PromptLooksLikeCommand => cli.printUsageError(init.io, "'{s}' looks like a quoted command; drop the quotes to run it, or use `clanker run \"{s}\"` to submit it as a task", .{ diag, diag }),
             error.OutOfMemory => unreachable,
         }
-        // A did-you-mean already names the next keystroke. Repeating
-        // `clanker --help` after it just restates the command list.
-        if (!suggested) cli.printUsageHint(init.io);
+        cli.printUsageHint(init.io);
         // Usage errors (bad/missing args) are the caller's fault, not
         // clanker's: exit nonzero so scripts and `&&` chains don't mistake a
         // rejected invocation for success.
@@ -246,7 +235,6 @@ pub fn main(init: std.process.Init) !void {
             error.UnknownProvider => "no provider by that name in config.toml; run `clanker providers check` for the list",
             error.ProviderCheckFailed => "provider check failed; run `clanker doctor` to diagnose",
             error.InvalidSessionId => "no session by that id; run `clanker sessions` for the list",
-            error.NotFound => "no such run; run `clanker graph` to list them",
             error.ImprovementNotFound => "no improvement by that id; they look like imp-... in state/improvements.jsonl",
             error.ToolFailed => "the internal tool returned an error; run `clanker doctor` to check the build",
             error.ToolBadOutput => "the internal tool returned unreadable output; run `clanker doctor` to check the build",
