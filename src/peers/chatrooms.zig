@@ -632,13 +632,13 @@ const PeerCooldown = struct {
     down_since_ns: i128 = 0, // 0 = up
 };
 
-var cooldown_mutex: std.Thread.Mutex = .{};
+var cooldown_mutex: std.Io.Mutex = .init;
 var peer_cooldowns: ?std.ArrayList(PeerCooldown) = null;
 
 /// True when `name` is still inside its backoff window.
 fn inCooldown(io: std.Io, name: []const u8) bool {
-    cooldown_mutex.lock();
-    defer cooldown_mutex.unlock();
+    cooldown_mutex.lockUncancelable(io);
+    defer cooldown_mutex.unlock(io);
     const list = peer_cooldowns orelse return false;
     for (list.items) |*c| {
         if (!std.mem.eql(u8, c.name, name)) continue;
@@ -652,10 +652,10 @@ fn inCooldown(io: std.Io, name: []const u8) bool {
 
 /// Record a failed delivery; returns the backoff window in seconds (0 if the
 /// cooldown slot could not be allocated).
-fn recordFailure(gpa: std.mem.Allocator, name: []const u8, now: i128) i64 {
-    cooldown_mutex.lock();
-    defer cooldown_mutex.unlock();
-    if (peer_cooldowns == null) peer_cooldowns = std.ArrayList(PeerCooldown).init(gpa);
+fn recordFailure(io: std.Io, gpa: std.mem.Allocator, name: []const u8, now: i128) i64 {
+    cooldown_mutex.lockUncancelable(io);
+    defer cooldown_mutex.unlock(io);
+    if (peer_cooldowns == null) peer_cooldowns = .empty;
     const list = &peer_cooldowns.?;
     for (list.items) |*c| {
         if (!std.mem.eql(u8, c.name, name)) continue;
@@ -669,9 +669,9 @@ fn recordFailure(gpa: std.mem.Allocator, name: []const u8, now: i128) i64 {
 
 /// Record a successful delivery; clears any cooldown for `name`. Returns true
 /// when the peer was previously down (a recovery worth noting).
-fn recordSuccess(name: []const u8) bool {
-    cooldown_mutex.lock();
-    defer cooldown_mutex.unlock();
+fn recordSuccess(io: std.Io, name: []const u8) bool {
+    cooldown_mutex.lockUncancelable(io);
+    defer cooldown_mutex.unlock(io);
     const list = peer_cooldowns orelse return false;
     for (list.items) |*c| {
         if (!std.mem.eql(u8, c.name, name)) continue;
@@ -747,7 +747,7 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg
             .headers = .{ .content_type = .{ .override = "application/json" }, .user_agent = .{ .override = "clanker/" ++ build_options.version } },
             .response_writer = &rw,
         }) catch |err| {
-            const window_s = recordFailure(gpa, peer.name, std.Io.Timestamp.now(io, .real).nanoseconds);
+            const window_s = recordFailure(io, gpa, peer.name, std.Io.Timestamp.now(io, .real).nanoseconds);
             if (window_s > 0) {
                 log.log(.error_, "chat to '{s}' failed: {s}; marking peer down, backing off {d}s", .{ peer.name, @errorName(err), window_s });
             } else {
@@ -760,7 +760,7 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg
         // worth surfacing at the default log level; a status code is enough to
         // know the send worked, and skipping the body keeps a peer echoing
         // message text (or anything else) out of this instance's logs.
-        if (recordSuccess(peer.name)) {
+        if (recordSuccess(io, peer.name)) {
             log.log(.info, "chat {s}: HTTP {d} (peer back up)", .{ peer.name, @intFromEnum(status) });
         } else {
             log.log(.info, "chat {s}: HTTP {d}", .{ peer.name, @intFromEnum(status) });
@@ -1268,20 +1268,20 @@ test "down-peer backoff grows, caps, and recovers on success" {
     const io = threaded.io();
 
     // Clear any cooldown state a prior test in this process may have left.
-    cooldown_mutex.lock();
+    cooldown_mutex.lockUncancelable(io);
     if (peer_cooldowns) |*l| l.clearRetainingCapacity();
-    cooldown_mutex.unlock();
+    cooldown_mutex.unlock(io);
 
     const now = std.Io.Timestamp.now(io, .real).nanoseconds;
     try std.testing.expect(!inCooldown(io, "down-peer"));
-    try std.testing.expectEqual(@as(i64, 5), recordFailure(std.testing.allocator, "down-peer", now));
+    try std.testing.expectEqual(@as(i64, 5), recordFailure(io, std.testing.allocator, "down-peer", now));
     try std.testing.expect(inCooldown(io, "down-peer"));
 
     // A second consecutive failure doubles the window.
-    try std.testing.expectEqual(@as(i64, 10), recordFailure(std.testing.allocator, "down-peer", now));
+    try std.testing.expectEqual(@as(i64, 10), recordFailure(io, std.testing.allocator, "down-peer", now));
 
     // A successful delivery clears the cooldown and reports recovery once.
-    try std.testing.expect(recordSuccess("down-peer"));
+    try std.testing.expect(recordSuccess(io, "down-peer"));
     try std.testing.expect(!inCooldown(io, "down-peer"));
-    try std.testing.expect(!recordSuccess("down-peer"));
+    try std.testing.expect(!recordSuccess(io, "down-peer"));
 }
