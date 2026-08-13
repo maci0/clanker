@@ -472,6 +472,10 @@ clanker serve --host 0.0.0.0 --serve-as clanker.lan --proxy
 # pair with [serve].proxy_token_env so the LAN bind is not an open relay
 ```
 
+**Dependencies.** Soft: PRD 0025 (fallback chain) is intentionally *not* on the proxy path — see Open questions. Hard: ADR 0004 / 0005 (native provider vtable + auth axis), existing `cmdServe` / `resolveListen` / Host+CSRF trust model in `src/cli.zig`, provider `authHeaders` / `endpointUrl` vtable, `src/stats/tokens.zig` for usage recording. No other Draft PRD blocks starting PR 1 of the PR Plan.
+
+**Implementation.** Phased as four reviewable PRs under **PR Plan** below (listen/flags → discovery/routing → 1:1 forward+token+deadlines → token_stats/e2e/docs). Surface stays off by default until PR 3 mounts `/proxy/v1` *and* the token check in the same change.
+
 ## Key Decisions
 
 1. **`serve --proxy` + `--proxy-port`, not `clanker proxy`.** The binding docs and `Serve` comments already reserved a named port next to `webui_port` and a shared `--host`. A second command would duplicate Host/CSRF/hot-reload and leave `clanker serve` users running two processes to get one machine's UI plus one machine's SDK endpoint.
@@ -750,12 +754,7 @@ Traceable to Goals. All unchecked: nothing is built.
 
 ## Open questions / future work
 
-**Decided.**
-
-- **Vertex discovery.** Asked: hide `vertex_anthropic` from Anthropic `GET …/v1/models`, or advertise and let Vertex 400 a body that lacks `anthropic_version`? Operator chose: advertise, do not transcode.
-- **Listen default.** Asked: dedicated `--proxy-port 17922` vs same socket as the web UI. Operator chose: same port, mount at `/proxy/v1/*` so an SDK `baseURL` ending in `/proxy` is not sitting on `/api/run`. `/api/*` stays. Dedicated `--proxy-port` remains opt-in with `/v1` at the root.
-
-**Still open.**
+Vertex discovery (advertise, do not transcode) and listen default (shared socket + `/proxy/v1`, optional dedicated `--proxy-port`) are decided in Key Decisions / Design — not repeated here.
 
 - **Live `/models` for empty `Provider.models`.** `handleProviders` already fetches live ids for ollama-style providers. Doing the same on `GET …/v1/models` would make discovery match the picker, at the cost of a networked, non-deterministic list and a third caller of that fetch. Left out on purpose. A follow-up can share `writeLiveModels` if operators actually miss it.
 

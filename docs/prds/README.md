@@ -46,6 +46,7 @@ and Implementation lists checkable file-level phases.
 | [0023](0023-webui-model-config.md) | Web UI model config | Draft | Read half shipped; write half open |
 | [0024](0024-sampling-profiles.md) | Sampling profiles | Draft | After 0025 |
 | [0025](0025-fallback-provider-chain.md) | Fallback provider chain | Draft | Before 0024 |
+| [0026](0026-llm-proxy.md) | LLM compatibility proxy | Draft | Independent of agent-loop drafts; four-PR plan |
 
 ## Recommended build order (Drafts)
 
@@ -62,6 +63,7 @@ optional subsystems:
 8. **0016** then **0017** — eval kernel, then DAP
 9. **0019** — `gh_read`
 10. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
+11. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
 
 ## Editing rules (short)
 
