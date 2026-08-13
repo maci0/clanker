@@ -3290,12 +3290,108 @@ fn drawScrollbar(surface: vxfw.Surface, col: u16, top: u16, bottom: u16, start: 
     }
 }
 
+/// One screen cell's worth of text: a base codepoint plus any zero-width
+/// codepoints that follow it, and the columns it occupies.
+const Cell = struct { bytes: []const u8, width: u16 };
+
+/// Walks `text` one cell at a time from `i`, which is advanced past the cell.
+///
+/// Two things the plain codepoint loop this replaces got wrong. A CJK
+/// ideograph is two columns, not one, so writing it as `.width = 1` told
+/// vaxis the terminal's cursor had advanced one column when it had advanced
+/// two; vaxis's frame diff then addressed every later cell on the row one
+/// column off, which is visible as smeared or duplicated text rather than a
+/// tidy misalignment. And a combining mark is zero columns, so emitting it as
+/// its own cell pushed the rest of the line right and left the accent
+/// floating over a space instead of over its base letter.
+///
+/// Both are fixed by measuring with `width_mod` (the same table `lineRows`
+/// already reserves rows with, so layout and render finally agree) and by
+/// absorbing trailing zero-width codepoints into the preceding cell. The
+/// absorbed slice is contiguous in `text`, so this stays allocation-free and
+/// borrows the caller's buffer, which is what `writeWrapped` and friends need.
+///
+/// A stray leading mark with no base gets a cell of its own rather than being
+/// dropped: losing bytes is worse than one odd-looking column.
+fn nextCell(text: []const u8, i: *usize) ?Cell {
+    if (i.* >= text.len) return null;
+    const start = i.*;
+    var it: std.unicode.Utf8Iterator = .{ .bytes = text, .i = i.* };
+    const base = it.nextCodepointSlice() orelse return null;
+    i.* = it.i;
+    var w: u16 = @intCast(width_mod.displayWidth(base));
+    if (w == 0) w = 1;
+    while (i.* < text.len) {
+        var peek: std.unicode.Utf8Iterator = .{ .bytes = text, .i = i.* };
+        const next = peek.nextCodepointSlice() orelse break;
+        if (width_mod.displayWidth(next) != 0) break;
+        i.* = peek.i;
+    }
+    return .{ .bytes = text[start..i.*], .width = w };
+}
+
+test "nextCell measures wide codepoints and keeps combining marks with their base" {
+    var i: usize = 0;
+    // ASCII: one cell, one column.
+    const ascii = nextCell("ab", &i).?;
+    try std.testing.expectEqualStrings("a", ascii.bytes);
+    try std.testing.expectEqual(@as(u16, 1), ascii.width);
+    try std.testing.expectEqual(@as(usize, 1), i);
+
+    // CJK: one cell, two columns. This is the case that desynced vaxis.
+    i = 0;
+    const cjk = nextCell("\xe4\xb8\xad", &i).?; // 中
+    try std.testing.expectEqual(@as(u16, 2), cjk.width);
+    try std.testing.expectEqualStrings("\xe4\xb8\xad", cjk.bytes);
+    try std.testing.expectEqual(@as(usize, 3), i);
+
+    // "e" + U+0301 combining acute is one cell of one column, carrying both
+    // codepoints, so the accent lands on the letter and nothing shifts right.
+    i = 0;
+    const accented = nextCell("e\xcc\x81x", &i).?;
+    try std.testing.expectEqual(@as(u16, 1), accented.width);
+    try std.testing.expectEqualStrings("e\xcc\x81", accented.bytes);
+    // ...and the walk resumes at the next base letter.
+    const after = nextCell("e\xcc\x81x", &i).?;
+    try std.testing.expectEqualStrings("x", after.bytes);
+
+    // A mark with no base still gets a cell rather than vanishing.
+    i = 0;
+    const orphan = nextCell("\xcc\x81", &i).?;
+    try std.testing.expectEqual(@as(u16, 1), orphan.width);
+
+    // Walking to the end terminates.
+    i = 0;
+    var seen: usize = 0;
+    while (nextCell("a\xe4\xb8\xadb", &i)) |_| seen += 1;
+    try std.testing.expectEqual(@as(usize, 3), seen);
+    try std.testing.expectEqual(@as(?Cell, null), nextCell("abc", &i));
+}
+
+test "a row of CJK occupies the columns lineRows reserved for it" {
+    // The invariant the old renderer broke: what nextCell reports summed over
+    // a line must equal what lineRows measured when reserving space for it.
+    const line = "\xe4\xb8\xad\xe6\x96\x87 mixed \xe4\xb8\xad"; // 中文 mixed 中
+    var i: usize = 0;
+    var cols: usize = 0;
+    while (nextCell(line, &i)) |c| cols += c.width;
+    try std.testing.expectEqual(width_mod.displayWidth(line), cols);
+    // 3 CJK glyphs at 2 columns each, plus " mixed " at 7.
+    try std.testing.expectEqual(@as(usize, 13), cols);
+    // Wide enough for the whole line: one row. Narrower: it wraps, and the
+    // wrap point is the same one the renderer will use.
+    try std.testing.expectEqual(@as(usize, 1), lineRows(line, 20));
+    try std.testing.expectEqual(@as(usize, 2), lineRows(line, 10));
+}
+
 fn writeRowAt(surface: vxfw.Surface, row: u16, col: *u16, text: []const u8, style: vaxis.Style) void {
-    var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
-    while (it.nextCodepointSlice()) |cp| {
-        if (col.* >= surface.size.width) break;
-        surface.writeCell(col.*, row, .{ .char = .{ .grapheme = cp, .width = 1 }, .style = style });
-        col.* += 1;
+    var i: usize = 0;
+    while (nextCell(text, &i)) |c| {
+        // A wide glyph needs both its columns inside the surface; half of one
+        // in the last column would be written as a truncated cell.
+        if (col.* + c.width > surface.size.width) break;
+        surface.writeCell(col.*, row, .{ .char = .{ .grapheme = c.bytes, .width = @intCast(c.width) }, .style = style });
+        col.* += c.width;
     }
 }
 
@@ -3448,10 +3544,10 @@ fn writeWrappedSegments(ctx: vxfw.DrawContext, surface: vxfw.Surface, row: *u16,
 fn writeWrappedCard(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text: []const u8, style: vaxis.Style) void {
     if (width < 8) return writeWrapped(surface, row, bottom, width, text, style);
     var col: u16 = 0;
-    var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
-    while (it.nextCodepointSlice()) |cp| {
+    var i: usize = 0;
+    while (nextCell(text, &i)) |c| {
         if (row.* >= bottom) break;
-        if (std.mem.eql(u8, cp, "\n")) {
+        if (std.mem.eql(u8, c.bytes, "\n")) {
             // Card lines are single-line by construction (cardPreview
             // flattens newlines); handled anyway so a stray one degrades
             // like writeWrapped instead of overprinting.
@@ -3459,7 +3555,7 @@ fn writeWrappedCard(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, t
             col = 0;
             continue;
         }
-        if (col >= width) {
+        if (col + c.width > width) {
             row.* += 1;
             col = 0;
             if (row.* >= bottom) break;
@@ -3469,8 +3565,8 @@ fn writeWrappedCard(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, t
                 col += 1;
             }
         }
-        surface.writeCell(col, row.*, .{ .char = .{ .grapheme = cp, .width = 1 }, .style = style });
-        col += 1;
+        surface.writeCell(col, row.*, .{ .char = .{ .grapheme = c.bytes, .width = @intCast(c.width) }, .style = style });
+        col += c.width;
     }
 }
 
@@ -3480,21 +3576,24 @@ fn writeWrappedCard(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, t
 /// to a single row); MdStream-quality wrapping is follow-up work.
 fn writeWrapped(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text: []const u8, style: vaxis.Style) void {
     var col: u16 = 0;
-    var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
-    while (it.nextCodepointSlice()) |cp| {
+    var i: usize = 0;
+    while (nextCell(text, &i)) |c| {
         if (row.* >= bottom) break;
-        if (std.mem.eql(u8, cp, "\n")) {
+        if (std.mem.eql(u8, c.bytes, "\n")) {
             row.* += 1;
             col = 0;
             continue;
         }
-        if (col >= width) {
+        // `col + c.width > width`, not `col >= width`: a two-column glyph
+        // that only half fits wraps whole rather than being written across
+        // the boundary. This is the same wrap point `lineRows` counts with.
+        if (col + c.width > width) {
             row.* += 1;
             col = 0;
             if (row.* >= bottom) break;
         }
-        surface.writeCell(col, row.*, .{ .char = .{ .grapheme = cp, .width = 1 }, .style = style });
-        col += 1;
+        surface.writeCell(col, row.*, .{ .char = .{ .grapheme = c.bytes, .width = @intCast(c.width) }, .style = style });
+        col += c.width;
     }
 }
 
