@@ -80,6 +80,7 @@ test "json field helpers" {
     try std.testing.expectError(error.MissingField, boolField(obj, "missing"));
 
     try std.testing.expectEqual(@as(f64, 1.5), try floatField(obj, "ratio"));
+    try std.testing.expectEqual(@as(f64, 3.0), try floatField(obj, "count"));
     try std.testing.expectError(error.FieldNotNumber, floatField(obj, "name"));
     try std.testing.expectError(error.MissingField, floatField(obj, "missing"));
 }

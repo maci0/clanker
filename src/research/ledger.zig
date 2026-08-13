@@ -102,10 +102,14 @@ test "isBetter respects direction" {
     try std.testing.expect(!isBetter(2.0, 1.0, "min"));
     try std.testing.expect(isBetter(2.0, 1.0, "max"));
     try std.testing.expect(!isBetter(0.5, 1.0, "max"));
+    // equal values are not better in either direction
+    try std.testing.expect(!isBetter(1.0, 1.0, "min"));
+    try std.testing.expect(!isBetter(1.0, 1.0, "max"));
 }
 test "tail keeps last lines" {
     try std.testing.expectEqualStrings("hello", tail("hello", 10));
-    try std.testing.expect(tail("a\nb\nc\nd\ne\nf", 4).len <= 4 or std.mem.find(u8, tail("a\nb\nc\nd\ne\nf", 4), "\n") != null);
+    try std.testing.expectEqualStrings("f", tail("a\nb\nc\nd\ne\nf", 4));
+    try std.testing.expectEqualStrings("e\nf", tail("a\nb\nc\nd\ne\nf", 5));
 }
 test "bestMetric reads ledger" {
     const gpa = std.testing.allocator;

@@ -82,6 +82,7 @@ test "engine records and summarizes findings" {
     try std.testing.expect(std.mem.find(u8, sum, "entry point") != null);
     try std.testing.expect(std.mem.find(u8, sum, "(src/main.zig)") != null);
     try std.testing.expect(std.mem.find(u8, sum, "standalone note") != null);
+    try std.testing.expect(std.mem.find(u8, sum, "()") == null);
 }
 
 test "empty engine summarizes to empty string" {
