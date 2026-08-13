@@ -983,18 +983,24 @@ fn scheduleSubArity(sub: []const u8) ?u8 {
     return null;
 }
 
+/// Spellings `specs` usage strings do not start with. Aliases cannot be
+/// expressed with stringToEnum, so this is a StaticStringMap like
+/// `log.Level.fromStr`.
+const command_aliases = std.StaticStringMap(Command).initComptime(.{
+    .{ "prune", .prune },
+    .{ "janitor", .prune },
+    .{ "provide", .providers_check },
+    .{ "workflows", .workflow },
+    .{ "plugin", .plugins },
+    .{ "history", .sessions },
+});
+
 fn commandForHelp(name: []const u8) ?Command {
     for (&specs) |*s| {
         const end = std.mem.findAny(u8, s.usage, " [") orelse s.usage.len;
         if (std.mem.eql(u8, name, s.usage[0..end])) return s.command;
     }
-    if (std.mem.eql(u8, name, "prune")) return .prune;
-    if (std.mem.eql(u8, name, "janitor")) return .prune;
-    if (std.mem.eql(u8, name, "provide")) return .providers_check;
-    if (std.mem.eql(u8, name, "workflows")) return .workflow;
-    if (std.mem.eql(u8, name, "plugin")) return .plugins;
-    if (std.mem.eql(u8, name, "history")) return .sessions;
-    return null;
+    return command_aliases.get(name);
 }
 
 /// The whole command list, grouped. Rendered from `specs` so a new command
@@ -4123,6 +4129,14 @@ fn cmdMcp(init: std.process.Init, opts: Options) !void {
     try mcp.serve(io, gpa, arena, &cfg, init.environ_map);
 }
 
+/// Closed spellings of "turn subscription on". Anything else is off.
+const subscribe_on = std.StaticStringMap(void).initComptime(.{
+    .{ "true", {} },
+    .{ "on", {} },
+    .{ "1", {} },
+    .{ "yes", {} },
+});
+
 fn cmdChat(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
@@ -4166,10 +4180,7 @@ fn cmdChat(init: std.process.Init, opts: Options) !void {
         }
         if (msgs.len == 0) try out.writeStreamingAll(io, "(no messages)\n");
     } else if (std.mem.eql(u8, opts.chat_sub, "subscribe")) {
-        const on = if (opts.message) |m|
-            (std.mem.eql(u8, m, "true") or std.mem.eql(u8, m, "on") or std.mem.eql(u8, m, "1") or std.mem.eql(u8, m, "yes"))
-        else
-            true;
+        const on = if (opts.message) |m| subscribe_on.get(m) != null else true;
         try chatrooms.subscribe(base, io, gpa, arena, state_dir, opts.room.?, on);
         const line = try std.fmt.allocPrint(arena, "{s} {s}\n", .{ if (on) "subscribed to" else "unsubscribed from", opts.room.? });
         try out.writeStreamingAll(io, line);
@@ -5843,9 +5854,11 @@ fn runStreamDelta(delta: []const u8) void {
 /// "tool ran" / "turn finished" events apart from literal answer text without
 /// a second connection or a heavier framing format.
 const stream_event_prefix = "\x01";
+const stream_event_cap = 4096;
+const stream_tool_call_cap = 8192;
 
 fn writeStreamEvent(fd: std.posix.fd_t, event_type: []const u8, extra: anytype) void {
-    var buf: [4096]u8 = undefined;
+    var buf: [stream_event_cap]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     w.writeAll(stream_event_prefix) catch return;
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -5872,7 +5885,7 @@ fn runStreamToolCall(calls: []const types.ToolCall) void {
     // `calls` carries each call's arguments (truncated) alongside the joined
     // `names` line, so the web UI can render a collapsible row per batch: the
     // summary stays the one-line "what ran", the body shows what it ran WITH.
-    var buf: [8192]u8 = undefined;
+    var buf: [stream_tool_call_cap]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     w.writeAll(stream_event_prefix) catch return;
     var s = std.json.Stringify{ .writer = &w, .options = .{} };

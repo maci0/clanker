@@ -2825,7 +2825,8 @@ const Model = struct {
             .drag => {
                 if (!self.mouse_down) return;
                 self.sel_end = .{ .row = row, .col = col };
-                self.has_selection = !std.meta.eql(self.sel_start, self.sel_end);
+                self.has_selection = self.sel_start.row != self.sel_end.row or
+                    self.sel_start.col != self.sel_end.col;
                 ctx.redraw = true;
             },
             .release => {
