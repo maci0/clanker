@@ -2770,13 +2770,13 @@ const Model = struct {
             pending_ask.picked = picked;
             line = switch (pending_ask.kind) {
                 .ask => if (picked) |i|
-                    std.fmt.allocPrint(bridge_gpa, "[ask: picked \"{s}\"]", .{pending_ask.options[i]}) catch null
+                    std.fmt.allocPrint(bridge_gpa, "notice: selected \"{s}\"", .{pending_ask.options[i]}) catch null
                 else
-                    bridge_gpa.dupe(u8, "[ask: declined]") catch null,
+                    bridge_gpa.dupe(u8, "notice: question declined") catch null,
                 .confirm => if (picked != null and picked.? == 0)
-                    bridge_gpa.dupe(u8, "[confirm: allowed]") catch null
+                    bridge_gpa.dupe(u8, "notice: confirmation allowed") catch null
                 else
-                    bridge_gpa.dupe(u8, "[confirm: denied]") catch null,
+                    bridge_gpa.dupe(u8, "notice: confirmation denied") catch null,
             };
             _ = std.c.pthread_cond_broadcast(&ask_cond);
         }

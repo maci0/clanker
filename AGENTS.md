@@ -57,7 +57,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   host-absolute or `..` path args, so a guest cannot bypass `network_allow`
   or `fs_prefixes` through a subprocess.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
-  execution graphs, sub-agents, autolearn, workflows.
+  execution graphs, sub-agents, autolearn, workflows. Session ids are path
+  fragments; every CLI, TUI, and HTTP entry point uses
+  `session.zig`'s `validSessionId` rather than restating its alphabet.
 - `src/schedule/` — `clanker schedule`: the cron dialect and next-fire
   arithmetic (`cron.zig`, pure — no allocator, clock or `std.Io`, so it is
   fully host-testable), `state/schedule.json` + the fire ledger (`store.zig`),
