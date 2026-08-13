@@ -50,6 +50,16 @@ export var ICON_PATHS = {
   grid: ["M4 5h6.5v6.5H4z", "M13.5 5H20v6.5h-6.5z", "M4 12.5h6.5V19H4z", "M13.5 12.5H20V19h-6.5z"],
   // Three rules: the list layout toggle's list face.
   list: ["M4 6.5h16", "M4 12h16", "M4 17.5h16"],
+  // A plus: add a card, a child item, a label.
+  plus: ["M12 5v14", "M5 12h14"],
+  // Three dots: the column overflow menu.
+  more: ["M5.5 12h1", "M11.5 12h1", "M17.5 12h1"],
+  // Disclosure, pointing at what it closes.
+  chevronLeft: ["M15 6l-6 6 6 6"],
+  // A rocket: start work on a goal.
+  rocket: ["M12 4l3 7H9l3-7z", "M9.5 11h5v5h-5z", "M9.5 16l-2 3.5", "M14.5 16l2 3.5"],
+  // A person: members and assign-to-me.
+  person: ["M12 5a3 3 0 100 6 3 3 0 000-6z", "M6 19c0-3.2 2.7-5 6-5s6 1.8 6 5"],
 };
 
 export function icon(name, size) {

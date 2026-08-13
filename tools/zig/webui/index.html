@@ -502,10 +502,10 @@ lamps carry further). The seven named palettes ride the same tokens.
         <input type="text" id="card-title"><label for="card-column" class="sr-only">Column</label><select id="card-column"></select><button type="submit" id="card-add">Add</button>
       </form>
       <div class="board-header" id="board-header">
-        <span class="board-header-icon"><svg class="icon" viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true" focusable="false" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" stroke-linejoin="miter"><path d="M8.5 8.5h10v11h-10z"/><path d="M5.5 15.5v-11h10"/></svg></span>
+        <span class="board-header-icon" id="board-header-icon"></span>
         <h2 class="board-header-title" id="board-title">Board</h2>
         <span class="board-header-sep"></span>
-        <button type="button" class="board-header-btn" id="board-toggle-list" title="Toggle list view">☰</button>
+        <button type="button" class="board-header-btn" id="board-toggle-list" title="Toggle list view" aria-label="Switch to list view"></button>
       </div>
       <div class="transcript-tools board-filter" id="board-filter">
         <label for="board-filter-input">Filter</label>

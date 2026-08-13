@@ -451,7 +451,7 @@ function drawFrame(ts) {
   }
 
   // The compactor runs after the verdict, over the top of the still stage.
-  if (!reduced && m.status !== "running") drawCompactor(ctx, cv, m, t, ground, cw);
+  if (!reduced && m.status !== "running") drawCompactor(ctx, cv, m, t, ground, cw, pal);
 }
 
 function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, reduced, m, pal) {
@@ -495,7 +495,7 @@ function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, redu
   // A brief flash on a sprite that blocked.
   if ((acting === "block" || acting === "counter") && !reduced && lunge > 0.4) {
     ctx.globalAlpha = 0.35 * lunge;
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = pal.fg;
     ctx.fillRect(bx - 2, by - 10, 20, 30);
     ctx.globalAlpha = 1;
   }
@@ -533,7 +533,7 @@ function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, redu
 
 /* The eliminated combatant's exit: a bulldozer pass, then walls closing in.
    Purely decorative, and the status line already said who lost in words. */
-function drawCompactor(ctx, cv, m, t, ground, cw) {
+function drawCompactor(ctx, cv, m, t, ground, cw, pal) {
   var q = state.compactor;
   if (!q.queue.length || q.i >= q.queue.length) return;
   if (!q.started) q.started = t;
@@ -548,7 +548,7 @@ function drawCompactor(ctx, cv, m, t, ground, cw) {
   if (age < pushMs) {
     var p = age / pushMs;
     // Dark hole at the far edge.
-    ctx.fillStyle = "#0b0e0f";
+    ctx.fillStyle = pal ? pal.bg : "#0b0e0f";
     ctx.fillRect(hole, ground - 16, 22, 18);
     // The loser's sprite, pushed ahead of the blade, shrinking into the hole.
     var lx = Math.round(cx + (hole - cx) * p);
@@ -560,11 +560,11 @@ function drawCompactor(ctx, cv, m, t, ground, cw) {
     ctx.globalAlpha = 1;
     // Bulldozer: body, blade, two treads that step-cycle on the same t.
     var bx = Math.round(cx - 40 + (hole - cx) * p);
-    ctx.fillStyle = "#e5b54a";
+    ctx.fillStyle = pal ? pal.warn : "#e5b54a";
     ctx.fillRect(bx, ground - 18, 24, 12);
-    ctx.fillStyle = "#c9a038";
+    ctx.fillStyle = pal ? pal.warn : "#c9a038";
     ctx.fillRect(bx + 24, ground - 20, 4, 16);
-    ctx.fillStyle = "#2a3033";
+    ctx.fillStyle = pal ? pal.surface : "#2a3033";
     var step = Math.floor(t / 90) % 2;
     ctx.fillRect(bx + 2 + step, ground - 6, 7, 6);
     ctx.fillRect(bx + 14 - step, ground - 6, 7, 6);
@@ -576,11 +576,11 @@ function drawCompactor(ctx, cv, m, t, ground, cw) {
     // short of full closure: the point is the walls closing.
     var w = (age - pushMs) / wallMs;
     ctx.globalAlpha = Math.min(1, w * 3);
-    ctx.fillStyle = "#121618";
+    ctx.fillStyle = pal ? pal.bg : "#121618";
     ctx.fillRect(0, 0, cv.width, cv.height);
     var gap = 26;
     var travel = Math.round((cv.width / 2 - gap) * Math.min(1, w * 1.2));
-    ctx.fillStyle = "#3a4146";
+    ctx.fillStyle = pal ? pal.border : "#3a4146";
     ctx.fillRect(0, 0, travel, cv.height);
     ctx.fillRect(cv.width - travel, 0, travel, cv.height);
     ctx.fillStyle = colorFor((cs[idx] && cs[idx].label) || String(idx));

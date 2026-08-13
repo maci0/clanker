@@ -1,6 +1,6 @@
 import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, isSafeLinkUrl as utilIsSafeLinkUrl, splitRow as utilSplitRow, prettyJsonIfPossible as utilPrettyJsonIfPossible, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, view_digit_max } from "./core/utils.js";
 import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt } from "./core/ui.js";
-import { ICON_PATHS as iconPaths, icon as iconFn } from "./core/icons.js";
+import { icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, reducedMotion as reducedMotionMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { THEMES as THEMESMod, loadTheme as loadThemeMod, applyTheme as applyThemeMod } from "./core/theme.js";
 import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod, messageKey as chatMessageKey, hasServerId as chatHasServerId } from "./core/chat.js";
@@ -217,7 +217,6 @@ var bind = vanBind;
 var skeletonRows = vanSkeletonRows;
 var setTurnPhase = vanSetTurnPhase;
 
-var ICON_PATHS = iconPaths;
 var icon = iconFn;
 
 var UI = vanUI;
@@ -2404,15 +2403,42 @@ function drawRun(g) {
   var mmViewport = document.createElement("div"); mmViewport.className = "run-minimap-viewport";
   minimap.appendChild(mmViewport);
   canvas.appendChild(minimap);
-  // Minimap content dimensions are cached (scrollWidth/scrollHeight never
-  // change while scrolling, only on a relayout) and repaints are coalesced to
-  // one per animation frame, so scroll events don't force a synchronous
-  // layout. Node positions come from the inline left/top the layout step set
-  // (lib/graph.js) instead of offsetLeft/offsetTop, which reflowed every node.
-  var mmSW = 1, mmSH = 1, mmRaf = 0;
+  // Content size and node positions are cached on layout. Scroll only
+  // updates the viewport rect, coalesced to one rAF, so it never walks
+  // the node list or forces layout.
+  var mmSW = 1, mmSH = 1, mmRaf = 0, mmNodes = [], mmEdges = [];
+  function mmToken(name, fallback) {
+    try { return (getComputedStyle(document.documentElement).getPropertyValue(name) || "").trim() || fallback; }
+    catch (_) { return fallback; }
+  }
   function measureMinimap(){
     try { mmSW = Math.max(1, canvas.scrollWidth); mmSH = Math.max(1, canvas.scrollHeight); }
     catch(_){ mmSW = 1; mmSH = 1; }
+  }
+  function rebuildMinimapCache(){
+    measureMinimap();
+    mmNodes = [];
+    canvas.querySelectorAll(".run-node").forEach(function(n){
+      var lx = parseFloat(n.style.left), ly = parseFloat(n.style.top);
+      mmNodes.push({
+        el: n,
+        x: isFinite(lx) ? lx : 0,
+        y: isFinite(ly) ? ly : 0,
+        kind: n.getAttribute("data-kind") || "",
+        ok: n.getAttribute("data-ok"),
+        selected: n.classList.contains("selected"),
+        highlight: n.hasAttribute("data-highlight")
+      });
+    });
+    mmEdges = [];
+    try {
+      canvas.querySelectorAll("svg.run-edges path[data-edge]").forEach(function(p){
+        var d = p.getAttribute("d") || "";
+        var m = d.match(/M\s*([0-9.\-]+),([0-9.\-]+)\s*L\s*([0-9.\-]+),([0-9.\-]+)/);
+        if (!m) return;
+        mmEdges.push({ x1: parseFloat(m[1]), y1: parseFloat(m[2]), x2: parseFloat(m[3]), y2: parseFloat(m[4]) });
+      });
+    } catch (_) {}
   }
   function paintMinimap(){
     try{
@@ -2420,91 +2446,79 @@ function drawRun(g) {
       if (!ctx) return;
       ctx.clearRect(0,0,mmCanvas.width, mmCanvas.height);
       var sw = mmSW, sh = mmSH;
-      // light line for edges (a minimap overview)
-      try{
-        var svg = canvas.querySelector("svg.run-edges");
-        if (svg) {
-          // Edges only: the arrowhead marker under <defs> is a path too, and
-          // its "M0,0 L8,4" parses as an edge from the graph's origin.
-          var paths = svg.querySelectorAll("path[data-edge]");
-          ctx.strokeStyle = "rgba(140,140,140,0.35)";
-          ctx.lineWidth = 0.7;
-          paths.forEach(function(p){
-            var d = p.getAttribute("d") || "";
-            var m = d.match(/M\s*([0-9.\-]+),([0-9.\-]+)\s*L\s*([0-9.\-]+),([0-9.\-]+)/);
-            if (!m) return;
-            var x1 = (parseFloat(m[1]) / sw) * mmCanvas.width;
-            var y1 = (parseFloat(m[2]) / sh) * mmCanvas.height;
-            var x2 = (parseFloat(m[3]) / sw) * mmCanvas.width;
-            var y2 = (parseFloat(m[4]) / sh) * mmCanvas.height;
-            ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-          });
-        }
-      }catch(_){}
-      var nodes = canvas.querySelectorAll(".run-node");
-      nodes.forEach(function(n){
-        // Inline left/top are set by the layout pass (no forced layout), with
-        // offsetLeft/offsetTop only as a fallback for any node lacking them.
-        var lx = parseFloat(n.style.left), ly = parseFloat(n.style.top);
-        var x = ((isFinite(lx) ? lx : n.offsetLeft) / sw) * mmCanvas.width;
-        var y = ((isFinite(ly) ? ly : n.offsetTop) / sh) * mmCanvas.height;
-        var w = 6, h = 4;
-        var kind = n.getAttribute("data-kind") || "";
-        if (kind === "llm") ctx.fillStyle = "rgba(11,87,208,0.75)";
-        else if (kind === "tool") ctx.fillStyle = "rgba(5,150,105,0.75)";
-        else if (kind === "final") ctx.fillStyle = "rgba(0,0,0,0.75)";
-        else ctx.fillStyle = "rgba(120,120,120,0.75)";
-        if (n.getAttribute("data-ok") === "false") ctx.fillStyle = "rgba(220,38,38,0.9)";
-        if (n.classList.contains("selected")) { ctx.fillStyle = "rgba(11,87,208,1)"; w = 7; h = 5; }
-        else if (n.hasAttribute("data-highlight")) ctx.fillStyle = "rgba(11,87,208,0.45)";
-        ctx.fillRect(x, y, w, h);
+      var accent = mmToken("--accent", "#0b57d0");
+      var ok = mmToken("--ok", "#117a3a");
+      var danger = mmToken("--danger", "#dc2626");
+      var fg = mmToken("--fg", "#111");
+      var muted = mmToken("--fg-muted", "#888");
+      ctx.strokeStyle = muted;
+      ctx.globalAlpha = 0.35;
+      ctx.lineWidth = 0.7;
+      mmEdges.forEach(function(e){
+        ctx.beginPath();
+        ctx.moveTo((e.x1 / sw) * mmCanvas.width, (e.y1 / sh) * mmCanvas.height);
+        ctx.lineTo((e.x2 / sw) * mmCanvas.width, (e.y2 / sh) * mmCanvas.height);
+        ctx.stroke();
       });
+      ctx.globalAlpha = 0.75;
+      mmNodes.forEach(function(n){
+        var x = (n.x / sw) * mmCanvas.width;
+        var y = (n.y / sh) * mmCanvas.height;
+        var w = 6, h = 4;
+        if (n.kind === "llm") ctx.fillStyle = accent;
+        else if (n.kind === "tool") ctx.fillStyle = ok;
+        else if (n.kind === "final") ctx.fillStyle = fg;
+        else ctx.fillStyle = muted;
+        if (n.ok === "false") ctx.fillStyle = danger;
+        if (n.selected) { ctx.fillStyle = accent; ctx.globalAlpha = 1; w = 7; h = 5; }
+        else if (n.highlight) { ctx.fillStyle = accent; ctx.globalAlpha = 0.45; }
+        ctx.fillRect(x, y, w, h);
+        ctx.globalAlpha = 0.75;
+      });
+      ctx.globalAlpha = 1;
     }catch(_){}
   }
-  function updateMinimap(){
-    // Content size can change on relayout (search/filter/fit), so re-measure
-    // here — a single read, never one per node — before using the cached dims.
-    measureMinimap();
-    var needsMap = mmSW > canvas.clientWidth + 8 || mmSH > canvas.clientHeight + 8;
+  function updateMinimapViewport(){
+    var cw = canvas.clientWidth, ch = canvas.clientHeight;
+    var needsMap = mmSW > cw + 8 || mmSH > ch + 8;
     minimap.hidden = !needsMap;
     if (minimap.hidden) return;
-    paintMinimap();
-    var sx = canvas.scrollLeft / Math.max(1, mmSW - canvas.clientWidth);
-    var sy = canvas.scrollTop / Math.max(1, mmSH - canvas.clientHeight);
-    var vw = canvas.clientWidth / mmSW * 100;
-    var vh = canvas.clientHeight / mmSH * 100;
+    var sx = canvas.scrollLeft / Math.max(1, mmSW - cw);
+    var sy = canvas.scrollTop / Math.max(1, mmSH - ch);
+    var vw = cw / mmSW * 100;
+    var vh = ch / mmSH * 100;
     mmViewport.style.left = (sx * (100 - vw)) + "%";
     mmViewport.style.top = (sy * (100 - vh)) + "%";
     mmViewport.style.width = Math.max(12, vw) + "%";
     mmViewport.style.height = Math.max(12, vh) + "%";
   }
-  // A scroll can fire many times per frame; coalesce to one repaint per frame.
+  function updateMinimap(){
+    rebuildMinimapCache();
+    if (mmSW > canvas.clientWidth + 8 || mmSH > canvas.clientHeight + 8) paintMinimap();
+    updateMinimapViewport();
+  }
   function scheduleMinimap(){
     if (mmRaf) return;
     mmRaf = requestAnimationFrame(function(){
       mmRaf = 0;
-      updateMinimap();
+      updateMinimapViewport();
     });
   }
   canvas.addEventListener("scroll", scheduleMinimap);
-  // click-to-jump: nearest node under cursor focuses & opens its detail (fallback to viewport jump)
   minimap.addEventListener("click", function(e){
     if (e.target === mmViewport) return;
     var rect = minimap.getBoundingClientRect();
     var px = (e.clientX - rect.left) / rect.width;
     var py = (e.clientY - rect.top) / rect.height;
-    var sw = Math.max(1, canvas.scrollWidth), sh = Math.max(1, canvas.scrollHeight);
-    var cx = px * sw, cy = py * sh;
+    var cx = px * mmSW, cy = py * mmSH;
     var best = null, bestD = Infinity;
-    canvas.querySelectorAll(".run-node").forEach(function(n){
-      var nx = n.offsetLeft + n.offsetWidth/2, ny = n.offsetTop + n.offsetHeight/2;
-      var d = Math.hypot(nx - cx, ny - cy);
-      if (d < bestD) { bestD = d; best = n; }
+    mmNodes.forEach(function(n){
+      var d = Math.hypot(n.x - cx, n.y - cy);
+      if (d < bestD) { bestD = d; best = n.el; }
     });
-    // within ~60px of a node, treat the minimap click as a node pick
     if (best && bestD < 60) { best.focus(); best.click(); best.scrollIntoView({block:"center", inline:"center"}); return; }
-    canvas.scrollLeft = px * (canvas.scrollWidth - canvas.clientWidth);
-    canvas.scrollTop = py * (canvas.scrollHeight - canvas.clientHeight);
+    canvas.scrollLeft = px * (mmSW - canvas.clientWidth);
+    canvas.scrollTop = py * (mmSH - canvas.clientHeight);
   });
   // drag viewport to pan
   (function(){
