@@ -1718,6 +1718,7 @@ const Model = struct {
             .gpa = self.gpa,
             .io = self.io,
             .root_dir = self.cfg.agent.sandbox_root,
+            .shared_root = self.cfg.agent.shared_root,
             .network_allow = &.{},
             .fs_prefixes = &.{},
             .environ_map = self.ctx.environ_map,

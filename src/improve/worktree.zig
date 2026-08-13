@@ -19,6 +19,10 @@
 
 const std = @import("std");
 const log = @import("../util/log.zig");
+/// For `shared_prefixes`: the list of untracked, checkout-wide paths is one
+/// list, shared with the sandbox that routes them, so the links here and the
+/// routing there cannot drift into disagreeing about what is shared.
+const host = @import("../sandbox/host.zig");
 
 /// Absolute path to the cwd as a plain (non-sentinel) owned slice.
 /// std.process.currentPathAlloc returns a [:0]u8 whose allocation is one byte
@@ -206,14 +210,27 @@ pub const Worktree = struct {
 /// tip. Must be called before any chdir into the result: `git worktree add`
 /// targets the repo the caller's cwd is already in.
 pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
-    return createOn(gpa, io, id, "clanker/improve-self-");
+    return createOn(gpa, io, id, "clanker/improve-self-", .improve);
 }
 
-/// `create` with the branch name's prefix chosen by the caller, so a plain
-/// agent run gets a branch that reads as one (`clanker/run-<id>`) instead of
-/// claiming to be an improve-self run. Everything else is identical: same
-/// parent directory, same shared-state linking, same base branch.
-pub fn createOn(gpa: std.mem.Allocator, io: std.Io, id: []const u8, branch_prefix: []const u8) !Worktree {
+/// How the worktree reaches the checkout's untracked, shared paths.
+pub const Sharing = enum {
+    /// improve-self: a real local `state/`, with the few entries the loop
+    /// depends on linked or copied in one at a time (`linkSharedState`). Its
+    /// staging directory has to be the run's own, and the copies are what keep
+    /// a proposal's learnings from escaping before it is promoted.
+    improve,
+    /// A plain agent run: every untracked path is a symlink to the checkout's,
+    /// so the run reads and writes the same state it would have without
+    /// isolation (`linkCheckoutState`). Only git-tracked source is private to
+    /// the worktree, which is the only thing isolation is for here.
+    run,
+};
+
+/// `create` with the branch prefix and sharing mode chosen by the caller, so a
+/// plain agent run gets a branch that reads as one (`clanker/run-<id>`) and the
+/// checkout-wide state it expects, without changing what improve-self does.
+pub fn createOn(gpa: std.mem.Allocator, io: std.Io, id: []const u8, branch_prefix: []const u8, sharing: Sharing) !Worktree {
     const base_branch = currentBranch(gpa, io) catch try gpa.dupe(u8, "main");
     errdefer gpa.free(base_branch);
 
@@ -252,8 +269,12 @@ pub fn createOn(gpa: std.mem.Allocator, io: std.Io, id: []const u8, branch_prefi
         return error.WorktreeCreateFailed;
     }
 
-    linkSharedState(gpa, io, path) catch |err|
-        log.log(.warn, "isolated run: could not link state/.env/config.local.toml into the worktree: {s}", .{@errorName(err)});
+    switch (sharing) {
+        .improve => linkSharedState(gpa, io, path) catch |err|
+            log.log(.warn, "isolated run: could not link state/.env/config.local.toml into the worktree: {s}", .{@errorName(err)}),
+        .run => linkCheckoutState(gpa, io, path) catch |err|
+            log.log(.warn, "isolated run: could not link the checkout's shared paths into the worktree: {s}", .{@errorName(err)}),
+    }
 
     // The fresh branch's tip IS the base commit the branch was cut at;
     // record it as the pinned merge base (see `created_from`).
@@ -261,6 +282,61 @@ pub fn createOn(gpa: std.mem.Allocator, io: std.Io, id: []const u8, branch_prefi
     errdefer gpa.free(created_from);
 
     return .{ .path = path, .branch = branch, .base_branch = base_branch, .created_from = created_from };
+}
+
+/// Points every untracked, checkout-wide path at the checkout's own copy, for a
+/// plain agent run isolated in a worktree.
+///
+/// The rule: git-tracked files are the run's own (isolating those is the point);
+/// everything git does not track belongs to the checkout and must be reachable
+/// exactly as it would be without isolation. A run that gets a snapshot instead
+/// is quietly crippled -- no goal to be steered by, no session to resume, its
+/// notes and token accounting written somewhere nobody reads -- and every
+/// symptom looks like a broken tool rather than a missing directory.
+///
+/// One symlink per entry, which works because the SANDBOX never traverses
+/// these: `Sandbox.shared_root` resolves the same prefixes against the checkout
+/// directly (see `shared_prefixes` in src/sandbox/host.zig), so safeJoinSecure's
+/// no-follow walk never meets the link and its refusal to cross one stays
+/// intact. The links are for the HOST half, the ~44 hardcoded relative
+/// "state/..." paths in src/ that resolve against the process cwd; native I/O
+/// follows links, so those reach the checkout with no call sites changed.
+///
+/// Both halves are needed and they are not redundant: without the links the
+/// host writes a worktree-local state/ nobody reads, and without the routing
+/// every sandboxed tool is denied the moment it touches a linked component.
+///
+/// `zig-out` and `.zig-cache` are untracked too and deliberately excluded, for
+/// the write-collision reasons in linkSharedState below; guest wasm is pinned to
+/// the harness's build instead (Registry.rebaseWasmPaths).
+fn linkCheckoutState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8) !void {
+    const root = try currentPath(gpa, io);
+    defer gpa.free(root);
+
+    for (host.shared_prefixes) |name| {
+        // Absent in the checkout means there is nothing to share: a dangling
+        // symlink would be worse than no entry, because a tool creating the
+        // path would write through it to a location the checkout never agreed
+        // to. The sandbox routes to the checkout either way, so a path created
+        // later still lands in the right place.
+        std.Io.Dir.cwd().access(io, name, .{}) catch continue;
+        const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
+        defer gpa.free(target);
+        const link_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
+        defer gpa.free(link_path);
+        const is_dir = isDir(io, name);
+        std.Io.Dir.cwd().symLink(io, target, link_path, .{ .is_directory = is_dir }) catch |err| switch (err) {
+            // Tracked, so `git worktree add` already checked it out and the
+            // worktree's own copy is the right one to use.
+            error.PathAlreadyExists => {},
+            else => log.log(.warn, "isolated run: could not link {s} into the worktree: {s}", .{ name, @errorName(err) }),
+        };
+    }
+}
+
+fn isDir(io: std.Io, path: []const u8) bool {
+    const st = std.Io.Dir.cwd().statFile(io, path, .{}) catch return false;
+    return st.kind == .directory;
 }
 
 /// Symlinks the runtime paths a fresh worktree checkout doesn't get on its

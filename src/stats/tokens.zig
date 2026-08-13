@@ -11,6 +11,7 @@
 //! group (plus a totals row), newest usage counted exactly once.
 
 const std = @import("std");
+const ensuredir = @import("../util/ensuredir.zig");
 const filelock = @import("../util/filelock.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
@@ -68,7 +69,7 @@ fn subPath(arena: std.mem.Allocator, state_dir: []const u8) ![]const u8 {
 /// a stats write must not break a chat completion. O(1) append via a
 /// truncate-free open + seek to end (the caller holds the only writer).
 pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, rec: Record) void {
-    if (state_dir.len > 0) base.createDirPath(io, state_dir) catch |err| {
+    if (state_dir.len > 0) ensuredir.ensureDir(base, io, state_dir) catch |err| {
         log.log(.warn, "[stats] mkdir failed: {s}", .{@errorName(err)});
         return;
     };
