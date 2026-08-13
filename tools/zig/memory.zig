@@ -1,5 +1,6 @@
 //! memory — WASM guest tool for the memory layer.
-//! Actions: chunk {text,size,overlap}, embed {texts[] or text,dim}, search {query,top_k,threshold,dim,collection_ids,mode}
+//! Actions: chunk {text,size,overlap}, embed {texts[] or text,dim}, search {query,top_k,threshold,dim,collection_ids,mode}.
+//! If action is omitted it is inferred: query -> search, texts -> embed, text -> chunk.
 
 const std = @import("std");
 const lib = @import("lib.zig");
