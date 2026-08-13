@@ -1062,6 +1062,59 @@ Against unmodified `main` the same harness fails 6 of them — including
 `zig build`, `zig build tools`, `zig build test --summary all` — 163/163 steps,
 765/767 tests (2 skipped, the expected worktree pair).
 
+## A message without an id took the room down with it (2026-08-13)
+
+`chatrooms.zig` does not promise an id. `Message.id` defaults to `""`, the
+field's absence is documented ("a peer too old to send one"), and `receive`
+deliberately accepts such a message rather than dropping it — there is even a
+test for it. The rooms view took the id on faith anyway, in three places, and
+each one failed differently.
+
+- **`var threadKey = m.id || msgKey;`** — `msgKey` is not declared anywhere in
+  `app.js`, or anywhere else in the tree. Reading it under the module's
+  `"use strict"` throws `ReferenceError`, so the first id-less message aborted
+  `buildChatMessage` mid-render. The throw unwound through `pollChat`'s
+  `forEach` into its `.catch`, which reported it as a failed fetch —
+  "Could not load messages: msgKey is not defined" — and widened the poll
+  backoff. Worse, `chatLastTs` and the seen-set are advanced *before* the
+  message is built, so every message after it in that batch was neither drawn
+  nor ever asked for again.
+- **The seen-set keyed on `m.id`.** `chatSeen[""]` is set by the first id-less
+  message, so from then on every id-less message was filtered out as a
+  redelivery of it. Within a single batch this happens to work (the `filter`
+  runs before the `forEach` that records ids), which is why it survived: the
+  loss only shows up across polls.
+- **The room actions sent `msg_id: ""`.** Pin, edit, delete and react all
+  match on the id server-side, and `""` matches whichever id-less message the
+  log holds first — so acting on one message could act on a different one.
+
+- **`core/chat.js: messageKey(m)`** — pure, and one definition of a message's
+  identity for the page's own bookkeeping. A real id is used as-is; an id-less
+  message falls back to `local:<sender>:<ts>:<djb2 of the text>`, which
+  distinguishes the messages that need distinguishing and collides only where
+  sender, second and text are all the same — a message there is no way to tell
+  apart anyway. The `local:` prefix means a fallback key can never be mistaken
+  for a server id.
+- **`core/chat.js: hasServerId(m)`** — asked by `buildChatMessage` before it
+  builds anything that names the message to the server. React, pin, edit and
+  delete are left out for an id-less message rather than pointed at the wrong
+  one. Copy is client-side and stays.
+- **`app.js`** — the seen-set, `rememberChatId` and the thread key all go
+  through `messageKey`. `msgKey` no longer appears in the tree.
+
+### Verified
+
+`node` driving the real `core/chat.js`: a real id passes through untouched; an
+id-less message gets a stable non-empty key that changes with the text, the
+sender and the timestamp; `null`, `undefined` and `{}` are total. The seen-set
+is then driven the way `pollChat` drives it — three distinct id-less messages
+in one batch all survive, a redelivered one is still deduped, and an id-less
+message arriving in a *second* batch survives, which is the case `m.id` lost.
+The `app.js` half is checked as source shape (the wiring, and that `msgKey` is
+gone from the file), since importing `app.js` boots the page. 31 assertions
+green; against unmodified `main` the same harness fails 20 of its 31.
+Gate: `zig build`, `zig build tools`, `zig build test --summary all`.
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
