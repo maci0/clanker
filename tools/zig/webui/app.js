@@ -1922,11 +1922,9 @@ el.form.addEventListener("submit", function (e) {
       markTurn(turn, "\n[stopped]");
     } else {
       var msg = err.message || "unknown error";
-      var hint = "";
-      if (/fetch|network|refused|ECONNREFUSED/i.test(msg))
+      var hint = errorRecoveryHint(msg);
+      if (!hint && /fetch|network|ECONNREFUSED/i.test(msg))
         hint = " (is the server still running?)";
-      else if (/timeout|timed out/i.test(msg))
-        hint = " (the request timed out)";
       appendText(turn, "\n[run failed: " + msg + hint + "]\n", true);
     }
   }).finally(function () {

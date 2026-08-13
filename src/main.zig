@@ -226,7 +226,7 @@ pub fn main(init: std.process.Init) !void {
         if (hint) |h| {
             cli.printUsageError(init.io, "{s}", .{h});
         } else {
-            log.log(.error_, "{s}", .{@errorName(err)});
+            cli.printUsageError(init.io, "{s}", .{@errorName(err)});
         }
         std.process.exit(1);
     };
