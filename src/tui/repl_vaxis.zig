@@ -5162,6 +5162,13 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     var buffer: [1024]u8 = undefined;
     var app: vxfw.App = try .init(io, gpa, init.environ_map, &buffer);
     defer app.deinit();
+    // Some pseudo-terminals briefly report 0x0. vxfw derives cell dimensions
+    // from this initial size and cannot lay out such a surface, so fail with
+    // an operator-facing diagnostic instead of reaching its divide-by-zero.
+    const initial_size = try app.tty.getWinsize();
+    if (initial_size.cols == 0 or initial_size.rows == 0) {
+        return error.TerminalSizeUnavailable;
+    }
 
     const model = try arena.create(Model);
     model.* = .{

@@ -248,6 +248,7 @@ pub fn main(init: std.process.Init) !void {
             error.UnknownProvider => "no provider by that name in config.toml; run `clanker providers check` for the list",
             error.ProviderCheckFailed => "provider check failed; run `clanker doctor` to diagnose",
             error.InvalidSessionId => "invalid session id; use 1-64 letters, numbers, dashes, or underscores",
+            error.TerminalSizeUnavailable => "terminal size is unavailable; resize the terminal and try again",
             error.SessionNotFound => "no saved conversation by that id; run `clanker sessions` for the list",
             error.ImprovementNotFound => "no improvement by that id; they look like imp-... in state/improvements.jsonl",
             error.ToolFailed => "the internal tool returned an error; run `clanker doctor` to check the build",
