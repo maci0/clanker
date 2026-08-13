@@ -9,8 +9,12 @@ zig-pkg/
 tools/ts/node_modules/
 tools/ts/build/
 
-# Runtime state (logs, history, sessions, improvements) — never commit
+# Runtime state (logs, history, sessions, improvements) — never commit.
+# Both spellings on purpose: the trailing slash matches only a directory, so
+# `state/` alone let a *symlink* named `state` be committed, pointing at one
+# machine's absolute path and dangling everywhere else.
 state/
+state
 
 # Isolated git worktrees improve-self runs stage themselves in
 .clanker-worktrees/
