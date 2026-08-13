@@ -339,7 +339,7 @@ fn runThreadMain(args: RunThreadArgs) void {
     var a = Agent.init(&self.ctx, self.arena, &self.provider, &self.cfg, &self.reg, self.tool_defs) catch |err| {
         // No agent, so no usage to report: the turn line is skipped rather
         // than printed as a row of zeroes.
-        self.finishTurn(std.fmt.allocPrint(self.arena, "error: {s}", .{@errorName(err)}) catch "error", null);
+        self.finishTurn(std.fmt.allocPrint(self.arena, "error: {s}", .{@errorName(err)}) catch "error: out of memory", null);
         return;
     };
     defer a.deinit();
@@ -368,9 +368,9 @@ fn runThreadMain(args: RunThreadArgs) void {
         // answer, and a failing request is exactly when a hostile or merely
         // broken endpoint gets to choose what bytes clanker prints.
         const text = if (if (err_detail) |d| clean(self.arena, d) else null) |d|
-            std.fmt.allocPrint(self.arena, "error: {s}{s}", .{ d, hint }) catch "error"
+            std.fmt.allocPrint(self.arena, "error: {s}{s}", .{ d, hint }) catch "error: out of memory"
         else
-            std.fmt.allocPrint(self.arena, "error: {s}{s}", .{ @errorName(err), hint }) catch "error";
+            std.fmt.allocPrint(self.arena, "error: {s}{s}", .{ @errorName(err), hint }) catch "error: out of memory";
         // A turn that ran out of iterations or budget still spent real
         // tokens and real money; report them the same as a turn that
         // finished. `Agent.run`'s own defer has already folded its stats by
@@ -1948,23 +1948,23 @@ const Model = struct {
             tool_name,
             null,
         ) catch |err| {
-            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[{s}: {s}]", .{ tool_name, @errorName(err) }) catch "[internal tool failed]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}", .{ tool_name, @errorName(err) }) catch "error: internal tool failed", .dim = true }) catch {};
             return true;
         };
         defer mod.deinit();
 
         const raw = mod.executeTool(input) catch |err| {
-            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[{s}: {s}]", .{ tool_name, @errorName(err) }) catch "[internal tool failed]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}", .{ tool_name, @errorName(err) }) catch "error: internal tool failed", .dim = true }) catch {};
             return true;
         };
         defer self.gpa.free(raw);
 
         const parsed = std.json.parseFromSliceLeaky(std.json.Value, self.arena, raw, .{ .ignore_unknown_fields = true }) catch {
-            self.lines.append(self.arena, .{ .text = "[internal tool returned unparseable output]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "error: internal tool returned unparseable output", .dim = true }) catch {};
             return true;
         };
         if (parsed != .object) {
-            self.lines.append(self.arena, .{ .text = "[internal tool returned an empty result]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "error: internal tool returned an empty result", .dim = true }) catch {};
             return true;
         }
         var ok = false;
@@ -1980,15 +1980,15 @@ const Model = struct {
                 "; /sessions lists saved conversations"
             else
                 "";
-            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[{s}: {s}{s}]", .{ tool_name, detail, extra }) catch "[internal tool failed]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}{s}", .{ tool_name, detail, extra }) catch "error: internal tool failed", .dim = true }) catch {};
             return true;
         }
         const text = parsed.object.get("text") orelse {
-            self.lines.append(self.arena, .{ .text = "[internal tool returned no text]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "error: internal tool returned no text", .dim = true }) catch {};
             return true;
         };
         if (text != .string) {
-            self.lines.append(self.arena, .{ .text = "[internal tool returned no text]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "error: internal tool returned no text", .dim = true }) catch {};
             return true;
         }
         // A tool's `text` is untrusted for the same reason a model's answer
@@ -1997,7 +1997,7 @@ const Model = struct {
         // block rather than per line, so a control byte cannot hide in the
         // split.
         const safe = clean(self.arena, text.string) orelse {
-            self.lines.append(self.arena, .{ .text = "[internal tool output dropped: out of memory]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "error: internal tool output dropped: out of memory", .dim = true }) catch {};
             return true;
         };
         var it = std.mem.splitScalar(u8, safe, '\n');
@@ -2067,8 +2067,8 @@ const Model = struct {
         var argv_buf: [max_escape_args][]const u8 = undefined;
         const argv = splitShellArgs(line, &argv_buf) catch |err| {
             self.lines.append(self.arena, .{ .text = switch (err) {
-                error.UnterminatedQuote => "[! unterminated quote: quote a whole argument, e.g. !rg \"foo bar\"]",
-                error.TooManyArgs => "[! too many arguments]",
+                error.UnterminatedQuote => "error: !: unterminated quote; quote a whole argument, e.g. !rg \"foo bar\"",
+                error.TooManyArgs => "error: !: too many arguments",
             }, .dim = true }) catch {};
             return;
         };
@@ -2097,26 +2097,26 @@ const Model = struct {
             .not_allowed => self.lines.append(self.arena, .{
                 .text = std.fmt.allocPrint(
                     self.arena,
-                    "[! '{s}' is not on the exec allowlist; type ! on its own to see what is, or add it to agent.repl_exec_allow]",
+                    "error: ! '{s}' is not on the exec allowlist; type ! on its own to see what is, or add it to agent.repl_exec_allow",
                     .{argv[0]},
-                ) catch "[! not allowed]",
+                ) catch "error: ! not allowed",
                 .dim = true,
             }) catch {},
             .denied => |d| {
                 const msg = switch (d) {
-                    .git_verb => std.fmt.allocPrint(self.arena, "[! git: only the local verbs are allowed (status, diff, log, show, add, commit, ls-files, rev-parse, branch, worktree)]", .{}),
-                    .zig_verb => std.fmt.allocPrint(self.arena, "[! zig: only ast-check, fmt --check, test, and build are allowed]", .{}),
-                    .uv_verb => std.fmt.allocPrint(self.arena, "[! uv: only `uv run` of tools/py/opencv_tool.py is allowed]", .{}),
-                    .no_pattern_match => std.fmt.allocPrint(self.arena, "[! '{s}': agent.exec_pattern_allow makes this command strict and no pattern matches]", .{argv[0]}),
-                    .deny_token => |x| std.fmt.allocPrint(self.arena, "[! '{s}': denied, '{s}' in '{s}' is on the sandbox deny list]", .{ argv[0], x.token, x.arg }),
-                    .shell_operator => |x| std.fmt.allocPrint(self.arena, "[! '{s}': denied, shell operator '{s}' in '{s}'; ! does not run a shell]", .{ argv[0], x.token, x.arg }),
-                    .foreign_worktree => |a| std.fmt.allocPrint(self.arena, "[! '{s}': denied, '{s}' reaches into another run's worktree; this run's tree is '.']", .{ argv[0], a }),
-                    .host_path => |a| std.fmt.allocPrint(self.arena, "[! '{s}': denied, '{s}' is a path outside the sandbox]", .{ argv[0], a }),
+                    .git_verb => std.fmt.allocPrint(self.arena, "error: ! git: only the local verbs are allowed (status, diff, log, show, add, commit, ls-files, rev-parse, branch, worktree)", .{}),
+                    .zig_verb => std.fmt.allocPrint(self.arena, "error: ! zig: only ast-check, fmt --check, test, and build are allowed", .{}),
+                    .uv_verb => std.fmt.allocPrint(self.arena, "error: ! uv: only `uv run` of tools/py/opencv_tool.py is allowed", .{}),
+                    .no_pattern_match => std.fmt.allocPrint(self.arena, "error: ! '{s}': agent.exec_pattern_allow makes this command strict and no pattern matches", .{argv[0]}),
+                    .deny_token => |x| std.fmt.allocPrint(self.arena, "error: ! '{s}': denied, '{s}' in '{s}' is on the sandbox deny list", .{ argv[0], x.token, x.arg }),
+                    .shell_operator => |x| std.fmt.allocPrint(self.arena, "error: ! '{s}': denied, shell operator '{s}' in '{s}'; ! does not run a shell", .{ argv[0], x.token, x.arg }),
+                    .foreign_worktree => |a| std.fmt.allocPrint(self.arena, "error: ! '{s}': denied, '{s}' reaches into another run's worktree; this run's tree is '.'", .{ argv[0], a }),
+                    .host_path => |a| std.fmt.allocPrint(self.arena, "error: ! '{s}': denied, '{s}' is a path outside the sandbox", .{ argv[0], a }),
                 };
-                self.lines.append(self.arena, .{ .text = msg catch "[! denied]", .dim = true }) catch {};
+                self.lines.append(self.arena, .{ .text = msg catch "error: ! denied", .dim = true }) catch {};
             },
             .failed => |err| self.lines.append(self.arena, .{
-                .text = std.fmt.allocPrint(self.arena, "[! '{s}': {s}]", .{ argv[0], @errorName(err) }) catch "[! failed]",
+                .text = std.fmt.allocPrint(self.arena, "error: ! '{s}': {s}", .{ argv[0], @errorName(err) }) catch "error: ! failed",
                 .dim = true,
             }) catch {},
             .ran => |out| {
@@ -2129,7 +2129,7 @@ const Model = struct {
                 // `!git add x` should look like.
                 if (out.code != 0) {
                     self.lines.append(self.arena, .{
-                        .text = std.fmt.allocPrint(self.arena, "[! exit {d}]", .{out.code}) catch "[! failed]",
+                        .text = std.fmt.allocPrint(self.arena, "error: ! exited with status {d}", .{out.code}) catch "error: ! failed",
                         .dim = true,
                     }) catch {};
                 }
@@ -2601,7 +2601,7 @@ const Model = struct {
             // buildModelCandidates, but a config reload mid-session (not
             // currently possible) would make this reachable, so fail quiet
             // rather than unreachable().
-            self.lines.append(self.arena, .{ .text = "[model: provider no longer configured]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "error: model: provider no longer configured", .dim = true }) catch {};
         }
     }
 
@@ -3550,7 +3550,7 @@ const Model = struct {
                 // The user's echoed prompt line: accent, no markdown (it is
                 // literal input, not model prose).
                 writeWrapped(surface, &row, bottom, text_width, l.text, prompt_style);
-            } else if (std.mem.startsWith(u8, l.text, "[error:")) {
+            } else if (std.mem.startsWith(u8, l.text, "error:")) {
                 writeWrapped(surface, &row, bottom, text_width, l.text, err_style);
             } else if (l.dim) {
                 // System notices, usage hints, tool output: plain dim.
@@ -4812,7 +4812,7 @@ test "clean returns the input slice unchanged when nothing to drop" {
 
 test "the stats and compaction lines route down the plain dim draw branch" {
     // `draw` picks a style per transcript line by inspecting the text: a tool
-    // card gets the tool tint and a bar-preserving wrap, an "[error:" prefix
+    // card gets the tool tint and a bar-preserving wrap, an "error:" prefix
     // gets the error tint, everything else is plain dim. The turn line and
     // the compaction notices are meant to be that last case, and they are
     // bracketed strings, so pin it rather than discover it as a wrong colour.
@@ -4832,7 +4832,7 @@ test "the stats and compaction lines route down the plain dim draw branch" {
 
     for ([_][]const u8{ turn, compacted }) |line| {
         try std.testing.expect(!transcript_mod.isToolCardLine(line));
-        try std.testing.expect(!std.mem.startsWith(u8, line, "[error:"));
+        try std.testing.expect(!std.mem.startsWith(u8, line, "error:"));
         // And nothing here can be mistaken for input the user typed.
         try std.testing.expect(parseCommand(line) == null);
         try std.testing.expect(parseShellEscape(line) == null);

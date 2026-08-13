@@ -113,9 +113,9 @@ pub fn compactDuration(buf: []u8, ms: u64) []const u8 {
 const dot = " \xc2\xb7 ";
 
 /// Writes the turn line: `[turn: 1234 in / 567 out · 4.2s · 135.1 tok/s ·
-/// cache 82% · $0.0031 · ctx 12.1k/128k (9%)]`. Bracketed like the REPL's
-/// other meta lines (`[error: ...]`, `[unknown command: ...]`) so it reads as
-/// the harness talking rather than the model.
+/// cache 82% · $0.0031 · ctx 12.1k/128k (9%)]`. Bracketed so it reads as
+/// harness metadata rather than model prose; errors use the CLI-compatible
+/// `error: ...` prefix instead.
 pub fn writeTurn(w: *std.Io.Writer, s: TurnStats) !void {
     var num: [32]u8 = undefined;
     var num2: [32]u8 = undefined;
