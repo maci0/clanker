@@ -2131,6 +2131,13 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
 
     // Provider's own OpenAI-compat /models endpoint.
     const provider = try cfg.provider(provider_name);
+    // Vertex derives its endpoint per request from project/location and has
+    // no base URL to append `/models` to. Its configured model table is still
+    // authoritative and is exactly what the TUI picker uses, so show that
+    // instead of constructing `/models` and leaking `InvalidFormat`.
+    if (provider.base_url.len == 0) {
+        return out.writeStreamingAll(io, try renderConfiguredProviderModels(arena, provider));
+    }
     const url = try std.fmt.allocPrint(arena, "{s}/models", .{std.mem.trimEnd(u8, provider.base_url, "/")});
     const bearer = if (provider.api_key_env) |env_name| blk: {
         const key = init.environ_map.get(env_name) orelse break :blk null;
@@ -2155,6 +2162,25 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
             }
         }
     }
+}
+
+fn renderConfiguredProviderModels(arena: std.mem.Allocator, provider: *const config.Provider) ![]const u8 {
+    var names: std.ArrayList([]const u8) = .empty;
+    var it = provider.models.iterator();
+    while (it.next()) |entry| try names.append(arena, entry.key_ptr.*);
+    std.mem.sort([]const u8, names.items, {}, struct {
+        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lessThan);
+
+    var rendered: std.Io.Writer.Allocating = .init(arena);
+    try rendered.writer.writeAll("id\tctx\n");
+    for (names.items) |name| {
+        const model = provider.models.get(name) orelse continue;
+        try rendered.writer.print("{s}\t{d}\n", .{ name, model.context_window });
+    }
+    return rendered.written();
 }
 
 /// Public, unauthenticated directory of provider/model specs (context window,
@@ -12098,6 +12124,17 @@ test "provider sweep ends with recovery when the default cannot answer" {
         "\nDefault provider 'openai' is not configured. Fix its config or choose another with `default_provider` in config.local.toml.\n",
         out.written(),
     );
+}
+
+test "providers models can render configured models without an HTTP endpoint" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var provider = try config.Provider.single(arena, "vertex", "", .vertex_anthropic, "zeta", .{ .context_window = 200_000 });
+    try provider.models.put(arena, "alpha", .{ .context_window = 128_000 });
+    const rendered = try renderConfiguredProviderModels(arena, &provider);
+    try std.testing.expectEqualStrings("id\tctx\nalpha\t128000\nzeta\t200000\n", rendered);
 }
 
 test "a live /models listing fills the picker, skipping entries it cannot name" {
