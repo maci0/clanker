@@ -3532,8 +3532,72 @@ h2#session-title {
 .schedule-log-row { display: grid; grid-template-columns: 6rem 6rem 1fr; gap: 10px; align-items: baseline; }
 .schedule-log-row[data-state="error"] { color: var(--danger, #d33); }
 
+/* Record lists are one control family. Arena, Compare, and Search all open a
+   saved record, so they use the panel's compact rectangular rows rather than
+   inheriting the pill silhouette reserved for short actions. Schedule entries
+   are the read-only member of the same family. */
+.arena-list, .compare-list {
+  gap: var(--space-2);
+}
+.arena-pick, .compare-row, .search-hit, .schedule-entry {
+  border-radius: var(--radius);
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  box-shadow: none;
+}
+.arena-pick, .compare-row, .search-hit {
+  min-height: 40px;
+  padding: var(--space-3) var(--space-4);
+}
+.arena-pick:hover, .compare-row:hover, .search-hit:hover {
+  border-color: var(--border);
+  background: var(--surface-hover);
+}
+.arena-pick[aria-pressed="true"], .compare-row[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
+  background: var(--accent-dim);
+}
+.schedule-entry {
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-2);
+}
+.arena-pick-q, .compare-row-q, .search-hit-title {
+  color: var(--fg);
+  font-weight: 600;
+}
+.arena-pick-outcome, .compare-row-outcome {
+  color: var(--fg-muted);
+}
+.search-hit-snippet {
+  margin: var(--space-1) 0;
+  color: var(--fg-muted);
+  font-weight: 400;
+  line-height: 1.55;
+}
+.schedule-entry-head, .schedule-entry-foot, .search-hit-head {
+  gap: var(--space-2) var(--space-3);
+}
+
+@media (max-width: 40rem) {
+  .arena-pick, .compare-row, .search-hit {
+    min-height: 44px;
+    padding: var(--space-3);
+  }
+  .arena-pick-outcome, .compare-row-outcome {
+    flex-basis: 100%;
+    padding-left: calc(8px + 10px);
+  }
+  .schedule-log-row {
+    grid-template-columns: minmax(5rem, auto) 1fr;
+  }
+  .schedule-log-row > :last-child {
+    grid-column: 1 / -1;
+  }
+}
+
 /* ---- Search view ---- */
-.search-hit { display: block; width: 100%; text-align: left; margin-bottom: var(--space-3); padding: 10px 12px; }
+.search-hit { display: block; width: 100%; text-align: left; margin-bottom: var(--space-2); padding: var(--space-3) var(--space-4); }
 .search-hit-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .search-hit-title { font-weight: 600; }
 .search-hit-snippet { margin: 4px 0; font-size: 13px; overflow-wrap: anywhere; }
