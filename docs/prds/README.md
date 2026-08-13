@@ -56,11 +56,10 @@ optional subsystems:
 
 1. **0013** — TTSR (substring engine)
 2. **0016** then **0017** — eval kernel, then DAP
-3. **0016** then **0017** — eval kernel, then DAP
-4. **0019** — `gh_read`
-5. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
-6. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
-7. **0027** — `write-goal` (field-list blocker still open)
+3. **0019** — `gh_read`
+4. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
+5. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
+6. **0027** — `write-goal` (field-list blocker still open)
 
 ## Editing rules (short)
 

@@ -24,7 +24,10 @@ pub const Level = enum { low, medium, high, xhigh };
 pub fn parseLevel(raw: []const u8) Level {
     var it = std.mem.tokenizeAny(u8, raw, " \t\r\n`\"'.");
     const word = it.next() orelse return .medium;
-    return std.meta.stringToEnum(Level, word) orelse .medium;
+    var buf: [8]u8 = undefined;
+    if (word.len > buf.len) return .medium;
+    const lower = std.ascii.lowerString(&buf, word);
+    return std.meta.stringToEnum(Level, lower) orelse .medium;
 }
 
 pub fn effortFor(level: Level) []const u8 {
