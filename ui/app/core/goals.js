@@ -24,6 +24,20 @@ export function goalStatusLabel(g, running) {
   return s;
 }
 
+/* Whether a goal is worktree-scoped, and what to say about it on hover, or
+   null when it is not. The stored field is a truthy *string* with two writers
+   that do not agree on its content: the web UI's checkbox writes the bare
+   `"true"`, while the `goal` tool writes the run's branch/path. Both mean the
+   same thing here — presence is the flag — so only the tooltip distinguishes
+   them, and a value this does not recognise is still shown rather than
+   dropped. */
+export function goalWorktreeTitle(g) {
+  var v = g && g.worktree;
+  if (typeof v !== "string" || !v) return null;
+  if (v === "true") return "Worked in its own git worktree and branch, not the shared checkout";
+  return "Worked in its own git worktree and branch: " + v;
+}
+
 /* The board column a goal's card must sit in, or null when an idle active
    goal is deliberately parked in one of the planning columns. */
 export function goalPinnedColumn(g, running) {

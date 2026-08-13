@@ -2026,6 +2026,8 @@ button.tool-name:hover { color: var(--accent-text); }
 .goal[data-status="active"] .goal-status { color: var(--ok); font-weight: 700; }
 .goal[data-status="running"] .goal-status { color: var(--accent-text); font-weight: 700; }
 .goal[data-status="review"] .goal-status { color: var(--warn-text); font-weight: 700; }
+/* The worktree marker in a goal's meta row: icon and word, one unit. */
+.goal-worktree { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--accent-text); }
 .goal-field { margin-top: 0.35rem; font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); overflow-wrap: anywhere; }
 .goal-field b { color: var(--fg); font-weight: 700; }
 /* A goal run's own panel: streamed output, status and Stop, one per run, so
@@ -2357,13 +2359,19 @@ mark {
 .settings-actions-spaced { margin-top: var(--space-2); }
 .settings-note { margin-top: var(--space-2); }
 .board-goal-form {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 9rem auto;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 9rem auto auto;
   align-items: end; gap: var(--space-2) var(--space-3);
   padding: var(--space-4); background: var(--surface-raised); border-radius: var(--radius);
 }
 .board-goal-form label { grid-row: 1; }
 .board-goal-form input, .board-goal-form button { grid-row: 2; }
 .board-goal-form label { flex-basis: auto; }
+/* The one checkbox among text boxes. The global `input[type="checkbox"]` rule
+   already sizes it, but `.goal-form input`'s `flex: 1 1 16rem` matches at the
+   same specificity and comes later, so it wins and stretches the box. Size is
+   left to the global rule; only the stretch is undone here. */
+.goal-form input[type="checkbox"] { flex: none; }
+.board-goal-form input[type="checkbox"] { justify-self: start; align-self: center; }
 /* Board header — Trello-style prominent top bar */
 .board-header {
   display: flex; align-items: center; gap: 0.75rem;
@@ -3498,6 +3506,8 @@ h2#session-title {
   #view-board .board-col:not([data-collapsed="true"]) { min-width: 0; max-width: none; width: 100%; max-height: none; }
   .board-goal-form { display: flex; padding: var(--space-3); }
   .board-goal-form input, .board-goal-form button { width: 100%; min-height: 44px; }
+  /* Exempt from the full-width rule above: a checkbox has nothing to fill. */
+  .board-goal-form input[type="checkbox"] { width: 1.05rem; min-height: 0; }
   .board-filter { display: flex; align-items: center; border-radius: var(--radius); gap: var(--space-2) var(--space-3); }
   .board-filter > input[type="search"] { flex: 1 1 14rem; min-height: 44px; }
   .board-filter select { min-height: 44px; }
