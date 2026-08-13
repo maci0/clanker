@@ -412,8 +412,12 @@ const Fold = struct {
 
 /// A reply at least this many wrapped terminal rows tall is worth folding.
 const FOLD_MIN_ROWS: usize = 8;
-/// Ticks per second while a fold animation is running.
-const FOLD_ANIM_RATE: u32 = 60;
+/// Steps a fold takes to travel from collapsed to open. At `fold_tick_ms` a
+/// side, that is roughly a quarter second.
+const FOLD_ANIM_RATE: u32 = 12;
+/// Frame interval while a fold is animating. Shares the one `ctx.tick` the
+/// model owns (see `timer_armed`); nothing here arms a second timer.
+const fold_tick_ms: u32 = 16;
 
 /// Errors use the same stable prefix as the non-interactive CLI. Keeping the
 /// classifier separate from drawing prevents a new TUI error path from
@@ -2016,16 +2020,34 @@ const Model = struct {
         return total;
     }
 
-    /// Fractional body rows currently revealed (0..bodyRows), from `anim`.
-    fn foldBodyReveal(self: *const Model, fold: Fold, width: u16) f32 {
-        return @as(f32, @floatFromInt(self.foldBodyRows(fold, width))) * foldEase(fold.anim);
+    /// The `▸ N lines` / `▾` header standing in for a collapsed reply. Arena
+    /// allocated per draw; vaxis borrows the bytes only until the frame flushes.
+    fn foldHeader(self: *const Model, arena: std.mem.Allocator, fold: Fold) []const u8 {
+        _ = self;
+        const hidden = fold.count - foldShownLines(fold);
+        if (hidden == 0) return "\xe2\x96\xbe reply";
+        return std.fmt.allocPrint(arena, "\xe2\x96\xb8 reply, {d} more line{s}", .{
+            hidden,
+            if (hidden == 1) "" else "s",
+        }) catch "\xe2\x96\xb8 reply";
     }
 
-    /// Whole terminal rows the fold currently occupies in the transcript
-    /// layout: the 1 header row plus the currently revealed body rows.
-    fn foldCurrentRows(self: *const Model, fold: Fold, width: u16) usize {
-        const reveal = self.foldBodyReveal(fold, width);
-        return 1 + @as(usize, @intFromFloat(@round(reveal)));
+    /// Flip the fold at `idx` open or closed. The animation carries it the
+    /// rest of the way; `anim` is never snapped, so a mid-animation toggle
+    /// reverses from where it is instead of jumping.
+    fn toggleFold(self: *Model, idx: usize) void {
+        if (idx >= self.folds.items.len) return;
+        self.folds.items[idx].expanded = !self.folds.items[idx].expanded;
+    }
+
+    /// Start the animation heartbeat if it is not already running. The `.tick`
+    /// arm owns re-arming from then on, so this only ever adds the *first*
+    /// timer: two pending ticks never converge back into one, they just double
+    /// every animation rate for the rest of the session.
+    fn armTimer(self: *Model, ctx: *vxfw.EventContext) !void {
+        if (self.timer_armed) return;
+        self.timer_armed = true;
+        try ctx.tick(fold_tick_ms, self.widget());
     }
 
     /// Advance every animating fold one step toward its target and report
@@ -3288,6 +3310,9 @@ const Model = struct {
                 // -- advancing it here as well would step it twice per frame
                 // during a streaming turn and not at all when idle.
                 if (self.mascot.mode.selfDriven()) self.mascot.advance(self.inputLen());
+                // A fold mid-open or mid-close steps here too, and reports
+                // whether it still needs frames.
+                const folds_animating = self.advanceFolds();
                 // Exactly one timer, at the faster of the rates anything wants:
                 // a streaming turn needs ~30fps for smooth text, the mascot
                 // only 20, and while both are live the stream's rate serves
@@ -3295,6 +3320,8 @@ const Model = struct {
                 // is working, which is not a bad look for it).
                 const want_tick: ?u32 = if (still_streaming)
                     stream_tick_ms
+                else if (folds_animating)
+                    fold_tick_ms
                 else if (self.mascot.mode.selfDriven())
                     mascot_tick_ms
                 else
@@ -3566,6 +3593,20 @@ const Model = struct {
             .release => {
                 if (!self.mouse_down) return;
                 self.mouse_down = false;
+                // A click (press and release on the same row, no drag) on a
+                // fold header opens or closes that reply. Checked before the
+                // selection path so a plain click is a toggle, not an empty
+                // copy of a zero-width selection.
+                if (!self.has_selection) {
+                    for (self.fold_hits.items) |hit| {
+                        if (hit.row == row) {
+                            self.toggleFold(hit.fold);
+                            self.armTimer(ctx) catch {};
+                            ctx.redraw = true;
+                            return;
+                        }
+                    }
+                }
                 if (!self.has_selection) return;
                 const surface = self.last_surface orelse return;
                 const text = extractSelectionText(ctx.alloc, surface, self.sel_start, self.sel_end) catch return;
@@ -4055,8 +4096,34 @@ const Model = struct {
         const fence_on = active.reset.len > 0;
         var syn_style = syntax.Style.fromTheme(&active);
         const hit_line = self.currentHitLine();
+        self.fold_hits.clearRetainingCapacity();
         var i: usize = start;
         while (i < view_end and row < bottom) : (i += 1) {
+            // A folded reply draws its header row, then only the lines the
+            // animation has revealed, and the loop jumps the rest. The header
+            // row is recorded so a click can map back to the fold.
+            if (self.foldIndexAtStart(i)) |fk| {
+                const f = self.folds.items[fk];
+                const shown = foldShownLines(f);
+                if (shown < f.count) {
+                    // `self.arena`, not `ctx.arena`: the hit list outlives the
+                    // frame (a click arrives after the draw that built it) and
+                    // `clearRetainingCapacity` would otherwise keep appending
+                    // into a buffer the previous frame's arena already freed.
+                    self.fold_hits.append(self.arena, .{ .row = row, .fold = fk }) catch {};
+                    writeWrapped(surface, &row, bottom, text_width, self.foldHeader(ctx.arena, f), tool_style);
+                    row += 1;
+                    var k: usize = 0;
+                    while (k < shown and row < bottom) : (k += 1) {
+                        writeWrapped(surface, &row, bottom, text_width, self.lines.items[f.start + k].text, vaxis.Style{});
+                        row += 1;
+                    }
+                    // `i` lands on the last line of the region; the loop's own
+                    // increment steps past it.
+                    i = f.start + f.count - 1;
+                    continue;
+                }
+            }
             const l = self.lines.items[i];
             // Each Line is one logical row (finishTurn/printHelp store the
             // transcript pre-split on '\n'). The write helpers advance `row`
@@ -4414,12 +4481,12 @@ fn tailWindow(
         var block_start = i;
         for (folds) |f| {
             if (i >= f.start and i < f.start + f.count) {
-                var body: usize = 0;
-                for (lines[f.start .. f.start + f.count]) |l| {
-                    body += lineRows(l.text, width);
+                // Header row plus exactly the lines the draw loop will render,
+                // counted the same way it counts them (`foldShownLines`).
+                rows = 1;
+                for (lines[f.start .. f.start + foldShownLines(f)]) |l| {
+                    rows += lineRows(l.text, width);
                 }
-                const reveal = @as(f32, @floatFromInt(body)) * foldEase(f.anim);
-                rows = 1 + @as(usize, @intFromFloat(@round(reveal)));
                 block_start = f.start;
                 break;
             }
@@ -4430,6 +4497,18 @@ fn tailWindow(
         if (used >= avail_rows) break;
     }
     return .{ .start = start, .used_rows = @intCast(@min(used, avail_rows)) };
+}
+
+/// How many of a fold's lines are currently revealed. Quantised to whole
+/// *lines* rather than wrapped rows because the draw loop can only stop
+/// between lines: measuring the layout in rows while rendering in lines let
+/// the two disagree, and the transcript was then bottom-aligned for a height
+/// it did not draw, clipping the tail of every folded reply.
+fn foldShownLines(fold: Fold) usize {
+    if (fold.anim >= 1) return fold.count;
+    if (fold.anim <= 0) return 0;
+    const eased = foldEase(fold.anim) * @as(f32, @floatFromInt(fold.count));
+    return @min(fold.count, @as(usize, @intFromFloat(@round(eased))));
 }
 
 /// Ease curve for the fold animation (smoothstep): fast middle, eased ends.
@@ -4919,6 +4998,44 @@ test "inline markdown splits into styled segments and leaves plain text whole" {
     try mdLineSegments(&theme, arena, "just text with a * star", &plain);
     try std.testing.expectEqual(@as(usize, 1), plain.items.len);
     try std.testing.expectEqualStrings("just text with a * star", plain.items[0].text);
+}
+
+test "a collapsed fold reserves exactly the rows the draw loop will use" {
+    // The bug this pins: `tailWindow` measured a fold in wrapped *rows* while
+    // the draw loop rendered whole *lines*, so the transcript was bottom-
+    // aligned for a height it never drew and the tail fell off the bottom.
+    // Both sides now count through `foldShownLines`.
+    const lines = [_]Line{
+        .{ .text = "clanker> ask" },
+        .{ .text = "a1" }, .{ .text = "a2" }, .{ .text = "a3" }, .{ .text = "a4" },
+        .{ .text = "receipt" },
+    };
+    const collapsed = [_]Fold{.{ .start = 1, .count = 4, .expanded = false, .anim = 0 }};
+
+    // Collapsed: prompt + header + receipt == 3 rows, and no body lines shown.
+    try std.testing.expectEqual(@as(usize, 0), foldShownLines(collapsed[0]));
+    const win = tailWindow(&lines, &collapsed, lines.len, 20, 80);
+    try std.testing.expectEqual(@as(usize, 0), win.start);
+    try std.testing.expectEqual(@as(u16, 3), win.used_rows);
+
+    // Fully open: every line is drawn, so the reservation is the full height
+    // (prompt + header + 4 body + receipt).
+    const open = [_]Fold{.{ .start = 1, .count = 4, .expanded = true, .anim = 1 }};
+    try std.testing.expectEqual(@as(usize, 4), foldShownLines(open[0]));
+    const win_open = tailWindow(&lines, &open, lines.len, 20, 80);
+    try std.testing.expectEqual(@as(u16, 7), win_open.used_rows);
+}
+
+test "a fold reveals whole lines as it animates, never a fraction" {
+    const f = Fold{ .start = 0, .count = 10, .expanded = true, .anim = 0.5 };
+    const shown = foldShownLines(f);
+    // Mid-animation reveals some but not all, and always a whole number of
+    // lines: the draw loop can only stop between lines.
+    try std.testing.expect(shown > 0 and shown < f.count);
+    // The ends are exact, so a fold round-trips to precisely open or closed
+    // rather than drifting a line each time it is toggled.
+    try std.testing.expectEqual(@as(usize, 0), foldShownLines(.{ .start = 0, .count = 10, .expanded = false, .anim = 0 }));
+    try std.testing.expectEqual(@as(usize, 10), foldShownLines(.{ .start = 0, .count = 10, .expanded = true, .anim = 1 }));
 }
 
 test "tailWindow bottom-aligns a short transcript and fills a tall one" {
