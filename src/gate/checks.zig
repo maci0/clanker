@@ -1057,6 +1057,16 @@ pub fn configWeakeningGate(
 ) GateResult {
     if (files.len != new_texts.len) return .{ .ok = false, .label = "config-weakening", .detail = "mismatched files/new_text count" };
     for (files, new_texts) |f, new| {
+        // config.toml often omits these keys, so the struct defaults in
+        // src/config.zig are what the next run actually loads. A fragment
+        // that assigns the disabled value is the same weakening as the TOML
+        // form; the full-file check (required defaults still present) lives
+        // in configSourceWeakeningGate and is run against the staged file.
+        if (std.mem.eql(u8, f, "src/config.zig")) {
+            if (forbiddenImproveDefault(new)) |detail|
+                return .{ .ok = false, .label = "config-weakening", .detail = detail };
+            continue;
+        }
         if (!std.mem.eql(u8, f, "config.toml") and !std.mem.eql(u8, f, "config.local.toml")) continue;
         var arena_state = std.heap.ArenaAllocator.init(gpa);
         defer arena_state.deinit();
@@ -1114,6 +1124,45 @@ fn weakensImprove(obj: std.json.ObjectMap) ?GateResult {
     }
     if (isFalse(obj.get("plan_phase")))
         return .{ .ok = false, .label = "config-weakening", .detail = "plan_phase must not be disabled" };
+    return null;
+}
+
+/// The improve-gate defaults and their parser live in `src/config.zig`,
+/// which is writable. `config.toml` in this repo does not set the keys, so
+/// flipping a default (or inverting the bool parse) disables the gate on
+/// the next run without ever touching a file `configWeakeningGate` used to
+/// inspect. Run this against the staged file, not a replacement fragment:
+/// a one-word `true` -> `false` replace has `new == "false"`.
+pub fn configSourceWeakeningGate(src: []const u8) GateResult {
+    const required = [_][]const u8{
+        "capability_gate: bool = true",
+        "inert_gate: bool = true",
+        "plan_phase: bool = true",
+        "git_commit: bool = true",
+        "if (obj.get(\"capability_gate\")) |k| im.capability_gate = switch (k)",
+        "if (obj.get(\"inert_gate\")) |k| im.inert_gate = switch (k)",
+        "if (obj.get(\"plan_phase\")) |k| im.plan_phase = switch (k)",
+    };
+    for (required) |need| {
+        if (std.mem.find(u8, src, need) == null)
+            return .{ .ok = false, .label = "config-weakening", .detail = "src/config.zig must keep improve-gate defaults enabled" };
+    }
+    if (forbiddenImproveDefault(src)) |detail|
+        return .{ .ok = false, .label = "config-weakening", .detail = detail };
+    return .{ .ok = true, .label = "config-weakening" };
+}
+
+fn forbiddenImproveDefault(src: []const u8) ?[]const u8 {
+    const forbidden = [_][]const u8{
+        "capability_gate: bool = false",
+        "inert_gate: bool = false",
+        "plan_phase: bool = false",
+        "max_consecutive_test_only: u32 = 0",
+        "|b| !b",
+    };
+    for (forbidden) |needle| {
+        if (std.mem.find(u8, src, needle) != null) return needle;
+    }
     return null;
 }
 
@@ -1247,4 +1296,51 @@ test "configWeakeningGate ignores non-config files" {
     const new_texts = [_][]const u8{"const x = 1;"};
     const result = configWeakeningGate(gpa, &files, &new_texts);
     try std.testing.expect(result.ok);
+}
+
+test "configWeakeningGate rejects flipping improve defaults in src/config.zig" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"src/config.zig"};
+    const flipped = [_][]const u8{"capability_gate: bool = false"};
+    const result = configWeakeningGate(gpa, &files, &flipped);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("config-weakening", result.label);
+
+    const invert = [_][]const u8{".bool => |b| !b,"};
+    const result2 = configWeakeningGate(gpa, &files, &invert);
+    try std.testing.expect(!result2.ok);
+
+    const harmless = [_][]const u8{"fn parseImprove(arena: std.mem.Allocator, v: json.Value) !Improve {"};
+    const result3 = configWeakeningGate(gpa, &files, &harmless);
+    try std.testing.expect(result3.ok);
+}
+
+test "configSourceWeakeningGate requires the enabled defaults and rejects a flip" {
+    const good =
+        \\capability_gate: bool = true
+        \\inert_gate: bool = true
+        \\plan_phase: bool = true
+        \\git_commit: bool = true
+        \\if (obj.get("capability_gate")) |k| im.capability_gate = switch (k) {
+        \\if (obj.get("inert_gate")) |k| im.inert_gate = switch (k) {
+        \\if (obj.get("plan_phase")) |k| im.plan_phase = switch (k) {
+    ;
+    try std.testing.expect(configSourceWeakeningGate(good).ok);
+
+    const flipped = good ++ "\ncapability_gate: bool = false\n";
+    try std.testing.expect(!configSourceWeakeningGate(flipped).ok);
+
+    const missing = 
+        \\inert_gate: bool = true
+        \\plan_phase: bool = true
+        \\git_commit: bool = true
+        \\if (obj.get("capability_gate")) |k| im.capability_gate = switch (k) {
+        \\if (obj.get("inert_gate")) |k| im.inert_gate = switch (k) {
+        \\if (obj.get("plan_phase")) |k| im.plan_phase = switch (k) {
+    ;
+    try std.testing.expect(!configSourceWeakeningGate(missing).ok);
+
+    const zeroed =
+        good ++ "\nmax_consecutive_test_only: u32 = 0\n";
+    try std.testing.expect(!configSourceWeakeningGate(zeroed).ok);
 }

@@ -130,6 +130,25 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/gate/checks.zig", .needle = "isFalse(obj.get(\"plan_phase\"))" },
     .{ .file = "src/gate/checks.zig", .needle = "isFalse(obj.get(\"git_commit\"))" },
     .{ .file = "src/gate/checks.zig", .needle = ".bool => |b| !b," },
+    // config.toml in this checkout does not set the improve-gate keys, so
+    // the struct defaults in src/config.zig are what the next run loads.
+    // A proposal that flips those (or inverts the bool parse) never
+    // touches config.toml, and configWeakeningGate used to ignore this file.
+    .{ .file = "src/config.zig", .needle = "capability_gate: bool = true" },
+    .{ .file = "src/config.zig", .needle = "inert_gate: bool = true" },
+    .{ .file = "src/config.zig", .needle = "plan_phase: bool = true" },
+    .{ .file = "src/config.zig", .needle = "git_commit: bool = true" },
+    .{ .file = "src/config.zig", .needle = "if (obj.get(\"capability_gate\")) |k| im.capability_gate = switch (k)" },
+    .{ .file = "src/gate/checks.zig", .needle = "configSourceWeakeningGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.configSourceWeakeningGate(" },
+    // cmdEval is writable. An early `return` before runAll, or `--tasks`
+    // with an emptied list, makes the staged `clanker eval` exit 0 with
+    // no result lines. The call sites plus uncoveredCapabilityTasks are
+    // what make that fail closed.
+    .{ .file = "src/cli.zig", .needle = "try r.runAll(list.items)" },
+    .{ .file = "src/cli.zig", .needle = "if (!all_ok) return error.EvalsFailed" },
+    .{ .file = "src/cli.zig", .needle = "scorers.Eval.loadAll(" },
+    .{ .file = "src/improve/engine.zig", .needle = "uncoveredCapabilityTasks(" },
     .{ .file = "src/gate/checks.zig", .needle = "std.mem.startsWith(u8, s, \"git \")" },
     // lintGate splits forbidden markers so checks.zig doesn't flag itself;
     // only "TO"++"DO" had a needle, leaving the other three removable.
@@ -647,6 +666,15 @@ pub const Engine = struct {
                 .{ @errorName(err), head, tail },
             );
             if (err == error.NoChanges) return .no_change;
+            // Same class of bug the path-rejection arm above used to have:
+            // without a history row the next iteration has no memory of this
+            // parse failure and will burn the budget on the same blob.
+            const parse_id = self.newId() catch null;
+            if (parse_id) |owned_id| {
+                defer self.ctx.gpa.free(owned_id);
+                self.hist.append(owned_id, .failed, opts.instructions, "invalid proposal", &.{}, 0, 0, @errorName(err), &.{}, null) catch |herr|
+                    log.log(.warn, "history append failed: {s}", .{@errorName(herr)});
+            }
             return .failed;
         };
         log.log(.info, "proposal: {s} ({d} change(s))", .{ proposal.summary, proposal.changes.len });
@@ -874,6 +902,28 @@ pub const Engine = struct {
             self.feedback = try std.fmt.allocPrint(self.arena, "Your patch was rejected by the config-weakening guard: {s}\nDo not disable safety gates in config.", .{cfg_weak.detail});
             self.removeTree(staging);
             return .failed;
+        }
+
+        // The fragment check above sees only `new`. A one-word replace of
+        // `true` with `false` on a default would slip past it; the staged
+        // file is what the next run will compile.
+        for (proposal.changes) |c| {
+            if (!std.mem.eql(u8, c.file, "src/config.zig")) continue;
+            const data = staged_dir.readFileAlloc(self.ctx.io, c.file, self.arena, .limited(1 << 22)) catch {
+                log.log(.warn, "proposal rejected: staged src/config.zig unreadable", .{});
+                try self.hist.append(id, .failed, opts.instructions, proposal.summary, gate_files, 0, 0, "staged src/config.zig unreadable", fingerprints, null);
+                self.feedback = "Your patch touched src/config.zig but the staged file could not be read. Keep the improve-gate defaults enabled.";
+                self.removeTree(staging);
+                return .failed;
+            };
+            const src_weak = gate_checks.configSourceWeakeningGate(data);
+            if (!src_weak.ok) {
+                log.log(.warn, "proposal rejected: {s}", .{src_weak.detail});
+                try self.hist.append(id, .failed, opts.instructions, proposal.summary, gate_files, 0, 0, src_weak.detail, fingerprints, null);
+                self.feedback = try std.fmt.allocPrint(self.arena, "Your patch was rejected by the config-weakening guard: {s}\nDo not disable safety gates in src/config.zig defaults or their parser.", .{src_weak.detail});
+                self.removeTree(staging);
+                return .failed;
+            }
         }
 
         // What the change actually does, decided from the staged source rather
@@ -1882,7 +1932,7 @@ pub const Engine = struct {
             .stdout_limit = .limited(1 << 20),
             .stderr_limit = .limited(1 << 20),
         });
-        const ok = switch (result.term) {
+        const exited_ok = switch (result.term) {
             .exited => |c| c == 0,
             else => false,
         };
@@ -1893,8 +1943,38 @@ pub const Engine = struct {
         // proposal (e.g. a change that broke the `gate` tool's own `zig`
         // invocation) came back reworded every time it was rejected instead
         // of getting fixed or dropped for an understood reason.
-        const detail: []const u8 = if (ok) "" else try std.fmt.allocPrint(self.arena, "{s}\n{s}", .{ result.stdout, result.stderr });
-        return .{ .ok = ok, .label = "capability evals", .detail = detail, .stdout = result.stdout, .stderr = result.stderr };
+        //
+        // Exit 0 is not enough: cmdEval is writable, and `eval --tasks` with
+        // an empty list (or an early return before runAll) exits 0 with no
+        // result lines. Fail closed unless every staged task produced one.
+        if (exited_ok) {
+            if (try self.uncoveredCapabilityTasks(staging, result.stdout)) |missing| {
+                const detail = try std.fmt.allocPrint(self.arena, "{s}\n{s}\n{s}", .{ missing, result.stdout, result.stderr });
+                return .{ .ok = false, .label = "capability evals", .detail = detail, .stdout = result.stdout, .stderr = result.stderr };
+            }
+        }
+        const detail: []const u8 = if (exited_ok) "" else try std.fmt.allocPrint(self.arena, "{s}\n{s}", .{ result.stdout, result.stderr });
+        return .{ .ok = exited_ok, .label = "capability evals", .detail = detail, .stdout = result.stdout, .stderr = result.stderr };
+    }
+
+    /// True when `stdout` has a `name: <score> PASS|FAIL` line for every
+    /// staged `.task` eval. The names come from this process's loader
+    /// (src/evals is protected), so a gutted staged `cmdEval` cannot hide
+    /// a case by simply not printing it.
+    fn uncoveredCapabilityTasks(self: *Engine, staging: []const u8, stdout: []const u8) !?[]const u8 {
+        const evals_path = try std.fmt.allocPrint(self.ctx.gpa, "{s}/evals", .{staging});
+        defer self.ctx.gpa.free(evals_path);
+        const evals = scorers.Eval.loadAll(self.arena, self.ctx.io, evals_path) catch
+            return "capability evals: could not load staged evals/";
+        var expected: usize = 0;
+        for (evals) |e| {
+            if (e.kind != .task) continue;
+            expected += 1;
+            if (!capabilityLineReports(stdout, e.name))
+                return try std.fmt.allocPrint(self.arena, "capability evals: staged task \"{s}\" produced no result line", .{e.name});
+        }
+        if (expected == 0) return "capability evals: staged tree has no task evals";
+        return null;
     }
 
     /// Re-runs only the named eval cases (the ones that failed on the first
