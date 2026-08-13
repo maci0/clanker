@@ -586,9 +586,50 @@ function cardNode(c) {
     av.title = c.assignee + " — click to reassign";
     av.addEventListener("click", function(e){
       e.stopPropagation();
-      var next2 = prompt("Assign to (empty to unassign):", c.assignee || "");
-      if (next2 === null) return;
-      postBoard({ op: "update", id: c.id, assignee: next2.trim() }, next2.trim() ? "Assigned to " + next2.trim() + "." : "Unassigned.");
+      // Trello-style member picker popup
+      var existing = document.querySelector(".member-picker-popup");
+      if (existing) existing.remove();
+      var popup = document.createElement("div");
+      popup.className = "member-picker-popup";
+      popup.style.cssText = "position:absolute;z-index:999;background:var(--surface);border:1px solid var(--rule);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.15);padding:0.5rem;min-width:160px;";
+      var popTitle = document.createElement("div");
+      popTitle.style.cssText = "font-weight:600;font-size:12px;color:var(--fg-muted);padding:0.3rem 0.4rem;margin-bottom:0.3rem;";
+      popTitle.textContent = "Members";
+      popup.appendChild(popTitle);
+      // Unassign option
+      var unBtn = document.createElement("button");
+      unBtn.type = "button";
+      unBtn.className = "member-picker-opt";
+      unBtn.style.cssText = "display:block;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg-muted);font-size:13px;border-radius:4px;";
+      unBtn.textContent = "✕ Remove assignee";
+      unBtn.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: "" }, "Unassigned."); });
+      unBtn.addEventListener("mouseenter", function(){ unBtn.style.background = "var(--surface-2)"; });
+      unBtn.addEventListener("mouseleave", function(){ unBtn.style.background = "none"; });
+      popup.appendChild(unBtn);
+      // Known peers as options
+      var peers = (_getKnownPeers() || []).map(function(p){ return typeof p === "string" ? p : p.name || p; });
+      if (peers.indexOf(c.assignee) === -1 && c.assignee) peers.unshift(c.assignee);
+      peers.forEach(function(name){
+        var opt = document.createElement("button");
+        opt.type = "button";
+        opt.style.cssText = "display:flex;align-items:center;gap:0.5rem;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg);font-size:13px;border-radius:4px;";
+        var optAv = document.createElement("span");
+        optAv.style.cssText = "flex:none;width:24px;height:24px;border-radius:50%;background:var(--accent);color:var(--on-accent);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;";
+        optAv.textContent = name.slice(0,2).toUpperCase();
+        opt.appendChild(optAv);
+        opt.appendChild(document.createTextNode(name));
+        if (name === c.assignee) opt.style.fontWeight = "700";
+        opt.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: name }, "Assigned to " + name + "."); });
+        opt.addEventListener("mouseenter", function(){ opt.style.background = "var(--surface-2)"; });
+        opt.addEventListener("mouseleave", function(){ opt.style.background = "none"; });
+        popup.appendChild(opt);
+      });
+      // Close on click outside
+      var closePopup = function(ev) { if (!popup.contains(ev.target)) { popup.remove(); document.removeEventListener("click", closePopup, true); } };
+      setTimeout(function(){ document.addEventListener("click", closePopup, true); }, 0);
+      // Position near the avatar
+      av.style.position = "relative";
+      av.appendChild(popup);
     });
     membersWrap.appendChild(av);
     bottom.appendChild(membersWrap);
@@ -898,29 +939,109 @@ function showCardDetail(id) {
     swatch.setAttribute("aria-label", (isSelected ? "Remove " : "Add ") + color + " label");
     if (isSelected) swatch.setAttribute("data-selected", "true");
     swatch.addEventListener("click", function() {
-      var newLabels;
       if (isSelected) {
-        newLabels = currentLabels.filter(function(l) { return l.color !== color; });
+        var newLabels = currentLabels.filter(function(l) { return l.color !== color; });
+        postBoard({ op: "update", id: c.id, labels: newLabels }, "Labels updated.");
       } else {
-        var text = prompt("Label text (optional):", color);
-        if (text === null) return;
-        newLabels = currentLabels.concat([{ color: color, text: text || color }]);
+        // Show inline text input for label name
+        var existing = labelPicker.querySelector(".label-text-input-wrap");
+        if (existing) existing.remove();
+        var wrap = document.createElement("div");
+        wrap.className = "label-text-input-wrap";
+        wrap.style.cssText = "grid-column:1/-1;display:flex;gap:4px;padding:4px 0;";
+        var samplePill = document.createElement("span");
+        samplePill.className = "card-label";
+        samplePill.setAttribute("data-color", color);
+        samplePill.style.cssText = "font-size:10px;padding:0.1rem 0.4rem;height:auto;width:auto;flex:none;";
+        samplePill.textContent = color;
+        wrap.appendChild(samplePill);
+        var txtIn = document.createElement("input");
+        txtIn.type = "text";
+        txtIn.placeholder = "Label name…";
+        txtIn.value = color;
+        txtIn.style.cssText = "flex:1;min-width:0;font-size:12px;padding:0.2rem 0.4rem;border:1px solid var(--rule);border-radius:4px;background:var(--surface);color:var(--fg);";
+        txtIn.addEventListener("input", function(){ samplePill.textContent = txtIn.value || color; });
+        wrap.appendChild(txtIn);
+        var addBtn = document.createElement("button");
+        addBtn.type = "button";
+        addBtn.textContent = "Add";
+        addBtn.style.cssText = "flex:none;font-size:12px;padding:0.2rem 0.5rem;border-radius:4px;background:var(--accent);color:var(--on-accent);border:none;cursor:pointer;";
+        addBtn.addEventListener("click", function(){
+          var text = txtIn.value.trim() || color;
+          var newLabels = currentLabels.concat([{ color: color, text: text }]);
+          postBoard({ op: "update", id: c.id, labels: newLabels }, "Labels updated.");
+        });
+        wrap.appendChild(addBtn);
+        labelPicker.appendChild(wrap);
+        txtIn.focus();
+        txtIn.select();
       }
-      postBoard({ op: "update", id: c.id, labels: newLabels }, "Labels updated.");
     });
     labelPicker.appendChild(swatch);
   });
   mainCol.appendChild(labelPicker);
 
-  // ---- Description/Notes ----
+  // ---- Description/Notes (Trello-style: click to edit, save/cancel) ----
   var fields = detailSection(mainCol, "Description");
+  var descDisplay = document.createElement("div");
+  descDisplay.className = "card-desc-display";
+  descDisplay.style.cssText = "min-height:40px;padding:0.5rem 0.6rem;border-radius:8px;cursor:pointer;line-height:1.5;font-size:13px;white-space:pre-wrap;word-break:break-word;";
+  if (c.body && c.body.trim()) {
+    descDisplay.textContent = c.body;
+    descDisplay.style.background = "transparent";
+    descDisplay.style.color = "var(--fg)";
+  } else {
+    descDisplay.textContent = "Add a more detailed description…";
+    descDisplay.style.background = "var(--surface-2)";
+    descDisplay.style.color = "var(--fg-muted)";
+    descDisplay.style.fontStyle = "italic";
+  }
   var bodyIn = document.createElement("textarea");
   bodyIn.id = "card-f-body";
-  bodyIn.rows = 4;
+  bodyIn.rows = 6;
   bodyIn.placeholder = "Add a more detailed description…";
-  bodyIn.style.cssText = "width:100%;font-family:var(--sans);font-size:13px;line-height:1.5;border-radius:8px;padding:0.5rem 0.6rem;border:1px solid var(--rule);background:var(--surface);resize:vertical;";
+  bodyIn.style.cssText = "width:100%;font-family:var(--sans);font-size:13px;line-height:1.5;border-radius:8px;padding:0.5rem 0.6rem;border:2px solid var(--accent);background:var(--surface);resize:vertical;display:none;";
   bindDraft(bodyIn, c.id, "body", c.body);
+  var descActions = document.createElement("div");
+  descActions.style.cssText = "display:none;gap:0.4rem;margin-top:0.4rem;align-items:center;";
+  var descSave = document.createElement("button");
+  descSave.type = "button";
+  descSave.className = "card-detail-save-btn";
+  descSave.textContent = "Save";
+  descSave.style.cssText = "min-height:28px;font-size:13px;";
+  var descCancel = document.createElement("button");
+  descCancel.type = "button";
+  descCancel.className = "secondary";
+  descCancel.textContent = "Cancel";
+  descCancel.style.cssText = "min-height:28px;font-size:13px;";
+  descActions.appendChild(descSave);
+  descActions.appendChild(descCancel);
+  descDisplay.addEventListener("click", function() {
+    descDisplay.style.display = "none";
+    bodyIn.style.display = "block";
+    descActions.style.display = "flex";
+    bodyIn.focus();
+  });
+  descCancel.addEventListener("click", function() {
+    bodyIn.value = c.body || "";
+    bodyIn.style.display = "none";
+    descActions.style.display = "none";
+    descDisplay.style.display = "block";
+  });
+  descSave.addEventListener("click", function() {
+    // Trigger the same save as the draft binding
+    bodyIn.dispatchEvent(new Event("change"));
+    descDisplay.textContent = bodyIn.value || "Add a more detailed description…";
+    descDisplay.style.background = bodyIn.value.trim() ? "transparent" : "var(--surface-2)";
+    descDisplay.style.color = bodyIn.value.trim() ? "var(--fg)" : "var(--fg-muted)";
+    descDisplay.style.fontStyle = bodyIn.value.trim() ? "normal" : "italic";
+    bodyIn.style.display = "none";
+    descActions.style.display = "none";
+    descDisplay.style.display = "block";
+  });
+  fields.appendChild(descDisplay);
   fields.appendChild(bodyIn);
+  fields.appendChild(descActions);
 
   // ---- Sidebar: quick actions ----
   var sideTitle1 = document.createElement("div");
@@ -928,28 +1049,91 @@ function showCardDetail(id) {
   sideTitle1.textContent = "Add to card";
   sidebarCol.appendChild(sideTitle1);
 
-  // Assignee sidebar button
+  // Assignee sidebar button with member picker dropdown
+  var assignWrap = document.createElement("div");
+  assignWrap.style.cssText = "position:relative;";
   var assignBtn = document.createElement("button");
   assignBtn.type = "button";
-  assignBtn.textContent = "Members: " + (c.assignee || "unassigned");
+  assignBtn.innerHTML = "👤 Members: " + (c.assignee || "<em>unassigned</em>");
   assignBtn.addEventListener("click", function() {
-    var next = prompt("Assign to (empty to unassign):", c.assignee || "");
-    if (next === null) return;
-    postBoard({ op: "update", id: c.id, assignee: next.trim() }, next.trim() ? "Assigned." : "Unassigned.");
+    var existing = assignWrap.querySelector(".member-picker-popup");
+    if (existing) { existing.remove(); return; }
+    var popup = document.createElement("div");
+    popup.className = "member-picker-popup";
+    popup.style.cssText = "position:absolute;left:0;top:100%;z-index:999;background:var(--surface);border:1px solid var(--rule);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.15);padding:0.5rem;min-width:180px;margin-top:4px;";
+    var popTitle = document.createElement("div");
+    popTitle.style.cssText = "font-weight:600;font-size:12px;color:var(--fg-muted);padding:0.3rem 0.4rem 0.5rem;border-bottom:1px solid var(--rule);margin-bottom:0.3rem;";
+    popTitle.textContent = "Members";
+    popup.appendChild(popTitle);
+    // Unassign option
+    var unBtn = document.createElement("button");
+    unBtn.type = "button";
+    unBtn.style.cssText = "display:block;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg-muted);font-size:13px;border-radius:4px;";
+    unBtn.textContent = "✕ Remove member";
+    unBtn.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: "" }, "Unassigned."); });
+    unBtn.addEventListener("mouseenter", function(){ unBtn.style.background = "var(--surface-2)"; });
+    unBtn.addEventListener("mouseleave", function(){ unBtn.style.background = "none"; });
+    popup.appendChild(unBtn);
+    // Known peers
+    var peers = (_getKnownPeers() || []).map(function(p){ return typeof p === "string" ? p : p.name || p; });
+    if (c.assignee && peers.indexOf(c.assignee) === -1) peers.unshift(c.assignee);
+    peers.forEach(function(name){
+      var opt = document.createElement("button");
+      opt.type = "button";
+      opt.style.cssText = "display:flex;align-items:center;gap:0.5rem;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg);font-size:13px;border-radius:4px;";
+      var optAv = document.createElement("span");
+      optAv.style.cssText = "flex:none;width:24px;height:24px;border-radius:50%;background:var(--accent);color:var(--on-accent);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;";
+      optAv.textContent = name.slice(0,2).toUpperCase();
+      opt.appendChild(optAv);
+      opt.appendChild(document.createTextNode(name));
+      if (name === c.assignee) { opt.style.fontWeight = "700"; opt.style.background = "color-mix(in srgb, var(--accent) 12%, transparent)"; }
+      opt.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: name }, "Assigned to " + name + "."); });
+      opt.addEventListener("mouseenter", function(){ opt.style.background = "var(--surface-2)"; });
+      opt.addEventListener("mouseleave", function(){ opt.style.background = name === c.assignee ? "color-mix(in srgb, var(--accent) 12%, transparent)" : "none"; });
+      popup.appendChild(opt);
+    });
+    var closePop = function(ev) { if (!popup.contains(ev.target) && ev.target !== assignBtn) { popup.remove(); document.removeEventListener("click", closePop, true); } };
+    setTimeout(function(){ document.addEventListener("click", closePop, true); }, 0);
+    assignWrap.appendChild(popup);
   });
-  sidebarCol.appendChild(assignBtn);
+  assignWrap.appendChild(assignBtn);
+  sidebarCol.appendChild(assignWrap);
 
-  // Priority sidebar button
+  // Priority sidebar button with dropdown
+  var prioWrap = document.createElement("div");
+  prioWrap.style.cssText = "position:relative;";
+  var curPrio = c.priority || "normal";
+  var prioIcons = { low: "🔽", normal: "➖", high: "🔺" };
   var prioBtn = document.createElement("button");
   prioBtn.type = "button";
-  var curPrio = c.priority || "normal";
-  prioBtn.textContent = "Priority: " + curPrio;
+  prioBtn.innerHTML = (prioIcons[curPrio] || "➖") + " Priority: " + curPrio;
   prioBtn.addEventListener("click", function() {
-    var opts = ["low", "normal", "high"];
-    var nextIdx = (opts.indexOf(curPrio) + 1) % opts.length;
-    postBoard({ op: "update", id: c.id, priority: opts[nextIdx] }, "Priority → " + opts[nextIdx]);
+    var existing = prioWrap.querySelector(".prio-picker-popup");
+    if (existing) { existing.remove(); return; }
+    var popup = document.createElement("div");
+    popup.className = "prio-picker-popup";
+    popup.style.cssText = "position:absolute;left:0;top:100%;z-index:999;background:var(--surface);border:1px solid var(--rule);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.15);padding:0.5rem;min-width:140px;margin-top:4px;";
+    var popTitle = document.createElement("div");
+    popTitle.style.cssText = "font-weight:600;font-size:12px;color:var(--fg-muted);padding:0.3rem 0.4rem 0.5rem;border-bottom:1px solid var(--rule);margin-bottom:0.3rem;";
+    popTitle.textContent = "Priority";
+    popup.appendChild(popTitle);
+    ["high", "normal", "low"].forEach(function(p){
+      var opt = document.createElement("button");
+      opt.type = "button";
+      opt.style.cssText = "display:flex;align-items:center;gap:0.5rem;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg);font-size:13px;border-radius:4px;";
+      opt.innerHTML = (prioIcons[p] || "") + " " + p.charAt(0).toUpperCase() + p.slice(1);
+      if (p === curPrio) { opt.style.fontWeight = "700"; opt.style.background = "color-mix(in srgb, var(--accent) 12%, transparent)"; }
+      opt.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, priority: p }, "Priority → " + p); });
+      opt.addEventListener("mouseenter", function(){ opt.style.background = "var(--surface-2)"; });
+      opt.addEventListener("mouseleave", function(){ opt.style.background = p === curPrio ? "color-mix(in srgb, var(--accent) 12%, transparent)" : "none"; });
+      popup.appendChild(opt);
+    });
+    var closePop = function(ev) { if (!popup.contains(ev.target) && ev.target !== prioBtn) { popup.remove(); document.removeEventListener("click", closePop, true); } };
+    setTimeout(function(){ document.addEventListener("click", closePop, true); }, 0);
+    prioWrap.appendChild(popup);
   });
-  sidebarCol.appendChild(prioBtn);
+  prioWrap.appendChild(prioBtn);
+  sidebarCol.appendChild(prioWrap);
 
   // Deadline sidebar — native date picker
   var deadlineWrap = document.createElement("div");
