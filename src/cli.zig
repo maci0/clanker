@@ -12718,26 +12718,22 @@ fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
         return;
     }
     if (std.mem.eql(u8, sub, "show")) {
-        const name = opts.workflow_name orelse {
-            log.log(.error_, "workflow show needs a name; try `clanker workflow list`", .{});
-            return error.MissingArg;
-        };
+        const name = opts.workflow_name orelse
+            usageExit(io, "workflow show needs a name; run `clanker workflow list` to see names", .{});
         const wf = workflows_mod.findByName(wfs, name) orelse {
-            log.log(.error_, "no workflow named '{s}'", .{name});
-            return error.MissingArg;
+            printUsageError(io, "no workflow named '{s}'; run `clanker workflow list` to see names", .{name});
+            std.process.exit(1);
         };
         try writeStdOut(io, wf.body);
         try writeStdOut(io, "\n");
         return;
     }
     if (std.mem.eql(u8, sub, "run")) {
-        const name = opts.workflow_name orelse {
-            log.log(.error_, "workflow run needs a name", .{});
-            return error.MissingArg;
-        };
+        const name = opts.workflow_name orelse
+            usageExit(io, "workflow run needs a name; run `clanker workflow list` to see names", .{});
         const wf = workflows_mod.findByName(wfs, name) orelse {
-            log.log(.error_, "no workflow named '{s}'", .{name});
-            return error.MissingArg;
+            printUsageError(io, "no workflow named '{s}'; run `clanker workflow list` to see names", .{name});
+            std.process.exit(1);
         };
         const expanded = try workflows_mod.instantiate(arena, wf.body, opts.workflow_args orelse "");
         var run_opts = opts;
@@ -12749,8 +12745,7 @@ fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
         try cmdRun(init, run_opts);
         return;
     }
-    log.log(.error_, "unknown workflow subcommand '{s}' (expected list, show, or run)", .{sub});
-    return error.BadSubcommand;
+    usageExit(io, "unknown workflow subcommand '{s}' (list, show, run)", .{sub});
 }
 
 test "the webui asset route covers every embedded module, arena.js included" {
