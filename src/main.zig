@@ -69,6 +69,7 @@ comptime {
     _ = @import("improve/reverts.zig");
     _ = @import("improve/inert.zig");
     _ = @import("improve/engine.zig");
+    _ = @import("improve/retire.zig");
     _ = @import("gate/checks.zig");
     _ = @import("mcp/server.zig");
     _ = @import("llm/gcp_jwt.zig");
