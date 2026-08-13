@@ -2132,6 +2132,7 @@ button:active:not(:disabled) {
   border-radius: var(--radius-lg); background: var(--surface);
   box-shadow: 0 16px 48px -16px rgba(0,0,0,0.18), 0 4px 12px rgba(0,0,0,0.06);
 }
+.overlay-box-wide { max-width: 48rem; max-height: 85vh; }
 .palette-box { padding: var(--space-3); border-radius: var(--radius-lg); }
 #palette-input {
   width: 100%; box-sizing: border-box;
