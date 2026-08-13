@@ -4010,24 +4010,43 @@ function loadFleetModule() {
    it at load. The page used to fire seven requests before showing anything,
    several of which execute a WASM tool. */
 var viewLoaded = {};
+
+/* A view's loader runs again every time its *first* load failed, because
+   `viewLoaded[name]` is only set once a load has actually succeeded (see
+   showView, and the comment there on why that retry matters). The loaders
+   that also bind listeners were therefore binding them again on every retry:
+   two failed opens of Compare left three Refresh handlers on one button, and
+   the arena added a `prefers-reduced-motion` listener each time too. Retrying
+   the fetch is the point; retrying the wiring is not, so the wiring is
+   separated out here and happens once per view for the life of the page.
+   `features/models.js` already carried a private `bound` flag against exactly
+   this; that flag is now redundant rather than load-bearing, and the next view
+   to be added gets the guarantee without having to remember it. */
+var viewBound = {};
+function bindOnce(name, bind) {
+  if (viewBound[name]) return;
+  viewBound[name] = true;
+  bind();
+}
+
 var viewLoaders = {
   runs: loadRuns,
   fleet: function () {
     return loadFleetModule().then(function (fleet) { return fleet.refreshFleet(); });
   },
   arena: function () {
-    return loadArenaModule().then(function (arena) { arena.bindArena(); return arena.loadArenaView(); });
+    return loadArenaModule().then(function (arena) { bindOnce("arena", arena.bindArena); return arena.loadArenaView(); });
   },
   compare: function () {
-    return loadCompareModule().then(function (compare) { compare.bindCompare(); return compare.loadCompareView(); });
+    return loadCompareModule().then(function (compare) { bindOnce("compare", compare.bindCompare); return compare.loadCompareView(); });
   },
   rooms: function () { return loadStatus().then(loadChatRooms); },
   // Goals ride along with the board: the board->goal sync (moving a card
   // marks its goal) needs the goal list, and the goal->board mirror needs to
   // run even when the Goals view was never opened.
   board: function () { return loadBoardRooms().then(function () { return loadGoals(); }); },
-  models: function () { modelsBind(); return modelsLoadView(); },
-  schedule: function () { scheduleBind(); return scheduleLoadView(); },
+  models: function () { bindOnce("models", modelsBind); return modelsLoadView(); },
+  schedule: function () { bindOnce("schedule", scheduleBind); return scheduleLoadView(); },
   knowledge: function(){ return kbLoad(); },
   prompts: promptsLoadView,
   tools: loadTools,
