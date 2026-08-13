@@ -561,7 +561,12 @@ function setRailOpen(open) {
 function applyRailCollapsed(collapsed) {
   el.rail.setAttribute("data-collapsed", String(collapsed));
   var btn = document.getElementById("rail-collapse");
-  if (btn) { btn.textContent = collapsed ? "◨" : "◧"; btn.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar"); btn.title = collapsed ? "Expand sidebar" : "Collapse sidebar"; }
+  if (btn) {
+    btn.textContent = "";
+    btn.appendChild(icon("panel", 15));
+    btn.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+    btn.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  }
   try { window.localStorage.setItem("clanker.railCollapsed", collapsed ? "1" : "0"); } catch (e) {}
 }
 
@@ -1628,7 +1633,8 @@ window.addEventListener("beforeunload", flushDraft);
   var rec = null, listening = false;
   function setListening(on){
     listening = on;
-    btn.textContent = on ? "●" : "🎙";
+    btn.textContent = "";
+    btn.appendChild(icon(on ? "minus" : "mic", 16));
     btn.setAttribute("aria-pressed", String(on));
     btn.title = on ? "Listening (click to stop)" : "Voice input (click to start)";
     el.task.placeholder = on ? "Listening…" : "Ask anything, type / for prompts";

@@ -60,6 +60,14 @@ export var ICON_PATHS = {
   rocket: ["M12 4l3 7H9l3-7z", "M9.5 11h5v5h-5z", "M9.5 16l-2 3.5", "M14.5 16l2 3.5"],
   // A person: members and assign-to-me.
   person: ["M12 5a3 3 0 100 6 3 3 0 000-6z", "M6 19c0-3.2 2.7-5 6-5s6 1.8 6 5"],
+  // A microphone: voice input.
+  mic: ["M12 4.5a2.5 2.5 0 00-2.5 2.5v5a2.5 2.5 0 005 0v-5A2.5 2.5 0 0012 4.5z", "M7.5 11.5a4.5 4.5 0 009 0", "M12 16v3.5", "M9 19.5h6"],
+  // A cycle: refresh a listing.
+  refresh: ["M19 12a7 7 0 11-2.1-4.9", "M17 4.5V8h3.5"],
+  // A star: a card marked to keep in view.
+  star: ["M12 4l2.2 4.6 5 .7-3.6 3.5.9 5L12 15.8 7.5 17.8l.9-5L4.8 9.3l5-.7z"],
+  // A panel with a rail: collapse or expand the sidebar.
+  panel: ["M5 5h14v14H5z", "M10 5v14"],
 };
 
 export function icon(name, size) {
