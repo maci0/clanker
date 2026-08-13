@@ -22,6 +22,7 @@ const json_util = @import("../util/json.zig");
 const toolout = @import("../util/toolout.zig");
 const utf8 = @import("../util/utf8.zig");
 const mock_server = @import("../llm/mock_server.zig");
+const advisor = @import("advisor.zig");
 
 /// Each chatroom inbox line injected into a run. Long enough to see what a
 /// peer said, short enough that a burst of rooms cannot fill the context.
@@ -511,6 +512,8 @@ pub const Agent = struct {
         // inherits a populated list does not re-announce items the viewer
         // already has.
         var last_todos_rev: u32 = if (self.private_todos) |l| l.rev else 0;
+        var advisor_note: ?advisor.Note = null;
+        defer if (advisor_note) |n| self.ctx.gpa.free(n.text);
         while (iteration < self.max_iterations) : (iteration += 1) {
             if (self.stopRequested()) {
                 log.log(.info, "run stopped at iteration {d}", .{iteration + 1});
@@ -554,6 +557,17 @@ pub const Agent = struct {
             const ctx_window = self.provider.activeModel().context_window;
             const utilization: f64 = if (ctx_window > 0) @as(f64, @floatFromInt(est_prompt_tokens)) / @as(f64, @floatFromInt(ctx_window)) * 100.0 else 0;
             log.log(.debug, "LLM call: ~{d} estimated prompt tokens ({d:.0}% of {d} context window)", .{ est_prompt_tokens, utilization, ctx_window });
+
+            var injected_advisor = false;
+            if (advisor_note) |note| {
+                const block = advisor.formatInjection(self.arena, note) catch null;
+                if (block) |b| {
+                    try messages.insert(self.arena, 0, .{ .role = .system, .content = b });
+                    injected_advisor = true;
+                }
+                self.ctx.gpa.free(note.text);
+                advisor_note = null;
+            }
 
             const llm_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
             const resp = if (self.on_token) |cb| blk: {
@@ -614,6 +628,10 @@ pub const Agent = struct {
             // produced it crossed the session budget: the caller wants that exact
             // answer (and the answer_format eval asserts it). Return it before the
             // budget check below, which can then only terminate a run that still
+            if (injected_advisor and messages.items.len > 0) {
+                _ = messages.orderedRemove(0);
+            }
+
             // wants to call tools.
             if (maybe_calls == null or maybe_calls.?.len == 0) {
                 try g.add(self.ctx.gpa, .{
@@ -715,6 +733,10 @@ pub const Agent = struct {
             if (self.on_tool_result) |cb| {
                 const tool_ms: u64 = @intCast(@divTrunc(tool_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
                 cb(tool_ms);
+            }
+            if (self.cfg.advisor.enabled) {
+                if (advisor_note) |old| self.ctx.gpa.free(old.text);
+                advisor_note = self.reviewTurn(messages.items, calls);
             }
             // The batch has joined, so the private list is quiescent again and
             // this thread is the only reader. Serializing it costs nothing
