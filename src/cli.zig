@@ -10508,15 +10508,15 @@ test "an idle keep-alive pass is not a request, a truncated one still is" {
 test "readiness names saturation and reports how close the listener is" {
     var buf: [160]u8 = undefined;
     const ready = readinessBody(&buf, 3, 64);
-    try std.testing.expect(std.mem.indexOf(u8, ready, "\"ok\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ready, "\"status\":\"ready\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ready, "\"in_flight\":3") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ready, "\"connection_limit\":64") != null);
+    try std.testing.expect(std.mem.find(u8, ready, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, ready, "\"status\":\"ready\"") != null);
+    try std.testing.expect(std.mem.find(u8, ready, "\"in_flight\":3") != null);
+    try std.testing.expect(std.mem.find(u8, ready, "\"connection_limit\":64") != null);
 
     const sat = readinessBody(&buf, 64, 64);
-    try std.testing.expect(std.mem.indexOf(u8, sat, "\"ok\":false") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sat, "\"status\":\"saturated\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sat, "\"in_flight\":64") != null);
+    try std.testing.expect(std.mem.find(u8, sat, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, sat, "\"status\":\"saturated\"") != null);
+    try std.testing.expect(std.mem.find(u8, sat, "\"in_flight\":64") != null);
 }
 
 test "only requests worth reading about are logged, at a level matching the status" {

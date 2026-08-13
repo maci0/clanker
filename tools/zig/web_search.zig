@@ -73,7 +73,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var max_f = lib.optNum(obj, "max_results") orelse default_max;
     if (max_f < 1) max_f = 1;
     if (max_f > max_results_cap) max_f = max_results_cap;
-    const want: usize = @intFromFloat(max_f);
+    const want: usize = @trunc(max_f);
     const region = lib.optStr(obj, "region") orelse "";
 
     var encbuf: [4096]u8 = undefined;

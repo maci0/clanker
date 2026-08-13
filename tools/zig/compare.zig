@@ -732,7 +732,7 @@ fn jsonInt(obj: std.json.ObjectMap, name: []const u8) i64 {
     const v = obj.get(name) orelse return 0;
     return switch (v) {
         .integer => |n| n,
-        .float => |f| @intFromFloat(f),
+        .float => |f| @trunc(f),
         else => 0,
     };
 }

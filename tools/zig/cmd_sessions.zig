@@ -84,7 +84,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return lib.okText(out, buf.items);
     }
 
-    const now_s: i64 = @intFromFloat(lib.nowSeconds());
+    const now_s: i64 = @trunc(lib.nowSeconds());
 
     var id_w: usize = 0;
     for (metas.items) |m| id_w = @max(id_w, m.id.len);

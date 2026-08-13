@@ -324,7 +324,7 @@ pub fn legalize(reply: Reply, is_last_round: bool, incoming: u16) Reply {
 
 pub fn scaled(base: u16, factor: f64) u16 {
     const f = std.math.clamp(factor, 0.0, 1.0);
-    return @intFromFloat(@round(@as(f64, @floatFromInt(base)) * f));
+    return @round(@as(f64, @floatFromInt(base)) * f);
 }
 
 /// What one resolved move did. `taken` is what landed on the mover (in-flight

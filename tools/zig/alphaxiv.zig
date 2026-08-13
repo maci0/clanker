@@ -26,7 +26,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const tool = lib.str(obj, "tool") catch return lib.fail(out, "missing tool — a server tool name, or \"list\" to enumerate them");
     var max_chars = default_max_chars;
     if (lib.optNum(obj, "max_chars")) |m| {
-        if (m >= 1) max_chars = @intFromFloat(m);
+        if (m >= 1) max_chars = @trunc(m);
     }
 
     const key = lib.getenv("ALPHAXIV_API_KEY") orelse

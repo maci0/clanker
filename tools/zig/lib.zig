@@ -894,7 +894,7 @@ pub fn uintFieldMap(obj: std.json.ObjectMap, name: []const u8) ?u32 {
     const v = obj.get(name) orelse return null;
     return switch (v) {
         .integer => |n| if (n > 0) @intCast(@min(n, std.math.maxInt(u32))) else null,
-        .float => |f| if (f >= 1.0) @intFromFloat(f) else null,
+        .float => |f| if (f >= 1.0) @trunc(f) else null,
         else => null,
     };
 }
@@ -935,7 +935,7 @@ pub const HarnessConfig = struct {
 /// e.g. "arena-1723456789-a1b2c3d4". Two calls in the same second with
 /// different seed text produce different ids.
 pub fn prefixedId(prefix: []const u8, seed_text: []const u8) ![]const u8 {
-    const secs: u64 = @intFromFloat(@max(0.0, nowSeconds()));
+    const secs: u64 = @trunc(@max(0.0, nowSeconds()));
     var hasher = std.hash.Wyhash.init(secs);
     hasher.update(seed_text);
     return std.fmt.allocPrint(alloc, "{s}-{d}-{x}", .{ prefix, secs, hasher.final() & 0xffff_ffff });

@@ -46,7 +46,7 @@ fn newId() []const u8 {
 }
 
 fn nowSec() i64 {
-    return @intFromFloat(lib.nowSeconds());
+    return @trunc(lib.nowSeconds());
 }
 
 fn isSlug(s: []const u8) bool {

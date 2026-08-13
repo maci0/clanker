@@ -53,12 +53,12 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
     if (message.len == 0) return lib.fail(out, "message is empty");
     if (message.len > max_message) return lib.fail(out, "message too long (max 500 bytes)");
 
-    const now: i64 = @intFromFloat(lib.nowSeconds());
+    const now: i64 = @trunc(lib.nowSeconds());
     const fire: i64 = blk: {
         if (obj.get("in_minutes")) |v| {
             const mins: i64 = switch (v) {
                 .integer => |i| i,
-                .float => |f| @intFromFloat(f),
+                .float => |f| @trunc(f),
                 else => return lib.fail(out, "in_minutes must be a number"),
             };
             if (mins < 0) return lib.fail(out, "in_minutes must not be negative");
@@ -77,7 +77,7 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
         const v = obj.get("every_minutes") orelse break :blk 0;
         const mins: i64 = switch (v) {
             .integer => |i| i,
-            .float => |f| @intFromFloat(f),
+            .float => |f| @trunc(f),
             else => return lib.fail(out, "every_minutes must be a number"),
         };
         if (mins < 1) return lib.fail(out, "every_minutes must be at least 1");
@@ -100,7 +100,7 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
 
 fn doList(out: *lib.Out) !void {
     const loaded = try load();
-    const now: i64 = @intFromFloat(lib.nowSeconds());
+    const now: i64 = @trunc(lib.nowSeconds());
     var jbuf: [65536]u8 = undefined;
     var w: std.Io.Writer = .fixed(&jbuf);
     var s: std.json.Stringify = .{ .writer = &w, .options = .{} };
@@ -139,7 +139,7 @@ fn doDone(obj: std.json.ObjectMap, out: *lib.Out) !void {
         .string => |s| s,
         else => return lib.fail(out, "id must be a string"),
     };
-    const now: i64 = @intFromFloat(lib.nowSeconds());
+    const now: i64 = @trunc(lib.nowSeconds());
     var attempt: u32 = 0;
     while (attempt < 3) : (attempt += 1) {
         var loaded = try load();
