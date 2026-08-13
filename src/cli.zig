@@ -916,8 +916,10 @@ fn commandForHelp(name: []const u8) ?Command {
         if (std.mem.eql(u8, name, s.usage[0..end])) return s.command;
     }
     if (std.mem.eql(u8, name, "prune")) return .prune;
+    if (std.mem.eql(u8, name, "janitor")) return .prune;
     if (std.mem.eql(u8, name, "provide")) return .providers_check;
     if (std.mem.eql(u8, name, "workflows")) return .workflow;
+    if (std.mem.eql(u8, name, "plugin")) return .plugins;
     return null;
 }
 
@@ -1985,14 +1987,15 @@ fn cmdProvidersCatalog(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
-    const query = opts.provider orelse {
-        log.log(.error_, "usage: clanker providers catalog <query>  (e.g. \"kimi\", \"deepseek\")", .{});
-        return error.MissingCatalogQuery;
-    };
+    const query = opts.provider orelse
+        usageExit(io, "providers catalog needs a query: clanker providers catalog <query>  (e.g. \"kimi\", \"deepseek\")", .{});
 
     const body = try fetchModelsDevCached(io, gpa, arena);
     const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
-    if (catalog != .object) return error.CatalogNotObject;
+    if (catalog != .object) {
+        log.log(.error_, "models.dev returned unexpected data; try again later", .{});
+        return error.HttpError;
+    }
 
     const out = std.Io.File.stdout();
     try out.writeStreamingAll(io, "provider/model\tctx\tout\tin $/1M\tout $/1M\treasoning\n");
@@ -2048,10 +2051,8 @@ fn cmdProvidersFill(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
-    const provider_name = opts.provider orelse {
-        log.log(.error_, "usage: clanker providers fill <provider>", .{});
-        return error.MissingCatalogQuery;
-    };
+    const provider_name = opts.provider orelse
+        usageExit(io, "providers fill needs a provider: clanker providers fill <name>", .{});
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     const p = try cfg.provider(provider_name);
 
@@ -11178,14 +11179,10 @@ fn cmdAutoresearch(init: std.process.Init, opts: Options) !void {
         for (targets.items) |tt| log.log(.info, "  target: {s}", .{tt});
         return;
     }
-    const harness_raw = opts.research_harness orelse {
-        log.log(.error_, "autoresearch needs --harness \"<cmd>\"", .{});
-        return error.MissingArg;
-    };
-    if (targets.items.len == 0) {
-        log.log(.error_, "autoresearch needs --target <file>", .{});
-        return error.MissingArg;
-    }
+    const harness_raw = opts.research_harness orelse
+        usageExit(io, "autoresearch needs --harness \"<cmd>\"", .{});
+    if (targets.items.len == 0)
+        usageExit(io, "autoresearch needs --target <file>", .{});
     var harness_argv: std.ArrayList([]const u8) = .empty;
     defer harness_argv.deinit(gpa);
     {

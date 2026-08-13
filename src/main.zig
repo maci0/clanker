@@ -211,10 +211,14 @@ pub fn main(init: std.process.Init) !void {
             error.ProviderCheckFailed => "provider check failed; run `clanker doctor` to diagnose",
             error.InvalidSessionId => "not a valid session id; run `clanker sessions` for the list",
             error.ToolFailed => "the internal tool returned an error; run `clanker doctor` to check the build",
+            error.ToolBadOutput => "the internal tool returned unreadable output; run `clanker doctor` to check the build",
             error.GateFailed => "one or more gates failed (see output above)",
             error.EvalsFailed => "one or more evals failed (see output above)",
             error.UnknownEval => "no eval by that name; run `clanker eval` with no argument to list them",
             error.HttpError => "the HTTP request failed; check the provider's status and your network",
+            error.GitFailed => "git exited with an error (see output above)",
+            error.ArenaRefused => "the arena match was refused (see output above)",
+            error.CompareRefused => "the comparison was refused (see output above)",
             else => null,
         };
         if (hint) |h| {
