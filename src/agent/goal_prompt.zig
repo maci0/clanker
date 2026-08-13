@@ -45,9 +45,11 @@ test "skills/write-goal.md stays in agreement with the field list" {
     // drifts from the code-rendered field list, the two surfaces disagree on
     // what a goal contains. Pin them together.
     const path = "skills/write-goal.md";
-    const skill = std.fs.cwd().readFileAlloc(std.testing.allocator, path, 1 << 20) catch
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const skill = std.Io.Dir.cwd().readFileAlloc(threaded.io(), path, std.testing.allocator, .limited(1 << 20)) catch
         return error.SkipZigTest; // not present in every cwd; gate runs in-repo
     defer std.testing.allocator.free(skill);
     try std.testing.expect(std.mem.indexOf(u8, skill, field_list) != null);
-    try std.testing.expect(std.mem.indexOf(u8, skill, "call the goal tool once") != null);
+    try std.testing.expect(std.mem.indexOf(u8, skill, "call the `goal` tool once") != null);
 }

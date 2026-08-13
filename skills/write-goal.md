@@ -10,7 +10,8 @@ options, one question per fork. Skip what the intent already answers. When
 nobody answers (headless runs, the improve loop, sub-agents), write the goal
 anyway and record the assumption in `boundaries`.
 
-Then call the `goal` tool once:
+Then call the `goal` tool once. A well-formed goal carries these five fields
+(`objective, completion_criterion, proof, boundaries, stop_rule`):
 
 - `objective`: what will be true afterwards, not what you will do. "Runs survive
   a restart", not "add persistence to runs".
