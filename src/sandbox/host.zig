@@ -1359,16 +1359,68 @@ fn methodFromDockerInput(obj: std.json.ObjectMap) []const u8 {
 }
 
 /// The Docker socket is equivalent to root authority on many hosts. This tool
-/// is an inspection surface, so the native boundary permits only GET even if
-/// a modified guest asks for a state-changing daemon operation.
+/// is an inspection surface: GET only, and only the list/inspect endpoints.
+/// A bare `/v1.*` prefix would still let a guest pull files out of a
+/// container (`.../archive`), export an image tarball (`.../get`), or read
+/// swarm secrets.
 fn dockerRequestAllowed(method: []const u8, path: []const u8) bool {
-    return std.mem.eql(u8, method, "GET") and
-        std.mem.startsWith(u8, path, "/v1.") and
-        std.mem.findAny(u8, path, "\r\n \t\x00") == null;
+    if (!std.mem.eql(u8, method, "GET")) return false;
+    if (std.mem.findAny(u8, path, "\r\n \t\x00") != null) return false;
+    if (!std.mem.startsWith(u8, path, "/v1.")) return false;
+
+    var i: usize = 4;
+    while (i < path.len and path[i] >= '0' and path[i] <= '9') : (i += 1) {}
+    if (i == 4 or i >= path.len or path[i] != '/') return false;
+    var rest = path[i + 1 ..];
+    if (std.mem.findScalar(u8, rest, '?')) |q| rest = rest[0..q];
+    if (rest.len == 0) return false;
+    if (std.mem.find(u8, rest, "..") != null) return false;
+
+    const exact = [_][]const u8{
+        "info",           "version",        "_ping",
+        "containers/json", "images/json",   "networks",
+        "volumes",        "system/df",
+    };
+    for (exact) |e| {
+        if (std.mem.eql(u8, rest, e)) return true;
+    }
+
+    if (std.mem.startsWith(u8, rest, "containers/")) {
+        const after = rest["containers/".len..];
+        const slash = std.mem.findScalar(u8, after, '/') orelse return false;
+        if (slash == 0) return false;
+        const action = after[slash + 1 ..];
+        return std.mem.eql(u8, action, "json") or
+            std.mem.eql(u8, action, "logs") or
+            std.mem.eql(u8, action, "stats") or
+            std.mem.eql(u8, action, "top");
+    }
+    if (std.mem.startsWith(u8, rest, "images/")) {
+        const after = rest["images/".len..];
+        const last = std.mem.findScalarLast(u8, after, '/') orelse return false;
+        if (last == 0 or last + 1 >= after.len) return false;
+        const action = after[last + 1 ..];
+        return std.mem.eql(u8, action, "json") or std.mem.eql(u8, action, "history");
+    }
+    if (std.mem.startsWith(u8, rest, "networks/")) {
+        const id = rest["networks/".len..];
+        return id.len > 0 and std.mem.findScalar(u8, id, '/') == null;
+    }
+    if (std.mem.startsWith(u8, rest, "volumes/")) {
+        const name = rest["volumes/".len..];
+        return name.len > 0 and std.mem.findScalar(u8, name, '/') == null;
+    }
+    return false;
 }
 
 test "docker request policy is query only" {
     try std.testing.expect(dockerRequestAllowed("GET", "/v1.41/containers/json"));
+    try std.testing.expect(dockerRequestAllowed("GET", "/v1.41/containers/json?all=1"));
+    try std.testing.expect(dockerRequestAllowed("GET", "/v1.41/containers/abc/json"));
+    try std.testing.expect(dockerRequestAllowed("GET", "/v1.41/containers/abc/logs?stdout=1"));
+    try std.testing.expect(dockerRequestAllowed("GET", "/v1.41/images/json"));
+    try std.testing.expect(dockerRequestAllowed("GET", "/v1.41/images/library/nginx/json"));
+    try std.testing.expect(dockerRequestAllowed("GET", "/v1.41/info"));
     try std.testing.expect(!dockerRequestAllowed("POST", "/v1.41/containers/prune"));
     try std.testing.expect(!dockerRequestAllowed("GET", "/containers/json"));
     try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/containers/json\r\nX-Evil: yes"));
@@ -1376,6 +1428,13 @@ test "docker request policy is query only" {
     try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/exec/a start"));
     try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/exec/a\tstart"));
     try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/x\x00y"));
+    try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/containers/abc/archive?path=/etc/passwd"));
+    try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/containers/abc/export"));
+    try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/images/nginx/get"));
+    try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/secrets"));
+    try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/secrets/foo"));
+    try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/configs"));
+    try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/swarm"));
 }
 
 test "custom headers with CRLF are rejected" {
@@ -3238,8 +3297,23 @@ pub fn ckAsk(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     return h.writeResult(bytes, answer);
 }
 
+/// ck_subagent is a privileged spawn channel. The agent loop attaches a
+/// runner to every tool sandbox (a nested run needs a parent), so the import
+/// existing is not a grant. Only the tools whose job is to spawn one may call it.
+fn subagentAccessAllowed(name: []const u8) bool {
+    return std.mem.eql(u8, name, "subagent") or std.mem.eql(u8, name, "rlm");
+}
+
+fn swarmAccessAllowed(name: []const u8) bool {
+    return std.mem.eql(u8, name, "swarm");
+}
+
 pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const h = getHost(caller);
+    if (!subagentAccessAllowed(h.sandbox.tool_self_name)) {
+        log.log(.warn, "[sandbox] ck_subagent denied for tool '{s}'", .{h.sandbox.tool_self_name});
+        return Err.denied;
+    }
     const bytes = memBytes(caller) orelse return Err.invalid;
     const json_input = sliceOf(bytes, json_ptr, json_len) orelse return Err.invalid;
     const runner = h.sandbox.subagent_runner orelse return Err.not_found;
@@ -3331,6 +3405,10 @@ const max_swarm_tasks: usize = 8;
 /// caller never observes a partially-finished swarm.
 pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const h = getHost(caller);
+    if (!swarmAccessAllowed(h.sandbox.tool_self_name)) {
+        log.log(.warn, "[sandbox] ck_swarm denied for tool '{s}'", .{h.sandbox.tool_self_name});
+        return Err.denied;
+    }
     const bytes = memBytes(caller) orelse return Err.invalid;
     const json_input = sliceOf(bytes, json_ptr, json_len) orelse return Err.invalid;
     const runner = h.sandbox.subagent_runner orelse return Err.not_found;
@@ -5073,6 +5151,18 @@ test "docker host channel is scoped to the docker tool" {
     try std.testing.expect(!dockerAccessAllowed(&sb));
     sb.tool_self_name = "docker";
     try std.testing.expect(dockerAccessAllowed(&sb));
+}
+
+test "subagent and swarm host channels are scoped to the tools that spawn them" {
+    try std.testing.expect(subagentAccessAllowed("subagent"));
+    try std.testing.expect(subagentAccessAllowed("rlm"));
+    try std.testing.expect(!subagentAccessAllowed("subagent-helper"));
+    try std.testing.expect(!subagentAccessAllowed("swarm"));
+    try std.testing.expect(!subagentAccessAllowed("read_file"));
+    try std.testing.expect(swarmAccessAllowed("swarm"));
+    try std.testing.expect(!swarmAccessAllowed("swarm-helper"));
+    try std.testing.expect(!swarmAccessAllowed("subagent"));
+    try std.testing.expect(!swarmAccessAllowed("rlm"));
 }
 
 test "chat host channel pins each descriptor to its operation" {

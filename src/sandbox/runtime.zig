@@ -1138,7 +1138,7 @@ test "cmd_janitor wasm tool scans and removes only shaped staging directories" {
         .io = io,
         .root_dir = root,
         .network_allow = &.{},
-        .fs_prefixes = &.{"state/"},
+        .fs_prefixes = &.{ "state/staging", "state/runs", "state/logs" },
         .environ_map = &env_map,
     };
 

@@ -1,7 +1,7 @@
 //! docker: query the local Docker daemon via its Unix socket.
 //! Input:  {"path": "/v1.41/containers/json"}
 //! Output: {"ok": true, "body": "<raw response>"} or {"ok": false, "error": ...}
-//! Only GET requests to /v1.* paths are allowed by the sandbox.
+//! Only GET requests to the list/inspect /v1.* paths are allowed by the sandbox.
 
 const std = @import("std");
 const lib = @import("lib.zig");

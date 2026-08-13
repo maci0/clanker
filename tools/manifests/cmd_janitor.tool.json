@@ -16,7 +16,9 @@
     }
   },
   "fs_prefixes": [
-    "state/"
+    "state/staging",
+    "state/runs",
+    "state/logs"
   ],
   "internal": true,
   "category": "harness"

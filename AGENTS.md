@@ -38,7 +38,12 @@ through a gated loop. Follow these conventions when changing this codebase.
   credential-acquisition axis, `gcp_jwt.zig`/`vertex_token.zig` the Vertex
   minting behind it. Adding a provider is one file, one registry row, and one
   `ProviderKind` tag in `config.zig` — never a new `switch (provider.kind)`.
-- `src/sandbox/` — zwasm runtime wrapper + `ck_*` host functions + policy.
+- `src/sandbox/`: zwasm runtime wrapper + `ck_*` host functions + policy.
+  Privileged channels (`ck_docker`, `ck_subagent`, `ck_swarm`, `ck_stats`,
+  `ck_ask`, `ck_std_api`, `ck_harness_config`) check `tool_self_name`; the
+  import existing is not a grant. The agent loop attaches a subagent runner
+  to every tool sandbox, so `ck_subagent`/`ck_swarm` would otherwise be
+  callable by any guest.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   execution graphs, sub-agents, autolearn, workflows.
 - `src/schedule/` — `clanker schedule`: the cron dialect and next-fire
