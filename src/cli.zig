@@ -3911,7 +3911,8 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
         return;
     }
     if (std.mem.eql(u8, sub, "validate")) {
-        return pluginsValidate(init, opts.plugin_target orelse config.firstToolsDir(cfg.agent.tools_dir));
+        if (opts.plugin_target) |path| return pluginsValidate(init, path);
+        return pluginsValidateAll(init, cfg.agent.tools_dir);
     }
     if (std.mem.eql(u8, sub, "new")) {
         const name = opts.plugin_target orelse
@@ -3935,6 +3936,20 @@ fn usageExitFor(io: std.Io, command: []const u8, comptime fmt: []const u8, args:
     printUsageError(io, fmt, args);
     printUsageHintFor(io, command);
     std.process.exit(2);
+}
+
+/// Validate every configured `tools_dir` and OR the exit status together.
+fn pluginsValidateAll(init: std.process.Init, dirs: []const []const u8) !void {
+    if (dirs.len == 0) return pluginsValidate(init, config.firstToolsDir(dirs));
+    if (dirs.len == 1) return pluginsValidate(init, dirs[0]);
+    var failed = false;
+    for (dirs) |dir| {
+        pluginsValidate(init, dir) catch |err| switch (err) {
+            error.PluginsValidateFailed => failed = true,
+            else => return err,
+        };
+    }
+    if (failed) std.process.exit(1);
 }
 
 /// Validate one manifest or a whole directory of them, and exit non-zero if
@@ -3990,7 +4005,7 @@ fn pluginsValidate(init: std.process.Init, path: []const u8) !void {
     var buf: [256]u8 = undefined;
     const summary = std.fmt.bufPrint(&buf, "{d} manifest(s) checked, {d} error(s), {d} warning(s)\n", .{ files.items.len, errors, warnings }) catch "checked\n";
     try writeStdOut(io, summary);
-    if (errors > 0) std.process.exit(1);
+    if (errors > 0) return error.PluginsValidateFailed;
 }
 
 /// The two checks that need more than the manifest's own bytes: does the

@@ -5464,10 +5464,13 @@ test "harness config access is scoped to each tool's consumed fields" {
     try std.testing.expect(std.mem.find(u8, peers, "providers") == null);
     try std.testing.expect(std.mem.find(u8, peers, "agent") == null);
 
-    cfg.agent.tools_dir = "vendor/my-tools";
+    cfg.agent.tools_dir = &.{ "vendor/my-tools", "vendor/overrides" };
     const tools_dir_json = try harnessConfigJSON(arena, &cfg, .tools_dir);
     try std.testing.expect(std.mem.find(u8, tools_dir_json, "tools_dir") != null);
     try std.testing.expect(std.mem.find(u8, tools_dir_json, "vendor/my-tools") != null);
+    // The guest ABI remains singular: filesystem-writing tools need one
+    // deterministic destination, while host registry discovery scans both.
+    try std.testing.expect(std.mem.find(u8, tools_dir_json, "vendor/overrides") == null);
     try std.testing.expect(std.mem.find(u8, tools_dir_json, "providers") == null);
     try std.testing.expect(std.mem.find(u8, tools_dir_json, "max_iterations") == null);
 
