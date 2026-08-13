@@ -36,6 +36,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `edit_file` accepts `op: "hashline"` so an edit can target those hashes
   instead of reproducing the exact text. A mismatch rejects the whole
   patch; success returns the new hashes for a follow-up edit.
+- Optional `[advisor]` second-model critique after each completed turn.
+  Off by default; fail-open. A `blocker` asks proceed/abort when a human
+  is present and otherwise injects as a one-turn concern.
 
 ### Changed
 

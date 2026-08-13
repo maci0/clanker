@@ -514,6 +514,8 @@ pub const Agent = struct {
         var last_todos_rev: u32 = if (self.private_todos) |l| l.rev else 0;
         var advisor_note: ?advisor.Note = null;
         defer if (advisor_note) |n| self.ctx.gpa.free(n.text);
+        var advisor_abort: ?[]const u8 = null;
+        defer if (advisor_abort) |t| self.ctx.gpa.free(t);
         while (iteration < self.max_iterations) : (iteration += 1) {
             if (self.stopRequested()) {
                 log.log(.info, "run stopped at iteration {d}", .{iteration + 1});
@@ -736,7 +738,17 @@ pub const Agent = struct {
             }
             if (self.cfg.advisor.enabled) {
                 if (advisor_note) |old| self.ctx.gpa.free(old.text);
-                advisor_note = self.reviewTurn(messages.items, calls);
+                advisor_note = self.reviewTurn(messages.items, calls, &advisor_abort);
+                if (advisor_abort) |text| {
+                    try g.add(self.ctx.gpa, .{
+                        .kind = .final,
+                        .iteration = iteration + 1,
+                        .label = "advisor abort",
+                        .output = graph_mod.truncatedPreview(text),
+                        .ok = false,
+                    });
+                    return .{ .message = .{ .role = .assistant, .content = text } };
+                }
             }
             // The batch has joined, so the private list is quiescent again and
             // this thread is the only reader. Serializing it costs nothing
@@ -1875,7 +1887,7 @@ pub const Agent = struct {
         self.tool_defs = self.reg.lazyToolDefs(self.arena, core.items, &self.revealed) catch return;
     }
 
-    fn reviewTurn(self: *Agent, messages: []const types.Message, calls: []const types.ToolCall) ?advisor.Note {
+    fn reviewTurn(self: *Agent, messages: []const types.Message, calls: []const types.ToolCall, abort_out: *?[]const u8) ?advisor.Note {
         var redact_buf: [32][]const u8 = undefined;
         var n: usize = 0;
         for (calls) |tc| {
@@ -1898,7 +1910,7 @@ pub const Agent = struct {
                 const opts = [_][]const u8{ "proceed", "abort" };
                 const answer = ask(self.arena, note.text, &opts) catch "proceed";
                 if (std.mem.eql(u8, std.mem.trim(u8, answer, " \t\r\n"), "abort")) {
-                    self.ctx.gpa.free(note.text);
+                    abort_out.* = note.text;
                     return null;
                 }
             }
