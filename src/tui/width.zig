@@ -168,6 +168,24 @@ test "mixed string sums codepoint widths" {
     try std.testing.expectEqual(@as(usize, 4), displayWidth("a\xe4\xb8\xadb"));
 }
 
+test "wide emoji are width 2" {
+    try std.testing.expectEqual(@as(u2, 2), codepointWidth(0x1F680)); // rocket
+    try std.testing.expectEqual(@as(u2, 2), codepointWidth(0x2705)); // check mark button
+    try std.testing.expectEqual(@as(u2, 2), codepointWidth(0x26A1)); // high voltage
+    try std.testing.expectEqual(@as(u2, 2), codepointWidth(0x1FAFF));
+}
+
+test "narrow symbols around the emoji singletons stay width 1" {
+    try std.testing.expectEqual(@as(u2, 1), codepointWidth(0x2319)); // below watch
+    try std.testing.expectEqual(@as(u2, 1), codepointWidth(0x2704)); // scissors variant
+    try std.testing.expectEqual(@as(u2, 1), codepointWidth(0x2764)); // heavy heart (EAW=N)
+}
+
+test "emoji in a mixed string count 2 columns" {
+    // "a" (1) + rocket (2) + "b" (1) = 4
+    try std.testing.expectEqual(@as(usize, 4), displayWidth("a\xf0\x9f\x9a\x80b"));
+}
+
 test "truncateToWidth returns the whole string when it already fits" {
     try std.testing.expectEqualStrings("hello", truncateToWidth("hello", 10));
 }
