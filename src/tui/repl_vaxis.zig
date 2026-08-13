@@ -3126,7 +3126,7 @@ const Model = struct {
             }
             if (row < bottom) row += 1;
             if (row < bottom) {
-                writeWrapped(surface, &row, bottom, text_width, "/help for commands  Tab to complete  Ctrl-P palette  Ctrl-C to quit", dim);
+                writeWrapped(surface, &row, bottom, text_width, "/model to switch  /help for commands  Ctrl-C to quit", dim);
             }
         }
         // Transcript layout: the visible block is bottom-aligned, chat-style,
@@ -4567,7 +4567,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // suppressed after the first task, so it never competes with real output.
     if (model.lines.items.len == 0) {
         model.lines.append(arena, .{
-            .text = "Type a task, or /help for commands. Tab completes /commands.",
+            .text = "Type a task, or /help for commands. Tab completes /commands; Ctrl-P opens the palette.",
             .dim = true,
         }) catch {};
     }

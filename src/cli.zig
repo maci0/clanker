@@ -11176,7 +11176,7 @@ test "mistyped commands get conservative suggestions" {
 
 test "mistyped flags get a one-edit suggestion" {
     try std.testing.expectEqualStrings("--session", suggestFlag("--sesion").?);
-    try std.testing.expectEqualStrings("--model", suggestFlag("--modle").?);
+    try std.testing.expectEqualStrings("--model", suggestFlag("--modell").?);
     try std.testing.expectEqualStrings("--provider", suggestFlag("--provder").?);
     try std.testing.expect(suggestFlag("--foo") == null);
     try std.testing.expect(suggestFlag("--bogus") == null);
@@ -11189,9 +11189,11 @@ test "history is the sessions alias people type first" {
 }
 
 test "stats table names the empty case and keeps columns aligned" {
-    const empty = try renderStatsTable(std.testing.allocator, &.{}, .{});
+    const empty = try renderStatsTable(std.testing.allocator, &.{}, .{ .provider = "", .model = "" });
     try std.testing.expectEqualStrings("no token usage recorded yet (run an agent task first)\n", empty);
 
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
     const rows = [_]token_stats.Stat{
         .{
             .provider = "kimi-k3",
@@ -11208,8 +11210,7 @@ test "stats table names the empty case and keeps columns aligned" {
             .error_calls = 0,
         },
     };
-    const text = try renderStatsTable(std.testing.allocator, &rows, token_stats.totals(&rows));
-    defer std.testing.allocator.free(text);
+    const text = try renderStatsTable(arena_state.allocator(), &rows, token_stats.totals(&rows));
     try std.testing.expect(std.mem.startsWith(u8, text, "provider        model                          calls"));
     try std.testing.expect(std.mem.indexOf(u8, text, "kimi-k3") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "totals") != null);
