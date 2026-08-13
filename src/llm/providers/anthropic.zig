@@ -106,10 +106,10 @@ pub fn buildBody(gpa: std.mem.Allocator, params: api.RequestParams, opts: BodyOp
     try s.beginObject();
     if (opts.anthropic_version) |v| {
         try s.objectField("anthropic_version");
-        try common.jstr(&s, v);
+        try s.write(v);
     } else {
         try s.objectField("model");
-        try common.jstr(&s, params.provider.activeModelName());
+        try s.write(params.provider.activeModelName());
     }
     // Anthropic streams only when asked in the body; the endpoint verb alone
     // (Vertex's :streamRawPredict) is not enough.
@@ -147,14 +147,14 @@ pub fn buildBody(gpa: std.mem.Allocator, params: api.RequestParams, opts: BodyOp
         for (system_parts.items, 0..) |part, i| {
             try s.beginObject();
             try s.objectField("type");
-            try common.jstr(&s, "text");
+            try s.write("text");
             try s.objectField("text");
-            try common.jstr(&s, part);
+            try s.write(part);
             if (i >= first_marked) {
                 try s.objectField("cache_control");
                 try s.beginObject();
                 try s.objectField("type");
-                try common.jstr(&s, "ephemeral");
+                try s.write("ephemeral");
                 try s.endObject();
             }
             try s.endObject();
@@ -168,7 +168,7 @@ pub fn buildBody(gpa: std.mem.Allocator, params: api.RequestParams, opts: BodyOp
         if (m.role == .system) continue;
         try s.beginObject();
         try s.objectField("role");
-        try common.jstr(&s, switch (m.role) {
+        try s.write(switch (m.role) {
             .system => "user", // unreachable; skipped above
             .user => "user",
             .assistant => "assistant",
@@ -180,9 +180,9 @@ pub fn buildBody(gpa: std.mem.Allocator, params: api.RequestParams, opts: BodyOp
             .tool => {
                 try s.beginObject();
                 try s.objectField("type");
-                try common.jstr(&s, "tool_result");
+                try s.write("tool_result");
                 try s.objectField("tool_use_id");
-                try common.jstr(&s, m.tool_call_id orelse "");
+                try s.write(m.tool_call_id orelse "");
                 try s.objectField("content");
                 // Canonical array form: Anthropic accepts tool_result content
                 // either as a bare string or as an array of content blocks,
@@ -194,9 +194,9 @@ pub fn buildBody(gpa: std.mem.Allocator, params: api.RequestParams, opts: BodyOp
                 try s.beginArray();
                 try s.beginObject();
                 try s.objectField("type");
-                try common.jstr(&s, "text");
+                try s.write("text");
                 try s.objectField("text");
-                try common.jstr(&s, m.content orelse "");
+                try s.write(m.content orelse "");
                 try s.endObject();
                 try s.endArray();
                 try s.endObject();
@@ -212,9 +212,9 @@ pub fn buildBody(gpa: std.mem.Allocator, params: api.RequestParams, opts: BodyOp
                     if (c.len > 0) {
                         try s.beginObject();
                         try s.objectField("type");
-                        try common.jstr(&s, "text");
+                        try s.write("text");
                         try s.objectField("text");
-                        try common.jstr(&s, c);
+                        try s.write(c);
                         try s.endObject();
                     }
                 }
@@ -222,15 +222,15 @@ pub fn buildBody(gpa: std.mem.Allocator, params: api.RequestParams, opts: BodyOp
                     for (calls) |tc| {
                         try s.beginObject();
                         try s.objectField("type");
-                        try common.jstr(&s, "tool_use");
+                        try s.write("tool_use");
                         try s.objectField("id");
-                        try common.jstr(&s, tc.id);
+                        try s.write(tc.id);
                         try s.objectField("name");
-                        try common.jstr(&s, tc.name);
+                        try s.write(tc.name);
                         try s.objectField("input");
                         // Embed the raw arguments JSON.
                         const input = json.parseFromSliceLeaky(json.Value, scratch, tc.arguments, .{}) catch json.Value{ .object = .empty };
-                        try common.jval(&s, input);
+                        try s.write(input);
                         try s.endObject();
                     }
                 }
@@ -247,33 +247,33 @@ pub fn buildBody(gpa: std.mem.Allocator, params: api.RequestParams, opts: BodyOp
                         if (c.len > 0) {
                             try s.beginObject();
                             try s.objectField("type");
-                            try common.jstr(&s, "text");
+                            try s.write("text");
                             try s.objectField("text");
-                            try common.jstr(&s, c);
+                            try s.write(c);
                             try s.endObject();
                         }
                     }
                     for (imgs) |img| {
                         try s.beginObject();
                         try s.objectField("type");
-                        try common.jstr(&s, "image");
+                        try s.write("image");
                         try s.objectField("source");
                         try s.beginObject();
                         try s.objectField("type");
-                        try common.jstr(&s, "base64");
+                        try s.write("base64");
                         try s.objectField("media_type");
-                        try common.jstr(&s, img.mime);
+                        try s.write(img.mime);
                         try s.objectField("data");
-                        try common.jstr(&s, img.b64);
+                        try s.write(img.b64);
                         try s.endObject();
                         try s.endObject();
                     }
                 } else {
                     try s.beginObject();
                     try s.objectField("type");
-                    try common.jstr(&s, "text");
+                    try s.write("text");
                     try s.objectField("text");
-                    try common.jstr(&s, m.content orelse "");
+                    try s.write(m.content orelse "");
                     try s.endObject();
                 }
             },
@@ -289,11 +289,11 @@ pub fn buildBody(gpa: std.mem.Allocator, params: api.RequestParams, opts: BodyOp
         for (tools) |t| {
             try s.beginObject();
             try s.objectField("name");
-            try common.jstr(&s, t.name);
+            try s.write(t.name);
             try s.objectField("description");
-            try common.jstr(&s, t.description);
+            try s.write(t.description);
             try s.objectField("input_schema");
-            try common.jval(&s, t.input_schema);
+            try s.write(t.input_schema);
             try s.endObject();
         }
         try s.endArray();

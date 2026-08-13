@@ -9039,25 +9039,7 @@ fn enrichRunError(arena: std.mem.Allocator, provider_name: []const u8, had_image
 
 fn containsAnyCaseInsensitive(haystack: []const u8, needles: []const []const u8) bool {
     for (needles) |needle| {
-        if (findCaseInsensitive(haystack, needle)) return true;
-    }
-    return false;
-}
-
-fn findCaseInsensitive(haystack: []const u8, needle: []const u8) bool {
-    if (needle.len == 0) return true;
-    if (haystack.len < needle.len) return false;
-    var i: usize = 0;
-    while (i <= haystack.len - needle.len) : (i += 1) {
-        var match = true;
-        for (needle, 0..) |nc, j| {
-            const hc = haystack[i + j];
-            if (hc != nc and std.ascii.toLower(hc) != std.ascii.toLower(nc)) {
-                match = false;
-                break;
-            }
-        }
-        if (match) return true;
+        if (std.ascii.indexOfIgnoreCase(haystack, needle) != null) return true;
     }
     return false;
 }

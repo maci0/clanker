@@ -45,13 +45,13 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
 
     try s.beginObject();
     try s.objectField("model");
-    try common.jstr(&s, params.provider.activeModelName());
+    try s.write(params.provider.activeModelName());
     try s.objectField("messages");
     try s.beginArray();
     for (params.messages) |m| {
         try s.beginObject();
         try s.objectField("role");
-        try common.jstr(&s, m.role.asStr());
+        try s.write(m.role.asStr());
         if (m.images) |imgs| {
             // Multimodal: content is an array of text + image_url blocks.
             try s.objectField("content");
@@ -59,28 +59,28 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
             if (m.content) |c| {
                 try s.beginObject();
                 try s.objectField("type");
-                try common.jstr(&s, "text");
+                try s.write("text");
                 try s.objectField("text");
-                try common.jstr(&s, c);
+                try s.write(c);
                 try s.endObject();
             }
             for (imgs) |img| {
                 try s.beginObject();
                 try s.objectField("type");
-                try common.jstr(&s, "image_url");
+                try s.write("image_url");
                 try s.objectField("image_url");
                 try s.beginObject();
                 try s.objectField("url");
                 const url = try std.fmt.allocPrint(gpa, "data:{s};base64,{s}", .{ img.mime, img.b64 });
                 defer gpa.free(url);
-                try common.jstr(&s, url);
+                try s.write(url);
                 try s.endObject();
                 try s.endObject();
             }
             try s.endArray();
         } else if (m.content) |c| {
             try s.objectField("content");
-            try common.jstr(&s, c);
+            try s.write(c);
         }
         if (m.tool_calls) |calls| {
             try s.objectField("tool_calls");
@@ -88,15 +88,15 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
             for (calls) |tc| {
                 try s.beginObject();
                 try s.objectField("id");
-                try common.jstr(&s, tc.id);
+                try s.write(tc.id);
                 try s.objectField("type");
-                try common.jstr(&s, "function");
+                try s.write("function");
                 try s.objectField("function");
                 try s.beginObject();
                 try s.objectField("name");
-                try common.jstr(&s, tc.name);
+                try s.write(tc.name);
                 try s.objectField("arguments");
-                try common.jstr(&s, tc.arguments);
+                try s.write(tc.arguments);
                 try s.endObject();
                 try s.endObject();
             }
@@ -104,7 +104,7 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
         }
         if (m.tool_call_id) |tid| {
             try s.objectField("tool_call_id");
-            try common.jstr(&s, tid);
+            try s.write(tid);
         }
         try s.endObject();
     }
@@ -116,15 +116,15 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
         for (tools) |t| {
             try s.beginObject();
             try s.objectField("type");
-            try common.jstr(&s, "function");
+            try s.write("function");
             try s.objectField("function");
             try s.beginObject();
             try s.objectField("name");
-            try common.jstr(&s, t.name);
+            try s.write(t.name);
             try s.objectField("description");
-            try common.jstr(&s, t.description);
+            try s.write(t.description);
             try s.objectField("parameters");
-            try common.jval(&s, t.input_schema);
+            try s.write(t.input_schema);
             try s.endObject();
             try s.endObject();
         }
@@ -148,13 +148,13 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
     }
     if (params.provider.activeModel().reasoning_effort) |re| {
         try s.objectField("reasoning_effort");
-        try common.jstr(&s, re);
+        try s.write(re);
     }
     if (params.response_format_json) {
         try s.objectField("response_format");
         try s.beginObject();
         try s.objectField("type");
-        try common.jstr(&s, "json_object");
+        try s.write("json_object");
         try s.endObject();
     }
     try s.endObject();

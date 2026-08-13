@@ -40,14 +40,6 @@ pub const Builder = struct {
     }
 };
 
-pub fn jstr(s: *json.Stringify, value: []const u8) !void {
-    try s.write(value);
-}
-
-pub fn jval(s: *json.Stringify, value: anytype) !void {
-    try s.write(value);
-}
-
 /// Clamps the requested output budget to fit the model's context window:
 /// never ask for more completion tokens than half the window.
 pub fn clampedMaxTokens(params: api.RequestParams) u32 {
