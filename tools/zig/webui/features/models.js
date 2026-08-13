@@ -47,10 +47,37 @@ function status(msg) {
   if (el) el.textContent = msg;
 }
 
+/* Puts the chosen provider back after the <select> has been refilled.
+   Which provider you are about to ask is a choice, and it has to outlive the
+   list being rebuilt — but emptying a <select> throws its selection away, and
+   refilling it leaves whichever option lands first selected instead (the HTML
+   "ask for a reset" algorithm). Assigning a value no option carries leaves
+   selectedIndex at -1 and the control blank, so a provider that has since been
+   removed from config.toml has to be detected and stepped back to the first
+   option deliberately rather than left showing nothing. */
+function restoreProvider(sel, wanted) {
+  if (!wanted) return;
+  sel.value = wanted;
+  if (sel.value === wanted) return;
+  // The provider is gone from config.toml. The first option stands, and any
+  // live listing still on screen belongs to a provider the select no longer
+  // names — leaving it there reads as the new selection's models.
+  sel.selectedIndex = 0;
+  var out = document.getElementById("models-live-out");
+  if (out) {
+    out.textContent = "";
+    out.appendChild(empty(wanted + " is no longer configured. Pick a provider and list again."));
+  }
+}
+
 function loadConfigured() {
   var box = document.getElementById("models-configured");
   var providerSel = document.getElementById("models-live-provider");
   if (!box) return Promise.resolve();
+  // Read before the refill, restored after it. loadModelsView() runs on every
+  // entry to the view and behind Refresh, so without this the choice was lost
+  // both times and the next "List models" quietly asked a different provider.
+  var chosen = providerSel ? providerSel.value : "";
   return fetch("/api/providers")
     .then(readJson)
     .then(function (d) {
@@ -76,6 +103,9 @@ function loadConfigured() {
           ]);
         });
       });
+      // Before the early return below: a config with providers but no declared
+      // models still fills the select, and the choice still has to survive.
+      if (providerSel) restoreProvider(providerSel, chosen);
       if (!rows.length) {
         box.appendChild(empty("No providers configured. Add [providers.<name>] in config.toml."));
         return;

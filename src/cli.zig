@@ -4126,6 +4126,7 @@ const max_connection_threads = 64;
 var connection_threads = std.atomic.Value(u32).init(0);
 var request_sequence = std.atomic.Value(u64).init(1);
 threadlocal var request_status: u16 = 0;
+threadlocal var request_keep_alive: bool = false;
 var http_requests_total = std.atomic.Value(u64).init(0);
 var http_errors_total = std.atomic.Value(u64).init(0);
 var http_latency_le_10ms = std.atomic.Value(u64).init(0);
@@ -4174,15 +4175,22 @@ fn connectionThread(conn: *Connection) void {
 }
 
 fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream) void {
-    // A hot-reload must never fire mid-request (would drop the client
-    // mid-response); see HotReload's doc comment.
-    if (hot_reload_active) |hr| hr.begin();
-    defer if (hot_reload_active) |hr| hr.end();
-    handleConnection(io, gpa, cfg, environ_map, port, serve_as_hosts, stream);
+    defer stream.close(io);
+    const tv: std.posix.timeval = .{ .sec = 5, .usec = 0 };
+    std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
+    var requests: u8 = 0;
+    while (requests < 100) : (requests += 1) {
+        request_keep_alive = false;
+        // A hot-reload must never fire mid-request (would drop the client
+        // mid-response); see HotReload's doc comment.
+        if (hot_reload_active) |hr| hr.begin();
+        handleConnection(io, gpa, cfg, environ_map, port, serve_as_hosts, stream);
+        if (hot_reload_active) |hr| hr.end();
+        if (!request_keep_alive) break;
+    }
 }
 
 fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream) void {
-    defer stream.close(io);
     var request_id_buf: [24]u8 = undefined;
     const request_id = std.fmt.bufPrint(&request_id_buf, "http-{d}", .{request_sequence.fetchAdd(1, .monotonic)}) catch "http-unknown";
     log.setContext(request_id);
@@ -4304,6 +4312,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_files = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/files");
         const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/logs");
         const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/plugins/config");
+        if (is_webui and std.mem.eql(u8, method, "GET") and cfg.modules.webui) {
+            const conn_val = headerValue(headers_raw, "connection") orelse "";
+            if (!std.ascii.eqlIgnoreCase(conn_val, "close")) request_keep_alive = true;
+        }
         if (is_webui and !cfg.modules.webui) {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"webui module disabled\"}");
         } else if (is_a2a and !cfg.modules.a2a) {
@@ -6341,7 +6353,7 @@ fn handleWebuiAsset(
     if (ifNoneMatchHits(headers_raw, etag)) {
         request_status = 304;
         var hbuf: [256]u8 = undefined;
-        const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n", .{etag}) catch return;
+        const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\n{s}\r\n", .{ etag, connHeader() }) catch return;
         rawhttp.writeAllFd(stream.socket.handle, hdr);
         return;
     }
@@ -6352,7 +6364,7 @@ fn handleWebuiAsset(
     request_status = 200;
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [512]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, out.len, encoding, etag }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, etag, connHeader() }) catch return;
     rawhttp.writeAllFd(stream.socket.handle, hdr);
     rawhttp.writeAllFd(stream.socket.handle, out);
 }
@@ -7132,7 +7144,7 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8
     const out = gzipped orelse bytes;
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [512]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, out.len, encoding }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, connHeader() }) catch return;
     rawhttp.writeAllFd(stream.socket.handle, hdr);
     rawhttp.writeAllFd(stream.socket.handle, out);
 }
@@ -9735,7 +9747,12 @@ test "retrieval prompt labels knowledge as untrusted and separates operator task
     try std.testing.expect(task_start < task);
 }
 
+fn connHeader() []const u8 {
+    return if (request_keep_alive) "Connection: keep-alive\r\n" else "Connection: close\r\n";
+}
+
 fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
+    request_keep_alive = false;
     request_status = status;
     var hbuf: [4096]u8 = undefined;
     // nosniff on every response, not just the HTML one: these bodies carry peer
@@ -9790,7 +9807,7 @@ fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     if (ifNoneMatchHits(headers_raw, etag)) {
         request_status = 304;
         var hbuf: [256]u8 = undefined;
-        const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n", .{etag}) catch return;
+        const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\n{s}\r\n", .{ etag, connHeader() }) catch return;
         rawhttp.writeAllFd(stream.socket.handle, hdr);
         return;
     }
@@ -9799,7 +9816,7 @@ fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     request_status = 200;
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [4096]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n", .{ out.len, encoding, etag, webui_csp }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-cache\r\n{s}\r\n", .{ out.len, encoding, etag, webui_csp, connHeader() }) catch return;
     rawhttp.writeAllFd(stream.socket.handle, hdr);
     rawhttp.writeAllFd(stream.socket.handle, out);
 }
@@ -10017,7 +10034,7 @@ fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
     if (ifNoneMatchHits(headers_raw, etag)) {
         request_status = 304;
         var hbuf: [256]u8 = undefined;
-        const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: public, max-age=3600, must-revalidate\r\nConnection: close\r\n\r\n", .{etag}) catch return;
+        const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: public, max-age=3600, must-revalidate\r\n{s}\r\n", .{ etag, connHeader() }) catch return;
         rawhttp.writeAllFd(stream.socket.handle, hdr);
         return;
     }
@@ -10026,7 +10043,7 @@ fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
     const out = gzipped orelse body;
     request_status = 200;
     const encoding = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/javascript; charset=utf-8\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: public, max-age=3600, must-revalidate\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ out.len, encoding, etag }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/javascript; charset=utf-8\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: public, max-age=3600, must-revalidate\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ out.len, encoding, etag, connHeader() }) catch return;
     rawhttp.writeAllFd(stream.socket.handle, hdr);
     rawhttp.writeAllFd(stream.socket.handle, out);
 }
