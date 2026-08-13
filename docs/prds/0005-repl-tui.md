@@ -164,7 +164,8 @@ specific `vxfw` shape, not an open-ended "figure it out":
 | CJK / fullwidth text in a rendered line | Occupies two columns, wraps whole rather than across the edge, and the row it lands on matches what `lineRows` reserved (`nextCell`) |
 | Decomposed text (base + combining mark) | One cell carrying both codepoints, so the accent sits on its letter instead of pushing the line right |
 | Control bytes in LLM/tool output | Stripped before render, per Design. Covers the streamed deltas, the provider's final `message.content`, its `err_detail` on a failed turn, internal `cmd_*` tool `text`, `!` escape output, and clipboard payloads |
-| History exceeds visible height | PgUp/PgDn/Home/End page it (manual scrollback, shipped); Ctrl-R searches it |
+| History exceeds visible height | PgUp/PgDn/Home/End page it (manual scrollback, shipped); the mouse wheel nudges it three lines a notch; Ctrl-R searches it |
+| Mouse wheel | Scrolls the transcript. `vxfw.App.run` enables mouse reporting unconditionally, which takes the terminal's own wheel handling away, so this is owed rather than optional — the same debt that already bought drag-select and OSC 52 copy |
 | A modal is open (picker or search) | It owns the keyboard, tested before the scrollback bindings. Those claim Escape whenever `view_end` is set, and jumping to a search hit always sets it, so a modal tested after them would never see its own cancel key |
 | A modal is drawn over the transcript | Its interior is blanked first (`clearBoxInterior`); `drawBox` draws only a border, so the text underneath used to show through the gaps |
 

@@ -2162,6 +2162,7 @@ const Model = struct {
             \\  Ctrl-C            stop the current turn, or quit when idle
             \\  Ctrl-Shift-C      copy the selection (or the input line)
             \\  Ctrl-Shift-V, Shift-Insert   paste from the system clipboard
+            \\  mouse wheel       scroll the transcript
             \\  mouse drag        select text in the transcript (copies on release)
         ;
         var kit = std.mem.splitScalar(u8, keys, '\n');
@@ -2705,6 +2706,29 @@ const Model = struct {
     /// dispatch), clamped to the transcript so dragging into the status
     /// line or input box can't select outside what's actually copyable.
     fn handleMouse(self: *Model, ctx: *vxfw.EventContext, m: vaxis.Mouse) !void {
+        // The wheel scrolls the transcript. This is owed rather than optional:
+        // `vxfw.App.run` enables mouse reporting unconditionally, which takes
+        // the terminal's own wheel handling away, and the guard below then
+        // dropped every non-left button — so the wheel did nothing in either
+        // layer and the transcript could only be moved from the keyboard.
+        // Handled before that guard, and only on `.press`, because a terminal
+        // that also reports a release for a wheel notch would otherwise
+        // scroll twice per notch.
+        if (m.type == .press) {
+            switch (m.button) {
+                .wheel_up, .wheel_down => {
+                    self.view_end = scrollWheelEnd(
+                        self.view_end,
+                        self.lineCount(),
+                        self.availRows(),
+                        m.button == .wheel_up,
+                    );
+                    ctx.redraw = true;
+                    return;
+                },
+                else => {},
+            }
+        }
         if (m.button != .left and m.type != .release) return;
         const row = std.math.clamp(
             @as(u16, @intCast(@max(0, m.row))),
@@ -3618,6 +3642,49 @@ fn scrollDownEnd(cur: ?usize, line_count: usize, avail_rows: u16) ?usize {
     const new_end = end + scrollPage(avail_rows);
     if (new_end >= line_count) return null;
     return clampViewEnd(new_end, line_count, avail_rows);
+}
+
+/// Lines one wheel notch moves. Three is the de-facto terminal default, and
+/// deliberately not `scrollPage`: a notch is a nudge, and paging a whole
+/// screen per notch makes a wheel unusable for reading.
+const wheel_lines: usize = 3;
+
+/// One wheel notch, up or down. Same contract as `scrollUpEnd` /
+/// `scrollDownEnd` — null means "follow the tail" — so the wheel and the
+/// paging keys leave `view_end` in states that are indistinguishable
+/// afterwards, and a reader can mix the two freely.
+fn scrollWheelEnd(cur: ?usize, line_count: usize, avail_rows: u16, up: bool) ?usize {
+    if (line_count <= avail_rows) return null;
+    const end = cur orelse line_count;
+    if (up) return clampViewEnd(end -| wheel_lines, line_count, avail_rows);
+    const new_end = end + wheel_lines;
+    // Reaching the tail dissolves the anchor rather than pinning just short
+    // of it, so scrolling down to the bottom resumes following new output.
+    if (new_end >= line_count) return null;
+    return clampViewEnd(new_end, line_count, avail_rows);
+}
+
+test "scrollWheelEnd nudges by a few lines and shares the paging contract" {
+    // Short transcript: nothing to scroll, in either direction.
+    try std.testing.expectEqual(@as(?usize, null), scrollWheelEnd(null, 10, 24, true));
+    try std.testing.expectEqual(@as(?usize, null), scrollWheelEnd(null, 24, 24, true));
+
+    // From the tail, one notch up moves three lines, not a page.
+    try std.testing.expectEqual(@as(?usize, 97), scrollWheelEnd(null, 100, 24, true));
+    // And keeps going, three at a time.
+    try std.testing.expectEqual(@as(?usize, 94), scrollWheelEnd(97, 100, 24, true));
+
+    // Down returns toward the tail and dissolves the anchor on arrival, so
+    // the transcript resumes following new output.
+    try std.testing.expectEqual(@as(?usize, 97), scrollWheelEnd(94, 100, 24, false));
+    try std.testing.expectEqual(@as(?usize, null), scrollWheelEnd(98, 100, 24, false));
+    // Already at the tail: down is a no-op, same as PgDn.
+    try std.testing.expectEqual(@as(?usize, null), scrollWheelEnd(null, 100, 24, false));
+
+    // Scrolling up clamps so the window still fills from line 0.
+    var end: ?usize = null;
+    for (0..100) |_| end = scrollWheelEnd(end, 100, 24, true);
+    try std.testing.expectEqual(@as(?usize, 24), end);
 }
 
 /// Home: jump to the very top (window [0, avail_rows)); null when there is
