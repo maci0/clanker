@@ -3190,9 +3190,13 @@ test isolateByDefault {
 /// hand. With no flag, the `[agent]` default for this run kind decides:
 /// `goal_worktree` for goal-driven and scheduled runs, `worktree` for a typed
 /// run.
-fn shouldIsolate(opts: Options, cfg: *const config.Config) bool {
+fn shouldIsolate(opts: Options, mode: config.WorktreeMode, cfg: *const config.Config) bool {
     if (opts.worktree) return true;
     if (opts.no_worktree) return false;
+    // `git_worktree_on` names modes that isolate by default. A named mode
+    // opts in regardless of `worktree`/`goal_worktree`; one left out (or an
+    // empty list) keeps the historical default below.
+    if (containsMode(cfg.agent.git_worktree_on, mode)) return true;
     const def = if (opts.unattended or opts.goal != null)
         cfg.agent.goal_worktree
     else
@@ -3200,24 +3204,39 @@ fn shouldIsolate(opts: Options, cfg: *const config.Config) bool {
     return isolateByDefault(opts, def);
 }
 
+/// Whether `m` is named in `modes` (the `[agent] git_worktree_on` list).
+fn containsMode(modes: []const config.WorktreeMode, m: config.WorktreeMode) bool {
+    for (modes) |x| if (x == m) return true;
+    return false;
+}
+
 test shouldIsolate {
     const auto = config.Config{};
     const force = config.Config{ .agent = .{ .worktree = .yes, .goal_worktree = .yes } };
     const optout = config.Config{ .agent = .{ .worktree = .no, .goal_worktree = .no } };
 
-    try std.testing.expect(!shouldIsolate(.{}, &auto));
-    try std.testing.expect(shouldIsolate(.{ .goal = "g1" }, &auto));
-    try std.testing.expect(shouldIsolate(.{ .worktree = true }, &auto));
+    try std.testing.expect(!shouldIsolate(.{}, .run, &auto));
+    try std.testing.expect(shouldIsolate(.{ .goal = "g1" }, .goal, &auto));
+    try std.testing.expect(shouldIsolate(.{ .worktree = true }, .run, &auto));
     // A config `.yes` isolates a plain run by default, `.no` opts a goal out.
-    try std.testing.expect(shouldIsolate(.{}, &force));
-    try std.testing.expect(!shouldIsolate(.{ .goal = "g1" }, &optout));
+    try std.testing.expect(shouldIsolate(.{}, .run, &force));
+    try std.testing.expect(!shouldIsolate(.{ .goal = "g1" }, .goal, &optout));
     // A flag still wins over the config default.
-    try std.testing.expect(!shouldIsolate(.{ .no_worktree = true }, &force));
+    try std.testing.expect(!shouldIsolate(.{ .no_worktree = true }, .run, &force));
     // The default, opted out of.
-    try std.testing.expect(!shouldIsolate(.{ .goal = "g1", .no_worktree = true }, &auto));
-    try std.testing.expect(!shouldIsolate(.{ .unattended = true, .no_worktree = true }, &auto));
+    try std.testing.expect(!shouldIsolate(.{ .goal = "g1", .no_worktree = true }, .goal, &auto));
+    try std.testing.expect(!shouldIsolate(.{ .unattended = true, .no_worktree = true }, .schedule, &auto));
     // Explicit --worktree wins over an explicit --no-worktree.
-    try std.testing.expect(shouldIsolate(.{ .worktree = true, .no_worktree = true }, &auto));
+    try std.testing.expect(shouldIsolate(.{ .worktree = true, .no_worktree = true }, .run, &auto));
+
+    // `git_worktree_on` names modes that isolate by default.
+    const listed = config.Config{ .agent = .{ .git_worktree_on = &.{ .goal, .schedule } } };
+    try std.testing.expect(shouldIsolate(.{}, .goal, &listed));
+    try std.testing.expect(shouldIsolate(.{ .unattended = true }, .schedule, &listed));
+    // A mode not named keeps the historical (auto) default: a typed run off.
+    try std.testing.expect(!shouldIsolate(.{}, .run, &listed));
+    // Explicit flag still beats the list.
+    try std.testing.expect(!shouldIsolate(.{ .no_worktree = true }, .goal, &listed));
 }
 
 fn cmdRun(init: std.process.Init, opts: Options) !void {
@@ -3285,7 +3304,13 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // and --goal runs would have made clanker unusable outside a git repo,
     // where `git worktree add` cannot succeed at all.
     const isolation_required = opts.worktree;
-    if (shouldIsolate(opts, &cfg)) isolate: {
+    const mode: config.WorktreeMode = if (opts.unattended)
+        .schedule
+    else if (opts.goal != null)
+        .goal
+    else
+        .run;
+    if (shouldIsolate(opts, mode, &cfg)) isolate: {
         harness_root = std.process.currentPathAlloc(io, arena) catch |err| {
             log.log(.error_, "run --worktree: could not read the current directory: {s}", .{@errorName(err)});
             return err;

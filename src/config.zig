@@ -299,6 +299,12 @@ pub const Agent = struct {
     /// have historically isolated by default. `auto` keeps that; `yes`/`no`
     /// force a default.
     goal_worktree: WorktreeDefault = .auto,
+    /// Per-mode opt-in to worktree isolation. Each mode named here isolates
+    /// by default (as if that mode's `worktree`/`goal_worktree` were `yes`);
+    /// a mode left out keeps its historical default, and an empty list keeps
+    /// every mode on those defaults. An explicit `--worktree`/`--no-worktree`
+    /// still wins over the list. Modes: `run`, `goal`, `tui`, `schedule`.
+    git_worktree_on: []const WorktreeMode = &.{},
 };
 
 /// Persistent eval kernels (PRD 0016). Off by default: a kernel is an
@@ -364,6 +370,7 @@ pub const AgentFields = struct {
     thinking_classifier_timeout_ms: bool = false,
     worktree: bool = false,
     goal_worktree: bool = false,
+    git_worktree_on: bool = false,
 };
 
 /// Who must approve a write-capable tool call before it runs.
@@ -373,6 +380,8 @@ pub const ConfirmWrites = enum { never, browser, always };
 /// each command kind's historical default (off for a plain run, on for
 /// goal/scheduled runs); `yes`/`no` force a default for that kind.
 pub const WorktreeDefault = enum { auto, yes, no };
+/// A session kind a `git_worktree_on` entry can name.
+pub const WorktreeMode = enum { run, goal, tui, schedule };
 
 pub const Improve = struct {
     /// null (or 0 in the file) means the engine sizes the context from the
@@ -1363,6 +1372,7 @@ pub const Config = struct {
             "fallback_provider",         "fallback_providers",             "auto_thinking",
             "thinking_classifier_model", "thinking_classifier_timeout_ms", "worktree",
             "goal_worktree",
+            "git_worktree_on",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -1538,6 +1548,16 @@ pub const Config = struct {
                 return error.GoalWorktreeDefaultInvalid;
             f.goal_worktree = true;
         }
+        if (obj.get("git_worktree_on")) |k| {
+            const names = try jsonNameList(arena, k, "git_worktree_on");
+            const modes = try arena.alloc(WorktreeMode, names.len);
+            for (names, 0..) |s, i| {
+                modes[i] = std.meta.stringToEnum(WorktreeMode, s) orelse
+                    return error.WorktreeModeInvalid;
+            }
+            a.git_worktree_on = modes;
+            f.git_worktree_on = true;
+        }
         return .{ .agent = a, .fields = f };
     }
 
@@ -1572,6 +1592,7 @@ pub const Config = struct {
         if (fields.thinking_classifier_timeout_ms) dst.thinking_classifier_timeout_ms = src.thinking_classifier_timeout_ms;
         if (fields.worktree) dst.worktree = src.worktree;
         if (fields.goal_worktree) dst.goal_worktree = src.goal_worktree;
+        if (fields.git_worktree_on) dst.git_worktree_on = src.git_worktree_on;
     }
 
     fn applyModulesFields(dst: *Modules, src: Modules, fields: ModulesFields) void {
@@ -2239,6 +2260,61 @@ test "worktree and goal_worktree parse and default to auto" {
         ,
     });
     try std.testing.expectError(error.WorktreeDefaultInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
+}
+
+test "agent.git_worktree_on parses per-mode list and rejects unknown modes" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = \"ollama\"
+        \\
+        \\[providers.ollama]
+        \\base_url = \"http://127.0.0.1:11434/v1\"
+        \\
+        \\[models.\"ollama/llama3.1\"]
+        \\provider = \"ollama\"
+        \\
+        \\[agent]
+        \\git_worktree_on = [\"goal\", \"schedule\"]
+        \\
+        ,
+    });
+    const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqualSlices(WorktreeMode, &.{ .goal, .schedule }, cfg.agent.git_worktree_on);
+
+    // Left out, the list defaults to empty (the historical per-run-kind behaviour).
+    try std.testing.expectEqualSlices(WorktreeMode, &.{}, (Agent{}).git_worktree_on);
+
+    // An unknown mode fails the load rather than being silently ignored.
+    try dir.writeFile(io, .{
+        .sub_path = "bad.toml",
+        .data =
+        \\default_provider = \"ollama\"
+        \\
+        \\[providers.ollama]
+        \\base_url = \"http://127.0.0.1:11434/v1\"
+        \\
+        \\[models.\"ollama/llama3.1\"]
+        \\provider = \"ollama\"
+        \\
+        \\[agent]
+        \\git_worktree_on = [\"goal\", \"nope\"]
+        \\
+        ,
+    });
+    try std.testing.expectError(error.WorktreeModeInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
 }
 
 test "agent.fallback_provider parses and is not reset by a partial local override" {
