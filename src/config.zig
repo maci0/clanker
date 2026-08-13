@@ -581,6 +581,19 @@ pub const Tui = struct {
     mascot_facing: []const u8 = "",
 };
 
+pub const TtsrRule = struct {
+    name: []const u8 = "",
+    pattern: []const u8 = "",
+    inject: []const u8 = "",
+    max_fires: u32 = 1,
+};
+
+pub const Ttsr = struct {
+    max_retries_per_turn: u32 = 3,
+    buffer_bytes: u32 = 4096,
+    rules: []const TtsrRule = &.{},
+};
+
 /// Post-turn second-model critique. Off by default; fails open. Distinct
 /// from `improve.arena_advisory`, which is a per-proposal Arena verdict
 /// inside the improve engine.
@@ -610,6 +623,7 @@ pub const Config = struct {
     notify: Notify = .{},
     tui: Tui = .{},
     advisor: Advisor = .{},
+    ttsr: Ttsr = .{},
     chatrooms: Chatrooms = .{},
     memory: Memory = .{},
     modules: Modules = .{},
@@ -729,7 +743,7 @@ pub const Config = struct {
             "default_provider", "agent",    "improve", "providers",
             "models",           "instance", "peers",   "notify",
             "chatrooms",        "modules",  "web",     "memory",
-            "serve",            "tui",      "advisor",
+            "serve",            "tui",      "advisor", "ttsr",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -748,6 +762,9 @@ pub const Config = struct {
         }
         if (obj.get("advisor")) |v| {
             cfg.advisor = try parseAdvisor(v);
+        }
+        if (obj.get("ttsr")) |v| {
+            cfg.ttsr = try parseTtsr(arena, v);
         }
         if (obj.get("providers")) |v| {
             const pobj = switch (v) {
@@ -1497,6 +1514,49 @@ pub const Config = struct {
         if (fields.multimodal) dst.multimodal = src.multimodal;
         if (fields.chatrooms) dst.chatrooms = src.chatrooms;
         if (fields.token_stats) dst.token_stats = src.token_stats;
+    }
+
+    fn parseTtsr(arena: std.mem.Allocator, v: json.Value) !Ttsr {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.TtsrNotObject,
+        };
+        var t = Ttsr{};
+        warnUnknownKeys(obj, &.{ "max_retries_per_turn", "buffer_bytes", "rules" }, "ttsr");
+        if (obj.get("max_retries_per_turn")) |k| {
+            t.max_retries_per_turn = try jsonUnsigned(u32, k, "ttsr.max_retries_per_turn");
+        }
+        if (obj.get("buffer_bytes")) |k| {
+            t.buffer_bytes = try jsonUnsigned(u32, k, "ttsr.buffer_bytes");
+            if (t.buffer_bytes == 0) t.buffer_bytes = 4096;
+        }
+        if (obj.get("rules")) |k| {
+            const arr = switch (k) {
+                .array => |a| a,
+                else => return error.TtsrRulesNotArray,
+            };
+            var out: std.ArrayList(TtsrRule) = .empty;
+            for (arr.items) |item| {
+                const ro = switch (item) {
+                    .object => |o| o,
+                    else => return error.TtsrRuleNotObject,
+                };
+                var rule = TtsrRule{};
+                if (ro.get("name")) |n| rule.name = try jsonStr(n, "ttsr.rule.name");
+                if (ro.get("pattern")) |p| rule.pattern = try jsonStr(p, "ttsr.rule.pattern");
+                if (ro.get("inject")) |inj| rule.inject = try jsonStr(inj, "ttsr.rule.inject");
+                if (ro.get("max_fires")) |mf| {
+                    const n = try jsonInt(mf, "ttsr.rule.max_fires");
+                    if (n <= 0) return error.TtsrMaxFiresZero;
+                    rule.max_fires = @intCast(n);
+                }
+                if (rule.name.len == 0) return error.TtsrRuleNameEmpty;
+                if (rule.pattern.len == 0) return error.TtsrRulePatternEmpty;
+                try out.append(arena, rule);
+            }
+            t.rules = try out.toOwnedSlice(arena);
+        }
+        return t;
     }
 
     fn parseAdvisor(v: json.Value) !Advisor {

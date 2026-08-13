@@ -24,6 +24,7 @@ const utf8 = @import("../util/utf8.zig");
 const mock_server = @import("../llm/mock_server.zig");
 const advisor = @import("advisor.zig");
 const thinking = @import("thinking.zig");
+const ttsr = @import("ttsr.zig");
 
 /// Each chatroom inbox line injected into a run. Long enough to see what a
 /// peer said, short enough that a burst of rooms cannot fill the context.
@@ -450,6 +451,23 @@ pub const Agent = struct {
         if (messages.items.len == 0 or messages.items[0].role != .system) {
             try messages.insert(self.arena, 0, .{ .role = .system, .content = self.system_prompt_text });
         }
+        var ttsr_rules: std.ArrayList(ttsr.Rule) = .empty;
+        for (self.cfg.ttsr.rules) |raw| {
+            const pat = ttsr.Pattern.compile(self.arena, raw.pattern) catch |err| {
+                log.log(.warn, "ttsr rule '{s}' ignored: {s}", .{ raw.name, @errorName(err) });
+                continue;
+            };
+            try ttsr_rules.append(self.arena, .{
+                .name = raw.name,
+                .pattern = pat,
+                .inject = raw.inject,
+                .max_fires = raw.max_fires,
+            });
+        }
+        if (ttsr_rules.items.len > 0 and !self.cfg.modules.streaming) {
+            log.log(.warn, "ttsr: {d} rule(s) configured but streaming is off; they will not fire", .{ttsr_rules.items.len});
+        }
+        var ttsr_retries: u32 = 0;
         // A resumed session may have been persisted mid-tool-call (crash or
         // atomic-rename rebuild between the assistant's tool_calls message
         // and the tool results). Providers reject tool_calls with no matching
@@ -574,17 +592,84 @@ pub const Agent = struct {
 
             const llm_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
             const effort = self.classifyEffort(messages.items);
+            var ttsr_hit: ?*ttsr.Rule = null;
             const resp = if (self.on_token) |cb| blk: {
                 if (!self.cfg.modules.streaming) break :blk try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0, effort);
+                const Guard = struct {
+                    inner: *const fn ([]const u8) void,
+                    rules: []ttsr.Rule,
+                    buf: []u8,
+                    len: usize = 0,
+                    hit: *?*ttsr.Rule,
+                    stop: ?*std.atomic.Value(bool),
+                    retries: u32,
+                    max_retries: u32,
+
+                    fn feed(self_g: *@This(), delta: []const u8) void {
+                        self_g.inner(delta);
+                        if (self_g.hit.* != null) return;
+                        if (self_g.retries >= self_g.max_retries) return;
+                        if (delta.len >= self_g.buf.len) {
+                            @memcpy(self_g.buf, delta[delta.len - self_g.buf.len ..]);
+                            self_g.len = self_g.buf.len;
+                        } else if (self_g.len + delta.len <= self_g.buf.len) {
+                            @memcpy(self_g.buf[self_g.len..][0..delta.len], delta);
+                            self_g.len += delta.len;
+                        } else {
+                            const drop = self_g.len + delta.len - self_g.buf.len;
+                            std.mem.copyForwards(u8, self_g.buf, self_g.buf[drop..self_g.len]);
+                            self_g.len -= drop;
+                            @memcpy(self_g.buf[self_g.len..][0..delta.len], delta);
+                            self_g.len += delta.len;
+                        }
+                        if (ttsr.firstMatch(self_g.rules, self_g.buf[0..self_g.len])) |rule| {
+                            self_g.hit.* = rule;
+                            if (self_g.stop) |f| f.store(true, .release);
+                        }
+                    }
+                };
+                var guard_buf = self.arena.alloc(u8, self.cfg.ttsr.buffer_bytes) catch
+                    try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0, effort);
+                var guard = Guard{
+                    .inner = cb,
+                    .rules = ttsr_rules.items,
+                    .buf = guard_buf,
+                    .hit = &ttsr_hit,
+                    .stop = self.stop_flag,
+                    .retries = ttsr_retries,
+                    .max_retries = self.cfg.ttsr.max_retries_per_turn,
+                };
+                const wrap = struct {
+                    var gptr: *Guard = undefined;
+                    fn call(delta: []const u8) void {
+                        gptr.feed(delta);
+                    }
+                };
+                wrap.gptr = &guard;
                 break :blk chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
                     .provider = self.provider,
                     .messages = messages.items,
                     .tools = self.tool_defs,
                     .reasoning_effort = effort,
-                }, err_detail, cb, self.stop_flag) catch |err| {
+                }, err_detail, wrap.call, self.stop_flag) catch |err| {
                     if (err != error.Interrupted) {
                         try self.recordFailedLlm(&g, iteration, llm_t0, err, err_detail.*);
                         return err;
+                    }
+                    if (ttsr_hit) |rule| {
+                        _ = self.stopRequested();
+                        if (self.stop_flag) |f| f.store(false, .release);
+                        ttsr_retries += 1;
+                        rule.fires += 1;
+                        const tag = try std.fmt.allocPrint(self.arena, "\n[ttsr:{s}]\n{s}\n[/ttsr]\n", .{ rule.name, rule.inject });
+                        if (messages.items.len > 0 and messages.items[0].role == .system) {
+                            const cur = messages.items[0].content orelse "";
+                            if (std.mem.indexOf(u8, cur, tag) == null) {
+                                messages.items[0].content = try std.fmt.allocPrint(self.arena, "{s}{s}", .{ cur, tag });
+                            }
+                        }
+                        log.log(.info, "ttsr: rule '{s}' fired; retrying turn ({d}/{d})", .{ rule.name, ttsr_retries, self.cfg.ttsr.max_retries_per_turn });
+                        continue;
                     }
                     // Same outcome as the between-iterations stopRequested()
                     // check above, for a Ctrl-C that instead landed mid-stream.
