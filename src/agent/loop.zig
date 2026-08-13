@@ -1927,11 +1927,11 @@ pub const Agent = struct {
     fn executeTool(self: *Agent, tc: types.ToolCall) ![]const u8 {
         const tool = self.reg.get(tc.name) orelse {
             log.log(.warn, "agent called unknown tool '{s}'", .{tc.name});
-            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"unknown tool: {s}\"}}", .{tc.name});
+            return toolErrorJson(self.arena, "unknown tool: {s}", .{tc.name});
         };
         if (!tool.enabled) {
             log.log(.warn, "agent called disabled plugin '{s}'", .{tc.name});
-            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"plugin disabled: {s}\"}}", .{tc.name});
+            return toolErrorJson(self.arena, "plugin disabled: {s}", .{tc.name});
         }
 
         // Tool arguments routinely contain prompts, message text, credentials,
@@ -1945,15 +1945,15 @@ pub const Agent = struct {
         else blk: {
             const wasm_bytes = self.wasmBytes(tool) catch |err| {
                 log.log(.error_, "tool '{s}': cannot load {s}: {s} (run `zig build tools`)", .{ tc.name, tool.wasm, @errorName(err) });
-                return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool wasm missing: {s} ({s}). Run `zig build tools`.\"}}", .{ tc.name, @errorName(err) });
+                return toolErrorJson(self.arena, "tool wasm missing: {s} ({s}). Run `zig build tools`.", .{ tc.name, @errorName(err) });
             };
             const sbp = self.sandboxPtrFor(tool) catch |err| {
                 log.log(.error_, "tool '{s}': sandbox setup failed: {s}", .{ tc.name, @errorName(err) });
-                return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool sandbox failed: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
+                return toolErrorJson(self.arena, "tool sandbox failed: {s} ({s})", .{ tc.name, @errorName(err) });
             };
             const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, sbp, wasm_bytes) catch |err| {
                 log.log(.error_, "tool '{s}': sandbox load failed: {s}", .{ tc.name, @errorName(err) });
-                return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool load failed: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
+                return toolErrorJson(self.arena, "tool load failed: {s} ({s})", .{ tc.name, @errorName(err) });
             };
             self.modules.put(self.arena, tc.name, m) catch {
                 m.deinit();
@@ -1967,7 +1967,7 @@ pub const Agent = struct {
 
         const out = mod.executeTool(effective_args) catch |err| {
             log.log(.error_, "tool '{s}' failed: {s}", .{ tc.name, @errorName(err) });
-            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool execution failed: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
+            return toolErrorJson(self.arena, "tool execution failed: {s} ({s})", .{ tc.name, @errorName(err) });
         };
         defer self.ctx.gpa.free(out);
         const t1 = std.Io.Timestamp.now(self.ctx.io, .awake);
@@ -2039,7 +2039,7 @@ pub const Agent = struct {
                 if (self.reg.get(tc.name)) |t| {
                     if (t.enabled and t.needsConfirm()) {
                         log.log(.info, "plan mode: tool '{s}' refused (write-capable)", .{tc.name});
-                        results[i] = try std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"plan mode: the {s} tool can change state and was not executed. Describe this action as a step in your plan instead.\"}}", .{tc.name});
+                        results[i] = try toolErrorJson(self.arena, "plan mode: the {s} tool can change state and was not executed. Describe this action as a step in your plan instead.", .{tc.name});
                         continue;
                     }
                 }
@@ -2055,7 +2055,7 @@ pub const Agent = struct {
                 if (self.reg.get(tc.name)) |t| {
                     if (t.enabled and t.needsConfirm() and !confirm(tc.name, argsPreview(tc.arguments))) {
                         log.log(.info, "tool '{s}' declined by the user", .{tc.name});
-                        results[i] = try std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"the user declined this {s} call. Do not retry it unchanged: adjust the approach, or put the question to ask_user.\"}}", .{tc.name});
+                        results[i] = try toolErrorJson(self.arena, "the user declined this {s} call. Do not retry it unchanged: adjust the approach, or put the question to ask_user.", .{tc.name});
                         continue;
                     }
                 }
@@ -2103,7 +2103,7 @@ pub const Agent = struct {
             try seen.put(self.ctx.gpa, tc.name, {});
 
             const tool = self.reg.get(tc.name) orelse {
-                results[i] = try std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"unknown tool: {s}\"}}", .{tc.name});
+                results[i] = try toolErrorJson(self.arena, "unknown tool: {s}", .{tc.name});
                 continue;
             };
             // Tools that call the model stay on the sequential pass below:
@@ -2116,7 +2116,7 @@ pub const Agent = struct {
             if (self.no_parallel_tools) continue;
             const wasm_bytes = self.wasmBytes(tool) catch |err| {
                 log.log(.error_, "tool '{s}': cannot load {s}: {s}", .{ tc.name, tool.wasm, @errorName(err) });
-                results[i] = try std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool wasm missing: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
+                results[i] = try toolErrorJson(self.arena, "tool wasm missing: {s} ({s})", .{ tc.name, @errorName(err) });
                 continue;
             };
 
@@ -2161,7 +2161,7 @@ pub const Agent = struct {
         for (handles.items) |h| {
             if (h.worker.err) |e| {
                 log.log(.error_, "tool '{s}' failed: {s}", .{ h.worker.tool.name, @errorName(e) });
-                results[h.slot] = std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool execution failed: {s} ({s})\"}}", .{ h.worker.tool.name, @errorName(e) }) catch "{{\"ok\":false,\"error\":\"tool execution failed\"}}";
+                results[h.slot] = toolErrorJson(self.arena, "tool execution failed: {s} ({s})", .{ h.worker.tool.name, @errorName(e) }) catch "{\"ok\":false,\"error\":\"tool execution failed\"}";
             } else if (h.worker.out) |out| {
                 // Handled without `try`: an error here would return through
                 // the enclosing defer, which joins and frees every handle a
@@ -2217,7 +2217,7 @@ pub const Agent = struct {
     /// the caller's thread (the transform module cache is not thread-safe).
     fn executeToolOnWorker(self: *Agent, tc: types.ToolCall) ![]const u8 {
         const tool = self.reg.get(tc.name) orelse
-            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"unknown tool: {s}\"}}", .{tc.name});
+            return toolErrorJson(self.arena, "unknown tool: {s}", .{tc.name});
         // Tools that call the model, and disabled ones, keep the original
         // in-thread path: they do not run wasm deeply and the LLM client is
         // not shared with worker threads.
@@ -2225,7 +2225,7 @@ pub const Agent = struct {
 
         const wasm_bytes = self.wasmBytes(tool) catch |err| {
             log.log(.error_, "tool '{s}': cannot load {s}: {s}", .{ tc.name, tool.wasm, @errorName(err) });
-            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool wasm missing: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
+            return toolErrorJson(self.arena, "tool wasm missing: {s} ({s})", .{ tc.name, @errorName(err) });
         };
         const eff_args = self.runChain(tc.name, .before, tc.arguments) catch tc.arguments;
 
@@ -2244,7 +2244,7 @@ pub const Agent = struct {
 
         if (worker.err) |e| {
             log.log(.error_, "tool '{s}' failed: {s}", .{ tc.name, @errorName(e) });
-            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool execution failed: {s} ({s})\"}}", .{ tc.name, @errorName(e) });
+            return toolErrorJson(self.arena, "tool execution failed: {s} ({s})", .{ tc.name, @errorName(e) });
         }
         const out = worker.out orelse return "{\"ok\":false,\"error\":\"tool produced no output\"}";
         defer self.ctx.gpa.free(out);
@@ -2402,6 +2402,10 @@ const max_per_turn_tokens: u32 = 32768;
 /// `max_tool_result_bytes` plus a truncation notice so it can ask for specific
 /// parts (offset, line range) if it needs more.
 const max_tool_result_bytes: usize = 32768;
+
+fn toolErrorJson(arena: std.mem.Allocator, comptime fmt: []const u8, args: anytype) ![]const u8 {
+    return std.fmt.allocPrint(arena, "{{\"ok\":false,\"error\":\"" ++ fmt ++ "\"}}", args);
+}
 
 /// Caps a tool result to `max_tool_result_bytes` with a truncation marker.
 /// Returns the original slice when it fits or is close enough that the marker
