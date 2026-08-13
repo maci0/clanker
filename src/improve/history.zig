@@ -115,9 +115,15 @@ pub const History = struct {
             for (fingerprints) |fp| {
                 var found = false;
                 for (e.changes) |seen| {
-                    if (seen == fp) found = true;
+                    if (seen == fp) {
+                        found = true;
+                        break;
+                    }
                 }
-                if (!found) all = false;
+                if (!found) {
+                    all = false;
+                    break;
+                }
             }
             if (all) return true;
         }
@@ -210,34 +216,11 @@ pub const History = struct {
         var guard = filelock.acquire(self.io, self.base, self.state_dir, "improvements", self.gpa);
         defer guard.release();
 
-        var buf: std.ArrayList(u8) = .empty;
-        defer buf.deinit(self.gpa);
-
-        // Carry the existing log forward. `writeFile` replaces, so building
-        // only the new record here meant every improvement erased the record
-        // of the one before it: a .jsonl that never held more than one line.
-        // With no memory of what it had already done, the loop re-proposed the
-        // same change until something else happened to stop it, the reason
-        // `repl_md = .{};` was promoted into src/cli.zig three separate times.
-        if (self.dir().readFileAlloc(self.io, self.logPath(), self.gpa, .limited(1 << 24)) catch null) |prior| {
-            defer self.gpa.free(prior);
-            try buf.appendSlice(self.gpa, prior);
-            if (prior.len > 0 and prior[prior.len - 1] != '\n') try buf.append(self.gpa, '\n');
-        }
-
-        // Grows to fit the record rather than a fixed cap: a build-failure
-        // detail can legitimately exceed 1 MiB, and the old fixed buffer
-        // made the whole append error out at that size, silently dropping
-        // the entry and any memory of the failed attempt.
         var out: std.Io.Writer.Allocating = .init(self.gpa);
         defer out.deinit();
         var s = json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
 
         try s.beginObject();
-        // Written from entry 1 on: `changes` already needed one silent format
-        // migration (bare u64 -> hex string) inferred per-field from old data.
-        // A version lets the next one branch on "v" instead of re-deriving
-        // "this must be an old entry" from field shape.
         try s.objectField("v");
         try s.write(1);
         try s.objectField("id");
@@ -262,9 +245,6 @@ pub const History = struct {
         try s.write(detail);
         try s.objectField("changes");
         try s.beginArray();
-        // Hex strings, not numbers: a Wyhash fingerprint is a full u64 and
-        // JSON's integer range is signed, so anything above i64 max would not
-        // survive the round trip and the edit would look new again.
         for (changes) |c| {
             var fp_buf: [16]u8 = undefined;
             try s.write(std.fmt.bufPrint(&fp_buf, "{x:0>16}", .{c}) catch continue);
@@ -276,9 +256,21 @@ pub const History = struct {
         }
         try s.endObject();
 
-        try buf.appendSlice(self.gpa, out.written());
-        try buf.append(self.gpa, '\n');
-        try self.dir().writeFile(self.io, .{ .sub_path = self.logPath(), .data = buf.items });
+        const record = out.written();
+
+        // O(1) append: open without truncating, seek to end, write the new
+        // record. The file lock above serializes concurrent writers; the old
+        // approach read the entire log into memory, appended in-memory, and
+        // wrote the whole thing back, making every append O(log_size).
+        const file = try self.dir().createFile(self.io, self.logPath(), .{ .truncate = false });
+        defer file.close(self.io);
+        const size = (try file.stat(self.io)).size;
+        var wbuf: [8192]u8 = undefined;
+        var fw = file.writer(self.io, &wbuf);
+        try fw.seekToUnbuffered(size);
+        try fw.interface.writeAll(record);
+        try fw.interface.writeAll("\n");
+        try fw.flush();
     }
 
     /// Snapshots the given live files (relative paths) into state/history/<id>/.

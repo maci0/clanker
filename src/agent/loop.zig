@@ -481,7 +481,14 @@ pub const Agent = struct {
         // consecutive iterations would spin until max_iterations with no
         // answer. Fingerprint counts are per-run; the third identical call
         // gets a synthetic error result instead of another execution.
-        var call_counts: std.StringArrayHashMapUnmanaged(u32) = .empty;
+        var call_counts: std.ArrayHashMapUnmanaged(u64, u32, struct {
+            pub fn hash(_: @This(), key: u64) u32 {
+                return @truncate(key);
+            }
+            pub fn eql(_: @This(), a: u64, b: u64, _: usize) bool {
+                return a == b;
+            }
+        }, true) = .empty;
         defer call_counts.deinit(self.ctx.gpa);
         // Last private-todo revision already reported to `on_todos`. Starts at
         // the list's current revision rather than 0 so a nested run that
@@ -657,7 +664,13 @@ pub const Agent = struct {
             var to_run: std.ArrayList(types.ToolCall) = .empty;
             defer to_run.deinit(self.ctx.gpa);
             for (calls, 0..) |tc, i| {
-                const fp = try std.fmt.allocPrint(self.arena, "{s}\x00{s}", .{ tc.name, tc.arguments });
+                const fp = blk: {
+                    var h = std.hash.Wyhash.init(0);
+                    h.update(tc.name);
+                    h.update("\x00");
+                    h.update(tc.arguments);
+                    break :blk h.final();
+                };
                 const gop = try call_counts.getOrPut(self.ctx.gpa, fp);
                 if (!gop.found_existing) gop.value_ptr.* = 0;
                 gop.value_ptr.* += 1;

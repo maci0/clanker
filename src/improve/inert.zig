@@ -451,14 +451,45 @@ pub fn classify(
     if (added.items.len == 0 or !purely_additive)
         return .{ .class = .behavior, .unreachable_fns = &.{} };
 
+    // Collect all source files and strip test blocks once, then scan for
+    // every added name. The old code called reachable() per name, which
+    // walked the directory tree and re-read every file each time.
+    var zig_files: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (zig_files.items) |f| gpa.free(f);
+        zig_files.deinit(gpa);
+    }
+    try zigFiles(gpa, io, dir, &scan_roots, &zig_files);
+    for (scan_files) |f| try zig_files.append(gpa, try gpa.dupe(u8, f));
+
+    var processed: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (processed.items) |c| gpa.free(c);
+        processed.deinit(gpa);
+    }
+    for (zig_files.items) |f| {
+        const src = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch {
+            try processed.append(gpa, try gpa.dupe(u8, ""));
+            continue;
+        };
+        defer gpa.free(src);
+        try processed.append(gpa, try nonTestCode(gpa, src));
+    }
+
     var uncalled: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (uncalled.items) |n| gpa.free(n);
         uncalled.deinit(gpa);
     }
     for (added.items) |name| {
-        if (try reachable(gpa, io, dir, name)) continue;
-        try uncalled.append(gpa, try gpa.dupe(u8, name));
+        var reached = false;
+        for (processed.items) |code| {
+            if (referencesName(code, name)) {
+                reached = true;
+                break;
+            }
+        }
+        if (!reached) try uncalled.append(gpa, try gpa.dupe(u8, name));
     }
 
     // Inert only when *every* addition is unreachable. A proposal that adds a
