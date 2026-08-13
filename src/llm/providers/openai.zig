@@ -148,7 +148,7 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
     }
     if (params.provider.activeModel().reasoning_effort) |re| {
         try s.objectField("reasoning_effort");
-        try s.write(re);
+        try s.write(@tagName(re));
     }
     if (params.response_format_json) {
         try s.objectField("response_format");
@@ -380,6 +380,31 @@ test "openai request body golden" {
         \\{"model":"deepseek-chat","messages":[{"role":"system","content":"be brief"},{"role":"user","content":"hi"}],"temperature":0.2,"max_tokens":512,"stream":false}
     ;
     try std.testing.expectEqualStrings(expected, body);
+}
+
+test "openai request body sends reasoning_effort and omits it when unset" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const p = try config.Provider.single(arena, "ollama", "http://localhost:11434", .openai_compat, "llama3.3", .{ .max_tokens = 64, .reasoning_effort = .high });
+    const messages = [_]types.Message{
+        .{ .role = .user, .content = "hi" },
+    };
+    const body = try buildRequest(arena, .{
+        .provider = &p,
+        .messages = &messages,
+    });
+    defer arena.free(body);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"reasoning_effort\":\"high\"") != null);
+
+    const plain = try config.Provider.single(arena, "ollama", "http://localhost:11434", .openai_compat, "llama3.3", .{ .max_tokens = 64 });
+    const plain_body = try buildRequest(arena, .{
+        .provider = &plain,
+        .messages = &messages,
+    });
+    defer arena.free(plain_body);
+    try std.testing.expect(std.mem.indexOf(u8, plain_body, "reasoning_effort") == null);
 }
 
 test "openai response parse with tool call" {

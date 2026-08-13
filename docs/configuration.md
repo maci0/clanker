@@ -162,7 +162,7 @@ overrides how it is *shown* (never what is *sent*).
 | `max_tokens` | int | 1024 | Per-request output-token cap. |
 | `temperature` | float | unset | Sampling temperature. |
 | `top_p` | float | unset | Nucleus cutoff; best set *instead of* temperature, not alongside. |
-| `reasoning_effort` | string | unset | For reasoning models: `"low"`/`"medium"`/`"high"`, keeps chain-of-thought short so `content` stays populated. |
+| `reasoning_effort` | string | unset | For reasoning models, sent as `reasoning_effort` on the OpenAI-compatible wire (Ollama, DeepSeek, OpenAI, …). One of `"none"`/`"low"`/`"medium"`/`"high"`/`"max"`; keeps chain-of-thought short so `content` stays populated. Unset omits the field; `"none"` disables reasoning explicitly. Invalid values are rejected at load. |
 | `display` | string | unset | UI label when the wire id is not what a person calls it (e.g. `kimi-k3` shown as `moonshotai/kimi-k3`). Display only. |
 | `cost_per_1m_input` | float | unset | USD per 1M input tokens, for run cost accounting. |
 | `cost_per_1m_output` | float | unset | USD per 1M output tokens. |
