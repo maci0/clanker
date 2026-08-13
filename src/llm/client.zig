@@ -66,7 +66,7 @@ pub const Abort = struct {
     client: ?*std.http.Client = null,
 
     /// Point this handle at the client `chat` is about to use.
-    fn arm(self: *Abort, io: std.Io, c: *std.http.Client) void {
+    pub fn arm(self: *Abort, io: std.Io, c: *std.http.Client) void {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
         self.client = c;
@@ -74,7 +74,7 @@ pub const Abort = struct {
 
     /// Stop pointing at a client that is about to be destroyed. Blocks until
     /// any concurrent `trigger` has finished with it.
-    fn disarm(self: *Abort, io: std.Io) void {
+    pub fn disarm(self: *Abort, io: std.Io) void {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
         self.client = null;

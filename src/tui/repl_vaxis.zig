@@ -201,6 +201,126 @@ fn tuiSteerPoll(arena: std.mem.Allocator) ?[]const u8 {
     return arena.dupe(u8, msg) catch null;
 }
 
+// ---------------------------------------------------------------------
+// Ask/confirm bridge: ask_user questions and confirm-before-write gates
+// raised on the run thread, answered by the render thread's modal
+// (handleAskKey/drawAskModal). pthread primitives rather than
+// std.Io.Mutex/Condition for the same reason cli.zig's serve bridge uses
+// them: AskFn/ConfirmFn are bare function pointers with no `Io` to wait
+// through, and the bounded block needs a timed wait the Io condition does
+// not have. Both types' zero-default is their static initializer.
+// ---------------------------------------------------------------------
+
+var ask_mutex: std.c.pthread_mutex_t = .{};
+var ask_cond: std.c.pthread_cond_t = .{};
+/// Set from agent.ask_timeout_seconds at REPL startup: the backstop that
+/// unparks the run if the question is never answered, the same budget the
+/// serve bridge gives a closed browser tab.
+var ask_timeout_ns: u64 = 120 * std.time.ns_per_s;
+
+const AskKind = enum { ask, confirm };
+const PendingAsk = struct {
+    active: bool = false,
+    kind: AskKind = .ask,
+    /// bridge_gpa-owned, control-stripped copies: question and options are
+    /// model-chosen text, so CWE-150 applies before they can reach a cell,
+    /// and the render thread must never touch the run thread's arena.
+    question: []const u8 = "",
+    options: []const []const u8 = &.{},
+    answered: bool = false,
+    /// Index into `options`, or null for declined (Escape, timeout, stop).
+    picked: ?usize = null,
+};
+var pending_ask: PendingAsk = .{};
+
+/// An always-owned, control-stripped copy of `bytes` (sanitizeAlloc returns
+/// the input slice unchanged when it is already clean, which would leave the
+/// bridge holding arena memory the run thread is about to reuse).
+fn dupSanitized(bytes: []const u8) ?[]u8 {
+    const safe = sanitize.sanitizeAlloc(bridge_gpa, bytes) catch return null;
+    if (safe.ptr != bytes.ptr) return @constCast(safe);
+    return bridge_gpa.dupe(u8, bytes) catch null;
+}
+
+/// Publishes a question and parks the run thread until the modal answers,
+/// the deadline passes, or the turn is abandoned. Returns the picked option
+/// index, null meaning declined. Runs on the run thread.
+fn askOnRunThread(kind: AskKind, question: []const u8, options: []const []const u8) ?usize {
+    const q = dupSanitized(question) orelse return null;
+    const opts = bridge_gpa.alloc([]const u8, options.len) catch {
+        bridge_gpa.free(q);
+        return null;
+    };
+    var made: usize = 0;
+    while (made < options.len) : (made += 1) {
+        opts[made] = dupSanitized(options[made]) orelse break;
+    }
+    _ = std.c.pthread_mutex_lock(&ask_mutex);
+    // One question at a time: the agent's tool path is sequential, so a
+    // second concurrent asker is a bug somewhere else; refuse, don't queue.
+    const refused = made < options.len or pending_ask.active;
+    if (!refused) {
+        pending_ask = .{ .active = true, .kind = kind, .question = q, .options = opts };
+        // Absolute CLOCK_REALTIME deadline, serve's pattern: a broadcast
+        // that wakes this waiter without answering re-waits on what is
+        // left of the budget for free.
+        var now: std.c.timespec = .{ .sec = 0, .nsec = 0 };
+        _ = std.c.clock_gettime(.REALTIME, &now);
+        const total = @as(u64, @intCast(now.sec)) * std.time.ns_per_s + @as(u64, @intCast(now.nsec)) + ask_timeout_ns;
+        const deadline: std.c.timespec = .{
+            .sec = @intCast(total / std.time.ns_per_s),
+            .nsec = @intCast(total % std.time.ns_per_s),
+        };
+        while (!pending_ask.answered) {
+            if (std.c.pthread_cond_timedwait(&ask_cond, &ask_mutex, &deadline) == .TIMEDOUT) break;
+        }
+    }
+    const picked = if (pending_ask.answered) pending_ask.picked else null;
+    pending_ask = .{};
+    _ = std.c.pthread_mutex_unlock(&ask_mutex);
+    for (opts[0..made]) |o| bridge_gpa.free(@constCast(o));
+    bridge_gpa.free(opts);
+    bridge_gpa.free(q);
+    return if (refused) null else picked;
+}
+
+/// Wakes a run thread parked in askOnRunThread with "declined". The render
+/// thread calls this wherever it stops or abandons a turn; without it the
+/// Ctrl-C stop flag would leave the worker on the condition until the
+/// timeout, and the join after it hanging that long too.
+fn askCancelPending() void {
+    _ = std.c.pthread_mutex_lock(&ask_mutex);
+    if (pending_ask.active and !pending_ask.answered) {
+        pending_ask.answered = true;
+        pending_ask.picked = null;
+        _ = std.c.pthread_cond_broadcast(&ask_cond);
+    }
+    _ = std.c.pthread_mutex_unlock(&ask_mutex);
+}
+
+/// Agent.ask_fn for this REPL: ask_user's question becomes the modal, and
+/// the answer is the picked option — gpa-owned, as ckAsk's contract
+/// requires (it frees with sandbox.gpa, which is bridge_gpa here).
+fn tuiAsk(question: []const u8, options: []const []const u8) anyerror![]const u8 {
+    const idx = askOnRunThread(.ask, question, options) orelse return error.NoUser;
+    if (idx >= options.len) return error.NoUser;
+    return bridge_gpa.dupe(u8, options[idx]);
+}
+
+/// The two answers a confirm offers; static, matching serveConfirm.
+const tui_confirm_options: []const []const u8 = &.{ "allow", "deny" };
+
+/// Agent.confirm_fn: one write-capable tool call shown with its truncated
+/// args preview. Anything short of an explicit "allow" — deny, Escape,
+/// timeout, an abandoned turn — refuses the call, exactly like the serve
+/// gate: an unattended gate that waves writes through protects nothing.
+fn tuiConfirm(tool_name: []const u8, args_preview: []const u8) bool {
+    var buf: [512]u8 = undefined;
+    const q = std.fmt.bufPrint(&buf, "{s}  {s}", .{ tool_name, args_preview }) catch tool_name;
+    const idx = askOnRunThread(.confirm, q, tui_confirm_options) orelse return false;
+    return idx == 0;
+}
+
 const RunThreadArgs = struct {
     model: *Model,
     task: []const u8,
@@ -227,6 +347,12 @@ fn runThreadMain(args: RunThreadArgs) void {
     // runs are drained between iterations, exactly as POST /api/steer feeds
     // a streaming web run.
     a.steer_fn = &tuiSteerPoll;
+    // The ask bridge: ask_user reaches the human as a modal instead of the
+    // "nobody attached" default, and with agent.confirm_writes = "always"
+    // the same modal gates write-capable tool calls. ("browser" keeps
+    // gating only serve's streaming runs, as documented.)
+    a.ask_fn = &tuiAsk;
+    if (self.cfg.agent.confirm_writes == .always) a.confirm_fn = &tuiConfirm;
 
     // Wall time spans the whole turn, tool rounds included, because that is
     // the wait the person at the keyboard actually sat through.
@@ -1351,6 +1477,13 @@ const Model = struct {
     /// The theme active when the theme picker opened, restored on Escape so a
     /// cancelled live-preview does not stick.
     theme_saved: ?[]const u8 = null,
+
+    /// An ask_user/confirm question from the run thread is on screen
+    /// (`pending_ask` owns the strings; these are only the modal's cursor).
+    /// While true every key routes to `handleAskKey`: the run is parked on
+    /// the answer, so no other binding may fire blind over the question.
+    ask_open: bool = false,
+    ask_selected: usize = 0,
 
     /// Transcript search (Ctrl-R). Like the pickers this is a modal that owns
     /// the keyboard while open, but it drives `view_end` rather than
@@ -2477,6 +2610,85 @@ const Model = struct {
         };
     }
 
+    /// Keys while the ask/confirm modal is open. Up/Down (or j/k) move,
+    /// 1-9 pick directly, Enter answers, Escape declines. Ctrl-C declines
+    /// *and* stops the turn — the one shortcut that keeps its meaning here,
+    /// because a parked run must stay stoppable. Everything else is
+    /// swallowed: the modal owns the keyboard.
+    fn handleAskKey(self: *Model, ctx: *vxfw.EventContext, key: vaxis.Key) !void {
+        _ = std.c.pthread_mutex_lock(&ask_mutex);
+        const live = pending_ask.active and !pending_ask.answered;
+        const count = pending_ask.options.len;
+        _ = std.c.pthread_mutex_unlock(&ask_mutex);
+        if (!live or count == 0) {
+            self.ask_open = false;
+            return ctx.consumeAndRedraw();
+        }
+        if (key.matches(vaxis.Key.up, .{}) or key.matches('k', .{})) {
+            self.ask_selected = if (self.ask_selected == 0) count - 1 else self.ask_selected - 1;
+            return ctx.consumeAndRedraw();
+        }
+        if (key.matches(vaxis.Key.down, .{}) or key.matches('j', .{}) or key.matches(vaxis.Key.tab, .{})) {
+            self.ask_selected = (self.ask_selected + 1) % count;
+            return ctx.consumeAndRedraw();
+        }
+        if (key.text) |t| {
+            if (t.len == 1 and t[0] >= '1' and t[0] <= '9') {
+                const idx: usize = t[0] - '1';
+                if (idx < count) {
+                    self.answerAsk(idx);
+                    return ctx.consumeAndRedraw();
+                }
+            }
+        }
+        if (key.matches(vaxis.Key.enter, .{})) {
+            self.answerAsk(@min(self.ask_selected, count - 1));
+            return ctx.consumeAndRedraw();
+        }
+        if (key.matches(vaxis.Key.escape, .{})) {
+            self.answerAsk(null);
+            return ctx.consumeAndRedraw();
+        }
+        if (key.matches('c', .{ .ctrl = true })) {
+            self.answerAsk(null);
+            bridge_stop_flag.store(true, .release);
+            return ctx.consumeAndRedraw();
+        }
+        return ctx.consumeEvent();
+    }
+
+    /// Delivers the modal's verdict to the parked run thread and records it
+    /// in the transcript, so the decision survives the modal vanishing.
+    /// `picked` null means declined. The transcript line is built under the
+    /// ask lock (the option bytes are freed the moment the run thread wakes)
+    /// and appended under the bridge lock — never nested.
+    fn answerAsk(self: *Model, picked: ?usize) void {
+        var line: ?[]const u8 = null;
+        _ = std.c.pthread_mutex_lock(&ask_mutex);
+        if (pending_ask.active and !pending_ask.answered) {
+            pending_ask.answered = true;
+            pending_ask.picked = picked;
+            line = switch (pending_ask.kind) {
+                .ask => if (picked) |i|
+                    std.fmt.allocPrint(bridge_gpa, "[ask: picked \"{s}\"]", .{pending_ask.options[i]}) catch null
+                else
+                    bridge_gpa.dupe(u8, "[ask: declined]") catch null,
+                .confirm => if (picked != null and picked.? == 0)
+                    bridge_gpa.dupe(u8, "[confirm: allowed]") catch null
+                else
+                    bridge_gpa.dupe(u8, "[confirm: denied]") catch null,
+            };
+            _ = std.c.pthread_cond_broadcast(&ask_cond);
+        }
+        _ = std.c.pthread_mutex_unlock(&ask_mutex);
+        self.ask_open = false;
+        if (line) |l| {
+            bridge_mutex.lockUncancelable(bridge_io);
+            bridge_tool_lines.append(bridge_gpa, l) catch bridge_gpa.free(l);
+            bridge_mutex.unlock(bridge_io);
+        }
+    }
+
     fn handlePickerKey(self: *Model, ctx: *vxfw.EventContext, key: vaxis.Key) !void {
         if (key.matches(vaxis.Key.escape, .{})) {
             // Theme preview is undone; a model pick has no preview to undo.
@@ -2580,6 +2792,20 @@ const Model = struct {
                 bridge_mutex.lockUncancelable(bridge_io);
                 const still_streaming = bridge_streaming;
                 bridge_mutex.unlock(bridge_io);
+                // Surface a pending ask/confirm the run thread raised since
+                // the last frame, and drop the modal if the question expired
+                // under it (timeout, stop). The ~30fps streaming tick is
+                // always live while a turn — and therefore an ask — is in
+                // flight, so polling here needs no extra timer.
+                _ = std.c.pthread_mutex_lock(&ask_mutex);
+                const ask_pending = pending_ask.active and !pending_ask.answered;
+                _ = std.c.pthread_mutex_unlock(&ask_mutex);
+                if (ask_pending and !self.ask_open) {
+                    self.ask_open = true;
+                    self.ask_selected = 0;
+                } else if (!ask_pending and self.ask_open) {
+                    self.ask_open = false;
+                }
                 // This delivery consumed the pending timer. Anything below that
                 // still wants one has to arm it again.
                 self.timer_armed = false;
@@ -2614,6 +2840,9 @@ const Model = struct {
                 ctx.redraw = true;
             },
             .key_press => |key| {
+                // The ask/confirm modal outranks even the picker: a run is
+                // parked on the answer. Ctrl-C inside declines and stops.
+                if (self.ask_open) return self.handleAskKey(ctx, key);
                 // The picker is modal: every key goes to it, none of the
                 // clipboard/history/quit shortcuts below apply while it's open.
                 if (self.picker_open) return self.handlePickerKey(ctx, key);
@@ -3343,6 +3572,7 @@ const Model = struct {
         if (self.has_selection) highlightSelection(surface, self.sel_start, self.sel_end);
         if (self.search_open) self.drawSearchBar(surface, rule_style, accent_style);
         if (self.picker_open) self.drawModelPicker(surface, rule_style, tool_style);
+        if (self.ask_open) self.drawAskModal(surface, rule_style, tool_style);
         // Last, and only into rows the transcript was already shortened out
         // of: drawn earlier, the wrapped-text writers above would paint over
         // it on any frame where the transcript happened to reach this far.
@@ -3386,6 +3616,51 @@ const Model = struct {
             var status_col: u16 = @intCast(surface.size.width - w - 2);
             writeRowAt(surface, y + 1, &status_col, status, if (self.search_hits.items.len == 0 and self.search_query.items.len > 0) rule_style else accent);
         }
+    }
+
+    /// Draws the ask/confirm modal, same box style and position as the
+    /// `/model` picker so it reads as part of this REPL. Held under the ask
+    /// lock for the whole draw: the option strings are freed the moment the
+    /// run thread wakes (timeout included), and a borrow across that would
+    /// paint freed bytes. The critical section is a few rows of cells.
+    fn drawAskModal(self: *Model, surface: vxfw.Surface, rule_style: vaxis.Style, sel_style: vaxis.Style) void {
+        _ = std.c.pthread_mutex_lock(&ask_mutex);
+        defer _ = std.c.pthread_mutex_unlock(&ask_mutex);
+        if (!pending_ask.active or pending_ask.answered) return;
+        const opts = pending_ask.options;
+        if (opts.len == 0 or surface.size.width < 8) return;
+        const max_rows: u16 = 8;
+        const rows_shown: u16 = @intCast(@min(opts.len, max_rows));
+        const h: u16 = rows_shown + 4; // border + question + rows + key guide + border
+        const y = self.transcript_bottom -| h;
+        clearBoxInterior(surface, 0, y, surface.size.width, h);
+        drawBox(surface, 0, y, surface.size.width, h, rule_style);
+
+        const label: []const u8 = switch (pending_ask.kind) {
+            .ask => "ask  ",
+            .confirm => "confirm write  ",
+        };
+        writeRow(surface, y + 1, label, .{ .bold = true });
+        var col: u16 = @intCast(label.len);
+        writeRowAt(surface, y + 1, &col, pending_ask.question, .{});
+
+        const sel = @min(self.ask_selected, opts.len - 1);
+        const first = pickerWindowStart(sel, opts.len, max_rows);
+        var row: u16 = y + 2;
+        var i: usize = 0;
+        while (i < rows_shown) : (i += 1) {
+            const idx = first + i;
+            const marker: []const u8 = if (idx == sel) "\xe2\x80\xba " else "  ";
+            const style = if (idx == sel) sel_style else vaxis.Style{};
+            writeRow(surface, row, marker, style);
+            var ocol: u16 = 2;
+            writeRowAt(surface, row, &ocol, opts[idx], style);
+            row += 1;
+        }
+        writeRow(surface, row, switch (pending_ask.kind) {
+            .ask => "  Up/Down or 1-9 pick  \xc2\xb7  Enter answer  \xc2\xb7  Esc decline",
+            .confirm => "  Enter answer  \xc2\xb7  Esc deny  \xc2\xb7  Ctrl-C deny and stop",
+        }, .{ .dim = true });
     }
 
     /// Draws the `/model` picker as a modal box over the tail of the
