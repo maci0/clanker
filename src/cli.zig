@@ -1158,14 +1158,39 @@ fn renderUsage(buf: []u8) []const u8 {
             // space (e.g. "...fill] [name]verify connectivity..."); wrap the
             // blurb onto its own aligned line instead.
             if (s.usage.len >= 32) {
-                w.print("  {s}\n  {s: <34}{s}\n", .{ s.usage, "", s.blurb }) catch {};
+                w.print("  {s}\n                                    ", .{s.usage}) catch {};
             } else {
-                w.print("  {s: <34}{s}\n", .{ s.usage, s.blurb }) catch {};
+                w.print("  {s: <34}", .{s.usage}) catch {};
             }
+            writeWrappedHelpBlurb(&w, s.blurb) catch {};
         }
     }
     w.writeAll("\nEverywhere\n  --verbose, -v                     log what it is doing\n  --help, -h                        this text, or a command's own help\n  --version                         print the version\n\nclanker <command> --help for a command's options.\n") catch {};
     return buf[0..w.end];
+}
+
+const help_blurb_width = 44;
+const help_blurb_indent = "                                    ";
+
+/// Finish a help-table row without letting prose drift beyond 80 columns.
+/// Command spellings remain intact so they are safe to copy and paste; only
+/// the explanatory prose wraps, aligned with the description column.
+fn writeWrappedHelpBlurb(w: *std.Io.Writer, blurb: []const u8) !void {
+    var words = std.mem.tokenizeScalar(u8, blurb, ' ');
+    var line_width: usize = 0;
+    while (words.next()) |word| {
+        if (line_width > 0 and line_width + 1 + word.len > help_blurb_width) {
+            try w.writeAll("\n" ++ help_blurb_indent);
+            line_width = 0;
+        }
+        if (line_width > 0) {
+            try w.writeByte(' ');
+            line_width += 1;
+        }
+        try w.writeAll(word);
+        line_width += word.len;
+    }
+    try w.writeByte('\n');
 }
 
 /// `clanker <command> --help`: what that one command takes, rather than the
@@ -11658,6 +11683,18 @@ test "every command is listed in the help table" {
         if (c == .help or c == .version) continue;
         if (specFor(c) == null) {
             std.debug.print("command {s} has no spec entry\n", .{@tagName(c)});
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "top-level help stays within 80 columns" {
+    var buf: [16384]u8 = undefined;
+    const usage = renderUsage(&buf);
+    var lines = std.mem.splitScalar(u8, usage, '\n');
+    while (lines.next()) |line| {
+        if (line.len > 80) {
+            std.debug.print("help line is {d} columns: {s}\n", .{ line.len, line });
             return error.TestUnexpectedResult;
         }
     }
