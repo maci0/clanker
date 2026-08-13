@@ -1525,7 +1525,7 @@ const specs = [_]Spec{
     .{ .command = .gate, .usage = "gate", .blurb = "run the build/test/tools/fmt/lint gates", .group = .maintain },
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model }, .detail = "--tasks             run only agent-driven evals; skip self-host build gates\n--provider <name>   run agent-driven evals with this provider\n--model <name>      run agent-driven evals with this model" },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain, .detail = "Ids look like imp-... and live in state/improvements.jsonl (the same list the\nimprove loop records). A missing id is refused; nothing is written." },
-    .{ .command = .autolearn, .usage = "autolearn [reset]", .blurb = "fold recent runs into the ROADMAP's Autolearn section", .group = .maintain, .detail = "Aggregates the last 7 days of state/autolearn.jsonl into actionable items.\n\nreset    archive the event log to state/autolearn.old.jsonl (overwriting any\n         previous archive) and start observations from a clean slate. Use it\n         after addressing the reported items, so they stop resurfacing." },
+    .{ .command = .autolearn, .usage = "autolearn [reset] [--model <model>]", .blurb = "fold recent runs into the ROADMAP's Autolearn section", .group = .maintain, .flags = &.{ .provider, .model }, .detail = "Aggregates the last 7 days of state/autolearn.jsonl into actionable items.\n\nreset    archive the event log to state/autolearn.old.jsonl (overwriting any\n         previous archive) and start observations from a clean slate. Use it\n         after addressing the reported items, so they stop resurfacing.\n\n--provider <name>  run the item synthesis with this provider instead of the\n                   configured default\n--model, -m        run the item synthesis with this model, or\n                   <provider>/<model>. Default is the deterministic local\n                   aggregation; passing a model instead has the chosen model\n                   review the raw observations and write the Autolearn section." },
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
     .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own; the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields: minute hour day-of-month month day-of-week, each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
     .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
@@ -2723,6 +2723,114 @@ fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
     }
     try out.writeStreamingAll(io, "Autolearn section updated in docs/ROADMAP.md\n\n");
     try out.writeStreamingAll(io, result.text);
+    if (opts.model != null or opts.provider != null) {
+        const synthesized = try autolearnSynthesize(init, opts, &cfg, arena, result.text);
+        try upsertRoadmapSection(io, arena, synthesized);
+        try out.writeStreamingAll(io, "\n\nAutolearn section rewritten by the model.\n\n");
+        try out.writeStreamingAll(io, synthesized);
+    }
+}
+
+/// `clanker autolearn --model <m>` — the deterministic aggregation above is
+/// re-synthesized by the chosen model: it reviews the raw observations and the
+/// mechanical draft, and returns a refined "## Autolearn" section. A WASM guest
+/// cannot call the LLM, so this pass is native; it does not touch the tool's
+/// deterministic aggregation, only overlays the model's write.
+fn autolearnSynthesize(
+    init: std.process.Init,
+    opts: Options,
+    cfg: *const config.Config,
+    arena: std.mem.Allocator,
+    mechanical: []const u8,
+) ![]const u8 {
+    const io = init.io;
+    const gpa = init.gpa;
+
+    // Feed a bounded tail of the raw observation log so a long history does
+    // not blow the prompt; only whole lines, so JSON fragments are never cut.
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, "state/autolearn.jsonl", arena, .limited(1 << 20)) catch "";
+    const observations = lastLines(raw, 64 * 1024);
+    if (observations.len == 0) return error.NoObservations;
+
+    var ctx = client.Ctx{
+        .io = io,
+        .gpa = gpa,
+        .environ_map = init.environ_map,
+        .cfg = cfg,
+    };
+    const provider = try arena.create(config.Provider);
+    provider.* = try resolveProvider(cfg, opts);
+
+    const sys =
+        \\You are the autolearn synthesizer for the clanker agent harness. You
+        \\review raw usage observations from past runs and write an actionable
+        \\"## Autolearn" section for docs/ROADMAP.md: a short intro sentence
+        \\followed by a bullet list of concrete improvement items, each a
+        \\`- [ ]` checkbox whose title captures the change and whose one-line
+        \\body explains the observed reason. Ground every item in the
+        \\observations; do not invent work. Return ONLY the markdown section,
+        \\beginning with the "## Autolearn" heading.
+    ;
+    const user = std.fmt.allocPrint(arena,
+        \\Raw observations (state/autolearn.jsonl, tail):
+        \\```text
+        \\{s}
+        \\```
+        \\
+        \\Current deterministic aggregation:
+        \\```markdown
+        \\{s}
+        \\```
+        \\
+        \\Rewrite and refine the "## Autolearn" section. Keep what the
+        \\deterministic pass got right, fold in anything it missed, and return
+        \\the finished markdown section only, starting with the "## Autolearn"
+        \\heading.
+    , .{ observations, mechanical }) catch return error.OutOfMemory;
+    const messages = [_]types.Message{
+        .{ .role = .system, .content = sys },
+        .{ .role = .user, .content = user },
+    };
+
+    var err_detail: ?[]const u8 = null;
+    const resp = client.chat(&ctx, arena, .{
+        .provider = provider,
+        .messages = &messages,
+        .max_tokens = 2500,
+    }, &err_detail) catch |err| {
+        try std.Io.File.stderr().writer(io).print(
+            "autolearn: model synthesis failed ({s})\n",
+            .{err_detail orelse @errorName(err)},
+        );
+        return error.ModelSynthesisFailed;
+    };
+    return resp.message.content orelse return error.EmptySynthesis;
+}
+
+/// The tail of `s` bounded to at most `max_bytes`, aligned to a line boundary
+/// (a leading partial line is dropped so only whole lines are fed).
+fn lastLines(s: []const u8, max_bytes: usize) []const u8 {
+    if (s.len <= max_bytes) return s;
+    const start = s.len - max_bytes;
+    const first_nl = std.mem.find(u8, s[start..], "\n") orelse return s[start..];
+    return s[start + first_nl + 1 ..];
+}
+
+/// Replaces any existing "## Autolearn" section in docs/ROADMAP.md (from the
+/// marker to EOF, since it is always the last section) with `section`, or
+/// appends it. Mirrors the autolearn tool's upsert so the model's write lands
+/// in the same place.
+fn upsertRoadmapSection(io: std.Io, arena: std.mem.Allocator, section: []const u8) !void {
+    const cwd = std.Io.Dir.cwd();
+    const existing = cwd.readFileAlloc(io, "docs/ROADMAP.md", arena, .limited(1 << 22)) catch "";
+    const marker = "## Autolearn";
+    var out: []const u8 = undefined;
+    if (std.mem.find(u8, existing, marker)) |idx| {
+        out = try std.mem.concat(arena, u8, &.{ existing[0..idx], section });
+    } else {
+        out = try std.mem.concat(arena, u8, &.{ existing, "\n\n", section });
+    }
+    try atomic_write.writeFile(io, cwd, "docs/ROADMAP.md", out);
 }
 
 // ---------------------------------------------------------------------- run --
