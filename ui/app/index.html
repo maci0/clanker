@@ -494,6 +494,8 @@ lamps carry further). The seven named palettes ride the same tokens.
         <input type="text" id="goal-criterion" placeholder="The observable completion criterion" maxlength="2000" autocomplete="off" required>
         <label for="goal-max-iterations">Budget</label>
         <input type="number" id="goal-max-iterations" placeholder="global default" min="1" max="1000" autocomplete="off">
+        <label for="goal-worktree">Worktree</label>
+        <input type="checkbox" id="goal-worktree" title="Work this goal in its own git worktree and branch, leaving the shared checkout untouched">
         <button type="submit" class="secondary" id="goal-add">Create goal card</button>
       </form>
       <!-- Kept for existing room boards and the board module's DOM contract;

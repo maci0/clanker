@@ -14,7 +14,8 @@
 // existed.
 import { readJson } from "../core/utils.js";
 import { T, bind, UI, state, uiConfirm, uiPrompt } from "../core/ui.js";
-import { goalSortKey, goalFields, goalStatusLabel, goalPinnedColumn } from "../core/goals.js";
+import { goalSortKey, goalFields, goalStatusLabel, goalPinnedColumn, goalWorktreeTitle } from "../core/goals.js";
+import { icon } from "../core/icons.js";
 import { makeLineSplitter } from "../core/stream.js";
 import { board, postBoard, loadBoard, boardIsLoaded } from "./board.js";
 
@@ -193,10 +194,17 @@ function goalCard(g) {
   // finished. data-status carries the same word so the colours follow.
   var shown = goalStatusLabel(g, running);
   var shownKey = (g.status || "active") === "active" && running ? "running" : (g.status || "");
+  var worktreeTitle = goalWorktreeTitle(g);
   return T.div({ class: "goal", "data-status": shownKey },
     T.div({ class: "goal-objective" }, g.objective || "(no objective recorded)"),
     T.div({ class: "goal-meta" },
       T.span({ class: "goal-status" }, shown),
+      /* Only when the goal actually carries the field. Goals written before it
+         existed have nothing to say, and a marker for "unknown" would be a
+         claim the record does not make. */
+      worktreeTitle
+        ? T.span({ class: "goal-worktree", title: worktreeTitle }, icon("worktree", 14), "worktree")
+        : null,
       g.max_iterations ? T.span("budget ≤ " + g.max_iterations + " iters") : null,
       g.id ? T.span("id " + String(g.id).slice(0, 10)) : null),
     /* A well-specified goal runs to several paragraphs and there are usually
@@ -696,6 +704,11 @@ export function bindGoals(deps) {
     var budget = budgetRaw ? parseInt(budgetRaw, 10) : 0;
     var payload = { objective: objective, completion_criterion: criterion };
     if (Number.isFinite(budget) && budget > 0) payload.max_iterations = budget;
+    /* Sent only when ticked. Leaving the key out records nothing, which is what
+       an untouched checkbox means and what keeps goals made here identical to
+       every goal made before this control existed. The server turns the boolean
+       into the stored string. */
+    if (el.goalWorktree && el.goalWorktree.checked) payload.worktree = true;
     el.goalAdd.disabled = true;
     postGoal(payload, "Goal added.").then(function (d) {
       el.goalAdd.disabled = false;
@@ -705,6 +718,7 @@ export function bindGoals(deps) {
       el.goalObjective.value = "";
       el.goalCriterion.value = "";
       el.goalMaxIterations.value = "";
+      if (el.goalWorktree) el.goalWorktree.checked = false;
       el.goalsStatus.textContent = "Goal card created in Backlog.";
     });
   });

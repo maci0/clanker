@@ -131,6 +131,7 @@ var el = {
   goalObjective: document.getElementById("goal-objective"),
   goalCriterion: document.getElementById("goal-criterion"),
   goalMaxIterations: document.getElementById("goal-max-iterations"),
+  goalWorktree: document.getElementById("goal-worktree"),
   goalsStatus: document.getElementById("goals-status"),
   goalAdd: document.getElementById("goal-add"),
   usage: document.getElementById("usage"),

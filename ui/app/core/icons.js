@@ -68,6 +68,12 @@ export var ICON_PATHS = {
   star: ["M12 4l2.2 4.6 5 .7-3.6 3.5.9 5L12 15.8 7.5 17.8l.9-5L4.8 9.3l5-.7z"],
   // A panel with a rail: collapse or expand the sidebar.
   panel: ["M5 5h14v14H5z", "M10 5v14"],
+  // A trunk with a second line branching off it, each ending in a node: a
+  // git worktree, i.e. work that lives on its own branch beside the checkout.
+  worktree: ["M7 7.5v9", "M7 11.5h8",
+    "M7 3.5a2 2 0 110 4 2 2 0 010-4z",
+    "M7 16.5a2 2 0 110 4 2 2 0 010-4z",
+    "M17 9.5a2 2 0 110 4 2 2 0 010-4z"],
 };
 
 export function icon(name, size) {

@@ -8347,6 +8347,16 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
             if (req.max_iterations) |n| {
                 updated.max_iterations = clampIterationBudget(n);
             }
+            // Only when the request names it, so a POST carrying just a status
+            // cannot clear a flag it never mentioned. `false` clears the field
+            // rather than storing a falsy string: the goal card reads presence
+            // as the flag, so "not worktree-scoped" has to be absence. Clearing
+            // it also discards a branch/path the `goal` tool wrote, which is the
+            // point -- the goal is no longer worktree-scoped, so the branch it
+            // used to name is not either.
+            if (req.worktree) |w| {
+                updated.worktree = if (w) "true" else null;
+            }
             updated.updated = now;
             kept.append(arena, updated) catch continue;
         }
@@ -9394,6 +9404,10 @@ const GoalPost = struct {
     /// string `"true"` so the goal card can show the worktree icon. The `goal`
     /// tool instead stores the worktree's branch/path here, and both read back
     /// as the same truthy string.
+    ///
+    /// Honoured on an update as well as a create, so a goal ticked (or left
+    /// unticked) by mistake can be corrected without deleting it. Absent means
+    /// "not mentioned" and leaves the stored value alone; `false` clears it.
     worktree: ?bool = null,
 };
 
