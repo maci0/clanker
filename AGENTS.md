@@ -84,7 +84,11 @@ through a gated loop. Follow these conventions when changing this codebase.
   `builder.zig` is part of the anti-cheat boundary.
 - `src/tui/` — libvaxis-backed REPL (`clanker repl`), syntax highlighting,
   theme, transcript rendering, control-character sanitizing, per-turn stats,
-  terminal width tracking, and the optional input-line mascot (`mascot.zig`).
+  terminal width tracking, and the optional mascot (`mascot.zig`, off by
+  default). The mascot's frames are generated, not hand-written:
+  `src/tui/mascot/gen_frames.py` turns the source gif into
+  `mascot_frames.zig` (three cell grids) plus the pngs the kitty-graphics path
+  transmits, and only needs rerunning when the artwork changes.
 - `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook,
   logging, dotenv, `ensureDir` (the one way to create `state/` when it may be
   a `--worktree` symlink; `createDirPath` reports NotDir), and the one UTF-8
