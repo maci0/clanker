@@ -7,10 +7,11 @@ Shipped (libvaxis-based), with known gaps tracked below. Source of truth:
 run`: `src/tui/transcript.zig`, `theme.zig`, `syntax.zig`, `width.zig`.
 Surface: `clanker repl`.
 
-**Critical gap:** `ask_user` and `confirm_writes=always` are ungated in the
-REPL. No `ask_fn` / `confirm_fn` is wired, so questions fall through to the
-headless "nobody attached" default and write-capable tools run without a
-prompt. A one-line startup warning says so; that is not a gate.
+**Ask/confirm:** Shipped. The REPL wires `Agent.ask_fn` / `confirm_fn` to a
+modal bridge (`tuiAsk` / `tuiConfirm` → `askOnRunThread`, answered by
+`handleAskKey` / `drawAskModal`). With `agent.confirm_writes = "always"`,
+write-capable tools gate on an allow/deny modal; Escape, timeout, or an
+abandoned turn declines (same deny-by-default posture as serve).
 
 The REPL this replaces (`src/tui/{input,region,statusbar,palette,approval,
 term}.zig`, `cmdRepl`, `util/lineedit.zig`, the pty `tui-test` suite — about
@@ -152,7 +153,7 @@ specific `vxfw` shape, not an open-ended "figure it out":
 | Transcript search (Ctrl-R) | **Shipped** | Incremental case-insensitive search over `lines`; drives `view_end` like paging |
 | Line-level markdown outside fences | **Shipped** | `mdLineSegments`: bold/italic/code/headings/bullets on completed + live stream |
 | Multi-line markdown constructs | **Gap** | Tables, block quotes, nested/ordered lists, setext headings still unstyled; `clanker run`'s `MdStream` stays richer |
-| Inline `ask_user`/confirm-before-write | **Gap (critical)** | Reuse `/model`'s modal (`picker_open`/`handlePickerKey`) wired to `AskFn`/`confirm_fn`; today ungated |
+| Inline `ask_user`/confirm-before-write | **Shipped** | Dedicated ask modal (`ask_open` / `handleAskKey` / `drawAskModal`) on a pthread bridge; `ask_fn` always, `confirm_fn` when `confirm_writes=always` |
 | Multi-line input | **Gap** | `vxfw.TextField` has no multi-line mode; Shift+Enter has no vaxis primitive to hook |
 | Plan mode | **Gap** | `Agent.plan_mode` + `needsConfirm` exist (web UI); needs a REPL toggle |
 | Visible stats/compaction | **Shipped** | `src/tui/stats.zig`; status-bar context meter + per-turn line + compaction notices |
@@ -166,8 +167,9 @@ specific `vxfw` shape, not an open-ended "figure it out":
 | Enter on a blank or whitespace-only line | Clears the composer and does nothing. It used to reach `submitTask` and spend a real turn on an empty prompt (`isBlankSubmission`) |
 | Ctrl-C, idle prompt | Quits the REPL (`ctx.quit = true`) |
 | Ctrl-C, mid-stream | Sets the same `stop_flag` `client.chatStream` already checks |
-| `ask_user` invoked here | No `ask_fn` is wired; falls back to the same "nobody attached" default (`not_found`) a headless run gets. No prompt-rendering path exists yet (tracked below) |
-| `confirm_writes = "always"` invoked here | No `confirm_fn` is wired either, so write-capable tool calls run **ungated**, not declined. A one-line warning prints once at startup so the operator isn't left believing they're protected. That warning is emitted *before* `log.setLevel(.error_)`, which is deliberate: the clamp exists to keep stray stderr off vaxis's alt screen, so it belongs immediately before `app.run`, not at the top of the command. Raised at the top it swallowed this warning (logged at `.warn`) outright, along with config parse warnings and `--session` id complaints |
+| `ask_user` invoked here | Modal opens on the render thread; run thread parks on `pthread_cond_timedwait` until pick / Escape / timeout (`ask_timeout_ns`, from `agent.ask_timeout_seconds`). Picked option text is returned gpa-owned. Decline → `error.NoUser` |
+| `confirm_writes = "always"` invoked here | Same modal with allow/deny. Anything short of explicit allow (deny, Escape, timeout, Ctrl-C abandon via `askCancelPending`) refuses the write — deny-by-default, matching serve |
+| Second ask while one is already pending | Refused (no queue); returns declined. Agent tool path is sequential, so concurrency here is a bug elsewhere |
 | Session file corrupt / unreadable on resume (`--session` / `--continue`) | `loadSession` errors other than `FileNotFound` abort REPL startup; the corrupt file is left untouched |
 | CJK / fullwidth text in a rendered line | Occupies two columns, wraps whole rather than across the edge, and the row it lands on matches what `lineRows` reserved (`nextCell`) |
 | Decomposed text (base + combining mark) | One cell carrying both codepoints, so the accent sits on its letter instead of pushing the line right |
@@ -284,12 +286,11 @@ Shipped:
 
 Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
 
-- [ ] **Inline `ask_user` / confirm-before-write prompt UI.** The biggest gap:
-      a run that calls `ask_user`, or `agent.confirm_writes = "always"`, has no
-      prompt-rendering path here, so the question is silently declined / the
-      write runs ungated (`repl_vaxis.zig` startup warning says so). The
-      `/model` picker's modal (`picker_open`/`handlePickerKey`) is the shape to
-      reuse, not a new mechanism.
+- [x] **Inline `ask_user` / confirm-before-write prompt UI.** Shipped: run-thread
+      bridge + render-thread modal (`askOnRunThread` / `handleAskKey` /
+      `drawAskModal`). `ask_fn` is always wired; `confirm_fn` is wired when
+      `agent.confirm_writes = "always"`. Decline-by-default on Escape/timeout/
+      abandon; one question at a time.
 - [ ] **Graceful iteration-limit landing.** Hitting `agent.max_iterations`
       returns `error.MaxIterationsExceeded` and the turn renders `[error: ...]`,
       discarding every tool round's work with no partial answer. Default raised
@@ -323,10 +324,9 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
 
 ## Open questions / future work
 
-- Order of the open items: the ask-bridge/confirm-write gap is the most
-  surprising one to a user coming from the web UI, since `agent.confirm_writes
-  = "always"` is documented as covering interactive REPL sessions but has no
-  render path here yet.
+- Order of the remaining open items (multi-line input, plan mode, truecolor
+  autodetection, multimodal) is operator preference; ask/confirm is no longer
+  the surprise gap relative to the web UI.
 - **`Agent.on_compact` hook.** Mid-turn compaction is currently *detected*
   rather than reported: `Agent.maybeCompactMessages` logs and moves on, so
   `stats.summaryState` recognises the summary message it left behind by its

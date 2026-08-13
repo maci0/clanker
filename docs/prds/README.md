@@ -25,7 +25,7 @@ and Implementation lists checkable file-level phases.
 | [0002](0002-kanban-board.md) | Shared kanban board | Shipped | |
 | [0003](0003-run-todos.md) | Run todo checklists | Shipped | Private vs shared; room todos removed |
 | [0004](0004-autoresearch.md) | Autoresearch | Shipped | |
-| [0005](0005-repl-tui.md) | REPL / TUI | Shipped (gaps) | Critical gap: ask/confirm ungated |
+| [0005](0005-repl-tui.md) | REPL / TUI | Shipped (gaps) | Ask/confirm shipped; multi-line input etc. still open |
 | [0006](0006-webui.md) | Web UI | Shipped | |
 | [0007](0007-memory.md) | Memory layer | In progress | Dead config keys; overflow Known issue |
 | [0008](0008-arena.md) | Arena | In progress | Phase 3 (multi-instance) open |
