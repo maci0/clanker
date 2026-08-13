@@ -619,6 +619,86 @@ pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, are
     return msg;
 }
 
+/// Per-peer delivery cooldown. A peer that is unreachable (a down dummy, a
+/// machine off the network, a restarting server) is not retried on every
+/// message and is not logged as an error on every attempt: the harness backs
+/// off exponentially and logs the down/up transition once. `fanOut` can run
+/// from any request thread (serve runs one thread per connection), so the
+/// shared list below is guarded by a mutex and every read/write happens
+/// inside it.
+const PeerCooldown = struct {
+    name: []const u8,
+    fail_count: u32 = 0,
+    down_since_ns: i128 = 0, // 0 = up
+};
+
+var cooldown_mutex: std.Thread.Mutex = .{};
+var peer_cooldowns: ?std.ArrayList(PeerCooldown) = null;
+
+/// True when `name` is still inside its backoff window.
+fn inCooldown(io: std.Io, name: []const u8) bool {
+    cooldown_mutex.lock();
+    defer cooldown_mutex.unlock();
+    const list = peer_cooldowns orelse return false;
+    for (list.items) |*c| {
+        if (!std.mem.eql(u8, c.name, name)) continue;
+        if (c.down_since_ns == 0) return false;
+        const now = std.Io.Timestamp.now(io, .real).nanoseconds;
+        if (now >= c.down_since_ns and now - c.down_since_ns < cooldownWindow(c.fail_count)) return true;
+        return false;
+    }
+    return false;
+}
+
+/// Record a failed delivery; returns the backoff window in seconds (0 if the
+/// cooldown slot could not be allocated).
+fn recordFailure(gpa: std.mem.Allocator, name: []const u8, now: i128) i64 {
+    cooldown_mutex.lock();
+    defer cooldown_mutex.unlock();
+    if (peer_cooldowns == null) peer_cooldowns = std.ArrayList(PeerCooldown).init(gpa);
+    const list = &peer_cooldowns.?;
+    for (list.items) |*c| {
+        if (!std.mem.eql(u8, c.name, name)) continue;
+        c.fail_count += 1;
+        c.down_since_ns = now;
+        return @intCast(@divTrunc(cooldownWindow(c.fail_count), @as(i128, std.time.ns_per_s)));
+    }
+    list.append(gpa, .{ .name = name, .fail_count = 1, .down_since_ns = now }) catch return 0;
+    return @intCast(@divTrunc(cooldownWindow(1), @as(i128, std.time.ns_per_s)));
+}
+
+/// Record a successful delivery; clears any cooldown for `name`. Returns true
+/// when the peer was previously down (a recovery worth noting).
+fn recordSuccess(name: []const u8) bool {
+    cooldown_mutex.lock();
+    defer cooldown_mutex.unlock();
+    const list = peer_cooldowns orelse return false;
+    for (list.items) |*c| {
+        if (!std.mem.eql(u8, c.name, name)) continue;
+        const was_down = c.fail_count != 0;
+        c.fail_count = 0;
+        c.down_since_ns = 0;
+        return was_down;
+    }
+    return false;
+}
+
+/// Exponential backoff window for a down peer: 5s base, doubling per
+/// consecutive failure, capped at 5 minutes, so a recovered peer is retried
+/// promptly while a hard-down one stops being hammered.
+fn cooldownWindow(fail_count: u32) i128 {
+    const base: i128 = 5 * std.time.ns_per_s;
+    const cap: i128 = 300 * std.time.ns_per_s;
+    if (fail_count == 0) return 0;
+    var w: i128 = base;
+    var i: u32 = 1;
+    while (i < fail_count) : (i += 1) {
+        if (w >= cap) return cap;
+        w *|= 2;
+    }
+    return @min(w, cap);
+}
+
 fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg: Message) void {
     if (!cfg.chatrooms.on) return;
     if (cfg.peers.len == 0) return;
@@ -627,6 +707,10 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg
     defer http_client.deinit();
 
     for (cfg.peers) |peer| {
+        // Skip a peer still inside its backoff window: don't hammer it and
+        // don't re-log the same failure on every message.
+        if (inCooldown(io, peer.name)) continue;
+
         const url = std.fmt.allocPrint(gpa, "{s}/api/chat/message", .{std.mem.trimEnd(u8, peer.url, "/")}) catch |err| {
             log.log(.error_, "chat to '{s}' failed: {s}", .{ peer.name, @errorName(err) });
             continue;
@@ -663,7 +747,12 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg
             .headers = .{ .content_type = .{ .override = "application/json" }, .user_agent = .{ .override = "clanker/" ++ build_options.version } },
             .response_writer = &rw,
         }) catch |err| {
-            log.log(.error_, "chat to '{s}' failed: {s}", .{ peer.name, @errorName(err) });
+            const window_s = recordFailure(gpa, peer.name, std.Io.Timestamp.now(io, .real).nanoseconds);
+            if (window_s > 0) {
+                log.log(.error_, "chat to '{s}' failed: {s}; marking peer down, backing off {d}s", .{ peer.name, @errorName(err), window_s });
+            } else {
+                log.log(.error_, "chat to '{s}' failed: {s}", .{ peer.name, @errorName(err) });
+            }
             continue;
         };
         const status = result.status;
@@ -671,7 +760,11 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg
         // worth surfacing at the default log level; a status code is enough to
         // know the send worked, and skipping the body keeps a peer echoing
         // message text (or anything else) out of this instance's logs.
-        log.log(.info, "chat {s}: HTTP {d}", .{ peer.name, @intFromEnum(status) });
+        if (recordSuccess(peer.name)) {
+            log.log(.info, "chat {s}: HTTP {d} (peer back up)", .{ peer.name, @intFromEnum(status) });
+        } else {
+            log.log(.info, "chat {s}: HTTP {d}", .{ peer.name, @intFromEnum(status) });
+        }
     }
 }
 
@@ -1159,4 +1252,36 @@ test "messages from concurrent senders are all kept" {
         kept += 1;
     }
     try std.testing.expectEqual(@as(usize, senders * per_sender), kept);
+}
+
+test "down-peer backoff grows, caps, and recovers on success" {
+    // Pure window math: base 5s, doubling per consecutive failure, capped at
+    // 5 minutes; no failures means no window.
+    try std.testing.expectEqual(@as(i128, 0), cooldownWindow(0));
+    try std.testing.expectEqual(@as(i128, 5 * std.time.ns_per_s), cooldownWindow(1));
+    try std.testing.expectEqual(@as(i128, 10 * std.time.ns_per_s), cooldownWindow(2));
+    try std.testing.expectEqual(@as(i128, 20 * std.time.ns_per_s), cooldownWindow(3));
+    try std.testing.expectEqual(@as(i128, 300 * std.time.ns_per_s), cooldownWindow(100));
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Clear any cooldown state a prior test in this process may have left.
+    cooldown_mutex.lock();
+    if (peer_cooldowns) |*l| l.clearRetainingCapacity();
+    cooldown_mutex.unlock();
+
+    const now = std.Io.Timestamp.now(io, .real).nanoseconds;
+    try std.testing.expect(!inCooldown(io, "down-peer"));
+    try std.testing.expectEqual(@as(i64, 5), recordFailure(std.testing.allocator, "down-peer", now));
+    try std.testing.expect(inCooldown(io, "down-peer"));
+
+    // A second consecutive failure doubles the window.
+    try std.testing.expectEqual(@as(i64, 10), recordFailure(std.testing.allocator, "down-peer", now));
+
+    // A successful delivery clears the cooldown and reports recovery once.
+    try std.testing.expect(recordSuccess("down-peer"));
+    try std.testing.expect(!inCooldown(io, "down-peer"));
+    try std.testing.expect(!recordSuccess("down-peer"));
 }
