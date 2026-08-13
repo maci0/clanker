@@ -3055,7 +3055,7 @@ const Model = struct {
                 // re-arms it after that. `typing` deliberately gets no timer:
                 // a keystroke is already a redraw, and the robot is supposed
                 // to stand still between them.
-                if (self.mascot.mode == .loop) {
+                if (self.mascot.mode.selfDriven()) {
                     self.timer_armed = true;
                     try ctx.tick(mascot_tick_ms, self.widget());
                 }
@@ -3108,11 +3108,11 @@ const Model = struct {
                     self.tick_count +%= 1;
                     if (self.tick_count % 3 == 0) self.spinner_frame +%= 1;
                 }
-                // Only `loop` is timer-driven. `typing` advances in the draw
-                // path instead, off the redraw a keystroke already causes --
-                // advancing it here as well would step it twice per frame
+                // The self-driven modes advance here. `typing` advances in the
+                // draw path instead, off the redraw a keystroke already causes
+                // -- advancing it here as well would step it twice per frame
                 // during a streaming turn and not at all when idle.
-                if (self.mascot.mode == .loop) self.mascot.advance(self.inputLen());
+                if (self.mascot.mode.selfDriven()) self.mascot.advance(self.inputLen());
                 // Exactly one timer, at the faster of the rates anything wants:
                 // a streaming turn needs ~30fps for smooth text, the mascot
                 // only 20, and while both are live the stream's rate serves
@@ -3120,7 +3120,7 @@ const Model = struct {
                 // is working, which is not a bad look for it).
                 const want_tick: ?u32 = if (still_streaming)
                     stream_tick_ms
-                else if (self.mascot.mode == .loop)
+                else if (self.mascot.mode.selfDriven())
                     mascot_tick_ms
                 else
                     null;
@@ -3627,24 +3627,30 @@ const Model = struct {
         return self.text_field.buf.firstHalf().len + self.text_field.buf.secondHalf().len;
     }
 
-    /// Paints the mascot into the rows reserved for it above the input box.
+    /// Paints the mascot at `row`, anchored within `[left, left + width)`.
+    ///
+    /// The window is the whole surface for the modes that live above the box,
+    /// and the input box's interior for `.input` -- which is the only reason
+    /// this takes a window at all: `cornerColumn` has to park the robot
+    /// against the *box's* right edge, not the screen's.
     ///
     /// The kitty transmit is resolved here rather than at startup because the
     /// capability answer to `queryTerminal` is still in flight while the model
     /// is being built: asking earlier reliably reports no graphics support and
     /// latches the fallback for the whole session. `ensureGraphics` is a no-op
     /// after the first call, so this costs one branch per frame.
-    fn drawMascot(self: *Model, surface: vxfw.Surface, row: u16) void {
+    fn drawMascot(self: *Model, surface: vxfw.Surface, row: u16, left: u16, width: u16) void {
         if (self.app) |app| {
             self.mascot.ensureGraphics(self.gpa, &app.vx, app.tty.writer());
         }
         const typed = self.inputLen();
         // `typing` mode's whole animation clock: it is a no-op unless the
         // input length changed since the last frame, which is exactly "a key
-        // was pressed". `loop` is stepped by the tick handler instead, and
-        // `advance` ignores this call for that mode.
+        // was pressed". The other live modes are stepped by the tick handler
+        // instead, and `advance` ignores this call for them.
         if (self.mascot.mode == .typing) self.mascot.advance(typed);
-        self.mascot.draw(surface, self.mascot.column(surface.size.width, typed), row);
+        const col = self.mascot.column(width, typed) + @as(i32, left);
+        self.mascot.draw(surface, col, row);
     }
 
     fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) std.mem.Allocator.Error!vxfw.Surface {
@@ -3683,18 +3689,28 @@ const Model = struct {
         // Layout numbers before the status line: its scroll indicator needs
         // the transcript height, which is only known once the input box has
         // claimed its rows.
-        const box_h: u16 = 3;
+        const mascot_v = self.mascot.variant();
+        // `.input` puts the robot *inside* the composer, so the box grows to
+        // hold it and the transcript is left alone. Every other mode reserves
+        // transcript rows above the box instead.
+        const mascot_in_box = self.mascot.mode == .input and
+            max.width >= mascot_v.cols + 4 and
+            // The taller box must still leave a transcript worth reading.
+            max.height >= mascot.inputBoxHeight(mascot_v) + 5;
+        const box_h: u16 = if (mascot_in_box) mascot.inputBoxHeight(mascot_v) else 3;
         const box_y = max.height -| box_h;
         const top: u16 = 1;
         const frame_bottom = box_y -| 1;
-        // The mascot claims the rows directly above the input box, so it runs
-        // along the box's top border. Rows are *reserved* rather than drawn
-        // over: the transcript ends where the robot begins, so nothing is
-        // occluded and a selection can still reach every visible line.
-        const mascot_on = self.mascot.enabled() and
-            mascot.fits(max.width, frame_bottom -| top);
-        const mascot_row: u16 = frame_bottom -| mascot.rows;
-        const bottom = if (mascot_on) mascot_row else frame_bottom;
+        // Above-the-box modes claim the rows directly above the composer, so
+        // the robot runs along the box's top border. Rows are *reserved*
+        // rather than drawn over: the transcript ends where the robot begins,
+        // so nothing is occluded and a selection can still reach every visible
+        // line.
+        const mascot_above = self.mascot.enabled() and !mascot_in_box and
+            self.mascot.mode != .input and
+            mascot.fits(mascot_v, max.width, frame_bottom -| top);
+        const mascot_row: u16 = frame_bottom -| mascot_v.rows;
+        const bottom = if (mascot_above) mascot_row else frame_bottom;
         self.transcript_top = top;
         self.transcript_bottom = bottom;
         const avail_rows: u16 = if (bottom > top) bottom - top else 0;
@@ -3793,9 +3809,19 @@ const Model = struct {
         }
 
         drawBox(surface, 0, box_y, max.width, box_h, rule_style);
-        const input_surf = try self.text_field.draw(ctx.withConstraints(.{}, .{ .width = max.width -| 4, .height = 1 }));
+        // In `.input` mode the robot occupies the right-hand end of the box,
+        // so the field is narrowed to leave it alone. Reserving the width
+        // rather than drawing over it is what keeps a long line from running
+        // underneath the robot, and keeps the caret reachable.
+        const input_reserve: u16 = if (mascot_in_box) mascot_v.cols + 1 else 0;
+        const input_w = max.width -| 4 -| input_reserve;
+        const input_surf = try self.text_field.draw(ctx.withConstraints(.{}, .{ .width = input_w, .height = 1 }));
         var children = try ctx.arena.alloc(vxfw.SubSurface, 1);
-        children[0] = .{ .origin = .{ .row = box_y + 1, .col = 2 }, .surface = input_surf };
+        // The field sits on the box's *last* interior row, so a taller box
+        // grows upward around the robot and the prompt stays where the eye
+        // expects it rather than floating at the top of a tall frame.
+        const input_row = box_y + box_h -| 2;
+        children[0] = .{ .origin = .{ .row = input_row, .col = 2 }, .surface = input_surf };
 
         // The scrollbar claims the rightmost column whenever the transcript
         // is taller than the region, so text wraps one column short of it.
@@ -3918,7 +3944,22 @@ const Model = struct {
         // Last, and only into rows the transcript was already shortened out
         // of: drawn earlier, the wrapped-text writers above would paint over
         // it on any frame where the transcript happened to reach this far.
-        if (mascot_on) self.drawMascot(surface, mascot_row);
+        // Last, and only into space the transcript or the composer was already
+        // shortened out of: drawn earlier, the wrapped-text writers above
+        // would paint over it on any frame where the transcript reached this
+        // far.
+        if (mascot_above) {
+            self.drawMascot(surface, mascot_row, 0, max.width);
+        } else if (mascot_in_box) {
+            // Bottom-right of the box interior: one row above the bottom
+            // border, inside the left/right borders. Anchoring to the box
+            // rather than the screen is what keeps the robot in the corner
+            // when the box grows.
+            const inner_left: u16 = 1;
+            const inner_width = max.width -| 2;
+            const inner_bottom = box_y + box_h -| 1;
+            self.drawMascot(surface, inner_bottom -| mascot_v.rows, inner_left, inner_width);
+        }
         self.last_surface = surface;
 
         surface.children = children;
@@ -5092,50 +5133,155 @@ pub const ReplOptions = struct {
     /// what lets `tui.mascot` be a real default rather than something the flag
     /// always overrides with "off".
     mascot: ?[]const u8 = null,
+    /// `--mascot-size=<small|medium|large>`, unparsed, same null convention.
+    mascot_size: ?[]const u8 = null,
+    /// `--mascot-facing=<left|right>`, unparsed, same null convention.
+    mascot_facing: ?[]const u8 = null,
     /// Initial palette for this invocation, overriding `CLANKER_THEME`.
     theme: ?[]const u8 = null,
 };
 
-/// Resolves the mascot mode from the flag and the config key, flag winning.
+/// One resolved setting plus the spelling that failed to parse, if any.
+fn Picked(comptime T: type) type {
+    return struct { value: T, bad: ?[]const u8 };
+}
+
+/// Flag beats config beats `fallback`, and an unparseable spelling from either
+/// falls back rather than failing.
 ///
-/// A spelling neither of them understands is *not* an error: this is an easter
-/// egg, and refusing to open the REPL over it would be a worse trade than
-/// starting without it. The caller reports the fallback on the transcript so
-/// the typo is still visible.
-fn resolveMascot(flag: ?[]const u8, configured: []const u8) struct { mode: mascot.Mode, bad: ?[]const u8 } {
+/// A typo is *not* an error here: this is an easter egg, and refusing to open
+/// the REPL over one would be a worse trade than starting without it. The
+/// spelling is handed back so the caller can say so on the transcript, which
+/// is the only reason a user ever finds out.
+fn pickSetting(
+    comptime T: type,
+    comptime parse: fn ([]const u8) ?T,
+    flag: ?[]const u8,
+    configured: []const u8,
+    fallback: T,
+) Picked(T) {
     if (flag) |text| {
-        return if (mascot.Mode.parse(text)) |m|
-            .{ .mode = m, .bad = null }
-        else
-            .{ .mode = .off, .bad = text };
+        return if (parse(text)) |v| .{ .value = v, .bad = null } else .{ .value = fallback, .bad = text };
     }
-    if (configured.len == 0) return .{ .mode = .off, .bad = null };
-    return if (mascot.Mode.parse(configured)) |m|
-        .{ .mode = m, .bad = null }
+    if (configured.len == 0) return .{ .value = fallback, .bad = null };
+    return if (parse(configured)) |v|
+        .{ .value = v, .bad = null }
     else
-        .{ .mode = .off, .bad = configured };
+        .{ .value = fallback, .bad = configured };
+}
+
+const MascotChoice = struct {
+    mode: mascot.Mode,
+    size: mascot.Size,
+    facing: mascot.Facing,
+    bad_mode: ?[]const u8,
+    bad_size: ?[]const u8,
+    bad_facing: ?[]const u8,
+};
+
+/// Resolves every mascot setting from its flag and its config key.
+///
+/// Facing is the one that is not a plain two-way pick: its default depends on
+/// the mode that was just resolved, because `place` faces left unless told
+/// otherwise and nothing else does.
+fn resolveMascot(
+    mode_flag: ?[]const u8,
+    mode_cfg: []const u8,
+    size_flag: ?[]const u8,
+    size_cfg: []const u8,
+    facing_flag: ?[]const u8,
+    facing_cfg: []const u8,
+) MascotChoice {
+    const mode = pickSetting(mascot.Mode, mascot.Mode.parse, mode_flag, mode_cfg, .off);
+    const size = pickSetting(mascot.Size, mascot.Size.parse, size_flag, size_cfg, .medium);
+    const facing = pickSetting(
+        mascot.Facing,
+        mascot.Facing.parse,
+        facing_flag,
+        facing_cfg,
+        mode.value.defaultFacing(),
+    );
+    return .{
+        .mode = mode.value,
+        .size = size.value,
+        .facing = facing.value,
+        .bad_mode = mode.bad,
+        .bad_size = size.bad,
+        .bad_facing = facing.bad,
+    };
+}
+
+fn resolveMode(flag: ?[]const u8, configured: []const u8) MascotChoice {
+    return resolveMascot(flag, configured, null, "", null, "");
 }
 
 test "resolveMascot prefers the flag and tolerates junk from either side" {
     // Neither set: off, quietly.
-    try std.testing.expectEqual(mascot.Mode.off, resolveMascot(null, "off").mode);
-    try std.testing.expectEqual(mascot.Mode.off, resolveMascot(null, "").mode);
+    try std.testing.expectEqual(mascot.Mode.off, resolveMode(null, "off").mode);
+    try std.testing.expectEqual(mascot.Mode.off, resolveMode(null, "").mode);
     // Config alone decides when the flag is absent.
-    try std.testing.expectEqual(mascot.Mode.typing, resolveMascot(null, "type").mode);
+    try std.testing.expectEqual(mascot.Mode.typing, resolveMode(null, "type").mode);
     // The flag wins, in both directions.
-    try std.testing.expectEqual(mascot.Mode.loop, resolveMascot("loop", "off").mode);
-    try std.testing.expectEqual(mascot.Mode.off, resolveMascot("off", "loop").mode);
+    try std.testing.expectEqual(mascot.Mode.loop, resolveMode("loop", "off").mode);
+    try std.testing.expectEqual(mascot.Mode.off, resolveMode("off", "loop").mode);
     // Bare `--mascot` still beats a config that says off.
-    try std.testing.expectEqual(mascot.Mode.bare_default, resolveMascot("on", "off").mode);
+    try std.testing.expectEqual(mascot.Mode.bare_default, resolveMode("on", "off").mode);
+    // The new modes are reachable from both sides.
+    try std.testing.expectEqual(mascot.Mode.place, resolveMode("place", "off").mode);
+    try std.testing.expectEqual(mascot.Mode.input, resolveMode(null, "input").mode);
     // Junk falls back to off and is reported, not swallowed.
-    const bad_flag = resolveMascot("sideways", "loop");
+    const bad_flag = resolveMode("sideways", "loop");
     try std.testing.expectEqual(mascot.Mode.off, bad_flag.mode);
-    try std.testing.expectEqualStrings("sideways", bad_flag.bad.?);
-    const bad_cfg = resolveMascot(null, "backwards");
+    try std.testing.expectEqualStrings("sideways", bad_flag.bad_mode.?);
+    const bad_cfg = resolveMode(null, "backwards");
     try std.testing.expectEqual(mascot.Mode.off, bad_cfg.mode);
-    try std.testing.expectEqualStrings("backwards", bad_cfg.bad.?);
+    try std.testing.expectEqualStrings("backwards", bad_cfg.bad_mode.?);
     // A good value reports nothing.
-    try std.testing.expectEqual(@as(?[]const u8, null), resolveMascot("loop", "off").bad);
+    try std.testing.expectEqual(@as(?[]const u8, null), resolveMode("loop", "off").bad_mode);
+}
+
+test "resolveMascot resolves size independently of mode" {
+    try std.testing.expectEqual(mascot.Size.medium, resolveMode("loop", "").size);
+    const small = resolveMascot("loop", "", "small", "", null, "");
+    try std.testing.expectEqual(mascot.Size.small, small.size);
+    // Config supplies it when the flag does not, and the flag wins when both do.
+    try std.testing.expectEqual(
+        mascot.Size.large,
+        resolveMascot("loop", "", null, "large", null, "").size,
+    );
+    try std.testing.expectEqual(
+        mascot.Size.small,
+        resolveMascot("loop", "", "small", "large", null, "").size,
+    );
+    // Junk keeps the default and is reported.
+    const bad = resolveMascot("loop", "", "gigantic", "", null, "");
+    try std.testing.expectEqual(mascot.Size.medium, bad.size);
+    try std.testing.expectEqualStrings("gigantic", bad.bad_size.?);
+    // A bad size must not take the mode down with it.
+    try std.testing.expectEqual(mascot.Mode.loop, bad.mode);
+}
+
+test "facing defaults per mode and is overridable" {
+    // `place` faces left unless told otherwise; the travelling modes face right.
+    try std.testing.expectEqual(mascot.Facing.left, resolveMode("place", "").facing);
+    try std.testing.expectEqual(mascot.Facing.right, resolveMode("loop", "").facing);
+    // Either source can override it, flag winning.
+    try std.testing.expectEqual(
+        mascot.Facing.right,
+        resolveMascot("place", "", null, "", "right", "").facing,
+    );
+    try std.testing.expectEqual(
+        mascot.Facing.left,
+        resolveMascot("loop", "", null, "", null, "left").facing,
+    );
+    try std.testing.expectEqual(
+        mascot.Facing.left,
+        resolveMascot("loop", "", null, "", "left", "right").facing,
+    );
+    // Junk falls back to the mode's default and is reported.
+    const bad = resolveMascot("place", "", null, "", "sideways", "");
+    try std.testing.expectEqual(mascot.Facing.left, bad.facing);
+    try std.testing.expectEqualStrings("sideways", bad.bad_facing.?);
 }
 
 /// The id `--continue` means: the saved session touched most recently.
@@ -5368,8 +5514,19 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     };
     // The easter egg. `--mascot` beats `tui.mascot`; both off is the default
     // and costs nothing beyond one `.off` branch per frame.
-    const mascot_choice = resolveMascot(opts.mascot, cfg.tui.mascot);
-    model.mascot = .{ .mode = mascot_choice.mode };
+    const mascot_choice = resolveMascot(
+        opts.mascot,
+        cfg.tui.mascot,
+        opts.mascot_size,
+        cfg.tui.mascot_size,
+        opts.mascot_facing,
+        cfg.tui.mascot_facing,
+    );
+    model.mascot = .{
+        .mode = mascot_choice.mode,
+        .size = mascot_choice.size,
+        .facing = mascot_choice.facing,
+    };
     // Only borrowed when there is something to draw, so nothing else in this
     // model can quietly start depending on a live app handle.
     if (mascot_choice.mode != .off) model.app = &app;
@@ -5399,13 +5556,31 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // forever, and was never removed after the first task. A resume already
     // has the resumed-conversation notice; a bad mascot spelling is appended
     // below and takes the same slot.
-    if (mascot_choice.bad) |bad| {
+    if (mascot_choice.bad_mode) |bad| {
         model.lines.append(arena, .{
             .text = std.fmt.allocPrint(
                 arena,
-                "error: mascot mode '{s}' is not one of off, type, loop; mascot is off",
+                "error: mascot mode '{s}' is not one of off, type, loop, place, input; mascot is off",
                 .{bad},
             ) catch "error: unknown mascot mode; mascot is off",
+        }) catch {};
+    }
+    if (mascot_choice.bad_size) |bad| {
+        model.lines.append(arena, .{
+            .text = std.fmt.allocPrint(
+                arena,
+                "error: mascot size '{s}' is not one of small, medium, large; using medium",
+                .{bad},
+            ) catch "error: unknown mascot size; using medium",
+        }) catch {};
+    }
+    if (mascot_choice.bad_facing) |bad| {
+        model.lines.append(arena, .{
+            .text = std.fmt.allocPrint(
+                arena,
+                "error: mascot facing '{s}' is not one of left, right; using the mode's default",
+                .{bad},
+            ) catch "error: unknown mascot facing; using the mode's default",
         }) catch {};
     }
     if (opts.theme) |name| {
