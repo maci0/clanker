@@ -5,7 +5,7 @@
 // wires the DOM and the app-level callbacks (tab counts, run opening, the
 // peer roster for @ mention hints).
 import { fmtInt, fmtCost, formatChatTime, fmtDeadline, readJson } from "../core/utils.js";
-import { T, bind, state, add } from "../core/ui.js";
+import { T, bind, state, add, uiConfirm, uiPrompt } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
 import { doneColumn as doneColumnOf, blockers as blockersOf, dueState } from "../lib/board.js";
@@ -1022,9 +1022,13 @@ function showCardDetail(id) {
   var colLabel = c.column || "";
   var colTitle = colLabel.replace(/_/g, " ").replace(/\b\w/g, function(l){ return l.toUpperCase(); });
   var inListEl = document.createElement("div");
-  inListEl.style.cssText = "font-size:12px;color:var(--fg-muted);margin-top:2px;";
-  inListEl.innerHTML = "in list <strong style=\"color:var(--fg);cursor:pointer;text-decoration:underline dotted;\">" + colTitle + "</strong>";
-  inListEl.querySelector("strong").addEventListener("click", function() {
+  inListEl.className = "card-in-list";
+  inListEl.appendChild(document.createTextNode("in list "));
+  var inListName = document.createElement("strong");
+  inListName.className = "card-in-list-name";
+  inListName.textContent = colTitle;
+  inListEl.appendChild(inListName);
+  inListName.addEventListener("click", function() {
     // Open column picker
     var existing = headerTextWrap.querySelector(".col-move-menu");
     if (existing) { existing.remove(); return; }
@@ -1244,7 +1248,14 @@ function showCardDetail(id) {
   assignWrap.style.cssText = "position:relative;";
   var assignBtn = document.createElement("button");
   assignBtn.type = "button";
-  assignBtn.innerHTML = "👤 Members: " + (c.assignee || "<em>unassigned</em>");
+  assignBtn.textContent = "👤 Members: ";
+  if (c.assignee) {
+    assignBtn.appendChild(document.createTextNode(c.assignee));
+  } else {
+    var unassigned = document.createElement("em");
+    unassigned.textContent = "unassigned";
+    assignBtn.appendChild(unassigned);
+  }
   assignBtn.addEventListener("click", function() {
     var existing = assignWrap.querySelector(".member-picker-popup");
     if (existing) { existing.remove(); return; }
@@ -1432,10 +1443,12 @@ function showCardDetail(id) {
   archiveBtn.innerHTML = "🗑 Delete";
   archiveBtn.style.color = "var(--danger)";
   archiveBtn.addEventListener("click", function() {
-    if (!confirm("Delete card \"" + c.title + "\"? This cannot be undone.")) return;
-    openCardId = null;
-    closeCardDetail();
-    postBoard({ op: "delete", id: c.id }, "Card deleted.");
+    uiConfirm("Delete card \"" + c.title + "\"? This cannot be undone.", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
+      if (!yes) return;
+      openCardId = null;
+      closeCardDetail();
+      postBoard({ op: "delete", id: c.id }, "Card deleted.");
+    });
   });
   sidebarCol.appendChild(archiveBtn);
 
@@ -1483,10 +1496,11 @@ function showCardDetail(id) {
   headerTitle.title = "Click to rename";
   headerTitle.addEventListener("click", function(e) {
     if (e.target !== headerTitle) return;
-    var newTitle = prompt("Card title:", c.title);
-    if (newTitle && newTitle.trim() && newTitle.trim() !== c.title) {
-      postBoard({ op: "update", id: c.id, title: newTitle.trim() }, "Title updated.");
-    }
+    uiPrompt("Card title", c.title, { maxlength: 500 }).then(function (newTitle) {
+      if (newTitle && newTitle.trim() && newTitle.trim() !== c.title) {
+        postBoard({ op: "update", id: c.id, title: newTitle.trim() }, "Title updated.");
+      }
+    });
   });
 
   // ---- Save button in main column ----

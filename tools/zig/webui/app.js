@@ -1,5 +1,5 @@
 import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, isSafeLinkUrl as utilIsSafeLinkUrl, splitRow as utilSplitRow, prettyJsonIfPossible as utilPrettyJsonIfPossible, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml } from "./core/utils.js";
-import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd } from "./core/ui.js";
+import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt } from "./core/ui.js";
 import { ICON_PATHS as iconPaths, icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, reducedMotion as reducedMotionMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { THEMES as THEMESMod, loadTheme as loadThemeMod, applyTheme as applyThemeMod } from "./core/theme.js";
@@ -827,20 +827,22 @@ el.sessionDelete.addEventListener("click", function () {
   // Deleting a transcript cannot be undone from here, so it is confirmed.
   // The run graphs survive it: they record runs that really happened and are
   // addressed by run id, not by session.
-  if (!window.confirm("Delete \"" + (meta.title || sessionId) + "\"? Its recorded runs are kept.")) return;
-  el.sessionDelete.disabled = true;
-  fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "DELETE" })
-    .then(readJson)
-    .then(function () {
-      el.sessionStatus.textContent = "Deleted. Started a new conversation.";
-      sessionId = newSessionId();
-      try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
-      el.transcript.textContent = "";
-      renderSessionChip();
-      return loadSessions();
-    }).catch(function (err) {
-      el.sessionStatus.textContent = "Could not delete: " + err.message;
-    }).finally(function () { el.sessionDelete.disabled = false; });
+  uiConfirm("Delete \"" + (meta.title || sessionId) + "\"? Its recorded runs are kept.", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
+    if (!yes) return;
+    el.sessionDelete.disabled = true;
+    fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "DELETE" })
+      .then(readJson)
+      .then(function () {
+        el.sessionStatus.textContent = "Deleted. Started a new conversation.";
+        sessionId = newSessionId();
+        try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+        el.transcript.textContent = "";
+        renderSessionChip();
+        return loadSessions();
+      }).catch(function (err) {
+        el.sessionStatus.textContent = "Could not delete: " + err.message;
+      }).finally(function () { el.sessionDelete.disabled = false; });
+  });
 });
 
 function syncControls() {
@@ -3017,15 +3019,23 @@ function openChatRoom(room) {
   // it is a per-channel concept, and a DM has nothing to name.
   if (el.chatChannelTitle) el.chatChannelTitle.textContent = isDm(room) ? "@" + dmPartner(room) : "#" + room;
   if (el.chatChannelTopic) {
-    el.chatChannelTopic.textContent = roomTopics[room] || "";
+    // An empty topic still needs something on screen to click, or a topic
+    // could never be set the first time.
+    el.chatChannelTopic.textContent = roomTopics[room] || (isDm(room) ? "" : "Add a topic");
+    el.chatChannelTopic.classList.toggle("is-placeholder", !roomTopics[room] && !isDm(room));
     el.chatChannelTopic.onclick = isDm(room) ? null : function () {
-      var newTopic = prompt("Set channel topic:", roomTopics[room] || "");
-      if (newTopic === null) return;
-      fetch("/api/chat/topic", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ room: room, topic: newTopic })
-      }).then(function (r) { return r.json(); }).then(function (d) {
-        if (d.ok) { roomTopics[room] = newTopic; el.chatChannelTopic.textContent = newTopic; }
-      }).catch(function () {});
+      uiPrompt("Set channel topic for #" + room, roomTopics[room] || "", { maxlength: 1024 }).then(function (newTopic) {
+        if (newTopic === null) return;
+        fetch("/api/chat/topic", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ room: room, topic: newTopic })
+        }).then(function (r) { return r.json(); }).then(function (d) {
+          if (d.ok) {
+            roomTopics[room] = newTopic;
+            el.chatChannelTopic.textContent = newTopic || "Add a topic";
+            el.chatChannelTopic.classList.toggle("is-placeholder", !newTopic);
+          }
+        }).catch(function () {});
+      });
     };
   }
   // Active-room highlight in the sidebar.
@@ -3309,12 +3319,11 @@ function buildChatMessage(m) {
   var from = document.createElement("span");
   from.className = "chat-from";
   from.textContent = m.from;
+  // Hue per name so different clankers read as different people at a
+  // glance. The hue values live in CSS as --chat-hue-N (with dark-theme
+  // overrides); data-color only picks which one, so themes stay in charge
+  // of legibility.
   from.setAttribute("data-color", String((function(h){ var v=0; for(var i=0;i<m.from.length;i++) v=(v*31 + m.from.charCodeAt(i))>>>0; return v%8; })(m.from)));
-  // hue per name so different clankers read as different people at a glance (Slack-like)
-  var hues = ["#0b57d0","#7c3aed","#059669","#d97706","#dc2626","#0891b2","#9333ea","#65a30d"];
-  var hue = hues[parseInt(from.getAttribute("data-color"),10)%hues.length];
-  from.style.color = hue;
-  from.style.borderBottom = "2px solid " + hue;
   meta.appendChild(from);
   var time = document.createElement("span");
   time.className = "chat-time";
@@ -3441,10 +3450,11 @@ function buildChatMessage(m) {
   var replyBtn = document.createElement("button"); replyBtn.type="button"; replyBtn.className="secondary"; replyBtn.textContent="Reply";
   replyBtn.addEventListener("click", function(e){
     e.stopPropagation();
-    var t=prompt("Reply in thread:");
-    if(!t||!t.trim()) return;
-    replies.push({from: instanceName, text: t.trim(), ts: Math.floor(Date.now()/1000)});
-    threadStore[threadKey]=replies; saveThreads(); renderThreads(); threadList.hidden=false;
+    uiPrompt("Reply in thread", "", { confirmLabel: "Reply", maxlength: 4096 }).then(function (t) {
+      if(!t||!t.trim()) return;
+      replies.push({from: instanceName, text: t.trim(), ts: Math.floor(Date.now()/1000)});
+      threadStore[threadKey]=replies; saveThreads(); renderThreads(); threadList.hidden=false;
+    });
   });
   threadBar.appendChild(replyBtn);
   renderThreads();
@@ -3507,12 +3517,14 @@ function buildChatMessage(m) {
     delBtn.type = "button"; delBtn.className = "secondary"; delBtn.textContent = "🗑️"; delBtn.title = "Delete message";
     delBtn.setAttribute("aria-label", "Delete message");
     delBtn.addEventListener("click", function(e){ e.stopPropagation();
-      if(!confirm("Delete this message?")) return;
-      fetch("/api/chat/delete", { method: "POST", headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
-      }).then(function(r){ return r.json(); }).then(function(d){
-        if(d.ok) { wrap.classList.add("chat-msg-deleted"); text.textContent = "[This message was deleted]"; text.classList.add("chat-deleted"); }
-      }).catch(function(){});
+      uiConfirm("Delete this message?", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
+        if(!yes) return;
+        fetch("/api/chat/delete", { method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
+        }).then(function(r){ return r.json(); }).then(function(d){
+          if(d.ok) { wrap.classList.add("chat-msg-deleted"); text.textContent = "[This message was deleted]"; text.classList.add("chat-deleted"); }
+        }).catch(function(){});
+      });
     });
     actions.appendChild(delBtn);
   }
@@ -4612,21 +4624,23 @@ el.sessionCompact.addEventListener("click", function () {
   // Irreversible: the dropped exchanges are gone from what the model can see.
   // Fork, Export and Copy all sit beside it and are not, so the difference
   // should not be left to the label.
-  if (!window.confirm("Compact this conversation? The oldest exchanges are dropped permanently.")) return;
-  el.sessionCompact.disabled = true;
-  fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/compact", { method: "POST" })
-    .then(readJson)
-    .then(function (d) {
-      el.sessionStatus.textContent = "Compacted to " + fmtBytes(d.bytes) + ".";
-      return loadSessions().then(function () {
-        el.transcript.textContent = "";
-        return fetch("/api/sessions/" + encodeURIComponent(sessionId))
-          .then(function (r) { return r.json(); })
-          .then(function (data) { renderSessionHistory(data.messages || []); });
-      });
-    })
-    .catch(function (err) { el.sessionStatus.textContent = "Compact failed: " + err.message; })
-    .then(function () { el.sessionCompact.disabled = false; });
+  uiConfirm("Compact this conversation? The oldest exchanges are dropped permanently.", { danger: true, confirmLabel: "Compact" }).then(function (yes) {
+    if (!yes) return;
+    el.sessionCompact.disabled = true;
+    fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/compact", { method: "POST" })
+      .then(readJson)
+      .then(function (d) {
+        el.sessionStatus.textContent = "Compacted to " + fmtBytes(d.bytes) + ".";
+        return loadSessions().then(function () {
+          el.transcript.textContent = "";
+          return fetch("/api/sessions/" + encodeURIComponent(sessionId))
+            .then(function (r) { return r.json(); })
+            .then(function (data) { renderSessionHistory(data.messages || []); });
+        });
+      })
+      .catch(function (err) { el.sessionStatus.textContent = "Compact failed: " + err.message; })
+      .then(function () { el.sessionCompact.disabled = false; });
+  });
 });
 
 function transcriptMarkdown() { return compTranscriptMarkdown(el.transcript, currentSessionMeta, sessionId); }
@@ -4794,8 +4808,10 @@ el.logsRefresh.addEventListener("click", function () { loadLogList(); });
         li.appendChild(a);
         var rev=document.createElement("button"); rev.type="button"; rev.className="secondary"; rev.textContent="Revert"; rev.style.marginLeft="0.5rem";
         rev.addEventListener("click", function(){
-          if(!confirm("Revert to "+r.run_id+"? This restores the worktree from that run where available.")) return;
-          append("Revert requested for "+r.run_id+" — use CLI `clanker revert "+r.run_id+"` if server-side revert is not enabled.\n");
+          uiConfirm("Revert to "+r.run_id+"? This restores the worktree from that run where available.", { danger: true, confirmLabel: "Revert" }).then(function (yes) {
+            if(!yes) return;
+            append("Revert requested for "+r.run_id+" — use CLI `clanker revert "+r.run_id+"` if server-side revert is not enabled.\n");
+          });
         });
         li.appendChild(rev);
         ul.appendChild(li);

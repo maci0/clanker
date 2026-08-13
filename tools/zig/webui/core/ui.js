@@ -117,6 +117,98 @@ export function toast(msg, kind) {
   return node;
 }
 
+/* Themed replacements for window.confirm / window.prompt. Native dialogs
+   punch unthemed browser chrome through the page mid-task and block the
+   main thread; these reuse the .slack-dialog <dialog> language the create-
+   channel flow already established, so every confirmation reads as part of
+   the same panel. Promise-shaped because <dialog> is: uiConfirm resolves
+   true/false, uiPrompt resolves the string or null (= cancelled), matching
+   the natives' contracts so call sites translate one-to-one. */
+function openDialog(build) {
+  return new Promise(function (resolve) {
+    var dlg = document.createElement("dialog");
+    dlg.className = "slack-dialog";
+    var form = document.createElement("form");
+    form.method = "dialog";
+    form.className = "slack-dialog-form";
+    dlg.appendChild(form);
+    build(form, function done(value) {
+      dlg.close();
+      resolve(value);
+    });
+    dlg.addEventListener("close", function () {
+      dlg.remove();
+      resolve(null);
+    });
+    dlg.addEventListener("cancel", function () { resolve(null); });
+    document.body.appendChild(dlg);
+    dlg.showModal();
+  });
+}
+
+export function uiConfirm(message, opts) {
+  opts = opts || {};
+  return openDialog(function (form, done) {
+    var p = document.createElement("p");
+    p.className = "ui-dialog-message";
+    p.textContent = message;
+    form.appendChild(p);
+    var actions = document.createElement("div");
+    actions.className = "slack-dialog-actions";
+    var cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "secondary";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", function () { done(false); });
+    actions.appendChild(cancel);
+    var ok = document.createElement("button");
+    ok.type = "button";
+    ok.className = opts.danger ? "danger" : "";
+    ok.textContent = opts.confirmLabel || "OK";
+    ok.addEventListener("click", function () { done(true); });
+    actions.appendChild(ok);
+    form.appendChild(actions);
+    window.setTimeout(function () { ok.focus(); }, 0);
+  }).then(function (v) { return v === true; });
+}
+
+export function uiPrompt(message, initial, opts) {
+  opts = opts || {};
+  return openDialog(function (form, done) {
+    var label = document.createElement("label");
+    label.className = "ui-dialog-message";
+    label.textContent = message;
+    var id = "ui-prompt-" + Math.floor(Math.random() * 1e9);
+    label.setAttribute("for", id);
+    form.appendChild(label);
+    var input = document.createElement("input");
+    input.type = "text";
+    input.id = id;
+    input.value = initial == null ? "" : String(initial);
+    if (opts.placeholder) input.placeholder = opts.placeholder;
+    if (opts.maxlength) input.maxLength = opts.maxlength;
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); done(input.value); }
+    });
+    form.appendChild(input);
+    var actions = document.createElement("div");
+    actions.className = "slack-dialog-actions";
+    var cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "secondary";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", function () { done(null); });
+    actions.appendChild(cancel);
+    var ok = document.createElement("button");
+    ok.type = "button";
+    ok.textContent = opts.confirmLabel || "Save";
+    ok.addEventListener("click", function () { done(input.value); });
+    actions.appendChild(ok);
+    form.appendChild(actions);
+    window.setTimeout(function () { input.focus(); input.select(); }, 0);
+  });
+}
+
 export function skeletonRows(container, n) {
   if (!container) return;
   container.textContent = "";

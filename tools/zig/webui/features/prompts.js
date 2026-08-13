@@ -1,4 +1,5 @@
 // Prompts library — single-user. Browse / create / use / delete prompt templates backed by GET/POST/DELETE /api/prompts.
+import { uiConfirm } from "../core/ui.js";
 
 export function loadPromptsView() {
   var status = document.getElementById("prompts-status");
@@ -38,11 +39,13 @@ function renderPrompts(prompts){
     head.appendChild(copyBtn);
     var delBtn=document.createElement("button"); delBtn.type="button"; delBtn.className="secondary danger"; delBtn.textContent="Delete";
     delBtn.addEventListener("click",function(){
-      if(!confirm("Delete prompt \""+(p.title||p.id)+"\"?")) return;
-      fetch("/api/prompts",{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:p.id})})
-        .then(function(r){return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; });})
-        .then(function(){ loadPromptsView(); try{ refreshLocalPrompts(); }catch(_){} })
-        .catch(function(e){ alert(e.message); });
+      uiConfirm("Delete prompt \""+(p.title||p.id)+"\"?", { danger: true, confirmLabel: "Delete" }).then(function(yes){
+        if(!yes) return;
+        fetch("/api/prompts",{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:p.id})})
+          .then(function(r){return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; });})
+          .then(function(){ loadPromptsView(); try{ refreshLocalPrompts(); }catch(_){} })
+          .catch(function(e){ alert(e.message); });
+      });
     });
     head.appendChild(delBtn); card.appendChild(head);
     var body=document.createElement("pre"); body.textContent=p.content;

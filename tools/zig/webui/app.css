@@ -38,6 +38,18 @@
   --code-bg: #0d1117;
   --code-fg: #e6edf3;
 
+  /* Per-sender chat hues: one stable color per clanker name so different
+     senders read as different people at a glance. Light-tuned here; the
+     dark blocks redefine them brighter so they stay legible on graphite. */
+  --chat-hue-0: #0b57d0;
+  --chat-hue-1: #7c3aed;
+  --chat-hue-2: #059669;
+  --chat-hue-3: #d97706;
+  --chat-hue-4: #dc2626;
+  --chat-hue-5: #0891b2;
+  --chat-hue-6: #9333ea;
+  --chat-hue-7: #65a30d;
+
   /* Prose in the text face; every measurement and every legend plate in
      mono, because a panel's engraving is fixed-pitch and its readings align. */
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -96,6 +108,14 @@
     --scrim: rgba(0, 0, 0, 0.56);
     --warn: #fbbf24;
     --warn-text: #fcd34d;
+    --chat-hue-0: #82aaff;
+    --chat-hue-1: #b799ff;
+    --chat-hue-2: #4ade80;
+    --chat-hue-3: #fbbf24;
+    --chat-hue-4: #f87171;
+    --chat-hue-5: #22d3ee;
+    --chat-hue-6: #c084fc;
+    --chat-hue-7: #a3e635;
     --lift: 0 1px 2px rgba(0, 0, 0, 0.45), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
     --lift-high: 0 2px 6px rgba(0, 0, 0, 0.5), 0 20px 44px -16px rgba(0, 0, 0, 0.7);
   }
@@ -151,6 +171,14 @@
   --warn-text: #fcd34d;
   --code-bg: #1a1e24;
   --code-fg: #e6edf3;
+  --chat-hue-0: #82aaff;
+  --chat-hue-1: #b799ff;
+  --chat-hue-2: #4ade80;
+  --chat-hue-3: #fbbf24;
+  --chat-hue-4: #f87171;
+  --chat-hue-5: #22d3ee;
+  --chat-hue-6: #c084fc;
+  --chat-hue-7: #a3e635;
   --lift: 0 1px 2px rgba(0, 0, 0, 0.45), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
   --lift-high: 0 2px 6px rgba(0, 0, 0, 0.5), 0 20px 44px -16px rgba(0, 0, 0, 0.7);
 }
@@ -387,6 +415,22 @@
   --warn-text: #b4ff50;
   --lift: 0 1px 2px rgba(0, 255, 0, 0.10), 0 6px 18px -8px rgba(0, 255, 0, 0.35);
   --lift-high: 0 2px 4px rgba(0, 255, 0, 0.14), 0 20px 44px -16px rgba(0, 255, 0, 0.45);
+}
+
+/* The named dark themes share one bright chat-hue set: :root's light-tuned
+   hues drop below readable contrast on their dark surfaces, and each palette
+   inventing eight of its own would splinter what the hue means (the same
+   sender should keep roughly the same color across themes). */
+:root[data-theme="mocha"], :root[data-theme="frappe"], :root[data-theme="macchiato"],
+:root[data-theme="tokyonight"], :root[data-theme="tokyonight-storm"], :root[data-theme="hackerman"] {
+  --chat-hue-0: #82aaff;
+  --chat-hue-1: #b799ff;
+  --chat-hue-2: #4ade80;
+  --chat-hue-3: #fbbf24;
+  --chat-hue-4: #f87171;
+  --chat-hue-5: #22d3ee;
+  --chat-hue-6: #c084fc;
+  --chat-hue-7: #a3e635;
 }
 
 * { box-sizing: border-box; }
@@ -1276,6 +1320,8 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 /* ── Slack-style layout ─────────────────────────────────────────────── */
 .slack-layout {
   display: flex; height: calc(100vh - 56px); overflow: hidden;
+  /* dvh tracks mobile browsers' collapsing URL bar; vh above is the fallback. */
+  height: calc(100dvh - 56px);
   border: 1px solid var(--rule); border-radius: var(--radius-lg);
   background: var(--surface);
 }
@@ -1357,8 +1403,8 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
   width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
   border: 1.5px solid var(--fg-muted);
 }
-.slack-presence-dot.is-online { background: #44b553; border-color: #44b553; }
-.slack-presence-dot.is-away { background: transparent; border-color: #e8912d; }
+.slack-presence-dot.is-online { background: var(--ok-fill); border-color: var(--ok-fill); }
+.slack-presence-dot.is-away { background: transparent; border-color: var(--warn); }
 .slack-room-item-name {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 13px;
@@ -1375,7 +1421,7 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 }
 .slack-room-presence {
   width: 8px; height: 8px; border-radius: 50%;
-  background: #44b553; flex-shrink: 0;
+  background: var(--ok-fill); flex-shrink: 0;
 }
 
 /* ── Main chat area ── */
@@ -1399,7 +1445,10 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
   font-size: 12px; color: var(--fg-muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   border-left: 1px solid var(--rule); padding-left: 0.5rem; margin-left: 0.25rem;
+  cursor: pointer;
 }
+.slack-channel-topic:hover { color: var(--fg); text-decoration: underline dotted; }
+.slack-channel-topic.is-placeholder { font-style: italic; }
 .slack-channel-actions {
   display: flex; gap: 0.25rem; align-items: center; flex-shrink: 0;
 }
@@ -1521,6 +1570,10 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .slack-dialog-form input { padding: 0.5rem; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--bg); color: var(--fg); font-size: 14px; }
 .slack-dialog-form input:focus { border-color: var(--accent); outline: none; }
 .slack-dialog-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.5rem; }
+/* uiConfirm / uiPrompt (core/ui.js) reuse this dialog language for every
+   confirmation and one-line input, replacing the browser's native chrome. */
+.ui-dialog-message { margin: 0; font-size: var(--step-0); color: var(--fg); overflow-wrap: anywhere; }
+.slack-dialog-actions .danger { background: var(--danger); color: var(--on-danger); border-color: var(--danger); }
 
 /* ── Typing indicator ── */
 .slack-typing-indicator {
@@ -1576,7 +1629,7 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 
 /* ── Mobile responsive ── */
 @media (max-width: 768px) {
-  .slack-layout { height: calc(100vh - 48px); }
+  .slack-layout { height: calc(100vh - 48px); height: calc(100dvh - 48px); }
   .slack-sidebar {
     position: absolute; z-index: 30; height: 100%;
     box-shadow: 4px 0 16px rgba(0,0,0,.2);
@@ -1606,11 +1659,11 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .chat-unread-divider::before,
 .chat-unread-divider::after {
   content: ""; flex: 1; height: 1px;
-  background: #e01e5a;
+  background: var(--danger);
 }
 .chat-unread-divider span {
   font-family: var(--sans); font-size: 11px; font-weight: 700;
-  color: #e01e5a; text-transform: uppercase; letter-spacing: 0.03em;
+  color: var(--danger); text-transform: uppercase; letter-spacing: 0.03em;
   white-space: nowrap;
 }
 .chat-msg { position: relative; font-family: var(--sans); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.35rem 0.5rem; border-radius: var(--radius); border-left: 2px solid transparent; }
@@ -1632,7 +1685,8 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .chat-topic { font-size: 12px; color: var(--fg-muted); padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--rule); font-style: italic; }
 .chat-thread-bar { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.4rem; font-size: 12px; }
 .chat-thread-bar[hidden] { display: none; }
-.chat-thread-bar button { min-height: 22px; padding: 0 0.5rem; font-size: 11px; border-radius: 999px; }
+/* 24px is the WCAG 2.5.8 floor; pointer:coarse below raises these to 44px. */
+.chat-thread-bar button { min-height: 24px; padding: 0 0.5rem; font-size: 11px; border-radius: 999px; }
 .chat-thread-list { flex-basis: 100%; display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.3rem; border-left: 2px solid var(--rule); padding-left: 0.6rem; }
 .chat-thread-list[hidden] { display: none; }
 .chat-thread-reply { font-size: 12px; color: var(--fg); padding: 0.15rem 0; }
@@ -1648,7 +1702,15 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 /* This instance's own messages, so a room reads as a conversation rather
    than a log of indistinguishable lines. */
 .chat-msg.mine .chat-from { color: var(--ok); }
-.chat-from[data-color] { padding: 0.05rem 0.4rem; border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--on-accent); }
+.chat-from[data-color] { padding: 0.05rem 0.4rem; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.chat-from[data-color="0"] { color: var(--chat-hue-0); border-bottom: 2px solid var(--chat-hue-0); }
+.chat-from[data-color="1"] { color: var(--chat-hue-1); border-bottom: 2px solid var(--chat-hue-1); }
+.chat-from[data-color="2"] { color: var(--chat-hue-2); border-bottom: 2px solid var(--chat-hue-2); }
+.chat-from[data-color="3"] { color: var(--chat-hue-3); border-bottom: 2px solid var(--chat-hue-3); }
+.chat-from[data-color="4"] { color: var(--chat-hue-4); border-bottom: 2px solid var(--chat-hue-4); }
+.chat-from[data-color="5"] { color: var(--chat-hue-5); border-bottom: 2px solid var(--chat-hue-5); }
+.chat-from[data-color="6"] { color: var(--chat-hue-6); border-bottom: 2px solid var(--chat-hue-6); }
+.chat-from[data-color="7"] { color: var(--chat-hue-7); border-bottom: 2px solid var(--chat-hue-7); }
 .chat-time[data-seen="true"]::after { content: " ✓✓"; color: var(--ok); font-size: 11px; }
 .chat-time { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .chat-text { white-space: pre-wrap; color: var(--fg); max-width: var(--measure); }
@@ -2614,7 +2676,14 @@ h2#session-title {
 .card-quick-edit-btn:hover { background: var(--surface-2); color: var(--fg); }
 .card-body { padding: 0.55rem 0.65rem 0.5rem; display: flex; flex-direction: column; gap: 0.35rem; }
 
-/* Trello-style card cover: colored strip at top */
+/* The "in list <column>" subtitle in the card detail header. */
+.card-in-list { font-size: 12px; color: var(--fg-muted); margin-top: 2px; }
+.card-in-list-name { color: var(--fg); cursor: pointer; text-decoration: underline dotted; }
+
+/* Trello-style card cover: colored strip at top. The cover/label palette is
+   deliberately theme-constant (like Trello's own label colors): saturated
+   mid-tones carrying white text, legible on light and dark alike, so a
+   card's color means the same thing whichever theme a browser picked. */
 .card-cover { height: 4px; border-radius: 8px 8px 0 0; margin: 0; background: var(--rule); flex-shrink: 0; transition: height 160ms ease; }
 .card-cover[data-priority="high"] { background: linear-gradient(90deg, var(--danger), color-mix(in srgb, var(--danger) 75%, #ff6b6b)); height: 4px; }
 .card-cover[data-priority="low"] { background: var(--surface-2); height: 3px; }

@@ -1,4 +1,5 @@
 // Knowledge view — single-user. Collections of documents.
+import { uiConfirm } from "../core/ui.js";
 export var selectedKnowledge = (function(){ try { var raw = window.localStorage.getItem("clanker.knowledge"); if (raw) return JSON.parse(raw); } catch(_){} return []; })();
 function persistKnowledge(){ try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(selectedKnowledge)); } catch(_){} }
 function ensureBadge(){
@@ -96,9 +97,11 @@ function openCollection(id){
       var dn=document.createElement("span"); dn.textContent=d.name+" ("+d.bytes+" bytes)"; row.appendChild(dn);
       var rm=document.createElement("button"); rm.type="button"; rm.className="secondary danger"; rm.textContent="Remove";
       rm.addEventListener("click",function(){
-        if(!confirm("Remove "+d.name+"?")) return;
-        fetch("/api/knowledge/"+encodeURIComponent(id)+"/docs/"+encodeURIComponent(d.id),{method:"DELETE"})
-          .then(function(r){return r.json();}).then(function(){ openCollection(id); loadKnowledge(); }).catch(function(e){ alert(e.message); });
+        uiConfirm("Remove "+d.name+"?", { danger: true, confirmLabel: "Remove" }).then(function(yes){
+          if(!yes) return;
+          fetch("/api/knowledge/"+encodeURIComponent(id)+"/docs/"+encodeURIComponent(d.id),{method:"DELETE"})
+            .then(function(r){return r.json();}).then(function(){ openCollection(id); loadKnowledge(); }).catch(function(e){ alert(e.message); });
+        });
       });
       row.appendChild(rm);
       var pre=document.createElement("pre"); pre.className="knowledge-preview"; pre.textContent=(d.content||"").slice(0,800); row.appendChild(pre);
@@ -130,11 +133,13 @@ function openCollection(id){
   }).catch(function(err){ alert(err.message); });
 }
 function deleteCollection(id,title){
-  if(!confirm("Delete collection \""+title+"\" and all its documents?")) return;
-  fetch("/api/knowledge/"+encodeURIComponent(id),{method:"DELETE"})
-    .then(function(r){return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; });})
-    .then(function(){ var at=selectedKnowledge.indexOf(id); if(at!==-1) selectedKnowledge.splice(at,1); var detail=document.getElementById("knowledge-detail"); if(detail) detail.hidden=true; loadKnowledge(); updateHint(); refreshBadge(); })
-    .catch(function(err){ alert(err.message); });
+  uiConfirm("Delete collection \""+title+"\" and all its documents?", { danger: true, confirmLabel: "Delete" }).then(function(yes){
+    if(!yes) return;
+    fetch("/api/knowledge/"+encodeURIComponent(id),{method:"DELETE"})
+      .then(function(r){return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; });})
+      .then(function(){ var at=selectedKnowledge.indexOf(id); if(at!==-1) selectedKnowledge.splice(at,1); var detail=document.getElementById("knowledge-detail"); if(detail) detail.hidden=true; loadKnowledge(); updateHint(); refreshBadge(); })
+      .catch(function(err){ alert(err.message); });
+  });
 }
 export function bindKnowledge(){
   var createBtn=document.getElementById("knowledge-create");

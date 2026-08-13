@@ -13,7 +13,7 @@
 // the title fallback there is what adopts cards created before the field
 // existed.
 import { readJson } from "../core/utils.js";
-import { T, bind, UI, state } from "../core/ui.js";
+import { T, bind, UI, state, uiConfirm } from "../core/ui.js";
 import { goalSortKey, goalFields, goalStatusLabel, goalPinnedColumn } from "../core/goals.js";
 import { makeLineSplitter } from "../core/stream.js";
 import { board, postBoard, loadBoard, boardIsLoaded } from "./board.js";
@@ -175,8 +175,9 @@ function goalCard(g) {
       actions.push(UI.button(pair[0], function () { postGoal({ id: g.id, status: pair[1] }, pair[2]); }));
     });
     actions.push(UI.button("Delete", function () {
-      if (!window.confirm("Delete this goal? Runs that carried it are kept.")) return;
-      postGoal({ id: g.id, remove: true }, "Goal deleted.");
+      uiConfirm("Delete this goal? Runs that carried it are kept.", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
+        if (yes) postGoal({ id: g.id, remove: true }, "Goal deleted.");
+      });
     }, { kind: "danger", label: "Delete goal: " + (g.objective || g.id) }));
   }
 
