@@ -628,7 +628,9 @@ The shipped `translate` plugin combines all of it: an `after` transform on every
 
 ## REPL slash commands
 
-A line starting with `!` is a shell escape (see below), a line starting with `/` is a command, and anything else is sent to the agent as a task. Two keys reach the same set without typing a name: **Ctrl-P** opens a fuzzy palette over the whole registry, matching mid-word and on the description, and **Ctrl-R** searches the transcript. Tab completes a partly-typed `/command` in place. All three are listed in the keys block `/help` generates, so the in-app list is the one that cannot go stale. The command set is one table in the source, `command_registry` in `src/tui/repl_vaxis.zig`, which is also what `/help` and Tab-complete are generated from. Some entries dispatch to the internal WASM tool `cmd_<name>`; the rest run in-process, either handling the line themselves or turning it into an agent task. A bare `exit` or `quit` also leaves the REPL.
+A line starting with `!` is a shell escape (see below), a line starting with `/` is a command, and anything else is sent to the agent as a task. Two keys reach the same set without typing a name: **Ctrl-P** opens a fuzzy palette over the whole registry, matching mid-word and on the description, and **Ctrl-R** searches the transcript. Tab completes a partly-typed `/command` in place. All three are listed in the keys block `/help` generates, so the in-app list is the one that cannot go stale. The command set is one table in the source, `command_registry` in `src/tui/repl_vaxis.zig`, which is also what `/help` and Tab-complete are generated from. Some entries dispatch to an internal WASM guest with the same bare name; the rest run in-process, either handling the line themselves or turning it into an agent task. A bare `exit` or `quit` also leaves the REPL.
+
+Composer editing follows readline conventions: Ctrl-U kills to the start, Ctrl-K to the end, Ctrl-W the preceding whitespace-delimited word, and Ctrl-Y yanks the most recently killed text. That private kill ring is separate from the system clipboard; Ctrl-Shift-C/V copy and paste through the terminal.
 
 | Command | Runs as | Description |
 |---------|---------|-------------|
@@ -636,11 +638,11 @@ A line starting with `!` is a shell escape (see below), a line starting with `/`
 | `/model [query]` | in-process | Switch provider/model through a fuzzy picker (Enter picks, Esc cancels) |
 | `/workflows` | in-process | List reusable prompt workflows |
 | `/workflow <name> [args]` | in-process | Run a workflow (expands `{{args}}`, then runs it as a task) |
-| `/sessions`, `/history` | `cmd_sessions` | List saved conversations |
-| `/graph [run-id]` | `cmd_graph` | List recorded runs, or render one as a timeline (same as `clanker graph`) |
-| `/status` | `cmd_status` | Show instance identity and configured peers |
-| `/tools` | `cmd_tools` | List registered tools (same as `clanker tools`) |
-| `/plugins [on\|off <name>]`, `/plugin [on\|off <name>]` | `cmd_plugins` | List plugins or switch an optional one on or off; the REPL reloads its tool catalog after a change |
+| `/sessions`, `/history` | `sessions` | List saved conversations |
+| `/graph [run-id]` | `graph` | List recorded runs, or render one as a timeline (same as `clanker graph`) |
+| `/status` | `status` | Show instance identity and configured peers |
+| `/tools` | `tools` | List registered tools (same as `clanker tools`) |
+| `/plugins [on\|off <name>]`, `/plugin [on\|off <name>]` | `plugins` | List plugins or switch an optional one on or off; the REPL reloads its tool catalog after a change |
 | `/theme [name]` | in-process | List or switch the color theme (`mocha`, `latte`, `tokyonight`, …) |
 | `/autoresearch ...` | in-process | Measurement loop (see `/autoresearch --help`) |
 | `/goal <intent>` | in-process | Design and persist a goal (runs the agent) |
