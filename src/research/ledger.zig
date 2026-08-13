@@ -108,8 +108,17 @@ test "isBetter respects direction" {
 }
 test "tail keeps last lines" {
     try std.testing.expectEqualStrings("hello", tail("hello", 10));
-    try std.testing.expectEqualStrings("f", tail("a\nb\nc\nd\ne\nf", 4));
+    // `keep` is a byte budget, and only the *partial* first line is dropped —
+    // not everything up to the last newline. The last 4 bytes here are
+    // "\ne\nf", whose leading newline is the previous line's terminator, so
+    // dropping through it leaves two whole lines that still fit the budget.
+    // Expecting "f" would throw away a line there was room for.
+    try std.testing.expectEqualStrings("e\nf", tail("a\nb\nc\nd\ne\nf", 4));
     try std.testing.expectEqualStrings("e\nf", tail("a\nb\nc\nd\ne\nf", 5));
+    // A budget that lands mid-line does cut that line: the last 3 bytes are
+    // "\nf", one whole line, and the 2 before that are a fragment of "e".
+    try std.testing.expectEqualStrings("f", tail("a\nb\nc\nd\ne\nf", 3));
+    try std.testing.expectEqualStrings("f", tail("a\nb\nc\nd\ne\nf", 2));
 }
 test "bestMetric reads ledger" {
     const gpa = std.testing.allocator;
