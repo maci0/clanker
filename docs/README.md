@@ -177,6 +177,14 @@ worktree becomes the root, so cwd-relative paths need no prefix and
 same isolation by default (`src/improve/worktree.zig`). Worktrees live in
 `.clanker-worktrees/<id>`, which is gitignored.
 
+Runs cannot read or write each other's worktrees. `ck_exec` refuses a `cwd` and
+any argument that names a `.clanker-worktrees` path or steps above the run's root
+with `..`, both of which reach a sibling run's tree; a run addresses its own tree
+as `.`. The argument half matters as much as the `cwd` half: `worktree` is an
+allowed git verb and `remove` is not on the deny list, so
+`git worktree remove .clanker-worktrees/<other>` would otherwise have deleted
+another run's tree and its commits.
+
 The worktree and its branch are **kept** when the run ends — the commits are the
 deliverable. Remove it with `git worktree remove` once the work has landed.
 (`improve-self` differs: it merges its branch back at the ref level and only then
@@ -430,7 +438,7 @@ changes as tools are added.
 | `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
 | `fetch_web` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
 | `web_search` | none | No-key web search: tries DuckDuckGo Lite first, transparently falls back to Bing Search RSS when DDG is unreachable, bot-challenged, or empty. Input: `{"query", "max_results" (1-20, default 8), "region"}`; returns `{ok, backend, query, count, results:[{title,url,snippet}]}` |
-| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Runs at the run's root, the directory the file tools resolve against, so plain `add`/`commit` stage what the agent edited. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored for inspecting another worktree, but they do not relocate the agent's work: see [Isolating a run](#isolating-a-run) |
+| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Runs at the run's root, the directory the file tools resolve against, so plain `add`/`commit` stage what the agent edited. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored only for paths inside the run's own tree — an argument naming `.clanker-worktrees`, or stepping above the root with `..`, is refused as another run's worktree — and they do not relocate the agent's work: see [Isolating a run](#isolating-a-run) |
 | `docker` | none | Query the local Docker daemon over its Unix socket |
 | `peers` | none — reads clanker's own config through the host (ck_harness_config) | Scan peer agent cards (up/down) or post a message to one peer |
 | `opencv` | none | Image analysis: size/brightness/sharpness, Canny edges, contours, faces, grayscale, resize |

@@ -2856,6 +2856,9 @@ pub const ExecDenial = union(enum) {
     deny_token: DeniedArg,
     /// A shell operator in an argument to a command that is itself a shell.
     shell_operator: DeniedArg,
+    /// An argument reaching into another run's isolated worktree. Carries the
+    /// offending argument. See `foreignWorktreeArg`.
+    foreign_worktree: []const u8,
 };
 
 /// The argv-level half of the ck_exec gate, factored out of `ckExec` so the
@@ -2876,6 +2879,13 @@ pub fn execDenial(sb: *const Sandbox, cmd: []const u8, argv: []const []const u8)
     // with a pattern is strict: only an argv matching one of its patterns runs,
     // and a match also overrides the deny tokens for the args it grants. A
     // command with no pattern stays under the deny-list check below.
+    // First, and deliberately ahead of exec_pattern_allow: crossing into
+    // another run's tree is not an argv shape a manifest gets to grant. A
+    // pattern-governed command returns early below, `null` when a pattern
+    // matched, so anything checked after that point is bypassable by writing a
+    // pattern -- which is exactly the wrong property for this rule.
+    if (foreignWorktreeArg(argv)) |arg| return .{ .foreign_worktree = arg };
+
     var join_buf: [4096]u8 = undefined;
     const policy = execPolicyFor(sb, argv, &join_buf);
     if (std.mem.eql(u8, cmd, "git") and !gitVerbAllowed(argv, sb.git_remote_ops)) return .git_verb;
@@ -3394,12 +3404,11 @@ pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
 /// nothing but sibling runs' trees, so refusing it costs nothing real, and
 /// `ck_fs_list` can still enumerate it, which was its only use.
 ///
-/// What this does NOT cover, so nobody reads more into it than it does: only
-/// the `cwd`/`dir` field is inspected. An argv naming the path itself,
-/// `git -C .clanker-worktrees/123 status` with no cwd at all, walks straight
-/// past this and reads a sibling run's tree. Closing that means checking the
-/// argv, which is its own change; this function is not the reason that case
-/// is safe, because it is not safe.
+/// The `cwd`/`dir` field is not the only way in, and this function is not the
+/// only caller: an argv naming the path itself, `git -C .clanker-worktrees/123
+/// status` with no cwd at all, resolves against the run's directory rather
+/// than through here. `foreignWorktreeArg` applies this same test to every
+/// argument, and `execDenial` calls it before any other rule.
 ///
 /// Keep this matching the component wherever it appears, and move the test
 /// below in the same commit if it ever has to change. Loosening it to "only a
@@ -3415,6 +3424,77 @@ fn pathHasWorktreeDir(path: []const u8) bool {
         if (std.mem.eql(u8, comp, ".clanker-worktrees")) return true;
     }
     return false;
+}
+
+/// True if `arg` is written as a path that walks *up* out of the directory it
+/// resolves against, once `.` and `..` are cancelled textually. `src/../lib`
+/// stays inside and is false; `../123` and `a/../../b` leave and are true.
+///
+/// Momentarily leaving counts, even if a later component would come back:
+/// whether `../x/y` lands back inside depends on what the run's own directory
+/// is called, which this cannot know and must not guess.
+///
+/// Absolute paths return false. They cannot "escape" relatively, and the
+/// component test above is what covers them.
+fn pathEscapesUpward(path: []const u8) bool {
+    if (path.len > 0 and path[0] == '/') return false;
+    var depth: isize = 0;
+    var it = std.mem.splitScalar(u8, path, '/');
+    while (it.next()) |comp| {
+        if (comp.len == 0 or std.mem.eql(u8, comp, ".")) continue;
+        if (std.mem.eql(u8, comp, "..")) {
+            depth -= 1;
+            if (depth < 0) return true;
+        } else depth += 1;
+    }
+    return false;
+}
+
+/// Whether `arg` is shaped like a path with a parent-directory step in it, as
+/// opposed to a pattern that merely contains two dots.
+///
+/// This narrowing is the whole reason the upward check is safe to apply to
+/// every argument: `rg` and `ast-grep` patterns are ordinary arguments here
+/// (nothing runs through a shell), and `a..b` or `\.\.` are regex syntax, not
+/// paths. Requiring a '/' next to the `..` leaves those alone.
+fn argStepsUpward(arg: []const u8) bool {
+    return std.mem.eql(u8, arg, "..") or
+        std.mem.startsWith(u8, arg, "../") or
+        std.mem.endsWith(u8, arg, "/..") or
+        std.mem.find(u8, arg, "/../") != null;
+}
+
+/// The argument that reaches into a run's isolated worktree other than the
+/// caller's own, or null if none does. Two ways in, and both are closed here
+/// because a run has exactly one legitimate tree and addresses it as `.`:
+///
+///   - Naming the container. `git -C .clanker-worktrees/123 status` from the
+///     checkout, or the absolute equivalent. `pathHasWorktreeDir`.
+///   - Walking up to a sibling. `git -C ../123 status` from *inside* a
+///     worktree, where cwd is `<checkout>/.clanker-worktrees/<own-id>` and the
+///     container is the parent, so no `.clanker-worktrees` component appears in
+///     the argument at all. `pathEscapesUpward`.
+///
+/// The second case is why this is not just the first test applied to argv. An
+/// isolated run is the one caller that sits inside the container, and it is
+/// also the caller with the most to gain from reading the tree next door.
+///
+/// Read access is not the worst of it: `worktree` is an allowed git verb and
+/// `remove` is not an `exec_deny_tokens` entry (the token is `rm`, which does
+/// not match at a word boundary inside "remove"), so before this existed
+/// `git worktree remove .clanker-worktrees/123` *deleted* a sibling run's tree,
+/// commits and all.
+///
+/// Cost of the conservative direction: a run cannot name its own worktree
+/// through the container either, absolutely or via `..`. It has no reason to --
+/// cwd already is that tree -- and the `cwd`/`dir` guard has refused the same
+/// shape since it was written, for the same reason.
+fn foreignWorktreeArg(argv: []const []const u8) ?[]const u8 {
+    for (argv) |arg| {
+        if (pathHasWorktreeDir(arg)) return arg;
+        if (argStepsUpward(arg) and pathEscapesUpward(arg)) return arg;
+    }
+    return null;
 }
 
 pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
@@ -3511,6 +3591,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
             .no_pattern_match => log.log(.warn, "[sandbox] ck_exec denied '{s}': exec_pattern_allow makes this command strict and no pattern matches", .{cmd}),
             .deny_token => |x| log.log(.warn, "[sandbox] ck_exec denied token '{s}' in arg '{s}'", .{ x.token, x.arg }),
             .shell_operator => |x| log.log(.warn, "[sandbox] ck_exec denied shell operator '{s}' in arg '{s}'", .{ x.token, x.arg }),
+            .foreign_worktree => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': it reaches into another run's worktree", .{a}),
         }
         return Err.denied;
     }
@@ -3678,6 +3759,7 @@ pub fn execUnderPolicy(
         return .{ .denied = switch (d) {
             .deny_token => |x| .{ .deny_token = outlives.arg(x, argv.items[0], cmd) },
             .shell_operator => |x| .{ .shell_operator = outlives.arg(x, argv.items[0], cmd) },
+            .foreign_worktree => |a| .{ .foreign_worktree = if (a.ptr == argv.items[0].ptr) cmd else a },
             else => d,
         } };
     }
@@ -4203,6 +4285,22 @@ test "execDenial: the argv-level gate ckExec and the REPL escape share" {
     sb.exec_allow = &.{"gh"};
     try std.testing.expect(execDenial(&sb, "gh", &.{ "/usr/bin/gh", "pr", "create" }) == null);
     try std.testing.expect(execDenial(&sb, "gh", &.{ "/usr/bin/gh", "issue", "list" }).? == .no_pattern_match);
+
+    // Another run's worktree is refused ahead of every rule above, so a
+    // pattern cannot grant it. `gh` is still the pattern-governed command
+    // here, and `gh pr create*` still matches this argv.
+    const foreign = execDenial(&sb, "gh", &.{ "/usr/bin/gh", "pr", "create", "-F", ".clanker-worktrees/123/body.md" }) orelse
+        return error.TestExpectedDenial;
+    try std.testing.expectEqualStrings(".clanker-worktrees/123/body.md", foreign.foreign_worktree);
+
+    // ...and ahead of the git verb allowlist, so the refusal names the real
+    // reason rather than blaming the verb.
+    sb.exec_pattern_allow = &.{};
+    sb.exec_allow = &.{"git"};
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "-C", ".clanker-worktrees/123", "status" }).? == .foreign_worktree);
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "-C", "../123", "status" }).? == .foreign_worktree);
+    // The run's own tree is `.`, which is unaffected.
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "-C", ".", "status" }) == null);
 }
 
 test "execUnderPolicy refuses a command that is not on the allowlist" {
@@ -4581,6 +4679,75 @@ test "pathHasWorktreeDir flags descent into another run's worktree" {
     try std.testing.expect(!pathHasWorktreeDir("state/runs"));
     try std.testing.expect(!pathHasWorktreeDir(""));
     try std.testing.expect(!pathHasWorktreeDir("clanker-worktrees/123")); // sibling name
+}
+
+test "pathEscapesUpward cancels . and .. textually" {
+    try std.testing.expect(pathEscapesUpward(".."));
+    try std.testing.expect(pathEscapesUpward("../123"));
+    try std.testing.expect(pathEscapesUpward("./../123"));
+    try std.testing.expect(pathEscapesUpward("a/../../b"));
+
+    // Stays inside: a `..` that only cancels a component before it. `src/..`
+    // is the starting directory itself, which is where the run already is.
+    try std.testing.expect(!pathEscapesUpward("src/.."));
+    try std.testing.expect(!pathEscapesUpward("src/../lib"));
+    try std.testing.expect(!pathEscapesUpward("a/b/../../c"));
+    try std.testing.expect(!pathEscapesUpward("src/sandbox"));
+    try std.testing.expect(!pathEscapesUpward("./src"));
+    try std.testing.expect(!pathEscapesUpward(""));
+
+    // Absolute paths are the component test's business, not this one's.
+    try std.testing.expect(!pathEscapesUpward("/etc/passwd"));
+    try std.testing.expect(!pathEscapesUpward("/checkout/../etc"));
+}
+
+test "argStepsUpward tells a path from a pattern that happens to hold two dots" {
+    try std.testing.expect(argStepsUpward(".."));
+    try std.testing.expect(argStepsUpward("../123"));
+    try std.testing.expect(argStepsUpward("src/../lib"));
+    try std.testing.expect(argStepsUpward("src/.."));
+
+    // rg / ast-grep patterns are ordinary arguments here (nothing runs through
+    // a shell), so two dots without a '/' beside them must stay usable.
+    try std.testing.expect(!argStepsUpward("a..b"));
+    try std.testing.expect(!argStepsUpward("\\.\\."));
+    try std.testing.expect(!argStepsUpward("fn .. end"));
+    try std.testing.expect(!argStepsUpward("..foo"));
+    try std.testing.expect(!argStepsUpward("src/foo..bar"));
+    try std.testing.expect(!argStepsUpward(""));
+}
+
+test "foreignWorktreeArg closes both routes into a sibling run's tree" {
+    // Naming the container, which is what a run in the checkout would do. This
+    // is the case that used to walk straight past the cwd-only guard.
+    try std.testing.expectEqualStrings(
+        ".clanker-worktrees/123",
+        foreignWorktreeArg(&.{ "/usr/bin/git", "-C", ".clanker-worktrees/123", "status" }).?,
+    );
+    try std.testing.expectEqualStrings(
+        "/checkout/.clanker-worktrees/123",
+        foreignWorktreeArg(&.{ "/usr/bin/git", "-C", "/checkout/.clanker-worktrees/123", "status" }).?,
+    );
+    // Not just readable before this: `worktree` is an allowed git verb and
+    // "remove" is not matched by the "rm" deny token, so this deleted it.
+    try std.testing.expectEqualStrings(
+        ".clanker-worktrees/123",
+        foreignWorktreeArg(&.{ "/usr/bin/git", "worktree", "remove", ".clanker-worktrees/123" }).?,
+    );
+
+    // Walking up to a sibling from inside a worktree, where cwd is
+    // `<checkout>/.clanker-worktrees/<own-id>` and no `.clanker-worktrees`
+    // component appears in the argument at all.
+    try std.testing.expectEqualStrings(
+        "../123",
+        foreignWorktreeArg(&.{ "/usr/bin/git", "-C", "../123", "status" }).?,
+    );
+
+    // Ordinary argv is untouched, patterns included.
+    try std.testing.expect(foreignWorktreeArg(&.{ "/usr/bin/git", "status" }) == null);
+    try std.testing.expect(foreignWorktreeArg(&.{ "/usr/bin/rg", "needle", "src" }) == null);
+    try std.testing.expect(foreignWorktreeArg(&.{ "/usr/bin/rg", "a..b", "src/../lib" }) == null);
+    try std.testing.expect(foreignWorktreeArg(&.{ "/opt/homebrew/bin/zig", "build", "test" }) == null);
 }
 
 test "ckHash produces correct SHA-256 hex digest" {
