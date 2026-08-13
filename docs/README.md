@@ -637,7 +637,7 @@ A line starting with `!` is a shell escape (see below), a line starting with `/`
 | `/workflows` | in-process | List reusable prompt workflows |
 | `/workflow <name> [args]` | in-process | Run a workflow (expands `{{args}}`, then runs it as a task) |
 | `/sessions`, `/history` | `cmd_sessions` | List saved conversations |
-| `/graph` | `cmd_graph list` | List recorded runs (same as `clanker graph`) |
+| `/graph [run-id]` | `cmd_graph` | List recorded runs, or render one as a timeline (same as `clanker graph`) |
 | `/status` | `cmd_status` | Show instance identity and configured peers |
 | `/tools` | `cmd_tools` | List registered tools (same as `clanker tools`) |
 | `/plugins [on\|off <name>]`, `/plugin [on\|off <name>]` | `cmd_plugins` | List plugins or switch an optional one on or off; the REPL reloads its tool catalog after a change |
@@ -660,15 +660,15 @@ A line starting with `!` is a third input mode, checked before the command table
 
 It is not a shell. The line is split into one fixed argv — whitespace separates arguments, `'…'` or `"…"` groups one argument that contains spaces, there are no backslash escapes — and that argv goes through the same `ck_exec` gate a WASM tool's exec call goes through (`host.execUnderPolicy` → `host.execDenial`). So there are no pipes, redirections, globs or `$VAR` expansion, because there is no shell to expand them; the child also gets the same filtered environment a tool's subprocess gets, which is why an allowed binary cannot print this project's API keys.
 
-The commands it may run are the union of every registered tool's `exec_allow` (`ast-grep`, `gh`, `git`, `rg`, `semcode`, `uv`, `zig`, `zls` as shipped) plus anything in `agent.repl_exec_allow`. A bare `!` prints usage and that list. The rest of the policy still applies: `git` is limited to its local verbs, the deny tokens (`reset`, `rebase`, `rm`, `-f`, …) still refuse, and a refusal is printed as a transcript line saying which token tripped it. A non-zero exit is reported as `[! exit N]`; output is control-stripped like every other untrusted string and capped at 500 lines.
+The commands it may run are the union of every registered tool's `exec_allow` (`ast-grep`, `gh`, `git`, `rg`, `semcode`, `uv`, `zig`, `zls` as shipped) plus anything in `agent.repl_exec_allow`. A bare `!` prints usage and that list. The rest of the policy still applies: `git` is limited to its local verbs, the deny tokens (`reset`, `rebase`, `rm`, `-f`, …) still refuse, and a refusal is printed as a transcript line saying which token tripped it. A non-zero exit is reported as `[! exit N]`; output is control-stripped like every other untrusted string and capped at 200 lines.
 
 ### `/graph`
 
 Every agent run records an execution graph and writes it to `state/runs/run-<timestamp>.json` on exit (`src/agent/graph.zig`), unless `modules.graphs` is `false`.
 
-The REPL's `/graph` dispatches `cmd_graph` with the `list` argument (`command_registry`, `src/tui/repl_vaxis.zig`), so it prints **one line per recorded run**, not a single run's timeline. With nothing recorded yet it prints `(no runs yet; clanker run creates one)`.
+Bare `/graph` dispatches `cmd_graph` with the `list` argument, so it prints one line per recorded run. `/graph <run-id>` and `clanker graph <run-id>` both render that run as an ASCII timeline. With nothing recorded yet the listing prints `(no runs yet; clanker run creates one)`.
 
-To render one run as an ASCII timeline, pass its id to the CLI — `clanker graph <run-id>` — which prints a header plus one line per node grouped by iteration:
+The timeline has a header plus one line per node grouped by iteration:
 
 ```
 run-1786365428 — summarize the config
