@@ -2456,6 +2456,17 @@ fn catalogCapabilities(arena: std.mem.Allocator, m: std.json.Value) ![]const []c
     return caps.toOwnedSlice(arena);
 }
 
+fn tomlQuoted(arena: std.mem.Allocator, value: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.append(arena, '"');
+    for (value) |c| {
+        if (c == '"' or c == '\\') try out.append(arena, '\\');
+        try out.append(arena, c);
+    }
+    try out.append(arena, '"');
+    return out.toOwnedSlice(arena);
+}
+
 fn renderModelSnippet(arena: std.mem.Allocator, provider_name: []const u8, name: []const u8, m: std.json.Value) ![]const u8 {
     if (m != .object) return std.fmt.allocPrint(arena, "# {s}: malformed catalog entry\n", .{name});
     var fields: std.ArrayList([]const u8) = .empty;
@@ -2467,7 +2478,7 @@ fn renderModelSnippet(arena: std.mem.Allocator, provider_name: []const u8, name:
         if (jsonNum(c.object, "input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_input = {d}", .{v}));
         if (jsonNum(c.object, "output")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_output = {d}", .{v}));
     };
-    if (fieldStr(m.object, "name")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "display = \"{s}\"", .{disp}));
+    if (fieldStr(m.object, "name")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "display = {s}", .{try tomlQuoted(arena, disp)}));
 
     const caps = try catalogCapabilities(arena, m);
     if (caps.len > 0) {
@@ -2478,7 +2489,9 @@ fn renderModelSnippet(arena: std.mem.Allocator, provider_name: []const u8, name:
     }
 
     var w: std.Io.Writer.Allocating = .init(arena);
-    try w.writer.print("[models.\"{s}/{s}\"]\nprovider = \"{s}\"\n", .{ provider_name, name, provider_name });
+    const table_key = try tomlQuoted(arena, try std.fmt.allocPrint(arena, "{s}/{s}", .{ provider_name, name }));
+    const provider_q = try tomlQuoted(arena, provider_name);
+    try w.writer.print("[models.{s}]\nprovider = {s}\n", .{ table_key, provider_q });
     for (fields.items) |f| {
         try w.writer.writeAll(f);
         try w.writer.writeAll("\n");
@@ -12634,6 +12647,22 @@ test "findCatalogModel tries the bare id when the config name carries an OpenRou
     try std.testing.expect(findCatalogModel(provider_entry, "kimi-k3") != null);
     try std.testing.expect(findCatalogModel(provider_entry, "moonshotai/kimi-k3") != null);
     try std.testing.expect(findCatalogModel(provider_entry, "no-such-model") == null);
+}
+
+test "vendored TOML last table with the same header wins" {
+    var parser = toml.Parser.init(std.testing.allocator);
+    defer parser.deinit();
+    var result = try parser.parseString(
+        \\[models."a/x"]
+        \\provider = "first"
+        \\
+        \\[models."a/x"]
+        \\provider = "second"
+        \\
+    );
+    defer result.deinit();
+    const entry = result.value.get("models").?.table.get("a/x").?.table;
+    try std.testing.expectEqualStrings("second", entry.get("provider").?.string);
 }
 
 test "renderModelSnippet emits a valid, pasteable TOML models table" {
