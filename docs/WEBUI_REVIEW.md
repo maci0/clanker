@@ -842,6 +842,52 @@ the page. Against `main` the same harness fails 14 of its 23 assertions.
 Gate: `zig build`, `zig build tools`, `zig build test --summary all` —
 163/163 steps, 763/765 tests (2 skipped, the expected worktree pair).
 
+## The run graph knew which iteration only half of it belonged to (2026-08-13)
+
+Two defects in `lib/graph.js`, both of them the graph disagreeing with itself
+about what it had drawn.
+
+**A tool call had no iteration.** `toDagInput` stamped `iteration` on the llm
+entry that opened a stage and on nothing else, so the tool calls made inside
+that iteration, and the final answer that closed the last one, went into the
+layout without it. `layoutGraph` then wrote `String(dn.data.iteration)` onto
+every node as `data-iter` — which for those is the five characters
+`undefined`. The iteration scrubber reads it back with `parseInt`, bails on
+`NaN`, and so dimmed only the model calls: dragging it to iteration 1 of a
+four-iteration run left every tool call and the answer at full opacity, which
+is the opposite of what the control is for. The same attribute is what a click
+uses to mark the matching breadcrumb chip `aria-current`, so clicking a tool
+node cleared the crumb instead of moving it. Fixed where it originates: the
+stage's iteration goes onto its tools, and the last stage's onto the answer.
+
+**The arrowhead was counted as an edge.** The `<marker>` that draws the arrow
+head is a `<path>`, and it lives inside the `<defs>` of the same
+`svg.run-edges`. `highlightPath` walked `dag.ilinks()` against
+`canvas.querySelectorAll(".run-edges path")` by index, and that answer begins
+with the marker — so edge *n* was painted onto edge *n-1*, and the last edge in
+the graph could never highlight at all. On a fan-out/fan-in graph the effect is
+that hovering a node lights up a neighbouring branch. The drawn edges are now
+kept in a list in creation order and highlighted through it, and each carries
+`data-edge` so anything else that wants the real edges can ask for them by
+name. `app.js`'s minimap was the other victim of the same query: it parsed the
+marker's `M0,0 L8,4` as an edge and drew a stray hairline in the corner of
+every map. It now asks for `path[data-edge]`.
+
+### Verified
+
+`node` + the DOM stub driving the real `lib/graph.js`, with `core/vendor.js`
+swapped for a stub whose `loadD3` installs a fake `dagStratify`/`sugiyama` —
+so `layoutGraph` really runs, really builds the svg, and the hover listener is
+really dispatched. 19 assertions: the iteration each of the five nodes ends up
+with, `data-iter` never being the string `undefined`, the five edges of a
+two-stage run with two parallel tools, all five of them marked on hover, the
+marker path never marked, the highlight clearing on `mouseleave`, and a second
+`layoutGraph` replacing the first render rather than stacking on it. Against
+unmodified `main` the same harness fails 6 of the 19. The `app.js` minimap line
+is one selector and is checked as source shape, since importing `app.js` boots
+the page. Gate: `zig build`, `zig build tools`, `zig build test --summary all`
+— 163/163 steps, 765/767 tests (2 skipped, the expected worktree pair).
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
