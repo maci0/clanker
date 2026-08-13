@@ -157,6 +157,11 @@ pub fn build(b: *std.Build) void {
         .cpu_arch = .wasm32,
         .os_tag = .freestanding,
     });
+    const tool_utf8_mod = b.createModule(.{
+        .root_source_file = b.path("src/util/utf8.zig"),
+        .target = tool_target,
+        .optimize = .ReleaseSmall,
+    });
 
     var threaded = std.Io.Threaded.init(b.allocator, .{});
     defer threaded.deinit();
@@ -195,6 +200,7 @@ pub fn build(b: *std.Build) void {
                 .root_source_file = b.path(b.fmt("tools/zig/{s}.zig", .{stem})),
                 .target = tool_target,
                 .optimize = .ReleaseSmall,
+                .imports = &.{.{ .name = "utf8", .module = tool_utf8_mod }},
             }),
         });
         tool.entry = .disabled;
