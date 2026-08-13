@@ -888,6 +888,90 @@ is one selector and is checked as source shape, since importing `app.js` boots
 the page. Gate: `zig build`, `zig build tools`, `zig build test --summary all`
 — 163/163 steps, 765/767 tests (2 skipped, the expected worktree pair).
 
+## A table under a sentence is a table (2026-08-13)
+
+`renderMarkdown` had two ideas about what opens a block. The dispatcher at the
+top of the loop knew about headings, thematic breaks, blockquotes, lists and
+tables. The paragraph accumulator underneath it knew about headings,
+blockquotes and lists — and nothing about breaks or tables. Whichever ran
+first won, and for a table written directly under the line that introduces it
+the accumulator ran first:
+
+```
+Here are the results:
+| name | count |
+| --- | --- |
+| a | 1 |
+```
+
+That whole block rendered as one paragraph of literal `|` characters — exactly
+the "wall of monospace" the markdown renderer exists to prevent — because the
+paragraph swallowed the header row before the dispatcher could look at it. A
+`---` rule under a line of prose went the same way, appearing as three hyphens
+mid-sentence. Both shapes are what a model writes: prose introducing a table,
+no blank line between.
+
+- **`lib/markdown.js: ruleAt(line)`, `tableAt(lines, i)`, `blockAt(lines, i)`**
+  — the question is asked once now, and both the dispatcher and the paragraph
+  accumulator ask it, so they cannot drift apart again. `tableAt` needs the
+  header *and* the `|---|---|` under it, because a line with pipes in it is
+  otherwise just prose: `a | b is not a table` still renders as the sentence it
+  is.
+- The dispatcher's own inline copies of the rule and table tests are replaced by
+  calls to the same predicates, so there is one definition of each.
+
+`blockAt` is exactly the disjunction of the dispatcher's own tests, which is
+what keeps the paragraph loop from stalling: a line the accumulator refuses is
+by construction a line the dispatcher consumes.
+
+### Verified
+
+`node` + a DOM stub driving the real `lib/markdown.js` and asserting on the
+rendered node tree. A table under a sentence renders `p` + `.md-table-wrap`
+with two `th` and two `tbody tr`, and the paragraph above it holds no `|` at
+all; `before\n---\nafter` renders `p`,`hr`,`p`. Alongside them, the shapes
+that already worked are pinned so this cannot be a trade: a standalone table, a
+table after a blank line, heading/list/quote breaks, a nested list, a plain
+three-line paragraph with its two `<br>`, `- - -` as a rule, and inline
+`*emphasis*` not opening a block. 30 assertions green; the same harness
+against unmodified `main` fails 12 of its 24.
+Gate: `zig build`, `zig build tools`, `zig build test --summary all`.
+
+## The Models view stops forgetting which provider you picked (2026-08-13)
+
+`#models-live-provider` is the provider the "List models" button asks. It is
+filled by `loadConfigured()`, which starts by emptying it — and
+`loadModelsView()` runs on **every** entry to the Models view as well as behind
+Refresh. Emptying a `<select>` throws its selection away, and refilling it
+leaves whichever option lands first selected (the HTML "ask for a reset"
+algorithm), so the choice was silently replaced by the alphabetically-first
+provider every single time. Nothing on screen said so, the table from the
+provider you *had* chosen was still sitting under the control, and the next
+click asked a different backend and drew its models in the same place.
+
+`restoreProvider(sel, wanted)` reads the value before the refill and puts it
+back after. The case that needs care is a provider removed from `config.toml`
+since: assigning a value no option carries leaves `selectedIndex` at `-1` and
+the control **blank**, not fallen back — so that is detected and stepped to the
+first option deliberately, and the live listing still on screen is dropped,
+because it belongs to a provider the select no longer names and leaving it
+there reads as the new selection's models.
+
+### Verified
+
+`node` + a DOM stub driving the real `features/models.js` — bind, load, choose
+`openai`, list its models, then reload the view twice. The stub models the two
+`<select>` behaviours the bug rides on: refilling an emptied select selects the
+first option, and assigning an unknown value gives `selectedIndex -1` with an
+empty `value` rather than a silent fallback. Faking either would have made the
+test test itself. 12 assertions: the chosen provider survives Refresh, a second
+"List models" still reaches `name=openai`, and a provider dropped from config
+falls back to the first while its stale table is cleared. Against `main` the
+same harness fails 3 of the 12 — the selection resets, the follow-up request
+goes to `deepseek`, and the dead listing stays. Gate: `zig build`,
+`zig build tools`, `zig build test --summary all` — 163/163 steps, 765/767
+tests (2 skipped, the expected worktree pair).
+
 ## The board's lane menu did nothing, loudly and quietly (2026-08-13)
 
 Four defects behind the column head's `⋯` menu and the card it sorts.
