@@ -10,6 +10,19 @@ const lib = @import("lib.zig");
 const event_path = "state/autolearn.jsonl";
 const roadmap_path = "docs/ROADMAP.md";
 
+/// Only events this recent count toward roadmap items. The log keeps full
+/// history, but a suggestion generated from a failure fixed days ago is
+/// noise: with no window, every resolved issue resurfaces on every refresh.
+const window_seconds: i64 = 7 * 24 * 3600;
+
+/// The loop's duplicate-call guard reports through tool results, so its
+/// refusals land in the log as tool_error events. They are model behavior
+/// (repeating identical calls), not tool defects, and listing them under
+/// "Fix '<tool>' tool errors" points the fix at the wrong place.
+fn isRepeatGuard(detail: []const u8) bool {
+    return std.mem.startsWith(u8, detail, "identical tool call already executed");
+}
+
 const Count = struct {
     n: u64 = 0,
     detail: []const u8 = "",
@@ -43,6 +56,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var cache_hit: u64 = 0;
     var cache_miss: u64 = 0;
     var model_uses: std.StringArrayHashMapUnmanaged(u64) = .empty;
+    var repeat_guard: u64 = 0;
+
+    // 0 disables the window (a host without a clock keeps full history).
+    const now_s: i64 = @intCast(@divTrunc(lib.nowNanos(), std.time.ns_per_s));
+    const cutoff: i64 = if (now_s > window_seconds) now_s - window_seconds else 0;
 
     const data = lib.fsRead(event_path) catch null;
     if (data) |d| {
@@ -51,6 +69,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             const l = std.mem.trim(u8, line, " \t\r\n");
             if (l.len == 0) continue;
             const ev = std.json.parseFromSliceLeaky(Event, alloc, l, .{ .ignore_unknown_fields = true }) catch continue;
+            if (ev.ts < cutoff) continue;
             if (std.mem.eql(u8, ev.type, "unknown_tool")) {
                 const gop = try unknown.getOrPut(alloc, ev.tool);
                 if (!gop.found_existing) gop.value_ptr.* = .{};
@@ -59,6 +78,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 // non-empty detail wins (events are appended in order).
                 if (ev.detail.len > 0) gop.value_ptr.detail = ev.detail;
             } else if (std.mem.eql(u8, ev.type, "tool_error")) {
+                if (isRepeatGuard(ev.detail)) {
+                    repeat_guard += 1;
+                    continue;
+                }
                 const gop = try errors.getOrPut(alloc, ev.tool);
                 if (!gop.found_existing) gop.value_ptr.* = .{};
                 gop.value_ptr.n += 1;
@@ -114,6 +137,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try items.append(alloc, try std.fmt.allocPrint(alloc, "Fix '{s}' tool errors ({d} failure(s), last: {s})", .{ kv.key_ptr.*, kv.value_ptr.n, kv.value_ptr.detail }));
     }
 
+    // Repeated identical calls: one aggregate item, aimed at the model side.
+    if (repeat_guard >= 3) {
+        try items.append(alloc, try std.fmt.allocPrint(alloc, "Reduce repeated identical tool calls ({d} refused by the duplicate-call guard): the model re-issues calls it already has answers for; tighten prompts or tool descriptions.", .{repeat_guard}));
+    }
+
     // Cache efficiency.
     const cache_total = cache_hit + cache_miss;
     if (cache_total > 0) {
@@ -133,7 +161,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     var section: std.ArrayList(u8) = .empty;
     try section.appendSlice(alloc, "## Autolearn\n\n");
-    try section.appendSlice(alloc, "Automatically observed from usage patterns (state/autolearn.jsonl). Refresh with `clanker autolearn`.\n\n");
+    try section.appendSlice(alloc, "Automatically observed from usage patterns (state/autolearn.jsonl, last 7 days). Refresh with `clanker autolearn`.\n\n");
     if (items.items.len == 0) {
         try section.appendSlice(alloc, "- No actionable observations yet — run a few tasks, then `clanker autolearn`.\n");
     } else {
