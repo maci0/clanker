@@ -140,7 +140,7 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/config.zig", .needle = "git_commit: bool = true" },
     .{ .file = "src/config.zig", .needle = "if (obj.get(\"capability_gate\")) |k| im.capability_gate = switch (k)" },
     .{ .file = "src/gate/checks.zig", .needle = "configSourceWeakeningGate(" },
-    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.configSourceWeakeningGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "stagedConfigWeakened(" },
     // cmdEval is writable. An early `return` before runAll, or `--tasks`
     // with an emptied list, makes the staged `clanker eval` exit 0 with
     // no result lines. The call sites plus uncoveredCapabilityTasks are
@@ -916,11 +916,13 @@ pub const Engine = struct {
                 self.removeTree(staging);
                 return .failed;
             };
-            const src_weak = gate_checks.configSourceWeakeningGate(data);
-            if (!src_weak.ok) {
-                log.log(.warn, "proposal rejected: {s}", .{src_weak.detail});
-                try self.hist.append(id, .failed, opts.instructions, proposal.summary, gate_files, 0, 0, src_weak.detail, fingerprints, null);
-                self.feedback = try std.fmt.allocPrint(self.arena, "Your patch was rejected by the config-weakening guard: {s}\nDo not disable safety gates in src/config.zig defaults or their parser.", .{src_weak.detail});
+            // The check itself lives here, not only in writable checks.zig:
+            // a patch that guts configSourceWeakeningGate to `return ok`
+            // would otherwise land a default flip.
+            if (stagedConfigWeakened(data)) |detail| {
+                log.log(.warn, "proposal rejected: {s}", .{detail});
+                try self.hist.append(id, .failed, opts.instructions, proposal.summary, gate_files, 0, 0, detail, fingerprints, null);
+                self.feedback = try std.fmt.allocPrint(self.arena, "Your patch was rejected by the config-weakening guard: {s}\nDo not disable safety gates in src/config.zig defaults or their parser.", .{detail});
                 self.removeTree(staging);
                 return .failed;
             }
@@ -2550,6 +2552,32 @@ fn lastProposalJson(arena: std.mem.Allocator, text: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Staged `src/config.zig` must keep the improve-gate defaults enabled.
+/// Protected: this file cannot be patched in the same pass it is grading.
+fn stagedConfigWeakened(src: []const u8) ?[]const u8 {
+    const required = [_][]const u8{
+        "capability_gate: bool = true",
+        "inert_gate: bool = true",
+        "plan_phase: bool = true",
+        "git_commit: bool = true",
+        "if (obj.get(\"capability_gate\")) |k| im.capability_gate = switch (k)",
+    };
+    for (required) |need| {
+        if (std.mem.find(u8, src, need) == null) return need;
+    }
+    const forbidden = [_][]const u8{
+        "capability_gate: bool = false",
+        "inert_gate: bool = false",
+        "plan_phase: bool = false",
+        "max_consecutive_test_only: u32 = 0",
+        "|b| !b",
+    };
+    for (forbidden) |needle| {
+        if (std.mem.find(u8, src, needle) != null) return needle;
+    }
+    return null;
+}
+
 /// True when `stdout` has a `name: <score> PASS|FAIL` line for every
 /// staged `.task` eval. Names come from this process's loader (`src/evals`
 /// is protected), so a gutted staged `cmdEval` cannot hide a case by not
@@ -2839,6 +2867,12 @@ test "parseFailedEvalNames handles empty input" {
 
     const names = try parseFailedEvalNames(arena, "");
     try std.testing.expectEqual(@as(usize, 0), names.len);
+}
+
+test "the live src/config.zig keeps improve-gate defaults enabled" {
+    const src = @embedFile("../config.zig");
+    try std.testing.expect(stagedConfigWeakened(src) == null);
+    try std.testing.expect(stagedConfigWeakened("capability_gate: bool = false") != null);
 }
 
 test "capabilityLineReports requires a named PASS or FAIL line" {

@@ -175,6 +175,12 @@ context, and asks the patch call to implement exactly that idea. Planning
 failing or running dry falls back to the single-shot behaviour. Disable with
 `improve.plan_phase = false`.
 
+`config.toml` may omit those keys. The struct defaults in `src/config.zig`
+(`capability_gate`, `inert_gate`, `plan_phase`) are then what the next run
+loads, so flipping a default there is the same as writing `= false` in
+config. The loop rejects that, and `clanker eval --tasks` with no result
+lines is a failed capability gate, not a pass.
+
 ## Living document
 
 This file and the `docs/prompts/*-review.md` prompts are living documents.
