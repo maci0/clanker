@@ -28,6 +28,7 @@ import { goalStatusLabel } from "./core/goals.js";
 import { selectedKnowledge as kbSelected, loadKnowledge as kbLoad, bindKnowledge as kbBind } from "./features/knowledge.js";
 import { loadPromptsView as promptsLoadView, bindPrompts as promptsBind } from "./features/prompts.js";
 import { loadModelsView as modelsLoadView, bindModels as modelsBind } from "./features/models.js";
+import { loadScheduleView as scheduleLoadView, bindSchedule as scheduleBind } from "./features/schedule.js";
 import { renderTurnTodos as todosRenderTurn } from "./features/todos.js";
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -3965,7 +3966,7 @@ toolsBind({
 
 // ---- views: one section visible at a time -----------------------------
 
-var VIEWS = ["chat", "board", "runs", "fleet", "arena", "compare", "rooms", "models", "knowledge", "prompts", "tools", "system"];
+var VIEWS = ["chat", "board", "runs", "fleet", "arena", "compare", "rooms", "models", "schedule", "knowledge", "prompts", "tools", "system"];
 var arenaModulePromise = null;
 function loadArenaModule() {
   if (!arenaModulePromise) arenaModulePromise = import("./features/arena.js");
@@ -4008,6 +4009,7 @@ var viewLoaders = {
   // run even when the Goals view was never opened.
   board: function () { return loadBoardRooms().then(function () { return loadGoals(); }); },
   models: function () { modelsBind(); return modelsLoadView(); },
+  schedule: function () { scheduleBind(); return scheduleLoadView(); },
   knowledge: function(){ return kbLoad(); },
   prompts: promptsLoadView,
   tools: loadTools,

@@ -46,6 +46,7 @@ const gate_checks = @import("gate/checks.zig");
 const schedule_cmd = @import("schedule/command.zig");
 const schedule_runner = @import("schedule/runner.zig");
 const schedule_store = @import("schedule/store.zig");
+const schedule_cron = @import("schedule/cron.zig");
 
 // Web UI vendor assets: served as plain static files (not routed through the
 // WASM "webui" tool, its shared output buffer, lib.zig's out_cap, is 64 KiB,
@@ -4246,6 +4247,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handlePrompts(io, gpa, cfg, environ_map, method, body, stream);
         } else if (std.mem.startsWith(u8, path, "/api/arena")) {
             handleArena(io, gpa, cfg, environ_map, method, path, stream);
+        } else if (std.mem.startsWith(u8, path, "/api/schedule")) {
+            handleSchedule(io, gpa, method, path, body, stream);
         } else if (std.mem.startsWith(u8, path, "/api/compare")) {
             handleCompare(io, gpa, cfg, environ_map, method, path, body, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message")) {
@@ -6073,6 +6076,7 @@ const webui_asset_paths = [_][]const u8{
     "/webui/features/prompts.js",
     "/webui/features/todos.js",
     "/webui/features/models.js",
+    "/webui/features/schedule.js",
 };
 
 fn isWebuiAssetPath(path: []const u8) bool {
@@ -6122,6 +6126,7 @@ fn handleWebuiAsset(
     const is_arena_view = std.mem.endsWith(u8, target, "features/arena.js");
     const is_todos_view = std.mem.endsWith(u8, target, "features/todos.js");
     const is_models_view = std.mem.endsWith(u8, target, "features/models.js");
+    const is_schedule_view = std.mem.endsWith(u8, target, "features/schedule.js");
     const is_vendor = std.mem.endsWith(u8, target, "vendor.js");
     const is_chat = std.mem.endsWith(u8, target, "chat.js");
     const is_labels = std.mem.endsWith(u8, target, "labels.js");
@@ -6148,8 +6153,8 @@ fn handleWebuiAsset(
     const is_modelpicker = std.mem.endsWith(u8, target, "modelpicker.js");
     const is_tools = std.mem.endsWith(u8, target, "tools.js");
     const is_ui = std.mem.endsWith(u8, target, "ui.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_compare_view) &render_compare_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_todos_view) &render_todos_view else if (is_models_view) &render_models_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_compare_view) &gzip_compare_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_todos_view) &gzip_todos_view else if (is_models_view) &gzip_models_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_compare_view) &render_compare_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_todos_view) &render_todos_view else if (is_models_view) &render_models_view else if (is_schedule_view) &render_schedule_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_compare_view) &gzip_compare_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_todos_view) &gzip_todos_view else if (is_models_view) &gzip_models_view else if (is_schedule_view) &gzip_schedule_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -8457,6 +8462,209 @@ test "arena route maps a bare path to a listing and a suffix to one match" {
     );
 }
 
+/// The next time an entry fires, as a wall-clock second, or null when it never
+/// will: disabled, an unparseable spec, or a spec with no future match.
+///
+/// Same reading `clanker schedule list` prints, and deliberately the same
+/// three-line derivation rather than a shared helper hoisted into the store:
+/// `nextText` renders a string for a terminal column and this needs a number
+/// for JSON, so factoring them together would mean one of the two callers
+/// parsing the other's output.
+fn scheduleNextRun(e: schedule_store.Entry) ?i64 {
+    if (!e.enabled) return null;
+    const spec = schedule_cron.parse(e.cron) catch return null;
+    const from = if (e.last_run > 0) e.last_run else e.created;
+    return spec.nextAfter(from, e.tz_offset_minutes);
+}
+
+/// `GET /api/schedule` — every entry with its next fire time, plus the tail of
+/// the ledger. `POST /api/schedule/<id>` with `{"enabled":bool}` switches one
+/// on or off.
+///
+/// Read-and-toggle only, which is the whole surface on purpose. Firing an
+/// entry is an agent run, and this server answers one request per connection,
+/// so `run` and `run-due` stay where they already work: the system's own cron,
+/// or a terminal. The same line the Arena and Compare views draw. Adding and
+/// removing entries stays on the CLI too, because `add` has to validate a cron
+/// spec and a task and report *which* of them was wrong, and a browser form
+/// that silently accepted a spec that never fires would be worse than no form.
+///
+/// Enabling re-dates `last_run` to now, exactly as `schedule enable` does: an
+/// entry parked for a month must not come back owing a run.
+fn handleSchedule(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    method: []const u8,
+    path: []const u8,
+    body: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const cwd = std.Io.Dir.cwd();
+
+    const rest = path["/api/schedule".len..];
+    if (std.mem.eql(u8, method, "POST")) {
+        const id = if (rest.len > 1 and rest[0] == '/') rest[1..] else "";
+        if (!isSlug(id)) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad entry id\"}");
+            return;
+        }
+        const req = std.json.parseFromSliceLeaky(struct { enabled: bool }, arena, body, .{ .ignore_unknown_fields = true }) catch {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"expected {\\\"enabled\\\": true|false}\"}");
+            return;
+        };
+        var s = schedule_store.open(io, gpa, arena, cwd) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"schedule is locked or unreadable\"}");
+            return;
+        };
+        defer s.close();
+        const e = s.find(id) orelse {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such entry\"}");
+            return;
+        };
+        if (req.enabled and !e.enabled) {
+            e.last_run = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
+        }
+        e.enabled = req.enabled;
+        s.save() catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not write the schedule\"}");
+            return;
+        };
+        var out: std.Io.Writer.Allocating = .init(arena);
+        var js = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+        js.beginObject() catch return;
+        js.objectField("ok") catch return;
+        js.write(true) catch return;
+        js.objectField("entry") catch return;
+        writeScheduleEntry(&js, e.*) catch return;
+        js.endObject() catch return;
+        respond(stream, 200, "OK", out.written());
+        return;
+    }
+
+    if (!std.mem.eql(u8, method, "GET")) {
+        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"GET or POST\"}");
+        return;
+    }
+
+    const entries = schedule_store.read(io, arena, cwd) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not read the schedule\"}");
+        return;
+    };
+    // The same 20 `schedule log` shows. A ledger read that fails is an empty
+    // ledger rather than a failed page: the entries are the point, and a
+    // missing log.jsonl is what a schedule that has never fired looks like.
+    const records = schedule_store.readRecords(io, arena, cwd, 20) catch &[_]schedule_store.Record{};
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var js = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    js.beginObject() catch return;
+    js.objectField("ok") catch return;
+    js.write(true) catch return;
+    js.objectField("entries") catch return;
+    js.beginArray() catch return;
+    for (entries) |e| writeScheduleEntry(&js, e) catch return;
+    js.endArray() catch return;
+    js.objectField("log") catch return;
+    js.beginArray() catch return;
+    for (records) |r| {
+        js.beginObject() catch return;
+        js.objectField("ts") catch return;
+        js.write(r.ts) catch return;
+        js.objectField("id") catch return;
+        js.write(r.id) catch return;
+        js.objectField("trigger") catch return;
+        js.write(r.trigger) catch return;
+        js.objectField("ok") catch return;
+        js.write(r.ok) catch return;
+        js.objectField("duration_ms") catch return;
+        js.write(r.duration_ms) catch return;
+        if (r.skipped > 0) {
+            js.objectField("skipped") catch return;
+            js.write(r.skipped) catch return;
+        }
+        if (r.err.len > 0) {
+            js.objectField("err") catch return;
+            js.write(r.err) catch return;
+        }
+        js.endObject() catch return;
+    }
+    js.endArray() catch return;
+    js.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
+}
+
+fn writeScheduleEntry(js: *std.json.Stringify, e: schedule_store.Entry) !void {
+    try js.beginObject();
+    try js.objectField("id");
+    try js.write(e.id);
+    try js.objectField("cron");
+    try js.write(e.cron);
+    try js.objectField("task");
+    try js.write(e.task);
+    if (e.provider) |p| {
+        try js.objectField("provider");
+        try js.write(p);
+    }
+    if (e.model) |m| {
+        try js.objectField("model");
+        try js.write(m);
+    }
+    try js.objectField("tz_offset_minutes");
+    try js.write(e.tz_offset_minutes);
+    try js.objectField("enabled");
+    try js.write(e.enabled);
+    try js.objectField("last_run");
+    try js.write(e.last_run);
+    try js.objectField("last_status");
+    try js.write(e.last_status);
+    try js.objectField("runs");
+    try js.write(e.runs);
+    try js.objectField("failures");
+    try js.write(e.failures);
+    // Absent rather than 0 when it never fires again, so the page can tell
+    // "disabled or broken spec" from "due at the epoch".
+    if (scheduleNextRun(e)) |next| {
+        try js.objectField("next_run");
+        try js.write(next);
+    }
+    try js.endObject();
+}
+
+test "the schedule payload carries the next fire time, and omits it when there is none" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const created = schedule_cron.epochFromCivil(2026, 8, 13, 12, 0, 0);
+    const every_minute = schedule_store.Entry{ .id = "sch-1", .cron = "* * * * *", .task = "t", .created = created };
+    try std.testing.expectEqual(@as(?i64, created + 60), scheduleNextRun(every_minute));
+
+    // A disabled entry has no next fire, and neither does a spec that cannot
+    // be parsed: both are "never", and the field is left out for both.
+    var off = every_minute;
+    off.enabled = false;
+    try std.testing.expectEqual(@as(?i64, null), scheduleNextRun(off));
+    var junk = every_minute;
+    junk.cron = "not a cron spec";
+    try std.testing.expectEqual(@as(?i64, null), scheduleNextRun(junk));
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var js = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    try writeScheduleEntry(&js, every_minute);
+    const on = try std.json.parseFromSliceLeaky(std.json.Value, arena, out.written(), .{});
+    try std.testing.expectEqual(created + 60, on.object.get("next_run").?.integer);
+    try std.testing.expect(on.object.get("enabled").?.bool);
+
+    var out2: std.Io.Writer.Allocating = .init(arena);
+    var js2 = std.json.Stringify{ .writer = &out2.writer, .options = .{ .emit_null_optional_fields = false } };
+    try writeScheduleEntry(&js2, off);
+    const disabled = try std.json.parseFromSliceLeaky(std.json.Value, arena, out2.written(), .{});
+    try std.testing.expect(disabled.object.get("next_run") == null);
+}
+
 /// `GET /api/compare` lists past comparisons; `GET /api/compare/<id>` returns
 /// one, read blind; `POST /api/compare/<id>` with `{"pick":"<letter>"}` records
 /// the human's pick and reveals.
@@ -9404,6 +9612,7 @@ var render_prompts_view: RenderCache = .{};
 var render_arena_view: RenderCache = .{};
 var render_todos_view: RenderCache = .{};
 var render_models_view: RenderCache = .{};
+var render_schedule_view: RenderCache = .{};
 var render_fleet: RenderCache = .{};
 var render_chat: RenderCache = .{};
 var render_labels: RenderCache = .{};
@@ -9443,6 +9652,7 @@ var gzip_prompts_view: GzipCache = .{};
 var gzip_arena_view: GzipCache = .{};
 var gzip_todos_view: GzipCache = .{};
 var gzip_models_view: GzipCache = .{};
+var gzip_schedule_view: GzipCache = .{};
 var gzip_fleet: GzipCache = .{};
 var gzip_chat: GzipCache = .{};
 var gzip_labels: GzipCache = .{};

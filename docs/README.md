@@ -836,6 +836,8 @@ For the authoritative field list and defaults, see the doc comments on each stru
 | `/api/arena/<id>` | GET | One match: combatants, HP, per-round moves and the verdict. The arena view polls this while a match is running and stops on the verdict |
 | `/api/compare` | GET | List past blind comparisons. Read blind: each row says whether a judge reached a verdict, never whose, since a winning provider name beside a verdict letter is the key to a two-way comparison |
 | `/api/compare/<id>` | GET, POST | GET reads one comparison blind — the answers in their stored order under `A`/`B`/`C`, with no provider or model anywhere in the reply. POST `{"pick":"<letter>"}` records the human's pick through the same tool op `clanker compare --show <id> --pick <letter>` uses, and the reply is revealed |
+| `/api/schedule` | GET | Every scheduled entry with its next fire time, plus the last 20 ledger records. The next-fire reading is the one `clanker schedule list` prints, and it is omitted rather than zeroed when an entry can never fire (disabled, or a spec that parses to nothing) |
+| `/api/schedule/<id>` | POST | `{"enabled":true\|false}` pauses or resumes one entry, writing the same `state/schedule.json` `clanker schedule enable\|disable` writes. Resuming re-dates the window from now, so an entry parked for a month does not come back owing a run. Firing is deliberately not here: that is `run`/`run-due`, from cron or a terminal |
 | `/api/janitor` | GET | How much litter (staging copies, run graphs, improve logs) is reclaimable; read-only, never deletes |
 | `/api/logs` | GET | Tail the instance's log output |
 | `/api/webui/plugins` | GET, POST | List web UI plugin assets, or toggle one |
