@@ -1478,7 +1478,7 @@ const Model = struct {
             // "/model" alone opens the picker on the full list; "/model kimi"
             // seeds it with a starting query, so a remembered partial name is
             // one Enter away instead of a blank list to type into again.
-            .model => self.openModelPicker(pc.args),
+            .model => try self.openModelPicker(ctx, pc.args),
             // /goal <intent> designs a goal through the agent (which calls
             // the goal tool to persist it), matching `clanker goal
             // "<intent>"`. Runs as a normal task so it streams like any
@@ -1535,7 +1535,7 @@ const Model = struct {
                 // Bare `/theme` (or a fuzzy seed) opens the live-preview
                 // picker menu; `/theme <exact-name>` still switches directly.
                 if (pc.args.len == 0 or !theme_mod.isKnown(pc.args)) {
-                    self.openThemePicker(pc.args);
+                    try self.openThemePicker(ctx, pc.args);
                     return;
                 }
                 self.theme_override = self.arena.dupe(u8, pc.args) catch pc.args;
@@ -2069,7 +2069,24 @@ const Model = struct {
         return line.len > 1 and line[0] != ' ' and line[line.len - 1] == ':';
     }
 
-    fn openModelPicker(self: *Model, seed_query: []const u8) void {
+    /// Takes keyboard focus for the modal.
+    ///
+    /// `vxfw` delivers a key press to the focused widget, and the composer
+    /// (`text_field`) has held focus since `.init`. `TextField` consumes
+    /// every printable key, so while it stayed focused the root Model's
+    /// `handlePickerKey` only ever saw the keys the field ignores — arrows,
+    /// Enter, Escape. Typed characters and Backspace went into the composer
+    /// behind the modal instead of into `picker_query`, so the query line
+    /// both pickers draw could not be typed into at all, and the fuzzy filter
+    /// was unreachable except through a seed argument (`/model kimi`).
+    /// Moving focus to the Model for the life of the modal is what makes the
+    /// picker a picker; `closeModelPicker` hands it back.
+    fn focusPicker(self: *Model, ctx: *vxfw.EventContext) !void {
+        try ctx.requestFocus(self.widget());
+    }
+
+    fn openModelPicker(self: *Model, ctx: *vxfw.EventContext, seed_query: []const u8) !void {
+        try self.focusPicker(ctx);
         self.picker_kind = .model;
         self.picker_open = true;
         self.picker_query.clearRetainingCapacity();
@@ -2080,7 +2097,8 @@ const Model = struct {
     /// The theme picker: same modal, but the list is the theme names and the
     /// selection previews live (the whole REPL repaints in the highlighted
     /// theme as you arrow through it). Escape restores what was active before.
-    fn openThemePicker(self: *Model, seed_query: []const u8) void {
+    fn openThemePicker(self: *Model, ctx: *vxfw.EventContext, seed_query: []const u8) !void {
+        try self.focusPicker(ctx);
         self.picker_kind = .theme;
         self.picker_open = true;
         self.theme_saved = self.theme_override;
@@ -2090,9 +2108,11 @@ const Model = struct {
         self.previewSelectedTheme();
     }
 
-    fn closeModelPicker(self: *Model) void {
+    fn closeModelPicker(self: *Model, ctx: *vxfw.EventContext) !void {
         self.picker_open = false;
         self.picker_query.clearRetainingCapacity();
+        // Hand keystrokes back to the composer.
+        try ctx.requestFocus(self.text_field.widget());
     }
 
     /// Theme names matching the query, in `theme_mod.names` order.
@@ -2163,7 +2183,7 @@ const Model = struct {
         if (key.matches(vaxis.Key.escape, .{})) {
             // Theme preview is undone; a model pick has no preview to undo.
             if (self.picker_kind == .theme) self.theme_override = self.theme_saved;
-            self.closeModelPicker();
+            try self.closeModelPicker(ctx);
             return ctx.consumeAndRedraw();
         }
         if (key.matches(vaxis.Key.enter, .{})) {
@@ -2179,7 +2199,7 @@ const Model = struct {
                     if (matches.len > 0) self.theme_override = matches[@min(self.picker_selected, matches.len - 1)];
                 },
             }
-            self.closeModelPicker();
+            try self.closeModelPicker(ctx);
             return ctx.consumeAndRedraw();
         }
         if (key.matches(vaxis.Key.up, .{})) {

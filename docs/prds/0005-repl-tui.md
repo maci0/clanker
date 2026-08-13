@@ -116,6 +116,16 @@ since `sanitize.zig` already documents itself as owning the one definition.
 That gap applied even to paths described as already stripped, `!` escape
 output among them.
 
+**A modal has to hold focus to be modal.** `vxfw` delivers a key press to the
+focused widget, and the composer has held focus since `.init`.
+`vxfw.TextField` consumes every printable key, so the root Model's
+`handlePickerKey` only ever received the keys the field ignores — arrows,
+Enter, Escape. The `/model` and `/theme` query line was therefore undrawable
+into: typed characters went to the composer *behind* the modal, and the
+fuzzy filter both pickers advertise was reachable only through a seed
+argument (`/model kimi`). Opening a picker now moves focus to the Model and
+closing it hands focus back, which is what makes the query line real.
+
 **Repainting is opt-in, so one seam owns it.** `vxfw` redraws when an event
 handler sets `ctx.redraw` and not otherwise. A submitted line fans out to a
 dozen places that append to `lines` — the generated `/help`, each `cmd_*`
