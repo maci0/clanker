@@ -531,26 +531,6 @@ fn reverseApply(gpa: std.mem.Allocator, after: []const u8, c: Change) ![]u8 {
     return out.toOwnedSlice(gpa);
 }
 
-/// True when some non-test code in the staged tree names `name`.
-fn reachable(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, name: []const u8) !bool {
-    var files: std.ArrayList([]const u8) = .empty;
-    defer {
-        for (files.items) |f| gpa.free(f);
-        files.deinit(gpa);
-    }
-    try zigFiles(gpa, io, dir, &scan_roots, &files);
-    for (scan_files) |f| try files.append(gpa, try gpa.dupe(u8, f));
-
-    for (files.items) |f| {
-        const src = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch continue;
-        defer gpa.free(src);
-        const code = try nonTestCode(gpa, src);
-        defer gpa.free(code);
-        if (referencesName(code, name)) return true;
-    }
-    return false;
-}
-
 test "blankNonCode leaves code and erases everything else" {
     const gpa = std.testing.allocator;
     const src =

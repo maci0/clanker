@@ -210,9 +210,9 @@ pub const History = struct {
         self.base.createDirPath(self.io, self.history_dir) catch |err|
             log.log(.warn, "mkdir {s} failed: {t}", .{ self.history_dir, err });
 
-        // Read-modify-write, so it has to be serialised: an improve run and
-        // the staged evals a gate spawns are separate processes sharing this
-        // file, and a lost entry is a run the next prompt never learns about.
+        // Serialised: an improve run and the staged evals a gate spawns are
+        // separate processes sharing this file, and a lost entry is a run the
+        // next prompt never learns about.
         var guard = filelock.acquire(self.io, self.base, self.state_dir, "improvements", self.gpa);
         defer guard.release();
 
@@ -245,6 +245,8 @@ pub const History = struct {
         try s.write(detail);
         try s.objectField("changes");
         try s.beginArray();
+        // Hex: Wyhash is a full u64; JSON integers are signed, so values
+        // above i64 max would not survive the round trip.
         for (changes) |c| {
             var fp_buf: [16]u8 = undefined;
             try s.write(std.fmt.bufPrint(&fp_buf, "{x:0>16}", .{c}) catch continue);
@@ -427,7 +429,10 @@ pub const History = struct {
             for (e.files) |f| {
                 var seen = false;
                 for (out.items) |have| {
-                    if (std.mem.eql(u8, have, f)) seen = true;
+                    if (std.mem.eql(u8, have, f)) {
+                        seen = true;
+                        break;
+                    }
                 }
                 if (!seen) try out.append(arena, f);
             }
