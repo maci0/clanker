@@ -558,3 +558,21 @@ test "a rejected path is reported back so the retry can move on" {
     try std.testing.expectError(error.PathNotAllowed, parseProposal(arena, text, 10, 4096, &rejected));
     try std.testing.expectEqualStrings(".git/config", rejected orelse return error.TestExpectedPath);
 }
+
+test "fuzz: no byte sequence crashes parseProposal" {
+    // The improve loop feeds model output straight into parseProposal: JSON,
+    // markdown fences, base64 blobs, and path strings. The property under
+    // test is that nothing panics or allocates without bound.
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+            const input = buf[0..len];
+
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            _ = parseProposal(arena_state.allocator(), input, 40, 32 * 1024, null) catch return;
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{});
+}

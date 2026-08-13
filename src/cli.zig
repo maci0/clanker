@@ -354,7 +354,15 @@ fn takeValue(
     return args[idx.*];
 }
 
+/// Convenience wrapper: parse without needing the resolved command out-param.
 pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
+    return parseWithCommand(args, diag, null);
+}
+
+/// Parse CLI args, returning the resolved command through `cmd_out` (set on
+/// `error.FlagNotForCommand` / `error.BadSubcommand`) so callers can name the
+/// actual command in a help hint even when a global flag precedes it.
+pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?*Command) !Options {
     var opts = Options{};
     var idx: usize = 1;
     var cmd_seen = false;
@@ -863,6 +871,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 return error.MissingArg;
             } else {
                 setDiag(diag, sub);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.BadSubcommand;
             }
         }
@@ -874,6 +883,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         for (seen_flags[0..seen_flags_len]) |f| {
             if (!commandAccepts(opts.command, f)) {
                 setDiag(diag, f.name());
+                if (cmd_out) |c| c.* = opts.command;
                 return error.FlagNotForCommand;
             }
         }
@@ -1064,6 +1074,15 @@ fn commandForHelp(name: []const u8) ?Command {
         if (std.mem.eql(u8, name, s.usage[0..end])) return s.command;
     }
     return command_aliases.get(name);
+}
+
+/// The canonical `clanker <name>` for a resolved command, used when a help
+/// hint has to name the command that was actually parsed (not the argv token
+/// that preceded a global flag, which may itself be a flag).
+pub fn commandName(c: Command) []const u8 {
+    const spec = specFor(c) orelse return "";
+    const end = std.mem.findAny(u8, spec.usage, " [") orelse spec.usage.len;
+    return spec.usage[0..end];
 }
 
 /// The whole command list, grouped. Rendered from `specs` so a new command
@@ -8347,6 +8366,16 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
             if (req.max_iterations) |n| {
                 updated.max_iterations = clampIterationBudget(n);
             }
+            // Only when the request names it, so a POST carrying just a status
+            // cannot clear a flag it never mentioned. `false` clears the field
+            // rather than storing a falsy string: the goal card reads presence
+            // as the flag, so "not worktree-scoped" has to be absence. Clearing
+            // it also discards a branch/path the `goal` tool wrote, which is the
+            // point -- the goal is no longer worktree-scoped, so the branch it
+            // used to name is not either.
+            if (req.worktree) |w| {
+                updated.worktree = if (w) "true" else null;
+            }
             updated.updated = now;
             kept.append(arena, updated) catch continue;
         }
@@ -9394,6 +9423,10 @@ const GoalPost = struct {
     /// string `"true"` so the goal card can show the worktree icon. The `goal`
     /// tool instead stores the worktree's branch/path here, and both read back
     /// as the same truthy string.
+    ///
+    /// Honoured on an update as well as a create, so a goal ticked (or left
+    /// unticked) by mistake can be corrected without deleting it. Absent means
+    /// "not mentioned" and leaves the stored value alone; `false` clears it.
     worktree: ?bool = null,
 };
 
@@ -11695,6 +11728,23 @@ test "--port still works as an alias for --webui-port" {
     var diag: []const u8 = "";
     try std.testing.expectError(error.FlagNotForCommand, parse(&.{ "clanker", "stats", "--port", "1" }, &diag));
     try std.testing.expectEqualStrings("--webui-port", diag);
+}
+
+test "parseWithCommand resolves the real command when a global flag precedes it" {
+    // `clanker --model x autolearn` refuses --model on autolearn, but the
+    // suggestion must name `autolearn`, not the leading `--model` token.
+    var diag: []const u8 = "";
+    var cmd: Command = .help;
+    try std.testing.expectError(error.FlagNotForCommand, parseWithCommand(&.{ "clanker", "--model", "x", "autolearn" }, &diag, &cmd));
+    try std.testing.expectEqual(Command.autolearn, cmd);
+    try std.testing.expectEqualStrings("--model", diag);
+    try std.testing.expectEqualStrings("autolearn", commandName(cmd));
+
+    // The subcommand case reports the parent command too.
+    var diag2: []const u8 = "";
+    var cmd2: Command = .help;
+    try std.testing.expectError(error.BadSubcommand, parseWithCommand(&.{ "clanker", "--model", "x", "session", "bogus" }, &diag2, &cmd2));
+    try std.testing.expectEqual(Command.session, cmd2);
 }
 
 test "the listener resolves config < env < flag, in that order" {
