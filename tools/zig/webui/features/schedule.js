@@ -17,7 +17,7 @@ import { readJson, fmtMs } from "../core/utils.js";
 
 function byId(id) { return document.getElementById(id); }
 
-var state = { entries: [], log: [], busy: "" };
+var state = { entries: [], log: [], busy: "", error: "" };
 
 /* Entry times are read at the entry's own fixed UTC offset (never a DST-aware
    zone), so they are rendered at that offset rather than in the browser's
@@ -171,6 +171,10 @@ function render() {
     } else state.log.forEach(function (r) { logHost.appendChild(logRow(r)); });
   }
   if (status) {
+    // A failed toggle has to survive the redraw that re-enables its button.
+    // The count is always true and therefore always available; what went
+    // wrong is said once and is the only thing worth the line while it holds.
+    if (state.error) { status.textContent = state.error; return; }
     var on = state.entries.filter(function (e) { return e.enabled; }).length;
     status.textContent = state.entries.length
       ? state.entries.length + (state.entries.length === 1 ? " entry" : " entries") + ", " + on + " active."
@@ -184,6 +188,9 @@ export function loadScheduleView() {
   return fetch("/api/schedule").then(readJson).then(function (data) {
     state.entries = (data && data.entries) || [];
     state.log = (data && data.log) || [];
+    // Refresh is also how you clear a failed toggle's message: the schedule
+    // just came back clean, so the last failure no longer describes it.
+    state.error = "";
     render();
     return data;
   }).catch(function (err) {
@@ -199,6 +206,7 @@ export function loadScheduleView() {
 function setEnabled(id, on) {
   if (state.busy) return Promise.resolve(null);
   state.busy = id;
+  state.error = "";
   render();
   var status = byId("schedule-status");
   if (status) status.textContent = (on ? "Resuming " : "Pausing ") + id + "…";
@@ -211,11 +219,17 @@ function setEnabled(id, on) {
     state.entries = state.entries.map(function (e) { return e.id === data.entry.id ? data.entry : e; });
     return data;
   }).catch(function (err) {
-    if (status) status.textContent = "Could not update " + id + ": " + err.message;
+    state.error = "Could not update " + id + ": " + err.message;
     return null;
   }).then(function (out) {
+    // Unconditionally, including after a failure. The row's Pause/Resume is
+    // disabled off state.busy, so skipping the redraw on the error path left
+    // the button greyed out for the rest of the visit: a server that refused
+    // once meant a switch that could never be tried again without reloading
+    // the view. The error text is carried in state.error so this redraw
+    // reports it rather than overwriting it with the entry count.
     state.busy = "";
-    if (out) render();
+    render();
     return out;
   });
 }
