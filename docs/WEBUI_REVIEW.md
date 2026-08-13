@@ -888,6 +888,55 @@ is one selector and is checked as source shape, since importing `app.js` boots
 the page. Gate: `zig build`, `zig build tools`, `zig build test --summary all`
 — 163/163 steps, 765/767 tests (2 skipped, the expected worktree pair).
 
+## A table under a sentence is a table (2026-08-13)
+
+`renderMarkdown` had two ideas about what opens a block. The dispatcher at the
+top of the loop knew about headings, thematic breaks, blockquotes, lists and
+tables. The paragraph accumulator underneath it knew about headings,
+blockquotes and lists — and nothing about breaks or tables. Whichever ran
+first won, and for a table written directly under the line that introduces it
+the accumulator ran first:
+
+```
+Here are the results:
+| name | count |
+| --- | --- |
+| a | 1 |
+```
+
+That whole block rendered as one paragraph of literal `|` characters — exactly
+the "wall of monospace" the markdown renderer exists to prevent — because the
+paragraph swallowed the header row before the dispatcher could look at it. A
+`---` rule under a line of prose went the same way, appearing as three hyphens
+mid-sentence. Both shapes are what a model writes: prose introducing a table,
+no blank line between.
+
+- **`lib/markdown.js: ruleAt(line)`, `tableAt(lines, i)`, `blockAt(lines, i)`**
+  — the question is asked once now, and both the dispatcher and the paragraph
+  accumulator ask it, so they cannot drift apart again. `tableAt` needs the
+  header *and* the `|---|---|` under it, because a line with pipes in it is
+  otherwise just prose: `a | b is not a table` still renders as the sentence it
+  is.
+- The dispatcher's own inline copies of the rule and table tests are replaced by
+  calls to the same predicates, so there is one definition of each.
+
+`blockAt` is exactly the disjunction of the dispatcher's own tests, which is
+what keeps the paragraph loop from stalling: a line the accumulator refuses is
+by construction a line the dispatcher consumes.
+
+### Verified
+
+`node` + a DOM stub driving the real `lib/markdown.js` and asserting on the
+rendered node tree. A table under a sentence renders `p` + `.md-table-wrap`
+with two `th` and two `tbody tr`, and the paragraph above it holds no `|` at
+all; `before\n---\nafter` renders `p`,`hr`,`p`. Alongside them, the shapes
+that already worked are pinned so this cannot be a trade: a standalone table, a
+table after a blank line, heading/list/quote breaks, a nested list, a plain
+three-line paragraph with its two `<br>`, `- - -` as a rule, and inline
+`*emphasis*` not opening a block. 30 assertions green; the same harness
+against unmodified `main` fails 12 of its 24.
+Gate: `zig build`, `zig build tools`, `zig build test --summary all`.
+
 ## The Models view stops forgetting which provider you picked (2026-08-13)
 
 `#models-live-provider` is the provider the "List models" button asks. It is
