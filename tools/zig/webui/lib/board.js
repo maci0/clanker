@@ -63,6 +63,18 @@ export function blockers(card, board, cardByIdFn) {
   });
 }
 
+/* Which priority sorts first. `normal` is what a card without one counts as
+   everywhere else on the board, and `high` is rank 0 — so a lookup has to test
+   for a missing key rather than for a falsy rank. Testing for falsy is what
+   quietly folded every high card in with the normal ones, in both places that
+   offer to sort by priority. */
+export var PRIORITY_RANK = { high: 0, normal: 1, low: 2 };
+
+export function priorityRank(card) {
+  var rank = PRIORITY_RANK[(card && card.priority) || "normal"];
+  return rank === undefined ? PRIORITY_RANK.normal : rank;
+}
+
 export function dueState(card) {
   if (!card.deadline) return "";
   var left = card.deadline - Math.floor(Date.now() / 1000);

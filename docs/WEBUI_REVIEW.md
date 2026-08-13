@@ -1015,6 +1015,53 @@ harness fails 4 of the 16. Gate: `zig build`, `zig build tools`,
 `zig build test --summary all` — 163/163 steps, 765/767 tests (2 skipped, the
 expected worktree pair).
 
+## The board's lane menu did nothing, loudly and quietly (2026-08-13)
+
+Four defects behind the column head's `⋯` menu and the card it sorts.
+
+**All three sorts were no-ops.** Each one sorted a copy of the lane's cards and
+then re-appended them by asking the list for `[data-id='<id>']`. A card carries
+`data-card`; nothing in this codebase has ever set `data-id`. Every lookup
+returned `null`, every sort returned to a lane in exactly the order it started
+in. The three near-identical handlers are now one `reorderLane(cmp)` and three
+comparators, and the node it moves is the card's `<li>` rather than the card
+itself: the card is a button *inside* a list item, so appending the button
+would have pulled it out of its item and left an empty one behind even once the
+attribute was right.
+
+**Sort by priority put high cards with the normal ones.** `{high:0, normal:1,
+low:2}[p] || 1` — `high` is rank 0, which is falsy, so it read as 1. The list
+view has its own copy of the same expression and the same bug, which is why the
+lookup now lives in `lib/board.js` as `priorityRank(card)` with both callers
+importing it: one place to be right, and a pure function to test.
+
+**Move all cards threw.** The handler posts one move per card and then called
+`toast(...)`. `features/board.js` has its own `boardToast` and never imported
+the app-level `toast`, so the last line of the handler raised
+`ReferenceError: toast is not defined` on every use. The moves had already been
+sent, so the visible symptom was a lane that emptied with no confirmation and
+an error in the console.
+
+**No card ever showed its notes.** The mini-card's description preview was
+guarded on `c.notes`. The field is `body` — what the detail panel edits, what
+the filter searches, what the create payload sends, what the board tool
+serialises. The preview now reads `body`, through `clip()` so a cut line ends
+in an ellipsis instead of mid-word.
+
+### Verified
+
+`node` + the DOM stub driving the real `features/board.js`: `bindBoard` against
+a stub `el`, a three-card board rendered through the module's own reactive
+render, then the `⋯` menu opened and its items clicked the way a pointer would.
+23 assertions covering the rendered preview text, each of the three sorts
+landing in its own distinct order, the lane still holding only `<li>` children
+afterwards, `Move all cards → Doing` posting one `move` per card *without*
+throwing, and the list view's Sort by priority putting the high card first.
+Against unmodified `main` the same harness fails 6 of them — including
+`ReferenceError: toast is not defined`, caught out of the click. Gate:
+`zig build`, `zig build tools`, `zig build test --summary all` — 163/163 steps,
+765/767 tests (2 skipped, the expected worktree pair).
+
 ## A message without an id took the room down with it (2026-08-13)
 
 `chatrooms.zig` does not promise an id. `Message.id` defaults to `""`, the
