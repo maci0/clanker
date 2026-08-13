@@ -8319,6 +8319,7 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
             .objective = obj,
             .completion_criterion = crit,
             .max_iterations = if (req.max_iterations) |n| clampIterationBudget(n) else null,
+            .worktree = if (req.worktree orelse false) "true" else null,
             .created = now,
             .updated = now,
         }) catch {
@@ -9389,6 +9390,11 @@ const GoalPost = struct {
     /// Optional per-goal iteration budget stored in state/goals.json and used
     /// as the default for runs of this goal. Clamped to 1..=1000 on write.
     max_iterations: ?u32 = null,
+    /// Set by the web UI's "worktree" checkbox; stored on the goal as the
+    /// string `"true"` so the goal card can show the worktree icon. The `goal`
+    /// tool instead stores the worktree's branch/path here, and both read back
+    /// as the same truthy string.
+    worktree: ?bool = null,
 };
 
 const StoredGoal = struct {
@@ -9400,6 +9406,10 @@ const StoredGoal = struct {
     stop_rule: []const u8 = "",
     status: []const u8 = "active",
     max_iterations: ?u32 = null,
+    /// Truthy when this goal runs in its own git worktree: either the web
+    /// UI's flag (`"true"`) or the `goal` tool's branch/path. Omitted when the
+    /// goal is not worktree-scoped.
+    worktree: ?[]const u8 = null,
     created: i64 = 0,
     updated: i64 = 0,
 };
