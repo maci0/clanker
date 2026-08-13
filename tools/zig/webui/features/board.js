@@ -4,11 +4,11 @@
 // goal side of the card<->goal mirroring lives in ./goals.js. bindBoard()
 // wires the DOM and the app-level callbacks (tab counts, run opening, the
 // peer roster for @ mention hints).
-import { fmtInt, fmtCost, formatChatTime, fmtDeadline, readJson } from "../core/utils.js";
+import { fmtInt, fmtCost, formatChatTime, fmtDeadline, readJson, clip } from "../core/utils.js";
 import { T, bind, state, add, uiConfirm, uiPrompt } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
-import { doneColumn as doneColumnOf, blockers as blockersOf, dueState } from "../lib/board.js";
+import { doneColumn as doneColumnOf, blockers as blockersOf, dueState, priorityRank } from "../lib/board.js";
 import { goalState, postGoal, goalIdForCard, workCardAsGoal, syncCardsFromGoals, loadGoals, isGoalRunning } from "./goals.js";
 
 var el = null;
@@ -415,54 +415,39 @@ function boardColumn(col, s) {
             sep1.className = "board-col-menu-sep";
             menu.appendChild(sep1);
 
-            /* Sort by priority */
-            var sortPri = document.createElement("button");
-            sortPri.type = "button"; sortPri.className = "board-col-menu-item";
-            sortPri.textContent = "Sort by priority";
-            sortPri.setAttribute("role", "menuitem");
-            sortPri.addEventListener("click", function(){
-              menu.remove(); backdrop.remove();
-              var priOrder = { high: 0, normal: 1, low: 2 };
-              var cards = shown.slice().sort(function(a,b){
-                return (priOrder[a.priority || "normal"] || 1) - (priOrder[b.priority || "normal"] || 1);
-              });
-              var listEl = document.getElementById("board-cards-" + col.id);
-              if (!listEl) return;
-              cards.forEach(function(c){ var el = listEl.querySelector("[data-id='" + c.id + "']"); if (el) listEl.appendChild(el); });
-            });
-            menu.appendChild(sortPri);
+            /* Reorders this lane in place, without a write: a sort is a way of
+               reading the lane, and the board tool holds no per-column order to
+               post it to.
 
-            /* Sort by date created (newest first) */
-            var sortDate = document.createElement("button");
-            sortDate.type = "button"; sortDate.className = "board-col-menu-item";
-            sortDate.textContent = "Sort by date created";
-            sortDate.setAttribute("role", "menuitem");
-            sortDate.addEventListener("click", function(){
-              menu.remove(); backdrop.remove();
-              var cards = shown.slice().sort(function(a,b){
-                return (b.created || 0) - (a.created || 0);
-              });
+               The node that moves is the card's <li>, not the card. A card is a
+               button carrying `data-card`, wrapped in a list item; appending the
+               button would pull it out of its item and leave an empty one behind.
+               This asked for `[data-id]`, an attribute no card has ever carried,
+               so all three sorts found nothing and did nothing at all. */
+            function reorderLane(cmp) {
               var listEl = document.getElementById("board-cards-" + col.id);
               if (!listEl) return;
-              cards.forEach(function(c){ var el = listEl.querySelector("[data-id='" + c.id + "']"); if (el) listEl.appendChild(el); });
-            });
-            menu.appendChild(sortDate);
+              shown.slice().sort(cmp).forEach(function (c) {
+                var node = listEl.querySelector("[data-card='" + c.id + "']");
+                var item = node && (node.closest ? node.closest("li") : node.parentNode);
+                if (item) listEl.appendChild(item);
+              });
+            }
+            function sortItem(label, cmp) {
+              var b = document.createElement("button");
+              b.type = "button"; b.className = "board-col-menu-item";
+              b.textContent = label;
+              b.setAttribute("role", "menuitem");
+              b.addEventListener("click", function(){
+                menu.remove(); backdrop.remove();
+                reorderLane(cmp);
+              });
+              menu.appendChild(b);
+            }
 
-            /* Sort alphabetically */
-            var sortAlpha = document.createElement("button");
-            sortAlpha.type = "button"; sortAlpha.className = "board-col-menu-item";
-            sortAlpha.textContent = "Sort alphabetically";
-            sortAlpha.setAttribute("role", "menuitem");
-            sortAlpha.addEventListener("click", function(){
-              menu.remove(); backdrop.remove();
-              var cards = shown.slice().sort(function(a,b){
-                return (a.title || "").localeCompare(b.title || "");
-              });
-              var listEl = document.getElementById("board-cards-" + col.id);
-              if (!listEl) return;
-              cards.forEach(function(c){ var el = listEl.querySelector("[data-id='" + c.id + "']"); if (el) listEl.appendChild(el); });
-            });
-            menu.appendChild(sortAlpha);
+            sortItem("Sort by priority", function(a, b){ return priorityRank(a) - priorityRank(b); });
+            sortItem("Sort by date created", function(a, b){ return (b.created || 0) - (a.created || 0); });
+            sortItem("Sort alphabetically", function(a, b){ return (a.title || "").localeCompare(b.title || ""); });
 
             var sep2 = document.createElement("hr");
             sep2.className = "board-col-menu-sep";
@@ -495,7 +480,10 @@ function boardColumn(col, s) {
                   shown.forEach(function(c){
                     postBoard({ op: "move", id: c.id, column: dest.id }, null);
                   });
-                  toast("Moved " + shown.length + " card" + (shown.length > 1 ? "s" : "") + " → " + dest.title);
+                  // boardToast, not the app-level toast(): this module never
+                  // imported that one, so the call threw a ReferenceError out of
+                  // the click handler every time a destination was picked.
+                  boardToast("Moved " + shown.length + " card" + (shown.length > 1 ? "s" : "") + " to " + dest.title, "ok");
                 });
                 menu.appendChild(opt);
               });
@@ -625,11 +613,14 @@ function cardNode(c) {
   title.textContent = c.title;
   body.appendChild(title);
 
-  // Description preview (first 2 lines)
-  if (c.notes && c.notes.trim()) {
+  // Description preview. The card's notes are `body` — the field the detail
+  // panel edits, the filter searches and the create payload sends. This read
+  // `c.notes`, which nothing on either side of the wire has ever set, so no
+  // card ever showed a preview.
+  if (c.body && c.body.trim()) {
     var descPrev = document.createElement("span");
     descPrev.className = "card-desc-preview";
-    descPrev.textContent = c.notes.trim().substring(0, 120);
+    descPrev.textContent = clip(c.body.trim(), 120);
     body.appendChild(descPrev);
   }
 
@@ -2170,8 +2161,7 @@ export function bindBoard(deps) {
       var how=(sortSel && sortSel.value) || "updated";
       rows.sort(function(a,b){
         if(how==="priority"){
-          var rank={high:0, normal:1, low:2};
-          var ra=rank[a.priority||"normal"]||1, rb=rank[b.priority||"normal"]||1;
+          var ra=priorityRank(a), rb=priorityRank(b);
           if(ra!==rb) return ra-rb;
         } else if(how==="due"){
           var da=a.deadline||Infinity, db=b.deadline||Infinity;
