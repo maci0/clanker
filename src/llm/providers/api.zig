@@ -101,7 +101,7 @@ pub const StreamEvent = struct {
 
 pub const StreamParseError = error{OutOfMemory};
 
-/// One provider. Registered in `../providers.zig`; adding a provider is this
+/// One provider. Registered in `../registry.zig`; adding a provider is this
 /// struct filled in by one new file plus one row in that table.
 pub const Provider = struct {
     /// The `kind = "..."` this entry serves. One entry per kind.
