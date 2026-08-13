@@ -2567,7 +2567,8 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
             },
             else => {},
         }
-        log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
+        const detail = enrichRunError(arena, provider.name, false, err_detail orelse @errorName(err));
+        log.log(.error_, "{s}", .{detail});
         return err;
     };
 

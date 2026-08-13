@@ -85,6 +85,42 @@ fn stripControls(gpa: std.mem.Allocator, bytes: []const u8) []const u8 {
     return out.toOwnedSlice(gpa) catch bytes;
 }
 
+fn errorRecoveryHint(err: anyerror, detail: ?[]const u8) []const u8 {
+    if (err == error.MaxIterationsExceeded) return " (hit iteration limit; try a simpler task or raise agent.max_iterations)";
+    if (err == error.SessionTokenBudgetExceeded) return " (ran out of token budget)";
+    if (detail) |d| {
+        if (findCaseInsensitive(d, "401") or findCaseInsensitive(d, "unauthorized") or findCaseInsensitive(d, "authentication"))
+            return " (check API key; run `clanker doctor`)";
+        if (findCaseInsensitive(d, "429") or findCaseInsensitive(d, "rate limit") or findCaseInsensitive(d, "rate_limit"))
+            return " (rate limited; wait or /model to switch)";
+        if (findCaseInsensitive(d, "not found") or findCaseInsensitive(d, "model_not_found"))
+            return " (model not found; /model to pick another)";
+        if (findCaseInsensitive(d, "timeout") or findCaseInsensitive(d, "timed out"))
+            return " (request timed out)";
+        if (findCaseInsensitive(d, "onnection refused") or findCaseInsensitive(d, "onnection reset"))
+            return " (cannot reach provider; check network)";
+    }
+    return "";
+}
+
+fn findCaseInsensitive(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (haystack.len < needle.len) return false;
+    var i: usize = 0;
+    while (i <= haystack.len - needle.len) : (i += 1) {
+        var match = true;
+        for (needle, 0..) |nc, j| {
+            const hc = haystack[i + j];
+            if (hc != nc and std.ascii.toLower(hc) != std.ascii.toLower(nc)) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return true;
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------------
 // Module-level bridge state: Agent's callbacks are bare `*const fn(...)`
 // with no captured context, so the background run thread and the render

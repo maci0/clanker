@@ -196,8 +196,10 @@ pub fn cmdDoctor(init: std.process.Init) !void {
     rep.w.print("\n{d} failing, {d} warning\n", .{ rep.failures, rep.warnings }) catch {};
     if (rep.failures > 0) {
         rep.w.writeAll("Fix the failures above, then run `clanker providers check` for connectivity.\n") catch {};
+    } else if (rep.warnings > 0) {
+        rep.w.writeAll("Warnings are fine if those providers are not needed. Run `clanker providers check` for connectivity.\n") catch {};
     } else {
-        rep.w.writeAll("Connectivity is not checked here: run `clanker providers check`.\n") catch {};
+        rep.w.writeAll("Everything looks good. Run `clanker providers check` for connectivity.\n") catch {};
     }
     out.interface.flush() catch {};
     // A non-zero exit lets `clanker doctor` guard a script or a CI step.
