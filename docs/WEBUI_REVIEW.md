@@ -1062,6 +1062,50 @@ Against unmodified `main` the same harness fails 6 of them — including
 `zig build`, `zig build tools`, `zig build test --summary all` — 163/163 steps,
 765/767 tests (2 skipped, the expected worktree pair).
 
+## One dropped poll no longer ends the arena watch (2026-08-13)
+
+The Arena view follows a running match by polling `/api/arena/<id>` every
+1.1 s, and `fetchMatch`'s `catch` called `stopPolling()`. Every failure was
+therefore terminal: one reset connection, one moment where the server was busy
+answering something else, and the timer was gone for good. What is left on
+screen is the worst version of that. The stage keeps its last frame, the HP
+chips keep their last numbers, the transcript keeps the round it had, and the
+one thing that would have told you it is no longer live, the status line, has
+been overwritten with `Could not load match: …`. Nothing is asking any more,
+and nothing says so. This server answers one request per connection, so a poll
+colliding with another client is ordinary rather than exceptional.
+
+Consecutive failures are now counted, five in a row give up, and any answer
+resets the count. Below the threshold the last known state stays on screen and
+the status line is left alone, so a hiccup is invisible, which is what it
+should be. At the threshold it stops and says `Lost track of match <id> after 5
+failed updates (…). Refresh to pick it up again.` — the state a frozen view was
+already in, said out loud. Opening a match by hand still fails loudly on the
+first try, because that failure is the answer to something you just asked for.
+
+The picker had a smaller version of the same disagreement: the lamp decided
+"running" from `!winner && !headline`, while the words beside it decided from
+`winner` alone. A match that ended with nobody named, a mutual concession, was
+drawn with a "done" lamp and labelled `running`. Both now read the same test,
+and that case reads `no verdict` — the vocabulary the Compare list already uses
+for it.
+
+### Verified
+
+`node` + the DOM stub driving the real `features/arena.js`, with
+`window.setInterval` handing back a token the test ticks by hand, so a poll is a
+poll and the test can then ask whether the timer is still there. 14 assertions:
+opening a running match starts exactly one timer, the status line describes the
+last move, a single failed poll leaves the timer alive and does *not* replace
+the live status with an error, the next poll recovers, a match that reaches a
+verdict still stops the timer and reaches both the status line and the
+transcript, twelve failures in a row stop it once and say so, and the picker row
+for a headline-without-winner match is neither lit nor labelled as running.
+Against unmodified `main` the same harness fails 6 of the 14: the timer is gone
+after the first failure, and everything downstream of still-watching goes with
+it. Gate: `zig build`, `zig build tools`, `zig build test --summary all` —
+163/163 steps, 765/767 tests (2 skipped, the expected worktree pair).
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
