@@ -174,7 +174,11 @@ pub const Agent = struct {
     /// How many of the most-used tools keep their schemas loaded without
     /// being asked for. Measured, not configured: see tools/usage.zig.
     hot_tools: u32 = 10,
-    tools_dir: []const u8 = "tools/manifests",
+    /// Directories of `*.tool.json` manifests, scanned in order. A later
+    /// directory wins on a tool `name` collision. Config accepts a string
+    /// (normalized to one entry) or an array, so existing `config.toml`
+    /// files keep working.
+    tools_dir: []const []const u8 = &.{"tools/manifests"},
     skills_dir: []const u8 = "skills",
     system_prompt_file: []const u8 = "skills/SYSTEM.md",
     learnings_file: []const u8 = "state/learnings.md",
@@ -1242,7 +1246,7 @@ pub const Config = struct {
             f.max_history_tokens = true;
         }
         if (obj.get("tools_dir")) |k| {
-            a.tools_dir = try jsonStr(k, "tools_dir");
+            a.tools_dir = try jsonToolsDir(arena, k);
             f.tools_dir = true;
         }
         if (obj.get("skills_dir")) |k| {
@@ -1605,6 +1609,28 @@ pub const Config = struct {
             .string => |s| s,
             else => error.FieldNotString,
         };
+    }
+
+    /// `agent.tools_dir` is a string or an array of strings. A bare string
+    /// becomes a one-element slice so every consumer only ever sees a list.
+    fn jsonToolsDir(arena: std.mem.Allocator, v: json.Value) ![]const []const u8 {
+        switch (v) {
+            .string => |s| {
+                const one = try arena.alloc([]const u8, 1);
+                one[0] = s;
+                return one;
+            },
+            .array => |arr| {
+                var out: std.ArrayList([]const u8) = .empty;
+                for (arr.items) |item| {
+                    const s = try jsonStr(item, "tools_dir[]");
+                    if (s.len == 0) continue;
+                    try out.append(arena, s);
+                }
+                return try out.toOwnedSlice(arena);
+            },
+            else => return error.ToolsDirInvalid,
+        }
     }
 
     fn jsonInt(v: json.Value, key: []const u8) !i64 {
@@ -2203,9 +2229,38 @@ test "partial local agent keeps base tools_dir" {
         ,
     });
     const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
-    try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir);
+    try std.testing.expectEqual(@as(usize, 1), cfg.agent.tools_dir.len);
+    try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir[0]);
     try std.testing.expectEqualStrings(".", cfg.agent.sandbox_root);
     try std.testing.expectEqual(@as(u32, 30), cfg.agent.max_iterations);
+}
+
+test "agent.tools_dir accepts a string or an array" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\agent = { tools_dir = ["tools/manifests", "/home/user/.config/clanker/plugins"] }
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(@as(usize, 2), cfg.agent.tools_dir.len);
+    try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir[0]);
+    try std.testing.expectEqualStrings("/home/user/.config/clanker/plugins", cfg.agent.tools_dir[1]);
+
+    try std.testing.expectEqual(@as(usize, 1), (Agent{}).tools_dir.len);
+    try std.testing.expectEqualStrings("tools/manifests", (Agent{}).tools_dir[0]);
 }
 
 test "the providers-check timeout has a short default, a global key, and a per-provider override" {
