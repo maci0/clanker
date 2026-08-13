@@ -11985,6 +11985,11 @@ test "--port still works as an alias for --webui-port" {
 test "parseWithCommand resolves the real command when a global flag precedes it" {
     // `clanker --model x stats` refuses --model on stats, but the suggestion
     // must name `stats`, not the leading `--model` token.
+    //
+    // This used to say `autolearn`, until autolearn gained --provider/--model
+    // for its LLM synthesis and started accepting the very flag the case needs
+    // refused. The command under test only has to be one that takes no
+    // `--model`; what is being asserted is which name the diagnostic reports.
     var diag: []const u8 = "";
     var cmd: Command = .help;
     try std.testing.expectError(error.FlagNotForCommand, parseWithCommand(&.{ "clanker", "--model", "x", "stats" }, &diag, &cmd));

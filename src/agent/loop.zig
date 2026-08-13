@@ -130,6 +130,11 @@ pub const Agent = struct {
     /// The task this run is working on, handed down to sub-agents so their
     /// piece is read in service of something.
     current_task: []const u8 = "",
+    /// Reduce the final answer to the bare value a criterion can match on:
+    /// unwrap fences, JSON and markdown emphasis, else take the first
+    /// non-empty line (`finalAnswer`). Off everywhere but the eval runner,
+    /// because it is lossy — a multi-line answer keeps only its first line.
+    exact_answer: bool = false,
     /// Human prompt for the ask_user tool, wired by the REPL. Null elsewhere:
     /// a scripted run has nobody to ask.
     ask_fn: ?host.AskFn = null,
@@ -1704,8 +1709,15 @@ pub const Agent = struct {
 
     /// Cleans the final response (exact-match) and updates the last transcript
     /// message so persisted sessions carry the same exact answer the caller sees.
+    ///
+    /// The cleaning only runs under `exact_answer`. It exists for evals that
+    /// assert on a bare value, and it is lossy by design: prose around a code
+    /// fence is dropped, and an answer with neither fence nor JSON collapses to
+    /// its first non-empty line. Applied to ordinary runs it deleted every line
+    /// but the first from every multi-line answer, in the REPL, in a persisted
+    /// session, and in serve's non-streaming reply alike.
     fn finish(self: *Agent, messages: *std.ArrayList(types.Message), resp: types.ChatResponse) !types.ChatResponse {
-        const ans = try self.finalAnswer(resp);
+        const ans = if (self.exact_answer) try self.finalAnswer(resp) else resp;
         if (messages.items.len > 0) {
             messages.items[messages.items.len - 1] = ans.message;
         }
@@ -3526,6 +3538,38 @@ test "resumed-session cleanup completes partial tool-call exchanges instead of d
         try Agent.dropDanglingToolExchange(arena, &messages);
         try std.testing.expectEqual(@as(usize, 1), messages.items.len);
     }
+}
+
+test "finish keeps every line of a multi-line answer unless exact_answer is set" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const answer = "a1\na2\na3";
+    const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = answer } };
+
+    // The product path: what the model wrote is what the caller gets. This is
+    // the regression — `finalAnswer` used to run unconditionally here, so the
+    // REPL, a persisted session and serve's non-streaming reply all showed
+    // "a1" and silently dropped the rest.
+    var plain: Agent = undefined;
+    plain.arena = arena;
+    plain.exact_answer = false;
+    var messages: std.ArrayList(types.Message) = .empty;
+    try messages.append(arena, resp.message);
+    const kept = try plain.finish(&messages, resp);
+    try std.testing.expectEqualStrings(answer, kept.message.content.?);
+    // The transcript the session persists carries the same full answer.
+    try std.testing.expectEqualStrings(answer, messages.items[0].content.?);
+
+    // The eval path still collapses to the bare value a criterion matches on.
+    var exact: Agent = undefined;
+    exact.arena = arena;
+    exact.exact_answer = true;
+    var eval_messages: std.ArrayList(types.Message) = .empty;
+    try eval_messages.append(arena, resp.message);
+    const reduced = try exact.finish(&eval_messages, resp);
+    try std.testing.expectEqualStrings("a1", reduced.message.content.?);
 }
 
 test "finalAnswer preserves an exact string answer" {

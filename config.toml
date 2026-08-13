@@ -195,6 +195,11 @@ sandbox_root = "."
 seed = 0
 compact_threshold_bytes = 0
 git_remote_ops = false
+# Session kinds that isolate in a git worktree by default, as if that mode's
+# worktree/goal_worktree were "yes": any of "run", "goal", "tui", "schedule".
+# Empty leaves every mode on its historical default. An explicit --worktree or
+# --no-worktree still wins.
+git_worktree_on = []
 exec_pattern_allow = []
 # Extra commands the REPL's `!cmd` escape may run, on top of the union of every
 # tool's exec_allow. Empty = the escape can run exactly what the tools can.
