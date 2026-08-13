@@ -186,9 +186,34 @@ allowed git verb and `remove` is not on the deny list, so
 another run's tree and its commits.
 
 The worktree and its branch are **kept** when the run ends — the commits are the
-deliverable. Remove it with `git worktree remove` once the work has landed.
+deliverable, and the run ends long before anyone has read them.
 (`improve-self` differs: it merges its branch back at the ref level and only then
 removes the worktree.)
+
+##### When a worktree is retired
+
+Cleanup follows the **goal's** lifecycle, not the run's and not the clock: an old
+worktree holding unmerged commits is precisely the one not to delete. A run that
+carried a goal is recorded in `state/worktrees.json` against it, and the worktree
+is retired once that goal reaches `archived` or `abandoned` — the two statuses
+that mean nobody is coming back for it. `done` and `review` do **not** retire
+anything; those are when someone is about to read the diff.
+
+Retirement never deletes commits. A branch still holding work its base does not
+have is kept and named, whatever the goal's status, the same rule
+`Worktree.cleanup` already applies to improve-self.
+
+Two triggers, one decision (`src/improve/retire.zig`), because
+`state/goals.json` has several writers and a wasm tool cannot run git at all:
+
+- Archiving a goal in the web UI retires its worktree immediately.
+- `clanker janitor` reports what is pending; `clanker janitor --yes` sweeps it.
+  Every run also prints the pending count when it ends.
+
+Worktrees in `.clanker-worktrees/` that no registry row claims are **reported and
+never removed**. A run that died before registering, an improve-self worktree in
+use right now, and one made by hand are indistinguishable on disk, and removing
+the second would take out live work.
 
 #### What is private and what is shared
 
