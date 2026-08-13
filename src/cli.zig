@@ -870,6 +870,12 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         setDiag(diag, "conversation id");
         return error.MissingArg;
     }
+    if (opts.session) |sid| {
+        if (!session.validSessionId(sid)) {
+            setDiag(diag, sid);
+            return error.BadSessionId;
+        }
+    }
     if (opts.command == .notify and opts.peer == null) {
         setDiag(diag, "<peer>");
         return error.MissingArg;
@@ -11661,6 +11667,18 @@ test "a bare invocation starts the REPL, and --help still asks for help" {
     try std.testing.expectEqual(Command.version, (try parse(&.{ "clanker", "--version" }, null)).command);
     // A typo is still a typo, not a silent REPL start.
     try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "runn" }, null));
+}
+
+test "every session-taking command rejects malformed ids during parsing" {
+    var diag: []const u8 = "";
+    const cases = [_][]const []const u8{
+        &.{ "clanker", "repl", "--session", "../../escape" },
+        &.{ "clanker", "run", "hello", "--session", "bad/id" },
+        &.{ "clanker", "session", "export", "bad.json" },
+    };
+    for (cases) |args| {
+        try std.testing.expectError(error.BadSessionId, parse(args, &diag));
+    }
 }
 
 test "repl accepts a startup theme before or after the command" {

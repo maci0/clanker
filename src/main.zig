@@ -187,6 +187,7 @@ pub fn main(init: std.process.Init) !void {
             error.BadPort => cli.printUsageError(init.io, "--webui-port wants a 16-bit port number, got '{s}'", .{diag}),
             error.BadDirection => cli.printUsageError(init.io, "--direction wants 'min' or 'max', got '{s}'", .{diag}),
             error.BadJudge => cli.printUsageError(init.io, "--judge wants 'self' or 'third', got '{s}'", .{diag}),
+            error.BadSessionId => cli.printUsageError(init.io, "invalid session id '{s}'; use 1-64 letters, numbers, dashes, or underscores", .{diag}),
             error.ArenaMixedPositions => cli.printUsageError(init.io, "use --for/--against for a two-way match or repeated --position for a battle royale, not both", .{}),
             error.ArenaTooFewPositions => cli.printUsageError(init.io, "a battle royale needs at least 2 --position flags (3 to 8 is the interesting range)", .{}),
             error.CompareTooFewModels => cli.printUsageError(init.io, "a comparison needs at least 2 --with flags, or none at all to compare every configured provider", .{}),
@@ -198,7 +199,7 @@ pub fn main(init: std.process.Init) !void {
         // These messages already name the next keystroke or the command's
         // own help. Repeating `clanker --help` after them restates the list.
         const skip_hint = switch (err) {
-            error.MissingTask, error.MissingArg, error.FlagNotForCommand, error.BadSubcommand, error.PromptLooksLikeCommand => true,
+            error.MissingTask, error.MissingArg, error.BadSessionId, error.FlagNotForCommand, error.BadSubcommand, error.PromptLooksLikeCommand => true,
             error.UnknownCommand => cli.suggestCommand(diag) != null,
             error.UnknownArg => cli.suggestFlag(diag) != null,
             else => false,
