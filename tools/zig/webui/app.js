@@ -20,7 +20,7 @@ import { pendingImages as attachImages, max_image_bytes as attachMaxBytes, rende
 import { loadLog as logsLoadLog, loadLogList as logsLoadLogList } from "./core/logs.js";
 import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugins as pluginsLoadWebuiPlugins, loadPluginAssets as pluginsLoadPluginAssets, renderWebuiPlugins as pluginsRenderWebuiPlugins } from "./core/plugins.js";
 import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle } from "./core/palette.js";
-import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, syncModelSearchLabel as mpSyncLabel, renderModelList as mpRenderList, hideModelList as mpHideList, selectModel as mpSelectModel, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind } from "./core/modelpicker.js";
+import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind } from "./core/modelpicker.js";
 import { renderTools as toolsRenderTools, showToolDetail as toolsShowDetail, toggleTool as toolsToggle, loadTools as toolsLoadTools, bindTools as toolsBind } from "./core/tools.js";
 import { board, loadBoardRooms, renderBoard, setOpenCardId, cardById, cardModalKeyHandler, bindBoard } from "./features/board.js";
 import { goalState, loadGoals, bindGoals } from "./features/goals.js";
@@ -179,8 +179,6 @@ var el = {
   transcriptEmpty: document.getElementById("transcript-empty"),
   suggestions: document.getElementById("suggestions"),
   modelSelect: document.getElementById("model-select"),
-  modelSearch: document.getElementById("model-search"),
-  modelList: document.getElementById("model-list"),
   paramTemp: document.getElementById("param-temp"),
   paramTopP: document.getElementById("param-topp"),
   fallbackProvider: document.getElementById("fallback-provider"),
@@ -314,8 +312,8 @@ function renderSessionChip() {
   function openModelPicker() {
     var dest = document.getElementById("task");
     if (dest) { dest.focus(); dest.scrollIntoView({ behavior: scrollPrefersReducedMotion() ? "auto" : "smooth", block: "center" }); }
-    var ms = document.getElementById("model-search");
-    if (ms) { try { ms.focus(); ms.select(); } catch(_){} }
+    var ms = document.getElementById("model-select");
+    if (ms) { try { ms.focus(); } catch(_){} }
   }
   if (hm) hm.addEventListener("click", openModelPicker);
   if (cm) cm.addEventListener("click", openModelPicker);
@@ -4515,10 +4513,6 @@ function setTabCount(view, n) {
 
 /* ---------- model picker and sampling — delegated ---------- */
 var loadProviders = mpLoadProviders;
-var syncModelSearchLabel = mpSyncLabel;
-var renderModelList = mpRenderList;
-var hideModelList = mpHideList;
-var selectModel = mpSelectModel;
 var runOptions = mpRunOptions;
 var syncSubmitLabel = mpSyncSubmit;
 
@@ -4755,7 +4749,7 @@ var SLASH_CMDS = [
   { cmd: "/fork", desc: "Fork this conversation", run: function(){ document.getElementById("session-fork").click(); } },
   { cmd: "/branch", desc: "Branch from last turn", run: function(){ var b=document.querySelector(".turn:last-child .turn-foot-actions button"); if(b) b.click(); } },
   { cmd: "/clear", desc: "Start a new conversation", run: function(){ document.getElementById("new-chat").click(); } },
-  { cmd: "/model", desc: "Switch model — e.g. /model gpt-4o", run: function(arg){ if(arg){ var s=document.getElementById("model-search"); if(s){ s.value=arg; s.dispatchEvent(new Event("input",{bubbles:true})); s.focus(); } } else { var ms=document.getElementById("model-search"); if(ms) ms.focus(); } } },
+  { cmd: "/model", desc: "Switch model — e.g. /model gpt-4o", run: function(arg){ var s=document.getElementById("model-select"); if(!s) return; if(arg){ var matched=false; for(var i=0;i<s.options.length;i++){ if(s.options[i].value===arg || s.options[i].textContent.indexOf(arg)>=0){ s.value=s.options[i].value; matched=true; break; } } if(matched) s.dispatchEvent(new Event("change",{bubbles:true})); } s.focus(); } },
   { cmd: "/knowledge", desc: "Open Knowledge collections", run: function(){ showView("knowledge", true); } },
   { cmd: "/prompts", desc: "Open Prompts library", run: function(){ showView("prompts", true); } },
   { cmd: "/compare", desc: "Open blind model comparisons", run: function(){ showView("compare", true); } },
@@ -5195,7 +5189,7 @@ el.helpOpen.addEventListener("click", function () { openOverlay(el.help, el.help
 el.helpClose.addEventListener("click", function () { closeOverlay(el.help); });
 
 var providerCacheHolder = { list: providerCache };
-mpBind({ el: el, readJson: readJson, fmtInt: fmtInt, allUsage: allUsage, renderUsage: renderUsage, renderContextMeter: renderContextMeter, fuzzyMatch: fuzzyMatch, providerCacheHolder: providerCacheHolder });
+mpBind({ el: el, readJson: readJson, fmtInt: fmtInt, allUsage: allUsage, renderUsage: renderUsage, renderContextMeter: renderContextMeter, providerCacheHolder: providerCacheHolder });
 // The picker module refreshes its own label on model change; the header chip
 // and composer pill mirror the same select, so they refresh here.
 if (el.modelSelect) el.modelSelect.addEventListener("change", renderSessionChip);
