@@ -22,6 +22,7 @@ const autolearn = @import("agent/autolearn.zig");
 const subagent = @import("agent/subagent.zig");
 const private_todos = @import("agent/private_todos.zig");
 const graph = @import("agent/graph.zig");
+const goal_prompt = @import("agent/goal_prompt.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
 const rawhttp = @import("util/rawhttp.zig");
@@ -3147,7 +3148,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         std.Io.Dir.cwd(),
         opts.task.?,
         opts.goal,
-        cfg.modules.goal and opts.goal == null,
+        cfg.modules.goal and cfg.modules.goal_auto_steer and opts.goal == null,
     );
     const task_text = resolved_task.task;
 
@@ -4325,7 +4326,7 @@ fn cmdGoal(init: std.process.Init, opts: Options) !void {
         return error.ModuleDisabled;
     }
     const intent = opts.task orelse return error.MissingTask;
-    const task = try std.fmt.allocPrint(arena, "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.", .{intent});
+    const task = try goal_prompt.task(arena, intent);
     var goal_opts = opts;
     goal_opts.task = task;
     try cmdRun(init, goal_opts);
@@ -10359,7 +10360,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         std.Io.Dir.cwd(),
         req.task,
         explicit_goal_id,
-        cfg.modules.goal and explicit_goal_id == null,
+        cfg.modules.goal and cfg.modules.goal_auto_steer and explicit_goal_id == null,
     ) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"goal resolve failed\"}");
         return;
