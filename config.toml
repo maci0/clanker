@@ -199,9 +199,16 @@ rooms = ["dev"]
 max_history = 500
 
 [tui]
-# The REPL mascot: a small robot that runs along the top of the input box.
-# Purely decorative, and off by default -- it costs 5 rows of transcript
-# while it is on, which is a real price on a short terminal.
+# The REPL mascot: a small robot that runs around the input box. Purely
+# decorative and off by default, so every key here is commented out -- the
+# built-in default is already `off`, and uncommenting any of them is opt-in.
+#
+# Try it for one session without editing this file at all:
+#
+#   clanker repl --mascot            # loop, the bare default
+#   clanker repl --mascot=input --mascot-size=small
+#
+# Modes:
 #
 #   off    no mascot, no rows claimed (the default)
 #   type   runs right as you type, stands still when you stop, and turns
@@ -210,30 +217,32 @@ max_history = 500
 #   place  runs on the spot in the bottom-right corner above the box
 #   input  runs on the spot *inside* the input box, at its bottom right. The
 #          box grows to make room and the text field is narrowed, so the robot
-#          never sits on top of what you are typing. Costs no transcript rows.
+#          never sits on top of what you are typing. Costs no transcript rows,
+#          which makes it the cheapest mode on a short terminal.
 #
-# `clanker repl --mascot` turns it on for one session and overrides this key;
-# bare `--mascot` means `loop`, and `--mascot=off` forces it off again.
+# Every mode except `input` reserves rows above the composer: 4, 5 or 10
+# depending on mascot_size. `--mascot` overrides this key for one session, and
+# `--mascot=off` forces it off again.
 #
 # Rendered with kitty graphics where the terminal supports it (Ghostty, kitty,
 # iTerm2) and with unicode half-blocks everywhere else. Skipped, not clipped,
-# on a terminal too small for the chosen size -- see mascot_size below.
-mascot = "off"
+# on a terminal too small for the chosen size.
+# mascot = "off"
 
-# small, medium or large. Empty means medium.
+# small, medium or large. Unset means medium.
 #
-# The sizes are 8x4, 10x5 and 21x10 cells, needing a terminal of at least
+# The grids are 8x4, 10x5 and 21x10 cells, needing a terminal of at least
 # 10x12, 12x13 and 23x18 respectively. `small` is a floor rather than a
 # preference: below roughly 8x4 the eye and the legs stop surviving the
 # downsample and the robot reads as a grey smudge. Overridden by
 # `--mascot-size`.
-mascot_size = ""
+# mascot_size = "medium"
 
-# left or right. Empty means "whatever the mode wants", which is left for
+# left or right. Unset means "whatever the mode wants", which is left for
 # `place` and right for everything else -- running on the spot facing right,
 # directly above a left-to-right input box, reads as walking into a wall.
 #
 # Only `loop` and `place` honour this. `type` sets its own orientation (it
 # turns upside down while deleting) and `input` is never mirrored. Overridden
 # by `--mascot-facing`.
-mascot_facing = ""
+# mascot_facing = "right"
