@@ -46,10 +46,10 @@ test "clanker run: a tool call round-trips through the real sandbox" {
 
     if (!result.ok()) std.debug.print("clanker run failed.\nstdout: {s}\nstderr: {s}\n", .{ result.stdout, result.stderr });
     try std.testing.expect(result.ok());
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, final_text) != null);
+    try std.testing.expect(std.mem.find(u8, result.stdout, final_text) != null);
 
     try std.testing.expectEqual(@as(usize, 3), mock.requestCount());
     const third_request = mock.request(2) orelse return error.MissingThirdRequest;
-    try std.testing.expect(std.mem.indexOf(u8, third_request, "\"tool_call_id\":\"call_2\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, third_request, "hello.txt") != null);
+    try std.testing.expect(std.mem.find(u8, third_request, "\"tool_call_id\":\"call_2\"") != null);
+    try std.testing.expect(std.mem.find(u8, third_request, "hello.txt") != null);
 }

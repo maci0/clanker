@@ -105,7 +105,7 @@ pub const Server = struct {
             if (raw_http.requestComplete(total.items)) break;
         }
         var body: []const u8 = &.{};
-        if (std.mem.indexOf(u8, total.items, "\r\n\r\n")) |hdr_end| body = total.items[hdr_end + 4 ..];
+        if (std.mem.find(u8, total.items, "\r\n\r\n")) |hdr_end| body = total.items[hdr_end + 4 ..];
         const index = self.record(body);
         self.respond(stream, index);
     }
@@ -161,11 +161,11 @@ test "textTurn and toolCallTurn produce parseable SSE frames" {
     const gpa = std.testing.allocator;
     const text = try textTurn(gpa, "hi \"there\"");
     defer gpa.free(text);
-    try std.testing.expect(std.mem.indexOf(u8, text, "hi \\\"there\\\"") != null);
+    try std.testing.expect(std.mem.find(u8, text, "hi \\\"there\\\"") != null);
     try std.testing.expect(std.mem.endsWith(u8, text, "data: [DONE]\n\n"));
 
     const call = try toolCallTurn(gpa, "call_1", "list_files", "{\"path\":\".\"}");
     defer gpa.free(call);
-    try std.testing.expect(std.mem.indexOf(u8, call, "\"name\":\"list_files\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, call, "\"finish_reason\":\"tool_calls\"") != null);
+    try std.testing.expect(std.mem.find(u8, call, "\"name\":\"list_files\"") != null);
+    try std.testing.expect(std.mem.find(u8, call, "\"finish_reason\":\"tool_calls\"") != null);
 }
