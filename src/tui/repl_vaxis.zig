@@ -3737,21 +3737,34 @@ const Model = struct {
         const dot = " \xc2\xb7 ";
         const model = std.fmt.bufPrint(&self.status_buf, "{s}/{s}", .{ self.provider.name, self.provider.activeModelName() }) catch "";
         var scol: u16 = 0;
-        writeRowAt(surface, 0, &scol, "clanker", brand_style);
-        writeRowAt(surface, 0, &scol, dot, dim);
-        writeRowAt(surface, 0, &scol, model, accent_style);
-        writeRowAt(surface, 0, &scol, dot, dim);
-        if (activity.len > 0) writeRowAt(surface, 0, &scol, activity, accent_style);
-        writeRowAt(surface, 0, &scol, phase, if (streaming) accent_style else prompt_style);
-        if (scroll_hint.len > 0) writeRowAt(surface, 0, &scol, scroll_hint, dim);
+        const full_prefix_width = width_mod.displayWidth("clanker") + width_mod.displayWidth(dot) * 2 +
+            width_mod.displayWidth(model) + width_mod.displayWidth(activity) + width_mod.displayWidth(phase);
+        if (full_prefix_width <= @as(usize, max.width)) {
+            // Wide layout preserves the familiar identity-first hierarchy.
+            writeRowAt(surface, 0, &scol, "clanker", brand_style);
+            writeRowAt(surface, 0, &scol, dot, dim);
+            writeRowAt(surface, 0, &scol, model, accent_style);
+            writeRowAt(surface, 0, &scol, dot, dim);
+            if (activity.len > 0) writeRowAt(surface, 0, &scol, activity, accent_style);
+            writeRowAt(surface, 0, &scol, phase, if (streaming) accent_style else prompt_style);
+        } else {
+            // On a constrained terminal the current state must survive before
+            // identity. Optional fields are whole-or-omitted, never clipped
+            // into misleading fragments such as a partial model id.
+            if (activity.len > 0) writeRowAt(surface, 0, &scol, activity, accent_style);
+            writeRowAt(surface, 0, &scol, phase, if (streaming) accent_style else prompt_style);
+            _ = writeStatusPairIfFits(surface, &scol, dot, dim, "clanker", brand_style);
+            _ = writeStatusPairIfFits(surface, &scol, dot, dim, model, accent_style);
+        }
+        if (scroll_hint.len > 0 and statusTextFits(max.width, scol, scroll_hint))
+            writeRowAt(surface, 0, &scol, scroll_hint, dim);
         // How full the model's window is, what the session has spent, and
         // what that cost: the numbers that decide whether to keep going in
         // this conversation or start a fresh one. Each is omitted when there
         // is nothing honest to say (no configured context window, no turn
         // yet, no priced model) rather than shown as a zero.
         if (stats_mod.contextMeter(&self.meter_buf, self.context_tokens, self.provider.activeModel().context_window)) |meter| {
-            writeRowAt(surface, 0, &scol, dot, dim);
-            writeRowAt(surface, 0, &scol, meter, dim);
+            _ = writeStatusPairIfFits(surface, &scol, dot, dim, meter, dim);
         }
         if (self.session_tokens > 0) {
             // Scratch only: `compactCount`'s slice is consumed by the
@@ -3760,8 +3773,7 @@ const Model = struct {
             var scratch: [32]u8 = undefined;
             const tok_text = std.fmt.bufPrint(&self.tok_buf, "{s} tok", .{stats_mod.compactCount(&scratch, self.session_tokens)}) catch "";
             if (tok_text.len > 0) {
-                writeRowAt(surface, 0, &scol, dot, dim);
-                writeRowAt(surface, 0, &scol, tok_text, dim);
+                _ = writeStatusPairIfFits(surface, &scol, dot, dim, tok_text, dim);
             }
         }
         if (self.session_cost) |cost| {
@@ -3773,13 +3785,11 @@ const Model = struct {
             else
                 std.fmt.bufPrint(&self.cost_buf, "${d:.4}", .{cost}) catch "";
             if (cost_text.len > 0) {
-                writeRowAt(surface, 0, &scol, dot, dim);
-                writeRowAt(surface, 0, &scol, cost_text, dim);
+                _ = writeStatusPairIfFits(surface, &scol, dot, dim, cost_text, dim);
             }
         }
         if (self.session_id) |sid| {
-            writeRowAt(surface, 0, &scol, dot, dim);
-            writeRowAt(surface, 0, &scol, sid, dim);
+            _ = writeStatusPairIfFits(surface, &scol, dot, dim, sid, dim);
         }
 
         drawBox(surface, 0, box_y, max.width, box_h, rule_style);
@@ -4702,6 +4712,29 @@ fn writeRowAt(surface: vxfw.Surface, row: u16, col: *u16, text: []const u8, styl
         surface.writeCell(col.*, row, .{ .char = .{ .grapheme = c.bytes, .width = @intCast(c.width) }, .style = style });
         col.* += c.width;
     }
+}
+
+fn statusTextFits(width: u16, col: u16, text: []const u8) bool {
+    return width_mod.displayWidth(text) <= @as(usize, width -| col);
+}
+
+/// Add one optional status field atomically. A clipped context count or model
+/// id is worse than omission because its visible fragment still looks valid.
+fn writeStatusPairIfFits(surface: vxfw.Surface, col: *u16, prefix: []const u8, prefix_style: vaxis.Style, text: []const u8, text_style: vaxis.Style) bool {
+    if (!statusTextFits(surface.size.width, col.*, prefix) or
+        width_mod.displayWidth(prefix) + width_mod.displayWidth(text) > @as(usize, surface.size.width -| col.*)) return false;
+    writeRowAt(surface, 0, col, prefix, prefix_style);
+    writeRowAt(surface, 0, col, text, text_style);
+    return true;
+}
+
+test "status fields fit atomically at constrained widths" {
+    try std.testing.expect(statusTextFits(20, 5, " · clanker"));
+    try std.testing.expect(!statusTextFits(12, 5, " · clanker"));
+    try std.testing.expect(statusTextFits(12, 0, "ready"));
+    // Display columns, not bytes: the spinner occupies one cell.
+    try std.testing.expect(statusTextFits(2, 0, "⠋ "));
+    try std.testing.expect(!statusTextFits(1, 0, "⠋ "));
 }
 
 /// The styles inline markdown renders with, resolved once from the active
