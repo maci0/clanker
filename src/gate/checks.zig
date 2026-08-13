@@ -1,6 +1,6 @@
 //! Deterministic gate checks for the self-improvement loop. This module is
 //! deliberately OUTSIDE the protected surface (src/improve/, src/evals/,
-//! src/tools/builder.zig) so clanker can keep strengthening these checks.
+//! src/toolhost/builder.zig) so clanker can keep strengthening these checks.
 //! The engine in src/improve/engine.zig calls these and promotes only when
 //! every check passes.
 
@@ -169,7 +169,7 @@ test "lintGate flags forbidden markers only in changed .zig files" {
 
 /// Consistency check over the tool manifests in a staged tree.
 ///
-/// The registry (`src/tools/registry.zig`) loads `tools/manifests/*.tool.json`
+/// The registry (`src/toolhost/registry.zig`) loads `tools/manifests/*.tool.json`
 /// at runtime and never compiles source, so nothing but this check catches a
 /// proposal that:
 ///   - duplicates a tool `name` (the registry's insert is last-wins, so one

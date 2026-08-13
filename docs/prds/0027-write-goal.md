@@ -269,7 +269,7 @@ the review moment the split exists to create.
    improve a draft nothing reads.
 3. Tool: `tools/zig/write_goal.zig` + `tools/manifests/write_goal.tool.json`
    (no `build.zig` edit — `build.zig:153-182` auto-discovers; no registry
-   edit — `src/tools/registry.zig:189` scans the manifest dir). Input
+   edit — `src/toolhost/registry.zig:189` scans the manifest dir). Input
    `{intent, context?, existing_goal?}`; output the structured record under
    the `{"ok":true,…}` envelope (`tools/zig/lib.zig:187`). No `fs_prefixes`
    — drafting writes nothing.

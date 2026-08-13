@@ -5,10 +5,10 @@ const builtin = @import("builtin");
 const toml = @import("toml");
 const config = @import("config.zig");
 const client = @import("llm/client.zig");
-const providers = @import("llm/providers.zig");
+const providers = @import("llm/registry.zig");
 const types = @import("llm/types.zig");
 const agent = @import("agent/loop.zig");
-const registry = @import("tools/registry.zig");
+const registry = @import("toolhost/registry.zig");
 const manifest_mod = @import("tools/manifest.zig");
 const scorers = @import("evals/scorers.zig");
 const eval_runner = @import("evals/runner.zig");
@@ -108,7 +108,7 @@ pub const Command = enum {
     compare,
     workflow,
     /// `plugins list|on|off|validate|new`: the operator and authoring side of the tool
-    /// registry. `src/tools/manifest.zig` is the schema it enforces.
+    /// registry. `src/toolhost/manifest.zig` is the schema it enforces.
     plugins,
     schedule,
 };

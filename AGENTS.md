@@ -78,7 +78,7 @@ through a gated loop. Follow these conventions when changing this codebase.
   appended at the LLM client choke point to `state/token_stats.jsonl`.
   Failed completions are recorded too (`ok:false`, `http_status`, `err`);
   a log of only successes cannot answer "is the provider down?".
-- `src/tools/` — the native tool infrastructure: `registry.zig` (loads
+- `src/toolhost/` — the native tool infrastructure: `registry.zig` (loads
   `*.tool.json` descriptors), `manifest.zig` (validates them),
   `builder.zig` (compiles WASM tools), `usage.zig` (tool call accounting).
   `builder.zig` is part of the anti-cheat boundary.
@@ -102,7 +102,7 @@ through a gated loop. Follow these conventions when changing this codebase.
 - `src/evals/` + `src/gate/` — the eval harness and deterministic gates
   (build/test/tools/fmt/lint). These verify every promoted change.
 - `src/improve/` — the self-improvement engine. It is deliberately protected:
-  clanker cannot modify `src/improve/`, `src/evals/`, `src/tools/builder.zig`,
+  clanker cannot modify `src/improve/`, `src/evals/`, `src/toolhost/builder.zig`,
   or `evals/` in a single pass (anti-cheat boundary).
 - `tools/zig/` — LLM-callable WASM guest sources (Zig); `tools/ts/` — AssemblyScript
   sources; `tools/manifests/` — descriptors; `tools/ts/dist/` — committed AS build output

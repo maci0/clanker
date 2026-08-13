@@ -30,7 +30,7 @@ for itself, organically, with no PRD to constrain or explain the choice — so
 its capability model (same-origin JS trusted the same as the page's own code,
 no `fs_prefixes`/`network_allow`-style grant) was never weighed against the
 alternative the tool-calling system already uses (`docs/manifest.md`,
-`src/tools/registry.zig`), and nothing stops the TUI and CLI from growing two
+`src/toolhost/registry.zig`), and nothing stops the TUI and CLI from growing two
 more, mutually incompatible, ad hoc mechanisms the next time someone needs
 one.
 
@@ -243,7 +243,7 @@ fetched.
 - TUI `command_registry` / `CommandSpec` (`src/tui/repl.zig`) for
   slash-command registration shape.
 - CLI `Command` enum + dispatch (`src/cli.zig`) for built-in-first ordering.
-- Tool registry + sandbox (`src/tools/registry.zig`, PRD 0010 / 0022) for
+- Tool registry + sandbox (`src/toolhost/registry.zig`, PRD 0010 / 0022) for
   Tier 1 / TUI tool-backed plugins.
 - [PRD 0022](0022-out-of-tree-tools.md) for `agent.tools_dir` as a list (Tier 1
   name resolution) and string-or-array parse inherited by `*_plugins_dir`.
@@ -272,7 +272,7 @@ throw → tab error) if not already true in code.
   `state/webui_plugins.json` is an enabled-list (`{"enabled":[...]}`); the
   tool system's `state/plugins.json` is a disabled-list
   (`{"disabled":[...], "enabled":[...]}`, read at
-  `src/tools/registry.zig:156,288`). For TUI/CLI the choice is now locked in
+  `src/toolhost/registry.zig:156,288`). For TUI/CLI the choice is now locked in
   Design decisions: enabled-list, default off, matching web UI. The tool
   system's on-by-default shape stays as-is for WASM tools; do not "unify"
   them without a separate PRD.

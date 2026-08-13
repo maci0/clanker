@@ -14,10 +14,10 @@ const std = @import("std");
 const config = @import("../config.zig");
 const types = @import("../llm/types.zig");
 const client = @import("../llm/client.zig");
-const providers = @import("../llm/providers.zig");
+const providers = @import("../llm/registry.zig");
 const scorers = @import("../evals/scorers.zig");
 const runner_mod = @import("../evals/runner.zig");
-const builder = @import("../tools/builder.zig");
+const builder = @import("../toolhost/builder.zig");
 const proposal_mod = @import("proposal.zig");
 const plan_mod = @import("plan.zig");
 const history_mod = @import("history.zig");
@@ -26,7 +26,7 @@ const inert = @import("inert_check.zig");
 const gate_checks = @import("../gate/checks.zig");
 const sandbox_host = @import("../sandbox/host.zig");
 const runtime = @import("../sandbox/runtime.zig");
-const registry = @import("../tools/registry.zig");
+const registry = @import("../toolhost/registry.zig");
 const log = @import("../util/log.zig");
 const redact = @import("../util/redact.zig");
 const atomic_write = @import("../util/atomic_write.zig");
@@ -331,7 +331,7 @@ const staging_runtime_files = [_][]const u8{ "config.local.toml", ".env" };
 /// Repeated verbatim to the model whenever it writes somewhere it may not, so
 /// the retry has the whole rule and not just the refusal.
 const surface_rules =
-    \\You may change: src/ (but not src/evals/, src/improve/, or src/tools/builder.zig), tools/ (but not tools/ts/dist/, and under tools/manifests/ only *.tool.json), ui/ (but not ui/vendor/), skills/, tests/, docs/, README.md, AGENTS.md, build.zig, build.zig.zon, config.toml.
+    \\You may change: src/ (but not src/evals/, src/improve/, or src/toolhost/builder.zig), tools/ (but not tools/ts/dist/, and under tools/manifests/ only *.tool.json), ui/ (but not ui/vendor/), skills/, tests/, docs/, README.md, AGENTS.md, build.zig, build.zig.zon, config.toml.
     \\You may CREATE a new evals/<name>.task.json, which adds a case to the suite your work is graded against. You may never modify or delete an eval that already exists.
 ;
 
@@ -2970,7 +2970,7 @@ const improve_system =
     \\- "old" MUST match the current file content byte-for-byte. Keep it short but
     \\  unique. An empty "old" appends "new" at the end of the file.
     \\- Only touch files shown in the context. Never change the eval machinery
-    \\  (src/evals/, src/improve/, src/tools/builder.zig).
+    \\  (src/evals/, src/improve/, src/toolhost/builder.zig).
     \\- Changes must compile with Zig 0.16 std APIs. Prefer minimal diffs.
     \\- A patch has to change what the program does. Two shapes are refused
     \\  outright, whatever their summary says:

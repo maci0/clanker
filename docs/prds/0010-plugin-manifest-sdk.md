@@ -2,8 +2,8 @@
 
 ## Status
 
-Shipped. Sources of truth: `src/tools/manifest.zig` (the schema, the validator,
-the scaffold templates) and `src/tools/registry.zig` (the loader, which is what
+Shipped. Sources of truth: `src/toolhost/manifest.zig` (the schema, the validator,
+the scaffold templates) and `src/toolhost/registry.zig` (the loader, which is what
 the schema is derived from). Surfaces: CLI `clanker plugins list|validate|new`
 (`Command.plugins`, `cmdPlugins` in `src/cli.zig`), REPL `/plugins` and
 `GET/POST /api/plugins` (both unchanged, both still the `plugins` guest).
@@ -112,7 +112,7 @@ skip path handles it with no new code. Reading a v2 file with v1 rules would
 mean registering a tool whose sandbox policy is not the one its author wrote,
 which is the failure the key exists to prevent.
 
-**The validator is pure.** `src/tools/manifest.zig` takes a filename and bytes
+**The validator is pure.** `src/toolhost/manifest.zig` takes a filename and bytes
 and returns a `Report` of `Finding{severity, key, message}`. No I/O, no
 dependency past `std`, so every rule is a unit test over a string literal. A
 malformed manifest is a finding and never an error return, so one bad file in a
@@ -234,7 +234,7 @@ existing docs:
 
 - [x] `manifest_version` parsed; absent means 1; unsupported is refused, not downgraded
 - [x] All 93 shipped manifests load unchanged and validate with zero errors and zero warnings, pinned by a test
-- [x] Pure validator in `src/tools/manifest.zig`, 11 unit tests, no I/O
+- [x] Pure validator in `src/toolhost/manifest.zig`, 11 unit tests, no I/O
 - [x] Findings carry the file and the offending key, and say what the key does or fails to do
 - [x] Fuel ceiling, `network_allow`/`fs_prefixes`/`exec_allow` shape, and the model-call declaration rule are all checked
 - [x] `clanker plugins list|validate|new`, with `list` delegating to the existing `plugins` guest

@@ -46,7 +46,7 @@ sandboxed WASM tool.
 | `docs/README.md`: "WASM tool ABI", "Sandbox", "Tool layout", "Tool catalog" | The `ck_*` host function table and what a tool descriptor can grant |
 | `src/sandbox/host.zig` | The actual `ck_*` implementations: the real ceiling of what a WASM tool can do |
 | `tools/zig/lib.zig` | Guest-side ABI: `scratch`/`host_arena`/`run`, `ck_*` imports |
-| `src/tools/registry.zig` | How tools are discovered and dispatched |
+| `src/toolhost/registry.zig` | How tools are discovered and dispatched |
 | A few existing tools as reference shape: `tools/zig/git.zig`, `tools/zig/fetch_web.zig`, `tools/zig/roadmap.zig`, `tools/zig/write_note.zig`, `tools/zig/status.zig` | What a well-scoped tool already looks like here |
 
 ## Non-negotiable
@@ -57,7 +57,7 @@ sandboxed WASM tool.
 - **Nothing may get easier to bypass by moving.** The protected surface is
   narrower than it used to be, so check `src/improve/proposal.zig` for what it
   is today rather than quoting this list back. As of now: `src/evals/` and
-  `src/tools/builder.zig` are closed outright; `evals/` is add-only (a pass may
+  `src/toolhost/builder.zig` are closed outright; `evals/` is add-only (a pass may
   create a case, never edit one); `src/improve/` is open **except**
   `proposal.zig`, which defines the modifiable surface itself. What keeps that
   safe is that gates run from the binary already on disk, never the patched
@@ -133,12 +133,12 @@ Run this on every file/function in scope.
 
 ```text
 1. Is it the sandbox itself, or does it define trust (loop.zig, sandbox/host.zig,
-   sandbox/runtime.zig, tools/registry.zig, the ck_* boundary)?
+   sandbox/runtime.zig, toolhost/registry.zig, the ck_* boundary)?
    YES → native. STOP. (A tool cannot host the thing that runs tools.)
 
 2. Does it grade, gate or promote a change (src/gate/checks.zig, the promotion
    path in src/improve/engine.zig), or is it closed outright (src/evals/,
-   src/tools/builder.zig, src/improve/proposal.zig)?
+   src/toolhost/builder.zig, src/improve/proposal.zig)?
    YES → native. STOP. (A tool cannot verify or promote its own or anyone
    else's change. Check src/improve/proposal.zig for today's surface: most of
    src/improve/ is modifiable, which is exactly why the gating inside it must
@@ -213,7 +213,7 @@ not a finding.
 | `src/agent/graph.zig` (`write`) | Serializes the execution graph to `state/runs/run-<id>.json` once per run | **Consider.** fs-write-only, once per run, low frequency: good shape. The graph *recording* (`g.add` calls threaded through the loop) stays native; only the final serialize-and-write is separable. |
 | `src/gate/checks.zig` | Shells out to `zig build`/`zig build test`/`zig build tools`/`zig fmt`/lint | **Native. Do not move.** It decides whether a self-authored change gets promoted, so moving it would let a future change alter its own gate. `tools/zig/gate.zig` runs the same commands on demand for an agent checking its own work, which is a different job: the tool answers a question, the native gate makes a decision. |
 | `src/llm/client.zig`, `src/llm/providers.zig` | The actual provider HTTP/SSE client the agent loop runs on, holds API keys via env | **Native. Do not move.** This is what `ck_llm` is *built on top of* for tools: it's the trust root for model access, and `Agent.on_token` streaming is tightly coupled to it. If a tool needs model access, it already has `ck_llm`; it does not need this. |
-| `src/sandbox/*`, `src/tools/registry.zig`, `src/tools/builder.zig` | The sandbox runtime and tool discovery/build pipeline | **Native. Do not move.** Defines what a WASM tool *is*; `builder.zig` is also explicitly protected. |
+| `src/sandbox/*`, `src/toolhost/registry.zig`, `src/toolhost/builder.zig` | The sandbox runtime and tool discovery/build pipeline | **Native. Do not move.** Defines what a WASM tool *is*; `builder.zig` is also explicitly protected. |
 | `src/cli.zig` (REPL loop, HTTP `serve` accept loop, spinner threads) | Raw stdin read loop, `std.Io.net` listen/accept, `std.Thread.spawn` for the spinner | **Native. Do not move.** No `ck_*` equivalent for socket listen/accept, raw fd control, or a thread held across a whole interactive session. The parts of `cli.zig` that already dispatch to tools (`/`-prefixed REPL commands -> `cmd_*` WASM tools) are the right pattern to extend for *new* commands: don't reinvent that dispatch, use it. |
 
 Verify each of these against the decision tree yourself; do not just copy the

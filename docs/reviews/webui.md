@@ -70,7 +70,7 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 - Offline-capable, vendored `/webui/vendor/*` lazy via `loadVendor`, no third-party fetch, no new sockets, no `eval/new Function`.
 - `connect-src 'self'` only — only `fetch("/api/*")` + `fetch("/.well-known/agent.json")` + the existing `/api/run` SSE stream; proved by `curl http://…/.well-known/agent.json` returning agent card and `grep` for `fetch(` showing only same-origin endpoints.
 - Vendor cache: `GET /webui/vendor/*` → `Cache-Control: public, max-age=3600, must-revalidate` + gzip; webui assets → `no-cache` + `ETag`/`If-None-Match` → `304` (verified via `curl -H Accept-Encoding:gzip -si` showing `Content-Encoding: gzip`).
-- No `src/improve/`, `src/evals/`, `evals/`, `src/tools/builder.zig` edits (non-webui siblings reverted before gate).
+- No `src/improve/`, `src/evals/`, `evals/`, `src/toolhost/builder.zig` edits (non-webui siblings reverted before gate).
 - ES-module split: native `<script type="module">` (28 `type="module"` incl. `van-boot.js`), no bundler/npm build step, per-module embedding like `app.css/app.js` (`zig fmt` clean, `node --check` on all 28 js files).
 - A11y sweep: `axe-core` (vendored `/tmp` build) over live `clanker serve` DOM via `playwright` + `jsdom` — **0 critical, 0 serious, 0 total on all 8 views** (`chat/board/goals/runs/fleet/rooms/tools/system`); skip-links, 8 live regions, roving tabindex on rail, graph tabindex, toast keyboard dismiss, fleet single tab-stop, reduced-motion gated skeletons/animations. Artifact: `docs/assets/webui/axe.json`.
 

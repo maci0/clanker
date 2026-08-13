@@ -30,7 +30,7 @@ fn handlePanic(msg: []const u8, ret_addr: ?usize) noreturn {
 comptime {
     _ = @import("config.zig");
     _ = @import("llm/types.zig");
-    _ = @import("llm/providers.zig");
+    _ = @import("llm/registry.zig");
     _ = @import("llm/providers/api.zig");
     _ = @import("llm/providers/common.zig");
     _ = @import("llm/sampling_profiles.zig");
@@ -42,10 +42,10 @@ comptime {
     _ = @import("sandbox/protocol.zig");
     _ = @import("sandbox/host.zig");
     _ = @import("sandbox/runtime.zig");
-    _ = @import("tools/registry.zig");
+    _ = @import("toolhost/registry.zig");
     _ = @import("tools/manifest.zig");
-    _ = @import("tools/builder.zig");
-    _ = @import("tools/usage.zig");
+    _ = @import("toolhost/builder.zig");
+    _ = @import("toolhost/usage.zig");
     _ = @import("agent/system_prompt.zig");
     _ = @import("agent/loop.zig");
     _ = @import("agent/advisor.zig");

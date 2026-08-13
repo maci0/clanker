@@ -445,7 +445,7 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 
 | Data | Code | Contents |
 |------|------|----------|
-| `tools/` | `src/tools/` | Tool sources, descriptors, and committed WASM |
+| `tools/` | `src/toolhost/` | Tool sources, descriptors, and committed WASM |
 | `evals/` | `src/evals/` | `*.task.json` eval definitions |
 | `skills/` | — | Markdown skills folded into the system prompt |
 | `workflows/` | `src/agent/workflows.zig` | Reusable prompt workflows (`agent.workflows_dir`) |
@@ -473,7 +473,7 @@ dependency cache location is controlled by the Zig installation/environment.
 - `zig-out/tools/` — built WASM binaries from `zig build tools`.
 - `tools/ts/dist/` — committed AssemblyScript artifacts (compiled JS/WASM).
 
-Tools are discovered by the registry (`src/tools/registry.zig`) from the configured `tools_dir` (default `tools/manifests`).
+Tools are discovered by the registry (`src/toolhost/registry.zig`) from the configured `tools_dir` (default `tools/manifests`).
 
 ## Build and test
 

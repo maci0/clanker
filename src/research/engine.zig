@@ -3,7 +3,7 @@
 //! documentation, and external sources to inform improvement proposals.
 //!
 //! This is deliberately outside the protected surface (src/improve/,
-//! src/evals/, src/tools/builder.zig) so clanker can keep strengthening
+//! src/evals/, src/toolhost/builder.zig) so clanker can keep strengthening
 //! its research capabilities.
 
 const std = @import("std");

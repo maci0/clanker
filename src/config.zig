@@ -18,7 +18,7 @@ const log = @import("util/log.zig");
 const toml_bridge = @import("util/toml_bridge.zig");
 
 /// The wire format a provider speaks. One tag per entry in the
-/// `src/llm/providers.zig` registry; the tag *is* the `kind = "..."` spelling,
+/// `src/llm/registry.zig` registry; the tag *is* the `kind = "..."` spelling,
 /// so adding a provider means adding a tag here and a row there, and nothing
 /// else in this file.
 pub const ProviderKind = enum {
@@ -172,7 +172,7 @@ pub const Agent = struct {
     /// of them are not wanted on most turns.
     tool_catalog: bool = true,
     /// How many of the most-used tools keep their schemas loaded without
-    /// being asked for. Measured, not configured: see tools/usage.zig.
+    /// being asked for. Measured, not configured: see toolhost/usage.zig.
     hot_tools: u32 = 10,
     /// Directories of `*.tool.json` manifests, scanned in order. A later
     /// directory wins on a tool `name` collision. Config accepts a string

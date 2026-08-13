@@ -6,8 +6,8 @@ is the whole of what the harness knows about it — the name and description the
 model reads, the JSON Schema for its arguments, and the sandbox policy the host
 enforces on every call.
 
-Loader: `src/tools/registry.zig` (`Registry.load` / `parseDescriptor`).
-Schema and validator: `src/tools/manifest.zig`.
+Loader: `src/toolhost/registry.zig` (`Registry.load` / `parseDescriptor`).
+Schema and validator: `src/toolhost/manifest.zig`.
 Checker: `clanker plugins validate [path]`.
 
 ```sh

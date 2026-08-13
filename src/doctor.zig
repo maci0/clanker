@@ -14,7 +14,7 @@
 
 const std = @import("std");
 const config = @import("config.zig");
-const registry = @import("tools/registry.zig");
+const registry = @import("toolhost/registry.zig");
 const log = @import("util/log.zig");
 const ensure_dir = @import("util/ensure_dir.zig");
 

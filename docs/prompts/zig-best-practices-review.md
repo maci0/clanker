@@ -60,7 +60,7 @@ questions) the langref sections for the specific builtins.
   structure findings are reported, structural moves are a separate
   decision. Same for file renames that touch imports.
 - **Never touch the protected surface's file layout** (`src/improve/`,
-  `src/evals/`, `src/tools/builder.zig`, `evals/`) even for a "pure" rename;
+  `src/evals/`, `src/toolhost/builder.zig`, `evals/`) even for a "pure" rename;
   see `wasm-review.md`'s trust-boundary section for why.
 - **Zero-cost is a tie-break, not a mandate.** A working agent beats purity
   theatre (Zig Zen: "together we serve the users").
@@ -84,7 +84,7 @@ src/llm/*            provider adapters (openai_compat, anthropic), HTTP/SSE clie
 src/sandbox/*        zwasm runtime wrapper, ck_* host functions, sandbox policy
 src/agent/*          agent loop, system prompt assembly, session store,
                       execution graphs, sub-agents, autolearn
-src/tools/*          tool registry (registry.zig); WASM build pipeline
+src/toolhost/*          tool registry (registry.zig); WASM build pipeline
                       (builder.zig, protected)
 src/tui/*            REPL terminal UI: raw-mode/size (term.zig), multiline
                       input, approval prompts, status bar, theming, transcript
@@ -107,7 +107,7 @@ Checklist:
 
 - [ ] Concern sits in its owning package: provider/HTTP logic in `llm`,
       sandbox policy in `sandbox`, orchestration in `agent`, tool discovery
-      in `tools/registry.zig`, shared helpers in `util`, process/CLI
+      in `toolhost/registry.zig`, shared helpers in `util`, process/CLI
       concerns in `cli.zig`.
 - [ ] No `src/improve/` -> other-subsystem imports that would let a
       self-authored change reach back into the gate it's being graded by

@@ -10,7 +10,7 @@ read the configured list via `ck_harness_config` (`tools_dirs`) and list
 every directory; `clanker plugins new` writes into the first-listed one;
 `clanker plugins validate` with no path validates every configured
 directory. Sources of truth: `src/config.zig` (`Agent.tools_dir`,
-`firstToolsDir`), `src/tools/registry.zig` (`Registry.load`),
+`firstToolsDir`), `src/toolhost/registry.zig` (`Registry.load`),
 `tools/zig/plugins.zig`, `tools/zig/lib.zig` (`toolsDirs`).
 
 Distribution (fetch/install/signing/a registry index) is not reopened here —
@@ -21,7 +21,7 @@ This PRD is only about loading more than one already-trusted local directory.
 
 `agent.tools_dir` is one string (`src/config.zig:177`, default
 `"tools/manifests"`), and `registry.Registry.load` takes exactly one directory
-(`src/tools/registry.zig:167`). Nineteen non-test call sites across nine files
+(`src/toolhost/registry.zig:167`). Nineteen non-test call sites across nine files
 pass it straight through, ten of them in `src/cli.zig` alone:
 `src/cli.zig`, `src/tui/repl.zig`, `src/agent/subagent.zig`,
 `src/peers/phonebook.zig`, `src/mcp/server.zig`, `src/research/auto_research.zig`,
@@ -204,7 +204,7 @@ behavior). No per-directory `enabled` toggle (remove the entry from
 - Soft: [PRD 0010](0010-plugin-manifest-sdk.md) already named `tools_dir` as a
   list as the remaining packaging gap; this PRD is that resolution. PRD 0012
   (CLI Tier 1 / `clanker <name>`) stays out of scope.
-- Existing: `src/config.zig` (`Agent.tools_dir`), `src/tools/registry.zig`,
+- Existing: `src/config.zig` (`Agent.tools_dir`), `src/toolhost/registry.zig`,
   `tools/zig/plugins.zig` (hardcoded default to replace via
   `ck_harness_config`), the nine call-site files listed under Design.
 

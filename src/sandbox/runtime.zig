@@ -10,7 +10,7 @@ const config_mod = @import("../config.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
 const private_todos_mod = @import("../agent/private_todos.zig");
 const token_stats_mod = @import("../stats/tokens.zig");
-const registry = @import("../tools/registry.zig");
+const registry = @import("../toolhost/registry.zig");
 const client = @import("../llm/client.zig");
 const zwasm = @import("zwasm");
 
