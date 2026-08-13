@@ -628,8 +628,11 @@ pub const Agent = struct {
                         }
                     }
                 };
+                // No room for the rolling window: take the same unguarded turn
+                // the `streaming` module being off takes, rather than failing
+                // the run over a buffer that only exists to match rules.
                 const guard_buf = self.arena.alloc(u8, self.cfg.ttsr.buffer_bytes) catch
-                    try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0, effort);
+                    break :blk try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0, effort);
                 var guard = Guard{
                     .inner = cb,
                     .rules = ttsr_rules.items,
@@ -1996,7 +1999,13 @@ pub const Agent = struct {
         if (note.severity == .blocker) {
             if (self.ask_fn) |ask| {
                 const opts = [_][]const u8{ "proceed", "abort" };
-                const answer = ask(self.arena, note.text, &opts) catch "proceed";
+                // AskFn hands back gpa-owned bytes, as ck_ask's own caller in
+                // host.zig does. An ask that cannot reach its human (no tab,
+                // timeout) has nothing to free and reads as "proceed": the
+                // advisor gate must not strand a run nobody is watching.
+                const picked: ?[]const u8 = ask(note.text, &opts) catch null;
+                defer if (picked) |p| self.ctx.gpa.free(@constCast(p));
+                const answer = picked orelse "proceed";
                 if (std.mem.eql(u8, std.mem.trim(u8, answer, " \t\r\n"), "abort")) {
                     abort_out.* = note.text;
                     return null;
