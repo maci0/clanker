@@ -941,19 +941,36 @@ pub fn jsonStrField(obj: std.json.ObjectMap, name: []const u8) []const u8 {
 /// providers (arena, compare). Parsed from `harnessConfig()` with
 /// `ignore_unknown_fields`.
 pub const HarnessProvider = struct { default_model: []const u8 = "" };
-pub const HarnessAgent = struct { tools_dir: []const u8 = "" };
+pub const HarnessAgent = struct {
+    tools_dir: []const u8 = "",
+    tools_dirs: []const []const u8 = &.{},
+};
 pub const HarnessConfig = struct {
     default_provider: []const u8 = "",
     providers: std.json.ArrayHashMap(HarnessProvider) = .{},
     agent: HarnessAgent = .{},
 };
 
-/// The configured manifest directory, or the in-tree default when the host
-/// denies ck_harness_config or the key is absent.
+/// The first configured manifest directory (scaffold destination), or the
+/// in-tree default when the host denies ck_harness_config or the key is absent.
 pub fn toolsDir() []const u8 {
     const cfg = parseHarnessConfig();
     if (cfg.agent.tools_dir.len > 0) return cfg.agent.tools_dir;
+    if (cfg.agent.tools_dirs.len > 0) return cfg.agent.tools_dirs[0];
     return "tools/manifests";
+}
+
+/// Every configured manifest directory, last-listed last. Falls back to
+/// `toolsDir()` so a host that only emitted the singular key still works.
+pub fn toolsDirs() []const []const u8 {
+    const cfg = parseHarnessConfig();
+    if (cfg.agent.tools_dirs.len > 0) return cfg.agent.tools_dirs;
+    if (cfg.agent.tools_dir.len > 0) {
+        const one = alloc.alloc([]const u8, 1) catch return &.{};
+        one[0] = cfg.agent.tools_dir;
+        return one;
+    }
+    return &.{"tools/manifests"};
 }
 
 /// Generates a time-and-content-seeded id with the given prefix,

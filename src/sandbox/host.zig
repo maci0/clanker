@@ -330,7 +330,7 @@ pub fn sandboxFor(
         .tool_self_name = tool.name,
         .tool_registry = null,
         .tool_call_depth = 0,
-        .fs_prefixes = tool.fs_prefixes,
+        .fs_prefixes = try fsPrefixesFor(arena, tool, cfg),
         .fuel = tool.fuel,
         .environ_map = environ_map,
         .seed = cfg.agent.seed,
@@ -344,6 +344,34 @@ pub fn sandboxFor(
         else
             tool.config_json,
     };
+}
+
+/// Descriptor `fs_prefixes` plus any extra `agent.tools_dir` entries the
+/// plugins/tools guests need to list. Extra entries stay relative to the
+/// sandbox root: a host-absolute path is refused by `safeJoin` and so is
+/// only useful to `Registry.load` on the host, not to a guest walk.
+fn fsPrefixesFor(
+    arena: std.mem.Allocator,
+    tool: *const registry.Tool,
+    cfg: *const config_mod.Config,
+) ![]const []const u8 {
+    if (!std.mem.eql(u8, tool.name, "plugins") and !std.mem.eql(u8, tool.name, "tools")) {
+        return tool.fs_prefixes;
+    }
+    var out: std.ArrayList([]const u8) = .empty;
+    try out.appendSlice(arena, tool.fs_prefixes);
+    for (cfg.agent.tools_dir) |dir| {
+        if (dir.len == 0 or dir[0] == '/') continue;
+        var seen = false;
+        for (out.items) |have| {
+            if (std.mem.eql(u8, have, dir)) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen) try out.append(arena, dir);
+    }
+    return try out.toOwnedSlice(arena);
 }
 
 /// Builds the `config` object handed to an exec-capable tool, merging its
@@ -1173,9 +1201,11 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
         }
         if (access == .tools_dir) {
             try s.objectField("tools_dir");
-            // Guest tools currently consume one writable/scaffold directory;
-            // registry discovery itself scans the complete host-side list.
+            // One deterministic write/scaffold destination (plugins new).
             try s.write(config_mod.firstToolsDir(cfg.agent.tools_dir));
+            try s.objectField("tools_dirs");
+            // Full scan list so /plugins and `tools list` match Registry.load.
+            try s.write(cfg.agent.tools_dir);
         }
         try s.endObject();
     }
@@ -5468,9 +5498,7 @@ test "harness config access is scoped to each tool's consumed fields" {
     const tools_dir_json = try harnessConfigJSON(arena, &cfg, .tools_dir);
     try std.testing.expect(std.mem.find(u8, tools_dir_json, "tools_dir") != null);
     try std.testing.expect(std.mem.find(u8, tools_dir_json, "vendor/my-tools") != null);
-    // The guest ABI remains singular: filesystem-writing tools need one
-    // deterministic destination, while host registry discovery scans both.
-    try std.testing.expect(std.mem.find(u8, tools_dir_json, "vendor/overrides") == null);
+    try std.testing.expect(std.mem.find(u8, tools_dir_json, "vendor/overrides") != null);
     try std.testing.expect(std.mem.find(u8, tools_dir_json, "providers") == null);
     try std.testing.expect(std.mem.find(u8, tools_dir_json, "max_iterations") == null);
 
