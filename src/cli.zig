@@ -4421,56 +4421,109 @@ fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"history read failed\"}");
         return;
     };
-    var buf: [128 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    s.beginObject() catch return;
-    s.objectField("ok") catch return;
-    s.write(true) catch return;
-    s.objectField("messages") catch return;
-    s.beginArray() catch return;
+    var out: std.Io.Writer.Allocating = .init(arena);
+    writeChatMessagesJson(&out.writer, msgs) catch {
+        log.log(.error_, "GET /api/chat/messages room={s}: response did not fit", .{room});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not build the message list\"}");
+        return;
+    };
+    respond(stream, 200, "OK", out.written());
+}
+
+/// The `/api/chat/messages` body, split out of the handler so it can be tested
+/// against a page of full-length messages without a socket.
+///
+/// It used to render into a fixed 128 KiB stack buffer whose every write was
+/// `catch return`, so a page that did not fit left the handler without calling
+/// `respond` at all: the browser saw the connection close rather than any
+/// status, and the Rooms view showed a bare network error it could not
+/// explain. A page is 50 messages and `chatrooms.max_text_len` is 4 KiB, so
+/// 200 KiB of text was reachable before JSON escaping, which can double a
+/// message thick with quotes and newlines. The room only had to be busy.
+fn writeChatMessagesJson(w: *std.Io.Writer, msgs: []const chatrooms.Message) !void {
+    var s = std.json.Stringify{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("messages");
+    try s.beginArray();
     for (msgs) |m| {
-        s.beginObject() catch return;
-        s.objectField("room") catch return;
-        s.write(m.room) catch return;
-        s.objectField("from") catch return;
-        s.write(m.from) catch return;
-        s.objectField("text") catch return;
-        s.write(m.text) catch return;
-        s.objectField("ts") catch return;
-        s.print("{d}", .{m.ts}) catch return;
-        s.objectField("id") catch return;
-        s.write(m.id) catch return;
+        try s.beginObject();
+        try s.objectField("room");
+        try s.write(m.room);
+        try s.objectField("from");
+        try s.write(m.from);
+        try s.objectField("text");
+        try s.write(m.text);
+        try s.objectField("ts");
+        try s.print("{d}", .{m.ts});
+        try s.objectField("id");
+        try s.write(m.id);
         if (m.thread_ts) |tts| {
-            s.objectField("thread_ts") catch return;
-            s.write(tts) catch return;
+            try s.objectField("thread_ts");
+            try s.write(tts);
         }
         if (m.reactions) |rxns| {
-            s.objectField("reactions") catch return;
-            s.beginArray() catch return;
+            try s.objectField("reactions");
+            try s.beginArray();
             for (rxns) |r| {
-                s.beginObject() catch return;
-                s.objectField("emoji") catch return;
-                s.write(r.emoji) catch return;
-                s.objectField("from") catch return;
-                s.write(r.from) catch return;
-                s.endObject() catch return;
+                try s.beginObject();
+                try s.objectField("emoji");
+                try s.write(r.emoji);
+                try s.objectField("from");
+                try s.write(r.from);
+                try s.endObject();
             }
-            s.endArray() catch return;
+            try s.endArray();
         }
         if (m.edited) |e| {
-            s.objectField("edited") catch return;
-            s.write(e) catch return;
+            try s.objectField("edited");
+            try s.write(e);
         }
         if (m.deleted) |d| {
-            s.objectField("deleted") catch return;
-            s.write(d) catch return;
+            try s.objectField("deleted");
+            try s.write(d);
         }
-        s.endObject() catch return;
+        try s.endObject();
     }
-    s.endArray() catch return;
-    s.endObject() catch return;
-    respond(stream, 200, "OK", buf[0..w.end]);
+    try s.endArray();
+    try s.endObject();
+}
+
+test "a full page of full-length messages serializes whole" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The worst page the route can be asked for: `readHistory`'s limit of 50,
+    // each at `chatrooms.max_text_len`, and the text is quotes and newlines so
+    // JSON escaping doubles every byte of it.
+    const unit = "\"\n";
+    var text: std.ArrayList(u8) = .empty;
+    while (text.items.len < chatrooms.max_text_len) try text.appendSlice(arena, unit);
+    var msgs: std.ArrayList(chatrooms.Message) = .empty;
+    for (0..50) |i| {
+        try msgs.append(arena, .{
+            .room = "engineering",
+            .from = try std.fmt.allocPrint(arena, "clanker-{d}", .{i}),
+            .text = text.items,
+            .ts = @intCast(1786590000 + i),
+            .id = try std.fmt.allocPrint(arena, "msg-{d}", .{i}),
+        });
+    }
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    try writeChatMessagesJson(&out.writer, msgs.items);
+    const body = out.written();
+
+    // Past the 128 KiB the fixed buffer gave it, which is the whole point.
+    try std.testing.expect(body.len > 128 * 1024);
+
+    // And it is a complete document, not a truncated one.
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
+    try std.testing.expect(parsed.object.get("ok").?.bool);
+    try std.testing.expectEqual(@as(usize, 50), parsed.object.get("messages").?.array.items.len);
 }
 
 /// `POST /api/chat/send`, this instance speaking, as opposed to
@@ -4733,9 +4786,12 @@ fn handleChatPins(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
         return;
     };
 
-    var buf: [16 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    // A pin is a whole message, so `chatrooms.max_text_len` puts four of them
+    // past the 16 KiB this used to render into, and an overflow returned
+    // without responding at all.
+    var out: std.Io.Writer.Allocating = .init(arena);
+    const w = &out.writer;
+    var s = std.json.Stringify{ .writer = w, .options = .{} };
     s.beginObject() catch return;
     s.objectField("ok") catch return;
     s.write(true) catch return;
@@ -4748,7 +4804,7 @@ fn handleChatPins(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
     }
     s.endArray() catch return;
     s.endObject() catch return;
-    respond(stream, 200, "OK", buf[0..w.end]);
+    respond(stream, 200, "OK", out.written());
 }
 
 /// Decodes `%XX` escapes and `+` in a query-string value. Invalid escapes are
@@ -4846,9 +4902,9 @@ fn handleChatRooms(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"subscription list failed\"}");
         return;
     };
-    var buf: [64 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    var out: std.Io.Writer.Allocating = .init(arena);
+    const w = &out.writer;
+    var s = std.json.Stringify{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
     s.beginObject() catch return;
     s.objectField("ok") catch return;
     s.write(true) catch return;
@@ -4878,7 +4934,7 @@ fn handleChatRooms(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     for (subs) |sub| s.write(sub) catch return;
     s.endArray() catch return;
     s.endObject() catch return;
-    respond(stream, 200, "OK", buf[0..w.end]);
+    respond(stream, 200, "OK", out.written());
 }
 
 /// GET /api/stats, aggregated token usage per provider/model.
