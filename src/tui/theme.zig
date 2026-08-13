@@ -8,6 +8,13 @@
 //! (add a field, default it to `""` in `mono`); the goal is "no reader has
 //! to decode a raw escape code to know what a style means", not "every
 //! possible SGR combination gets a name".
+//!
+//! Truecolor: the named palettes emit 24-bit SGR (and 24-bit vaxis cells),
+//! and neither this module nor vaxis 0.5.1 downsamples for a 256/16-color
+//! terminal — such a terminal approximates or ignores them. That is fine by
+//! construction: `default` and `mono` carry no RGB at all, so truecolor
+//! only ever fires when someone explicitly picks a palette, and a wrong
+//! guess is visible and self-correcting (`--theme mono`), not silent.
 
 const std = @import("std");
 
