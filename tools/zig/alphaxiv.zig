@@ -71,6 +71,5 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return lib.fail(out, "alphaXiv returned a response that is not a JSON-RPC message");
     if (!extracted.ok) return lib.fail(out, extracted.text);
 
-    const text = if (extracted.text.len > max_chars) extracted.text[0..max_chars] else extracted.text;
-    return lib.okText(out, text);
+    return lib.okText(out, lib.utf8Prefix(extracted.text, max_chars));
 }

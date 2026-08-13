@@ -82,9 +82,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             &[_][]const u8{ "build", gate };
 
         const res = if (dir) |d|
-            lib.execCwd("zig", args, d) catch return lib.fail(out, "could not run zig")
+            lib.execCwd("zig", args, d) catch |err| return lib.failErr(out, err, "running zig")
         else
-            lib.exec("zig", args) catch return lib.fail(out, "could not run zig");
+            lib.exec("zig", args) catch |err| return lib.failErr(out, err, "running zig");
         const failed = std.mem.find(u8, res, "\"code\":0") == null;
         if (failed) {
             var buf: [4096]u8 = undefined;

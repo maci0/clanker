@@ -57,7 +57,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     else if (std.mem.eql(u8, op, "^"))
         std.math.pow(f64, a, b)
     else
-        return lib.fail(out, "unknown op");
+        return lib.fail(out, "unknown op; use + - * / ^");
 
     var buf: [128]u8 = undefined;
     const body = try std.fmt.bufPrint(&buf, "{{\"ok\":true,\"result\":{d}}}", .{result});

@@ -58,8 +58,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     var result: []const u8 = undefined;
     if (depth >= max_depth) {
-        const cap: usize = 2000;
-        const excerpt = if (text.len > cap) text[0..cap] else text;
+        const excerpt = lib.utf8Prefix(text, 2000);
         result = try std.fmt.allocPrint(lib.alloc, "(rlm depth limit {d} reached) excerpt: {s}", .{ max_depth, excerpt });
     } else {
         const task = try std.fmt.allocPrint(

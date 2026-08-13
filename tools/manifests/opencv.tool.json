@@ -1,7 +1,7 @@
 {
   "name": "opencv",
-  "description": "Analyze an image with OpenCV. ops: info (size, brightness, sharpness), edges (Canny), contours (bounding boxes), faces (Haar cascade), grayscale, resize. Input: {\"op\": \"info\", \"path\": \"docs/assets/mascot.jpg\", \"options\": {}}. Written images land in state/opencv/.",
-  "llm_description": "Analyze/transform an image with OpenCV. op: info|edges|contours|faces|grayscale|resize. Input: {op, path, options?}. Written images land in state/opencv/.",
+  "description": "Analyze an image with OpenCV. ops: info (size, brightness, sharpness), edges (Canny), contours (bounding boxes), faces (Haar cascade), grayscale, resize. Input: {\"op\": \"info\", \"path\": \"docs/assets/mascot.jpg\", \"options\": {}}. options keys the guest actually reads: edges uses threshold1/threshold2 (defaults 100/200); contours uses min_area (default 100); resize needs width and/or height (the missing side is scaled). Written images land in state/opencv/.",
+  "llm_description": "Analyze/transform an image with OpenCV. op: info|edges|contours|faces|grayscale|resize. Input: {op, path, options?}. options: edges {threshold1?,threshold2?} (default 100/200); contours {min_area?} (default 100); resize {width? and/or height?} (missing side is scaled). Written images land in state/opencv/.",
   "wasm": "zig-out/tools/opencv.wasm",
   "input_schema": {
     "type": "object",
@@ -22,7 +22,30 @@
         "type": "string"
       },
       "options": {
-        "type": "object"
+        "type": "object",
+        "description": "Per-op knobs. Unused keys are ignored.",
+        "properties": {
+          "threshold1": {
+            "type": "integer",
+            "description": "Canny low threshold for edges. Default 100."
+          },
+          "threshold2": {
+            "type": "integer",
+            "description": "Canny high threshold for edges. Default 200."
+          },
+          "min_area": {
+            "type": "number",
+            "description": "Minimum contour area in pixels for contours. Default 100."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Target width for resize. If only height is set, width is scaled."
+          },
+          "height": {
+            "type": "integer",
+            "description": "Target height for resize. If only width is set, height is scaled."
+          }
+        }
       }
     },
     "required": [

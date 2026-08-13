@@ -37,7 +37,5 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     defer lib.alloc.free(url);
 
     const body = lib.httpGet(url) catch |err| return lib.failErr(out, err, "querying context7");
-    const text = if (body.len > max_chars) body[0..max_chars] else body;
-
-    return lib.okText(out, text);
+    return lib.okText(out, lib.utf8Prefix(body, max_chars));
 }

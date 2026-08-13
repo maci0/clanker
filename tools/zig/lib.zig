@@ -210,6 +210,21 @@ pub fn okText(out: *Out, text: []const u8) !void {
     commit(out, &w);
 }
 
+/// First `max` bytes of `s`, snapped down to a UTF-8 code-point boundary.
+/// A byte cap that lands mid-sequence produces invalid UTF-8; putting that
+/// in a JSON string makes the whole tool reply unparsable.
+pub fn utf8Prefix(s: []const u8, max: usize) []const u8 {
+    var n = @min(s.len, max);
+    if (n == s.len) return s;
+    while (n > 0 and s[n - 1] & 0xC0 == 0x80) n -= 1;
+    if (n == 0) return s[0..0];
+    const b = s[n - 1];
+    if (b & 0x80 == 0) return s[0..n];
+    const need: usize = if (b & 0xE0 == 0xC0) 2 else if (b & 0xF0 == 0xE0) 3 else if (b & 0xF8 == 0xF0) 4 else 1;
+    if (n - 1 + need > @min(s.len, max)) n -= 1;
+    return s[0..n];
+}
+
 // ----------------------------------------------------------------- input --
 
 /// Parses the tool input and requires it to be a JSON object. Tools that want
