@@ -4474,18 +4474,17 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     const dry = opts.dry_run;
-    const args = if (dry)
-        "{\"dry_run\":true,\"scope\":\"staged\"}"
-    else
-        "{\"dry_run\":true,\"scope\":\"staged\"}";
-    const preview = try toolText(io, init.gpa, arena, &cfg, init.environ_map, "smart_commit", args);
+    // The preview is a dry run either way: --dry-run only decides whether we
+    // stop after showing it. The real commit below is the one that writes.
+    const preview = try toolText(io, init.gpa, arena, &cfg, init.environ_map, "smart_commit", "{\"dry_run\":true,\"scope\":\"staged\"}");
     try writeStdOut(io, preview);
     try writeStdOut(io, "\n");
     if (dry) return;
     if (!opts.apply) {
         try writeStdOut(io, "Proceed? [y/N] ");
         var buf: [8]u8 = undefined;
-        const n = std.Io.File.stdin().readStreaming(io, &buf) catch 0;
+        // readStreaming takes a vector of buffers, not one buffer.
+        const n = std.Io.File.stdin().readStreaming(io, &.{&buf}) catch 0;
         const ans = std.mem.trim(u8, buf[0..n], " \t\r\n");
         if (!(std.mem.eql(u8, ans, "y") or std.mem.eql(u8, ans, "Y") or std.mem.eql(u8, ans, "yes"))) {
             try writeStdOut(io, "aborted\n");
