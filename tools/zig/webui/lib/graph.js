@@ -32,16 +32,24 @@ export function graphSummaryText(built) {
   return parts.join(" ");
 }
 
+/* Every entry carries the iteration it belongs to, not only the llm node that
+   opened it: a tool call happens *within* an iteration, and the answer closes
+   the last one. The graph writes this onto each node as `data-iter`, which the
+   iteration scrubber and the breadcrumb chips both read — with it missing on
+   tools, `String(undefined)` reached the attribute and the scrubber skipped
+   every tool call it was asked to dim. */
 export function toDagInput(built) {
   var data = [];
   var parents = [];
+  var lastIteration = null;
   built.stages.forEach(function (stage) {
     var llmId = "n" + data.length;
+    lastIteration = stage.iteration;
     data.push({ id: llmId, parentIds: parents, kind: "llm", node: stage.llm, iteration: stage.iteration });
     if (stage.tools.length) {
       parents = stage.tools.map(function (tn) {
         var tid = "n" + data.length;
-        data.push({ id: tid, parentIds: [llmId], kind: "tool", node: tn });
+        data.push({ id: tid, parentIds: [llmId], kind: "tool", node: tn, iteration: stage.iteration });
         return tid;
       });
     } else {
@@ -50,8 +58,8 @@ export function toDagInput(built) {
   });
   if (data.length) {
     data.push(built.final
-      ? { id: "n" + data.length, parentIds: parents, kind: "final", node: built.final }
-      : { id: "n" + data.length, parentIds: parents, kind: "incomplete", node: null });
+      ? { id: "n" + data.length, parentIds: parents, kind: "final", node: built.final, iteration: lastIteration }
+      : { id: "n" + data.length, parentIds: parents, kind: "incomplete", node: null, iteration: lastIteration });
   }
   return data;
 }
@@ -216,6 +224,11 @@ export function layoutGraph(canvas, built, slowest, opts) {
     arrowPath.setAttribute("d", "M0,0 L8,4 L0,8 z");
     arrowPath.setAttribute("fill", "var(--border)");
     marker.appendChild(arrowPath); defs.appendChild(marker); svg.appendChild(defs);
+    // The drawn edges, in dag.ilinks() order, kept as a list rather than looked
+    // up again later: the arrowhead marker inside <defs> is also a <path> under
+    // this svg, so "svg path" answers with one extra element in front of the
+    // real edges and shifts every index by one.
+    var edgePaths = [];
     for (var link of dag.ilinks()) {
       var pts = link.points.map(function (p) { return [p.x + offsetX, p.y + offsetY]; });
       pts[0][1] = link.source.y + offsetY + link.source.data.h / 2;
@@ -225,7 +238,9 @@ export function layoutGraph(canvas, built, slowest, opts) {
       var path = document.createElementNS(svgNS, "path");
       path.setAttribute("d", d);
       path.setAttribute("marker-end", "url(#run-arrow)");
+      path.setAttribute("data-edge", String(edgePaths.length));
       svg.appendChild(path);
+      edgePaths.push(path);
     }
     canvas.insertBefore(svg, canvas.firstChild);
     for (var dn of dag.idescendants()) {
@@ -258,10 +273,9 @@ export function layoutGraph(canvas, built, slowest, opts) {
             function markUp(dn2){ if (upSeen[dn2.data.id]) return; upSeen[dn2.data.id]=true; var el2 = dn2.data.el; if(el2) el2.setAttribute("data-highlight","true"); for (var p of dn2.iparents()) markUp(p); }
             function markDown(dn2){ if (downSeen[dn2.data.id]) return; downSeen[dn2.data.id]=true; var el2b = dn2.data.el; if(el2b) el2b.setAttribute("data-highlight","true"); for (var ch of dn2.ichildren()) markDown(ch); }
             markUp(me); markDown(me);
-            var ps = canvas.querySelectorAll(".run-edges path");
             var idx=0;
             for (var lk of dag.ilinks()) {
-              var pth = ps[idx++];
+              var pth = edgePaths[idx++];
               if (!pth) continue;
               var sH = lk.source.data.el && lk.source.data.el.hasAttribute("data-highlight");
               var tH = lk.target.data.el && lk.target.data.el.hasAttribute("data-highlight");
