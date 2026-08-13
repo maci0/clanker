@@ -442,8 +442,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else if (std.mem.eql(u8, a, "--webui-port") or std.mem.eql(u8, a, "--port")) {
                 // `--port` is the original spelling, kept working so existing
                 // service files and scripts do not break. `--webui-port` is
-                // the documented one: it names the surface, so an API port
-                // added later reads as a peer of it rather than a rename.
+                // the documented one: it names the surface, so a second
+                // listener added later is --proxy-port rather than a rename.
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 opts.webui_port = std.fmt.parseInt(u16, v, 10) catch {
                     setDiag(diag, v);
@@ -1353,7 +1353,7 @@ const specs = [_]Spec{
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
     .{ .command = .compare, .usage = "compare \"<prompt>\" [--with <provider[@model]>]...", .blurb = "one prompt to several models at once, answers shown unlabeled", .group = .work, .flags = &.{ .compare_with, .compare_judge, .compare_show, .compare_pick, .compare_synthesize, .compare_reveal }, .detail = "Every model gets the same prompt, the calls run side by side, and the answers\ncome back as A, B, C with nothing saying which model wrote which. Use it to\ndecide where to route a class of work; use `providers check` for connectivity\nand latency, which says nothing about answer quality, and `arena` when you want\nthe models to argue with each other rather than answer independently.\n\n--with <provider>          add a model on its provider's configured model\n--with <provider@model>    add a specific model, so two models of one provider\n                           is expressible. Repeat 2-8 times; with no --with at\n                           all, every configured provider enters\n--judge <provider>         who scores the answers. Default \"auto\": the\n                           configured default provider, with a caveat on the\n                           verdict when it is itself an entrant, since it may\n                           recognise its own answer. \"none\" leaves the pick to\n                           you\n--synthesize               also merge the answers into one, as an extra call\n--reveal                   print the label-to-model key even with no verdict\n--show <id>                print a stored comparison instead of running one\n--pick <letter>            with --show, record that answer as your pick\n\nThe display order comes from the comparison id, not the order you typed the\nmodels in, and each model's own names are struck out of its own answer, so\nnothing before the reveal says who wrote what. Comparisons land in\nstate/compare/<id>.json; `compare --show` with no id is not a listing, use the\ncompare tool from a run or read state/compare/log.jsonl." },
-    .{ .command = .serve, .usage = "serve [--host <addr>] [--serve-as <name>]... [--webui-port <port>]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .webui_port, .host, .serve_as }, .detail = "Binds 127.0.0.1 (loopback) by default.\n\n--host <addr>          interface to bind. Default 127.0.0.1; use 0.0.0.0 (or\n                       ::) to reach the web UI and HTTP API from the LAN.\n                       Binding broadly exposes whatever the server can do\n                       (tool calls, write confirmations) to anyone who can\n                       reach the port, so pair it with a firewall.\n--serve-as <name>      a hostname this server may present itself as, so a\n                       reverse proxy or tailnet name is served. Repeatable.\n--webui-port <port>    port the web UI and its API answer on (default 17921).\n                       Also accepted as --port, the original spelling.\n\nOne interface, named ports: --host is the address the process binds, and\neach surface gets its own port under its own name, so an API port split out\nfrom the web UI later would be --api-port rather than a rename of this one.\n\nWhatever it binds to, a request is served only when its Host header names\nthis listener. An IP literal at this port always passes, so --host 0.0.0.0\nis reachable from the LAN by IP with nothing else set. A hostname is not:\nDNS rebinding needs a name whose resolution an attacker controls, and an IP\nliteral cannot be rebound. Only localhost and the names listed by\n--serve-as pass, so a reverse proxy or a tailnet name has to be named:\n--serve-as clanker.lan.\n\nThe listener can also be set without flags, for a service file or a\ncontainer that cannot pass them. Three layers, weakest first:\n\n  [serve] in config.toml       host, webui_port, serve_as (a TOML array)\n  CLANKER_HOST, CLANKER_WEBUI_PORT\n  --host, --webui-port, --serve-as\n\nEach overrides the one above it, so a flag always wins over the env, which\nalways wins over the file. Only that one port is exposed to the network\neither way: serve opens exactly one socket, and configured [[peers]] are\noutbound URLs this process connects to, never anything it listens on." },
+    .{ .command = .serve, .usage = "serve [--host <addr>] [--serve-as <name>]... [--webui-port <port>] [--proxy] [--proxy-port <port>]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .webui_port, .host, .serve_as, .proxy, .proxy_port }, .detail = "Binds 127.0.0.1 (loopback) by default.\n\n--host <addr>          interface to bind. Default 127.0.0.1; use 0.0.0.0 (or\n                       ::) to reach the web UI and HTTP API from the LAN.\n                       Binding broadly exposes whatever the server can do\n                       (tool calls, write confirmations) to anyone who can\n                       reach the port, so pair it with a firewall.\n--serve-as <name>      a hostname this server may present itself as, so a\n                       reverse proxy or tailnet name is served. Repeatable.\n--webui-port <port>    port the web UI and its API answer on (default 17921).\n                       Also accepted as --port, the original spelling.\n--proxy                mount an OpenAI/Anthropic compatibility proxy at\n                       /proxy/v1 on this socket. Off by default. --no-proxy\n                       forces it off even if the file enabled it.\n--proxy-port <port>    optional dedicated proxy listener. When it differs\n                       from --webui-port, /v1 lives at the root on that port\n                       and /api/* is not mounted there.\n\nOne interface, named ports: --host is the address the process binds, and\neach surface gets its own port under its own name. The optional second\nlistener is --proxy-port, not a rename of --webui-port.\n\nWhatever it binds to, a request is served only when its Host header names\nthis listener. An IP literal at this port always passes, so --host 0.0.0.0\nis reachable from the LAN by IP with nothing else set. A hostname is not:\nDNS rebinding needs a name whose resolution an attacker controls, and an IP\nliteral cannot be rebound. Only localhost and the names listed by\n--serve-as pass, so a reverse proxy or a tailnet name has to be named:\n--serve-as clanker.lan.\n\nThe listener can also be set without flags, for a service file or a\ncontainer that cannot pass them. Three layers, weakest first:\n\n  [serve] in config.toml       host, webui_port, serve_as, proxy, proxy_port\n  CLANKER_HOST, CLANKER_WEBUI_PORT, CLANKER_PROXY_PORT\n  --host, --webui-port, --serve-as, --proxy, --no-proxy, --proxy-port\n\nEach overrides the one above it, so a flag always wins over the env, which\nalways wins over the file. Without --proxy the process still opens exactly\none socket. --proxy keeps that true and mounts /proxy/v1 on it. A distinct\n--proxy-port is the only way a second socket is opened. Configured\n[[peers]] are outbound URLs this process connects to, never anything it\nlistens on." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
 
     .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect, .detail = "Also reachable as `clanker history`.\n\nLists every conversation in state/sessions, newest last. To resume one:\n  clanker run --session <id> \"continue where we left off\"\n  clanker repl --session <id>\nTo export one as a standalone HTML file:\n  clanker session export <id>" },
@@ -3433,16 +3433,25 @@ var hot_reload_active: ?*HotReload = null;
 /// Every flag that shapes what the listener is and who it answers to has to be
 /// repeated here, or a hot-reload re-exec silently narrows the policy the
 /// operator started the server with.
-fn buildServeArgvTail(arena: std.mem.Allocator, port: u16, bind_addr: []const u8, serve_as_hosts: []const []const u8) ![]const []const u8 {
+fn buildServeArgvTail(arena: std.mem.Allocator, listen: ListenPolicy) ![]const []const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(arena, "serve");
     try argv.append(arena, "--host");
-    try argv.append(arena, bind_addr);
+    try argv.append(arena, listen.host);
     try argv.append(arena, "--webui-port");
-    try argv.append(arena, try std.fmt.allocPrint(arena, "{d}", .{port}));
-    for (serve_as_hosts) |name| {
+    try argv.append(arena, try std.fmt.allocPrint(arena, "{d}", .{listen.port}));
+    for (listen.serve_as_hosts) |name| {
         try argv.append(arena, "--serve-as");
         try argv.append(arena, name);
+    }
+    if (listen.proxy_enabled) {
+        try argv.append(arena, "--proxy");
+        if (listen.proxy_port != listen.port) {
+            try argv.append(arena, "--proxy-port");
+            try argv.append(arena, try std.fmt.allocPrint(arena, "{d}", .{listen.proxy_port}));
+        }
+    } else {
+        try argv.append(arena, "--no-proxy");
     }
     return argv.items;
 }
@@ -4341,6 +4350,8 @@ const ListenPolicy = struct {
     host: []const u8,
     port: u16,
     serve_as_hosts: []const []const u8,
+    proxy_enabled: bool,
+    proxy_port: u16,
 };
 
 /// Resolves the listener across its three layers, weakest first:
@@ -4356,6 +4367,8 @@ const ListenPolicy = struct {
 fn resolveListen(cfg: *const config.Config, environ_map: *std.process.Environ.Map, opts: Options) ListenPolicy {
     var bind_host: []const u8 = default_serve_host;
     var bind_port: u16 = default_webui_port;
+    var proxy_enabled = cfg.serve.proxy;
+    var proxy_port: ?u16 = cfg.serve.proxy_port;
 
     if (cfg.serve.host) |h| bind_host = h;
     if (cfg.serve.webui_port) |p| bind_port = p;
@@ -4374,9 +4387,29 @@ fn resolveListen(cfg: *const config.Config, environ_map: *std.process.Environ.Ma
             log.log(.warn, "CLANKER_WEBUI_PORT '{s}' is not a 16-bit port number; ignoring", .{v});
         }
     }
+    if (environ_map.get("CLANKER_PROXY_PORT")) |v| {
+        const trimmed = std.mem.trim(u8, v, " \t");
+        if (std.fmt.parseInt(u16, trimmed, 10)) |p| {
+            if (p == 0) {
+                log.log(.warn, "CLANKER_PROXY_PORT '{s}' is not a usable port; ignoring", .{v});
+            } else {
+                proxy_port = p;
+                proxy_enabled = true;
+            }
+        } else |_| {
+            log.log(.warn, "CLANKER_PROXY_PORT '{s}' is not a 16-bit port number; ignoring", .{v});
+        }
+    }
 
     if (opts.host) |h| bind_host = h;
     if (opts.webui_port) |p| bind_port = p;
+    if (opts.proxy_port) |p| {
+        if (p != 0) {
+            proxy_port = p;
+            proxy_enabled = true;
+        }
+    }
+    if (opts.proxy) |p| proxy_enabled = p;
 
     // An empty flag list means the flag was never given, so the config's
     // names stand. `--serve-as` given at all replaces the set rather than
@@ -4384,7 +4417,14 @@ fn resolveListen(cfg: *const config.Config, environ_map: *std.process.Environ.Ma
     // as the whole policy, not as a delta against a file.
     const serve_as = if (opts.serve_as_hosts.len > 0) opts.serve_as_hosts else cfg.serve.serve_as;
 
-    return .{ .host = bind_host, .port = bind_port, .serve_as_hosts = serve_as };
+    const resolved_proxy_port = if (proxy_enabled) (proxy_port orelse bind_port) else bind_port;
+    return .{
+        .host = bind_host,
+        .port = bind_port,
+        .serve_as_hosts = serve_as,
+        .proxy_enabled = proxy_enabled,
+        .proxy_port = resolved_proxy_port,
+    };
 }
 
 /// Bind address for `serve`: IPv6 if the host string contains a colon (e.g.
@@ -4433,8 +4473,38 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
         std.fmt.bufPrint(&hostbuf, "{s}:{d}", .{ listen.host, port }) catch "host:port";
 
     log.log(.info, "serve listening on {s}", .{disp});
+    const dedicated = listen.proxy_enabled and listen.proxy_port != listen.port;
+    if (listen.proxy_enabled and !isLoopbackHost(listen.host) and cfg.serve.proxy_token_env == null) {
+        log.log(.warn, "serve proxy on {s} has no proxy_token_env; anyone who can reach the port spends the configured provider keys", .{listen.host});
+    }
+    if (listen.proxy_enabled and !dedicated) {
+        log.log(.info, "serve proxy at http://{s}/proxy/v1", .{disp});
+    }
     // Bare clickable URL (no log prefix) so terminals render it as a link.
     std.debug.print("http://{s}/webui\n", .{disp});
+
+    if (dedicated) {
+        const proxy_addr = try parseBindAddr(listen.host, listen.proxy_port);
+        const proxy_server = try std.Io.net.IpAddress.listen(&proxy_addr, io, .{ .reuse_address = true });
+        var pbuf: [512]u8 = undefined;
+        const pdisp = if (needs_bracket)
+            std.fmt.bufPrint(&pbuf, "[{s}]:{d}", .{ listen.host, listen.proxy_port }) catch "host:port"
+        else
+            std.fmt.bufPrint(&pbuf, "{s}:{d}", .{ listen.host, listen.proxy_port }) catch "host:port";
+        log.log(.info, "serve proxy listening on {s}", .{pdisp});
+        const pl = try gpa.create(ProxyListener);
+        pl.* = .{
+            .io = io,
+            .gpa = gpa,
+            .cfg = &cfg,
+            .environ_map = init.environ_map,
+            .port = listen.proxy_port,
+            .serve_as_hosts = listen.serve_as_hosts,
+            .server = proxy_server,
+        };
+        const pthread = try std.Thread.spawn(.{}, proxyAcceptLoop, .{pl});
+        pthread.detach();
+    }
 
     // Hot-reload: a background thread watches the binary and re-execs into
     // `serve --host <host> --webui-port <port>` once a rebuild lands and no request
@@ -4447,15 +4517,40 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
         // pins the child to what this process actually bound, so a reload
         // cannot quietly rebind somewhere else because the config file was
         // edited or the env changed underneath it.
-        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, port, listen.host, listen.serve_as_hosts));
+        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, listen));
     }
 
+    const surface: proxy.Surface = if (listen.proxy_enabled and !dedicated) .both else .webui;
     while (true) {
         const stream = server.accept(io) catch |err| {
             log.log(.error_, "accept error: {s}", .{@errorName(err)});
             continue;
         };
-        serveConnection(io, gpa, &cfg, init.environ_map, port, listen.serve_as_hosts, stream);
+        serveConnection(io, gpa, &cfg, init.environ_map, port, listen.serve_as_hosts, stream, surface);
+    }
+}
+
+fn isLoopbackHost(host: []const u8) bool {
+    return std.mem.eql(u8, host, "127.0.0.1") or std.mem.eql(u8, host, "::1") or std.ascii.eqlIgnoreCase(host, "localhost");
+}
+
+const ProxyListener = struct {
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    port: u16,
+    serve_as_hosts: []const []const u8,
+    server: std.Io.net.Server,
+};
+
+fn proxyAcceptLoop(pl: *ProxyListener) void {
+    while (true) {
+        const stream = pl.server.accept(pl.io) catch |err| {
+            log.log(.error_, "proxy accept error: {s}", .{@errorName(err)});
+            continue;
+        };
+        serveConnection(pl.io, pl.gpa, pl.cfg, pl.environ_map, pl.port, pl.serve_as_hosts, stream, .proxy);
     }
 }
 
