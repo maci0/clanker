@@ -1,0 +1,31 @@
+{
+  "name": "alphaxiv",
+  "description": "Query the alphaXiv research API (api.alphaxiv.org MCP endpoint). {\"tool\": \"list\"} enumerates the server's tools and their input schemas; any other value calls that tool with {\"args\": {...}}. Research tools include discover_papers (search/rank papers), get_paper_content (full text or AI report for an arXiv id), answer_pdf_queries (page-level Q&A over papers), and read_files_from_github_repository (browse a paper's codebase). Requires the ALPHAXIV_API_KEY environment variable (alphaxiv.org, Settings > API Keys). Returns {\"ok\": true, \"text\": \"...\"} truncated to max_chars (default 16000).",
+  "llm_description": "alphaXiv research API. {tool, args?, max_chars?}: tool=\"list\" enumerates server tools + schemas; else calls it (discover_papers, get_paper_content, answer_pdf_queries, read_files_from_github_repository). Needs ALPHAXIV_API_KEY.",
+  "wasm": "zig-out/tools/alphaxiv.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "tool": {
+        "type": "string",
+        "description": "Server tool name, or \"list\" to enumerate available tools"
+      },
+      "args": {
+        "type": "object",
+        "description": "Arguments for the named server tool (see \"list\" for its schema)"
+      },
+      "max_chars": {
+        "type": "integer",
+        "description": "Truncate the reply to this many characters (default 16000)"
+      }
+    },
+    "required": [
+      "tool"
+    ]
+  },
+  "network_allow": [
+    "api.alphaxiv.org"
+  ],
+  "fs_prefixes": [],
+  "category": "web"
+}

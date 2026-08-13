@@ -6,6 +6,7 @@ const std = @import("std");
 const json = std.json;
 const types = @import("../llm/types.zig");
 const log = @import("../util/log.zig");
+const utf8 = @import("../util/utf8.zig");
 const strField = @import("../util/json.zig").strField;
 const manifest = @import("manifest.zig");
 
@@ -160,6 +161,10 @@ pub const plugins_state_path = "state/plugins.json";
 /// so the committed manifest keeps holding the project default and a local
 /// change stays local, the same split `plugins.json` makes for on/off.
 pub const plugin_config_state_path = "state/plugin_config.json";
+
+/// Catalog line description: enough to choose a tool, cheap enough that
+/// the full listing stays small.
+const max_catalog_line_bytes: usize = 160;
 
 pub const Registry = struct {
     tools: std.StringArrayHashMapUnmanaged(Tool) = .empty,
@@ -419,13 +424,13 @@ pub const Registry = struct {
     fn firstLine(s: []const u8) []const u8 {
         const line = s[0 .. std.mem.findScalar(u8, s, '\n') orelse s.len];
         // Long enough to choose by, short enough that forty of them stay cheap.
-        return if (line.len > 160) line[0..160] else line;
+        return utf8.cap(line, max_catalog_line_bytes);
     }
 
     test firstLine {
         try std.testing.expectEqualStrings("one", firstLine("one\ntwo"));
         try std.testing.expectEqualStrings("short", firstLine("short"));
-        try std.testing.expectEqual(@as(usize, 160), firstLine("x" ** 400).len);
+        try std.testing.expectEqual(max_catalog_line_bytes, firstLine("x" ** 400).len);
     }
 
     /// The tool definitions to send with a request: the always-available core,

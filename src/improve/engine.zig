@@ -701,6 +701,12 @@ pub const Engine = struct {
             // should hear that and pick something else.
             if (self.hist.revertedByHuman(dup_arena.allocator(), fingerprints) catch false) {
                 log.log(.warn, "proposal repeats an improvement a human reverted; refusing", .{});
+                const revert_id = self.newId() catch null;
+                if (revert_id) |owned_id| {
+                    defer self.ctx.gpa.free(owned_id);
+                    self.hist.append(owned_id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, "repeats a human-reverted improvement", fingerprints, null) catch |herr|
+                        log.log(.warn, "history append failed: {s}", .{@errorName(herr)});
+                }
                 self.feedback = "This exact change was merged before, and a human reverted it afterwards. The revert is deliberate review feedback: do not propose this change again in any form. Pick a different improvement.";
                 return .failed;
             }

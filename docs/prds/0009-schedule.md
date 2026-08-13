@@ -9,7 +9,12 @@ next-fire arithmetic, pure), `src/schedule/store.zig`
 `src/schedule/command.zig` (the operator surface). Surface: CLI
 `clanker schedule [list|add|remove|enable|disable|run|run-due|log]`
 (`Command.schedule` in `src/cli.zig`, which contributes the flag table, one
-dispatch arm, and the callback that turns an entry into a `cmdRun`).
+dispatch arm, and the callback that turns an entry into a `cmdRun`), plus a
+web UI Schedule view (`tools/zig/webui/features/schedule.js`) over
+`GET /api/schedule` (entries with next-fire times and a ledger tail) and
+`POST /api/schedule/<id>` `{"enabled": bool}`, both routed in `src/cli.zig`.
+The browser reads the schedule and can enable/disable an entry; nothing in
+the browser fires one.
 
 There is no always-on loop and no WASM tool over this state. Both are
 deliberate; see Non-goals.
@@ -75,10 +80,12 @@ system's own cron.
 - **Backfill / catch-up.** Missed windows are counted and dropped, never
   replayed. This is Goal 3, stated as a non-goal too because it is the thing a
   future reader is most likely to "fix".
-- **A WASM tool or web UI page over the schedule.** The store and the ledger
-  are plain JSON in `state/`; nothing reads them but the CLI yet. Listed as
-  future work rather than shipped, since neither is needed to remove the
-  outside dependency this PRD is about.
+- **A WASM tool over the schedule.** The store and the ledger are plain JSON
+  in `state/`; no guest tool reads them yet, so an agent conversation cannot
+  see what is scheduled. Listed as future work rather than shipped, since it
+  is not needed to remove the outside dependency this PRD is about. (The web
+  UI half of what this non-goal originally covered has since shipped, see
+  Status; the browser reads and toggles entries but still fires nothing.)
 - **Cron nicknames (`@daily`), names (`MON`, `JAN`), seconds, `L`/`W`/`#`.**
   Every one of them is a dialect this parser would have to speak *exactly*
   right or silently mis-fire. Rejecting them is a documented refusal, not a
@@ -270,10 +277,12 @@ so on every add, and `schedule --help` gives the crontab line:
 
 - **A read-only WASM tool over the schedule**, in the shape of the
   `autoresearch` tool (list entries, tail the ledger), so an agent
-  conversation and the web UI can see what is scheduled. `AGENTS.md`'s "WASM
-  by default" says a capability that can be a guest should be one; the
-  firing side cannot (ADR 0008), but the reading side plainly can, and not
-  building it yet is a scope call rather than a design one.
+  conversation can see what is scheduled. The web UI already can
+  (`GET /api/schedule`, see Status); the agent-facing guest tool is the
+  remaining gap. `AGENTS.md`'s "WASM by default" says a capability that can
+  be a guest should be one; the firing side cannot (ADR 0008), but the
+  reading side plainly can, and not building it yet is a scope call rather
+  than a design one.
 - **Whether a scheduled run should be goal-steered.** Today it is, because it
   goes through `cmdRun` unchanged and `modules.goal` steers every run. That is
   consistent, but it also means an entry's prompt is silently rewritten by

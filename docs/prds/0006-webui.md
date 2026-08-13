@@ -2,22 +2,17 @@
 
 ## Status
 
-Shipped — Board (Trello) and Rooms (Slack) polished + callgraph navigation (Codex/Kimi/Qwen): search/kind filters with dim, `↗` sub-run jump + `↑ Parent`, deep-link `#runs/<id>?node=<label>` with pinned selection, minimap with dots+edges+viewport drag, path highlight on hover/focus, `/`→search/`n`/`F`/`j`/`k`/arrows/`+/-` keyboard, breadcrumb sync, `Copy link` pins node, inline `+` quick-add per lane,
-Archive toggle for done, `Drop here — or Add card` empty slots, card cover strip +
-member avatar + `✔ 50%` progress bar, priority `filled` due labels, Slack grouped
-messages / day `— YYYY-MM-DD —` / hover gutter + `#` composer / `/me` `/shrug`
-+ link unfurl + hover action bar + room `· 3 new` badges. ChatGPT/Cursor/Claude
-theme also live, plus a pixel-art SVG header logo. Source of truth: `tools/zig/webui/*`
+Shipped. Source of truth: `tools/zig/webui/*`
 (`index.html`/`app.css`/`app.js` + `core/*`/`lib/*`/`features/*` ES modules),
 comptime-embedded via `tools/zig/webui.zig`, routed in `src/cli.zig`
 (`handleConnection`/`handleRun`/`handleWebuiAsset`/`handleWebuiPeers`/etc).
 Surface: `clanker serve`, served at `GET /`. Co-equal product surface with
-the CLI (`PRODUCT.md`). Turn-by-turn audit trail of the module-split and
-accessibility work lives separately in `docs/WEBUI_REVIEW.md` — that
-document is a working log, this one is the spec.
-Phase 6 — Chat UX parity against the Kimi Code web UI — also live: per-turn
-Branch (server `branchSession` + per-turn Branch button), run-ref citation
-chips → `openRun`, the composer model pill, and the collapsed icon rail.
+the CLI. Turn-by-turn audit trail of the module-split and accessibility work
+lives separately in `docs/WEBUI_REVIEW.md` — that document is a working log,
+this one is the spec. The shipped feature set (Board, Rooms, callgraph
+navigation, ChatGPT/Cursor/Claude theme, Phase 6 chat parity, Compare,
+goals↔board sync) is enumerated in Acceptance criteria below rather than
+repeated here.
 
 ## Problem
 
@@ -94,9 +89,10 @@ here as the design rationale it is, not kept as a separate file.
 routed the same way `app.css`/`app.js` already were —
 `tools/zig/webui.zig`'s `assetFor` is a lookup table, adding a module is
 mechanical. `app.js` dropped from 5,511 lines to 3,545 right after the
-`board.js`/`goals.js` split, and sits at 5,341 today as later work (Phase 6,
-Kimi-parity, Models/Schedule/Search views) landed inline rather than in a
-module; `core/icons.js`,
+`board.js`/`goals.js` split, and sits at 5,341 today from later inline growth
+(Phase 6, Kimi-parity); the Models/Schedule/Search views landed as real
+modules (`features/models.js`, `features/schedule.js`, `features/search.js`,
+each routed and individually cached in `src/cli.zig`); `core/icons.js`,
 `core/ui.js`, `core/utils.js`, `core/vendor.js`, `core/chat.js`,
 `core/labels.js`, `core/goals.js`, `core/stream.js`, `core/theme.js`,
 `core/overlay.js`, `core/search.js`, `core/composer.js`, `core/scroll.js`,
@@ -186,7 +182,16 @@ hidden `<select>`, which stays the one thing `runOptions()`/localStorage/
 `renderContextMeter()` read — selecting an entry sets its value and
 dispatches `change`, so nothing downstream needed to change.
 
-**Theme / chrome (2026-08-12).** Light `#ffffff`/`#f7f7f8` and dark `#212121`/`#171717` aligned to ChatGPT/Cursor/Claude — `14px` antialiased body, pill composer `24px→20px` (focus `accent 22%`), user bubble `18–20px` right-aligned `min(30–42rem,68–78%)`, pill buttons/inputs `999px` (`sans 13px`), header `sticky ghost` (`92% surface`, `blur 10px`, `rule 70%`), `session-title` `14px/500 muted`, `session-actions` `30px/12px`, ghost `chip-btn`, `header-model` `999px` clickable → composer, rail `14–15rem` on `surface` (collapsed `56px`), `turn-events` `sans 12px` chips, `event-ask` `14px` card, `code-block` dark-sink `--code-bg/--code-fg`, `skeleton` shimmer, `turn-foot` hover-reveal, composer placeholder `13px/0.65`, toolbar `11px` meta, plus ChatGPT-density tweaks (`46rem` column, centered `6vh` hero `clamp(20–26px)`, `2× 18rem` suggestion grid `44px 10px` cards, `d3`/`hljs` vendor blurs preserved).
+**Theme / chrome.** The chrome follows the ChatGPT/Cursor/Claude idiom, all
+plain CSS riding the app's palette variables (light `#ffffff`/`#f7f7f8`, dark
+`#212121`/`#171717`), no theme engine: a 14px antialiased sans body, pill
+shapes throughout (composer, buttons, inputs, the clickable `header-model`
+chip, all `999px` radii), right-aligned user bubbles with a max-width clamp,
+a sticky translucent header (mostly-opaque surface plus blur), a collapsible
+rail on `surface`, chip-styled `turn-events`, a dark-sink code-block palette
+(`--code-bg`/`--code-fg`), skeleton shimmer for loading, hover-revealed turn
+footers, and a centered narrow-column hero with a suggestion grid. The
+vendored `d3`/`hljs` view styling is preserved untouched.
 
 **Subagent graphs and the Fleet view.** A nested run always recorded its own
 graph, but under the same second-resolution `run-<ts>` id as everything
@@ -302,7 +307,7 @@ Phase 3 — see what the agents are doing:
 
 - [x] 3.1 Subagent runs recorded as their own graphs
 - [x] 3.2 Cross-agent view (Fleet: roster, DMs, nested-run grouping)
-- [x] 3.3 Todos in the browser, both layers. Shared durable work: the board's filtered view — text/assignee/blocked/priority filters on the existing board (the board *is* the shared todo surface, per `docs/prds/0002-kanban-board.md`); no second data store. A run's own working plan: the private per-run checklist (`src/agent/private_todos.zig`) rendered live in the turn card from `todos` events on the run's own `/api/run` stream (`features/todos.js`); still in memory, still discarded when the run returns, no endpoint and no polling added
+- [x] 3.3 Todos in the browser, both layers. Shared durable work: the board's filtered view — text/assignee/blocked/priority filters on the existing board (the board *is* the shared todo surface, per `docs/prds/0002-kanban-board.md`); no second data store. A run's own working plan: the private per-run checklist rendered live in the turn card from `todos` events on the run's own `/api/run` stream (`features/todos.js`); the private-todo lifecycle itself is specified by `docs/prds/0003-run-todos.md`, not here
 
 Phase 4 — `webui_pixelagents`:
 
@@ -361,6 +366,6 @@ Infrastructure:
 - **Phase 5 progress** now streams over the existing `/api/run` `\x01` channel; history/revert detail can be added per-run without a new transport.
 - **Remaining `app.js` decomposition** — `board.js` and `goals.js` split out
   already (see Design), but `app.js` grew back from 3,545 to 5,341 lines as
-  later work (Phase 6, Models/Schedule/Search) landed inline; no specific
+  later work (Phase 6, Kimi-parity) landed inline; no specific
   next module is scoped, but splitting is cheaper now that the import graph
   is real instead of window-bridge globals.

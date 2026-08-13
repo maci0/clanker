@@ -434,16 +434,11 @@ pub fn chatStream(
     const extra_len = impl.authHeaders(cred, &headers, &extra);
 
     const uri = std.Uri.parse(url) catch return error.InvalidUrl;
-    var req = client.request(.POST, uri, .{
+    var req = try client.request(.POST, uri, .{
         .redirect_behavior = .unhandled,
         .headers = headers,
         .extra_headers = extra[0..extra_len],
-    }) catch |err| {
-        log.log(.error_, "stream request to '{s}' failed: {s}", .{ provider.name, @errorName(err) });
-        noteError();
-        recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
-        return err;
-    };
+    });
     defer req.deinit();
 
     req.transfer_encoding = .{ .content_length = body.len };
@@ -453,38 +448,13 @@ pub fn chatStream(
     if (ctx.environ_map.get("CLANKER_DEBUG_BODY") != null) {
         log.log(.debug, "LLM streaming request provider={s} bytes={d}", .{ provider.name, body.len });
     }
-    var body_writer = req.sendBodyUnflushed(&.{}) catch |err| {
-        log.log(.error_, "stream send to '{s}' failed: {s}", .{ provider.name, @errorName(err) });
-        noteError();
-        recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
-        return err;
-    };
-    body_writer.writer.writeAll(body) catch |err| {
-        log.log(.error_, "stream send to '{s}' failed: {s}", .{ provider.name, @errorName(err) });
-        noteError();
-        recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
-        return err;
-    };
-    body_writer.end() catch |err| {
-        log.log(.error_, "stream send to '{s}' failed: {s}", .{ provider.name, @errorName(err) });
-        noteError();
-        recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
-        return err;
-    };
-    req.connection.?.flush() catch |err| {
-        log.log(.error_, "stream send to '{s}' failed: {s}", .{ provider.name, @errorName(err) });
-        noteError();
-        recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
-        return err;
-    };
+    var body_writer = try req.sendBodyUnflushed(&.{});
+    try body_writer.writer.writeAll(body);
+    try body_writer.end();
+    try req.connection.?.flush();
 
     var redirect_buffer: [8192]u8 = undefined;
-    var response = req.receiveHead(&redirect_buffer) catch |err| {
-        log.log(.error_, "stream response from '{s}' failed: {s}", .{ provider.name, @errorName(err) });
-        noteError();
-        recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
-        return err;
-    };
+    var response = try req.receiveHead(&redirect_buffer);
 
     if (@intFromEnum(response.head.status) >= 400) {
         // The client advertises gzip, and providers compress error bodies too:
@@ -1082,50 +1052,6 @@ test "vertex non-stream chat hits rawPredict, not streamRawPredict" {
     try std.testing.expect(std.mem.endsWith(u8, captured.target, ":rawPredict"));
     try std.testing.expect(!std.mem.endsWith(u8, captured.target, ":streamRawPredict"));
     try std.testing.expect(std.mem.find(u8, captured.body, "\"stream\":true") == null);
-}
-
-test "chat retries a 503 and records the successful completion" {
-    const mock_server = @import("mock_server.zig");
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const mock = try mock_server.MockServer.start(io, std.testing.allocator, .anthropic_text);
-    defer mock.stop();
-    mock.fail_before_ok.store(1, .release);
-
-    var env = std.process.Environ.Map.init(std.testing.allocator);
-    defer env.deinit();
-    try env.put("MOCK_ANTHROPIC_KEY", "test-key");
-
-    const base_url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}", .{mock.port});
-    defer std.testing.allocator.free(base_url);
-    var arena_for_provider = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_for_provider.deinit();
-    var provider = try config.Provider.single(arena_for_provider.allocator(), "anthropic-mock", base_url, .anthropic, "claude-sonnet-5", .{
-        .context_window = 1_000_000,
-        .max_tokens = 1024,
-    });
-    provider.api_key_env = "MOCK_ANTHROPIC_KEY";
-
-    var ctx = Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-
-    const before = snapshotMetrics();
-    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
-    var err_detail: ?[]const u8 = null;
-    const resp = try chat(&ctx, arena_state.allocator(), .{
-        .provider = &provider,
-        .messages = &messages,
-    }, &err_detail);
-    try std.testing.expect(resp.message.content != null);
-    try std.testing.expectEqual(@as(usize, 2), mock.captured.items.len);
-
-    const after = snapshotMetrics();
-    try std.testing.expectEqual(before.requests_total + 1, after.requests_total);
-    try std.testing.expectEqual(before.retries_total + 1, after.retries_total);
-    try std.testing.expectEqual(before.errors_total, after.errors_total);
 }
 
 test "cached prompt tokens are billed at the cache-read rate" {

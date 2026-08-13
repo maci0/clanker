@@ -110,7 +110,7 @@ runs — this one field is not itself an array, unlike the others above).
 None currently known. Previously resolved: `kanban_add`/`kanban_update` now
 honour the `assignee` field they used to silently drop; `kanban_move`'s no-op
 `position` field was removed from the manifest (card ordering stays future
-work, see Open questions); and the newest-first history fold that silently
+work); and the newest-first history fold that silently
 lost older cards was fixed by requesting oldest-first pages (see Paging bound
 above).
 

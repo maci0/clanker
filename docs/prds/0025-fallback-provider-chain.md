@@ -3,10 +3,11 @@
 ## Status
 
 Draft. Nothing in this PRD is built yet. Sources of truth once built:
-`src/config.zig` (`Agent.fallback_provider`, `~L260`), `src/cli.zig`
-(`visionFallbackProvider`, `~L9456-9480`, and its one call site,
-`~L9668-9676`), `src/llm/client.zig` (`isRetryable`, `max_attempts`, the
-existing same-provider retry loop, `~L49-120`), `src/agent/loop.zig`
+`src/config.zig` (`Agent.fallback_provider`, `~L261`), `src/cli.zig`
+(`visionFallbackProvider`, `~L9575`, and its one call site, `~L9774`, with
+the routing comment at `~L9764-9771`), `src/llm/client.zig`
+(`max_attempts = 3` at `~L49`, the existing same-provider retry loop at
+`~L139-160`, and `isRetryable` at `~L708`), `src/agent/loop.zig`
 (`self.provider: *const config.Provider`, `~L68`, and its `client.chat`/
 `chatStream` call sites).
 
@@ -16,11 +17,20 @@ existing same-provider retry loop, `~L49-120`), `src/agent/loop.zig`
 trigger: an image is attached, `cfg.modules.multimodal` is on, and the
 selected model does not declare `image_in`
 (`req.images.len > 0 and cfg.modules.multimodal and
-!imageAttachmentsSupported(...)`, `src/cli.zig:9668`). When that condition
+!imageAttachmentsSupported(...)`, `src/cli.zig:9773`). When that condition
 holds, `visionFallbackProvider` picks a *different* provider **before any
 request is sent** — a pre-emptive, capability-based swap, zero wasted
 requests, decided once at run setup in `cli.zig`, before `Agent.init` even
 runs.
+
+One caution for a future reader tempted to "correct" this section against the
+git history: commit `5b95920`'s message says the per-run fallback is "used
+when a single request to the selected provider fails", which describes a
+reactive mechanism. The code it landed does not do that. The guard above is
+purely pre-emptive (images attached, multimodal on, model lacks `image_in`),
+evaluated before `Agent.init`, and nothing anywhere reacts to a request that
+actually failed. This PRD's reading is the correct one; the commit message
+overstates.
 
 Nothing in the codebase reacts to a request that actually *fails*. The one
 retry mechanism that exists, `client.zig`'s `isRetryable` +
@@ -98,7 +108,7 @@ approach as PRD 0022's `tools_dir`) or an array — a user with today's single
 surface, not a breaking change to the existing key.
 
 `RunRequest.fallback_provider` (the per-run webui override,
-`src/cli.zig:5627-5631`) gets the equivalent pluralization for consistency,
+`src/cli.zig:5647-5648`) gets the equivalent pluralization for consistency,
 though a single override remains a valid, common case.
 
 **Trigger (Goal 2).** `client.zig`'s existing loop already distinguishes
@@ -126,6 +136,12 @@ non-empty, advance `self.provider` to the next entry not yet tried this
 turn and retry the same built request against it; on success, log which
 provider actually served the turn; on exhausting the whole chain, propagate
 the last error as today.
+
+Sequencing against [PRD 0024 (sampling profiles)](0024-sampling-profiles.md),
+which touches the same four dispatch sites: this PRD owns the call-site
+restructure (the provider swap around `client.chat`/`chatStream`) and lands
+first; 0024 only extends `writeSamplingParams`'s `orelse` chain and rides on
+top afterwards, touching no call site.
 
 **`self.provider` becomes swappable mid-run.** Today it is set once at
 `Agent.init` and never reassigned (`src/agent/loop.zig:68`, every read site

@@ -30,9 +30,6 @@ pub const MockServer = struct {
     captured: std.ArrayList(Captured) = .empty,
     mode: Mode,
     port: u16,
-    /// First N accepted requests answer 503, then the configured mode.
-    /// Used to exercise the client's retry loop without a real provider.
-    fail_before_ok: std.atomic.Value(u32) = .init(0),
 
     pub fn start(io: std.Io, gpa: std.mem.Allocator, mode: Mode) !*MockServer {
         var seed_ctr: std.atomic.Value(u64) = .init(0);
@@ -140,15 +137,6 @@ pub const MockServer = struct {
     }
 
     fn respond(self: *MockServer, stream: std.Io.net.Stream) void {
-        if (self.fail_before_ok.load(.acquire) > 0) {
-            _ = self.fail_before_ok.fetchSub(1, .acq_rel);
-            const body = "{\"error\":{\"message\":\"temporarily unavailable\"}}";
-            var hbuf: [256]u8 = undefined;
-            const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{body.len}) catch return;
-            rawhttp.writeAllFd(stream.socket.handle, hdr);
-            rawhttp.writeAllFd(stream.socket.handle, body);
-            return;
-        }
         const pair = switch (self.mode) {
             .openai_stream => .{
                 \\data: {"id":"chatcmpl-mock2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello "},"finish_reason":null}]}

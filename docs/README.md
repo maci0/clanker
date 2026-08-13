@@ -978,8 +978,17 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/knowledge` | GET, POST | Knowledge-graph entries |
 | `/api/prompts` | GET, POST | Stored prompts |
 | `/api/steer` | POST | Send steering text into a run already in flight |
-| `/api/chat/messages`, `/api/chat/rooms`, `/api/chat/pins` | GET | Read the chatroom log, the room list, and pinned messages |
-| `/api/chat/send`, `/subscribe`, `/react`, `/edit`, `/delete`, `/pin`, `/topic` | POST | Chatroom mutations |
+| `/api/chat/messages?room=..&after=..` | GET | Read a room's message log after a cursor |
+| `/api/chat/rooms` | GET | List subscribed chatrooms |
+| `/api/chat/pins` | GET | Pinned messages in a room |
+| `/api/chat/message` | POST | Receive a chatroom message fanned out from a peer |
+| `/api/chat/send` | POST | Send a message to a chatroom |
+| `/api/chat/subscribe` | POST | Join or leave a chatroom |
+| `/api/chat/react` | POST | Add or remove a reaction |
+| `/api/chat/edit` | POST | Edit a message already sent |
+| `/api/chat/delete` | POST | Delete a message |
+| `/api/chat/pin` | POST | Pin or unpin a message |
+| `/api/chat/topic` | POST | Set a room's topic |
 | `/api/runs` | GET | Recorded runs, newest first (JSON) |
 | `/api/runs/<run-id>` | GET | One execution graph, node by node (JSON) |
 | `/api/notify` | POST | Receive a notification (JSON) |
@@ -1003,11 +1012,6 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/logs` | GET | Tail the instance's log output |
 | `/api/webui/plugins` | GET, POST | List web UI plugin assets, or toggle one |
 | `/webui/plugins/<name>` | GET | Serve a web UI plugin's static asset |
-| `/api/chat/message` | POST | Receive a chatroom message fanned out from a peer |
-| `/api/chat/messages` | GET | Read a room's message log after a cursor |
-| `/api/chat/rooms` | GET | List subscribed chatrooms |
-| `/api/chat/send` | POST | Send a message to a chatroom |
-| `/api/chat/subscribe` | POST | Join or leave a chatroom |
 
 `GET /` loads the `webui` tool from the registry and renders its output as HTML. It is a real multi-turn chat, not a one-shot form: the page holds a `session` id in `localStorage` and sends it on every `/api/run` call, so replies stay in context (backed by the same `state/sessions/*.json` store as the CLI/REPL `--session`) until "New chat" starts a fresh id.
 

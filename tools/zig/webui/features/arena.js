@@ -22,11 +22,45 @@ function reducedMotion() {
 function _hash(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h >>> 0; }
 function colorFor(name) { var v = _hash(name || ""); return "hsl(" + (v % 360) + " 35% 62%)"; }
 
-// Fleet's existing bucket palette rather than new hex values.
-var HP_GOOD = "#2fae4d";
-var HP_WARN = "#e5b54a";
-var HP_LOW = "#dc4c3f";
-var INK = "#dfe5df";
+// The canvas palette is seeded from the active theme's computed tokens, not a
+// fixed dark ramp: Fleet's bucket hues map onto the theme's ok/warn/danger and
+// the stage neutrals onto surface/border, so a light data-theme draws a light
+// stage and the status colours stay re-tunable. The palette is re-read on every
+// draw/redraw; the theme observer in bindArena re-seeds static reduced-motion
+// frames.
+function themeVar(name) {
+  var root = document.documentElement;
+  if (!root) return "";
+  var v = (getComputedStyle(root).getPropertyValue(name) || "").trim();
+  // Some themes alias a token (mocha/latte set --surface: var(--paper)); resolve
+  // one level so the palette gets a concrete colour, not the var() string.
+  var m = /^var\(\s*([--A-Za-z0-9_]+)\s*\)$/.exec(v);
+  return m ? themeVar(m[1]) : v;
+}
+function hexRgb(hex) {
+  var s = (hex || "").trim();
+  if (s.charAt(0) === "#") s = s.slice(1);
+  if (s.length === 3) s = s.replace(/./g, function (c) { return c + c; });
+  if (s.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(s)) return null;
+  var n = parseInt(s, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function withAlpha(color, a) {
+  var rgb = hexRgb(color);
+  return rgb ? "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + a + ")" : color;
+}
+function arenaTheme() {
+  return {
+    bg: themeVar("--surface-2") || "#1d2225",
+    surface: themeVar("--surface") || "#2a3033",
+    border: themeVar("--border") || "#343b3f",
+    fg: themeVar("--fg") || "#ffffff",
+    muted: themeVar("--fg-muted") || "#8b948b",
+    ok: themeVar("--ok") || "#2fae4d",
+    warn: themeVar("--warn") || "#e5b54a",
+    danger: themeVar("--danger") || "#dc4c3f"
+  };
+}
 
 var state = {
   id: null,
@@ -368,11 +402,10 @@ function frame(ts) {
   state.raf = window.requestAnimationFrame(frame);
 }
 
-function hpColor(hp, max) {
-  var frac = max ? hp / max : 0;
-  if (frac > 0.5) return HP_GOOD;
-  if (frac > 0.2) return HP_WARN;
-  return HP_LOW;
+function hpColor(frac, pal) {
+  if (frac > 0.5) return pal.ok;
+  if (frac > 0.2) return pal.warn;
+  return pal.danger;
 }
 
 function drawFrame(ts) {
@@ -386,19 +419,21 @@ function drawFrame(ts) {
   var t = reduced ? 0 : (ts || 0);
   var cs = m.combatants || [];
   var n = cs.length || 1;
+  var pal = arenaTheme();
 
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, cv.width, cv.height);
 
-  // Ground plane and horizon, tiled the same way as Fleet's desk floor.
-  ctx.fillStyle = "#1d2225";
+  // Ground plane and horizon, toned from the active theme rather than a fixed
+  // dark ramp, tiled the same way as Fleet's desk floor.
+  ctx.fillStyle = pal.bg;
   ctx.fillRect(0, 0, cv.width, cv.height);
-  ctx.fillStyle = "rgba(255,255,255,0.04)";
+  ctx.fillStyle = withAlpha(pal.fg, 0.04);
   for (var gx = 0; gx < cv.width; gx += 8) ctx.fillRect(gx, 0, 1, cv.height);
   var ground = cv.height - 46;
-  ctx.fillStyle = "#2a3033";
+  ctx.fillStyle = pal.surface;
   ctx.fillRect(0, ground, cv.width, 2);
-  ctx.fillStyle = "#343b3f";
+  ctx.fillStyle = pal.border;
   for (var tx = 0; tx < cv.width; tx += 16) ctx.fillRect(tx + 1, ground + 2, 14, 26);
 
   var last = lastMove(m);
@@ -412,14 +447,14 @@ function drawFrame(ts) {
     // Pairwise faces the two sprites across the centre; a royale lines them up.
     var facing = n <= 2 ? (i === 0 ? 1 : -1) : (cx < cv.width / 2 ? 1 : -1);
     var acting = last && last.combatant === i ? last.move : null;
-    drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, reduced, m);
+    drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, reduced, m, pal);
   }
 
   // The compactor runs after the verdict, over the top of the still stage.
-  if (!reduced && m.status !== "running") drawCompactor(ctx, cv, m, t, ground, cw);
+  if (!reduced && m.status !== "running") drawCompactor(ctx, cv, m, t, ground, cw, pal);
 }
 
-function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, reduced, m) {
+function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, reduced, m, pal) {
   var gone = c.eliminated || c.conceded;
   var bob = reduced || gone ? 0 : Math.sin(t / 420 + i * 1.1) * 2;
   var kneel = c.conceded || c.eliminated ? 8 : 0;
@@ -451,7 +486,7 @@ function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, redu
     ctx.fillRect(bx - 2, by - 10, 5, 4);
     ctx.fillRect(bx + 15, by - 10, 5, 4);
     ctx.globalAlpha = breathe;
-    ctx.fillStyle = HP_GOOD;
+    ctx.fillStyle = pal.ok;
     ctx.fillRect(bx + 2, by - 18, 14, 3);
     ctx.globalAlpha = gone ? 0.45 : 1;
   }
@@ -460,7 +495,7 @@ function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, redu
   // A brief flash on a sprite that blocked.
   if ((acting === "block" || acting === "counter") && !reduced && lunge > 0.4) {
     ctx.globalAlpha = 0.35 * lunge;
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = pal.fg;
     ctx.fillRect(bx - 2, by - 10, 20, 30);
     ctx.globalAlpha = 1;
   }
@@ -473,7 +508,7 @@ function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, redu
   var barY = ground - 52;
   ctx.globalAlpha = gone ? 0.4 : 1;
   for (var s = 0; s < segs; s++) {
-    ctx.fillStyle = s < filled ? hpColor(c.hp, maxHp) : "#3a4146";
+    ctx.fillStyle = s < filled ? hpColor(c.hp / maxHp, pal) : pal.border;
     ctx.fillRect(barX + s * 4.4, barY, 3, 5);
   }
   ctx.globalAlpha = 1;
@@ -483,14 +518,14 @@ function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, redu
   var lm = lastMove(m);
   if (lm && lm.combatant === i && lm.damage_taken > 0 && !reduced && lunge > 0) {
     ctx.globalAlpha = lunge;
-    ctx.fillStyle = HP_LOW;
+    ctx.fillStyle = pal.danger;
     ctx.font = "10px monospace";
     ctx.textAlign = "center";
     ctx.fillText("-" + lm.damage_taken, cx, barY - 6 - Math.round((1 - lunge) * 10));
     ctx.globalAlpha = 1;
   }
 
-  ctx.fillStyle = INK;
+  ctx.fillStyle = pal.fg;
   ctx.font = "10px monospace";
   ctx.textAlign = "center";
   ctx.fillText((c.label || "").slice(0, 14), cx, ground + 40);
@@ -498,7 +533,7 @@ function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, redu
 
 /* The eliminated combatant's exit: a bulldozer pass, then walls closing in.
    Purely decorative, and the status line already said who lost in words. */
-function drawCompactor(ctx, cv, m, t, ground, cw) {
+function drawCompactor(ctx, cv, m, t, ground, cw, pal) {
   var q = state.compactor;
   if (!q.queue.length || q.i >= q.queue.length) return;
   if (!q.started) q.started = t;
@@ -513,7 +548,7 @@ function drawCompactor(ctx, cv, m, t, ground, cw) {
   if (age < pushMs) {
     var p = age / pushMs;
     // Dark hole at the far edge.
-    ctx.fillStyle = "#0b0e0f";
+    ctx.fillStyle = pal ? pal.bg : "#0b0e0f";
     ctx.fillRect(hole, ground - 16, 22, 18);
     // The loser's sprite, pushed ahead of the blade, shrinking into the hole.
     var lx = Math.round(cx + (hole - cx) * p);
@@ -525,11 +560,11 @@ function drawCompactor(ctx, cv, m, t, ground, cw) {
     ctx.globalAlpha = 1;
     // Bulldozer: body, blade, two treads that step-cycle on the same t.
     var bx = Math.round(cx - 40 + (hole - cx) * p);
-    ctx.fillStyle = "#e5b54a";
+    ctx.fillStyle = pal ? pal.warn : "#e5b54a";
     ctx.fillRect(bx, ground - 18, 24, 12);
-    ctx.fillStyle = "#c9a038";
+    ctx.fillStyle = pal ? pal.warn : "#c9a038";
     ctx.fillRect(bx + 24, ground - 20, 4, 16);
-    ctx.fillStyle = "#2a3033";
+    ctx.fillStyle = pal ? pal.surface : "#2a3033";
     var step = Math.floor(t / 90) % 2;
     ctx.fillRect(bx + 2 + step, ground - 6, 7, 6);
     ctx.fillRect(bx + 14 - step, ground - 6, 7, 6);
@@ -541,11 +576,11 @@ function drawCompactor(ctx, cv, m, t, ground, cw) {
     // short of full closure: the point is the walls closing.
     var w = (age - pushMs) / wallMs;
     ctx.globalAlpha = Math.min(1, w * 3);
-    ctx.fillStyle = "#121618";
+    ctx.fillStyle = pal ? pal.bg : "#121618";
     ctx.fillRect(0, 0, cv.width, cv.height);
     var gap = 26;
     var travel = Math.round((cv.width / 2 - gap) * Math.min(1, w * 1.2));
-    ctx.fillStyle = "#3a4146";
+    ctx.fillStyle = pal ? pal.border : "#3a4146";
     ctx.fillRect(0, 0, travel, cv.height);
     ctx.fillRect(cv.width - travel, 0, travel, cv.height);
     ctx.fillStyle = colorFor((cs[idx] && cs[idx].label) || String(idx));
@@ -567,6 +602,7 @@ function renderCombatants(m) {
   var host = byId("arena-combatants");
   if (!host) return;
   host.textContent = "";
+  var pal = arenaTheme();
   (m.combatants || []).forEach(function (c, i) {
     var chip = document.createElement("div");
     chip.className = "arena-combatant";
@@ -588,7 +624,7 @@ function renderCombatants(m) {
     fill.className = "arena-hp-fill";
     var frac = (c.max_hp ? c.hp / c.max_hp : 0);
     fill.style.width = Math.max(0, Math.min(100, Math.round(frac * 100))) + "%";
-    fill.style.background = hpColor(c.hp, c.max_hp || 100);
+    fill.style.background = hpColor((c.max_hp ? c.hp / c.max_hp : 0), pal);
     bar.appendChild(fill);
     var hp = document.createElement("span");
     hp.className = "meta";
@@ -627,8 +663,9 @@ function renderHpGraph(m) {
   var ctx = cv.getContext("2d");
   var W = cv.width, H = cv.height;
   var padL = 26, padR = 8, padT = 8, padB = 16;
+  var pal = arenaTheme();
   ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = "#1d2225";
+  ctx.fillStyle = pal.bg;
   ctx.fillRect(0, 0, W, H);
   var maxHp = 0;
   cs.forEach(function (c) { maxHp = Math.max(maxHp, c.max_hp || 100); });
@@ -636,8 +673,8 @@ function renderHpGraph(m) {
   function X(k) { return padL + (W - padL - padR) * (k / nx); }
   function Y(hp) { return padT + (H - padT - padB) * (1 - hp / maxHp); }
   // Gridlines at 0/50/100% with axis labels, same ink as the stage.
-  ctx.strokeStyle = "rgba(255,255,255,0.08)";
-  ctx.fillStyle = "#8b948b";
+  ctx.strokeStyle = withAlpha(pal.fg, 0.08);
+  ctx.fillStyle = pal.muted;
   ctx.font = "9px monospace";
   ctx.textAlign = "right";
   [0, 0.5, 1].forEach(function (f) {
@@ -654,7 +691,7 @@ function renderHpGraph(m) {
   (m.rounds || []).forEach(function (r) {
     var upto = moveIdx + (r.moves || []).length;
     var x = X(upto);
-    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.strokeStyle = withAlpha(pal.fg, 0.05);
     ctx.beginPath();
     ctx.moveTo(x, padT);
     ctx.lineTo(x, H - padB);
@@ -691,5 +728,12 @@ export function bindArena() {
   if (window.matchMedia) {
     var mq = window.matchMedia("(prefers-reduced-motion: reduce)");
     if (mq.addEventListener) mq.addEventListener("change", function () { renderMatch(); });
+  }
+  // A theme switch must re-seed the palette; re-render draws from the new
+  // tokens, and a reduced-motion static frame is redrawn too.
+  var root = document.documentElement;
+  if (root && typeof MutationObserver !== "undefined") {
+    new MutationObserver(function () { renderMatch(); })
+      .observe(root, { attributes: true, attributeFilter: ["data-theme"] });
   }
 }

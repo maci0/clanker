@@ -470,6 +470,46 @@ function _toolBucket(label){
   if(l.indexOf("ask")!==-1) return "ask";
   return "tool";
 }
+
+// The canvas palette is seeded from the active theme's computed tokens each
+// frame, never a fixed dark ramp, so a light data-theme paints a light floor
+// and the status hues follow --ok/--warn/--accent and stay re-tunable. Frames
+// re-read the tokens on every draw; reduced-motion static frames are re-seeded
+// by the theme observer registered in initFleet.
+function _themeVar(name) {
+  var root = document.documentElement;
+  if (!root) return "";
+  var v = (getComputedStyle(root).getPropertyValue(name) || "").trim();
+  // Some themes alias a token (mocha/latte set --surface: var(--paper)); resolve
+  // one level so the palette gets a concrete colour, not the var() string.
+  var m = /^var\(\s*([--A-Za-z0-9_]+)\s*\)$/.exec(v);
+  return m ? _themeVar(m[1]) : v;
+}
+function _hexRgb(hex) {
+  var s = (hex || "").trim();
+  if (s.charAt(0) === "#") s = s.slice(1);
+  if (s.length === 3) s = s.replace(/./g, function (c) { return c + c; });
+  if (s.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(s)) return null;
+  var n = parseInt(s, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function _alpha(color, a) {
+  var rgb = _hexRgb(color);
+  return rgb ? "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + a + ")" : color;
+}
+function _floorTheme() {
+  return {
+    bg: _themeVar("--surface-2") || "#1d2225",
+    surface: _themeVar("--surface") || "#2a3033",
+    border: _themeVar("--border") || "#343b3f",
+    fg: _themeVar("--fg") || "#ffffff",
+    muted: _themeVar("--fg-muted") || "#dfe5df",
+    accent: _themeVar("--accent") || "#3f97dd",
+    ok: _themeVar("--ok") || "#4cc468",
+    warn: _themeVar("--warn") || "#e5b54a",
+    okFill: _themeVar("--ok-fill") || "#2fae4d"
+  };
+}
 function _floorFrame(ts){
   var cv=byId("fleet-canvas"); var lab=byId("fleet-floor-status");
   if(!cv || cv.closest && cv.closest("#fleet-floor[hidden]") || !document.body.contains(cv)) { _floorRAF=null; return; }
@@ -478,11 +518,12 @@ function _floorFrame(ts){
   var ctx=cv.getContext("2d"); if(!ctx){ if(lab) lab.textContent="Canvas unavailable."; return; }
   var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var t = reduced ? _floorState.t : (ts||0);
+  var pal = _floorTheme();
   ctx.imageSmoothingEnabled=false;
   ctx.clearRect(0,0,cv.width,cv.height);
-  ctx.fillStyle="#1d2225"; ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.fillStyle=pal.bg; ctx.fillRect(0,0,cv.width,cv.height);
   // brushed backplane lines
-  ctx.fillStyle="rgba(255,255,255,0.04)";
+  ctx.fillStyle=_alpha(pal.fg, 0.04);
   for(var gx=0; gx<cv.width; gx+=8) ctx.fillRect(gx, 0, 1, cv.height);
   var names=_floorState.names; var cols=Math.max(1,names.length); var cw=cv.width/cols;
   for(var i=0;i<names.length;i++){
@@ -491,13 +532,12 @@ function _floorFrame(ts){
     var bucket=_floorState.phase[name] || "idle";
     var idleFor = Date.now() - (_floorState.idle[name]||Date.now());
     var dozing = idleFor > 5*60*1000;
-    var glow = dozing ? "#77827b" : (bucket==="ask" ? "#3f97dd" : bucket==="tool" ? "#4cc468" : bucket==="exec" ? "#e5b54a" : "#2fae4d");
+    var glow = dozing ? pal.muted : (bucket==="ask" ? pal.accent : bucket==="tool" ? pal.ok : bucket==="exec" ? pal.warn : pal.ok);
     var breathe = reduced || dozing ? 1 : 0.75 + 0.25*Math.sin(t/900 + i);
-    // floor tile
-    ctx.fillStyle="#343b3f"; ctx.fillRect(x+6, 110, Math.floor(cw)-12, 40);
-    // desk
-    ctx.fillStyle="#3a4146"; ctx.fillRect(x+12, 86, Math.floor(cw)-24, 10);
-    ctx.fillStyle="#4a5358"; ctx.fillRect(x+10, 96, Math.floor(cw)-20, 14);
+    // floor tile + desk, toned from the active theme rather than a dark ramp
+    ctx.fillStyle=pal.border; ctx.fillRect(x+6, 110, Math.floor(cw)-12, 40);
+    ctx.fillStyle=pal.surface; ctx.fillRect(x+12, 86, Math.floor(cw)-24, 10);
+    ctx.fillStyle=pal.border; ctx.fillRect(x+10, 96, Math.floor(cw)-20, 14);
     // agent body (simple pill)
     var bob = reduced||dozing ? 0 : Math.sin(t/420 + i*1.1)*2;
     ctx.fillStyle=_colorFor(name);
@@ -514,9 +554,9 @@ function _floorFrame(ts){
     ctx.globalAlpha=breathe; ctx.fillStyle=glow; ctx.beginPath(); ctx.arc(x+Math.floor(cw/2), 48, 6, 0, Math.PI*2); ctx.fill(); ctx.globalAlpha=1;
     if(dozing){ ctx.fillStyle="rgba(255,255,255,0.9)"; ctx.font="9px monospace"; ctx.textAlign="center"; ctx.fillText("zZ", x+Math.floor(cw/2), 44); }
     // label
-    ctx.fillStyle="#dfe5df"; ctx.font="10px monospace"; ctx.textAlign="center"; ctx.fillText(name.slice(0,12), x+Math.floor(cw/2), 168);
+    ctx.fillStyle=pal.muted; ctx.font="10px monospace"; ctx.textAlign="center"; ctx.fillText(name.slice(0,12), x+Math.floor(cw/2), 168);
     // helper sprite
-    if(bucket==="sub"){ ctx.fillStyle="#c9f2d3"; ctx.fillRect(x+Math.floor(cw/2)+12, by+6, 6, 10); }
+    if(bucket==="sub"){ ctx.fillStyle=pal.okFill; ctx.fillRect(x+Math.floor(cw/2)+12, by+6, 6, 10); }
   }
   if(lab){
     if(reduced) lab.textContent="Fleet floor — still frame ("+names.length+" desks). Respecting reduced motion.";
@@ -547,6 +587,19 @@ function renderFloor(runs, roster){
   if(_floorRAF) cancelAnimationFrame(_floorRAF);
   _floorRAF=requestAnimationFrame(_floorFrame);
   // live tick from /api/run stream is attached by fleet live listener below
+}
+
+function observeFloorTheme() {
+  var root = document.documentElement;
+  if (!root || typeof MutationObserver === "undefined") return;
+  new MutationObserver(function () {
+    var cv = byId("fleet-canvas");
+    if (!cv || !document.body.contains(cv)) return;
+    // Re-seed so a static reduced-motion frame (or the running loop) picks up
+    // the new palette, without stacking a second animation loop.
+    if (_floorRAF) cancelAnimationFrame(_floorRAF);
+    _floorRAF = requestAnimationFrame(_floorFrame);
+  }).observe(root, { attributes: true, attributeFilter: ["data-theme"] });
 }
 
 export function initFleet() {
@@ -602,6 +655,7 @@ export function initFleet() {
     }).then(function () { if (refresh) refresh.disabled = false; });
   }
   _refreshAll = doRefresh;
+  observeFloorTheme();
   if (refresh && !refresh._fleetBound) {
     refresh._fleetBound = true;
     refresh.addEventListener("click", doRefresh);

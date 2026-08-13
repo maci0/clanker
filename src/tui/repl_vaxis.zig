@@ -1571,6 +1571,12 @@ const Model = struct {
     /// submitted line, which /autoresearch re-submits as an agent task when
     /// given real arguments.
     fn runCommand(self: *Model, ctx: *vxfw.EventContext, pc: ParsedCommand, task: []const u8) !void {
+        // Park the raw line in history like chat and `!` escapes so Up/Down
+        // can recall and re-run slash commands too. `task` is gpa-owned and
+        // freed when `submit` returns, so own a copy in the arena.
+        if (self.arena.dupe(u8, task)) |owned| {
+            self.history.append(self.arena, owned) catch {};
+        } else |_| {}
         switch (pc.spec.action) {
             // A quit command has to set `ctx.quit`, rather than merely stop
             // the input handler: App.run returns on that flag and its
@@ -2492,6 +2498,7 @@ const Model = struct {
     }
 
     fn typeErasedEventHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
+        // vxfw stores the Model as *anyopaque on the widget.
         const self: *Model = @ptrCast(@alignCast(ptr));
         switch (event) {
             .init => try ctx.requestFocus(self.text_field.widget()),
@@ -2971,6 +2978,7 @@ const Model = struct {
     }
 
     fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) std.mem.Allocator.Error!vxfw.Surface {
+        // vxfw stores the Model as *anyopaque on the widget.
         const self: *Model = @ptrCast(@alignCast(ptr));
         const max = ctx.max.size();
 

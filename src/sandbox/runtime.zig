@@ -1072,15 +1072,22 @@ test "cmd_autolearn wasm tool reports the newest tool_error detail as 'last:'" {
     defer tmp.cleanup();
     // Two failures for the same tool: the item renders "last: <detail>", so
     // the second detail must win, and events recorded before detail existed
-    // (empty string) must not blank out a real one that follows.
+    // (empty string) must not blank out a real one that follows. Timestamps
+    // must be recent: the aggregation only counts the last 7 days, and an
+    // ancient event (like the stale one below) must be ignored.
     try tmp.dir.createDirPath(io, "state");
     try tmp.dir.createDirPath(io, "docs");
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/autolearn.jsonl", .data =
-        \\{"ts":1,"type":"tool_error","tool":"git","detail":"git exited 1: usage"}
-        \\{"ts":2,"type":"tool_error","tool":"git","detail":""}
-        \\{"ts":3,"type":"tool_error","tool":"git","detail":"git exited 128: not a git repository"}
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    const log_data = try std.fmt.allocPrint(std.testing.allocator,
+        \\{{"ts":1,"type":"tool_error","tool":"git","detail":"ancient, outside the window"}}
+        \\{{"ts":{d},"type":"tool_error","tool":"git","detail":"git exited 1: usage"}}
+        \\{{"ts":{d},"type":"tool_error","tool":"git","detail":""}}
+        \\{{"ts":{d},"type":"tool_error","tool":"git","detail":"git exited 128: not a git repository"}}
+        \\{{"ts":{d},"type":"tool_error","tool":"git","detail":"identical tool call already executed twice with the same arguments; do not repeat it"}}
         \\
-    });
+    , .{ now - 3, now - 2, now - 1, now });
+    defer std.testing.allocator.free(log_data);
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/autolearn.jsonl", .data = log_data });
     const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     defer std.testing.allocator.free(root);
 
@@ -1103,6 +1110,10 @@ test "cmd_autolearn wasm tool reports the newest tool_error detail as 'last:'" {
     try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
     try std.testing.expect(std.mem.find(u8, out, "3 failure(s), last: git exited 128: not a git repository") != null);
     try std.testing.expect(std.mem.find(u8, out, "last: git exited 1: usage") == null);
+    // The ancient event fell outside the 7-day window, and the duplicate-call
+    // guard refusal was bucketed separately instead of counted as a git error.
+    try std.testing.expect(std.mem.find(u8, out, "ancient, outside the window") == null);
+    try std.testing.expect(std.mem.find(u8, out, "4 failure(s)") == null);
 }
 
 test "cmd_janitor wasm tool scans and removes only shaped staging directories" {

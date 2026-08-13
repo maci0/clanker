@@ -2,23 +2,25 @@
 
 ## Status
 
-In progress: the offline builtin path is shipped and wired; the pluggable
-parts of the design (real embedding provider, real vector backend,
-config-driven chunking) are present as code but not reachable at runtime.
-Sources of truth: `src/memory/chunk.zig`, `src/memory/vector.zig`,
-`src/memory/embedder.zig`, `src/memory/hash_embed.zig` (the host-side
-traits), `tools/zig/memory.zig` + `tools/manifests/memory.tool.json` (the
-sandboxed guest tool), `tools/zig/knowledge.zig` (owns the Knowledge chunk
-cache), `src/config.zig`'s `Memory` struct and `parseMemory` (config), and
-`src/cli.zig`'s `handleRun` (the `/api/run` injection point). `src/knowledge/store.zig`
-no longer exists: Knowledge moved to the sandboxed `tools/zig/knowledge.zig`
+In progress: the offline builtin path is shipped and wired, now entirely as
+a sandboxed WASM tool. The pluggable parts of the design (real embedding
+provider, real vector backend, config-driven chunking) were deleted, not
+stranded: the host-side `src/memory/` layer this PRD originally specified
+(`chunk.zig`, `vector.zig`, `embedder.zig`, `hash_embed.zig`) was removed in
+the native-to-WASM migration (commit `fa56dd8`), while the config keys that
+gated it (`embedding.provider`/`embedding.model`, `vector.backend`) remain
+parsed and unused. Sources of truth: `tools/zig/memory.zig` +
+`tools/manifests/memory.tool.json` (the sandboxed guest tool),
+`tools/zig/knowledge.zig` (owns the Knowledge chunk cache),
+`src/config.zig`'s `Memory` struct and `parseMemory` (config), and
+`src/cli.zig`'s `handleRun` + `memorySearch` (the `/api/run` injection
+point, which dispatches the guest tool). `src/knowledge/store.zig` no longer
+exists either: Knowledge moved to the sandboxed `tools/zig/knowledge.zig`
 WASM tool; any reference to `store.zig` elsewhere is stale.
 
 Read this before trusting Design below: `embedding.provider`/`embedding.model`
 and `chunk.size`/`overlap`/`strategy` are parsed from config but never read by
-any code that actually chunks or embeds (see Known issues). The guest
-`memory` tool does not call the host traits at all; it reimplements hashing
-independently, bugs included.
+any code that actually chunks or embeds (see Known issues).
 
 ## Problem
 
@@ -54,11 +56,12 @@ a second, differently-scoped store.
   someone needs corpora large enough for re-embedding to cost something
   measurable, which hasn't been demonstrated.
 - **Not real vector-backend swapping, yet.** `muninndb`/`sqlite-vec` are
-  named in config and in `vector.zig`'s `Backend` enum, but neither has an
+  named in config (and in the manifest's description), but neither has an
   implementation: deliberately deferred (see Known issues for what that
   means for anyone who sets `vector.backend` to either value today).
-- **Not a vendored local embedding model.** `local_onnx` is a stub. Shipping
-  a model binary isn't worth it until the hash embedder's recall is a proven
+- **Not a vendored local embedding model.** `local_onnx` is named only in
+  the manifest's description; no implementation exists. Shipping a model
+  binary isn't worth it until the hash embedder's recall is a proven
   bottleneck.
 - **Not a first-class workflow step type.** `workflows/memory-rag.md`
   documents calling the `memory` tool manually from a chain; there is no
@@ -66,45 +69,42 @@ a second, differently-scoped store.
 
 ## Design
 
-**Chunking (`src/memory/chunk.zig`).** `chunkText(arena, doc_id, content,
-size, overlap, strategy)` supports fixed windowing and markdown-aware
-splitting (breaks on heading boundaries and blank-line separators, then
-windows each section), hashing each chunk with sha256. This module is
-exercised only by its own unit tests; see Known issues for the two other
-chunkers that duplicate it instead of calling it.
+**One guest module owns chunking, embedding and search
+(`tools/zig/memory.zig`).** The host-side `src/memory/*` traits this section
+used to describe (a configurable `chunkText`, `cosine`/`topK` free
+functions, an `embedOpenAICompat` provider embedder, and the
+`Backend`/`Provider` enums naming the pluggable seams) were deleted in the
+WASM migration; nothing with those shapes exists any more. What the guest
+tool actually implements:
 
-**Vector similarity (`src/memory/vector.zig`).** `cosine(a, b) f32` and
-`topK(arena, query, ids, vectors, k, threshold) []Hit{chunk_id, score}` are
-free functions over caller-supplied parallel arrays, not a stateful store:
-there is no `upsert`. `Backend = enum {builtin, muninndb, sqlite_vec}` is
-declared but never switched on anywhere in the codebase.
+- **Chunking** (`chunk` action): simple fixed windowing only, size clamped
+  to at most 800 and overlap to at most 120 whatever the request asks, at
+  most 20 chunks, each trimmed of surrounding whitespace. No markdown-aware
+  strategy exists here; the markdown-aware chunker is
+  `tools/zig/knowledge.zig`'s `chunkMarkdown` (below).
+- **Hash embedding** (`hashEmbedInto`): token-bag plus adjacent-bigram
+  hashing via Wyhash into `dim` dimensions (default 384, clamped to
+  16..1024), L2-normalized, deterministic, offline. Tokens are lowercased
+  alphanumeric runs capped at 128 bytes. The bigram construction still
+  carries a buffer overflow (Known issues 1).
+- **Scoring**: `cosine` over two vectors (f64 accumulation) for vector mode;
+  `keywordScore` for keyword mode, the fraction of the query's tokens (two
+  or more chars) found as case-insensitive substrings of the chunk text.
 
-**Embedding (`src/memory/embedder.zig`).** `embedOpenAICompat` is fully
-implemented and tested: it POSTs `{base_url}/embeddings` with `{model,
-input}` and parses an OpenAI-shaped `{data:[{embedding:[...]}]}` response.
-`embedBuiltin` delegates to `hash_embed.embedBatch`. `Provider = enum
-{openai_compat, local_onnx, builtin}`; `local_onnx` has no implementation,
-enum value only.
-
-**Hash embedder (`src/memory/hash_embed.zig`).** Token-bag plus
-adjacent-bigram hashing into `dim` dimensions (default 384) via Wyhash,
-L2-normalized, deterministic, offline. `embed()` has a known buffer overflow
-in its bigram construction (see Known issues); not fixed as part of this PRD.
-
-**Guest tool (`tools/zig/memory.zig`, `fs_prefixes: ["state/knowledge"]`).**
-Actions `chunk`, `embed`, `search`. Does not import `src/memory/*.zig`: the
-guest/host sandbox boundary means WASM code can't call host-only modules, so
-it reimplements token-bag/bigram hashing and cosine independently (the same
-buffer-overflow bug included). `chunk` ignores the `strategy` argument
-entirely: always simple fixed windowing, capped at size 800 / overlap 120,
-capped at 20 chunks. `search` lists `state/knowledge/*.chunks.json`,
-re-embeds every chunk's text per call (no cache), filters by
-`collection_ids` if given, and returns top-k by cosine with a `note` field
-naming the error when the listing itself fails rather than failing the call.
+**Guest tool surface (`tools/zig/memory.zig`, `fs_prefixes:
+["state/knowledge"]`).** Actions `chunk`, `embed`, `search`. `search` takes
+`query`, `mode` (`"vector"`, the default, or `"keyword"`), `top_k` (default
+5), `threshold`, `dim`, and optional `collection_ids`; it lists
+`state/knowledge/*.chunks.json`, re-embeds every chunk's text per call in
+vector mode (no cache), scores with `keywordScore` in keyword mode, filters
+by `collection_ids` if given, and returns top-k with each hit's text
+truncated to 2000 chars, plus a `note` field naming the error when the
+listing itself fails rather than failing the call.
 
 **Manifest (`tools/manifests/memory.tool.json`).** `fs_prefixes:
 ["state/knowledge"]`, `wasm: zig-out/tools/memory.wasm`; describes the three
-actions above and matches the guest tool's accepted fields.
+actions above, including `search`'s `mode` (vector, the default, or
+keyword), and matches the guest tool's accepted fields.
 
 **Config (`src/config.zig`, `Memory` struct and `parseMemory`).**
 
@@ -114,9 +114,9 @@ backend = "hybrid"          # hybrid | vector | keyword
 chunk.size = 800
 chunk.overlap = 120
 chunk.strategy = "markdown" # markdown | fixed
-embedding.provider = ""     # "" or "builtin" is the only path that runs
+embedding.provider = ""     # parsed, never read (Known issues 2)
 embedding.model = ""
-vector.backend = "builtin"  # only "builtin" is implemented
+vector.backend = "builtin"  # parsed, never read; only the builtin path exists
 vector.top_k = 5
 vector.threshold = 0.35
 ```
@@ -132,55 +132,47 @@ actually reads is narrower than the table suggests; see Known issues.
 doc's chunks out via `invalidateChunks`; deleting the collection removes the
 file outright.
 
-**`/api/run` injection (`src/cli.zig`, `handleRun`).** Fires only on the HTTP
-path, only when `req.knowledge` is non-empty and `cfg.memory.backend` is
-`hybrid`/`vector`/`keyword`. Host-side, not through the WASM tool: imports
-`memory/hash_embed.zig` and `memory/vector.zig` directly. `want_vector =
-backend != "keyword"`. `use_hash = want_vector and embedding_provider is ""
-or "builtin" and vector_backend == "builtin"` (the only branch that ever
-actually runs; see Known issues). When it runs: embeds `task_text` and every
-cached chunk with the hash embedder (re-embedding on every request, no
-cache), ranks with `topK`, and for `hybrid` falls back to substring/token
-keyword scoring over the same chunk cache if the vector pass returns nothing.
-Memory hits are capped at 80,000 bytes; the raw Knowledge document block
-injected ahead of them is capped at 100,000; both are prepended to
-`task_text` separated by `---`.
+**`/api/run` injection (`src/cli.zig`, `handleRun` + `memorySearch`).** Fires
+only on the HTTP path, only when `req.knowledge` is non-empty and
+`cfg.memory.backend` is `hybrid`/`vector`/`keyword`. It goes through the
+sandboxed guest, not around it: `memorySearch` builds a `search` request
+(query truncated to 4000 bytes, `top_k` from `vector.top_k`, `threshold`
+from `vector.threshold`) and dispatches the `memory` WASM tool via
+`toolJson`. `mode` is `"keyword"` when the backend is `keyword`, otherwise
+`"vector"`; for `hybrid`, a vector pass that returns nothing is retried once
+with `mode: "keyword"`. The tool re-embeds every cached chunk per request
+(no vector cache). Hits are capped at 80,000 bytes and prepended to the task
+inside an untrusted `<retrieved_memory_hits>` block, additive to the raw
+Knowledge document injection (itself capped at 100,000 bytes).
 
 ## Known issues
 
-1. **Bigram buffer overflow.** `hash_embed.zig`'s `embed()` (bigram
-   construction) and `memory.zig`'s duplicate `hashEmbedInto()` both copy
-   into a `bigram: [256]u8` buffer, but the previous and current token can
-   each be up to 128 bytes (their own buffer caps) plus one separator byte:
-   worst case 257 bytes into a 256-byte buffer. Two consecutive 128+
-   character alphanumeric runs (reachable single-user input) trigger it.
-   Both copies need the fix, or de-duplication first so there's one copy to
-   fix.
-2. **`embedding.provider`/`embedding.model` are dead config.** Parsed, but
-   the only place either is read is a single string comparison in
-   `handleRun` that checks for `""`/`"builtin"`; nothing calls
-   `embedOpenAICompat` at runtime. Setting `embedding.provider` to anything
-   else silently downgrades `/api/run` memory injection to keyword-only
-   scoring, with no error or log. The openai_compat embedder is implemented
-   and tested but unreachable from any caller.
+1. **Bigram buffer overflow — still live, unfixed.** One copy remains after
+   the migration: `tools/zig/memory.zig`'s `hashEmbedInto` copies up to 257
+   bytes (`prev_buf` up to 128, one separator byte, `token_buf` up to 128)
+   into a `bigram: [256]u8` buffer. Two consecutive 128+ character
+   alphanumeric runs (reachable single-user input) trigger it. This is a
+   real memory-safety bug awaiting a code fix; deleting `hash_embed.zig`'s
+   duplicate removed the second copy, not the bug.
+2. **`embedding.provider`/`embedding.model` are dead config.** Parsed, and
+   nothing reads either any more: the `embedOpenAICompat` implementation was
+   deleted with `src/memory/`, so there is no provider embedding path in the
+   tree at all. Setting them changes nothing, with no error or log.
 3. **`chunk.size`/`overlap`/`strategy` are dead config.** No chunking call
    site reads them. `knowledge.zig`'s `deriveChunks` hardcodes 800/120 and
    always uses its own markdown-aware chunker; `memory.zig`'s `chunk` action
-   clamps to the same 800/120 and ignores `strategy` outright.
-   `src/memory/chunk.zig`'s configurable `chunkText` is exercised only by
-   its own tests.
-4. **`vector.backend` accepts values with no implementation.** Setting it to
-   `"muninndb"` or `"sqlite-vec"` fails `handleRun`'s `use_hash` check (which
-   requires `"builtin"`) and silently falls back to keyword scoring: the
-   same user-visible effect as issue 2, a different config knob.
-5. **Three chunkers, two hash embedders, no shared code.**
-   `src/memory/chunk.zig`, `knowledge.zig`'s `chunkMarkdown`, and
-   `memory.zig`'s inline windower each reimplement chunking; `hash_embed.zig`
-   and `memory.zig`'s `hashEmbedInto` each reimplement hashing. A fix to one
-   does not propagate to the others (issue 1 is the concrete cost of this).
-   The guest/host split explains the WASM-side duplication (guest code
-   cannot import host-only `src/memory/*.zig`); it does not explain the
-   `knowledge.zig` vs. `chunk.zig` split, which are both host-side.
+   clamps to the same 800/120 and has no strategy at all.
+4. **`vector.backend` is dead config.** Parsed, and nothing reads it; the
+   `Backend` enum it used to select over was deleted with `vector.zig`.
+   Setting `"muninndb"` or `"sqlite-vec"` changes nothing: only the builtin
+   hash+cosine path exists.
+5. **Post-migration consolidation.** Two chunkers remain
+   (`knowledge.zig`'s markdown-aware `chunkMarkdown` and `memory.zig`'s
+   fixed windower) and one hash embedder (`memory.zig`'s `hashEmbedInto`).
+   The host/guest duplication this issue used to track went away with the
+   host side; what is left is a two-chunker split between two guest tools,
+   worth either consolidating into a shared source file compiled into both
+   or documenting as deliberate (Knowledge owns its cache format).
 6. **`src/knowledge/store.zig` no longer exists.** Knowledge moved to the
    sandboxed `tools/zig/knowledge.zig` WASM tool; anything still pointing at
    the old path is stale.
@@ -189,8 +181,8 @@ injected ahead of them is capped at 100,000; both are prepended to
 
 | Condition | Behaviour |
 |---|---|
-| `embedding.provider` set to anything but `""`/`"builtin"` | Silent fallback to keyword-only scoring; no error surfaced (Known issues 2) |
-| `vector.backend` set to `"muninndb"`/`"sqlite-vec"` | Same silent keyword-only fallback; neither backend is implemented (Known issues 4) |
+| `embedding.provider` set to anything but `""`/`"builtin"` | Ignored: nothing reads the key; no error or log (Known issues 2) |
+| `vector.backend` set to `"muninndb"`/`"sqlite-vec"` | Ignored the same way; neither backend is implemented and nothing reads the key (Known issues 4) |
 | Two consecutive 128+ char alphanumeric tokens in embedded text | Bigram buffer overflow (Known issues 1) |
 | `state/knowledge/<id>.chunks.json` missing or unreadable | That collection is skipped for vector and keyword injection alike; read/parse errors are swallowed, no partial-collection warning |
 | Injected content (Knowledge docs + memory hits) exceeds the 100,000 / 80,000-byte caps | Truncated at the byte boundary, not aligned to a document or chunk edge |
@@ -210,30 +202,27 @@ injected ahead of them is capped at 100,000; both are prepended to
 - [x] `/api/run` `final_task` injection: vector hits when available, keyword
       fallback for `hybrid`, additive to Knowledge injection, size-capped
       (`src/cli.zig` `handleRun`)
-- [ ] A configured `embedding.provider` actually reaches `embedOpenAICompat`
-      at runtime; currently dead code (Known issues 2)
+- [ ] A configured `embedding.provider` actually reaches a real embedding
+      call at runtime; today nothing reads the key and no provider embedder
+      exists in the tree (Known issues 2)
 - [ ] `chunk.size`/`overlap`/`strategy` actually govern chunking; currently
       ignored by every call site that writes `.chunks.json` (Known issues 3)
-- [ ] A real `muninndb` or `sqlite-vec` `VectorStore` backend; currently
-      unimplemented behind the `Backend` enum (Known issues 4)
-- [ ] Bigram buffer overflow fixed in both `hash_embed.zig` and `memory.zig`
-      (Known issues 1)
-- [ ] The three chunkers and two hash embedders consolidated to one, or a
-      documented reason each must stay separate (Known issues 5)
+- [ ] A real `muninndb` or `sqlite-vec` vector backend; currently nothing
+      reads `vector.backend` at all (Known issues 4)
+- [ ] Bigram buffer overflow fixed in `tools/zig/memory.zig`'s
+      `hashEmbedInto`, the one remaining copy; still unfixed (Known issues 1)
+- [ ] The two remaining chunkers consolidated to one, or a documented reason
+      each must stay separate (Known issues 5)
 
 ## Open questions / future work
 
-- Should the guest `memory` tool share a chunking/embedding module with the
-  host instead of duplicating it, or is the duplication load-bearing because
-  guest code can't cross the sandbox boundary into host-only
-  `src/memory/*.zig`? If the latter, the fix is a shared source file
-  compiled into both targets, not a runtime import; worth deciding before
-  touching Known issue 5, since it determines where the fix goes.
-- Is openai_compat embedding actually wanted on the `/api/run` path, or was
-  the trait built ahead of a real caller? If wanted, `handleRun` needs a
-  branch that calls `embedOpenAICompat` when `embedding.provider` names a
-  real provider; if not, the dead code and the config keys gating it should
-  come out together rather than imply a feature that doesn't run.
+- Is a real embedding provider actually wanted on the `/api/run` path? The
+  `embedOpenAICompat` trait was built ahead of a real caller and then
+  deleted in the WASM migration, so answering yes now means implementing an
+  embedding call reachable from the guest tool (or a host seam feeding it),
+  not just wiring an existing function. If no, the
+  `embedding.provider`/`embedding.model` config keys should come out rather
+  than imply a feature that doesn't run.
 - Should chunk re-embedding on every `/api/run` request (no vector cache)
   be replaced by storing embeddings alongside chunk text in `.chunks.json`,
   once a real embedder makes re-embedding non-free? Not worth doing while

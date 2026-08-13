@@ -5,7 +5,7 @@
 // wires the DOM and the app-level callbacks (tab counts, run opening, the
 // peer roster for @ mention hints).
 import { fmtInt, fmtCost, formatChatTime, fmtDeadline, readJson, clip } from "../core/utils.js";
-import { T, bind, state, add, uiConfirm, uiPrompt } from "../core/ui.js";
+import { T, bind, state, add, toast, uiConfirm, uiPrompt } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
 import { doneColumn as doneColumnOf, blockers as blockersOf, dueState, priorityRank } from "../lib/board.js";
@@ -16,29 +16,6 @@ var _setTabCount = null;
 var _openRun = null;
 var _getKnownPeers = null;
 var _renderBoardList = null;
-
-/* Lightweight toast notification for board actions */
-function boardToast(msg, kind) {
-  var container = document.getElementById("board-toast-container");
-  if (!container) {
-    container = document.createElement("div");
-    container.id = "board-toast-container";
-    container.style.cssText = "position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);z-index:10000;display:flex;flex-direction:column-reverse;gap:0.4rem;align-items:center;pointer-events:none;";
-    document.body.appendChild(container);
-  }
-  var t = document.createElement("div");
-  t.className = "board-toast" + (kind === "error" ? " board-toast-error" : "");
-  t.style.cssText = "padding:0.5rem 1.2rem;border-radius:8px;font-size:13px;font-weight:500;color:#fff;pointer-events:auto;opacity:0;transform:translateY(12px);transition:opacity 220ms,transform 220ms;max-width:360px;text-align:center;" +
-    (kind === "error" ? "background:#c0392b;" : "background:#27ae60;");
-  t.textContent = msg;
-  container.appendChild(t);
-  requestAnimationFrame(function(){ t.style.opacity = "1"; t.style.transform = "translateY(0)"; });
-  setTimeout(function(){
-    t.style.opacity = "0";
-    t.style.transform = "translateY(12px)";
-    setTimeout(function(){ t.remove(); }, 250);
-  }, 2400);
-}
 
 
 export var board = { columns: [], cards: [] };
@@ -68,7 +45,8 @@ export function setListMode(on) {
   if (listViewEl) listViewEl.hidden = !listMode;
   if (toggleBtn) {
     toggleBtn.setAttribute("aria-pressed", listMode ? "true" : "false");
-    toggleBtn.textContent = listMode ? "▦" : "☰";
+    toggleBtn.textContent = "";
+    toggleBtn.appendChild(icon(listMode ? "grid" : "list", 16));
     toggleBtn.title = listMode ? "Switch to board view" : "Switch to list view";
   }
   syncListControls();
@@ -170,14 +148,13 @@ export function postBoard(payload, status) {
         }
       }
       if (status) {
+        // The app-level #board-status observer already toasts this line.
         el.boardStatus.textContent = status;
-        boardToast(status, "ok");
       }
       return d;
     })
     .catch(function (err) {
-      el.boardStatus.textContent = "Board: " + err.message;
-      boardToast(err.message, "error");
+      el.boardStatus.textContent = "Could not update the board: " + err.message;
       return false;
     });
 }
@@ -293,7 +270,8 @@ function boardColumn(col, s) {
   var qaTrigger = document.createElement("button");
   qaTrigger.type = "button";
   qaTrigger.className = "board-add-trigger";
-  qaTrigger.innerHTML = '<span class="icon" aria-hidden="true">+</span> Add a card';
+  qaTrigger.appendChild(icon("plus", 14));
+  qaTrigger.appendChild(document.createTextNode(" Add a card"));
 
   // Form (hidden by default, shown on trigger click)
   var qaForm = document.createElement("div");
@@ -305,7 +283,7 @@ function boardColumn(col, s) {
   var qaActions = document.createElement("div");
   qaActions.className = "board-add-actions";
   var qaSave = document.createElement("button"); qaSave.type = "button"; qaSave.className = "secondary"; qaSave.textContent = "Add card";
-  var qaCancel = document.createElement("button"); qaCancel.type = "button"; qaCancel.className = "board-add-cancel"; qaCancel.innerHTML = "✕";
+  var qaCancel = document.createElement("button"); qaCancel.type = "button"; qaCancel.className = "board-add-cancel"; qaCancel.appendChild(icon("close", 12));
   qaCancel.setAttribute("aria-label", "Cancel adding a goal to " + col.title);
   qaActions.appendChild(qaSave);
   qaActions.appendChild(qaCancel);
@@ -358,17 +336,22 @@ function boardColumn(col, s) {
     T.div({ class: "board-col-head" },
       (function(){
         var collapse = document.createElement("button");
-        collapse.type = "button"; collapse.className = "secondary"; collapse.textContent = "‹";
+        collapse.type = "button"; collapse.className = "secondary";
         collapse.title = "Collapse lane";
         collapse.classList.add("board-lane-control");
         collapse.setAttribute("aria-label", "Collapse " + col.title + " lane");
         collapse.setAttribute("aria-expanded", "true");
         collapse.setAttribute("aria-controls", "board-cards-" + col.id);
+        function setCollapseFace(expanded) {
+          collapse.textContent = "";
+          collapse.appendChild(icon(expanded ? "chevronLeft" : "chevron", 14));
+        }
+        setCollapseFace(true);
         collapse.addEventListener("click", function(e){
           e.stopPropagation();
           var isCol = colEl.getAttribute("data-collapsed") === "true";
           colEl.setAttribute("data-collapsed", String(!isCol));
-          collapse.textContent = isCol ? "‹" : "›";
+          setCollapseFace(isCol);
           collapse.title = isCol ? "Collapse lane" : "Expand lane";
           collapse.setAttribute("aria-label", (isCol ? "Collapse " : "Expand ") + col.title + " lane");
           collapse.setAttribute("aria-expanded", String(isCol));
@@ -376,13 +359,14 @@ function boardColumn(col, s) {
         return collapse;
       })(),
       T.h3({ class: "board-col-title", id: "board-col-" + col.id }, col.title),
-      T.span({ style: "display:flex; gap:0.25rem; align-items:center;" },
+      T.span({ class: "board-col-head-actions" },
         (function(){
           var add = document.createElement("button");
-          add.type = "button"; add.className = "secondary"; add.textContent = "+";
+          add.type = "button"; add.className = "secondary";
           add.title = "Define a new goal card";
           add.classList.add("board-lane-control");
           add.setAttribute("aria-label", "Add a goal to " + col.title);
+          add.appendChild(icon("plus", 14));
           add.addEventListener("click", function(e){
             e.stopPropagation();
             // Trello-style: open the inline quick-add form
@@ -392,11 +376,11 @@ function boardColumn(col, s) {
           wrap.appendChild(add);
           return wrap;
         })(),
-        /* Trello-style column options "⋯" menu */
+        /* Trello-style column options menu */
         (function(){
           var menuBtn = document.createElement("button");
           menuBtn.type = "button"; menuBtn.className = "secondary board-lane-control board-col-menu-btn";
-          menuBtn.textContent = "⋯"; menuBtn.title = "Column actions";
+          menuBtn.appendChild(icon("more", 14)); menuBtn.title = "Column actions";
           menuBtn.setAttribute("aria-label", "Actions for " + col.title);
           menuBtn.setAttribute("aria-haspopup", "true");
           menuBtn.addEventListener("click", function(e){
@@ -480,10 +464,9 @@ function boardColumn(col, s) {
                   shown.forEach(function(c){
                     postBoard({ op: "move", id: c.id, column: dest.id }, null);
                   });
-                  // boardToast, not the app-level toast(): this module never
-                  // imported that one, so the call threw a ReferenceError out of
-                  // the click handler every time a destination was picked.
-                  boardToast("Moved " + shown.length + " card" + (shown.length > 1 ? "s" : "") + " to " + dest.title, "ok");
+                  // The shared themed toast(): keep this off the app-level
+                  // error path and on the "moved" update status.
+                  toast("Moved " + shown.length + " card" + (shown.length > 1 ? "s" : "") + " to " + dest.title);
                 });
                 menu.appendChild(opt);
               });
@@ -514,6 +497,41 @@ function boardColumn(col, s) {
 /* ---- Trello-style label colours ---- */
 var LABEL_COLORS = ["green","yellow","orange","red","purple","blue","sky","pink","lime","black"];
 
+function menuPopup(anchored) {
+  var popup = document.createElement("div");
+  popup.className = anchored ? "menu-popup is-anchored" : "menu-popup";
+  return popup;
+}
+function menuTitle(text, plain) {
+  var t = document.createElement("div");
+  t.className = plain ? "menu-popup-title is-plain" : "menu-popup-title";
+  t.textContent = text;
+  return t;
+}
+function menuItem(opts) {
+  opts = opts || {};
+  var btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "menu-popup-item" + (opts.muted ? " is-muted" : "") + (opts.current ? " is-current" : "");
+  return btn;
+}
+function menuAvatar(name) {
+  var av = document.createElement("span");
+  av.className = "menu-popup-avatar";
+  av.textContent = (name || "?").slice(0, 2).toUpperCase();
+  return av;
+}
+function dismissOnOutside(node, extra) {
+  var closePop = function (ev) {
+    if (node.contains(ev.target) || (extra && extra.contains && extra.contains(ev.target))) return;
+    if (ev.target === extra) return;
+    node.remove();
+    document.removeEventListener("click", closePop, true);
+  };
+  setTimeout(function () { document.addEventListener("click", closePop, true); }, 0);
+  return closePop;
+}
+
 function cardNode(c) {
   var b = document.createElement("button");
   b.type = "button";
@@ -542,7 +560,7 @@ function cardNode(c) {
   var pencil = document.createElement("button");
   pencil.type = "button";
   pencil.className = "card-quick-edit-btn";
-  pencil.innerHTML = "✏️";
+  pencil.appendChild(icon("pencil", 14));
   pencil.title = "Quick edit";
   pencil.setAttribute("aria-label", "Quick edit card");
   pencil.addEventListener("click", function(e) {
@@ -561,7 +579,7 @@ function cardNode(c) {
   qa.className = "card-quick-actions";
   var qaEdit = document.createElement("button");
   qaEdit.type = "button";
-  qaEdit.innerHTML = "✎";
+  qaEdit.appendChild(icon("pencil", 14));
   qaEdit.title = "Open card";
   qaEdit.setAttribute("aria-label", "Open card");
   qaEdit.addEventListener("click", function(e) {
@@ -573,7 +591,7 @@ function cardNode(c) {
   // Quick move to next column
   var qaMove = document.createElement("button");
   qaMove.type = "button";
-  qaMove.innerHTML = "→";
+  qaMove.appendChild(icon("arrowRight", 14));
   qaMove.title = "Move to next column";
   qaMove.setAttribute("aria-label", "Move to next column");
   qaMove.addEventListener("click", function(e) {
@@ -634,7 +652,7 @@ function cardNode(c) {
     var due = document.createElement("span");
     due.className = "card-badge";
     due.setAttribute("data-due", ds);
-    due.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M5 1v3M11 1v3M2 7h12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+    due.appendChild(icon("calendar", 14));
     due.appendChild(document.createTextNode(" " + (ds === "late" ? "Late · " : ds === "soon" ? "Soon · " : "") + fmtDeadline(c.deadline)));
     due.title = "Due " + c.deadline;
     badges.appendChild(due);
@@ -647,7 +665,7 @@ function cardNode(c) {
     var subBadge = document.createElement("span");
     subBadge.className = "card-badge";
     if (doneN === totalN && totalN > 0) subBadge.setAttribute("data-done", "true");
-    subBadge.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M5 8l2 2 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    subBadge.appendChild(icon("checklist", 14));
     subBadge.appendChild(document.createTextNode(" " + doneN + "/" + totalN));
     subBadge.title = doneN + " of " + totalN + " checklist items complete";
     badges.appendChild(subBadge);
@@ -659,7 +677,7 @@ function cardNode(c) {
     var bl = document.createElement("span");
     bl.className = "card-badge";
     bl.style.color = "var(--warn-text)";
-    bl.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/><path d="M4 12L12 4" stroke="currentColor" stroke-width="1.3"/></svg>';
+    bl.appendChild(icon("blocked", 14));
     bl.appendChild(document.createTextNode(" " + blocked.length));
     bl.title = "Blocked by " + blocked.length + " card(s)";
     badges.appendChild(bl);
@@ -670,7 +688,7 @@ function cardNode(c) {
     var gf = document.createElement("span");
     gf.className = "card-badge";
     gf.style.color = "var(--accent-text)";
-    gf.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="3" fill="currentColor"/></svg>';
+    gf.appendChild(icon("goal", 14));
     gf.title = "Mirrors a goal — kept in step with the Goals view";
     badges.appendChild(gf);
     // The same rocket that the "Start work" button shows on the open card,
@@ -679,7 +697,7 @@ function cardNode(c) {
     // the rocket lights up, so the closed card shows the live run state.
     var sw = document.createElement("span");
     sw.className = "card-badge";
-    sw.textContent = "\uD83D\uDE80"; // 🚀
+    sw.appendChild(icon("rocket", 14));
     sw.title = "Goal — Start work (opens a run)";
     if (isGoalRunning(c.goal)) {
       sw.dataset.goalRun = "true";
@@ -692,7 +710,7 @@ function cardNode(c) {
   if ((c.activity || []).length) {
     var actBadge = document.createElement("span");
     actBadge.className = "card-badge";
-    actBadge.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 12V4a2 2 0 012-2h6a2 2 0 012 2v5a2 2 0 01-2 2H6l-3 3z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+    actBadge.appendChild(icon("activity", 14));
     actBadge.appendChild(document.createTextNode(" " + c.activity.length));
     actBadge.title = c.activity.length + " activity entries";
     badges.appendChild(actBadge);
@@ -756,44 +774,24 @@ function cardNode(c) {
       // Trello-style member picker popup
       var existing = document.querySelector(".member-picker-popup");
       if (existing) existing.remove();
-      var popup = document.createElement("div");
-      popup.className = "member-picker-popup";
-      popup.style.cssText = "position:absolute;z-index:999;background:var(--surface);border:1px solid var(--rule);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.15);padding:0.5rem;min-width:160px;";
-      var popTitle = document.createElement("div");
-      popTitle.style.cssText = "font-weight:600;font-size:12px;color:var(--fg-muted);padding:0.3rem 0.4rem;margin-bottom:0.3rem;";
-      popTitle.textContent = "Members";
-      popup.appendChild(popTitle);
-      // Unassign option
-      var unBtn = document.createElement("button");
-      unBtn.type = "button";
-      unBtn.className = "member-picker-opt";
-      unBtn.style.cssText = "display:block;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg-muted);font-size:13px;border-radius:4px;";
-      unBtn.textContent = "✕ Remove assignee";
+      var popup = menuPopup();
+      popup.classList.add("member-picker-popup");
+      popup.appendChild(menuTitle("Members", true));
+      var unBtn = menuItem({ muted: true });
+      unBtn.appendChild(icon("close", 12));
+      unBtn.appendChild(document.createTextNode(" Remove assignee"));
       unBtn.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: "" }, "Unassigned."); });
-      unBtn.addEventListener("mouseenter", function(){ unBtn.style.background = "var(--surface-2)"; });
-      unBtn.addEventListener("mouseleave", function(){ unBtn.style.background = "none"; });
       popup.appendChild(unBtn);
-      // Known peers as options
       var peers = (_getKnownPeers() || []).map(function(p){ return typeof p === "string" ? p : p.name || p; });
       if (peers.indexOf(c.assignee) === -1 && c.assignee) peers.unshift(c.assignee);
       peers.forEach(function(name){
-        var opt = document.createElement("button");
-        opt.type = "button";
-        opt.style.cssText = "display:flex;align-items:center;gap:0.5rem;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg);font-size:13px;border-radius:4px;";
-        var optAv = document.createElement("span");
-        optAv.style.cssText = "flex:none;width:24px;height:24px;border-radius:50%;background:var(--accent);color:var(--on-accent);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;";
-        optAv.textContent = name.slice(0,2).toUpperCase();
-        opt.appendChild(optAv);
+        var opt = menuItem({ current: name === c.assignee });
+        opt.appendChild(menuAvatar(name));
         opt.appendChild(document.createTextNode(name));
-        if (name === c.assignee) opt.style.fontWeight = "700";
         opt.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: name }, "Assigned to " + name + "."); });
-        opt.addEventListener("mouseenter", function(){ opt.style.background = "var(--surface-2)"; });
-        opt.addEventListener("mouseleave", function(){ opt.style.background = "none"; });
         popup.appendChild(opt);
       });
-      // Close on click outside
-      var closePopup = function(ev) { if (!popup.contains(ev.target)) { popup.remove(); document.removeEventListener("click", closePopup, true); } };
-      setTimeout(function(){ document.addEventListener("click", closePopup, true); }, 0);
+      dismissOnOutside(popup);
       // Position near the avatar
       av.style.position = "relative";
       av.appendChild(popup);
@@ -1007,12 +1005,12 @@ function showCardDetail(id) {
   header.className = "card-detail-header";
   var headerIcon = document.createElement("span");
   headerIcon.className = "card-detail-icon";
-  headerIcon.textContent = "📋";
+  headerIcon.appendChild(icon("copy", 18));
   var headerTitle = document.createElement("h3");
   headerTitle.id = "card-detail-title";
   headerTitle.textContent = c.title;
   var headerCol = document.createElement("span");
-  headerCol.style.cssText = "font-size:12px;color:var(--fg-muted);margin-left:0.5rem;";
+  headerCol.className = "card-detail-header-col";
   var colName = "";
   if (board && board.columns) {
     for (var ci = 0; ci < board.columns.length; ci++) {
@@ -1024,7 +1022,7 @@ function showCardDetail(id) {
   var close = document.createElement("button");
   close.type = "button";
   close.className = "card-detail-close";
-  close.innerHTML = "✕";
+  close.appendChild(icon("close", 14));
   close.title = "Close";
   close.setAttribute("aria-label", "Close card detail");
   close.addEventListener("click", function () {
@@ -1035,7 +1033,7 @@ function showCardDetail(id) {
   });
   // Header layout with title and "in list" subtitle
   var headerTextWrap = document.createElement("div");
-  headerTextWrap.style.cssText = "flex:1;min-width:0;";
+  headerTextWrap.className = "card-detail-header-text";
   headerTextWrap.appendChild(headerTitle);
   // "in list" subtitle like Trello
   var colLabel = c.column || "";
@@ -1051,30 +1049,20 @@ function showCardDetail(id) {
     // Open column picker
     var existing = headerTextWrap.querySelector(".col-move-menu");
     if (existing) { existing.remove(); return; }
-    var menu = document.createElement("div");
-    menu.className = "col-move-menu";
-    menu.style.cssText = "position:absolute;z-index:999;background:var(--surface);border:1px solid var(--rule);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.15);padding:0.5rem;min-width:140px;margin-top:4px;";
-    var menuTitle = document.createElement("div");
-    menuTitle.style.cssText = "font-weight:600;font-size:12px;color:var(--fg-muted);padding:0.3rem 0.4rem 0.5rem;border-bottom:1px solid var(--rule);margin-bottom:0.3rem;";
-    menuTitle.textContent = "Move to…";
-    menu.appendChild(menuTitle);
-    COLS.forEach(function(col) {
-      var opt = document.createElement("button");
-      opt.type = "button";
-      opt.style.cssText = "display:block;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg);font-size:13px;border-radius:4px;";
+    var menu = menuPopup();
+    menu.classList.add("col-move-menu");
+    menu.appendChild(menuTitle("Move to…"));
+    (board.columns || []).forEach(function(col) {
+      var opt = menuItem({ current: col.id === c.column });
       opt.textContent = col.title;
-      if (col.id === c.column) { opt.style.fontWeight = "700"; opt.style.background = "color-mix(in srgb, var(--accent) 12%, transparent)"; }
       opt.addEventListener("click", function() {
         menu.remove();
         if (col.id === c.column) return;
         postBoard({ op: "move", id: c.id, column: col.id }, "Moved to " + col.title + ".");
       });
-      opt.addEventListener("mouseenter", function(){ opt.style.background = "var(--surface-2)"; });
-      opt.addEventListener("mouseleave", function(){ opt.style.background = col.id === c.column ? "color-mix(in srgb, var(--accent) 12%, transparent)" : "none"; });
       menu.appendChild(opt);
     });
-    var closePop = function(ev) { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener("click", closePop, true); } };
-    setTimeout(function(){ document.addEventListener("click", closePop, true); }, 0);
+    dismissOnOutside(menu);
     inListEl.style.position = "relative";
     inListEl.appendChild(menu);
   });
@@ -1110,15 +1098,14 @@ function showCardDetail(id) {
   mainCol.appendChild(labelsHead);
 
   var labelsRow = document.createElement("div");
-  labelsRow.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;margin-bottom:var(--space-3);";
+  labelsRow.className = "labels-row";
   var currentLabels = c.labels || [];
   currentLabels.forEach(function(lbl) {
     var pill = document.createElement("button");
     pill.type = "button";
-    pill.className = "card-label";
+    pill.className = "card-label is-open";
     pill.setAttribute("data-color", lbl.color || "blue");
     pill.textContent = lbl.text || lbl.color;
-    pill.style.cssText = "font-size:11px;padding:0.15rem 0.5rem;cursor:pointer;height:auto;width:auto;";
     pill.title = "Remove label";
     pill.setAttribute("aria-label", "Remove " + (lbl.text || lbl.color) + " label");
     pill.addEventListener("click", function() {
@@ -1130,8 +1117,9 @@ function showCardDetail(id) {
   // Add label button
   var addLabelBtn = document.createElement("button");
   addLabelBtn.type = "button";
-  addLabelBtn.style.cssText = "font-size:11px;padding:0.15rem 0.5rem;border-radius:999px;border:1px dashed var(--rule);background:none;color:var(--fg-muted);cursor:pointer;";
-  addLabelBtn.textContent = "+ Add";
+  addLabelBtn.className = "label-add-btn";
+  addLabelBtn.appendChild(icon("plus", 12));
+  addLabelBtn.appendChild(document.createTextNode(" Add"));
   addLabelBtn.addEventListener("click", function() {
     // Toggle label picker visibility
     labelPicker.hidden = !labelPicker.hidden;
@@ -1160,25 +1148,23 @@ function showCardDetail(id) {
         var existing = labelPicker.querySelector(".label-text-input-wrap");
         if (existing) existing.remove();
         var wrap = document.createElement("div");
-        wrap.className = "label-text-input-wrap";
-        wrap.style.cssText = "grid-column:1/-1;display:flex;gap:4px;padding:4px 0;";
+        wrap.className = "label-name-row";
         var samplePill = document.createElement("span");
-        samplePill.className = "card-label";
+        samplePill.className = "card-label is-sample";
         samplePill.setAttribute("data-color", color);
-        samplePill.style.cssText = "font-size:10px;padding:0.1rem 0.4rem;height:auto;width:auto;flex:none;";
         samplePill.textContent = color;
         wrap.appendChild(samplePill);
         var txtIn = document.createElement("input");
         txtIn.type = "text";
         txtIn.placeholder = "Label name…";
         txtIn.value = color;
-        txtIn.style.cssText = "flex:1;min-width:0;font-size:12px;padding:0.2rem 0.4rem;border:1px solid var(--rule);border-radius:4px;background:var(--surface);color:var(--fg);";
+        txtIn.className = "label-name-input";
         txtIn.addEventListener("input", function(){ samplePill.textContent = txtIn.value || color; });
         wrap.appendChild(txtIn);
         var addBtn = document.createElement("button");
         addBtn.type = "button";
         addBtn.textContent = "Add";
-        addBtn.style.cssText = "flex:none;font-size:12px;padding:0.2rem 0.5rem;border-radius:4px;background:var(--accent);color:var(--on-accent);border:none;cursor:pointer;";
+        addBtn.className = "label-name-confirm";
         addBtn.addEventListener("click", function(){
           var text = txtIn.value.trim() || color;
           var newLabels = currentLabels.concat([{ color: color, text: text }]);
@@ -1198,59 +1184,50 @@ function showCardDetail(id) {
   var fields = detailSection(mainCol, "Description");
   var descDisplay = document.createElement("div");
   descDisplay.className = "card-desc-display";
-  descDisplay.style.cssText = "min-height:40px;padding:0.5rem 0.6rem;border-radius:8px;cursor:pointer;line-height:1.5;font-size:13px;white-space:pre-wrap;word-break:break-word;";
   if (c.body && c.body.trim()) {
     descDisplay.textContent = c.body;
-    descDisplay.style.background = "transparent";
-    descDisplay.style.color = "var(--fg)";
   } else {
     descDisplay.textContent = "Add a more detailed description…";
-    descDisplay.style.background = "var(--surface-2)";
-    descDisplay.style.color = "var(--fg-muted)";
-    descDisplay.style.fontStyle = "italic";
+    descDisplay.classList.add("is-empty");
   }
   var bodyIn = document.createElement("textarea");
   bodyIn.id = "card-f-body";
   bodyIn.rows = 6;
   bodyIn.placeholder = "Add a more detailed description…";
-  bodyIn.style.cssText = "width:100%;font-family:var(--sans);font-size:13px;line-height:1.5;border-radius:8px;padding:0.5rem 0.6rem;border:2px solid var(--accent);background:var(--surface);resize:vertical;display:none;";
+  bodyIn.className = "card-desc-edit";
   bindDraft(bodyIn, c.id, "body", c.body);
   var descActions = document.createElement("div");
-  descActions.style.cssText = "display:none;gap:0.4rem;margin-top:0.4rem;align-items:center;";
+  descActions.className = "card-desc-actions";
   var descSave = document.createElement("button");
   descSave.type = "button";
   descSave.className = "card-detail-save-btn";
   descSave.textContent = "Save";
-  descSave.style.cssText = "min-height:28px;font-size:13px;";
   var descCancel = document.createElement("button");
   descCancel.type = "button";
   descCancel.className = "secondary";
   descCancel.textContent = "Cancel";
-  descCancel.style.cssText = "min-height:28px;font-size:13px;";
   descActions.appendChild(descSave);
   descActions.appendChild(descCancel);
   descDisplay.addEventListener("click", function() {
-    descDisplay.style.display = "none";
+    descDisplay.hidden = true;
     bodyIn.style.display = "block";
-    descActions.style.display = "flex";
+    descActions.classList.add("is-open");
     bodyIn.focus();
   });
   descCancel.addEventListener("click", function() {
     bodyIn.value = c.body || "";
     bodyIn.style.display = "none";
-    descActions.style.display = "none";
-    descDisplay.style.display = "block";
+    descActions.classList.remove("is-open");
+    descDisplay.hidden = false;
   });
   descSave.addEventListener("click", function() {
-    // Trigger the same save as the draft binding
     bodyIn.dispatchEvent(new Event("change"));
-    descDisplay.textContent = bodyIn.value || "Add a more detailed description…";
-    descDisplay.style.background = bodyIn.value.trim() ? "transparent" : "var(--surface-2)";
-    descDisplay.style.color = bodyIn.value.trim() ? "var(--fg)" : "var(--fg-muted)";
-    descDisplay.style.fontStyle = bodyIn.value.trim() ? "normal" : "italic";
+    var filled = !!bodyIn.value.trim();
+    descDisplay.textContent = filled ? bodyIn.value : "Add a more detailed description…";
+    descDisplay.classList.toggle("is-empty", !filled);
     bodyIn.style.display = "none";
-    descActions.style.display = "none";
-    descDisplay.style.display = "block";
+    descActions.classList.remove("is-open");
+    descDisplay.hidden = false;
   });
   fields.appendChild(descDisplay);
   fields.appendChild(bodyIn);
@@ -1264,13 +1241,12 @@ function showCardDetail(id) {
 
   // Assignee sidebar button with member picker dropdown
   var assignWrap = document.createElement("div");
-  assignWrap.style.cssText = "position:relative;";
+  assignWrap.className = "board-rel";
   var assignBtn = document.createElement("button");
   assignBtn.type = "button";
-  assignBtn.textContent = "👤 Members: ";
-  if (c.assignee) {
-    assignBtn.appendChild(document.createTextNode(c.assignee));
-  } else {
+  assignBtn.appendChild(icon("person", 14));
+  assignBtn.appendChild(document.createTextNode(c.assignee ? " Members: " + c.assignee : " Members: "));
+  if (!c.assignee) {
     var unassigned = document.createElement("em");
     unassigned.textContent = "unassigned";
     assignBtn.appendChild(unassigned);
@@ -1278,42 +1254,24 @@ function showCardDetail(id) {
   assignBtn.addEventListener("click", function() {
     var existing = assignWrap.querySelector(".member-picker-popup");
     if (existing) { existing.remove(); return; }
-    var popup = document.createElement("div");
-    popup.className = "member-picker-popup";
-    popup.style.cssText = "position:absolute;left:0;top:100%;z-index:999;background:var(--surface);border:1px solid var(--rule);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.15);padding:0.5rem;min-width:180px;margin-top:4px;";
-    var popTitle = document.createElement("div");
-    popTitle.style.cssText = "font-weight:600;font-size:12px;color:var(--fg-muted);padding:0.3rem 0.4rem 0.5rem;border-bottom:1px solid var(--rule);margin-bottom:0.3rem;";
-    popTitle.textContent = "Members";
-    popup.appendChild(popTitle);
-    // Unassign option
-    var unBtn = document.createElement("button");
-    unBtn.type = "button";
-    unBtn.style.cssText = "display:block;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg-muted);font-size:13px;border-radius:4px;";
-    unBtn.textContent = "✕ Remove member";
+    var popup = menuPopup(true);
+    popup.classList.add("member-picker-popup");
+    popup.appendChild(menuTitle("Members"));
+    var unBtn = menuItem({ muted: true });
+    unBtn.appendChild(icon("close", 12));
+    unBtn.appendChild(document.createTextNode(" Remove member"));
     unBtn.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: "" }, "Unassigned."); });
-    unBtn.addEventListener("mouseenter", function(){ unBtn.style.background = "var(--surface-2)"; });
-    unBtn.addEventListener("mouseleave", function(){ unBtn.style.background = "none"; });
     popup.appendChild(unBtn);
-    // Known peers
     var peers = (_getKnownPeers() || []).map(function(p){ return typeof p === "string" ? p : p.name || p; });
     if (c.assignee && peers.indexOf(c.assignee) === -1) peers.unshift(c.assignee);
     peers.forEach(function(name){
-      var opt = document.createElement("button");
-      opt.type = "button";
-      opt.style.cssText = "display:flex;align-items:center;gap:0.5rem;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg);font-size:13px;border-radius:4px;";
-      var optAv = document.createElement("span");
-      optAv.style.cssText = "flex:none;width:24px;height:24px;border-radius:50%;background:var(--accent);color:var(--on-accent);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;";
-      optAv.textContent = name.slice(0,2).toUpperCase();
-      opt.appendChild(optAv);
+      var opt = menuItem({ current: name === c.assignee });
+      opt.appendChild(menuAvatar(name));
       opt.appendChild(document.createTextNode(name));
-      if (name === c.assignee) { opt.style.fontWeight = "700"; opt.style.background = "color-mix(in srgb, var(--accent) 12%, transparent)"; }
       opt.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: name }, "Assigned to " + name + "."); });
-      opt.addEventListener("mouseenter", function(){ opt.style.background = "var(--surface-2)"; });
-      opt.addEventListener("mouseleave", function(){ opt.style.background = name === c.assignee ? "color-mix(in srgb, var(--accent) 12%, transparent)" : "none"; });
       popup.appendChild(opt);
     });
-    var closePop = function(ev) { if (!popup.contains(ev.target) && ev.target !== assignBtn) { popup.remove(); document.removeEventListener("click", closePop, true); } };
-    setTimeout(function(){ document.addEventListener("click", closePop, true); }, 0);
+    dismissOnOutside(popup, assignBtn);
     assignWrap.appendChild(popup);
   });
   assignWrap.appendChild(assignBtn);
@@ -1321,35 +1279,27 @@ function showCardDetail(id) {
 
   // Priority sidebar button with dropdown
   var prioWrap = document.createElement("div");
-  prioWrap.style.cssText = "position:relative;";
+  prioWrap.className = "board-rel";
   var curPrio = c.priority || "normal";
-  var prioIcons = { low: "🔽", normal: "➖", high: "🔺" };
+  var prioIcons = { low: "arrowDown", normal: "minus", high: "arrowUp" };
   var prioBtn = document.createElement("button");
   prioBtn.type = "button";
-  prioBtn.innerHTML = (prioIcons[curPrio] || "➖") + " Priority: " + curPrio;
+  prioBtn.appendChild(icon(prioIcons[curPrio] || "minus", 14));
+  prioBtn.appendChild(document.createTextNode(" Priority: " + curPrio));
   prioBtn.addEventListener("click", function() {
     var existing = prioWrap.querySelector(".prio-picker-popup");
     if (existing) { existing.remove(); return; }
-    var popup = document.createElement("div");
-    popup.className = "prio-picker-popup";
-    popup.style.cssText = "position:absolute;left:0;top:100%;z-index:999;background:var(--surface);border:1px solid var(--rule);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.15);padding:0.5rem;min-width:140px;margin-top:4px;";
-    var popTitle = document.createElement("div");
-    popTitle.style.cssText = "font-weight:600;font-size:12px;color:var(--fg-muted);padding:0.3rem 0.4rem 0.5rem;border-bottom:1px solid var(--rule);margin-bottom:0.3rem;";
-    popTitle.textContent = "Priority";
-    popup.appendChild(popTitle);
+    var popup = menuPopup(true);
+    popup.classList.add("prio-picker-popup");
+    popup.appendChild(menuTitle("Priority"));
     ["high", "normal", "low"].forEach(function(p){
-      var opt = document.createElement("button");
-      opt.type = "button";
-      opt.style.cssText = "display:flex;align-items:center;gap:0.5rem;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg);font-size:13px;border-radius:4px;";
-      opt.innerHTML = (prioIcons[p] || "") + " " + p.charAt(0).toUpperCase() + p.slice(1);
-      if (p === curPrio) { opt.style.fontWeight = "700"; opt.style.background = "color-mix(in srgb, var(--accent) 12%, transparent)"; }
+      var opt = menuItem({ current: p === curPrio });
+      opt.appendChild(icon(prioIcons[p] || "minus", 14));
+      opt.appendChild(document.createTextNode(" " + p.charAt(0).toUpperCase() + p.slice(1)));
       opt.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, priority: p }, "Priority → " + p); });
-      opt.addEventListener("mouseenter", function(){ opt.style.background = "var(--surface-2)"; });
-      opt.addEventListener("mouseleave", function(){ opt.style.background = p === curPrio ? "color-mix(in srgb, var(--accent) 12%, transparent)" : "none"; });
       popup.appendChild(opt);
     });
-    var closePop = function(ev) { if (!popup.contains(ev.target) && ev.target !== prioBtn) { popup.remove(); document.removeEventListener("click", closePop, true); } };
-    setTimeout(function(){ document.addEventListener("click", closePop, true); }, 0);
+    dismissOnOutside(popup, prioBtn);
     prioWrap.appendChild(popup);
   });
   prioWrap.appendChild(prioBtn);
@@ -1357,13 +1307,14 @@ function showCardDetail(id) {
 
   // Deadline sidebar — native date picker
   var deadlineWrap = document.createElement("div");
-  deadlineWrap.style.cssText = "position:relative;";
+  deadlineWrap.className = "board-rel";
   var deadlineBtn = document.createElement("button");
   deadlineBtn.type = "button";
-  deadlineBtn.innerHTML = "📅 " + (c.deadline ? "Due: " + fmtDeadline(c.deadline) : "Dates");
+  deadlineBtn.appendChild(icon("calendar", 14));
+  deadlineBtn.appendChild(document.createTextNode(c.deadline ? " Due: " + fmtDeadline(c.deadline) : " Dates"));
   var deadlineInput = document.createElement("input");
   deadlineInput.type = "date";
-  deadlineInput.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;cursor:pointer;";
+  deadlineInput.className = "card-detail-date-hit";
   if (c.deadline) {
     // Convert deadline to YYYY-MM-DD if it's a unix timestamp
     try {
@@ -1417,7 +1368,8 @@ function showCardDetail(id) {
   // Move column sidebar — dropdown instead of prompt
   var moveBtn = document.createElement("button");
   moveBtn.type = "button";
-  moveBtn.innerHTML = "➜ Move";
+  moveBtn.appendChild(icon("arrowRight", 14));
+  moveBtn.appendChild(document.createTextNode(" Move"));
   moveBtn.addEventListener("click", function() {
     if (!board || !board.columns) return;
     // Build a small dropdown
@@ -1425,12 +1377,14 @@ function showCardDetail(id) {
     if (existing) { existing.remove(); return; }
     var menu = document.createElement("div");
     menu.className = "card-detail-move-menu";
-    menu.style.cssText = "display:flex;flex-direction:column;gap:2px;margin-top:4px;";
     board.columns.forEach(function(col) {
       var opt = document.createElement("button");
       opt.type = "button";
-      opt.textContent = col.title + (col.id === c.column ? " ✓" : "");
-      opt.style.cssText = "text-align:left;min-height:28px;font-size:12px;border-radius:4px;padding:0.25rem 0.5rem;border:none;background:" + (col.id === c.column ? "var(--accent)" : "var(--surface-2)") + ";color:" + (col.id === c.column ? "var(--on-accent)" : "var(--fg)") + ";cursor:pointer;";
+      opt.className = "card-detail-move-opt" + (col.id === c.column ? " is-current" : "");
+      opt.textContent = col.title;
+      if (col.id === c.column) {
+        opt.appendChild(icon("held", 12));
+      }
       opt.addEventListener("click", function() {
         if (col.id === c.column) { menu.remove(); return; }
         postBoard({ op: "move", id: c.id, column: col.id }, "Moved to " + col.title + ".");
@@ -1445,7 +1399,8 @@ function showCardDetail(id) {
   // Copy card button
   var copyBtn = document.createElement("button");
   copyBtn.type = "button";
-  copyBtn.innerHTML = "📋 Copy";
+  copyBtn.appendChild(icon("copy", 14));
+  copyBtn.appendChild(document.createTextNode(" Copy"));
   copyBtn.addEventListener("click", function() {
     var newTitle = c.title + " (copy)";
     var payload = { op: "add", title: newTitle, column: c.column };
@@ -1459,8 +1414,9 @@ function showCardDetail(id) {
   // Archive/delete sidebar button
   var archiveBtn = document.createElement("button");
   archiveBtn.type = "button";
-  archiveBtn.innerHTML = "🗑 Delete";
-  archiveBtn.style.color = "var(--danger)";
+  archiveBtn.appendChild(icon("trash", 14));
+  archiveBtn.appendChild(document.createTextNode(" Delete"));
+  archiveBtn.classList.add("danger");
   archiveBtn.addEventListener("click", function() {
     uiConfirm("Delete card \"" + c.title + "\"? This cannot be undone.", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
       if (!yes) return;
@@ -1524,7 +1480,7 @@ function showCardDetail(id) {
 
   // ---- Save button in main column ----
   var saveRow = document.createElement("div");
-  saveRow.style.cssText = "margin-top:var(--space-3);display:flex;gap:8px;flex-wrap:wrap;";
+  saveRow.className = "card-detail-save-row";
   var save = document.createElement("button");
   save.type = "button";
   save.className = "card-detail-save-btn";
@@ -1548,7 +1504,8 @@ function showCardDetail(id) {
   var takeIt = document.createElement("button");
   takeIt.type = "button";
   takeIt.className = "secondary";
-  takeIt.textContent = "🙋 Assign to me";
+  takeIt.appendChild(icon("person", 14));
+  takeIt.appendChild(document.createTextNode(" Assign to me"));
   takeIt.addEventListener("click", function () {
     postBoard({ op: "update", id: c.id, assignee: (el.instanceChip.textContent || "").trim() }, "Assigned.");
   });
@@ -1558,7 +1515,8 @@ function showCardDetail(id) {
   var asGoal = document.createElement("button");
   asGoal.type = "button";
   asGoal.className = "secondary";
-  asGoal.textContent = c.goal ? "🚀 Start work" : "🎯 Convert to goal";
+  asGoal.appendChild(icon(c.goal ? "rocket" : "goal", 14));
+  asGoal.appendChild(document.createTextNode(c.goal ? " Start work" : " Convert to goal"));
   asGoal.title = c.goal
     ? "Start a run for this goal. The card moves to Doing, then Review when the run finishes."
     : "Turn this legacy card into a goal and start it.";
@@ -1668,7 +1626,7 @@ function showCardDetail(id) {
     var child = document.createElement("button");
     child.type = "button";
     child.className = "rail-pin";
-    child.textContent = "+";
+    child.appendChild(icon("plus", 14));
     child.setAttribute("aria-label", "Add child checklist item under: " + s.text);
     var drop = document.createElement("button");
     drop.type = "button";
@@ -1694,7 +1652,7 @@ function showCardDetail(id) {
         var clear = document.createElement("button");
         clear.type = "button";
         clear.className = "rail-pin";
-        clear.textContent = "×";
+        clear.appendChild(icon("close", 12));
         clear.setAttribute("aria-label", "Remove dependency on " + (subById[id] ? subById[id].text : id));
         clear.addEventListener("click", function () {
           postBoard({ op: "subtask_depend", id: c.id, subtask_id: s.id, depends_on: id, off: true }, "Checklist dependency removed.");
@@ -1875,8 +1833,7 @@ function showCardDetail(id) {
   var entries = (c.log || []).slice().reverse();
   if (!entries.length) {
     var empty = document.createElement("p");
-    empty.className = "meta";
-    empty.style.cssText = "font-style:italic;color:var(--fg-muted);padding:0.5rem 0;";
+    empty.className = "meta card-activity-empty";
     empty.textContent = "No activity yet. Moving, assigning, or commenting on this card will build its history here.";
     logBox.appendChild(empty);
   }
@@ -1893,10 +1850,10 @@ function showCardDetail(id) {
     // Set a unique color based on name hash
     var nameHash = 0;
     for (var ci = 0; ci < whoName.length; ci++) nameHash = ((nameHash << 5) - nameHash + whoName.charCodeAt(ci)) | 0;
-    var avatarColors = ["#0b5ab8","#0a7a2e","#c45a0a","#6b2fb8","#c23a7a","#c41212","#2a8ecc","#9a7a0a"];
-    var avatarBg = avatarColors[Math.abs(nameHash) % avatarColors.length];
-    avatar.style.background = avatarBg;
-    avatar.style.color = "#fff";
+    // One stable tone per name, from the theme-aware chat-hue palette (in
+    // app.css), which re-saturates per theme so the initials stay legible in
+    // light and dark alike. No literal hex or white-is-assumed text here.
+    avatar.classList.add("avatar-tone-" + (Math.abs(nameHash) % 8));
     item.appendChild(avatar);
     // Content
     var content = document.createElement("div");
@@ -1921,15 +1878,13 @@ function showCardDetail(id) {
   logBox.appendChild(activityList);
   // Activity input with send button
   var noteWrap = document.createElement("div");
-  noteWrap.style.cssText = "display:flex;gap:0.4rem;align-items:center;margin-top:0.5rem;";
+  noteWrap.className = "card-comment-row";
   var noteAvatar = document.createElement("div");
-  noteAvatar.className = "card-activity-avatar";
+  noteAvatar.className = "card-activity-avatar card-comment-avatar";
   noteAvatar.textContent = "ME";
-  noteAvatar.style.cssText = "flex:none;background:var(--accent);color:var(--on-accent);";
   noteWrap.appendChild(noteAvatar);
   var noteIn = input("card-f-log", "text", "", "Write a comment…");
   noteIn.maxLength = 2000;
-  noteIn.style.cssText = "flex:1;min-width:0;";
   noteIn.addEventListener("keydown", function (e) {
     if (e.key !== "Enter" || !noteIn.value.trim()) return;
     e.preventDefault();
@@ -1938,9 +1893,8 @@ function showCardDetail(id) {
   noteWrap.appendChild(noteIn);
   var noteSend = document.createElement("button");
   noteSend.type = "button";
-  noteSend.className = "card-detail-save-btn";
+  noteSend.className = "card-detail-save-btn card-comment-send";
   noteSend.textContent = "Save";
-  noteSend.style.cssText = "flex:none;min-height:32px;";
   noteSend.addEventListener("click", function() {
     if (!noteIn.value.trim()) return;
     postBoard({ op: "log", id: c.id, what: noteIn.value.trim() }, "Recorded.");
@@ -1997,6 +1951,8 @@ export function bindBoard(deps) {
   _setTabCount = deps.setTabCount;
   _openRun = deps.openRun;
   _getKnownPeers = deps.getKnownPeers;
+  var headerIcon = document.getElementById("board-header-icon");
+  if (headerIcon && !headerIcon.firstChild) headerIcon.appendChild(icon("grid", 20));
 
   bind(el.board, boardState, function (s) {
     var open = 0;
@@ -2052,15 +2008,51 @@ export function bindBoard(deps) {
       })
       .finally(function () { el.boardResyncGoals.disabled = false; });
   });
+  // The text filter runs on every keystroke, so debounce it: a full board
+  // rebuild per keypress (bind() clears and re-renders every column) is what
+  // made typing lag. Structured filters coalesce to one rAF so a double
+  // listener cannot stack two rebuilds in the same frame.
+  var filterTimer = null;
+  var filterRaf = 0;
+  function scheduleFilterRebuild(fromText) {
+    function run() {
+      filterRaf = 0;
+      var next = boardFilterState();
+      var cur = boardState.val;
+      if (cur &&
+          (next.text || "").trim().toLowerCase() === (cur.text || "") &&
+          !!next.blockedOnly === !!cur.blockedOnly &&
+          (next.priority || "") === (cur.priority || "") &&
+          (next.assignee || "") === (cur.assignee || "") &&
+          (next.label || "") === (cur.label || "") &&
+          !!el.boardMine.checked === !!cur.mine) return;
+      renderBoard(null);
+    }
+    if (fromText) {
+      if (filterTimer) window.clearTimeout(filterTimer);
+      filterTimer = window.setTimeout(function () {
+        filterTimer = null;
+        if (filterRaf) return;
+        filterRaf = window.requestAnimationFrame(run);
+      }, 150);
+      return;
+    }
+    if (filterRaf) return;
+    filterRaf = window.requestAnimationFrame(run);
+  }
   ["board-filter-input","board-filter-mine","board-filter-blocked","board-filter-priority","board-filter-assignee","board-filter-label"].forEach(function(id){
     var n=document.getElementById(id);
     if(!n) return;
-    n.addEventListener(id==="board-filter-input" ? "input" : "change", function(){ renderBoard(null); });
+    if (id === "board-filter-input") {
+      n.addEventListener("input", function () { scheduleFilterRebuild(true); });
+    } else {
+      n.addEventListener("change", function(){ scheduleFilterRebuild(false); });
+    }
   });
   var boardMine=document.getElementById("board-filter-mine");
-  if(boardMine) boardMine.addEventListener("change", function(){ var top=document.getElementById("board-mine"); if(top) top.checked=boardMine.checked; renderBoard(null); });
+  if(boardMine) boardMine.addEventListener("change", function(){ var top=document.getElementById("board-mine"); if(top) top.checked=boardMine.checked; });
   var topMine=document.getElementById("board-mine");
-  if(topMine) topMine.addEventListener("change", function(){ var b=document.getElementById("board-filter-mine"); if(b) b.checked=topMine.checked; renderBoard(null); });
+  if(topMine) topMine.addEventListener("change", function(){ var b=document.getElementById("board-filter-mine"); if(b) b.checked=topMine.checked; scheduleFilterRebuild(false); });
   // ---- Keyboard shortcuts (Trello-style) ----
   // n = new card, / = focus filter, ? = show shortcuts, Escape = close detail
   document.addEventListener("keydown", function(e) {

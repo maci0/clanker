@@ -1,18 +1,18 @@
 // Vanilla, no bundler. Usage table — token/cost totals by provider/model.
-export function usageColumns() {
+function usageColumns() {
   return [
     ["Provider / model", ""], ["Calls", "num"], ["Failed", "num"], ["Prompt", "num"],
     ["Completion", "num"], ["Cache hit", "num"], ["Tok/s", "num"], ["Cost", "num"],
   ];
 }
 
-export function usageName(r, modelLabel, T) {
+function usageName(r, modelLabel, T) {
   var shown = modelLabel(r.provider, r.model);
   if (shown === r.provider) return T.td(r.provider);
   return T.td(r.provider + " / ", T.span({ class: "model" }, shown));
 }
 
-export function usageRow(r, modelLabel, fmtInt, fmtCost, T) {
+function usageRow(r, modelLabel, fmtInt, fmtCost, T) {
   return T.tr(usageName(r, modelLabel, T), [
     fmtInt(r.calls), fmtInt(r.error_calls || 0), fmtInt(r.prompt_tokens), fmtInt(r.completion_tokens),
     (r.cache_hit_rate || 0).toFixed(1) + "%", (r.tokens_per_sec || 0).toFixed(0), fmtCost(r.cost),

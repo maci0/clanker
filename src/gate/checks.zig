@@ -354,6 +354,8 @@ fn testProcessEnviron() std.process.Environ {
     const c_environ = std.c.environ;
     var n: usize = 0;
     while (c_environ[n] != null) : (n += 1) {}
+    // c_environ is [*:null]?[*:0]u8; Environ.block.slice wants that same
+    // sentinel pointer as a slice. The length is the null we just walked to.
     return .{ .block = .{ .slice = @ptrCast(c_environ[0..n :null]) } };
 }
 

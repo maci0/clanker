@@ -12,9 +12,13 @@
 
 const std = @import("std");
 const types = @import("../llm/types.zig");
+const utf8 = @import("../util/utf8.zig");
 
 /// Per-file read cap for instruction layers and each `@` import hop.
 const max_instruction_file_bytes: usize = 64 * 1024;
+/// Persistent learnings section in the system prompt: enough to keep recent
+/// notes, not enough to crowd out skills and instructions.
+const max_learnings_prompt_bytes: usize = 4096;
 /// Claude-compatible hop limit for nested `@` imports.
 const max_import_depth: usize = 4;
 
@@ -70,10 +74,7 @@ const self_authored_notice =
 /// note written mid-codepoint would otherwise dangle a continuation byte into
 /// the system prompt as invalid UTF-8, which is sent to the provider as-is.
 fn capUtf8(s: []const u8, max_bytes: usize) []const u8 {
-    if (s.len <= max_bytes) return s;
-    var end = max_bytes;
-    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
-    return s[0..end];
+    return utf8.cap(s, max_bytes);
 }
 
 /// Resolves the path to device-global operator instructions.
@@ -386,8 +387,8 @@ pub fn build(
     if (learnings) |l| {
         if (l.len > 0) {
             try buf.appendSlice(arena, "## Learnings (persistent memory)\n\n" ++ self_authored_notice);
-            if (l.len > 4096) {
-                try buf.appendSlice(arena, capUtf8(l, 4096));
+            if (l.len > max_learnings_prompt_bytes) {
+                try buf.appendSlice(arena, capUtf8(l, max_learnings_prompt_bytes));
                 try buf.appendSlice(arena, "...");
             } else {
                 try buf.appendSlice(arena, l);

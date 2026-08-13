@@ -16,9 +16,8 @@ loop's future research capabilities (pulled in only by a test-only import in
 `main.zig`); the autoresearch loop never imports it and it is not part of
 this surface, despite the similar name.
 
-Two things this doc used to claim that the code does not do: `--budget`
-is accepted but never enforced as a wall-clock cutoff, and the `best/`
-directory the loop creates is never written to. Both are in Known issues.
+One thing this doc used to claim that the code does not do: `--budget`
+is accepted but never enforced as a wall-clock cutoff. See Known issues.
 
 ## Problem
 
@@ -85,17 +84,12 @@ surface.
   with no timeout, so a hung or slow harness command runs to completion (or
   forever) instead of being cut off at the advertised wall-clock budget.
   Fix belongs in `src/research/harness.zig`'s `runHarness`.
-- `Loop.iterOnce` creates `state/autoresearch/<run-id>/best/` but never
-  writes to it; an improved iteration overwrites the original target files
-  at their real repo path instead. `best/` is a directory with nothing in
-  it. Fix belongs in `src/research/autoresearch.zig`'s `iterOnce`: either
-  populate it or stop creating it.
 
 ## Failure modes
 
 | Condition | Behaviour |
 |---|---|
-| `--target`/`--harness` missing (non dry-run) | `error.MissingArg`, logged, command aborts |
+| `--target`/`--harness` missing (non dry-run) | Usage message and immediate exit (`usageExit` in `src/cli.zig`, no error value). `error.MissingArg` fires only when the `--harness` string parses to zero argv entries (e.g. all whitespace) |
 | `--dry-run` | Logs target/harness/metric/direction/budget/iters and returns; no LLM call, no harness run |
 | LLM chat call fails | Iteration warning-logged, treated as no improvement, loop continues |
 | Proposal JSON fails to parse | Iteration warning-logged, treated as no improvement |
@@ -120,9 +114,6 @@ surface.
 
 ## Open questions / future work
 
-- Whether `best/` should hold real snapshots of the best-known target files,
-  independent of the working tree, or whether the directory should simply
-  not be created until it does something.
 - Whether the budget should become a real subprocess timeout (kill after N
   seconds) or the harness contract should instead just document "the
   harness is responsible for its own budget."

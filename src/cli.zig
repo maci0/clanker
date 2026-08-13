@@ -44,6 +44,7 @@ const atomic_write = @import("util/atomic_write.zig");
 const diskcap = @import("util/diskcap.zig");
 const runlock = @import("util/runlock.zig");
 const filelock = @import("util/filelock.zig");
+const utf8 = @import("util/utf8.zig");
 const gate_checks = @import("gate/checks.zig");
 const schedule_cmd = @import("schedule/command.zig");
 const schedule_runner = @import("schedule/runner.zig");
@@ -120,6 +121,9 @@ pub const Options = struct {
     goal: ?[]const u8 = null,
     peer: ?[]const u8 = null,
     message: ?[]const u8 = null,
+    /// `autolearn reset`: archive the event log before refreshing, so the
+    /// next report starts from a clean slate.
+    autolearn_reset: bool = false,
     /// Sub-command for `chat`: "send", "history", "rooms" (default) or
     /// "subscribe". `room` holds the room name; `message` holds the text (send),
     /// an `after` ts (history) or an on/off token (subscribe).
@@ -721,6 +725,13 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 setDiag(diag, a);
                 return error.UnknownArg;
             }
+        } else if (opts.command == .autolearn) {
+            if (std.mem.eql(u8, a, "reset") and !opts.autolearn_reset) {
+                opts.autolearn_reset = true;
+            } else {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
         } else if (opts.command == .schedule) {
             // Positional-only: <sub> then up to two arguments whose meaning
             // depends on it (add takes a spec and a task, the rest an id).
@@ -1243,7 +1254,7 @@ const specs = [_]Spec{
     .{ .command = .gate, .usage = "gate", .blurb = "run the build/test/tools/fmt/lint gates", .group = .maintain },
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model }, .detail = "--tasks runs only the agent-driven evals, skipping the selfhost build gates.\n--provider/--model run the eval agents on a specific backend (cmdEval already resolves them; the improve loop's eval_provider rides this)." },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain },
-    .{ .command = .autolearn, .usage = "autolearn", .blurb = "fold recent runs into the ROADMAP's Autolearn section", .group = .maintain },
+    .{ .command = .autolearn, .usage = "autolearn [reset]", .blurb = "fold recent runs into the ROADMAP's Autolearn section", .group = .maintain, .detail = "Aggregates the last 7 days of state/autolearn.jsonl into actionable items.\n\nreset    archive the event log to state/autolearn.old.jsonl (overwriting any\n         previous archive) and start observations from a clean slate. Use it\n         after addressing the reported items, so they stop resurfacing." },
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
     .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own; the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields: minute hour day-of-month month day-of-week, each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
     .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
@@ -1334,6 +1345,7 @@ const ScheduleFire = struct {
     }
 
     fn call(ctx: *anyopaque, entry: *const schedule_store.Entry) anyerror!void {
+        // callback() boxed this ScheduleFire as Fire.ctx.
         const self: *ScheduleFire = @ptrCast(@alignCast(ctx));
         var run_opts = self.opts;
         run_opts.command = .run;
@@ -2340,7 +2352,6 @@ fn httpGetTask(
 /// logic lives in the cmd_autolearn tool (fs-scoped read/aggregate/write,
 /// same shape as roadmap/history/learnings); this just runs it and reports.
 fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
-    _ = opts;
     const io = init.io;
     const gpa = init.gpa;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -2350,8 +2361,20 @@ fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
     if (!cfg.modules.autolearn) {
         return error.ModuleDisabled;
     }
-    const section = try toolText(io, gpa, arena, &cfg, init.environ_map, "cmd_autolearn", "");
     const out = std.Io.File.stdout();
+    if (opts.autolearn_reset) {
+        // Archive rather than delete: the history stays greppable, the
+        // aggregation starts over. Overwrites the previous archive; one
+        // generation back is enough for "what did it say before the reset".
+        const cwd = std.Io.Dir.cwd();
+        if (cwd.rename("state/autolearn.jsonl", cwd, "state/autolearn.old.jsonl", io)) {
+            try out.writeStreamingAll(io, "Event log archived to state/autolearn.old.jsonl\n");
+        } else |err| switch (err) {
+            error.FileNotFound => try out.writeStreamingAll(io, "No event log to reset (state/autolearn.jsonl not found)\n"),
+            else => return err,
+        }
+    }
+    const section = try toolText(io, gpa, arena, &cfg, init.environ_map, "cmd_autolearn", "");
     try out.writeStreamingAll(io, "Autolearn section updated in docs/ROADMAP.md\n\n");
     try out.writeStreamingAll(io, section);
 }
@@ -3056,7 +3079,9 @@ fn execSelf(gpa: std.mem.Allocator, exe_path: [:0]const u8, argv_tail: []const [
     const exe_z: [*:0]const u8 = exe_path.ptr;
     argv.append(gpa, exe_z) catch return;
     for (argv_tail) |a| {
-        argv.append(gpa, @as([*:0]const u8, @ptrCast(gpa.dupeZ(u8, a) catch return))) catch return;
+        // dupeZ returns [:0]u8; .ptr is already [*:0]u8 (no pointer recast).
+        const z = gpa.dupeZ(u8, a) catch return;
+        argv.append(gpa, z.ptr) catch return;
     }
     argv.append(gpa, null) catch return;
     // Mark every fd above stderr close-on-exec. The re-exec'd image reopens
@@ -3074,7 +3099,9 @@ fn execSelf(gpa: std.mem.Allocator, exe_path: [:0]const u8, argv_tail: []const [
         _ = std.c.fcntl(fd, std.c.F.SETFD, @as(c_int, std.c.FD_CLOEXEC));
     }
     const path_z: [*:0]const u8 = exe_path.ptr;
+    // argv ends with the null we just appended (C argv / execve contract).
     const argv_z: [*:null]const ?[*:0]const u8 = @ptrCast(argv.items.ptr);
+    // environ is [*:null]?[*:0]u8; execve wants the const form of that shape.
     _ = std.c.execve(path_z, argv_z, @ptrCast(std.c.environ));
 }
 
@@ -3176,6 +3203,7 @@ const HotReload = struct {
             var relevant = false;
             var i: usize = 0;
             while (i + @sizeOf(std.os.linux.inotify_event) <= n) {
+                // buf is aligned to inotify_event; i walks kernel-sized records.
                 const ev: *const std.os.linux.inotify_event = @ptrCast(@alignCast(&buf[i]));
                 if (ev.getName()) |name| {
                     if (std.mem.eql(u8, name, base_name)) relevant = true;
@@ -3465,18 +3493,6 @@ fn toolText(
     tool_name: []const u8,
     args: []const u8,
 ) ![]const u8 {
-    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
-    const mod = runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, tool_name, &ctx) catch |err| {
-        if (err == error.UnknownTool) {
-            log.log(.error_, "internal tool '{s}' not found in {s}", .{ tool_name, cfg.agent.tools_dir });
-        } else {
-            log.log(.error_, "'{s}' tool load failed: {s} (run `zig build tools`)", .{ tool_name, @errorName(err) });
-        }
-        return error.ToolWasmMissing;
-    };
-    defer mod.deinit();
-
     var ibuf: [8192]u8 = undefined;
     var iw: std.Io.Writer = .fixed(&ibuf);
     var is = std.json.Stringify{ .writer = &iw, .options = .{} };
@@ -3485,8 +3501,7 @@ fn toolText(
     try is.write(args);
     try is.endObject();
 
-    const raw = try mod.executeTool(ibuf[0..iw.end]);
-    defer gpa.free(raw);
+    const raw = try toolJson(io, gpa, arena, cfg, environ_map, tool_name, ibuf[0..iw.end]);
 
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true });
     if (parsed != .object) return error.ToolBadOutput;
@@ -3527,19 +3542,7 @@ fn cmdPrune(init: std.process.Init, apply: bool) !void {
     try is.objectField("state_dir");
     try is.write(cfg.agent.state_dir);
     try is.endObject();
-    var reg = try registry.Registry.load(init.io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-    var ctx = client.Ctx{ .io = init.io, .gpa = init.gpa, .environ_map = init.environ_map, .cfg = &cfg };
-    const mod = runtime.loadNamedTool(init.gpa, init.io, arena, init.environ_map, &cfg, &reg, "cmd_janitor", &ctx) catch |err| {
-        if (err == error.UnknownTool) {
-            log.log(.error_, "internal tool 'cmd_janitor' not found in {s}", .{cfg.agent.tools_dir});
-        } else {
-            log.log(.error_, "'cmd_janitor' tool load failed: {s} (run `zig build tools`)", .{@errorName(err)});
-        }
-        return error.ToolWasmMissing;
-    };
-    defer mod.deinit();
-    const raw = try mod.executeTool(ibuf[0..iw.end]);
-    defer init.gpa.free(raw);
+    const raw = try toolJson(init.io, init.gpa, arena, &cfg, init.environ_map, "cmd_janitor", ibuf[0..iw.end]);
     const stdout = std.Io.File.stdout();
     // Empty output reads as "did it even run?": when the tool has nothing to
     // report, say so, and on scans point at the flag that would act on it.
@@ -3985,17 +3988,6 @@ fn cmdNotify(init: std.process.Init, opts: Options) !void {
     const peer_name = opts.peer orelse return error.MissingPeer;
     const message = opts.message orelse return error.MissingMessage;
 
-    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-    const mod = runtime.loadNamedTool(gpa, io, arena, init.environ_map, &cfg, &reg, "peers", null) catch |err| {
-        if (err == error.UnknownTool) {
-            log.log(.error_, "internal tool 'peers' not found in {s}", .{cfg.agent.tools_dir});
-        } else {
-            log.log(.error_, "'peers' tool load failed: {s} (run `zig build tools`)", .{@errorName(err)});
-        }
-        return error.ToolWasmMissing;
-    };
-    defer mod.deinit();
-
     var ibuf: [4096]u8 = undefined;
     var iw: std.Io.Writer = .fixed(&ibuf);
     var is = std.json.Stringify{ .writer = &iw, .options = .{} };
@@ -4008,8 +4000,7 @@ fn cmdNotify(init: std.process.Init, opts: Options) !void {
     try is.write(message);
     try is.endObject();
 
-    const raw = try mod.executeTool(ibuf[0..iw.end]);
-    defer gpa.free(raw);
+    const raw = try toolJson(io, gpa, arena, &cfg, init.environ_map, "peers", ibuf[0..iw.end]);
     const result = parseToolResult(arena, raw);
     if (!result.ok) {
         log.log(.error_, "notify to '{s}' failed: {s}", .{ peer_name, result.err });
@@ -5755,14 +5746,12 @@ fn runStreamToolCall(calls: []const types.ToolCall) void {
         s.write(tc.name) catch return;
         s.objectField("args") catch return;
         const cap: usize = 400;
-        if (tc.arguments.len > cap) {
-            var cut: usize = cap;
-            // Do not split a UTF-8 sequence at the cut.
-            while (cut > 0 and (tc.arguments[cut] & 0xC0) == 0x80) cut -= 1;
+        const clipped = utf8.cap(tc.arguments, cap);
+        if (clipped.len < tc.arguments.len) {
             var arg_buf: [cap + 3]u8 = undefined;
-            @memcpy(arg_buf[0..cut], tc.arguments[0..cut]);
-            @memcpy(arg_buf[cut..][0..3], "...");
-            s.write(arg_buf[0 .. cut + 3]) catch return;
+            @memcpy(arg_buf[0..clipped.len], clipped);
+            @memcpy(arg_buf[clipped.len..][0..3], "...");
+            s.write(arg_buf[0 .. clipped.len + 3]) catch return;
         } else {
             s.write(tc.arguments) catch return;
         }
@@ -7954,10 +7943,9 @@ fn scanSkills(arena: std.mem.Allocator, io: std.Io, base: std.Io.Dir, dir: []con
 
 /// Clips a line to `max` bytes without splitting a UTF-8 codepoint.
 fn clipTo(arena: std.mem.Allocator, s: []const u8, max: usize) []const u8 {
-    if (s.len <= max) return s;
-    var end: usize = max;
-    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
-    return arena.dupe(u8, s[0..end]) catch s[0..end];
+    const clipped = utf8.cap(s, max);
+    if (clipped.len == s.len) return s;
+    return arena.dupe(u8, clipped) catch clipped;
 }
 
 /// Skills the prompt embeds also get capped at the same bound (PromptParts

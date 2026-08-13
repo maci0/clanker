@@ -3,6 +3,9 @@
 export var vendorLoads = {};
 export var tomlRegistered = false;
 
+import { readJson } from "./utils.js";
+export { readJson };
+
 export function loadVendor(file, ready) {
   if (vendorLoads[file]) return vendorLoads[file];
   vendorLoads[file] = ready() ? Promise.resolve() : new Promise(function (resolve, reject) {
@@ -59,16 +62,6 @@ export function scrollTo(node, block) {
   node.scrollIntoView({ block: block, behavior: reducedMotion.matches ? "auto" : "smooth" });
 }
 
-export function readJson(r) {
-  return r.json().then(function (d) {
-    if (!r.ok) throw new Error((d && d.error) || "HTTP " + r.status);
-    return d;
-  }, function () {
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return {};
-  });
-}
-
 export function copyText(text, btn, restoreLabel, selectTarget) {
   function restore() {
     window.setTimeout(function () { btn.textContent = restoreLabel; }, 1400);
@@ -93,7 +86,7 @@ export function copyText(text, btn, restoreLabel, selectTarget) {
   }, selectInstead);
 }
 
-export function getVendorLoads() { return vendorLoads; }
+
 
 // Backward-compat: app.js classic script expects globals; keep duplicated there
 // for now — mirror so future modules can import while app.js still works.

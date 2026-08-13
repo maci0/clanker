@@ -9,13 +9,26 @@ pub const Level = enum {
     error_,
 
     pub fn fromStr(s: []const u8) ?Level {
-        if (std.mem.eql(u8, s, "debug")) return .debug;
-        if (std.mem.eql(u8, s, "info")) return .info;
-        if (std.mem.eql(u8, s, "warn")) return .warn;
-        if (std.mem.eql(u8, s, "error")) return .error_;
-        return null;
+        // Closed set; the stored tag is `error_` so stringToEnum cannot
+        // accept the operator-facing spelling "error" on its own.
+        const names = std.StaticStringMap(Level).initComptime(.{
+            .{ "debug", .debug },
+            .{ "info", .info },
+            .{ "warn", .warn },
+            .{ "error", .error_ },
+        });
+        return names.get(s);
     }
 };
+
+test "Level.fromStr accepts operator spellings" {
+    try std.testing.expectEqual(Level.debug, Level.fromStr("debug").?);
+    try std.testing.expectEqual(Level.info, Level.fromStr("info").?);
+    try std.testing.expectEqual(Level.warn, Level.fromStr("warn").?);
+    try std.testing.expectEqual(Level.error_, Level.fromStr("error").?);
+    try std.testing.expect(Level.fromStr("error_") == null);
+    try std.testing.expect(Level.fromStr("nope") == null);
+}
 
 var current_level = std.atomic.Value(u8).init(@intFromEnum(Level.info));
 

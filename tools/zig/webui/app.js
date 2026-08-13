@@ -1,6 +1,6 @@
 import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, isSafeLinkUrl as utilIsSafeLinkUrl, splitRow as utilSplitRow, prettyJsonIfPossible as utilPrettyJsonIfPossible, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, view_digit_max } from "./core/utils.js";
 import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt } from "./core/ui.js";
-import { ICON_PATHS as iconPaths, icon as iconFn } from "./core/icons.js";
+import { icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, reducedMotion as reducedMotionMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { THEMES as THEMESMod, loadTheme as loadThemeMod, applyTheme as applyThemeMod } from "./core/theme.js";
 import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod, messageKey as chatMessageKey, hasServerId as chatHasServerId } from "./core/chat.js";
@@ -217,7 +217,6 @@ var bind = vanBind;
 var skeletonRows = vanSkeletonRows;
 var setTurnPhase = vanSetTurnPhase;
 
-var ICON_PATHS = iconPaths;
 var icon = iconFn;
 
 var UI = vanUI;
@@ -562,7 +561,12 @@ function setRailOpen(open) {
 function applyRailCollapsed(collapsed) {
   el.rail.setAttribute("data-collapsed", String(collapsed));
   var btn = document.getElementById("rail-collapse");
-  if (btn) { btn.textContent = collapsed ? "◨" : "◧"; btn.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar"); btn.title = collapsed ? "Expand sidebar" : "Collapse sidebar"; }
+  if (btn) {
+    btn.textContent = "";
+    btn.appendChild(icon("panel", 15));
+    btn.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+    btn.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  }
   try { window.localStorage.setItem("clanker.railCollapsed", collapsed ? "1" : "0"); } catch (e) {}
 }
 
@@ -1629,7 +1633,8 @@ window.addEventListener("beforeunload", flushDraft);
   var rec = null, listening = false;
   function setListening(on){
     listening = on;
-    btn.textContent = on ? "●" : "🎙";
+    btn.textContent = "";
+    btn.appendChild(icon(on ? "minus" : "mic", 16));
     btn.setAttribute("aria-pressed", String(on));
     btn.title = on ? "Listening (click to stop)" : "Voice input (click to start)";
     el.task.placeholder = on ? "Listening…" : "Ask anything, type / for prompts";
@@ -2404,83 +2409,122 @@ function drawRun(g) {
   var mmViewport = document.createElement("div"); mmViewport.className = "run-minimap-viewport";
   minimap.appendChild(mmViewport);
   canvas.appendChild(minimap);
+  // Content size and node positions are cached on layout. Scroll only
+  // updates the viewport rect, coalesced to one rAF, so it never walks
+  // the node list or forces layout.
+  var mmSW = 1, mmSH = 1, mmRaf = 0, mmNodes = [], mmEdges = [];
+  function mmToken(name, fallback) {
+    try { return (getComputedStyle(document.documentElement).getPropertyValue(name) || "").trim() || fallback; }
+    catch (_) { return fallback; }
+  }
+  function measureMinimap(){
+    try { mmSW = Math.max(1, canvas.scrollWidth); mmSH = Math.max(1, canvas.scrollHeight); }
+    catch(_){ mmSW = 1; mmSH = 1; }
+  }
+  function rebuildMinimapCache(){
+    measureMinimap();
+    mmNodes = [];
+    canvas.querySelectorAll(".run-node").forEach(function(n){
+      var lx = parseFloat(n.style.left), ly = parseFloat(n.style.top);
+      mmNodes.push({
+        el: n,
+        x: isFinite(lx) ? lx : 0,
+        y: isFinite(ly) ? ly : 0,
+        kind: n.getAttribute("data-kind") || "",
+        ok: n.getAttribute("data-ok"),
+        selected: n.classList.contains("selected"),
+        highlight: n.hasAttribute("data-highlight")
+      });
+    });
+    mmEdges = [];
+    try {
+      canvas.querySelectorAll("svg.run-edges path[data-edge]").forEach(function(p){
+        var d = p.getAttribute("d") || "";
+        var m = d.match(/M\s*([0-9.\-]+),([0-9.\-]+)\s*L\s*([0-9.\-]+),([0-9.\-]+)/);
+        if (!m) return;
+        mmEdges.push({ x1: parseFloat(m[1]), y1: parseFloat(m[2]), x2: parseFloat(m[3]), y2: parseFloat(m[4]) });
+      });
+    } catch (_) {}
+  }
   function paintMinimap(){
     try{
       var ctx = mmCanvas.getContext("2d");
       if (!ctx) return;
       ctx.clearRect(0,0,mmCanvas.width, mmCanvas.height);
-      var sw = Math.max(1, canvas.scrollWidth), sh = Math.max(1, canvas.scrollHeight);
-      // light line for edges (a minimap overview)
-      try{
-        var svg = canvas.querySelector("svg.run-edges");
-        if (svg) {
-          // Edges only: the arrowhead marker under <defs> is a path too, and
-          // its "M0,0 L8,4" parses as an edge from the graph's origin.
-          var paths = svg.querySelectorAll("path[data-edge]");
-          ctx.strokeStyle = "rgba(140,140,140,0.35)";
-          ctx.lineWidth = 0.7;
-          paths.forEach(function(p){
-            var d = p.getAttribute("d") || "";
-            var m = d.match(/M\s*([0-9.\-]+),([0-9.\-]+)\s*L\s*([0-9.\-]+),([0-9.\-]+)/);
-            if (!m) return;
-            var x1 = (parseFloat(m[1]) / sw) * mmCanvas.width;
-            var y1 = (parseFloat(m[2]) / sh) * mmCanvas.height;
-            var x2 = (parseFloat(m[3]) / sw) * mmCanvas.width;
-            var y2 = (parseFloat(m[4]) / sh) * mmCanvas.height;
-            ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-          });
-        }
-      }catch(_){}
-      var nodes = canvas.querySelectorAll(".run-node");
-      nodes.forEach(function(n){
-        var x = (n.offsetLeft / sw) * mmCanvas.width;
-        var y = (n.offsetTop / sh) * mmCanvas.height;
-        var w = 6, h = 4;
-        var kind = n.getAttribute("data-kind") || "";
-        if (kind === "llm") ctx.fillStyle = "rgba(11,87,208,0.75)";
-        else if (kind === "tool") ctx.fillStyle = "rgba(5,150,105,0.75)";
-        else if (kind === "final") ctx.fillStyle = "rgba(0,0,0,0.75)";
-        else ctx.fillStyle = "rgba(120,120,120,0.75)";
-        if (n.getAttribute("data-ok") === "false") ctx.fillStyle = "rgba(220,38,38,0.9)";
-        if (n.classList.contains("selected")) { ctx.fillStyle = "rgba(11,87,208,1)"; w = 7; h = 5; }
-        else if (n.hasAttribute("data-highlight")) ctx.fillStyle = "rgba(11,87,208,0.45)";
-        ctx.fillRect(x, y, w, h);
+      var sw = mmSW, sh = mmSH;
+      var accent = mmToken("--accent", "#0b57d0");
+      var ok = mmToken("--ok", "#117a3a");
+      var danger = mmToken("--danger", "#dc2626");
+      var fg = mmToken("--fg", "#111");
+      var muted = mmToken("--fg-muted", "#888");
+      ctx.strokeStyle = muted;
+      ctx.globalAlpha = 0.35;
+      ctx.lineWidth = 0.7;
+      mmEdges.forEach(function(e){
+        ctx.beginPath();
+        ctx.moveTo((e.x1 / sw) * mmCanvas.width, (e.y1 / sh) * mmCanvas.height);
+        ctx.lineTo((e.x2 / sw) * mmCanvas.width, (e.y2 / sh) * mmCanvas.height);
+        ctx.stroke();
       });
+      ctx.globalAlpha = 0.75;
+      mmNodes.forEach(function(n){
+        var x = (n.x / sw) * mmCanvas.width;
+        var y = (n.y / sh) * mmCanvas.height;
+        var w = 6, h = 4;
+        if (n.kind === "llm") ctx.fillStyle = accent;
+        else if (n.kind === "tool") ctx.fillStyle = ok;
+        else if (n.kind === "final") ctx.fillStyle = fg;
+        else ctx.fillStyle = muted;
+        if (n.ok === "false") ctx.fillStyle = danger;
+        if (n.selected) { ctx.fillStyle = accent; ctx.globalAlpha = 1; w = 7; h = 5; }
+        else if (n.highlight) { ctx.fillStyle = accent; ctx.globalAlpha = 0.45; }
+        ctx.fillRect(x, y, w, h);
+        ctx.globalAlpha = 0.75;
+      });
+      ctx.globalAlpha = 1;
     }catch(_){}
   }
-  function updateMinimap(){
-    var needsMap = canvas.scrollWidth > canvas.clientWidth + 8 || canvas.scrollHeight > canvas.clientHeight + 8;
+  function updateMinimapViewport(){
+    var cw = canvas.clientWidth, ch = canvas.clientHeight;
+    var needsMap = mmSW > cw + 8 || mmSH > ch + 8;
     minimap.hidden = !needsMap;
     if (minimap.hidden) return;
-    paintMinimap();
-    var sx = canvas.scrollLeft / Math.max(1, canvas.scrollWidth - canvas.clientWidth);
-    var sy = canvas.scrollTop / Math.max(1, canvas.scrollHeight - canvas.clientHeight);
-    var vw = canvas.clientWidth / Math.max(1, canvas.scrollWidth) * 100;
-    var vh = canvas.clientHeight / Math.max(1, canvas.scrollHeight) * 100;
+    var sx = canvas.scrollLeft / Math.max(1, mmSW - cw);
+    var sy = canvas.scrollTop / Math.max(1, mmSH - ch);
+    var vw = cw / mmSW * 100;
+    var vh = ch / mmSH * 100;
     mmViewport.style.left = (sx * (100 - vw)) + "%";
     mmViewport.style.top = (sy * (100 - vh)) + "%";
     mmViewport.style.width = Math.max(12, vw) + "%";
     mmViewport.style.height = Math.max(12, vh) + "%";
   }
-  canvas.addEventListener("scroll", updateMinimap);
-  // click-to-jump: nearest node under cursor focuses & opens its detail (fallback to viewport jump)
+  function updateMinimap(){
+    rebuildMinimapCache();
+    if (mmSW > canvas.clientWidth + 8 || mmSH > canvas.clientHeight + 8) paintMinimap();
+    updateMinimapViewport();
+  }
+  function scheduleMinimap(){
+    if (mmRaf) return;
+    mmRaf = requestAnimationFrame(function(){
+      mmRaf = 0;
+      updateMinimapViewport();
+    });
+  }
+  canvas.addEventListener("scroll", scheduleMinimap);
   minimap.addEventListener("click", function(e){
     if (e.target === mmViewport) return;
     var rect = minimap.getBoundingClientRect();
     var px = (e.clientX - rect.left) / rect.width;
     var py = (e.clientY - rect.top) / rect.height;
-    var sw = Math.max(1, canvas.scrollWidth), sh = Math.max(1, canvas.scrollHeight);
-    var cx = px * sw, cy = py * sh;
+    var cx = px * mmSW, cy = py * mmSH;
     var best = null, bestD = Infinity;
-    canvas.querySelectorAll(".run-node").forEach(function(n){
-      var nx = n.offsetLeft + n.offsetWidth/2, ny = n.offsetTop + n.offsetHeight/2;
-      var d = Math.hypot(nx - cx, ny - cy);
-      if (d < bestD) { bestD = d; best = n; }
+    mmNodes.forEach(function(n){
+      var d = Math.hypot(n.x - cx, n.y - cy);
+      if (d < bestD) { bestD = d; best = n.el; }
     });
-    // within ~60px of a node, treat the minimap click as a node pick
     if (best && bestD < 60) { best.focus(); best.click(); best.scrollIntoView({block:"center", inline:"center"}); return; }
-    canvas.scrollLeft = px * (canvas.scrollWidth - canvas.clientWidth);
-    canvas.scrollTop = py * (canvas.scrollHeight - canvas.clientHeight);
+    canvas.scrollLeft = px * (mmSW - canvas.clientWidth);
+    canvas.scrollTop = py * (mmSH - canvas.clientHeight);
   });
   // drag viewport to pan
   (function(){
@@ -3035,6 +3079,8 @@ function renderChatSidebarList(container, list, icon) {
       var dot = document.createElement("span");
       dot.className = "slack-presence-dot" + (peerUp ? " is-online" : "");
       dot.title = peerUp ? "Online" : "Offline";
+      dot.setAttribute("role", "img");
+      dot.setAttribute("aria-label", peerUp ? "Online" : "Offline");
       iconEl.appendChild(dot);
     } else {
       iconEl.textContent = icon;
@@ -4896,8 +4942,8 @@ function transcriptMarkdown() { return compTranscriptMarkdown(el.transcript, cur
       navigator.clipboard.writeText(url).then(function(){
         btn.textContent = "Copied";
         setTimeout(function(){ btn.textContent = "Share"; }, 1200);
-      }, function(){ prompt("Share link", url); });
-    } catch(_){ try { prompt("Share link", url); } catch(__){} }
+      }, function(){ uiPrompt("Share link", url); });
+    } catch(_){ try { uiPrompt("Share link", url); } catch(__){} }
   });
 })();
 var downloadText = compDownloadText;
@@ -4970,14 +5016,14 @@ bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: f
       var fr = new FileReader();
       fr.onload = function(){
         var text = String(fr.result || "");
-        var parsed = null; try { parsed = JSON.parse(text); } catch(e){ alert("Not valid JSON: "+e.message); return; }
+        var parsed = null; try { parsed = JSON.parse(text); } catch(e){ uiConfirm("Not valid JSON: "+e.message); return; }
         // Accept {messages:[{role,content}]} or {conversations:[...]} or bare array
         var msgs = null; var title = "";
         if (Array.isArray(parsed)) msgs = parsed;
         else if (parsed && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
         else if (parsed && Array.isArray(parsed.conversations) && parsed.conversations[0]) { var c = parsed.conversations[0]; msgs = c.messages || c.mapping && Object.values(c.mapping).map(function(v){ var m=v.message; return m?{role:m.author&&m.author.role,content:(m.content&&m.content.parts&&m.content.parts[0])||m.content} : null; }).filter(Boolean) || []; title = c.title || ""; }
         else if (parsed && parsed.id && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
-        if (!msgs || !msgs.length){ alert("No messages found in file. Expected {messages:[{role,content}]} or an array of messages."); return; }
+        if (!msgs || !msgs.length){ uiConfirm("No messages found in file. Expected {messages:[{role,content}]} or an array of messages."); return; }
         // Normalize to StoredMessage shape the server expects
         var norm = msgs.map(function(m){
           var role = (m.role==="assistant"||m.role==="assistant") ? "assistant" : (m.role==="user"?"user":String(m.role||"user"));
@@ -4985,14 +5031,14 @@ bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: f
           if (role!=="user" && role!=="assistant") role="user";
           return { role: role, content: content };
         }).filter(function(m){ return m.content && m.content.trim(); });
-        if (!norm.length){ alert("No importable messages."); return; }
+        if (!norm.length){ uiConfirm("No importable messages."); return; }
         fetch("/api/sessions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ import_chat: true, title: title || ("imported "+new Date().toLocaleString()), messages: norm }) })
           .then(function(r){ return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; }); })
           .then(function(d){
             el.sessionStatus.textContent = "Imported.";
             if (d.id){ sessionId = d.id; try{ window.localStorage.setItem("clanker.session", sessionId); }catch(_){} renderSessionChip(); }
             return loadSessions();
-          }).catch(function(err){ alert("Import failed: "+err.message); });
+          }).catch(function(err){ uiConfirm("Import failed: "+err.message); });
       };
       fr.readAsText(f);
     });

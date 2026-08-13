@@ -24,6 +24,8 @@ through a gated loop. Follow these conventions when changing this codebase.
 - No libc-dependent code in the harness beyond what the build links.
 - Allocators are explicit; arena for run-scoped data, gpa for ownership.
 - New code must be `zig fmt` clean (the improve gate auto-formats and checks).
+- Closed name tables use `std.StaticStringMap.initComptime` (`log.Level.fromStr`);
+  `stringToEnum` cannot alias `"error"` onto the `error_` tag.
 
 ## Architecture
 
@@ -58,8 +60,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   theme, transcript rendering, control-character sanitizing, per-turn stats,
   and terminal width tracking.
 - `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook,
-  logging and dotenv. Peer notify/phonebook, patch application, knowledge
-  store, and prompts store moved to sandboxed WASM tools (`tools/zig/`).
+  logging, dotenv, and the one UTF-8 byte-cap (`util/utf8.zig` `cap`). Peer
+  notify/phonebook, patch application, knowledge store, and prompts store
+  moved to sandboxed WASM tools (`tools/zig/`).
 - `src/webui_vendor/` — vendored JS dependencies for the web UI (preact,
   d3-dag, mermaid, highlight.js). Committed, not generated.
 - Every `.zig` file lives under a subsystem directory; only `main.zig`,
@@ -75,7 +78,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   sources; `tools/manifests/` — descriptors; `tools/bin/` — committed AS build output
   (built via `npm run build:all` in `tools/ts/`; guest ABI: exports
   scratch/host_arena/run, imports env.ck_*); `zig-out/tools/` — Zig tool build
-  output (`zig build tools`), gitignored.
+  output (`zig build tools`), gitignored. The web UI is that guest: `clanker serve`
+  loads `webui.wasm` at start, so a `.js`/`.css` edit needs `zig build tools` and
+  a serve restart; rebuilding the host binary does not pick it up.
 
 ## WASM by default
 
