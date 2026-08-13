@@ -11917,14 +11917,14 @@ test "--port still works as an alias for --webui-port" {
 }
 
 test "parseWithCommand resolves the real command when a global flag precedes it" {
-    // `clanker --model x autolearn` refuses --model on autolearn, but the
-    // suggestion must name `autolearn`, not the leading `--model` token.
+    // `clanker --model x stats` refuses --model on stats, but the suggestion
+    // must name `stats`, not the leading `--model` token.
     var diag: []const u8 = "";
     var cmd: Command = .help;
-    try std.testing.expectError(error.FlagNotForCommand, parseWithCommand(&.{ "clanker", "--model", "x", "autolearn" }, &diag, &cmd));
-    try std.testing.expectEqual(Command.autolearn, cmd);
+    try std.testing.expectError(error.FlagNotForCommand, parseWithCommand(&.{ "clanker", "--model", "x", "stats" }, &diag, &cmd));
+    try std.testing.expectEqual(Command.stats, cmd);
     try std.testing.expectEqualStrings("--model", diag);
-    try std.testing.expectEqualStrings("autolearn", commandName(cmd));
+    try std.testing.expectEqualStrings("stats", commandName(cmd));
 
     // The subcommand case reports the parent command too.
     var diag2: []const u8 = "";
