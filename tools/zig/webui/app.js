@@ -11,7 +11,7 @@ import { metricsFor as graphMetricsFor, buildStages as graphBuildStages, graphSu
 import { boardActionLine as boardActionLineMod } from "./lib/board.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
 import { clearMarks as searchClear, markMatches as searchMark, turnForMessage } from "./core/search.js";
-import { loadPrompts as compLoadPrompts, savePrompts as compSavePrompts, promptQuery as compPromptQuery, autoGrow as compAutoGrow, contextLabel as compContextLabel, transcriptMarkdown as compTranscriptMarkdown, downloadText as compDownloadText } from "./core/composer.js";
+import { loadPrompts as compLoadPrompts, savePrompts as compSavePrompts, promptQuery as compPromptQuery, autoGrow as compAutoGrow, contextLabel as compContextLabel, transcriptMarkdown as compTranscriptMarkdown, downloadText as compDownloadText, forgetPrompt as compForgetPrompt, setActiveItem as compSetActiveItem } from "./core/composer.js";
 import { nearBottom as scrollNearBottom, prefersReducedMotion as scrollPrefersReducedMotion, syncScrollButton as scrollSyncButton } from "./core/scroll.js";
 import { textPrompt as dialogTextPrompt, finishTextPrompt as dialogFinishTextPrompt, bindDialog as dialogBindDialog } from "./core/dialog.js";
 import { renderUsageTable as usageRenderTable } from "./core/usage.js";
@@ -4630,6 +4630,11 @@ function hidePromptList() {
   el.promptList.textContent = "";
   el.task.setAttribute("aria-expanded", "false");
   el.task.removeAttribute("aria-activedescendant");
+  // The one place that means "no suggestion list is open", so it is also where
+  // the mention list's own state stops being true. Leaving the flag set is what
+  // let a key meant for one list be dispatched against another.
+  kbMentionActive = false;
+  kbMentionIndex = 0;
 }
 
 var SLASH_CMDS = [
@@ -4693,15 +4698,40 @@ function usePrompt(text) {
 function taskInputHandler(){ var q=slashQuery(); if(q) renderSlashList(); else renderPromptList(); }
 el.task.addEventListener("input", taskInputHandler);
 el.task.addEventListener("blur", function () { window.setTimeout(hidePromptList, 120); });
+/* One popup, three lists: saved prompts, `/` commands, and `#` knowledge
+   collections. Each keeps its own highlight — `promptIndex` for the first two,
+   `kbMentionIndex` for mentions — and the handler has to know which one is on
+   screen before it moves anything or acts on a row.
+
+   It did not. Every key was treated as belonging to the prompt list, so with
+   the `#` mention list open: an arrow key nudged `promptIndex` and re-rendered
+   the *prompt* list, which for a value not starting with `/` hides the popup —
+   the first arrow press dismissed the mentions rather than walking them; Enter
+   always activated the first row whatever was highlighted; and Delete read the
+   row's label ("3 docs") as the name of a saved prompt, found it absent, and
+   `splice(-1, 1)` silently forgot your most recently saved prompt instead. The
+   index left over from another list can also be past the end of a shorter one,
+   which made `items[promptIndex]` undefined and the keypress a TypeError. */
 el.task.addEventListener("keydown", function (e) {
   var isSlash = slashQuery() !== null;
   if (el.promptList.hidden) return;
   var items = el.promptList.querySelectorAll(".palette-item");
   if (!items.length) return;
+  var list = kbMentionActive ? "kb" : (isSlash ? "slash" : "prompt");
+  var at = list === "kb" ? kbMentionIndex : promptIndex;
+  if (typeof at !== "number" || at < 0 || at >= items.length) at = 0;
   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     e.preventDefault();
-    promptIndex = (promptIndex + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-    if(isSlash) renderSlashList(); else renderPromptList();
+    at = (at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    if (list === "kb") {
+      // Moved in place: the mention list is built from a /api/knowledge fetch,
+      // and re-rendering would be one request per arrow key.
+      kbMentionIndex = at;
+      compSetActiveItem(el.promptList, at, el.task);
+    } else {
+      promptIndex = at;
+      if (isSlash) renderSlashList(); else renderPromptList();
+    }
     return;
   }
   if (e.key === "Escape") {
@@ -4709,10 +4739,10 @@ el.task.addEventListener("keydown", function (e) {
     hidePromptList();
     return;
   }
-  if (!isSlash && e.key === "Delete") {
+  if (list === "prompt" && e.key === "Delete") {
     e.preventDefault();
-    var doomed = items[promptIndex].querySelector(".palette-label").textContent;
-    prompts.splice(prompts.indexOf(doomed), 1);
+    var doomed = items[at].querySelector(".palette-label").textContent;
+    if (!compForgetPrompt(prompts, doomed)) return;
     savePrompts();
     el.sessionStatus.textContent = "Forgot that prompt.";
     renderPromptList();
@@ -4720,16 +4750,15 @@ el.task.addEventListener("keydown", function (e) {
   }
   if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) {
     e.preventDefault();
-    if(kbMentionActive){
-      var kbItem = el.promptList.querySelector(".palette-item");
-      if(kbItem) kbItem.dispatchEvent(new MouseEvent("mousedown", {bubbles:true, cancelable:true}));
+    if (list === "kb") {
+      items[at].dispatchEvent(new MouseEvent("mousedown", {bubbles:true, cancelable:true}));
       return;
     }
-    if(isSlash){
-      var q2=slashQuery(); var m=SLASH_CMDS.filter(function(c){ return c.cmd.indexOf(q2.head)===0; })[promptIndex];
+    if (list === "slash") {
+      var q2=slashQuery(); var m=SLASH_CMDS.filter(function(c){ return c.cmd.indexOf(q2.head)===0; })[at];
       if(m) useSlash(m, q2.rest);
     } else {
-      usePrompt(items[promptIndex].querySelector(".palette-label").textContent);
+      usePrompt(items[at].querySelector(".palette-label").textContent);
     }
   }
 });

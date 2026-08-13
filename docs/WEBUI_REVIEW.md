@@ -1198,6 +1198,62 @@ and the no-match case draws nothing at all. Gate: `zig build`,
 `zig build tools`, `zig build test --summary all` — 163/163 steps, 765/767
 tests (2 skipped, the expected worktree pair).
 
+## One popup, three lists, one index (2026-08-13)
+
+The composer's suggestion popup (`#prompt-list`) is shared by three different
+lists: saved prompts, `/` commands, and the `#` knowledge-collection mentions.
+Each keeps its own highlight — `promptIndex` for the first two, `kbMentionIndex`
+for mentions — but the keydown handler only ever knew about `promptIndex` and
+the prompt list. Every key pressed while the mention list was open was
+dispatched against the wrong one.
+
+- **An arrow key dismissed the mentions.** ↓ nudged `promptIndex` and called
+  `renderPromptList()`, and `renderPromptList` hides the popup outright when the
+  composer's value does not start with `/`. So the first arrow press closed the
+  list it was meant to walk; the mentions could only be picked with the mouse,
+  or with Enter, which —
+- **— always took the first row.** The Enter branch reached for
+  `el.promptList.querySelector(".palette-item")`, the first item in the DOM,
+  ignoring `kbMentionIndex` entirely. `kbMentionIndex` was written by the
+  renderer and read by nobody.
+- **Delete forgot a prompt you had not asked it to.** The Delete branch was
+  guarded on `!isSlash` only, so it fired for mentions too. It read the row's
+  label — `"3 docs"` — as the text of a saved prompt and ran
+  `prompts.splice(prompts.indexOf(doomed), 1)`. `indexOf` is `-1`, and
+  `splice(-1, 1)` removes the **last** element: pressing Delete over a knowledge
+  collection silently deleted your most recently saved prompt and wrote that to
+  `localStorage`, under the status line "Forgot that prompt."
+- **A stale index could be past the end.** With six saved prompts and a mention
+  list of two, `promptIndex` was still 5 and `items[5]` is `undefined` — Enter or
+  Delete then threw on `.querySelector` of undefined.
+
+- **`core/composer.js: forgetPrompt(prompts, text)`** — removes by exact text
+  and says whether it removed anything. The `-1` case is the whole point.
+- **`core/composer.js: setActiveItem(listEl, index, taskEl)`** — moves the
+  highlight and `aria-activedescendant` inside a list that is already on screen,
+  and clamps an out-of-range index to the first row. The mention list is built
+  from a `/api/knowledge` fetch, so re-rendering it to move a highlight would be
+  one request per arrow key.
+- **`app.js`** — the handler now names which list is on screen (`kb`, `slash` or
+  `prompt`), reads that list's own index, clamps it against what is actually
+  rendered, and routes every key accordingly. Delete is offered for saved
+  prompts only. `hidePromptList` clears the mention flag, since it is the one
+  place that means "no suggestion list is open".
+
+### Verified
+
+`node` driving the real `core/composer.js`. `forgetPrompt` over a three-prompt
+list: the named prompt goes, a text that was never saved removes nothing and in
+particular leaves the *last* prompt alone, and an empty list is total.
+`setActiveItem` over a rendered list of `.palette-item` rows: exactly one row
+carries `aria-selected="true"`, `aria-activedescendant` names it, the rows are
+not rebuilt, an index of 5 against two rows falls back to the first, and an
+empty list reports `-1` rather than throwing. The keydown handler is checked as
+source shape — including that no bare `prompts.splice(prompts.indexOf(...))` is
+left in the file — since importing `app.js` boots the page. 32 assertions
+green; against unmodified `main` the same harness fails 25 of its 32.
+Gate: `zig build`, `zig build tools`, `zig build test --summary all`.
+
 ## The run graph points at the bottleneck (2026-08-13)
 
 A run graph already showed every step's duration, twice: a badge on the card and
