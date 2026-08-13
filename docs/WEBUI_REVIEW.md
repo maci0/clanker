@@ -1198,8 +1198,87 @@ and the no-match case draws nothing at all. Gate: `zig build`,
 `zig build tools`, `zig build test --summary all` — 163/163 steps, 765/767
 tests (2 skipped, the expected worktree pair).
 
+## The Models view hands you the config.toml entry (2026-08-13)
+
+The Models view exists so that finding a model to add to `config.toml` does not
+need a terminal, and it stopped one step short of that: it showed the context
+window, the prices and the capabilities, then left you to hand-type the TOML
+from them in another window. That is where a context window loses a digit and
+where `max_tokens` gets forgotten — and forgetting it is not cosmetic, because
+the entry then takes `config.Model`'s 1024-token default and truncates every
+answer the model gives.
+
+`clanker providers fill` already prints exactly the right block. Each row of the
+models.dev results now has a **config.toml** button that shows that same block,
+built from the same catalog fields and the same capability vocabulary. Still
+read-only: it hands over text to paste and never writes `config.toml`, matching
+`providers fill`'s own stance.
+
+- **`features/models.js: configSnippet(m, configured, known)`** — pure and
+  exported, so the text a test asserts is the text the button shows. Provider
+  and model ids arrive from a third-party fetch and land inside double-quoted
+  TOML strings, so quotes and backslashes are escaped; a provider name that is
+  not a bare TOML key (`[providers."muse-spark-1.1"]`, which this repo's own
+  `config.toml` already needs) is quoted in the hint. When the catalog's
+  provider has no `[providers.*]` table the block alone would be rejected at
+  startup, so the snippet says what else is needed instead of looking complete;
+  `known` keeps "we have not loaded the provider list" distinct from "the list
+  is empty", so nothing is claimed about a provider we cannot see.
+- **`src/cli.zig: catalogCapabilities`** — models.dev's
+  `reasoning`/`tool_call`/`modalities.input` translated to the tags
+  `config.Model.capabilities` accepts, extracted from `renderModelSnippet` so
+  the CLI's snippet and the page's read one definition. `/api/catalog` now also
+  returns `display` and `output` (the fields the snippet needs for `display` and
+  `max_tokens`) alongside the columns the table already showed.
+- **`index.html` / `app.css`** — the snippet is a selectable `<pre>`, not just a
+  clipboard write. `navigator.clipboard` exists only in a secure context and
+  `clanker serve` speaks plain http, so on `http://192.168.0.5:8080` a
+  copy-only affordance would be dead on exactly the setup this server is built
+  for. Copy is the shortcut; when the API is missing or refuses, the button
+  reads `Select it` and the status line says why, rather than doing nothing.
+
+### Verified
+
+`node` + a DOM stub driving the real `features/models.js` — 32 assertions.
+`configSnippet` over a full catalog entry (every field, in order, ending in a
+newline), a bare one, an undeclared provider, an unknown provider list, a dotted
+provider name and an id carrying a quote and a backslash. Then the real table:
+both rows get a button, the panel opens titled with its model and holding the
+real snippet, Copy reaches the clipboard and says `Copied`, the same click with
+`navigator.clipboard` removed falls back to `Select it` with the text still on
+screen, and Close and a fresh search both put the stale panel away. The earlier
+provider-selection regression test still passes 12/12 on this branch.
+
+The Zig half: a new test pins `catalogCapabilities` across every branch of the
+vocabulary, including `false` and a non-object entry. That the extraction is
+behaviour-preserving was checked live rather than argued —
+`clanker providers fill deepseek` against the real models.dev catalog produces
+**byte-identical** output on this branch and on unmodified `main`
+(`clanker providers check deepseek: ok, 786ms`). The `/api/catalog` JSON
+emission itself is three straight-line `objectField` pairs next to the identical
+existing ones and is asserted on source shape, since `clanker serve` dies at
+`accept` in this environment.
+
+Gate: `zig build`, `zig build tools`, `zig build test --summary all` — 163/163
+steps, 767/769 tests (2 skipped, the expected worktree pair).
+
 ## Left / next
 
+- The config.toml snippet is on the models.dev rows only. The "Live from
+  provider" listing is the case a local Ollama/vLLM user wants it for most, but
+  `GET /models` returns an id and sometimes a context window and never an output
+  limit — so a snippet from there would ship exactly the missing-`max_tokens`
+  footgun the catalog snippet was built to close. It needs a way to ask for, or
+  default, an output cap before it is worth offering.
+- `#models-status` is one `aria-live` line shared by three independent panels
+  (Configured, Live, Discover) and is only ever written on success, so a stale
+  "12 catalog matches." survives a failed live listing. Each panel wants its own
+  line, or the writes want a panel tag.
+- `core/tools.js: buildToolConfig` types its inputs off `typeof current`, so a
+  key in `config_editable` that is absent from `config` is typed `"undefined"`
+  and saved back as a string — a numeric setting silently becomes `""` the first
+  time it is set from the page. The fix wants the manifest to say the type
+  rather than the current value implying it.
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
 - Promote `axe-core` into the repo + `clanker gate` so the a11y proof is not `/tmp`-vendored; add narrow-viewport Fleet interaction (hamburger → Fleet) to the screenshot harness so the drawer path is also photographed.
 - Resolve the pre-existing axe items logged in the sweep entry (composer `#task` combobox role, `#rail-list` workspace header structure, board/goals/runs contrast + labels, run-compare B select name) — they sit in the concurrent agent's board/run-compare/workspace surface.

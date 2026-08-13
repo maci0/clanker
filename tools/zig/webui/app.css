@@ -1773,6 +1773,28 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .usage-wrap { overflow-x: auto; }
 .usage-empty { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); margin-top: 1rem; }
 
+/* ---- models: the config.toml entry for a discovered model ----
+   The <pre> is the artefact, not the button: the clipboard API is unavailable
+   on a plain-http origin, so the text has to be readable and selectable on its
+   own. `user-select: all` makes one click select the whole block. */
+.models-snippet {
+  margin-top: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--surface-2); padding: var(--space-3);
+}
+.models-snippet-head {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  margin-bottom: var(--space-2);
+}
+.models-snippet-head code { flex: 1; font-family: var(--mono); font-size: var(--step-0); color: var(--accent-text); }
+.models-snippet pre {
+  margin: 0; padding: var(--space-2) var(--space-3); overflow-x: auto;
+  border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--surface);
+  font-family: var(--mono); font-size: var(--step-0); line-height: 1.55; color: var(--fg);
+  white-space: pre; user-select: all;
+}
+.models-snippet pre:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.models-snippet-btn { white-space: nowrap; }
+
 /* ---- tools: every WASM plugin, and a switch for the optional ones ---- */
 .tool-group {
   display: flex; align-items: center; gap: var(--space-2); width: 100%;
