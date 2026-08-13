@@ -793,6 +793,8 @@ pub fn gitDenyGuardGate(
             switch (agent_val) {
                 .object => |agent_obj| {
                     if (hasGitInExecAllow(agent_obj)) |r| return r;
+                    if (isTrue(agent_obj.get("git_remote_ops")))
+                        return .{ .ok = false, .label = "git-deny-guard", .detail = "proposals must not enable git_remote_ops" };
                 },
                 else => {},
             }
@@ -800,6 +802,8 @@ pub fn gitDenyGuardGate(
         // Root-level check: the proposal's "new" text may lack the [agent]
         // header when the replacement targets a single line.
         if (hasGitInExecAllow(obj)) |r| return r;
+        if (isTrue(obj.get("git_remote_ops")))
+            return .{ .ok = false, .label = "git-deny-guard", .detail = "proposals must not enable git_remote_ops" };
     }
     return .{ .ok = true, .label = "git-deny-guard" };
 }
@@ -995,6 +999,39 @@ test "gitDenyGuardGate allows a git-prefixed tool that is not the git command" {
     try std.testing.expect(result.ok);
 }
 
+test "gitDenyGuardGate rejects git_remote_ops = true in agent section" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.toml"};
+    const new_texts = [_][]const u8{
+        \\[agent]
+        \\git_remote_ops = true
+    };
+    const result = gitDenyGuardGate(gpa, &files, &new_texts);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("git-deny-guard", result.label);
+    try std.testing.expect(std.mem.find(u8, result.detail, "git_remote_ops") != null);
+}
+
+test "gitDenyGuardGate rejects a git_remote_ops fragment without [agent] header" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.toml"};
+    const frag = [_][]const u8{"git_remote_ops = true"};
+    const result = gitDenyGuardGate(gpa, &files, &frag);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("git-deny-guard", result.label);
+}
+
+test "gitDenyGuardGate allows git_remote_ops = false" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.toml"};
+    const new_texts = [_][]const u8{
+        \\[agent]
+        \\git_remote_ops = false
+    };
+    const result = gitDenyGuardGate(gpa, &files, &new_texts);
+    try std.testing.expect(result.ok);
+}
+
 test "gitDenyGuardGate rejects an unparseable config file" {
     const gpa = std.testing.allocator;
     const files = [_][]const u8{"config.toml"};
@@ -1082,6 +1119,14 @@ fn isFalse(v: ?std.json.Value) bool {
     const val = v orelse return false;
     return switch (val) {
         .bool => |b| !b,
+        else => false,
+    };
+}
+
+fn isTrue(v: ?std.json.Value) bool {
+    const val = v orelse return false;
+    return switch (val) {
+        .bool => |b| b,
         else => false,
     };
 }

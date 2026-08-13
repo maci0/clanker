@@ -328,7 +328,7 @@ pub fn chatStream(
     // attachments. Debugging must never copy that user data into terminal or
     // CI logs; the byte count is enough to diagnose framing problems.
     if (ctx.environ_map.get("CLANKER_DEBUG_BODY") != null) {
-        std.debug.print("LLM streaming request provider={s} bytes={d}\n", .{ provider.name, body.len });
+        log.log(.debug, "LLM streaming request provider={s} bytes={d}", .{ provider.name, body.len });
     }
     var body_writer = try req.sendBodyUnflushed(&.{});
     try body_writer.writer.writeAll(body);
