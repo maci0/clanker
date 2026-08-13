@@ -1,0 +1,20 @@
+{
+  "name": "plugins",
+  "description": "list plugins and switch the optional ones on or off",
+  "wasm": "zig-out/tools/plugins.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "args": {
+        "type": "string"
+      }
+    }
+  },
+  "fs_prefixes": [
+    ".",
+    "state/plugins.json",
+    "state/plugin_config.json"
+  ],
+  "internal": true,
+  "category": "harness"
+}

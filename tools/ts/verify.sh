@@ -22,6 +22,7 @@ npm ci --silent --ignore-scripts
 
 status=0
 for f in *.ts; do
+  [ -e "$f" ] || continue
   case "$f" in env.d.ts|lib.ts|json.ts) continue;; esac
   stem="${f%.ts}"
   npx --no-install asc "$f" -o "$scratch/$stem.wasm" --optimize --bindings raw --noExportMemory

@@ -191,7 +191,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <option value="">None (no auto-retry)</option>
         </select>
         <details class="more" id="params">
-          <summary>Options</summary>
+          <summary>Advanced</summary>
           <div class="more-actions params-grid">
             <label for="param-temp">Temperature</label>
             <input type="number" id="param-temp" min="0" max="2" step="0.05" placeholder="config">
@@ -601,13 +601,16 @@ lamps carry further). The seven named palettes ride the same tokens.
            `clanker providers fill` prints. Shown as selectable text rather than
            only copied, because navigator.clipboard needs a secure context and
            `clanker serve` speaks plain http. -->
-      <div id="models-snippet" class="models-snippet" role="region" aria-label="config.toml entry" hidden>
+      <div id="models-snippet" class="models-snippet" role="region" aria-label="config.local.toml entry" hidden>
         <div class="models-snippet-head">
           <code id="models-snippet-title"></code>
           <button type="button" class="secondary" id="models-snippet-copy">Copy</button>
+          <button type="button" class="primary" id="models-snippet-save">Save to config.local.toml</button>
+          <button type="button" class="secondary" id="models-snippet-default">Set as default</button>
           <button type="button" class="secondary" id="models-snippet-close">Close</button>
         </div>
         <pre id="models-snippet-body" tabindex="0"></pre>
+        <p class="models-snippet-note" id="models-snippet-note" hidden></p>
       </div>
       <p class="sr-only" id="models-status" role="status" aria-live="polite"></p>
     </section>

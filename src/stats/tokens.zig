@@ -12,8 +12,8 @@
 //! group (plus a totals row), newest usage counted exactly once.
 
 const std = @import("std");
-const ensuredir = @import("../util/ensuredir.zig");
-const filelock = @import("../util/filelock.zig");
+const ensure_dir = @import("../util/ensure_dir.zig");
+const file_lock = @import("../util/file_lock.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 
@@ -42,6 +42,12 @@ pub const Record = struct {
     err: []const u8 = "",
     /// Log correlation id when the call happened on an HTTP worker.
     request_id: []const u8 = "",
+    /// Optional advisor-completion tokens for this turn. Omitted when unset.
+    advisor_tokens: ?u64 = null,
+    /// Classifier result from auto-thinking (`low`/`medium`/`high`/`xhigh`).
+    thinking_level: ?[]const u8 = null,
+    /// Round-trip ms of the thinking classifier call.
+    thinking_classifier_ms: ?u64 = null,
 };
 
 /// Aggregated usage for one (provider, model) pair.
@@ -87,7 +93,7 @@ fn subPath(arena: std.mem.Allocator, state_dir: []const u8) ![]const u8 {
 /// a stats write must not break a chat completion. O(1) append via a
 /// truncate-free open + seek to end (the caller holds the only writer).
 pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, rec: Record) void {
-    if (state_dir.len > 0) ensuredir.ensureDir(base, io, state_dir) catch |err| {
+    if (state_dir.len > 0) ensure_dir.ensureDir(base, io, state_dir) catch |err| {
         log.log(.warn, "[stats] mkdir failed: {s}", .{@errorName(err)});
         return;
     };
@@ -101,7 +107,7 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     // waiter that already opened the old inode could append to an unlinked
     // file after the replacement and silently lose the record.
     const lock_dir = if (state_dir.len == 0) "." else state_dir;
-    var guard = filelock.acquire(io, base, lock_dir, "token_stats", arena);
+    var guard = file_lock.acquire(io, base, lock_dir, "token_stats", arena);
     defer guard.release();
 
     // Trim the log when it outgrows the cap. Done before the file is opened

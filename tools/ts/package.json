@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "asc calc_ts.ts -o ../dist/calc_ts.wasm --optimize --bindings raw --noExportMemory",
-    "build:all": "for f in *.ts; do case \"$f\" in env.d.ts|lib.ts|json.ts) continue;; esac; asc \"$f\" -o \"../dist/${f%.ts}.wasm\" --optimize --bindings raw --noExportMemory; done"
+    "build:all": "bash -ec 'for f in $(ls *.ts | sort); do case \"$f\" in env.d.ts|lib.ts|json.ts) continue;; esac; asc \"$f\" -o \"../dist/${f%.ts}.wasm\" --optimize --bindings raw --noExportMemory; done'"
   },
   "devDependencies": {
     "assemblyscript": "0.28.20"

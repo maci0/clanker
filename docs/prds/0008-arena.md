@@ -355,7 +355,7 @@ way its own non-goal requires.
 
 **REPL / CLI.** `/arena "<question>" --for "<stance>" --against "<stance>"`,
 the flag-string-in-text style `/autoresearch` already established in the
-slash-command table (`command_registry`, `src/tui/repl_vaxis.zig`); prints a usage block on
+slash-command table (`command_registry`, `src/tui/repl.zig`); prints a usage block on
 no args the same way. Each round's moves render as transcript cards, one dim
 line per move (matching tool-call card style), ending in a verdict block.
 `clanker arena` mirrors it non-interactively for scripting, same pattern as

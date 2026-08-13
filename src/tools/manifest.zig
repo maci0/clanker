@@ -39,7 +39,7 @@ pub const default_fuel: u64 = 10_000_000_000;
 ///
 /// `parameters` is OpenAI's spelling of `input_schema`, accepted by
 /// `Registry.normalizedSchema` for compatibility. `category` is read by the
-/// `cmd_tools` and `cmd_plugins` guests (for grouping and the web UI's tool
+/// `tools` and `plugins` guests (for grouping and the web UI's tool
 /// panel), not by the registry, it is honored, just not by the loader.
 pub const known_keys = [_][]const u8{
     "manifest_version",
@@ -510,18 +510,25 @@ fn arrayOf(obj: json.ObjectMap, key: []const u8) ?[]const json.Value {
 /// granting nothing. An author widens `fs_prefixes` / `network_allow` /
 /// `exec_allow` on purpose rather than inheriting a template's guesses.
 ///
+/// `portable` selects the out-of-tree shape: `{name}.wasm` beside the
+/// manifest. The in-tree default points at `zig-out/tools/{name}.wasm`.
+///
 /// The placeholder text deliberately avoids the words `clanker gate`'s lint
 /// forbids in a `.zig` file, since the guest below is one: a scaffolder whose
 /// output fails the gate on the first run is a scaffolder that has to be
 /// hand-edited before it can be built.
-pub fn scaffoldManifest(arena: std.mem.Allocator, name: []const u8) ![]const u8 {
+pub fn scaffoldManifest(arena: std.mem.Allocator, name: []const u8, portable: bool) ![]const u8 {
     if (!isToolName(name) or name.len == 0) return error.BadToolName;
+    const wasm = if (portable)
+        try std.fmt.allocPrint(arena, "{s}.wasm", .{name})
+    else
+        try std.fmt.allocPrint(arena, "zig-out/tools/{s}.wasm", .{name});
     return std.fmt.allocPrint(arena,
         \\{{
         \\  "manifest_version": {d},
         \\  "name": "{s}",
         \\  "description": "REPLACE ME: one sentence the model reads to decide whether to call this tool, then the exact input and output shapes.",
-        \\  "wasm": "zig-out/tools/{s}.wasm",
+        \\  "wasm": "{s}",
         \\  "input_schema": {{
         \\    "type": "object",
         \\    "properties": {{
@@ -537,7 +544,7 @@ pub fn scaffoldManifest(arena: std.mem.Allocator, name: []const u8) ![]const u8 
         \\  "category": "other"
         \\}}
         \\
-    , .{ current_version, name, name });
+    , .{ current_version, name, wasm });
 }
 
 /// A guest source file that compiles under `zig build tools` and answers the
@@ -782,9 +789,14 @@ test "the scaffolded manifest and guest are what the validator asks for" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const manifest = try scaffoldManifest(arena, "my_tool");
+    const manifest = try scaffoldManifest(arena, "my_tool", false);
     const rep = try validate(arena, "my_tool.tool.json", manifest);
     try testing.expectEqual(@as(usize, 0), rep.findings.len);
+
+    const portable = try scaffoldManifest(arena, "my_tool", true);
+    const portable_rep = try validate(arena, "my_tool.tool.json", portable);
+    try testing.expectEqual(@as(usize, 0), portable_rep.findings.len);
+    try testing.expect(std.mem.find(u8, portable, "\"wasm\": \"my_tool.wasm\"") != null);
 
     // The generated pair has to agree on the name, or `zig build tools`
     // produces a wasm the manifest does not point at.
@@ -801,7 +813,7 @@ test "the scaffolded manifest and guest are what the validator asks for" {
         try testing.expect(std.mem.find(u8, guest, marker) == null);
     }
 
-    try testing.expectError(error.BadToolName, scaffoldManifest(arena, "My-Tool"));
+    try testing.expectError(error.BadToolName, scaffoldManifest(arena, "My-Tool", false));
     try testing.expectError(error.BadToolName, scaffoldGuest(arena, ""));
 }
 

@@ -193,7 +193,11 @@ pub const Agent = struct {
     /// How many of the most-used tools keep their schemas loaded without
     /// being asked for. Measured, not configured: see tools/usage.zig.
     hot_tools: u32 = 10,
-    tools_dir: []const u8 = "tools/manifests",
+    /// Directories of `*.tool.json` manifests, scanned in order. A later
+    /// directory wins on a tool `name` collision. Config accepts a string
+    /// (normalized to one entry) or an array, so existing `config.toml`
+    /// files keep working.
+    tools_dir: []const []const u8 = &.{"tools/manifests"},
     skills_dir: []const u8 = "skills",
     system_prompt_file: []const u8 = "skills/SYSTEM.md",
     learnings_file: []const u8 = "state/learnings.md",
@@ -205,6 +209,7 @@ pub const Agent = struct {
     /// chatroom logs, run records, cursors.
     state_dir: []const u8 = "state",
     sandbox_root: []const u8 = ".",
+
     /// Absolute path of the checkout an isolated run was started from, set at
     /// runtime by `run --worktree` (see cmdRun) and deliberately NOT readable
     /// from a config file: it describes how this process was invoked, not a
@@ -240,7 +245,7 @@ pub const Agent = struct {
     /// of every registered tool's `exec_allow`. Empty (the default) means `!`
     /// runs exactly the commands clanker's own tools may run and nothing more;
     /// listing `["ls", "cat"]` here widens the escape without widening any
-    /// tool, since nothing reads this field except `src/tui/repl_vaxis.zig`.
+    /// tool, since nothing reads this field except `src/tui/repl.zig`.
     /// The rest of the ck_exec policy (the deny tokens, git's verb allowlist,
     /// `exec_pattern_allow`) still applies to whatever is named here.
     repl_exec_allow: []const []const u8 = &.{},
@@ -264,7 +269,7 @@ pub const Agent = struct {
     /// today's behaviour; `browser` gates streaming web runs, where the
     /// question travels the run's own stream like ask_user. `always` is
     /// reserved for also gating interactive REPL sessions at the terminal,
-    /// but src/tui/repl_vaxis.zig has no prompt-rendering path to answer it
+    /// but src/tui/repl.zig has no prompt-rendering path to answer it
     /// yet (see docs/ROADMAP.md, "vaxis REPL: close the gap left by the
     /// deleted REPL"): only cli.zig's serve path reads this field, gated on
     /// `!= .never`, so `always` behaves identically to `browser` until the
@@ -273,12 +278,48 @@ pub const Agent = struct {
     /// gated, whatever this says: a confirm nobody can answer would deny
     /// every write instead of protecting anything.
     confirm_writes: ConfirmWrites = .never,
-    /// Preferred secondary provider, used when the selected/default provider
-    /// cannot serve the request (e.g. an image attached to a model that does
-    /// not declare vision). When empty, the harness picks the first other
-    /// configured provider that can. Names a `[providers.<name>]` entry.
-    fallback_provider: []const u8 = "",
+    /// Ordered fallback providers, tried after the selected provider cannot
+    /// serve a request. Config accepts `fallback_provider` (string or array)
+    /// or `fallback_providers` (array); a bare string becomes one entry so
+    /// existing configs keep working. Empty means no reactive chain.
+    fallback_providers: []const []const u8 = &.{},
+    /// Opt-in per-turn classifier that selects a sampling-profile
+    /// `reasoning_effort` row. Off until a calibration eval justifies it.
+    auto_thinking: bool = false,
+    /// `provider` or `provider/model`. Empty means cheapest configured
+    /// provider by `cost_per_1m_input`, then first alphabetically.
+    thinking_classifier_model: []const u8 = "",
+    thinking_classifier_timeout_ms: u32 = 3000,
 };
+
+/// Persistent eval kernels (PRD 0016). Off by default: a kernel is an
+/// unsandboxed subprocess with the host's ambient filesystem permission.
+pub const Kernel = struct {
+    enabled: bool = false,
+    max_output_bytes: u32 = 65536,
+    cleanup_delay_ms: u32 = 5000,
+};
+
+/// First configured fallback, used by the pre-emptive vision router. Empty
+/// when no chain is configured.
+pub fn firstFallbackProvider(dirs: []const []const u8) []const u8 {
+    return if (dirs.len > 0) dirs[0] else "";
+}
+
+/// First configured manifest directory, used by `plugins new` and similar
+/// "write into one place" surfaces. An empty list is treated as the in-tree
+/// default so a malformed config cannot strand the scaffolder.
+pub fn firstToolsDir(dirs: []const []const u8) []const u8 {
+    return if (dirs.len > 0) dirs[0] else "tools/manifests";
+}
+
+/// Comma-separated `tools_dir` list for diagnostics. One entry is returned
+/// as-is so existing single-directory messages stay unchanged.
+pub fn toolsDirDisplay(arena: std.mem.Allocator, dirs: []const []const u8) ![]const u8 {
+    if (dirs.len == 0) return "(empty)";
+    if (dirs.len == 1) return dirs[0];
+    return std.mem.join(arena, ", ", dirs);
+}
 
 /// Which agent keys a config file actually set. Used so a partial
 /// `config.local.toml` `"agent"` object does not replace the whole agent
@@ -309,6 +350,9 @@ pub const AgentFields = struct {
     provider_check_timeout_seconds: bool = false,
     confirm_writes: bool = false,
     fallback_provider: bool = false,
+    auto_thinking: bool = false,
+    thinking_classifier_model: bool = false,
+    thinking_classifier_timeout_ms: bool = false,
 };
 
 /// Who must approve a write-capable tool call before it runs.
@@ -549,12 +593,44 @@ pub const Web = struct {
 /// session-scoped `/theme`, and moving it would change behaviour rather than
 /// just add a key.
 pub const Tui = struct {
-    /// `off`, `type`, or `loop`. Kept as the raw string rather than the
-    /// `tui/mascot.zig` enum so config.zig owes nothing to the TUI: an
-    /// unparseable value is reported where the flag is resolved, next to the
-    /// identical failure from `--mascot=<junk>`, instead of failing config
-    /// load for every non-REPL subcommand.
+    /// `off`, `type`, `loop`, `place` or `input`. Kept as the raw string
+    /// rather than the `tui/mascot.zig` enum so config.zig owes nothing to the
+    /// TUI: an unparseable value is reported where the flag is resolved, next
+    /// to the identical failure from `--mascot=<junk>`, instead of failing
+    /// config load for every non-REPL subcommand.
     mascot: []const u8 = "off",
+    /// `small`, `medium` or `large`. Empty means "not set", so the flag and
+    /// then the built-in default decide. Same raw-string reasoning as above.
+    mascot_size: []const u8 = "",
+    /// `left` or `right`. Empty means "not set", which matters more here than
+    /// elsewhere: the default depends on the mode, so an empty value is not
+    /// the same as writing "right".
+    mascot_facing: []const u8 = "",
+};
+
+pub const TtsrRule = struct {
+    name: []const u8 = "",
+    pattern: []const u8 = "",
+    inject: []const u8 = "",
+    max_fires: u32 = 1,
+};
+
+pub const Ttsr = struct {
+    max_retries_per_turn: u32 = 3,
+    buffer_bytes: u32 = 4096,
+    rules: []const TtsrRule = &.{},
+};
+
+/// Post-turn second-model critique. Off by default; fails open. Distinct
+/// from `improve.arena_advisory`, which is a per-proposal Arena verdict
+/// inside the improve engine.
+pub const Advisor = struct {
+    enabled: bool = false,
+    provider: []const u8 = "",
+    model: []const u8 = "",
+    scope: []const u8 = "turn",
+    context_turns: u32 = 3,
+    timeout_ms: u32 = 5000,
 };
 
 pub const Config = struct {
@@ -573,6 +649,9 @@ pub const Config = struct {
     serve_fields: ServeFields = .{},
     notify: Notify = .{},
     tui: Tui = .{},
+    advisor: Advisor = .{},
+    ttsr: Ttsr = .{},
+    kernel: Kernel = .{},
     chatrooms: Chatrooms = .{},
     memory: Memory = .{},
     modules: Modules = .{},
@@ -692,7 +771,8 @@ pub const Config = struct {
             "default_provider", "agent",    "improve", "providers",
             "models",           "instance", "peers",   "notify",
             "chatrooms",        "modules",  "web",     "memory",
-            "serve",            "tui",
+            "serve",            "tui",      "advisor", "ttsr",
+            "kernel",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -708,6 +788,15 @@ pub const Config = struct {
         if (obj.get("improve")) |v| {
             cfg.improve = try parseImprove(arena, v);
             cfg.improve_present = true;
+        }
+        if (obj.get("advisor")) |v| {
+            cfg.advisor = try parseAdvisor(v);
+        }
+        if (obj.get("ttsr")) |v| {
+            cfg.ttsr = try parseTtsr(arena, v);
+        }
+        if (obj.get("kernel")) |v| {
+            cfg.kernel = try parseKernel(v);
         }
         if (obj.get("providers")) |v| {
             const pobj = switch (v) {
@@ -1175,8 +1264,10 @@ pub const Config = struct {
             else => return error.TuiNotObject,
         };
         var t = Tui{};
-        warnUnknownKeys(obj, &.{"mascot"}, "tui");
+        warnUnknownKeys(obj, &.{ "mascot", "mascot_size", "mascot_facing" }, "tui");
         if (obj.get("mascot")) |k| t.mascot = try jsonStr(k, "mascot");
+        if (obj.get("mascot_size")) |k| t.mascot_size = try jsonStr(k, "mascot_size");
+        if (obj.get("mascot_facing")) |k| t.mascot_facing = try jsonStr(k, "mascot_facing");
         return t;
     }
 
@@ -1236,15 +1327,16 @@ pub const Config = struct {
         var a = Agent{};
         var f = AgentFields{};
         warnUnknownKeys(obj, &.{
-            "max_iterations",      "compact_threshold_bytes", "max_total_tokens",
-            "max_tokens_per_turn", "max_history_tokens",      "tool_catalog",
-            "hot_tools",           "tools_dir",               "skills_dir",
-            "system_prompt_file",  "learnings_file",          "global_instructions_file",
-            "state_dir",           "sandbox_root",            "workflows_dir",
-            "chains_dir",          "git_commit",              "git_remote_ops",
-            "exec_pattern_allow",  "repl_exec_allow",         "seed",
-            "ask_timeout_seconds", "confirm_writes",          "provider_check_timeout_seconds",
-            "fallback_provider",
+            "max_iterations",            "compact_threshold_bytes",        "max_total_tokens",
+            "max_tokens_per_turn",       "max_history_tokens",             "tool_catalog",
+            "hot_tools",                 "tools_dir",                      "skills_dir",
+            "system_prompt_file",        "learnings_file",                 "global_instructions_file",
+            "state_dir",                 "sandbox_root",                   "workflows_dir",
+            "chains_dir",                "git_commit",                     "git_remote_ops",
+            "exec_pattern_allow",        "repl_exec_allow",                "seed",
+            "ask_timeout_seconds",       "confirm_writes",                 "provider_check_timeout_seconds",
+            "fallback_provider",         "fallback_providers",             "auto_thinking",
+            "thinking_classifier_model", "thinking_classifier_timeout_ms",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -1267,7 +1359,7 @@ pub const Config = struct {
             f.max_history_tokens = true;
         }
         if (obj.get("tools_dir")) |k| {
-            a.tools_dir = try jsonStr(k, "tools_dir");
+            a.tools_dir = try jsonToolsDir(arena, k);
             f.tools_dir = true;
         }
         if (obj.get("skills_dir")) |k| {
@@ -1389,9 +1481,24 @@ pub const Config = struct {
                 return error.ConfirmWritesInvalid;
             f.confirm_writes = true;
         }
-        if (obj.get("fallback_provider")) |k| {
-            a.fallback_provider = try jsonStr(k, "fallback_provider");
+        if (obj.get("fallback_providers") orelse obj.get("fallback_provider")) |k| {
+            a.fallback_providers = try jsonNameList(arena, k, "fallback_provider");
             f.fallback_provider = true;
+        }
+        if (obj.get("auto_thinking")) |k| {
+            a.auto_thinking = switch (k) {
+                .bool => |b| b,
+                else => return error.FieldNotBool,
+            };
+            f.auto_thinking = true;
+        }
+        if (obj.get("thinking_classifier_model")) |k| {
+            a.thinking_classifier_model = try jsonStr(k, "thinking_classifier_model");
+            f.thinking_classifier_model = true;
+        }
+        if (obj.get("thinking_classifier_timeout_ms")) |k| {
+            a.thinking_classifier_timeout_ms = try jsonUnsigned(u32, k, "thinking_classifier_timeout_ms");
+            f.thinking_classifier_timeout_ms = true;
         }
         return .{ .agent = a, .fields = f };
     }
@@ -1421,7 +1528,10 @@ pub const Config = struct {
         if (fields.ask_timeout_seconds) dst.ask_timeout_seconds = src.ask_timeout_seconds;
         if (fields.provider_check_timeout_seconds) dst.provider_check_timeout_seconds = src.provider_check_timeout_seconds;
         if (fields.confirm_writes) dst.confirm_writes = src.confirm_writes;
-        if (fields.fallback_provider) dst.fallback_provider = src.fallback_provider;
+        if (fields.fallback_provider) dst.fallback_providers = src.fallback_providers;
+        if (fields.auto_thinking) dst.auto_thinking = src.auto_thinking;
+        if (fields.thinking_classifier_model) dst.thinking_classifier_model = src.thinking_classifier_model;
+        if (fields.thinking_classifier_timeout_ms) dst.thinking_classifier_timeout_ms = src.thinking_classifier_timeout_ms;
     }
 
     fn applyModulesFields(dst: *Modules, src: Modules, fields: ModulesFields) void {
@@ -1442,6 +1552,90 @@ pub const Config = struct {
         if (fields.multimodal) dst.multimodal = src.multimodal;
         if (fields.chatrooms) dst.chatrooms = src.chatrooms;
         if (fields.token_stats) dst.token_stats = src.token_stats;
+    }
+
+    fn parseKernel(v: json.Value) !Kernel {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.KernelNotObject,
+        };
+        var k = Kernel{};
+        warnUnknownKeys(obj, &.{ "enabled", "max_output_bytes", "cleanup_delay_ms" }, "kernel");
+        if (obj.get("enabled")) |e| k.enabled = switch (e) {
+            .bool => |b| b,
+            else => return error.FieldNotBool,
+        };
+        if (obj.get("max_output_bytes")) |n| k.max_output_bytes = try jsonUnsigned(u32, n, "kernel.max_output_bytes");
+        if (obj.get("cleanup_delay_ms")) |n| k.cleanup_delay_ms = try jsonUnsigned(u32, n, "kernel.cleanup_delay_ms");
+        return k;
+    }
+
+    fn parseTtsr(arena: std.mem.Allocator, v: json.Value) !Ttsr {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.TtsrNotObject,
+        };
+        var t = Ttsr{};
+        warnUnknownKeys(obj, &.{ "max_retries_per_turn", "buffer_bytes", "rules" }, "ttsr");
+        if (obj.get("max_retries_per_turn")) |k| {
+            t.max_retries_per_turn = try jsonUnsigned(u32, k, "ttsr.max_retries_per_turn");
+        }
+        if (obj.get("buffer_bytes")) |k| {
+            t.buffer_bytes = try jsonUnsigned(u32, k, "ttsr.buffer_bytes");
+            if (t.buffer_bytes == 0) t.buffer_bytes = 4096;
+        }
+        if (obj.get("rules")) |k| {
+            const arr = switch (k) {
+                .array => |a| a,
+                else => return error.TtsrRulesNotArray,
+            };
+            var out: std.ArrayList(TtsrRule) = .empty;
+            for (arr.items) |item| {
+                const ro = switch (item) {
+                    .object => |o| o,
+                    else => return error.TtsrRuleNotObject,
+                };
+                var rule = TtsrRule{};
+                if (ro.get("name")) |n| rule.name = try jsonStr(n, "ttsr.rule.name");
+                if (ro.get("pattern")) |p| rule.pattern = try jsonStr(p, "ttsr.rule.pattern");
+                if (ro.get("inject")) |inj| rule.inject = try jsonStr(inj, "ttsr.rule.inject");
+                if (ro.get("max_fires")) |mf| {
+                    const n = try jsonInt(mf, "ttsr.rule.max_fires");
+                    if (n <= 0) return error.TtsrMaxFiresZero;
+                    rule.max_fires = @intCast(n);
+                }
+                if (rule.name.len == 0) return error.TtsrRuleNameEmpty;
+                if (rule.pattern.len == 0) return error.TtsrRulePatternEmpty;
+                try out.append(arena, rule);
+            }
+            t.rules = try out.toOwnedSlice(arena);
+        }
+        return t;
+    }
+
+    fn parseAdvisor(v: json.Value) !Advisor {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.AdvisorNotObject,
+        };
+        var a = Advisor{};
+        warnUnknownKeys(obj, &.{ "enabled", "provider", "model", "scope", "context_turns", "timeout_ms" }, "advisor");
+        if (obj.get("enabled")) |k| a.enabled = switch (k) {
+            .bool => |b| b,
+            else => return error.FieldNotBool,
+        };
+        if (obj.get("provider")) |k| a.provider = try jsonStr(k, "advisor.provider");
+        if (obj.get("model")) |k| a.model = try jsonStr(k, "advisor.model");
+        if (obj.get("scope")) |k| a.scope = try jsonStr(k, "advisor.scope");
+        if (obj.get("context_turns")) |k| {
+            const n = try jsonInt(k, "advisor.context_turns");
+            a.context_turns = if (n <= 0) 1 else @intCast(n);
+        }
+        if (obj.get("timeout_ms")) |k| {
+            const n = try jsonInt(k, "advisor.timeout_ms");
+            a.timeout_ms = if (n <= 0) 0 else @intCast(n);
+        }
+        return a;
     }
 
     fn parseImprove(arena: std.mem.Allocator, v: json.Value) !Improve {
@@ -1629,6 +1823,38 @@ pub const Config = struct {
         return switch (v) {
             .string => |s| s,
             else => error.FieldNotString,
+        };
+    }
+
+    /// A string or an array of strings. A bare string becomes a one-element
+    /// slice so every consumer only ever sees a list.
+    fn jsonNameList(arena: std.mem.Allocator, v: json.Value, key: []const u8) ![]const []const u8 {
+        switch (v) {
+            .string => |s| {
+                if (s.len == 0) return &.{};
+                const one = try arena.alloc([]const u8, 1);
+                one[0] = s;
+                return one;
+            },
+            .array => |arr| {
+                var out: std.ArrayList([]const u8) = .empty;
+                for (arr.items) |item| {
+                    const s = try jsonStr(item, key);
+                    if (s.len == 0) continue;
+                    try out.append(arena, s);
+                }
+                return try out.toOwnedSlice(arena);
+            },
+            else => return error.NameListInvalid,
+        }
+    }
+
+    /// `agent.tools_dir` is a string or an array of strings. A bare string
+    /// becomes a one-element slice so every consumer only ever sees a list.
+    fn jsonToolsDir(arena: std.mem.Allocator, v: json.Value) ![]const []const u8 {
+        return jsonNameList(arena, v, "tools_dir") catch |err| switch (err) {
+            error.FieldNotString, error.NameListInvalid => error.ToolsDirInvalid,
+            else => err,
         };
     }
 
@@ -1944,7 +2170,43 @@ test "agent.fallback_provider parses and is not reset by a partial local overrid
         \\
     });
     const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
-    try std.testing.expectEqualStrings("ollama", cfg.agent.fallback_provider);
+    try std.testing.expectEqual(@as(usize, 1), cfg.agent.fallback_providers.len);
+    try std.testing.expectEqualStrings("ollama", cfg.agent.fallback_providers[0]);
+    try std.testing.expectEqualStrings("ollama", firstFallbackProvider(cfg.agent.fallback_providers));
+}
+
+test "agent.fallback_providers accepts an array" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+        \\default_provider = "deepseek"
+        \\
+        \\[providers.deepseek]
+        \\base_url = "https://api.deepseek.com"
+        \\default_model = "deepseek-v4-flash"
+        \\
+        \\[models."deepseek/deepseek-v4-flash"]
+        \\provider = "deepseek"
+        \\capabilities = ["thinking", "tool_use"]
+        \\
+        \\[agent]
+        \\fallback_providers = ["ollama", "kimi-k3"]
+        \\
+    });
+    const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(@as(usize, 2), cfg.agent.fallback_providers.len);
+    try std.testing.expectEqualStrings("ollama", cfg.agent.fallback_providers[0]);
+    try std.testing.expectEqualStrings("kimi-k3", cfg.agent.fallback_providers[1]);
 }
 
 test "a config.local.json sibling is ignored: TOML is canonical" {
@@ -2202,6 +2464,38 @@ test "a local override with only default_provider keeps the base providers" {
     try std.testing.expectEqualStrings("https://b.test", (try cfg.provider(null)).base_url);
 }
 
+test "advisor section parses and stays off by default" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[advisor]
+        \\enabled = true
+        \\provider = "a"
+        \\model = "m"
+        \\scope = "session"
+        \\timeout_ms = 2500
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expect(cfg.advisor.enabled);
+    try std.testing.expectEqualStrings("a", cfg.advisor.provider);
+    try std.testing.expectEqualStrings("session", cfg.advisor.scope);
+    try std.testing.expectEqual(@as(u32, 2500), cfg.advisor.timeout_ms);
+    try std.testing.expect(!(Advisor{}).enabled);
+}
+
 test "partial local agent keeps base tools_dir" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -2228,9 +2522,43 @@ test "partial local agent keeps base tools_dir" {
         ,
     });
     const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
-    try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir);
+    try std.testing.expectEqual(@as(usize, 1), cfg.agent.tools_dir.len);
+    try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir[0]);
     try std.testing.expectEqualStrings(".", cfg.agent.sandbox_root);
     try std.testing.expectEqual(@as(u32, 30), cfg.agent.max_iterations);
+}
+
+test "agent.tools_dir accepts a string or an array" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\agent = { tools_dir = ["tools/manifests", "/home/user/.config/clanker/plugins"] }
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(@as(usize, 2), cfg.agent.tools_dir.len);
+    try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir[0]);
+    try std.testing.expectEqualStrings("/home/user/.config/clanker/plugins", cfg.agent.tools_dir[1]);
+
+    try std.testing.expectEqual(@as(usize, 1), (Agent{}).tools_dir.len);
+    try std.testing.expectEqualStrings("tools/manifests", (Agent{}).tools_dir[0]);
+    try std.testing.expectEqualStrings("tools/manifests", firstToolsDir(&.{}));
+    try std.testing.expectEqualStrings("a", firstToolsDir(&.{ "a", "b" }));
+    try std.testing.expectEqualStrings("(empty)", try toolsDirDisplay(arena, &.{}));
+    try std.testing.expectEqualStrings("only", try toolsDirDisplay(arena, &.{"only"}));
+    try std.testing.expectEqualStrings("a, b", try toolsDirDisplay(arena, &.{ "a", "b" }));
 }
 
 test "the providers-check timeout has a short default, a global key, and a per-provider override" {

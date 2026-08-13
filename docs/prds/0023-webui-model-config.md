@@ -2,14 +2,11 @@
 
 ## Status
 
-Draft. Roughly the read half already shipped: the Models view, `/api/catalog`,
-`/api/providers/models`, `renderModelSnippet`, and the copy-with-fallback flow
-in `ui/app/features/models.js` all exist today. What is unbuilt is
-the write half: the two endpoints below and the span-replace primitive they
-need. Sources of truth once built:
-`ui/app/features/models.js` (today read-only — its own header
-comment: "Read-only by design: config.toml stays hand-edited, matching
-`providers fill`'s own never-writes-config stance"), `src/cli.zig`
+Shipped. `POST /api/config/model` and `POST /api/config/default` write
+`config.local.toml` via the span-replace primitive in
+`src/util/toml_edit.zig`. The Models view confirms, then saves, and
+notices that a serve restart is required. Sources of truth:
+`ui/app/features/models.js`, `src/util/toml_edit.zig`, `src/cli.zig`
 (`cmdProvidersFill`, `renderModelSnippet`, `findCatalogProvider`/
 `findCatalogModel`), `src/config.zig` (`Provider`, `Model`, `Config.load`'s
 base+local merge), `src/util/atomic_write.zig` (the write primitive this
@@ -227,26 +224,27 @@ button or self-restart in v1.
 
 ## Acceptance criteria
 
-- [ ] `POST /api/config/model` renders the identical block text
+- [x] `POST /api/config/model` renders the identical block text
       `clanker providers fill` would print for the same provider/model, and
       table-replaces it into `config.local.toml`.
-- [ ] `POST /api/config/default` sets `default_provider`/`default_model` as
+- [x] `POST /api/config/default` sets `default_provider`/`default_model` as
       top-level keys, inserted before the first table header.
-- [ ] Writing a table that already exists in `config.local.toml` leaves
+- [x] Writing a table that already exists in `config.local.toml` leaves
       every other line in the file (including comments and unrelated
       tables) byte-for-byte identical to before the write.
-- [ ] Writing a table that doesn't exist yet appends it; writing a
+- [x] Writing a table that doesn't exist yet appends it; writing a
       top-level key that doesn't exist yet inserts it before the first
       `[` header.
-- [ ] Header match is literal against `renderModelSnippet` output (spacing
+- [x] Header match is literal against `renderModelSnippet` output (spacing
       variants are not treated as the same table).
-- [ ] A killed process mid-write (simulated in a test) leaves the previous
-      file content intact.
-- [ ] The vendored TOML parser's behavior on a file with two tables sharing
+- [x] A killed process mid-write (simulated in a test) leaves the previous
+      file content intact. (`atomic_write.writeFile` already covers this;
+      `toml_edit` never writes the destination itself.)
+- [x] The vendored TOML parser's behavior on a file with two tables sharing
       the same header text is pinned by a test as **last table wins**.
-- [ ] The Models view shows the exact block to be written and requires an
+- [x] The Models view shows the exact block to be written and requires an
       explicit second action before the endpoint is called.
-- [ ] A successful save's UI response is a text notice that the change
+- [x] A successful save's UI response is a text notice that the change
       applies on next restart (no restart button).
 
 ## Open questions / future work

@@ -1,5 +1,5 @@
 //! symbols: find where a Zig symbol is DECLARED (fn/const/var/struct/enum/union)
-//! across the project, vs. the search_code tool which matches any occurrence.
+//! across the project, vs. the repo_search tool which matches any occurrence.
 //! Input:  {"name": "executeTool", "path": "src"}
 //! Output: {"ok": true, "code": 0, "stdout": "...", "stderr": "..."}
 
@@ -77,7 +77,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.endArray();
     if (matches.items.len == 0) {
         try s.objectField("note");
-        const note = try std.fmt.allocPrint(alloc, "no declarations of '{s}' found under '{s}'; try a broader path (e.g. \".\") or check spelling. This tool matches fn/const/var/struct/enum/union declarations only, not call sites (use search_code for those).", .{ name, path });
+        const note = try std.fmt.allocPrint(alloc, "no declarations of '{s}' found under '{s}'; try a broader path (e.g. \".\") or check spelling. This tool matches fn/const/var/struct/enum/union declarations only, not call sites (use repo_search for those).", .{ name, path });
         try s.write(note);
     }
     try s.endObject();

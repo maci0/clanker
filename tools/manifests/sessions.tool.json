@@ -1,0 +1,18 @@
+{
+  "name": "sessions",
+  "description": "list saved conversations",
+  "wasm": "zig-out/tools/sessions.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "args": {
+        "type": "string"
+      }
+    }
+  },
+  "fs_prefixes": [
+    "state/sessions/"
+  ],
+  "internal": true,
+  "category": "harness"
+}

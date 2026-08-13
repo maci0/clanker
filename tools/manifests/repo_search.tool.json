@@ -1,0 +1,38 @@
+{
+  "name": "repo_search",
+  "description": "Search this project's own source tree (not the public internet; that is sourcegraph_search) with the most deterministic engine that fits the question. Default to engine=\"ast-grep\": structural AST patterns with metavariables ($NAME, $$$ARGS), use this whenever you are looking for a code *shape* rather than text, including plain symbol/name lookups. It works on this project's own Zig source too: sgconfig.yml registers a Zig grammar built by tools/grammars/build.sh, so patterns like \"const $A = @import($B);\" or \"pub fn $N($$$A) $R { $$$B }\" match real syntax and never a comment or a string. If it returns an error about the grammar, run tools/grammars/build.sh once. engine=\"semcode\": semantic queries over an indexed C/C++/Rust tree (needs .semcode.db). engine=\"rg\": ripgrep regex, last resort, only for plain text, file names, or patterns ast-grep cannot express as syntax. Prefer ast-grep over rg whenever the query could be phrased as a code structure. Input: {\"engine\": \"rg\" | \"ast-grep\" | \"semcode\", \"query\": \"...\", \"path\": \".\"}. Returns {\"ok\": bool, \"code\": int, \"stdout\": \"...\", \"stderr\": \"...\"}.",
+  "llm_description": "Search this project's source (not the public internet; that is sourcegraph_search). engine: \"ast-grep\" (default), structural AST patterns with metavariables ($NAME, $$$ARGS); use for code shape or symbol lookups, works on this project's Zig via sgconfig.yml (run tools/grammars/build.sh if grammar error). \"semcode\", semantic queries over indexed C/C++/Rust tree (needs .semcode.db). \"rg\", ripgrep regex, last resort for plain text/filenames only. Input: {engine, query, path}. Returns {ok, code, stdout, stderr}.",
+  "wasm": "zig-out/tools/repo_search.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "engine": {
+        "type": "string",
+        "enum": [
+          "rg",
+          "ast-grep",
+          "semcode"
+        ]
+      },
+      "query": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "category": "code",
+  "fs_prefixes": [
+    "."
+  ],
+  "exec_allow": [
+    "rg",
+    "ast-grep",
+    "semcode"
+  ],
+  "confirm": false
+}

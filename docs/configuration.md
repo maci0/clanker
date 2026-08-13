@@ -211,18 +211,48 @@ Run-loop and path settings. The commonly-touched keys:
 | `provider_check_timeout_seconds` | 10 | Global ceiling for `providers check`; override per provider with `check_timeout_seconds`. |
 | `ask_timeout_seconds` | 120 | How long a serve-side `ask_user`/confirm question waits for the browser before giving up. |
 | `confirm_writes` | `never` | Gate write-capable tool calls on a human's allow/deny. `browser` asks streaming web runs; `always` is reserved for the REPL and behaves like `browser` today. |
-| `fallback_provider` | (unset) | Provider to route image-bearing work to when the selected provider has no vision-capable model. |
+| `fallback_provider` / `fallback_providers` | (unset) | Ordered fallbacks after the selected provider cannot serve a request. A string or an array; later entries are tried in order. Also the preferred vision-routing target. |
+| `auto_thinking` | `false` | Per-turn classifier that selects a sampling-profile `reasoning_effort` row. Opt-in. |
+| `thinking_classifier_model` | (unset) | `provider` or `provider/model`. Empty = cheapest configured provider. |
+| `thinking_classifier_timeout_ms` | 3000 | Parsed now; deadline abort is still open. |
 | `compact_threshold_bytes` | 24000 | Compact conversation history past this size (`0` uses the model window). |
 | `max_total_tokens`, `max_tokens_per_turn`, `max_history_tokens` | -, 4096, 16000 | Token budgets that drive compaction. |
 | `tool_catalog` | true | Send full schemas only for hot tools; let the model request the rest by name (saves thousands of tokens/request with many tools). |
 | `hot_tools` | 10 | How many most-used tools keep their schemas loaded unasked. |
-| `tools_dir`, `skills_dir`, `workflows_dir`, `chains_dir`, `state_dir`, `sandbox_root` | see defaults | Where the harness reads tools/skills/state. |
+| `tools_dir` | `tools/manifests` | One directory or a list. Later-listed wins on a tool `name` collision. |
+| `skills_dir`, `workflows_dir`, `chains_dir`, `state_dir`, `sandbox_root` | see defaults | Where the harness reads skills/state. |
 | `system_prompt_file`, `learnings_file`, `global_instructions_file` | see defaults | Prompt-assembly inputs. |
 | `git_remote_ops` | false | Whether the `git` tool may run `push`/`merge`/`checkout` (the rest of the deny list still applies). |
 | `git_commit` | true | Commit promoted self-improvements with git. |
 | `exec_pattern_allow` | `[]` | Extra `ck_exec` command patterns to permit. |
 | `repl_exec_allow` | `[]` | Extra commands the REPL's `!cmd` escape may run, on top of the union of every tool's `exec_allow`. Widens the escape only, never a tool; the deny tokens and git's verb allowlist still apply. |
 | `seed` | 0 | RNG seed for reproducibility (`0` = time-seeded). |
+
+## `[advisor]`
+
+Post-turn second-model critique. Off by default. Distinct from
+`improve.arena_advisory`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Run the advisor after each completed tool batch. |
+| `provider` | (unset) | Provider name; falls back to `default_provider`. |
+| `model` | (unset) | Model name on that provider. |
+| `scope` | `turn` | `turn` = last user turn; `session` = last `context_turns` user turns. |
+| `context_turns` | 3 | How many user turns `scope = "session"` sends. |
+| `timeout_ms` | 5000 | Parsed now; deadline abort is still open. |
+
+## `[kernel]`
+
+Persistent Python/JS eval kernels. Off by default — an unsandboxed
+subprocess (ADR 0010). Do not flip `enabled` on in a recommended config
+until cgroups quotas exist.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Start kernels. Off = the tool returns a disabled error. |
+| `max_output_bytes` | 65536 | Cap on returned stdout/stderr/result. |
+| `cleanup_delay_ms` | 5000 | Delay before deleting `state/kernels/<session>/` after SIGTERM. |
 
 ## `[modules]`
 

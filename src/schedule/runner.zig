@@ -22,8 +22,8 @@
 const std = @import("std");
 const cron = @import("cron.zig");
 const store = @import("store.zig");
-const filelock = @import("../util/filelock.zig");
-const ensuredir = @import("../util/ensuredir.zig");
+const file_lock = @import("../util/file_lock.zig");
+const ensure_dir = @import("../util/ensure_dir.zig");
 const log = @import("../util/log.zig");
 
 /// Held for the whole of one `run-due`, so a cron that fires every minute
@@ -252,13 +252,13 @@ fn fireOne(
 }
 
 /// An advisory exclusive lock on a file of its own, taken without waiting.
-/// Not `util/runlock.zig`: that one decides whether a lock is stale by looking
+/// Not `util/run_lock.zig`: that one decides whether a lock is stale by looking
 /// the owning pid up in `/proc`, which does not exist on macOS, so every lock
 /// there reads as abandoned and gets taken over. A kernel-held flock needs no
 /// liveness check, it is released when the process dies, however it dies.
 fn acquireRunLock(io: std.Io, base: std.Io.Dir) !std.Io.File {
-    ensuredir.ensureDir(base, io, store.ledger_dir) catch {};
-    return filelock.createFileRetry(io, base, run_lock_path, .{
+    ensure_dir.ensureDir(base, io, store.ledger_dir) catch {};
+    return file_lock.createFileRetry(io, base, run_lock_path, .{
         .truncate = false,
         .lock = .exclusive,
         .lock_nonblocking = true,
@@ -470,7 +470,7 @@ test "a second run-due reports busy instead of firing on top of the first" {
     // Standing in for a sweep already in flight: the same flock the runner
     // takes, held by this test for the duration.
     try f.tmp.dir.createDirPath(f.io(), store.ledger_dir);
-    var held = try filelock.createFileRetry(f.io(), f.tmp.dir, run_lock_path, .{ .truncate = false, .lock = .exclusive });
+    var held = try file_lock.createFileRetry(f.io(), f.tmp.dir, run_lock_path, .{ .truncate = false, .lock = .exclusive });
 
     var rec = Recorder{ .alloc = testing.allocator };
     defer rec.calls.deinit(testing.allocator);

@@ -149,7 +149,7 @@ image over 4 MB client-side; the server enforces the same cap on each
 attachment's decoded size (`max_image_bytes`) plus a hard cap of 4 images per
 message (`max_run_images` / `core/attachments.js`'s `max_images`) — both
 caps exist because a hand-written request bypasses the page's own limits.
-The raw HTTP body-size ceiling (`rawhttp.max_body_bytes`, 24 MiB) is sized to
+The raw HTTP body-size ceiling (`raw_http.max_body_bytes`, 24 MiB) is sized to
 fit four maximum-sized images after base64 expansion (~21.4 MiB) plus JSON
 framing; the socket reader in `handleConnection` enforces this same limit
 and returns 413, not a silent truncation.
@@ -269,7 +269,7 @@ every document; "judged" is what a single ledger row can honestly say.
 |---|---|
 | `ask_user` question unanswered past `ask_timeout_seconds` | Degrades to the headless "nobody attached" default |
 | Confirm-before-write denied, timed out, or tab closed | Refuses the call, tells the model the user declined |
-| Request body over `rawhttp.max_body_bytes` + 64 KiB headers | `413 Content Too Large`, connection dropped |
+| Request body over `raw_http.max_body_bytes` + 64 KiB headers | `413 Content Too Large`, connection dropped |
 | More than 4 images attached | `400 Bad Request` server-side; composer refuses client-side first |
 | A single image over 4 MB decoded | Refused, client and server both |
 | `session` id on `/api/run` fails `validSessionId` | `400 Bad Request` — closes a traversal bypass unique to this route, since the dedicated session routes validate the same fragment but `/api/run` didn't inherit that check for free |
@@ -340,7 +340,7 @@ Goals ↔ board sync + mid-run steering (#91):
 Compare view (blind side-by-side, #9):
 
 - [x] 9.1 Compare tab — `features/compare.js`, wired like every prior module (embed + `out_cap` guard in `webui.zig`, `assetFor` route, `webui_asset_paths` entry, dedicated `render_compare_view`/`gzip_compare_view` whose predicate carries its directory and aliases nothing). Lists past comparisons from `GET /api/compare`, opens one from `GET /api/compare/<id>`, renders its answers side by side in stored blind order under positional `A`/`B`/`C`, deep-links as `#compare/<id>`, and records a pick with `POST /api/compare/<id>` `{"pick":"<letter>"}` — the same tool op the CLI's `--show <id> --pick <letter>` uses
-- [x] 9.2 The payload is blind, not just the render — both read paths ask the tool for `"reveal": false`, and an un-revealed reply carries no `provider` and no `model` at all: not for the answers, not for the verdict, and not for the listing's winner column. A recorded pick overrides it and reveals. Pinned by `compare_blind.mayReveal`'s cases, by `compareRouteToToolInput`'s (a `true` there would hand the page the key), and by two `sandbox.runtime` tests that run the real `compare.wasm` against a document a live comparison actually produced and fail on any provider or model name in an un-revealed reply
+- [x] 9.2 The payload is blind, not just the render — both read paths ask the tool for `"reveal": false`, and an un-revealed reply carries no `provider` and no `model` at all: not for the answers, not for the verdict, and not for the listing's winner column. A recorded pick overrides it and reveals. Pinned by `compare_logic.mayReveal`'s cases, by `compareRouteToToolInput`'s (a `true` there would hand the page the key), and by two `sandbox.runtime` tests that run the real `compare.wasm` against a document a live comparison actually produced and fail on any provider or model name in an un-revealed reply
 
 Infrastructure:
 

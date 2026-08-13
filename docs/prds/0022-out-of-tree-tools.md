@@ -2,15 +2,16 @@
 
 ## Status
 
-Draft. Nothing in this PRD is built yet. Named here as the open question
-already on record in
-[docs/prds/0010-plugin-manifest-sdk.md](0010-plugin-manifest-sdk.md#open-questions--future-work)
-and in `docs/ROADMAP.md`'s plugin-manifest-SDK entry: "`agent.tools_dir` as a
-list... is what still stands between the packaging slice and installing a
-third-party plugin *alongside* the built-in ones rather than instead of them."
-This PRD resolves that question with a concrete design. Sources of truth once
-built: `src/tools/registry.zig` (`Registry.load`), `src/config.zig`
-(`Agent.tools_dir`), `tools/zig/cmd_plugins.zig`.
+Shipped. `agent.tools_dir` is a list (`[]const []const u8`); a bare string
+still parses as one entry. `Registry.load` scans each directory in order,
+last-listed wins on a cross-directory `name` collision (with a warning),
+and a missing list entry warns and continues. `plugins` / `tools` guests
+read the configured list via `ck_harness_config` (`tools_dirs`) and list
+every directory; `clanker plugins new` writes into the first-listed one;
+`clanker plugins validate` with no path validates every configured
+directory. Sources of truth: `src/config.zig` (`Agent.tools_dir`,
+`firstToolsDir`), `src/tools/registry.zig` (`Registry.load`),
+`tools/zig/plugins.zig`, `tools/zig/lib.zig` (`toolsDirs`).
 
 Distribution (fetch/install/signing/a registry index) is not reopened here —
 see [ADR 0007](../adrs/0007-plugin-manifests-are-declarative-and-unsigned.md).
@@ -22,8 +23,8 @@ This PRD is only about loading more than one already-trusted local directory.
 `"tools/manifests"`), and `registry.Registry.load` takes exactly one directory
 (`src/tools/registry.zig:167`). Nineteen non-test call sites across nine files
 pass it straight through, ten of them in `src/cli.zig` alone:
-`src/cli.zig`, `src/tui/repl_vaxis.zig`, `src/agent/subagent.zig`,
-`src/peers/phonebook.zig`, `src/mcp/server.zig`, `src/research/autoresearch.zig`,
+`src/cli.zig`, `src/tui/repl.zig`, `src/agent/subagent.zig`,
+`src/peers/phonebook.zig`, `src/mcp/server.zig`, `src/research/auto_research.zig`,
 `src/doctor.zig`, `src/improve/engine.zig` (`:1230`, `:1467`, `:1725`: three
 sites in the self-improve engine, the consumer most likely to break silently),
 `src/gate/checks.zig` (`toolDescriptorGate`).
@@ -43,9 +44,9 @@ has no way to keep it in its own directory, separate from clanker's own tree,
 and have both load.
 
 Separately, `clanker plugins list` (and the REPL's `/plugins`, and
-`GET /api/plugins`) goes through the `cmd_plugins` guest, which hardcodes its
+`GET /api/plugins`) goes through the `plugins` guest, which hardcodes its
 own copy of the default — `const tools_dir = "tools/manifests";`
-(`tools/zig/cmd_plugins.zig:13`) — rather than reading `agent.tools_dir` from
+(`tools/zig/plugins.zig:13`) — rather than reading `agent.tools_dir` from
 the harness at all. Today that is a latent bug only for the rare user who
 already changed `tools_dir`; multi-directory support would make it wrong for
 anyone using the feature this PRD adds, since the guest would never see the
@@ -69,7 +70,7 @@ be fixed as part of this work, not filed separately.
 4. Every existing single-directory consumer keeps working with the same
    call-site shape, adjusted mechanically for the new type — no caller grows
    new branching logic to handle "one dir" vs "many".
-5. `cmd_plugins` (`/plugins`, `/api/plugins`, `clanker plugins list`) reads the
+5. `plugins` (`/plugins`, `/api/plugins`, `clanker plugins list`) reads the
    real configured directory list instead of its hardcoded default, so `list`
    shows tools from every configured directory, not just the first.
 6. `clanker plugins new` and `clanker plugins validate` behave sensibly with
@@ -146,9 +147,9 @@ support changes *which directories get scanned for manifests*, not how a
 found manifest's own `wasm` path is resolved — worth stating explicitly since
 it is easy to assume otherwise.
 
-**Call sites.** `src/cli.zig`, `src/tui/repl_vaxis.zig`,
+**Call sites.** `src/cli.zig`, `src/tui/repl.zig`,
 `src/agent/subagent.zig`, `src/peers/phonebook.zig`, `src/mcp/server.zig`,
-`src/research/autoresearch.zig`, `src/doctor.zig`, and `src/improve/engine.zig`
+`src/research/auto_research.zig`, `src/doctor.zig`, and `src/improve/engine.zig`
 (three sites: `:1230`, `:1467`, `:1725`) all pass
 `cfg.agent.tools_dir` straight to `Registry.load` today; each becomes a
 mechanical no-op change once the type is a slice, since none of them branch on
@@ -160,8 +161,8 @@ is invisible to it by construction, since the gate operates on the staged tree
 a proposal touches. No special-casing needed there: a proposal cannot touch a
 directory the gate never opens.
 
-**`cmd_plugins` (Goal 5).** The guest's hardcoded
-`const tools_dir = "tools/manifests"` (`tools/zig/cmd_plugins.zig:13`) is
+**`plugins` (Goal 5).** The guest's hardcoded
+`const tools_dir = "tools/manifests"` (`tools/zig/plugins.zig:13`) is
 replaced with the directory list read via `ck_harness_config` (the same
 channel `Tool.config` already uses to hand a guest host-side data, per
 `registry.zig`'s `config_json` field), listing every configured directory in
@@ -204,7 +205,7 @@ behavior). No per-directory `enabled` toggle (remove the entry from
   list as the remaining packaging gap; this PRD is that resolution. PRD 0012
   (CLI Tier 1 / `clanker <name>`) stays out of scope.
 - Existing: `src/config.zig` (`Agent.tools_dir`), `src/tools/registry.zig`,
-  `tools/zig/cmd_plugins.zig` (hardcoded default to replace via
+  `tools/zig/plugins.zig` (hardcoded default to replace via
   `ck_harness_config`), the nine call-site files listed under Design.
 
 **Implementation.**
@@ -216,12 +217,12 @@ behavior). No per-directory `enabled` toggle (remove the entry from
    scan each in order, last-listed wins on cross-directory `name` collision
    with a warning naming both paths; missing entry warns and continues.
 3. Call sites: mechanical type adjustment across `src/cli.zig`,
-   `src/tui/repl_vaxis.zig`, `src/agent/subagent.zig`, `src/peers/phonebook.zig`,
-   `src/mcp/server.zig`, `src/research/autoresearch.zig`, `src/doctor.zig`,
+   `src/tui/repl.zig`, `src/agent/subagent.zig`, `src/peers/phonebook.zig`,
+   `src/mcp/server.zig`, `src/research/auto_research.zig`, `src/doctor.zig`,
    `src/improve/engine.zig` (three sites), `src/gate/checks.zig`: no new
    branching on directory count.
-4. `cmd_plugins` harness_config: replace hardcoded
-   `tools_dir = "tools/manifests"` in `tools/zig/cmd_plugins.zig` with the
+4. `plugins` harness_config: replace hardcoded
+   `tools_dir = "tools/manifests"` in `tools/zig/plugins.zig` with the
    configured list via `ck_harness_config`; list/merge with the same
    last-wins rule as `Registry.load`.
 5. `plugins new` / `validate`: multi-dir `new` writes into the first-listed
@@ -229,16 +230,13 @@ behavior). No per-directory `enabled` toggle (remove the entry from
    and OR's exit status.
 6. Tests: bare-string config; two-entry list loads both; cross-directory
    same-name collision → later wins + warning; missing list entry does not
-   empty the registry; `cmd_plugins` list reflects all configured dirs.
+   empty the registry; `plugins` list reflects all configured dirs.
 
 ## Known issues
 
-- `tools/zig/cmd_plugins.zig:13` hardcodes `tools_dir = "tools/manifests"`
-  instead of reading `agent.tools_dir` from the harness at all. This predates
-  this PRD (it is wrong today for anyone who already set a non-default
-  `tools_dir`) but must be fixed as part of Goal 5, not filed as a separate
-  follow-up, since multi-directory support is meaningless from the guest's
-  point of view otherwise.
+- `toolDescriptorGate` still walks one staged-worktree directory and never
+  opens an extra `tools_dir` entry. That is the anti-cheat boundary, not a
+  loader bug: an out-of-tree plugin is not part of a promoted checkout.
 
 ## Failure modes
 
@@ -255,27 +253,27 @@ behavior). No per-directory `enabled` toggle (remove the entry from
 
 ## Acceptance criteria
 
-- [ ] `Agent.tools_dir` is `[]const []const u8`; a bare JSON string at the
+- [x] `Agent.tools_dir` is `[]const []const u8`; a bare JSON string at the
       `tools_dir` key still parses (normalized to one entry).
-- [ ] `Registry.load` accepts a directory list, scans each in order, and
+- [x] `Registry.load` accepts a directory list, scans each in order, and
       last-listed wins on a cross-directory `name` collision, with a warning
       logged naming both source paths.
-- [ ] A missing directory in the list logs a warning and does not prevent the
+- [x] A missing directory in the list logs a warning and does not prevent the
       remaining directories from loading.
-- [ ] Every existing call site (`cli.zig`, `repl_vaxis.zig`, `subagent.zig`,
+- [x] Every existing call site (`cli.zig`, `repl.zig`, `subagent.zig`,
       `phonebook.zig`, `mcp/server.zig`, `autoresearch.zig`, `doctor.zig`,
       `improve/engine.zig`, `gate/checks.zig`) compiles against the new
       signature with no added branching on directory count.
-- [ ] `cmd_plugins` reads the configured directory list via
+- [x] `plugins` reads the configured directory list via
       `ck_harness_config` instead of its hardcoded default; `/plugins list`,
       `/api/plugins`, and `clanker plugins list` (which delegates to the same
       guest per PRD 0010) all show tools from every configured directory.
-- [ ] `clanker plugins new` with 2+ configured directories writes into the
+- [x] `clanker plugins new` with 2+ configured directories writes into the
       first-listed one; with exactly one, behavior is unchanged.
-- [ ] `clanker plugins validate` with no argument and 2+ configured
+- [x] `clanker plugins validate` with no argument and 2+ configured
       directories validates all of them and exits non-zero on any error in
       any of them.
-- [ ] A test exists exercising: bare-string config still works; a two-entry
+- [x] A test exists exercising: bare-string config still works; a two-entry
       list loads tools from both; a same-name collision across two
       directories resolves to the later one with a warning; a missing entry
       in the list does not empty the whole registry.

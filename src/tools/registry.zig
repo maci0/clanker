@@ -169,34 +169,45 @@ const max_catalog_line_bytes: usize = 160;
 pub const Registry = struct {
     tools: std.StringArrayHashMapUnmanaged(Tool) = .empty,
 
-    pub fn load(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, tools_dir: []const u8) !Registry {
+    pub fn load(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, tools_dirs: []const []const u8) !Registry {
         var reg = Registry{};
+        var sources: std.StringHashMapUnmanaged([]const u8) = .empty;
 
-        var dir = base.openDir(io, tools_dir, .{ .iterate = true }) catch |err| switch (err) {
-            error.FileNotFound => {
-                // Wrong/missing path is a config problem (agent.tools_dir), not a
-                // missing guest rebuild, `zig build tools` only fills zig-out/tools.
-                log.log(.warn, "tools dir '{s}' not found; check agent.tools_dir (expected a directory of *.tool.json manifests)", .{tools_dir});
-                return reg;
-            },
-            else => return err,
-        };
-        defer dir.close(io);
+        for (tools_dirs) |tools_dir| {
+            var dir = base.openDir(io, tools_dir, .{ .iterate = true }) catch |err| switch (err) {
+                error.FileNotFound => {
+                    // Wrong/missing path is a config problem (agent.tools_dir), not a
+                    // missing guest rebuild, `zig build tools` only fills zig-out/tools.
+                    // One missing list entry must not empty the rest of the registry.
+                    log.log(.warn, "tools dir '{s}' not found; check agent.tools_dir (expected a directory of *.tool.json manifests)", .{tools_dir});
+                    continue;
+                },
+                else => return err,
+            };
+            defer dir.close(io);
 
-        var it = dir.iterate();
-        while (it.next(io) catch null) |entry| {
-            if (entry.kind != .file) continue;
-            if (!std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
-            const raw = dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20)) catch |err| {
-                log.log(.warn, "cannot read tool descriptor '{s}': {s}", .{ entry.name, @errorName(err) });
-                continue;
-            };
-            var tool = parseDescriptor(arena, raw) catch |err| {
-                log.log(.warn, "invalid tool descriptor '{s}': {s} (run `clanker plugins validate {s}` for the offending key)", .{ entry.name, @errorName(err), tools_dir });
-                continue;
-            };
-            tool.wasm = try resolveWasmPath(arena, tools_dir, tool.wasm);
-            try reg.tools.put(arena, tool.name, tool);
+            var it = dir.iterate();
+            while (it.next(io) catch null) |entry| {
+                if (entry.kind != .file) continue;
+                if (!std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
+                const raw = dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20)) catch |err| {
+                    log.log(.warn, "cannot read tool descriptor '{s}': {s}", .{ entry.name, @errorName(err) });
+                    continue;
+                };
+                var tool = parseDescriptor(arena, raw) catch |err| {
+                    log.log(.warn, "invalid tool descriptor '{s}': {s} (run `clanker plugins validate {s}` for the offending key)", .{ entry.name, @errorName(err), tools_dir });
+                    continue;
+                };
+                tool.wasm = try resolveWasmPath(arena, tools_dir, tool.wasm);
+                if (reg.tools.get(tool.name)) |_| {
+                    const prev = sources.get(tool.name) orelse "";
+                    if (!std.mem.eql(u8, prev, tools_dir)) {
+                        log.log(.warn, "tool '{s}' from '{s}' overrides '{s}'", .{ tool.name, tools_dir, prev });
+                    }
+                }
+                try sources.put(arena, tool.name, tools_dir);
+                try reg.tools.put(arena, tool.name, tool);
+            }
         }
         reg.applyToggles(io, arena, base);
         reg.applyConfigOverrides(io, arena, base);
@@ -739,7 +750,7 @@ test "registry loads descriptors" {
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, "tools");
+    const reg = try Registry.load(io, arena, tmp.dir, &.{"tools"});
     const tool = reg.get("calculator").?;
     try std.testing.expectEqualStrings("calculator", tool.name);
     // Bare name: resolved beside the manifest, so a self-contained plugin
@@ -777,7 +788,7 @@ test "a descriptor's fuel budget is parsed, and junk values keep the default" {
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, "tools");
+    const reg = try Registry.load(io, arena, tmp.dir, &.{"tools"});
     try std.testing.expectEqual(@as(u64, 250_000_000), reg.get("thrifty").?.fuel);
     try std.testing.expectEqual(@as(u64, 0), reg.get("sloppy").?.fuel);
 }
@@ -803,20 +814,20 @@ test "plugin toggles disable optional tools but never core ones" {
         ,
     });
     try dir.writeFile(io, .{
-        .sub_path = "tools/cmd_status.tool.json",
+        .sub_path = "tools/status.tool.json",
         .data =
-        \\{ "name": "cmd_status", "description": "status", "wasm": "cmd_status.wasm", "input_schema": {}, "internal": true }
+        \\{ "name": "status", "description": "status", "wasm": "status.wasm", "input_schema": {}, "internal": true }
         ,
     });
     try dir.createDirPath(io, "state");
     try dir.writeFile(io, .{
         .sub_path = plugins_state_path,
-        .data = "{\"disabled\":[\"web_search\",\"cmd_status\"]}",
+        .data = "{\"disabled\":[\"web_search\",\"status\"]}",
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, "tools");
+    const reg = try Registry.load(io, arena, tmp.dir, &.{"tools"});
     try std.testing.expect(!reg.get("web_search").?.enabled);
-    try std.testing.expect(reg.get("cmd_status").?.enabled); // core: toggle ignored
+    try std.testing.expect(reg.get("status").?.enabled); // core: toggle ignored
 
     // A disabled plugin leaves the catalog the model sees.
     const defs = try reg.toToolDefs(arena);
@@ -862,7 +873,7 @@ test "config overrides apply only to keys the descriptor opted in" {
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, "tools");
+    const reg = try Registry.load(io, arena, tmp.dir, &.{"tools"});
 
     const rlm = reg.get("rlm").?;
     try std.testing.expectEqual(@as(i64, 6), rlm.config.object.get("max_depth").?.integer);
@@ -922,9 +933,97 @@ test "a missing tools_dir yields an empty registry without error" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const reg = try Registry.load(io, arena, tmp.dir, "no-such-tools-dir");
+    const reg = try Registry.load(io, arena, tmp.dir, &.{"no-such-tools-dir"});
     try std.testing.expectEqual(@as(usize, 0), reg.tools.count());
     try std.testing.expect(reg.get("webui") == null);
+}
+
+test "a two-entry tools_dir list loads both directories" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "builtins");
+    try tmp.dir.createDirPath(io, "extra");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "builtins/alpha.tool.json",
+        .data =
+        \\{ "name": "alpha", "description": "a", "wasm": "alpha.wasm", "input_schema": {} }
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "extra/beta.tool.json",
+        .data =
+        \\{ "name": "beta", "description": "b", "wasm": "beta.wasm", "input_schema": {} }
+        ,
+    });
+
+    const reg = try Registry.load(io, arena, tmp.dir, &.{ "builtins", "extra" });
+    try std.testing.expectEqual(@as(usize, 2), reg.tools.count());
+    try std.testing.expectEqualStrings("builtins/alpha.wasm", reg.get("alpha").?.wasm);
+    try std.testing.expectEqualStrings("extra/beta.wasm", reg.get("beta").?.wasm);
+}
+
+test "a later tools_dir wins a cross-directory name collision" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "builtins");
+    try tmp.dir.createDirPath(io, "override");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "builtins/echo.tool.json",
+        .data =
+        \\{ "name": "echo", "description": "stock", "wasm": "stock.wasm", "input_schema": {} }
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "override/echo.tool.json",
+        .data =
+        \\{ "name": "echo", "description": "local", "wasm": "local.wasm", "input_schema": {} }
+        ,
+    });
+
+    const reg = try Registry.load(io, arena, tmp.dir, &.{ "builtins", "override" });
+    try std.testing.expectEqual(@as(usize, 1), reg.tools.count());
+    try std.testing.expectEqualStrings("local", reg.get("echo").?.description);
+    try std.testing.expectEqualStrings("override/local.wasm", reg.get("echo").?.wasm);
+}
+
+test "a missing tools_dir list entry does not empty the rest" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "builtins");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "builtins/keep.tool.json",
+        .data =
+        \\{ "name": "keep", "description": "k", "wasm": "keep.wasm", "input_schema": {} }
+        ,
+    });
+
+    const reg = try Registry.load(io, arena, tmp.dir, &.{ "no-such-extra", "builtins" });
+    try std.testing.expectEqual(@as(usize, 1), reg.tools.count());
+    try std.testing.expect(reg.get("keep") != null);
 }
 
 test "every shipped manifest carries a schema the provider accepts" {
@@ -1133,7 +1232,7 @@ test "a bare wasm name resolves beside its manifest; a path never moves" {
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, "vendor/hello");
+    const reg = try Registry.load(io, arena, tmp.dir, &.{"vendor/hello"});
     try std.testing.expectEqualStrings("vendor/hello/hello.wasm", reg.get("hello").?.wasm);
     try std.testing.expectEqualStrings("zig-out/tools/rooted.wasm", reg.get("rooted").?.wasm);
 

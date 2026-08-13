@@ -13,6 +13,7 @@ const providers = @import("providers.zig");
 const auth = @import("auth.zig");
 const config = @import("../config.zig");
 const log = @import("../util/log.zig");
+const redact = @import("../util/redact.zig");
 const token_stats = @import("../stats/tokens.zig");
 const build_options = @import("build_options");
 
@@ -251,13 +252,16 @@ pub fn chat(
 
     if (@intFromEnum(outcome.status) >= 400) {
         if (err_detail.* == null) {
-            err_detail.* = try arena.dupe(u8, outcome.body);
+            err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}", .{@intFromEnum(outcome.status)});
         }
+        var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+        const log_detail = redact.forLog(&log_detail_buf, err_detail.* orelse "ApiError");
         log.log(.error_, "provider '{s}' returned HTTP {d} after {d} attempt(s): {s}", .{
-            provider.name, @intFromEnum(outcome.status), attempt, err_detail.* orelse "",
+            provider.name, @intFromEnum(outcome.status), attempt, log_detail,
         });
         noteError();
-        recordFailure(ctx, arena, provider, @intFromEnum(outcome.status), err_detail.* orelse "ApiError", elapsedMs(ctx.io, llm_t0));
+        var stats_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+        recordFailure(ctx, arena, provider, @intFromEnum(outcome.status), redact.forStats(&stats_detail_buf, err_detail.* orelse "ApiError"), elapsedMs(ctx.io, llm_t0));
         return error.ApiError;
     }
 
@@ -269,11 +273,14 @@ pub fn chat(
     // HTTP error path in doFetch, so without this the caller only sees a bare
     // error.ApiError with no idea what the provider said.
     const resp = impl.parseResponse(arena, body_owned, err_detail) catch |err| {
+        var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+        const log_detail = redact.forLog(&log_detail_buf, err_detail.* orelse @errorName(err));
         log.log(.error_, "provider '{s}' returned an unreadable response: {s} ({s})", .{
-            provider.name, @errorName(err), err_detail.* orelse "",
+            provider.name, @errorName(err), log_detail,
         });
         noteError();
-        recordFailure(ctx, arena, provider, @intFromEnum(outcome.status), err_detail.* orelse @errorName(err), elapsedMs(ctx.io, llm_t0));
+        var stats_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+        recordFailure(ctx, arena, provider, @intFromEnum(outcome.status), redact.forStats(&stats_detail_buf, err_detail.* orelse @errorName(err)), elapsedMs(ctx.io, llm_t0));
         return err;
     };
     const ms: u64 = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
@@ -465,11 +472,13 @@ fn doFetch(
 
     if (@intFromEnum(result.status) >= 400) {
         if (impl.parseErrorDetail(arena, response)) |msg| {
-            err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}: {s}", .{ @intFromEnum(result.status), msg });
+            const capped = redact.forCaller(arena, msg) catch msg[0..@min(msg.len, redact.max_caller_detail_len)];
+            err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}: {s}", .{ @intFromEnum(result.status), capped });
         } else {
             err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}", .{@intFromEnum(result.status)});
         }
-        log.log(.debug, "provider '{s}' returned {s}", .{ provider.name, err_detail.*.? });
+        var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+        log.log(.debug, "provider '{s}' returned {s}", .{ provider.name, redact.forLog(&log_detail_buf, err_detail.*.?) });
     }
 
     return .{
@@ -569,13 +578,16 @@ pub fn chatStream(
         // Extract only the provider's documented error message, matching the
         // non-streaming path, and never surface the complete raw body.
         if (impl.parseErrorDetail(arena, err_body.items)) |msg| {
-            err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}: {s}", .{ @intFromEnum(response.head.status), msg });
+            const capped = redact.forCaller(arena, msg) catch msg[0..@min(msg.len, redact.max_caller_detail_len)];
+            err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}: {s}", .{ @intFromEnum(response.head.status), capped });
         } else {
             err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}", .{@intFromEnum(response.head.status)});
         }
-        log.log(.error_, "provider '{s}' stream returned {s}", .{ provider.name, err_detail.*.? });
+        var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+        log.log(.error_, "provider '{s}' stream returned {s}", .{ provider.name, redact.forLog(&log_detail_buf, err_detail.*.?) });
         noteError();
-        recordFailure(ctx, arena, provider, @intFromEnum(response.head.status), err_detail.*.?, elapsedMs(ctx.io, llm_t0));
+        var stats_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+        recordFailure(ctx, arena, provider, @intFromEnum(response.head.status), redact.forStats(&stats_detail_buf, err_detail.*.?), elapsedMs(ctx.io, llm_t0));
         return error.ApiError;
     }
 

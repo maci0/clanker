@@ -42,7 +42,8 @@ pub fn cmdPhonebook(init: std.process.Init) !void {
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     const mod = runtime.loadNamedTool(gpa, io, arena, init.environ_map, &cfg, &reg, "peers", null) catch |err| {
         if (err == error.UnknownTool) {
-            log.log(.error_, "internal tool 'peers' not found in {s}", .{cfg.agent.tools_dir});
+            const dirs = config.toolsDirDisplay(arena, cfg.agent.tools_dir) catch "configured tool directories";
+            log.log(.error_, "internal tool 'peers' not found in {s}", .{dirs});
         } else {
             log.log(.error_, "'peers' tool load failed: {s} (run `zig build tools`)", .{@errorName(err)});
         }

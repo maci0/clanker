@@ -26,7 +26,7 @@ Both `clanker repl` and `clanker run` render the same live status while a turn i
 - a `⚙ <tool names>` line when a tool batch starts, and a `↳ <ms>` line when it finishes,
 - a bold `›` gutter marking where the model's actual answer begins,
 - the answer itself rendered live: `**bold**`, `*italic*`, `` `inline code` ``, fenced blocks, and `- ` bullets turn into real ANSI styling as tokens stream in (`MdStream` in `src/tui/transcript.zig`; a marker split across two deltas, e.g. `**` arriving as two 1-byte chunks, is buffered and resolved once the rest arrives),
-- a dim stats footer per turn: `[turn: 1234 in / 567 out · 4.2s · 135.1 tok/s · cache 82% · $0.0031 · ctx 12.3k/128k (10%)]`. One formatter behind both surfaces (`src/tui/stats.zig`): `clanker run` prints it on stderr, `clanker repl` appends it to the transcript as the last line of the turn. A model with no `cost_per_1m_input`/`cost_per_1m_output` in the catalogue drops the `$` segment rather than claiming the turn was free, and a provider that reported no cache accounting drops `cache` rather than showing 0%.
+- a dim stats footer per turn: `[turn: 1234 in / 567 out · 4.2s · 135.1 tok/s · cache 82% · $0.0031 · ctx 12.3k/128k (10%)]`. One formatter behind both surfaces (`src/tui/turn_stats.zig`): `clanker run` prints it on stderr, `clanker repl` appends it to the transcript as the last line of the turn. A model with no `cost_per_1m_input`/`cost_per_1m_output` in the catalogue drops the `$` segment rather than claiming the turn was free, and a provider that reported no cache accounting drops `cache` rather than showing 0%.
 
 The vaxis REPL adds two things `clanker run` has no use for, since a one-shot run has no history to lose:
 - a running `ctx <used>/<window> (<pct>%)` meter, the tokens the session has spent, and its cost so far, in the status bar next to the provider/model,
@@ -508,10 +508,10 @@ changes as tools are added.
 | `image` | `.` | Read an image file and return it as a multimodal part, so the model can see it |
 | `ask_user` | none | Put a multiple-choice question to the human, to another clanker instance, or (in a sub-agent run) to the parent agent via `{"parent": true}` |
 | `forget_note` | `state` | Remove learnings matching a substring, with `dry_run` to see what would go |
-| `search_code` | none | Search this project via `{"engine": "rg" \| "ast-grep" \| "semcode", "query", "path"}` |
+| `repo_search` | none | Search this project via `{"engine": "rg" \| "ast-grep" \| "semcode", "query", "path"}` |
 | `symbols` | none | Find the Zig declaration site of a fn, const, struct, enum, or union |
 | `std_api` | none | Look up a Zig 0.16 std signature and docs before writing code against it |
-| `code_search` | none | Search open-source code through Sourcegraph |
+| `sourcegraph_search` | none | Search open-source code through Sourcegraph |
 | `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
 | `fetch_web` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
 | `web_search` | none | No-key web search: tries DuckDuckGo Lite first, transparently falls back to Bing Search RSS when DDG is unreachable, bot-challenged, or empty. Input: `{"query", "max_results" (1-20, default 8), "region"}`; returns `{ok, backend, query, count, results:[{title,url,snippet}]}` |
@@ -531,7 +531,7 @@ changes as tools are added.
 | `subagent` | none | Delegate a task to a nested sub-agent run (own context, bounded iterations, dedicated thread) |
 | `rlm` | none | Recursive Language Model: recursively call a sub-LM over input chunks with bounded depth |
 | `arena` | `state/arena/` | Run a bounded, judged debate between two positions, or a 3-8 way Battle Royale, and return a verdict traceable to the move transcript. Rules live in `tools/zig/arena_match.zig` (host-tested); turns go through `ck_llm`, one bounded completion per move |
-| `compare` | `state/compare/` | Put one prompt to 2-8 configured models at once and show the answers unlabeled, so a winner is picked on the answer rather than the badge. The entrant calls go through `ck_llm_many`, so they run concurrently; the display order is derived from the comparison id and each model's own names are struck out of its own answer. Rules live in `tools/zig/compare_blind.zig` (host-tested) |
+| `compare` | `state/compare/` | Put one prompt to 2-8 configured models at once and show the answers unlabeled, so a winner is picked on the answer rather than the badge. The entrant calls go through `ck_llm_many`, so they run concurrently; the display order is derived from the comparison id and each model's own names are struck out of its own answer. Rules live in `tools/zig/compare_logic.zig` (host-tested) |
 | `reasoning` | `state/` | Read recent reasoning traces recorded from reasoning models (`state/reasoning.jsonl`) |
 | `kanban_add`, `kanban_move`, `kanban_claim`, `kanban_update`, `kanban_log`, `kanban_subtask`, `kanban_depend`, `kanban_cost`, `kanban_list`, `kanban_delete` | none | Work the shared Kanban board (folded from the board room's chat log, not a file): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
 
@@ -539,16 +539,16 @@ Internal tools, never offered to the model:
 
 | Tool | Filesystem | Purpose |
 |------|------------|---------|
-| `cmd_tools` | `tools/manifests/` | List registered tools |
-| `cmd_sessions` | `state/sessions/` | List saved conversations |
-| `cmd_graph` | `state/runs/` | Render the latest execution graph |
-| `cmd_status` | none — reads clanker's own config through the host (ck_harness_config) | Show this instance and its peers |
-| `cmd_plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
-| `cmd_autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`) |
+| `tools` | `tools/manifests/` | List registered tools |
+| `sessions` | `state/sessions/` | List saved conversations |
+| `graph` | `state/runs/` | Render the latest execution graph |
+| `status` | none — reads clanker's own config through the host (ck_harness_config) | Show this instance and its peers |
+| `plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
+| `autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`) |
 | `webui` | none | Serve the web UI at `GET /`. Same-origin only: every script, style and font comes from this server's own `/webui/*` routes, with no CDN and no third-party origin (`script-src 'self'`). Not a single file — the page is many small ES modules, each served on its own route |
 | `translate` | none | Transform plugin, off by default: translates tool results through `ck_llm` |
 | `board` | none | The whole board operation surface behind one entry point, used by `/api/board`; agents use the `kanban_*` tools instead (same wasm, one op each) |
-| `cmd_janitor` | `state/` | Report what old runs left behind, for `/api/janitor` |
+| `janitor` | `state/` | Report what old runs left behind, for `/api/janitor` |
 | `knowledge` | `state/` | Knowledge collections behind `/api/knowledge`: list, create, delete, add or search documents |
 | `prompts` | `state/` | Saved prompt templates behind `/api/prompts` |
 | `session_export` | `state/` | Render one saved session as a self-contained HTML transcript (`clanker session export`) |
@@ -602,7 +602,7 @@ The `opencv` tool is the shape to copy when a capability has no in-process WASM 
 
 The **Runs** panel picks any recorded run and draws its graph: one row per node, grouped by iteration, with a bar whose width is that node's share of the slowest node in the run. LLM rows carry prompt/completion tokens, tool rows the result size, and the closing `final` row the answer size. The `final` node repeats the duration of the LLM call that produced it, so it is deliberately drawn without a bar rather than counting that time twice.
 
-The panel reads `GET /api/runs` and `GET /api/runs/<run-id>`, both answered by the `cmd_graph` plugin's `json` modes. The harness never reads `state/runs/` itself: run ids are validated as `run-<digits>` before they reach the plugin, and the graph is parsed and re-emitted rather than passed through, so a hand-edited file under `state/runs/` cannot become a response body verbatim.
+The panel reads `GET /api/runs` and `GET /api/runs/<run-id>`, both answered by the `graph` plugin's `json` modes. The harness never reads `state/runs/` itself: run ids are validated as `run-<digits>` before they reach the plugin, and the graph is parsed and re-emitted rather than passed through, so a hand-edited file under `state/runs/` cannot become a response body verbatim.
 
 ### Transform chains
 
@@ -628,7 +628,9 @@ The shipped `translate` plugin combines all of it: an `after` transform on every
 
 ## REPL slash commands
 
-A line starting with `!` is a shell escape (see below), a line starting with `/` is a command, and anything else is sent to the agent as a task. Two keys reach the same set without typing a name: **Ctrl-P** opens a fuzzy palette over the whole registry, matching mid-word and on the description, and **Ctrl-R** searches the transcript. Tab completes a partly-typed `/command` in place. All three are listed in the keys block `/help` generates, so the in-app list is the one that cannot go stale. The command set is one table in the source, `command_registry` in `src/tui/repl_vaxis.zig`, which is also what `/help` and Tab-complete are generated from. Some entries dispatch to the internal WASM tool `cmd_<name>`; the rest run in-process, either handling the line themselves or turning it into an agent task. A bare `exit` or `quit` also leaves the REPL.
+A line starting with `!` is a shell escape (see below), a line starting with `/` is a command, and anything else is sent to the agent as a task. Two keys reach the same set without typing a name: **Ctrl-P** opens a fuzzy palette over the whole registry, matching mid-word and on the description, and **Ctrl-R** searches the transcript. Tab completes a partly-typed `/command` in place. All three are listed in the keys block `/help` generates, so the in-app list is the one that cannot go stale. The command set is one table in the source, `command_registry` in `src/tui/repl.zig`, which is also what `/help` and Tab-complete are generated from. Some entries dispatch to an internal WASM guest with the same bare name; the rest run in-process, either handling the line themselves or turning it into an agent task. A bare `exit` or `quit` also leaves the REPL.
+
+Composer editing follows readline conventions: Ctrl-U kills to the start, Ctrl-K to the end, Ctrl-W the preceding whitespace-delimited word, and Ctrl-Y yanks the most recently killed text. That private kill ring is separate from the system clipboard; Ctrl-Shift-C/V copy and paste through the terminal.
 
 | Command | Runs as | Description |
 |---------|---------|-------------|
@@ -636,11 +638,11 @@ A line starting with `!` is a shell escape (see below), a line starting with `/`
 | `/model [query]` | in-process | Switch provider/model through a fuzzy picker (Enter picks, Esc cancels) |
 | `/workflows` | in-process | List reusable prompt workflows |
 | `/workflow <name> [args]` | in-process | Run a workflow (expands `{{args}}`, then runs it as a task) |
-| `/sessions`, `/history` | `cmd_sessions` | List saved conversations |
-| `/graph` | `cmd_graph list` | List recorded runs (same as `clanker graph`) |
-| `/status` | `cmd_status` | Show instance identity and configured peers |
-| `/tools` | `cmd_tools` | List registered tools (same as `clanker tools`) |
-| `/plugins [on\|off <name>]`, `/plugin [on\|off <name>]` | `cmd_plugins` | List plugins or switch an optional one on or off; the REPL reloads its tool catalog after a change |
+| `/sessions`, `/history` | `sessions` | List saved conversations |
+| `/graph [run-id]` | `graph` | List recorded runs, or render one as a timeline (same as `clanker graph`) |
+| `/status` | `status` | Show instance identity and configured peers |
+| `/tools` | `tools` | List registered tools (same as `clanker tools`) |
+| `/plugins [on\|off <name>]`, `/plugin [on\|off <name>]` | `plugins` | List plugins or switch an optional one on or off; the REPL reloads its tool catalog after a change |
 | `/theme [name]` | in-process | List or switch the color theme (`mocha`, `latte`, `tokyonight`, …) |
 | `/autoresearch ...` | in-process | Measurement loop (see `/autoresearch --help`) |
 | `/goal <intent>` | in-process | Design and persist a goal (runs the agent) |
@@ -660,22 +662,22 @@ A line starting with `!` is a third input mode, checked before the command table
 
 It is not a shell. The line is split into one fixed argv — whitespace separates arguments, `'…'` or `"…"` groups one argument that contains spaces, there are no backslash escapes — and that argv goes through the same `ck_exec` gate a WASM tool's exec call goes through (`host.execUnderPolicy` → `host.execDenial`). So there are no pipes, redirections, globs or `$VAR` expansion, because there is no shell to expand them; the child also gets the same filtered environment a tool's subprocess gets, which is why an allowed binary cannot print this project's API keys.
 
-The commands it may run are the union of every registered tool's `exec_allow` (`ast-grep`, `gh`, `git`, `rg`, `semcode`, `uv`, `zig`, `zls` as shipped) plus anything in `agent.repl_exec_allow`. A bare `!` prints usage and that list. The rest of the policy still applies: `git` is limited to its local verbs, the deny tokens (`reset`, `rebase`, `rm`, `-f`, …) still refuse, and a refusal is printed as a transcript line saying which token tripped it. A non-zero exit is reported as `[! exit N]`; output is control-stripped like every other untrusted string and capped at 500 lines.
+The commands it may run are the union of every registered tool's `exec_allow` (`ast-grep`, `gh`, `git`, `rg`, `semcode`, `uv`, `zig`, `zls` as shipped) plus anything in `agent.repl_exec_allow`. A bare `!` prints usage and that list. The rest of the policy still applies: `git` is limited to its local verbs, the deny tokens (`reset`, `rebase`, `rm`, `-f`, …) still refuse, and a refusal is printed as a transcript line saying which token tripped it. A non-zero exit is reported as `[! exit N]`; output is control-stripped like every other untrusted string and capped at 200 lines.
 
 ### `/graph`
 
 Every agent run records an execution graph and writes it to `state/runs/run-<timestamp>.json` on exit (`src/agent/graph.zig`), unless `modules.graphs` is `false`.
 
-The REPL's `/graph` dispatches `cmd_graph` with the `list` argument (`command_registry`, `src/tui/repl_vaxis.zig`), so it prints **one line per recorded run**, not a single run's timeline. With nothing recorded yet it prints `(no runs yet; clanker run creates one)`.
+Bare `/graph` dispatches `graph` with the `list` argument, so it prints one line per recorded run. `/graph <run-id>` and `clanker graph <run-id>` both render that run as an ASCII timeline. With nothing recorded yet the listing prints `(no runs yet; clanker run creates one)`.
 
-To render one run as an ASCII timeline, pass its id to the CLI — `clanker graph <run-id>` — which prints a header plus one line per node grouped by iteration:
+The timeline has a header plus one line per node grouped by iteration:
 
 ```
 run-1786365428 — summarize the config
   (kimi-k3, 8421ms, prompt=3190 completion=412)
 iter 1
   llm  kimi-k3  3190/180 tok, 5120ms
-  tool search_code  2048 B
+  tool repo_search  2048 B
 iter 2
   llm  kimi-k3  3402/232 tok, 3301ms
   done 512 B, stop
@@ -818,7 +820,7 @@ Each names the provider (or model key) and the fix. All fail at startup rather t
 
 A key that doesn't belong in its section (a typo like `mx_iterations`) doesn't fail the load — it logs `unknown key '<name>' in <section> (ignored — check spelling)` and falls back to that field's default, so a misspelling is visible in the startup log instead of silently taking effect as "unset."
 
-Internally, `Config.load` distributes the top-level `models` table into each `Provider`'s own `models` map at load time (`distributeModels` in `src/config.zig`), so everything downstream — `Provider.activeModel()`, `resolveProvider`, the LLM client, the agent loop's context budgeting — still sees the same per-provider model map it always has. Only the on-disk shape changed; wasm guest tools that need structured config fields (`peers`, `providers`, `cmd_status`, `ask_user`) go through a `ck_harness_config` host function rather than reading `config.toml` themselves, since a `wasm32-freestanding` guest carries no TOML parser. `config_view` is the exception for its whole-file dump (raw bytes). Its `{"section":...}` filter reads the same host JSON, which includes every non-secret top-level section of the merged config (`agent` budgets, `modules`, `models` as the reconstructed flat table, `chatrooms`, `tui`, `improve`, `web`, `serve`, `memory`, `notify`) and still omits `api_key_env` and `service_account_file`.
+Internally, `Config.load` distributes the top-level `models` table into each `Provider`'s own `models` map at load time (`distributeModels` in `src/config.zig`), so everything downstream — `Provider.activeModel()`, `resolveProvider`, the LLM client, the agent loop's context budgeting — still sees the same per-provider model map it always has. Only the on-disk shape changed; wasm guest tools that need structured config fields (`peers`, `providers`, `status`, `ask_user`) go through a `ck_harness_config` host function rather than reading `config.toml` themselves, since a `wasm32-freestanding` guest carries no TOML parser. `config_view` is the exception for its whole-file dump (raw bytes). Its `{"section":...}` filter reads the same host JSON, which includes every non-secret top-level section of the merged config (`agent` budgets, `modules`, `models` as the reconstructed flat table, `chatrooms`, `tui`, `improve`, `web`, `serve`, `memory`, `notify`) and still omits `api_key_env` and `service_account_file`.
 
 Full example:
 
@@ -882,7 +884,7 @@ Fields:
   - `compact_threshold_bytes`: if conversation exceeds this, compact history.
   - `max_total_tokens`: total token budget across the run.
   - `max_tokens_per_turn`, `max_history_tokens`: per-turn input cap and total history budget before compaction kicks in.
-  - `tools_dir`, `skills_dir`, `system_prompt_file`, `learnings_file`, `state_dir`: paths the agent reads/writes at runtime.
+  - `tools_dir`: one directory or a list of them (default `tools/manifests`). Later-listed wins on a tool name collision. `skills_dir`, `system_prompt_file`, `learnings_file`, `state_dir`: other paths the agent reads/writes at runtime.
   - `global_instructions_file`: optional path to device-global operator instructions. When empty (default), clanker loads `$HOME/.agents/AGENTS.md` if present. Missing or empty files are skipped.
   - `sandbox_root`: the run's root. `ck_fs_*` paths resolve under it and `ck_exec`
     children run in it, so the file tools and the commands agree on one tree
@@ -894,7 +896,7 @@ Fields:
   - `seed`: sampling seed.
   - `workflows_dir`: where reusable prompt workflows are read from (default `workflows`).
   - `chains_dir`: where transform chains are read from (default `chains`).
-  - `fallback_provider`: provider to route image-bearing work to when the selected provider has no vision-capable model (default unset). Ignored unless it names a configured provider that differs from the current one and has a vision model; with nothing set, the first other provider that qualifies is used.
+  - `fallback_provider` / `fallback_providers`: ordered fallbacks after the selected provider cannot serve a request (default unset). A string still means one name. After the primary exhausts its own retries (or fails before any content is delivered), the next configured name is tried. Also the preferred vision-routing target: ignored unless it names a configured provider that differs from the current one and has a vision model; with nothing set, the first other provider that qualifies is used.
   - `ask_timeout_seconds`: how long a serve-side `ask_user` question waits for the browser before giving up (default 120). Confirm questions share the timeout.
   - `provider_check_timeout_seconds`: how long `providers check` waits for one provider before reporting it as timed out and moving on (default 10). Without a ceiling a single unreachable endpoint costs the whole sweep the OS connect timeout (~75s on macOS). `0` disables the ceiling; `[providers.<name>] check_timeout_seconds` overrides it per provider.
   - `confirm_writes`: gate write-capable tool calls (exec or filesystem access in the descriptor, or `"confirm": true`) on a human's allow/deny. `"never"` (default) asks nobody; `"browser"` asks streaming web runs; `"always"` also asks interactive REPL sessions — the call blocks on a modal in `clanker repl` (Enter allows, Esc denies, Ctrl-C denies and stops the turn), and anything short of an explicit allow, a timeout after `ask_timeout_seconds` included, refuses the call. Runs with no human channel — headless one-shots, the improve loop, nested sub-agents — are never gated. Read-only tools opt out with `"confirm": false` in their manifest.

@@ -4,7 +4,7 @@ const build_zon = @import("build.zig.zon");
 // Pure-logic modules under tools/zig/ that don't export the tool ABI (run/scratch/host_arena).
 // They are imported by other tools, not standalone guests, so the wasm build skips them
 // and `zig build test` runs their tests on the host target instead.
-const host_tested_helpers = [_][]const u8{ "alphaxiv_mcp", "arena_match", "cards", "compare_blind", "manifest_scan", "search_parse" };
+const host_tested_helpers = [_][]const u8{ "alphaxiv_client", "arena_match", "cards", "compare_logic", "hashline", "kernel_magic", "manifest_scan", "search_parse" };
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
@@ -24,8 +24,11 @@ pub fn build(b: *std.Build) void {
     // The zig the gates shell out to. `zig fmt` and `zig ast-check` run with
     // `cwd` set to a staging or temp directory, so a bare "zig" is resolved
     // against a PATH the spawn does not reliably see; the interpreter running
-    // this build is both the right version and an absolute path.
-    build_options.addOption([]const u8, "zig_exe", b.graph.zig_exe);
+    // this build is both the right version and an absolute path. Release
+    // builds omit it: the path is host-specific, useless on any other machine,
+    // and would make otherwise identical release artifacts byte-different.
+    const zig_exe_for_options: []const u8 = if (optimize == .Debug) b.graph.zig_exe else "";
+    build_options.addOption([]const u8, "zig_exe", zig_exe_for_options);
 
     // The host, with one adjustment: zwasm links libc, and on a glibc host the
     // crt1.o carries SFrame relocations this lld cannot resolve, so linux
@@ -86,9 +89,10 @@ pub fn build(b: *std.Build) void {
             // Debug info embeds the absolute checkout path (DWARF comp-dir
             // and per-file paths), so two clean builds of the same source
             // from differently-named directories produce byte-different
-            // binaries. Debug builds keep symbols for local debugging;
-            // release builds strip them so the shipped artifact does not
-            // encode where it happened to be built.
+            // Debug binaries. Debug builds keep symbols and embed
+            // build_options.zig_exe for local gate runs; release builds strip
+            // symbols and omit zig_exe so shipped artifacts do not encode the
+            // build host.
             .strip = optimize != .Debug,
             .imports = &.{
                 .{ .name = "zwasm", .module = zwasm_mod },
@@ -119,6 +123,11 @@ pub fn build(b: *std.Build) void {
         .target = test_target,
         .optimize = optimize,
     });
+    const ui_vendor_test_mod = b.createModule(.{
+        .root_source_file = b.path("ui/vendor.zig"),
+        .target = test_target,
+        .optimize = optimize,
+    });
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = test_target,
@@ -128,6 +137,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "build_options", .module = build_options.createModule() },
             .{ .name = "vaxis", .module = vaxis_test_dep.module("vaxis") },
             .{ .name = "toml", .module = toml_test_mod },
+            .{ .name = "vendor", .module = ui_vendor_test_mod },
         },
     });
     const exe_tests = b.addTest(.{ .root_module = test_mod, .use_llvm = true });
@@ -178,8 +188,7 @@ pub fn build(b: *std.Build) void {
 
     const tools_src_path = b.pathFromRoot("tools/zig");
     var dir = std.Io.Dir.openDirAbsolute(io, tools_src_path, .{ .iterate = true }) catch |err| {
-        std.debug.print("warning: cannot open {s}: {s}\n", .{ tools_src_path, @errorName(err) });
-        return;
+        std.debug.panic("cannot open {s}: {s}", .{ tools_src_path, @errorName(err) });
     };
     defer dir.close(io);
 
@@ -266,8 +275,7 @@ pub fn build(b: *std.Build) void {
     for (c_langs) |lang| {
         const lang_src_path = b.pathFromRoot(lang.dir);
         var lang_dir = std.Io.Dir.openDirAbsolute(io, lang_src_path, .{ .iterate = true }) catch |err| {
-            std.debug.print("warning: cannot open {s}: {s}\n", .{ lang_src_path, @errorName(err) });
-            continue;
+            std.debug.panic("cannot open {s}: {s}", .{ lang_src_path, @errorName(err) });
         };
         defer lang_dir.close(io);
 
@@ -310,7 +318,7 @@ pub fn build(b: *std.Build) void {
     run_tests.step.dependOn(tools_step);
     // The pty-driven `tui-test` step (src/tui/testing/) drove the old
     // hand-rolled REPL (src/tui/*) over a real pty; removed with it when
-    // the REPL migrated to libvaxis (src/tui/repl_vaxis.zig).
+    // the REPL migrated to libvaxis (src/tui/repl.zig).
 
     // -------------------------------------------------------------- e2e tests
     // Black-box tests (tests/e2e/) that spawn the actual built `clanker`
@@ -330,8 +338,8 @@ pub fn build(b: *std.Build) void {
     // manifests directory absolutely, rather than duplicating either.
     e2e_options.addOption([]const u8, "zig_out_dir", b.pathFromRoot("zig-out"));
     e2e_options.addOption([]const u8, "tools_manifests_dir", b.pathFromRoot("tools/manifests"));
-    const rawhttp_mod = b.createModule(.{
-        .root_source_file = b.path("src/util/rawhttp.zig"),
+    const raw_http_mod = b.createModule(.{
+        .root_source_file = b.path("src/util/raw_http.zig"),
         .target = test_target,
         .optimize = optimize,
         .link_libc = true,
@@ -343,7 +351,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "e2e_options", .module = e2e_options.createModule() },
-            .{ .name = "rawhttp", .module = rawhttp_mod },
+            .{ .name = "raw_http", .module = raw_http_mod },
         },
     });
     const e2e_tests = b.addTest(.{ .root_module = e2e_mod });

@@ -31,6 +31,7 @@ extern fn ck_fs_list(path_ptr: u32, path_len: u32) u32;
 extern fn ck_getenv(name_ptr: u32, name_len: u32) u32;
 extern fn ck_exec(argv_ptr: u32, argv_len: u32) u32;
 extern fn ck_docker(req_ptr: u32, req_len: u32) u32;
+extern fn ck_kernel(req_ptr: u32, req_len: u32) u32;
 extern fn ck_llm(prompt_ptr: u32, prompt_len: u32) u32;
 extern fn ck_llm_many(req_ptr: u32, req_len: u32) u32;
 extern fn ck_chat(op_ptr: u32, op_len: u32) u32;
@@ -840,6 +841,11 @@ pub const DockerError = error{ OutOfMemory, WriteFailed, SandboxDenied, InvalidA
 
 /// Calls the harness's Docker-socket host function with a JSON request
 /// {"method": "...", "path": "..."}; returns the raw response body.
+pub fn kernelEval(req: []const u8) FsError![]const u8 {
+    const d = sliceToMem(req);
+    return fsPathQuery(ck_kernel(d.ptr, d.len));
+}
+
 pub fn dockerRequest(method: []const u8, path: []const u8) DockerError![]const u8 {
     const wbuf = std.heap.wasm_allocator.alloc(u8, 8 * 1024) catch return error.OutOfMemory;
     defer std.heap.wasm_allocator.free(wbuf);
@@ -941,10 +947,39 @@ pub fn jsonStrField(obj: std.json.ObjectMap, name: []const u8) []const u8 {
 /// providers (arena, compare). Parsed from `harnessConfig()` with
 /// `ignore_unknown_fields`.
 pub const HarnessProvider = struct { default_model: []const u8 = "" };
+pub const HarnessAgent = struct {
+    tools_dir: []const u8 = "",
+    tools_dirs: []const []const u8 = &.{},
+};
+pub const HarnessKernel = struct { enabled: bool = false, max_output_bytes: u32 = 65536 };
 pub const HarnessConfig = struct {
     default_provider: []const u8 = "",
     providers: std.json.ArrayHashMap(HarnessProvider) = .{},
+    agent: HarnessAgent = .{},
+    kernel: HarnessKernel = .{},
 };
+
+/// The first configured manifest directory (scaffold destination), or the
+/// in-tree default when the host denies ck_harness_config or the key is absent.
+pub fn toolsDir() []const u8 {
+    const cfg = parseHarnessConfig();
+    if (cfg.agent.tools_dir.len > 0) return cfg.agent.tools_dir;
+    if (cfg.agent.tools_dirs.len > 0) return cfg.agent.tools_dirs[0];
+    return "tools/manifests";
+}
+
+/// Every configured manifest directory, last-listed last. Falls back to
+/// `toolsDir()` so a host that only emitted the singular key still works.
+pub fn toolsDirs() []const []const u8 {
+    const cfg = parseHarnessConfig();
+    if (cfg.agent.tools_dirs.len > 0) return cfg.agent.tools_dirs;
+    if (cfg.agent.tools_dir.len > 0) {
+        const one = alloc.alloc([]const u8, 1) catch return &.{};
+        one[0] = cfg.agent.tools_dir;
+        return one;
+    }
+    return &.{"tools/manifests"};
+}
 
 /// Generates a time-and-content-seeded id with the given prefix,
 /// e.g. "arena-1723456789-a1b2c3d4". Two calls in the same second with

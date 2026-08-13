@@ -56,7 +56,8 @@
 # just make sure it is exported.
 
 set -euo pipefail
-cd "$(dirname "$0")"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
 
 [ "${BASH_VERSINFO[0]:-0}" -ge 4 ] || { printf 'error: bash 4+ required\n' >&2; exit 1; }
 
@@ -64,7 +65,7 @@ info() { printf '==> %s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 # Print the header comment block, however long it grows.
-usage() { sed -n '2,/^$/!d; s/^# \?//p' "$0"; }
+usage() { sed -En '2,/^$/{s/^# ?//p;}' "$0"; }
 
 # Flip the first '- [ ] ...' line matching $1 to '- [x]'. Compared as whole
 # lines, so item text containing regex or glob characters is safe.

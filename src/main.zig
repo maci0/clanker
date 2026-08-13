@@ -5,12 +5,12 @@ const vaxis = @import("vaxis");
 const cli = @import("cli.zig");
 const log = @import("util/log.zig");
 const dotenv = @import("util/dotenv.zig");
-const autolearn = @import("agent/autolearn.zig");
+const auto_learn = @import("agent/auto_learn.zig");
 const host = @import("sandbox/host.zig");
 const vertex_token = @import("llm/vertex_token.zig");
 const config = @import("config.zig");
 
-// `clanker repl` (src/tui/repl_vaxis.zig) puts the terminal in raw mode with
+// `clanker repl` (src/tui/repl.zig) puts the terminal in raw mode with
 // an alt-screen buffer. Without this, a panic there leaves the terminal
 // broken (raw mode, alt-screen, mouse tracking all still on) with the panic
 // message invisible inside the alt-screen that never gets popped, so the
@@ -33,6 +33,7 @@ comptime {
     _ = @import("llm/providers.zig");
     _ = @import("llm/providers/api.zig");
     _ = @import("llm/providers/common.zig");
+    _ = @import("llm/sampling_profiles.zig");
     _ = @import("llm/providers/openai.zig");
     _ = @import("llm/providers/anthropic.zig");
     _ = @import("llm/providers/vertex.zig");
@@ -47,29 +48,35 @@ comptime {
     _ = @import("tools/usage.zig");
     _ = @import("agent/system_prompt.zig");
     _ = @import("agent/loop.zig");
+    _ = @import("agent/advisor.zig");
+    _ = @import("agent/thinking.zig");
+    _ = @import("agent/ttsr.zig");
+    _ = @import("agent/subprocess.zig");
     _ = @import("agent/session.zig");
     _ = @import("agent/graph.zig");
     _ = @import("agent/subagent.zig");
     _ = @import("util/dotenv.zig");
     _ = @import("util/log.zig");
+    _ = @import("util/redact.zig");
     _ = @import("util/atomic_write.zig");
-    _ = @import("util/filelock.zig");
-    _ = @import("util/diskcap.zig");
-    _ = @import("util/ensuredir.zig");
+    _ = @import("util/file_lock.zig");
+    _ = @import("util/disk_cap.zig");
+    _ = @import("util/ensure_dir.zig");
     _ = @import("util/json.zig");
-    _ = @import("util/rawhttp.zig");
-    _ = @import("util/runlock.zig");
+    _ = @import("util/raw_http.zig");
+    _ = @import("util/run_lock.zig");
     _ = @import("util/toml_bridge.zig");
-    _ = @import("util/toolout.zig");
+    _ = @import("util/toml_edit.zig");
+    _ = @import("util/tool_out.zig");
     _ = @import("util/utf8.zig");
-    _ = @import("agent/autolearn.zig");
+    _ = @import("agent/auto_learn.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("evals/runner.zig");
     _ = @import("improve/proposal.zig");
     _ = @import("improve/plan.zig");
     _ = @import("improve/history.zig");
     _ = @import("improve/reverts.zig");
-    _ = @import("improve/inert.zig");
+    _ = @import("improve/inert_check.zig");
     _ = @import("improve/engine.zig");
     _ = @import("improve/retire.zig");
     _ = @import("gate/checks.zig");
@@ -84,9 +91,9 @@ comptime {
     _ = @import("tui/transcript.zig");
     _ = @import("tui/theme.zig");
     _ = @import("tui/syntax.zig");
-    _ = @import("tui/stats.zig");
+    _ = @import("tui/turn_stats.zig");
     _ = @import("tui/mascot.zig");
-    _ = @import("tui/repl_vaxis.zig");
+    _ = @import("tui/repl.zig");
     _ = @import("serve/proxy.zig");
     _ = @import("serve/proxy_transcode.zig");
     _ = @import("cli.zig");
@@ -94,8 +101,9 @@ comptime {
     _ = @import("research/engine.zig");
     _ = @import("research/ledger.zig");
     _ = @import("research/harness.zig");
-    _ = @import("research/autoresearch.zig");
+    _ = @import("research/auto_research.zig");
     _ = @import("agent/workflows.zig");
+    _ = @import("agent/goal_prompt.zig");
     _ = @import("schedule/cron.zig");
     _ = @import("schedule/store.zig");
     _ = @import("schedule/runner.zig");
@@ -191,8 +199,8 @@ pub fn main(init: std.process.Init) !void {
             error.ArenaMixedPositions => cli.printUsageError(init.io, "use --for/--against for a two-way match or repeated --position for a battle royale, not both", .{}),
             error.ArenaTooFewPositions => cli.printUsageError(init.io, "a battle royale needs at least 2 --position flags (3 to 8 is the interesting range)", .{}),
             error.CompareTooFewModels => cli.printUsageError(init.io, "a comparison needs at least 2 --with flags, or none at all to compare every configured provider", .{}),
-            error.FlagNotForCommand => cli.printUsageError(init.io, "{s} is not an option for this command (see `clanker <command> --help`)", .{diag}),
-            error.BadSubcommand => cli.printUsageError(init.io, "unrecognized subcommand '{s}' (see `clanker <command> --help`)", .{diag}),
+            error.FlagNotForCommand => cli.printUsageError(init.io, "{s} is not an option for this command; run `clanker {s} --help`", .{ diag, arg_list.items[1] }),
+            error.BadSubcommand => cli.printUsageError(init.io, "unrecognized subcommand '{s}'; run `clanker {s} --help`", .{ diag, arg_list.items[1] }),
             error.PromptLooksLikeCommand => cli.printUsageError(init.io, "'{s}' looks like a quoted command; drop the quotes to run it, or use `clanker run \"{s}\"` to submit it as a task", .{ diag, diag }),
             error.OutOfMemory => unreachable,
         }
@@ -204,7 +212,13 @@ pub fn main(init: std.process.Init) !void {
             error.UnknownArg => cli.suggestFlag(diag) != null,
             else => false,
         };
-        if (!skip_hint) cli.printUsageHint(init.io);
+        if (!skip_hint) {
+            if (err == error.UnknownCommand or arg_list.items.len < 2) {
+                cli.printUsageHint(init.io);
+            } else {
+                cli.printUsageHintFor(init.io, arg_list.items[1]);
+            }
+        }
         // Usage errors (bad/missing args) are the caller's fault, not
         // clanker's: exit nonzero so scripts and `&&` chains don't mistake a
         // rejected invocation for success.
@@ -237,6 +251,10 @@ pub fn main(init: std.process.Init) !void {
         }
     }
     cli.run(init, opts) catch |err| {
+        // A downstream reader such as `head` closing early is successful
+        // pipeline control, not an operator-facing clanker failure. Every
+        // list/table command writes through this boundary, so handle it once.
+        if (err == error.BrokenPipe) std.process.exit(0);
         // Common failures get a human line with a recovery hint, not a
         // timestamped log record: this is an interactive moment, not a log
         // collector ingest path.

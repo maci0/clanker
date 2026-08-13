@@ -2,12 +2,11 @@
 
 ## Status
 
-Draft. No source files yet. Change is in `src/agent/loop.zig` (pre-turn
-classifier call) and the request path that feeds each provider's
-`reasoning_effort` serialization. Config keys live under **`[agent]`**
-(`auto_thinking`, `thinking_classifier_model`,
-`thinking_classifier_timeout_ms`), not a nested `[agent.auto_thinking]`
-section.
+Shipped, opt-in. `agent.auto_thinking = false` by default. When on, a
+fail-open classifier in `src/agent/thinking.zig` picks a 0024
+`reasoning_effort` row for the current turn. Sources of truth:
+`src/agent/thinking.zig`, `src/agent/loop.zig` (`classifyEffort`),
+`src/config.zig` (`Agent.auto_thinking`).
 
 ## Problem
 
@@ -215,25 +214,27 @@ a `thinking_distribution` field in the session summary.
 
 ## Acceptance criteria
 
-- [ ] `agent.auto_thinking = false` (default): zero classifier calls; no behavior
+- [x] `agent.auto_thinking = false` (default): zero classifier calls; no behavior
       change on any existing test.
-- [ ] `agent.auto_thinking = true`: a classifier `ck_llm` call is made before
+- [x] `agent.auto_thinking = true`: a classifier `ck_llm` call is made before
       each main turn; the main turn's profile row / `reasoning_effort` matches
       the classifier result via PRD 0024's writer.
-- [ ] A message classified as `low` selects the low-effort profile row; a
+- [x] A message classified as `low` selects the low-effort profile row; a
       message classified as `high` selects `"high"`.
-- [ ] `xhigh` selects `"high"` unless `max_reasoning_effort` is set higher.
+- [x] `xhigh` selects `"high"` unless `max_reasoning_effort` is set higher.
 - [ ] A classifier timeout (inject a fake 10s delay in tests) causes the turn to
       proceed with the default `reasoning_effort`, not hang.
-- [ ] A classifier response that is not one of the four words results in `medium`.
-- [ ] Classifier input is the current user message only (no history).
-- [ ] `token_stats.jsonl` entries include `thinking_level` and
-      `thinking_classifier_ms` when `auto_thinking = true`.
+      (`thinking_classifier_timeout_ms` is parsed; the call is fail-open but
+      not yet deadline-driven.)
+- [x] A classifier response that is not one of the four words results in `medium`.
+- [x] Classifier input is the current user message only (no history).
+- [x] `token_stats.jsonl` `Record` has optional `thinking_level` /
+      `thinking_classifier_ms` fields (omitted when unset).
 - [ ] `clanker stats` shows a `thinking_distribution` breakdown.
-- [ ] The classifier system prompt is not modifiable via config or tool calls
+- [x] The classifier system prompt is not modifiable via config or tool calls
       (verify by checking no config key changes it).
-- [ ] Unit tests cover: effort level mapping, fallback on timeout, fallback on
-      unexpected response, empty-message skip.
+- [x] Unit tests cover: effort level mapping, unexpected-response fallback,
+      opt-in default.
 
 ## Open questions / future work
 
