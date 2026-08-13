@@ -15,6 +15,7 @@ const token_stats = @import("../stats/tokens.zig");
 const log = @import("../util/log.zig");
 const rawhttp = @import("../util/rawhttp.zig");
 const anthropic = @import("../llm/providers/anthropic.zig");
+const xcode = @import("proxy_transcode.zig");
 const build_options = @import("build_options");
 
 pub const Surface = enum { webui, proxy, both };
@@ -28,7 +29,10 @@ pub const default_idle_s: u32 = 60;
 pub const webui_reserved_slots: u32 = 8;
 
 const user_agent = "clanker/" ++ build_options.version;
-const extra_slots = 8;
+// Worst case: authHeaders (2) + overlayAnthropic (~3) + five copyIfPresent
+// forwards. setNamed drops silently when full, so undersizing loses a
+// forwarded header rather than crashing — size for the real maximum.
+const extra_slots = 12;
 
 pub fn isProxyPath(path: []const u8, surface: Surface) bool {
     return switch (surface) {
@@ -100,6 +104,9 @@ pub fn handle(ctx: Ctx) u16 {
     if (isModelsList(ctx.path) or modelsId(ctx.path) != null) {
         return writeAllow(ctx, 405, "GET");
     }
+    if (std.mem.eql(u8, ctx.path, "/v1/messages/count_tokens")) {
+        return writeCountTokens(ctx);
+    }
     return forward(ctx, family);
 }
 
@@ -128,7 +135,8 @@ const Resolved = struct {
 
 const LookupError = error{ ModelNotFound, ProtocolMismatch, MissingModel, AmbiguousProvider };
 
-pub fn lookup(cfg: *const config.Config, family: Family, model: ?[]const u8) LookupError!Resolved {
+/// `family` null means any configured provider (chat/messages unified routing).
+pub fn lookup(cfg: *const config.Config, family: ?Family, model: ?[]const u8) LookupError!Resolved {
     if (model) |raw| {
         const trimmed = std.mem.trim(u8, raw, " \t");
         if (trimmed.len == 0) return error.MissingModel;
@@ -137,6 +145,10 @@ pub fn lookup(cfg: *const config.Config, family: Family, model: ?[]const u8) Loo
         if (aliasOf(cfg, trimmed)) |dest| {
             if (try composite(cfg, family, dest)) |r| return r;
         }
+        // claude-code-proxy: "claude-…sonnet…" → sonnet/middle alias, or the
+        // single configured provider. Lets Claude Code keep its stock model
+        // names in front of a Qwen/OpenAI/Vertex backend.
+        if (try claudeSizeFallback(cfg, family, trimmed)) |r| return r;
         return error.ModelNotFound;
     }
     return uniqueProvider(cfg, family);
@@ -165,19 +177,36 @@ fn forward(ctx: Ctx, family: Family) u16 {
         return writeEnvelope(ctx, 400, "malformed_request", "stream must be a JSON boolean");
     }
 
-    const resolved = lookup(ctx.cfg, family, peek.model) catch |err| switch (err) {
-        error.MissingModel => return writeEnvelope(ctx, 400, "missing_required_parameter", "model is required when more than one provider speaks this protocol"),
+    const chat_route = isChatCompletions(ctx.path) or isMessagesCreate(ctx.path);
+    const filter: ?Family = if (chat_route) null else family;
+    const resolved = lookup(ctx.cfg, filter, peek.model) catch |err| switch (err) {
+        error.MissingModel => return writeEnvelope(ctx, 400, "missing_required_parameter", "model is required when more than one provider is configured"),
         error.ModelNotFound => return writeEnvelope(ctx, 400, "model_not_found", "Unknown model for this route"),
         error.ProtocolMismatch => return writeEnvelope(ctx, 400, "protocol_mismatch", "Model does not speak this protocol"),
         error.AmbiguousProvider => return writeEnvelope(ctx, 400, "missing_required_parameter", "Send a model or configure a single provider for this protocol"),
     };
 
-    if (resolved.provider.kind == .vertex_anthropic and !isMessagesCreate(ctx.path)) {
-        return writeEnvelope(ctx, 400, "unknown_endpoint", "vertex_anthropic only serves POST /v1/messages");
+    const up_family = xcode.upstreamFamily(resolved.provider.kind);
+    const need_xcode = chat_route and up_family != family;
+    if (!chat_route and resolved.provider.kind == .vertex_anthropic) {
+        return writeEnvelope(ctx, 400, "unknown_endpoint", "vertex_anthropic only serves chat / messages");
     }
 
     var upstream_body = ctx.body;
-    if (resolved.splice) {
+    if (need_xcode) {
+        upstream_body = transcodeRequest(arena, family, &resolved.provider, ctx.body) catch {
+            return writeEnvelope(ctx, 400, "malformed_request", "Could not transcode request for this backend");
+        };
+    } else if (resolved.provider.kind == .vertex_anthropic and isMessagesCreate(ctx.path)) {
+        upstream_body = xcode.rewriteVertexBody(arena, if (resolved.splice)
+            (spliceModel(arena, ctx.body, resolved.wire_id) catch {
+                return writeEnvelope(ctx, 400, "missing_required_parameter", "model must be a JSON string");
+            })
+        else
+            ctx.body) catch {
+            return writeEnvelope(ctx, 400, "malformed_request", "Could not rewrite Vertex body");
+        };
+    } else if (resolved.splice) {
         upstream_body = spliceModel(arena, ctx.body, resolved.wire_id) catch {
             return writeEnvelope(ctx, 400, "missing_required_parameter", "model must be a JSON string");
         };
@@ -185,7 +214,7 @@ fn forward(ctx: Ctx, family: Family) u16 {
 
     const streaming = peek.stream == .yes or wantsEventStream(ctx.headers_raw, ctx.path);
     const impl = providers.forKind(resolved.provider.kind);
-    const url = upstreamUrl(ctx.gpa, &resolved.provider, impl, ctx.path, ctx.query, streaming) catch {
+    const url = upstreamUrl(ctx.gpa, &resolved.provider, impl, ctx.path, ctx.query, streaming, need_xcode or resolved.provider.kind == .vertex_anthropic) catch {
         return writeEnvelope(ctx, 502, null, "Failed to build upstream URL");
     };
     defer ctx.gpa.free(url);
@@ -197,7 +226,7 @@ fn forward(ctx: Ctx, family: Family) u16 {
     defer cred.deinit(ctx.gpa);
 
     const t0 = std.Io.Timestamp.now(ctx.io, .awake);
-    const status = pipe(ctx, family, &resolved.provider, impl, cred, url, upstream_body, streaming) catch |err| {
+    const status = pipe(ctx, family, &resolved.provider, impl, cred, url, upstream_body, streaming, need_xcode) catch |err| {
         const ms = elapsedMs(ctx.io, t0);
         recordFail(ctx, arena, &resolved.provider, 0, @errorName(err), ms);
         return switch (err) {
@@ -221,6 +250,13 @@ fn forward(ctx: Ctx, family: Family) u16 {
     return status;
 }
 
+fn transcodeRequest(arena: std.mem.Allocator, client_family: Family, provider: *const config.Provider, body: []const u8) ![]u8 {
+    return switch (client_family) {
+        .openai => xcode.openaiToAnthropic(arena, provider, body, provider.kind == .vertex_anthropic),
+        .anthropic => xcode.anthropicToOpenai(arena, provider, body),
+    };
+}
+
 fn pipe(
     ctx: Ctx,
     family: Family,
@@ -230,8 +266,8 @@ fn pipe(
     url: []const u8,
     body: []const u8,
     streaming: bool,
+    need_xcode: bool,
 ) !u16 {
-    _ = family;
     const method = parseMethod(ctx.method) orelse return error.BadMethod;
     const uri = std.Uri.parse(url) catch return error.InvalidUrl;
 
@@ -247,8 +283,6 @@ fn pipe(
     } else {
         headers.content_type = .omit;
     }
-    if (headerValue(ctx.headers_raw, "accept")) |ac| headers.accept = .{ .override = ac };
-
     var extra: [extra_slots]std.http.Header = undefined;
     var extra_len: usize = 0;
 
@@ -259,6 +293,9 @@ fn pipe(
         extra_len += 1;
     }
     extra_len = overlayAnthropic(ctx, provider, cred, &extra, extra_len);
+    // Accept rides extra_headers: std.http 0.16's Request.Headers has no
+    // `accept` field (it was removed with the auto-Accept default).
+    extra_len = copyIfPresent(ctx.headers_raw, "accept", &extra, extra_len);
     extra_len = copyIfPresent(ctx.headers_raw, "openai-organization", &extra, extra_len);
     extra_len = copyIfPresent(ctx.headers_raw, "openai-project", &extra, extra_len);
     extra_len = copyIfPresent(ctx.headers_raw, "openai-beta", &extra, extra_len);
@@ -275,7 +312,7 @@ fn pipe(
         .abort = &abort,
         .first_byte_ns = timeoutNs(ctx.cfg.serve.proxy_first_byte_timeout_s, default_first_byte_s),
         .idle_ns = timeoutNs(ctx.cfg.serve.proxy_idle_timeout_s, default_idle_s),
-        .started = std.time.nanoTimestamp(),
+        .started = nowNs(ctx.io),
     };
     const watcher = std.Thread.spawn(.{}, Watch.loop, .{&watch}) catch null;
     defer {
@@ -312,6 +349,11 @@ fn pipe(
     const reason = reasonPhrase(status);
 
     if (streaming) {
+        if (need_xcode and status < 400) {
+            writeStreamHead(ctx.stream, status, reason, "text/event-stream");
+            try xcodeStream(ctx, family, impl, provider, &response, &watch);
+            return status;
+        }
         writeStreamHead(ctx.stream, status, reason, ctype);
         var buf: [8192]u8 = undefined;
         var transfer: [8192]u8 = undefined;
@@ -342,9 +384,114 @@ fn pipe(
         }
         body_buf.appendSlice(ctx.gpa, buf[0..nread]) catch return error.ConnectFailed;
     }
+    if (need_xcode and status < 400) {
+        var arena_state = std.heap.ArenaAllocator.init(ctx.gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        var err_detail: ?[]const u8 = null;
+        const parsed = impl.parseResponse(arena, body_buf.items, &err_detail) catch {
+            writeFixed(ctx.stream, status, reason, "application/json", body_buf.items);
+            return status;
+        };
+        const encoded = switch (family) {
+            .openai => xcode.openaiCompletion(ctx.gpa, provider.activeModelName(), parsed),
+            .anthropic => xcode.anthropicMessage(ctx.gpa, provider.activeModelName(), parsed),
+        } catch {
+            writeFixed(ctx.stream, status, reason, "application/json", body_buf.items);
+            return status;
+        };
+        defer ctx.gpa.free(encoded);
+        writeFixed(ctx.stream, status, reason, "application/json", encoded);
+        peekAndRecord(ctx, provider, status, encoded, false);
+        return status;
+    }
     writeFixed(ctx.stream, status, reason, ctype, body_buf.items);
     peekAndRecord(ctx, provider, status, body_buf.items, false);
     return status;
+}
+
+fn xcodeStream(
+    ctx: Ctx,
+    family: Family,
+    impl: *const providers.Provider,
+    provider: *const config.Provider,
+    response: anytype,
+    watch: *Watch,
+) !void {
+    var transfer: [8192]u8 = undefined;
+    const reader = response.reader(&transfer);
+    var sse: std.ArrayList(u8) = .empty;
+    defer sse.deinit(ctx.gpa);
+    var payloads: std.ArrayList([]const u8) = .empty;
+    defer payloads.deinit(ctx.gpa);
+    var openai_st = xcode.OpenaiStream{ .model = provider.activeModelName() };
+    var anth_st = xcode.AnthropicStream{ .model = provider.activeModelName() };
+    var chunk_arena_state = std.heap.ArenaAllocator.init(ctx.gpa);
+    defer chunk_arena_state.deinit();
+    var buf: [8192]u8 = undefined;
+    var total: usize = 0;
+    var at_eof = false;
+    while (true) {
+        const nread = reader.readSliceShort(&buf) catch break;
+        if (nread == 0) {
+            if (sse.items.len > 0) sse.appendSlice(ctx.gpa, "\n\n") catch {};
+            at_eof = true;
+        } else {
+            watch.markByte();
+            total += nread;
+            if (total > rawhttp.max_body_bytes) break;
+            sse.appendSlice(ctx.gpa, buf[0..nread]) catch break;
+        }
+        while (std.mem.find(u8, sse.items, "\n\n")) |frame_end| {
+            const frame = sse.items[0..frame_end];
+            payloads.clearRetainingCapacity();
+            xcode.ssePayloads(frame, &payloads, ctx.gpa) catch {};
+            for (payloads.items) |payload| {
+                defer _ = chunk_arena_state.reset(.retain_capacity);
+                const ev = impl.parseStreamEvent(chunk_arena_state.allocator(), payload) catch continue orelse continue;
+                switch (family) {
+                    .openai => {
+                        if (try openai_st.writeEvent(ctx.gpa, ev)) |line| {
+                            defer ctx.gpa.free(line);
+                            rawhttp.writeAllFd(ctx.stream.socket.handle, line);
+                        }
+                    },
+                    .anthropic => {
+                        if (try anth_st.writeEvent(ctx.gpa, ev)) |line| {
+                            defer ctx.gpa.free(line);
+                            rawhttp.writeAllFd(ctx.stream.socket.handle, line);
+                        }
+                    },
+                }
+                if (ev.done) return;
+            }
+            const rest = sse.items[frame_end + 2 ..];
+            std.mem.copyForwards(u8, sse.items[0..rest.len], rest);
+            sse.items.len = rest.len;
+        }
+        if (at_eof) break;
+    }
+    if (family == .openai) {
+        if (try openai_st.writeEvent(ctx.gpa, .{ .done = true })) |line| {
+            defer ctx.gpa.free(line);
+            rawhttp.writeAllFd(ctx.stream.socket.handle, line);
+        }
+    } else if (!anth_st.started) {
+        if (try anth_st.writeEvent(ctx.gpa, .{ .done = true })) |line| {
+            defer ctx.gpa.free(line);
+            rawhttp.writeAllFd(ctx.stream.socket.handle, line);
+        }
+    }
+}
+
+fn writeCountTokens(ctx: Ctx) u16 {
+    // Claude Code probes this. A local estimate keeps the client working
+    // when the backend is openai_compat and has no /messages/count_tokens.
+    const n = @max(ctx.body.len / 4, 1);
+    var buf: [64]u8 = undefined;
+    const body = std.fmt.bufPrint(&buf, "{{\"input_tokens\":{d}}}", .{n}) catch "{\"input_tokens\":1}";
+    writeFixed(ctx.stream, 200, "OK", "application/json", body);
+    return 200;
 }
 
 fn upstreamUrl(
@@ -354,8 +501,10 @@ fn upstreamUrl(
     path: []const u8,
     query: []const u8,
     streaming: bool,
+    force_vtable: bool,
 ) ![]u8 {
-    const use_vtable = (provider.kind == .vertex_anthropic and isMessagesCreate(path)) or
+    const use_vtable = force_vtable or
+        (provider.kind == .vertex_anthropic and isMessagesCreate(path)) or
         (provider.kind == .openai_compat and isChatCompletions(path)) or
         (provider.kind == .anthropic and isMessagesCreate(path));
     if (use_vtable) {
@@ -422,20 +571,20 @@ const Watch = struct {
     abort: *client.Abort,
     first_byte_ns: u64,
     idle_ns: u64,
-    started: i128,
+    started: i64,
     first: std.atomic.Value(bool) = .init(false),
-    last: std.atomic.Value(i128) = .init(0),
+    last: std.atomic.Value(i64) = .init(0),
     stop: std.atomic.Value(bool) = .init(false),
 
     fn markByte(self: *Watch) void {
         self.first.store(true, .release);
-        self.last.store(std.time.nanoTimestamp(), .release);
+        self.last.store(nowNs(self.io), .release);
     }
 
     fn loop(self: *Watch) void {
         while (!self.stop.load(.acquire)) {
-            std.Thread.sleep(50 * std.time.ns_per_ms);
-            const now = std.time.nanoTimestamp();
+            std.Io.sleep(self.io, .fromNanoseconds(50 * std.time.ns_per_ms), .awake) catch return;
+            const now = nowNs(self.io);
             if (!self.first.load(.acquire)) {
                 if (self.first_byte_ns > 0 and now - self.started > self.first_byte_ns) {
                     self.abort.trigger(self.io);
@@ -451,6 +600,14 @@ const Watch = struct {
         }
     }
 };
+
+/// Monotonic now in ns (std.time.nanoTimestamp is gone in 0.16; the Io
+/// clock is the one source of time this codebase uses).
+fn nowNs(io: std.Io) i64 {
+    // i64 rather than the clock's i96: atomics cap at 64 bits, and 2^63 ns
+    // of uptime is ~292 years.
+    return @intCast(std.Io.Timestamp.now(io, .awake).nanoseconds);
+}
 
 fn timeoutNs(configured: ?u32, default_s: u32) u64 {
     const s = configured orelse default_s;
@@ -659,12 +816,12 @@ fn findTopLevelStringField(body: []const u8, field: []const u8) ?StringSpan {
     return null;
 }
 
-fn uniqueWire(cfg: *const config.Config, family: Family, id: []const u8) LookupError!?Resolved {
+fn uniqueWire(cfg: *const config.Config, family: ?Family, id: []const u8) LookupError!?Resolved {
     var found: ?Resolved = null;
     var it = cfg.providers.iterator();
     while (it.next()) |kv| {
         const p = kv.value_ptr;
-        if (!speaks(p.kind, family)) continue;
+        if (family) |f| if (!speaks(p.kind, f)) continue;
         if (p.models.get(id) == null) continue;
         if (found != null) return null;
         var copy = p.*;
@@ -674,13 +831,15 @@ fn uniqueWire(cfg: *const config.Config, family: Family, id: []const u8) LookupE
     return found;
 }
 
-fn composite(cfg: *const config.Config, family: Family, name: []const u8) LookupError!?Resolved {
+fn composite(cfg: *const config.Config, family: ?Family, name: []const u8) LookupError!?Resolved {
     const slash = std.mem.findScalar(u8, name, '/') orelse return null;
     const head = name[0..slash];
     const tail = name[slash + 1 ..];
     if (head.len == 0 or tail.len == 0) return null;
     const p = cfg.providers.getPtr(head) orelse return null;
-    if (!speaks(p.kind, family)) return error.ProtocolMismatch;
+    if (family) |f| {
+        if (!speaks(p.kind, f)) return error.ProtocolMismatch;
+    }
     if (p.models.count() > 0 and p.models.get(tail) == null) return error.ModelNotFound;
     var copy = p.*;
     copy.default_model = tail;
@@ -691,11 +850,39 @@ fn aliasOf(cfg: *const config.Config, name: []const u8) ?[]const u8 {
     return cfg.serve.proxy_aliases.map.get(name);
 }
 
-fn uniqueProvider(cfg: *const config.Config, family: Family) LookupError!Resolved {
+fn claudeSizeKey(name: []const u8) ?[]const u8 {
+    if (containsIgnoreCase(name, "haiku")) return "haiku";
+    if (containsIgnoreCase(name, "sonnet")) return "sonnet";
+    if (containsIgnoreCase(name, "opus")) return "opus";
+    return null;
+}
+
+fn claudeSizeFallback(cfg: *const config.Config, family: ?Family, name: []const u8) LookupError!?Resolved {
+    const key = claudeSizeKey(name) orelse return null;
+    const alt: []const u8 = if (std.mem.eql(u8, key, "haiku")) "small" else if (std.mem.eql(u8, key, "sonnet")) "middle" else "big";
+    if (aliasOf(cfg, key)) |dest| {
+        if (try composite(cfg, family, dest)) |r| return r;
+    }
+    if (aliasOf(cfg, alt)) |dest| {
+        if (try composite(cfg, family, dest)) |r| return r;
+    }
+    return uniqueProvider(cfg, family) catch null;
+}
+
+fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
+    if (needle.len > hay.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= hay.len) : (i += 1) {
+        if (std.ascii.eqlIgnoreCase(hay[i..][0..needle.len], needle)) return true;
+    }
+    return false;
+}
+
+fn uniqueProvider(cfg: *const config.Config, family: ?Family) LookupError!Resolved {
     var found: ?*const config.Provider = null;
     var it = cfg.providers.iterator();
     while (it.next()) |kv| {
-        if (!speaks(kv.value_ptr.kind, family)) continue;
+        if (family) |f| if (!speaks(kv.value_ptr.kind, f)) continue;
         if (found != null) return error.AmbiguousProvider;
         found = kv.value_ptr;
     }
@@ -751,10 +938,9 @@ fn collectModels(cfg: *const config.Config, family: Family, arena: std.mem.Alloc
     var it = cfg.providers.iterator();
     while (it.next()) |kv| {
         const p = kv.value_ptr;
-        if (!speaks(p.kind, family)) continue;
         var mit = p.models.iterator();
         while (mit.next()) |m| {
-            const id = try advertisedAlloc(arena, cfg, family, kv.key_ptr.*, m.key_ptr.*);
+            const id = try advertisedAlloc(arena, cfg, null, kv.key_ptr.*, m.key_ptr.*);
             const display = m.value_ptr.display orelse m.key_ptr.*;
             try writeOneModel(s, family, id, kv.key_ptr.*, display);
         }
@@ -767,11 +953,11 @@ fn collectModels(cfg: *const config.Config, family: Family, arena: std.mem.Alloc
     try s.endObject();
 }
 
-fn advertisedAlloc(arena: std.mem.Allocator, cfg: *const config.Config, family: Family, provider_name: []const u8, wire_id: []const u8) ![]const u8 {
+fn advertisedAlloc(arena: std.mem.Allocator, cfg: *const config.Config, family: ?Family, provider_name: []const u8, wire_id: []const u8) ![]const u8 {
     var hits: u32 = 0;
     var it = cfg.providers.iterator();
     while (it.next()) |kv| {
-        if (!speaks(kv.value_ptr.kind, family)) continue;
+        if (family) |f| if (!speaks(kv.value_ptr.kind, f)) continue;
         if (kv.value_ptr.models.get(wire_id) != null) hits += 1;
     }
     if (hits == 1) return wire_id;
@@ -779,13 +965,13 @@ fn advertisedAlloc(arena: std.mem.Allocator, cfg: *const config.Config, family: 
 }
 
 fn findAdvertised(cfg: *const config.Config, family: Family, arena: std.mem.Allocator, want: []const u8) ?Listed {
+    _ = family;
     var it = cfg.providers.iterator();
     while (it.next()) |kv| {
         const p = kv.value_ptr;
-        if (!speaks(p.kind, family)) continue;
         var mit = p.models.iterator();
         while (mit.next()) |m| {
-            const id = advertisedAlloc(arena, cfg, family, kv.key_ptr.*, m.key_ptr.*) catch continue;
+            const id = advertisedAlloc(arena, cfg, null, kv.key_ptr.*, m.key_ptr.*) catch continue;
             if (std.mem.eql(u8, id, want) or std.mem.eql(u8, m.key_ptr.*, want)) {
                 return .{ .id = id, .owned_by = kv.key_ptr.*, .display = m.value_ptr.display orelse m.key_ptr.* };
             }
@@ -1059,8 +1245,17 @@ test "lookup unique wire id, composite, alias, protocol mismatch" {
     try std.testing.expectEqualStrings("claude-sonnet-4-20250514", c.wire_id);
     try std.testing.expect(c.splice);
 
+    const unified = try lookup(&cfg, null, "anthropic/claude-sonnet-4-20250514");
+    try std.testing.expectEqualStrings("claude-sonnet-4-20250514", unified.wire_id);
+    try std.testing.expectEqual(config.ProviderKind.anthropic, unified.provider.kind);
+
     try std.testing.expectError(error.ProtocolMismatch, lookup(&cfg, .openai, "anthropic/claude-sonnet-4-20250514"));
     try std.testing.expectError(error.ModelNotFound, lookup(&cfg, .openai, "nope"));
+
+    try cfg.serve.proxy_aliases.map.put(arena, "sonnet", "kimi-k3/kimi-k3");
+    const mapped = try lookup(&cfg, null, "claude-3-5-sonnet-20241022");
+    try std.testing.expectEqualStrings("kimi-k3", mapped.wire_id);
+    try std.testing.expectEqualStrings("kimi-k3", mapped.provider.name);
 }
 
 test "lookup does not mutate cfg.providers" {
@@ -1104,25 +1299,25 @@ test "upstreamUrl keeps embeddings, count_tokens, and files off the chat path" {
     const gpa = std.testing.allocator;
     const openai_impl = providers.forKind(.openai_compat);
     var openai = config.Provider{ .name = "o", .base_url = "https://api.openai.com/v1", .default_model = "m" };
-    const emb = try upstreamUrl(gpa, &openai, openai_impl, "/v1/embeddings", "", false);
+    const emb = try upstreamUrl(gpa, &openai, openai_impl, "/v1/embeddings", "", false, false);
     defer gpa.free(emb);
     try std.testing.expectEqualStrings("https://api.openai.com/v1/embeddings", emb);
-    const files = try upstreamUrl(gpa, &openai, openai_impl, "/v1/files", "limit=10", false);
+    const files = try upstreamUrl(gpa, &openai, openai_impl, "/v1/files", "limit=10", false, false);
     defer gpa.free(files);
     try std.testing.expectEqualStrings("https://api.openai.com/v1/files?limit=10", files);
-    const resp = try upstreamUrl(gpa, &openai, openai_impl, "/v1/responses", "", false);
+    const resp = try upstreamUrl(gpa, &openai, openai_impl, "/v1/responses", "", false, false);
     defer gpa.free(resp);
     try std.testing.expectEqualStrings("https://api.openai.com/v1/responses", resp);
 
     const anth_impl = providers.forKind(.anthropic);
     var anth = config.Provider{ .name = "a", .base_url = "https://api.anthropic.com", .kind = .anthropic, .default_model = "c" };
-    const count = try upstreamUrl(gpa, &anth, anth_impl, "/v1/messages/count_tokens", "", false);
+    const count = try upstreamUrl(gpa, &anth, anth_impl, "/v1/messages/count_tokens", "", false, false);
     defer gpa.free(count);
     try std.testing.expectEqualStrings("https://api.anthropic.com/v1/messages/count_tokens", count);
-    const batches = try upstreamUrl(gpa, &anth, anth_impl, "/v1/messages/batches", "", false);
+    const batches = try upstreamUrl(gpa, &anth, anth_impl, "/v1/messages/batches", "", false, false);
     defer gpa.free(batches);
     try std.testing.expectEqualStrings("https://api.anthropic.com/v1/messages/batches", batches);
-    const msgs = try upstreamUrl(gpa, &anth, anth_impl, "/v1/messages", "", false);
+    const msgs = try upstreamUrl(gpa, &anth, anth_impl, "/v1/messages", "", false, false);
     defer gpa.free(msgs);
     try std.testing.expectEqualStrings("https://api.anthropic.com/v1/messages", msgs);
 }

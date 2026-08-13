@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const scan = @import("manifest_scan.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -106,38 +107,25 @@ const Meta = struct {
     plugin: bool = false,
 };
 
-/// One manifest's description and whether it is a plugin.
+/// One manifest's description and whether it is a plugin. Scanned, not
+/// parsed: a full std.json parse of ~90 manifests (input_schema trees
+/// included) under wasm interpretation put `tools list` over a second;
+/// manifest_scan reads the four top-level fields in one pass. Borrowing
+/// from fsRead's result is safe here — the host arena bump-allocates for
+/// the whole call without resetting (lib.zig), so earlier reads survive
+/// later ones.
 fn describeFull(file_name: []const u8) Meta {
     var path_buf: [256]u8 = undefined;
     const path = std.fmt.bufPrint(&path_buf, "tools/manifests/{s}", .{file_name}) catch return .{};
     const raw = lib.fsRead(path) catch return .{};
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch return .{};
-    if (parsed != .object) return .{};
     var meta = Meta{};
-    if (parsed.object.get("description")) |d| {
-        if (d == .string) meta.description = d.string;
-    }
-    if (parsed.object.get("internal")) |i| {
-        if (i == .bool and i.bool) meta.plugin = true;
-    }
-    if (parsed.object.get("category")) |c| {
-        if (c == .string) meta.category = c.string;
-    }
-    if (parsed.object.get("transform") != null) {
+    if (scan.topLevelString(lib.alloc, raw, "description")) |d| meta.description = d;
+    if (scan.topLevelIsTrue(raw, "internal")) meta.plugin = true;
+    if (scan.topLevelString(lib.alloc, raw, "category")) |c| meta.category = c;
+    if (scan.topLevelPresent(raw, "transform")) {
         meta.plugin = true;
         if (meta.category.len == 0) meta.category = "transform";
     }
     if (meta.category.len == 0) meta.category = "other";
     return meta;
-}
-
-/// The `description` field of one manifest, or "" when it cannot be read.
-fn describe(file_name: []const u8) []const u8 {
-    var path_buf: [256]u8 = undefined;
-    const path = std.fmt.bufPrint(&path_buf, "tools/manifests/{s}", .{file_name}) catch return "";
-    const raw = lib.fsRead(path) catch return "";
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch return "";
-    if (parsed != .object) return "";
-    const d = parsed.object.get("description") orelse return "";
-    return if (d == .string) d.string else "";
 }

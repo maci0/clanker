@@ -85,6 +85,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   knowledge store, and prompts store moved to sandboxed WASM tools (`tools/zig/`).
 - `src/webui_vendor/` — vendored JS dependencies for the web UI (preact,
   d3-dag, mermaid, highlight.js). Committed, not generated.
+- `src/serve/` — the OpenAI/Anthropic compatibility proxy (`clanker serve --proxy`).
+  Native because it attaches provider credentials. It forwards `/v1/*` 1:1 and
+  must not go through `client.chat` / `buildRequest`.
 - Every `.zig` file lives under a subsystem directory; only `main.zig`,
   `cli.zig`, `config.zig`, and `doctor.zig` sit directly in
   `src/`. A new module with tests must be added to the `comptime` block in

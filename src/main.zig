@@ -88,6 +88,7 @@ comptime {
     _ = @import("tui/mascot.zig");
     _ = @import("tui/repl_vaxis.zig");
     _ = @import("serve/proxy.zig");
+    _ = @import("serve/proxy_transcode.zig");
     _ = @import("cli.zig");
     _ = @import("doctor.zig");
     _ = @import("research/engine.zig");
@@ -155,7 +156,9 @@ pub fn main(init: std.process.Init) !void {
             error.UnknownCommand => if (cli.suggestCommand(diag)) |suggestion|
                 cli.printUsageError(init.io, "unknown command '{s}'; did you mean `clanker {s}`?", .{ diag, suggestion })
             else
-                cli.printUsageError(init.io, "unknown command '{s}' (see the command list below)", .{diag}),
+                // No "(see the list below)": no list follows, only the
+                // printUsageHint line naming `clanker --help`.
+                cli.printUsageError(init.io, "unknown command '{s}'", .{diag}),
             error.UnknownArg => if (cli.suggestFlag(diag)) |suggestion|
                 cli.printUsageError(init.io, "unrecognized argument '{s}'; did you mean `{s}`?", .{ diag, suggestion })
             else

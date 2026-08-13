@@ -4,7 +4,7 @@ const build_zon = @import("build.zig.zon");
 // Pure-logic modules under tools/zig/ that don't export the tool ABI (run/scratch/host_arena).
 // They are imported by other tools, not standalone guests, so the wasm build skips them
 // and `zig build test` runs their tests on the host target instead.
-const host_tested_helpers = [_][]const u8{ "alphaxiv_mcp", "arena_match", "cards", "compare_blind", "search_parse" };
+const host_tested_helpers = [_][]const u8{ "alphaxiv_mcp", "arena_match", "cards", "compare_blind", "manifest_scan", "search_parse" };
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
@@ -45,7 +45,10 @@ pub fn build(b: *std.Build) void {
     const exe_target = b.standardTargetOptions(.{ .default_target = native_query });
 
     // zwasm: pure-Zig WebAssembly runtime used for the tool sandbox.
-    const zwasm_dep = b.dependency("zwasm", .{});
+    // target/optimize passed through: without them the module compiled at
+    // zwasm's own default (Debug), so even a ReleaseSafe clanker ran every
+    // tool on a Debug interpreter.
+    const zwasm_dep = b.dependency("zwasm", .{ .target = exe_target, .optimize = optimize });
     const zwasm_mod = zwasm_dep.module("zwasm");
 
     // vaxis: native-tty TUI library (Phase 1 of the libvaxis migration,

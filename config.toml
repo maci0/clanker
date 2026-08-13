@@ -158,6 +158,9 @@ id = "main"
 # # proxy_idle_timeout_s = 60
 # # [serve.proxy_aliases]
 # # "claude-4-sonnet" = "anthropic/claude-sonnet-4-20250514"
+# # sonnet = "kimi-k3/kimi-k3"   # Claude Code "…sonnet…" → this backend
+# # haiku = "kimi-k3/kimi-k3"
+# # opus = "vertex/claude-opus-4-6"
 
 # Outbound only: a peer is a URL this instance connects to, never a port it
 # opens. `dummy-down` points at the discard port on purpose, so `phonebook`

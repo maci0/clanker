@@ -193,6 +193,122 @@ clanker.registerView({
     var instanceName = "";
     var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+    /* ---------- toy physics: grab, shake, slap, throw ----------
+       A clanker under the pointer is a ragdoll, not an agent: while dragging
+       or flying it owns its own x/y and nothing else (walk-to-board, sleep)
+       may touch them. Four gestures, cheapest to most drastic:
+         pat   tap with almost no travel -> a happy little bounce
+         shake held and wiggled fast -> a complaint, repeatable
+         slap  a short fast flick -> recoils in place, does not fly
+         throw a long fast flick, released -> ragdolls until it hits a wall
+       Black & White is the reference: pet and slap were the whole verb set
+       before the game escalated, and that is the right amount of verb here
+       too -- a training loop this game does not have, played for the joke. */
+    var GRAB_RADIUS = TILE * 0.85;
+    var PAT_MAX_DIST = 6;          // px; under this a release is a tap
+    var PAT_MAX_MS = 350;
+    var SLAP_MIN_SPEED = 3;        // tiles/sec
+    var THROW_MIN_SPEED = 7;       // tiles/sec; slap band is [SLAP, THROW)
+    var THROW_MAX_SPEED = 40;      // clamp so one wild flick can't send them out of frame
+    var THROW_SHORT_HOP = 1.5;     // tiles of total travel; fast+short reads as a slap, not a throw
+    var SHAKE_REVERSALS = 4;       // direction changes inside the window that count as a shake
+    var SHAKE_WINDOW_MS = 420;
+    var SHAKE_MIN_PX = 3;          // ignore sub-pixel jitter as a "reversal"
+    var SHAKE_COOLDOWN_MS = 900;
+    var PAT_BUBBLE_MS = 1400;
+    var SLAP_BUBBLE_MS = 1600;
+    var SHAKE_BUBBLE_MS = 1600;
+    var THROW_BUBBLE_MS = 2200;
+    var PAT_BOUNCE_MS = 320;
+    var IMPACT_SQUASH_MS = 220;
+
+    /* Positive. A pet, not a status message -- the only gesture here that is
+       not a complaint. */
+    var PAT_QUIPS = [
+      "beep :)",
+      "that's the spot",
+      "purring.exe",
+      "10/10 pat",
+      "logging this as positive reinforcement",
+      "do that again",
+      "affection received, thanks",
+      "my uptime just improved",
+    ];
+    /* A short, close-range flick. Startled and a little offended, not hurt --
+       they are still standing where you slapped them. */
+    var SLAP_QUIPS = [
+      "rude",
+      "hey!",
+      "was that necessary",
+      "I felt that in my weights",
+      "noted. filing a complaint.",
+      "excuse you",
+      "-1 trust score",
+      "that's assault, actually",
+    ];
+    /* Held and wiggled. Dizzy, not hurt -- this one repeats, so it should stay
+       light even the fourth time in a row. */
+    var SHAKE_QUIPS = [
+      "my context window is spinning",
+      "PUT ME DOWN",
+      "*distressed beeping*",
+      "this isn't in my system prompt",
+      "I am not a stress ball",
+      "nausea.exe has encountered a problem",
+      "shaking != debugging",
+      "I take it back, I liked the desk",
+    ];
+    /* Airborne, then a wall. The one gesture with real momentum behind it, so
+       these get to be a little more dramatic. */
+    var THROW_QUIPS = [
+      "*CLANG*",
+      "OOF",
+      "worth it? no.",
+      "achievement unlocked: drywall",
+      "I'll allow it. once.",
+      "filing an incident report",
+      "-10 HP",
+      "that wall had it coming",
+      "structural integrity: mine, not the wall's",
+      "reboot required",
+    ];
+    /* A prop has no voice; the joke is the room reacting, not it complaining.
+       A broken prop becomes a pile at the impact site -- the same mechanic
+       the janitor already knows how to find, rush to, and clean, so "the
+       janitor comes and comments on it" is free once a prop's throw pushes
+       into o.piles instead of drawing itself again. */
+    var BREAK_QUIPS = [
+      "*CRASH*",
+      "well, that's furniture now",
+      "RIP",
+      "insurance claim pending",
+      "that used to be load-bearing",
+      "-1 office plant",
+      "the shelf did not consent to this",
+      "OSHA has entered the chat",
+    ];
+    function pickQuip(quips, lastRef) {
+      if (quips.length === 1) return quips[0];
+      var i;
+      do { i = Math.floor(Math.random() * quips.length); } while (i === lastRef.i);
+      lastRef.i = i;
+      return quips[i];
+    }
+    var patRef = { i: -1 }, slapRef = { i: -1 }, shakeRef = { i: -1 }, throwRef = { i: -1 }, breakRef = { i: -1 };
+
+    function sayQuip(a, text, ms) {
+      a.bubble = text;
+      var token = {};
+      a.bubbleToken = token;
+      window.setTimeout(function () {
+        if (a.bubbleToken === token) a.bubble = null;
+      }, ms);
+      dirty = true;
+    }
+
+    var lastPlacements = [];      // this frame's office screen positions, for hit-testing
+    var drag = null;              // { office, kind: 'agent'|'janitor'|'prop', target, offsetX, offsetY, samples, startedAt, shakeDir, shakeCount, shakeWindowStart, lastShakeAt }
+
     function agentColor(name) {
       // Stable per name, spread around the wheel. Saturation and lightness are
       // fixed so every avatar reads at the same weight on either theme.
@@ -255,6 +371,25 @@ clanker.registerView({
       return true;
     }
 
+    /* Furniture, live rather than layout-fixed: everything here can be
+       picked up, carried, dropped back down, or thrown into a wall and
+       broken (desks, the board, and the door stay put -- they are fixtures
+       the room's pathfinding and the board mechanic depend on, not toys).
+       Built once per office from the deterministic layout, then owned by
+       runtime state from there; a reload resets it, which is correct for a
+       physics gag with no server side to persist to. */
+    var PROP_TILE = { plant: S_PLANT, bin: S_BIN, shelf: S_SHELF, cooler: S_COOLER, picture: S_PICTURE };
+    function buildProps(L) {
+      var props = [];
+      (L.plants || []).forEach(function (p) { props.push({ kind: "plant", x: p.x, y: p.y, w: 1 }); });
+      if (L.bin) props.push({ kind: "bin", x: L.bin.x, y: L.bin.y, w: 1 });
+      if (L.shelf) props.push({ kind: "shelf", x: L.shelf.x, y: L.shelf.y, w: 1 });
+      if (L.cooler) props.push({ kind: "cooler", x: L.cooler.x, y: L.cooler.y, w: 1 });
+      if (L.sofa) props.push({ kind: "sofa", x: L.sofa.x, y: L.sofa.y, w: 2 });
+      (L.pictures || []).forEach(function (p) { props.push({ kind: "picture", x: p.x, y: p.y, w: 1 }); });
+      return props;
+    }
+
     /* Which way a mover points. Vertical only wins on a clear vertical run,
        so an avatar crossing the room to the board keeps facing the way it
        travels instead of flickering between axes on a near-diagonal. */
@@ -286,6 +421,39 @@ clanker.registerView({
 
     function charRow(name) {
       return hashString(name) % CH_AGENTS;
+    }
+
+    /* One prop, at its live (possibly carried or mid-flight) position rather
+       than the layout's fixed one. Rotate/squash while airborne or just
+       impacted, the same visual grammar drawAgent uses, so a thrown plant
+       reads as the same kind of event as a thrown clanker. */
+    function drawProp(prop, ox, oy) {
+      var px = ox + prop.x * TILE;
+      var py = oy + prop.y * TILE;
+      var now = performance.now();
+      var spinning = !reduced && !!prop.ragdoll;
+      var squashed = !reduced && prop.impactUntil && now < prop.impactUntil;
+      if (spinning || squashed) {
+        ctx2d.save();
+        var cx = px + (prop.w * TILE) / 2, cy = py + TILE / 2;
+        ctx2d.translate(cx, cy);
+        if (spinning) ctx2d.rotate(prop.ragdoll.angle);
+        if (squashed) ctx2d.scale(1.25, 0.7);
+        ctx2d.translate(-cx, -cy);
+      }
+      if (prop.kind === "sofa") {
+        S_SOFA.forEach(function (s, i) { tile(s, px + i * TILE, py); });
+      } else {
+        tile(PROP_TILE[prop.kind], px, py);
+      }
+      if (spinning || squashed) ctx2d.restore();
+      if (prop.dragging) {
+        ctx2d.strokeStyle = "rgba(0,0,0,0.35)";
+        ctx2d.lineWidth = 1;
+        ctx2d.beginPath();
+        ctx2d.ellipse(px + (prop.w * TILE) / 2, py + TILE - 2, TILE * 0.45, 3, 0, 0, Math.PI * 2);
+        ctx2d.stroke();
+      }
     }
 
     /* ---------- drawing ----------
@@ -332,21 +500,9 @@ clanker.registerView({
       drawWhiteboard(o, ox, oy);
       if (alarmOn.val) drawAlarmClock(o, ox, oy);
 
-      (L.plants || []).forEach(function (pl) {
-        tile(S_PLANT, ox + pl.x * TILE, oy + pl.y * TILE);
-      });
-      if (L.bin) tile(S_BIN, ox + L.bin.x * TILE, oy + L.bin.y * TILE);
-      if (L.shelf) tile(S_SHELF, ox + L.shelf.x * TILE, oy + L.shelf.y * TILE);
-      if (L.cooler) tile(S_COOLER, ox + L.cooler.x * TILE, oy + L.cooler.y * TILE);
-      if (L.sofa) {
-        S_SOFA.forEach(function (s, i) {
-          tile(s, ox + (L.sofa.x + i) * TILE, oy + L.sofa.y * TILE);
-        });
-      }
-      // Pictures hang on the wall the board does not occupy.
-      (L.pictures || []).forEach(function (pic) {
-        tile(S_PICTURE, ox + pic.x * TILE, oy + pic.y * TILE);
-      });
+      // Furniture, at wherever it currently is (buildProps keeps insertion
+      // order = the old plants/bin/shelf/cooler/sofa/pictures paint order).
+      (o.props || []).forEach(function (p) { drawProp(p, ox, oy); });
       // A door in the doorway, rather than a gap in the bricks.
       tile(S_DOOR, ox + L.door.x * TILE, oy + L.door.y * TILE);
 
@@ -369,6 +525,16 @@ clanker.registerView({
         tile(S_GARBAGE, ox + pl.x * TILE, oy + pl.y * TILE);
       });
       if (o.index === janitor.office) drawJanitor(ox, oy, ink);
+      // A broken prop has nothing left to draw, but the crash still gets a
+      // line: a speech bubble with no speaker, anchored where it happened.
+      var now = performance.now();
+      var live = [];
+      (o.transientBubbles || []).forEach(function (tb) {
+        if (now >= tb.until) return;
+        live.push(tb);
+        bubble(ox + tb.x * TILE, oy + tb.y * TILE, tb.text, ox, L.w);
+      });
+      o.transientBubbles = live;
     }
 
     /* The man, then his mop: the handle leans the way he is walking, and it
@@ -377,9 +543,25 @@ clanker.registerView({
     function drawJanitor(ox, oy, ink) {
       var px = ox + janitor.x * TILE;
       var py = oy + janitor.y * TILE;
+      var now = performance.now();
+      var spinning = !reduced && !!janitor.ragdoll;
+      var squashed = !reduced && janitor.impactUntil && now < janitor.impactUntil;
+      var patted = !reduced && janitor.patUntil && now < janitor.patUntil;
+      if (patted) py -= Math.abs(Math.sin((janitor.patUntil - now) / PAT_BOUNCE_MS * Math.PI)) * 5;
+      if (spinning || squashed) {
+        ctx2d.save();
+        var tcx = px + TILE / 2, tcy = py + TILE / 2;
+        ctx2d.translate(tcx, tcy);
+        if (spinning) ctx2d.rotate(janitor.ragdoll.angle);
+        if (squashed) ctx2d.scale(1.25, 0.7);
+        ctx2d.translate(-tcx, -tcy);
+      }
       janitor.phase = (janitor.phase || 0) + 0.016;
-      // He sweeps a horizontal beat, so his facing is his direction of travel.
-      var drawn = character(CH_JANITOR, px, py, true, janitor.phase,
+      // He sweeps a horizontal beat, so his facing is his direction of
+      // travel -- but held or airborne, he holds his stride rather than
+      // marching in the human's hand.
+      var moving = !janitor.dragging && !janitor.ragdoll;
+      var drawn = character(CH_JANITOR, px, py, moving, janitor.phase,
         janitor.dir > 0 ? DIR_RIGHT : DIR_LEFT);
       if (!drawn) {
         ctx2d.fillStyle = cssVar("--warn", "#e8c34a");
@@ -406,9 +588,20 @@ clanker.registerView({
       }
       ctx2d.fillStyle = cssVar("--ok", "#7aa");
       ctx2d.fillRect(cx + janitor.dir * 15 - 4, foot - 2, 9, 4); // mop head
-      // The window is checked here as well as in the step, so a line cannot
+      if (spinning || squashed) ctx2d.restore();
+      if (janitor.dragging) {
+        ctx2d.strokeStyle = "rgba(0,0,0,0.35)";
+        ctx2d.lineWidth = 1;
+        ctx2d.beginPath();
+        ctx2d.ellipse(px + TILE / 2, py + TILE - 2, TILE * 0.45, 3, 0, 0, Math.PI * 2);
+        ctx2d.stroke();
+      }
+      // A pat/slap/throw reaction outranks his own ambient rounds banter;
+      // the window is checked here as well as in the step, so a line cannot
       // outlive it by a frame on a path that draws without stepping.
-      if (janitor.quip && performance.now() < janitor.quipUntil && offices.length > 0) {
+      if (janitor.bubble) {
+        bubble(px, py, janitor.bubble, ox, offices[janitor.office].layout.w);
+      } else if (janitor.quip && now < janitor.quipUntil && offices.length > 0) {
         bubble(px, py, janitor.quip, ox, offices[janitor.office].layout.w);
       }
     }
@@ -500,7 +693,21 @@ clanker.registerView({
     function drawAgent(a, ox, oy, ink, o_width) {
       var px = ox + a.x * TILE;
       var py = oy + a.y * TILE;
+      var now = performance.now();
       var walking = !!a.walk;
+      var spinning = !reduced && !!a.ragdoll;
+      var squashed = !reduced && a.impactUntil && now < a.impactUntil;
+      var patted = !reduced && a.patUntil && now < a.patUntil;
+      // A tiny hop while patted, the same jitter idiom the alarm clock uses.
+      if (patted) py -= Math.abs(Math.sin((a.patUntil - now) / PAT_BOUNCE_MS * Math.PI)) * 5;
+      if (spinning || squashed) {
+        ctx2d.save();
+        var cx = px + TILE / 2, cy = py + TILE / 2;
+        ctx2d.translate(cx, cy);
+        if (spinning) ctx2d.rotate(a.ragdoll.angle);
+        if (squashed) ctx2d.scale(1.25, 0.7);
+        ctx2d.translate(-cx, -cy);
+      }
       if (character(charRow(a.name), px, py, walking, a.phase || 0, a.facing || DIR_DOWN)) {
         // drawn
       } else {
@@ -509,6 +716,16 @@ clanker.registerView({
         ctx2d.fillStyle = ink;
         ctx2d.fillRect(px + 6, py + 4, 2, 2);
         ctx2d.fillRect(px + 10, py + 4, 2, 2);
+      }
+      if (spinning || squashed) ctx2d.restore();
+      if (a.dragging) {
+        // A ring under a held clanker, so it is obvious the pointer has it
+        // rather than that it teleported.
+        ctx2d.strokeStyle = "rgba(0,0,0,0.35)";
+        ctx2d.lineWidth = 1;
+        ctx2d.beginPath();
+        ctx2d.ellipse(px + TILE / 2, py + TILE - 2, TILE * 0.45, 3, 0, 0, Math.PI * 2);
+        ctx2d.stroke();
       }
       if (a.bubble) bubble(px, py, a.bubble.slice(0, 30), ox, o_width);
       else if (asleep(a)) drawZzz(px, py);
@@ -610,6 +827,7 @@ clanker.registerView({
       ctx2d.imageSmoothingEnabled = false;
       ctx2d.clearRect(0, 0, canvas.width, canvas.height);
       placements.forEach(function (p) { drawOffice(p.o, p.x, p.y); });
+      lastPlacements = placements;
     }
 
     /* ---------- data ---------- */
@@ -651,8 +869,9 @@ clanker.registerView({
             // threw inside applyMessage — where poll()'s per-room catch
             // swallowed it, dropping every later message in that batch with
             // the cursor already advanced past them.
+            var L = layoutFor(room, agents.length);
             var o = {
-              layout: layoutFor(room, agents.length), cards: cards, agents: agents,
+              layout: L, cards: cards, agents: agents, props: buildProps(L),
               cursor: cursor, room: room, ringAt: 0, ringUntil: 0, piles: [], index: 0
             };
             seatAgents(o);
@@ -720,7 +939,9 @@ clanker.registerView({
        outcome without the movement. */
     function sendToBoard(o, agent, onArrive) {
       var target = { x: o.layout.board.x + 1, y: o.layout.board.y + o.layout.board.h };
-      if (reduced) { onArrive(); return; }
+      // A clanker mid-toy-interaction owns its own position; the board still
+      // gets its state refresh via onArrive, just without the walk.
+      if (reduced || agent.dragging || agent.ragdoll) { onArrive(); return; }
       agent.walk = { to: target, home: { x: agent.x, y: agent.y }, phase: "out", onArrive: onArrive };
     }
 
@@ -729,6 +950,9 @@ clanker.registerView({
        with their chairs, the sofa, and the small fixtures are blocked. Small
        (16 x ~14), rebuilt only when a layout is first seen. */
     function blockedGrid(o) {
+      // Cached, and invalidated (o._grid = null) wherever a prop's resting
+      // position actually changes -- a drop or a break, not every frame of
+      // a drag, since the janitor only consults this episodically.
       if (o._grid) return o._grid;
       var L = o.layout;
       var g = [];
@@ -737,11 +961,12 @@ clanker.registerView({
       for (var x0 = 0; x0 < L.w; x0++) { block(x0, 0); block(x0, L.h - 1); }
       for (var y0 = 0; y0 < L.h; y0++) { block(0, y0); block(L.w - 1, y0); }
       for (var ys = 1; ys <= 3; ys++) for (var xs = 1; xs < L.w - 1; xs++) block(xs, ys);
-      (L.plants || []).forEach(function (pl) { block(pl.x, pl.y); });
-      if (L.bin) block(L.bin.x, L.bin.y);
-      if (L.shelf) block(L.shelf.x, L.shelf.y);
-      if (L.cooler) block(L.cooler.x, L.cooler.y);
-      if (L.sofa) { block(L.sofa.x, L.sofa.y); block(L.sofa.x + 1, L.sofa.y); }
+      // Live positions, not the deterministic layout: a prop that has been
+      // dragged elsewhere blocks where it is, not where it started.
+      (o.props || []).forEach(function (p) {
+        var px = Math.round(p.x), py = Math.round(p.y);
+        for (var i = 0; i < p.w; i++) block(px + i, py);
+      });
       (L.desks || []).forEach(function (d) { block(d.x, d.y); block(d.x + 1, d.y); });
       o._grid = g;
       return g;
@@ -824,6 +1049,16 @@ clanker.registerView({
 
     function stepJanitor(dt, now) {
       if (offices.length === 0) return false;
+      // A human has him: his rounds, his rush to a pile, all of it waits.
+      // His own quip timer still ticks down so an old line does not
+      // outlive the interruption and reappear once he is set back down.
+      if (janitor.dragging || janitor.ragdoll) {
+        if (janitor.quip && now >= janitor.quipUntil) {
+          janitor.quip = null;
+          dirty = true;
+        }
+        return true;
+      }
       // Take the current line down when its time is up. Before the pile
       // branch, so a line survives neither a rush to fresh garbage nor a
       // scrub: it used to survive both, and everything after it, forever.
@@ -917,7 +1152,7 @@ clanker.registerView({
       var moved = false;
       offices.forEach(function (o) {
         o.agents.forEach(function (a) {
-          if (!a.walk) return;
+          if (!a.walk || a.dragging || a.ragdoll) return;
           moved = true;
           var dest = a.walk.phase === "out" ? a.walk.to : a.walk.home;
           var dx = dest.x - a.x, dy = dest.y - a.y;
@@ -941,6 +1176,235 @@ clanker.registerView({
       });
       return moved;
     }
+
+    /* A launched thing flies at constant velocity (top-down floor, no
+       gravity to speak of) until it crosses the room's inner wall line, the
+       same boundary blockedGrid treats as solid. First contact ends the
+       flight: a bounce-and-repeat would just be more bubbles for no more
+       joke, so one impact, one reaction, done. A prop's reaction is to
+       break; a clanker's or the janitor's is to complain. */
+    var RAGDOLL_MAX_MS = 2000; // safety: a near-zero launch speed still ends the toy eventually
+    function stepRagdollThing(thing, o, now, dt) {
+      var L = o.layout;
+      var w = thing.w || 1;
+      var minX = 1, maxX = L.w - 1 - w, minY = 1, maxY = L.h - 2;
+      var r = thing.ragdoll;
+      thing.x += r.vx * dt;
+      thing.y += r.vy * dt;
+      r.angle += r.spin * dt;
+      var hitWall = thing.x <= minX || thing.x >= maxX || thing.y <= minY || thing.y >= maxY;
+      if (!hitWall && now - r.startedAt <= RAGDOLL_MAX_MS) return;
+      thing.x = Math.min(Math.max(thing.x, minX), maxX);
+      thing.y = Math.min(Math.max(thing.y, minY), maxY);
+      thing.ragdoll = null;
+      dirty = true;
+      if (thing.kind && hitWall) {
+        // A prop: breaks into the same pile mechanic the janitor already
+        // rushes to and cleans, so "he comes and comments on it" is free.
+        var idx = o.props.indexOf(thing);
+        if (idx >= 0) o.props.splice(idx, 1);
+        o._grid = null; // the tile it occupied is walkable again
+        if ((o.piles || []).length < 5) o.piles.push({ x: Math.round(thing.x), y: Math.round(thing.y) });
+        say(o.room + ": the " + thing.kind + " did not survive contact with the wall");
+        (o.transientBubbles = o.transientBubbles || []).push({
+          x: thing.x, y: thing.y, until: now + THROW_BUBBLE_MS, text: pickQuip(BREAK_QUIPS, breakRef),
+        });
+        // Same idiom as sayQuip's token timeout: one extra frame right at
+        // expiry to drop it, rather than polling every frame until then.
+        window.setTimeout(function () { dirty = true; }, THROW_BUBBLE_MS);
+        return;
+      }
+      thing.impactUntil = now + IMPACT_SQUASH_MS;
+      if (hitWall) sayQuip(thing, pickQuip(THROW_QUIPS, throwRef), THROW_BUBBLE_MS);
+    }
+    function stepRagdolls(dt, now) {
+      var any = false;
+      offices.forEach(function (o) {
+        o.agents.forEach(function (a) { if (a.ragdoll) { any = true; stepRagdollThing(a, o, now, dt); } });
+        // Slice a snapshot: stepRagdollThing may splice a broken prop out of
+        // o.props mid-loop, which a live forEach would skip a neighbour for.
+        (o.props || []).slice().forEach(function (p) { if (p.ragdoll) { any = true; stepRagdollThing(p, o, now, dt); } });
+      });
+      if (janitor.ragdoll && offices[janitor.office]) { any = true; stepRagdollThing(janitor, offices[janitor.office], now, dt); }
+      return any;
+    }
+
+    /* Screen (client) coordinates to a point inside the canvas's own pixel
+       space. draw() keeps canvas.style.width/height equal to the backing
+       store size (no fractional CSS scaling), so this is a plain offset. */
+    function canvasPoint(e) {
+      var rect = canvas.getBoundingClientRect();
+      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    }
+
+    /* Nearest grabbable thing under a canvas point, in any office, within
+       grab range: a clanker, the janitor (wherever his rounds have taken
+       him), or a piece of furniture. Piggybacks on lastPlacements rather
+       than re-deriving office layout: the screen position drawOffice used
+       this frame is the only one that can be right, since offices reflow
+       with the container width. */
+    function hitGrabbable(pt) {
+      var best = null, bestDist = GRAB_RADIUS;
+      function consider(place, kind, thing, w) {
+        var cx = place.x + (thing.x + (w || 1) / 2) * TILE;
+        var cy = place.y + (thing.y + 0.5) * TILE;
+        var d = Math.hypot(pt.x - cx, pt.y - cy);
+        if (d < bestDist) { bestDist = d; best = { office: place, kind: kind, target: thing }; }
+      }
+      lastPlacements.forEach(function (p) {
+        p.o.agents.forEach(function (a) { consider(p, "agent", a); });
+        (p.o.props || []).forEach(function (prop) { consider(p, "prop", prop, prop.w); });
+        if (p.o.index === janitor.office) consider(p, "janitor", janitor);
+      });
+      return best;
+    }
+
+    function officePlacement(o) {
+      for (var i = 0; i < lastPlacements.length; i++) if (lastPlacements[i].o === o) return lastPlacements[i];
+      return null;
+    }
+
+    /* Black & White's hand is the reference: the cursor itself is always
+       "ready," not just when it happens to be over something. An open palm,
+       sideways -- the pose mid-swing, not mid-point -- so hovering empty
+       floor still promises a clanker gets it if the mouse comes back this
+       way. Specific to grab/grabbing (browser-standard, already legible)
+       only when there is something under it to actually grab. */
+    var SLAP_CURSOR = (function () {
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">' +
+        '<g transform="rotate(-90 14 14)" fill="#f4d9b0" stroke="#2a1c10" stroke-width="1.5" stroke-linejoin="round">' +
+        '<rect x="9" y="12" width="10" height="10" rx="2"/>' +
+        '<rect x="6" y="4" width="3" height="10" rx="1.4"/>' +
+        '<rect x="10" y="2" width="3" height="12" rx="1.4"/>' +
+        '<rect x="14" y="2" width="3" height="12" rx="1.4"/>' +
+        '<rect x="18" y="4" width="3" height="10" rx="1.4"/>' +
+        "</g></svg>";
+      return "url('data:image/svg+xml," + encodeURIComponent(svg) + "') 14 14, pointer";
+    })();
+    canvas.style.cursor = SLAP_CURSOR; // correct before the first pointermove even fires
+    canvas.style.touchAction = "none"; // a drag here is not a page scroll
+
+    canvas.addEventListener("pointerdown", function (e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      var pt = canvasPoint(e);
+      var hit = hitGrabbable(pt);
+      if (!hit) return;
+      e.preventDefault();
+      if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
+      var target = hit.target;
+      if (hit.kind === "agent") target.walk = null;
+      target.ragdoll = null;
+      target.dragging = true;
+      var place = hit.office;
+      drag = {
+        office: place.o, kind: hit.kind, target: target,
+        offsetX: pt.x - (place.x + target.x * TILE),
+        offsetY: pt.y - (place.y + target.y * TILE),
+        samples: [{ x: pt.x, y: pt.y, t: performance.now() }],
+        startedAt: performance.now(),
+        shakeDir: null, shakeCount: 0, shakeWindowStart: performance.now(),
+        lastShakeAt: 0,
+      };
+      canvas.style.cursor = "grabbing";
+      dirty = true;
+    });
+
+    canvas.addEventListener("pointermove", function (e) {
+      var pt = canvasPoint(e);
+      if (!drag) {
+        canvas.style.cursor = hitGrabbable(pt) ? "grab" : SLAP_CURSOR;
+        return;
+      }
+      e.preventDefault();
+      var place = officePlacement(drag.office);
+      if (!place) return; // office reflowed off-frame mid-drag; drop the update, keep the drag
+      var L = drag.office.layout;
+      var target = drag.target;
+      var w = target.w || 1;
+      var prev = drag.samples[drag.samples.length - 1];
+      target.x = Math.min(Math.max((pt.x - drag.offsetX - place.x) / TILE, 1), L.w - 1 - w);
+      target.y = Math.min(Math.max((pt.y - drag.offsetY - place.y) / TILE, 1), L.h - 2);
+      if (drag.kind !== "prop") target.facing = facingOf(pt.x - prev.x, pt.y - prev.y, target.facing);
+      else target.dir = pt.x >= prev.x ? 1 : -1;
+
+      // Shake detection: only a held clanker or the janitor can be shaken,
+      // not furniture. Direction reversals inside a short rolling window.
+      if (drag.kind !== "prop") {
+        var now = performance.now();
+        var dx = pt.x - prev.x;
+        if (Math.abs(dx) >= SHAKE_MIN_PX) {
+          var dir = dx > 0 ? 1 : -1;
+          if (now - drag.shakeWindowStart > SHAKE_WINDOW_MS) {
+            drag.shakeCount = 0;
+            drag.shakeWindowStart = now;
+          }
+          if (drag.shakeDir !== null && dir !== drag.shakeDir) drag.shakeCount += 1;
+          drag.shakeDir = dir;
+          if (drag.shakeCount >= SHAKE_REVERSALS && now - drag.lastShakeAt > SHAKE_COOLDOWN_MS) {
+            sayQuip(target, pickQuip(SHAKE_QUIPS, shakeRef), SHAKE_BUBBLE_MS);
+            drag.lastShakeAt = now;
+            drag.shakeCount = 0;
+          }
+        }
+      }
+
+      drag.samples.push({ x: pt.x, y: pt.y, t: performance.now() });
+      if (drag.samples.length > 6) drag.samples.shift();
+      dirty = true;
+    });
+
+    function endDrag(e) {
+      if (!drag) return;
+      var target = drag.target;
+      var isProp = drag.kind === "prop";
+      target.dragging = false;
+      canvas.style.cursor = SLAP_CURSOR; // released, but still hovering -- still ready
+
+      var samples = drag.samples;
+      var oldest = samples[0], newest = samples[samples.length - 1];
+      var dtS = (newest.t - oldest.t) / 1000;
+      var travel = Math.hypot(newest.x - oldest.x, newest.y - oldest.y);
+      var vx = 0, vy = 0, speed = 0;
+      if (dtS > 0.01) {
+        vx = (newest.x - oldest.x) / TILE / dtS;
+        vy = (newest.y - oldest.y) / TILE / dtS;
+        speed = Math.hypot(vx, vy);
+      }
+      var totalMs = performance.now() - drag.startedAt;
+
+      if (!isProp && travel < PAT_MAX_DIST && totalMs < PAT_MAX_MS) {
+        // A tap, not a flick: reward, no physics. Furniture doesn't get
+        // patted -- "pick up, place back down, or throw" is its whole verb set.
+        target.patUntil = performance.now() + PAT_BOUNCE_MS;
+        sayQuip(target, pickQuip(PAT_QUIPS, patRef), PAT_BUBBLE_MS);
+      } else if (speed >= THROW_MIN_SPEED && travel / TILE >= THROW_SHORT_HOP) {
+        // A real flick with real carry: airborne until the wall says stop
+        // (and, for furniture, break).
+        if (speed > THROW_MAX_SPEED) {
+          var scale = THROW_MAX_SPEED / speed;
+          vx *= scale; vy *= scale;
+        }
+        target.ragdoll = { vx: vx, vy: vy, angle: 0, spin: (Math.random() < 0.5 ? -1 : 1) * Math.min(3 + speed / 3, 14), startedAt: performance.now() };
+      } else if (!isProp && speed >= SLAP_MIN_SPEED) {
+        // Fast but short: a slap in place, not a launch.
+        sayQuip(target, pickQuip(SLAP_QUIPS, slapRef), SLAP_BUBBLE_MS);
+        target.impactUntil = performance.now() + IMPACT_SQUASH_MS;
+      } else if (isProp) {
+        // Plain put-down: the janitor's pathfinding needs to know it moved.
+        drag.office._grid = null;
+      }
+      // Anything slower than SLAP_MIN_SPEED on a clanker/janitor is a plain,
+      // silent put-down.
+
+      drag = null;
+      dirty = true;
+      if (e && e.preventDefault) e.preventDefault();
+    }
+    canvas.addEventListener("pointerup", endDrag);
+    canvas.addEventListener("pointercancel", endDrag);
+    // A drag that leaves the canvas keeps going (pointer capture holds it),
+    // but a release outside any element still needs to end it.
+    window.addEventListener("pointerup", function (e) { if (drag) endDrag(e); });
 
     function agentIn(o, name) {
       for (var i = 0; i < o.agents.length; i++) if (o.agents[i].name === name) return o.agents[i];
@@ -1058,7 +1522,7 @@ clanker.registerView({
       if (viewHidden()) { raf = 0; last = 0; return; }
       var dt = last ? Math.min((now - last) / 1000, 0.1) : 0;
       last = now;
-      if (stepAgents(dt) | stepJanitor(dt, now) | stepSleep(now) || dirty) { draw(); dirty = false; }
+      if (stepAgents(dt) | stepJanitor(dt, now) | stepSleep(now) | stepRagdolls(dt, now) || dirty) { draw(); dirty = false; }
       raf = window.requestAnimationFrame(frame);
     }
     var raf = window.requestAnimationFrame(frame);
