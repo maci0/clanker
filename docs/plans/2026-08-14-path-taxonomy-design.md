@@ -16,7 +16,7 @@
 
 ## Naming rules
 
-1. Zig sources: `snake_case.zig` only. No smashed compounds (`ensuredir` → `ensure_dir`).
+1. Zig sources: `snake_case.zig` only. No smashed compounds (`ensure_dir` → `ensure_dir`).
 2. Top-level `src/` dirs stay single-token nouns when possible. Keep `improve/` (verb outlier) and root `evals/` this pass.
 3. Guest sources stay under `tools/`; host tool infrastructure is `src/toolhost/` (today `src/tools/`).
 4. Operator scripts live under `scripts/`, not the repo root.
@@ -59,7 +59,7 @@ tools/                   # LLM-callable guest sources only
 
 src/
   toolhost/              # was src/tools/
-  tui/repl.zig           # was repl_vaxis.zig
+  tui/repl.zig           # was repl.zig
   tui/turn_stats.zig     # was stats.zig
   util/ensure_dir.zig    # + disk_cap, run_lock, file_lock, tool_out, raw_http
   llm/registry.zig       # was providers.zig (dir llm/providers/ unchanged)
@@ -116,13 +116,13 @@ If `tools` as a guest name is too ambiguous beside `tools/` the directory, prefe
 
 | From | To |
 |------|----|
-| `src/util/ensuredir.zig` | `src/util/ensure_dir.zig` |
-| `src/util/diskcap.zig` | `src/util/disk_cap.zig` |
-| `src/util/runlock.zig` | `src/util/run_lock.zig` |
-| `src/util/filelock.zig` | `src/util/file_lock.zig` |
-| `src/util/toolout.zig` | `src/util/tool_out.zig` |
-| `src/util/rawhttp.zig` | `src/util/raw_http.zig` |
-| `src/tui/repl_vaxis.zig` | `src/tui/repl.zig` |
+| `src/util/ensure_dir.zig` | `src/util/ensure_dir.zig` |
+| `src/util/disk_cap.zig` | `src/util/disk_cap.zig` |
+| `src/util/run_lock.zig` | `src/util/run_lock.zig` |
+| `src/util/file_lock.zig` | `src/util/file_lock.zig` |
+| `src/util/tool_out.zig` | `src/util/tool_out.zig` |
+| `src/util/raw_http.zig` | `src/util/raw_http.zig` |
+| `src/tui/repl.zig` | `src/tui/repl.zig` |
 | `src/tui/stats.zig` | `src/tui/turn_stats.zig` |
 | `src/tools/` | `src/toolhost/` |
 | `src/llm/providers.zig` | `src/llm/registry.zig` |

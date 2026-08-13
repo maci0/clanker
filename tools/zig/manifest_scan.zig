@@ -1,5 +1,5 @@
-//! Single-pass top-level field scanner for tool manifests. cmd_tools and
-//! cmd_plugins need four small fields out of each of ~90 manifests, and a
+//! Single-pass top-level field scanner for tool manifests. tools and
+//! plugins need four small fields out of each of ~90 manifests, and a
 //! full std.json parse of every manifest — input_schema trees included —
 //! under wasm interpretation was where `clanker tools list` spent over a
 //! second of its runtime. This walks the bytes once, tracking depth and

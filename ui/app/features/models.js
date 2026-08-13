@@ -1,8 +1,6 @@
 // Models view — what the configured providers offer, a provider's live
-// /models listing, and models.dev discovery, so finding a model to add to
-// config.toml no longer needs a terminal (`clanker providers models|catalog`
-// are the same data). Read-only by design: config.toml stays hand-edited,
-// matching `providers fill`'s own never-writes-config stance.
+// /models listing, and models.dev discovery. Save writes config.local.toml
+// only (never the shared config.toml), after an explicit confirm.
 import { readJson, fmtInt } from "../core/utils.js";
 
 /* Generic grid builder. Shares only the .usage-wrap/.usage presentation classes
@@ -117,6 +115,9 @@ export function configSnippet(m, configured, known) {
   return lines.join("\n") + "\n";
 }
 
+var snippetModel = null;
+var pendingSave = null;
+
 function hideSnippet() {
   var host = document.getElementById("models-snippet");
   if (host) host.hidden = true;
@@ -126,14 +127,82 @@ function showSnippet(m) {
   var host = document.getElementById("models-snippet");
   var body = document.getElementById("models-snippet-body");
   if (!host || !body) return;
+  snippetModel = m;
+  pendingSave = null;
   var title = document.getElementById("models-snippet-title");
   if (title) title.textContent = m.provider + "/" + m.id;
   body.textContent = configSnippet(m, configuredProviders, providersKnown);
   host.hidden = false;
   var copy = document.getElementById("models-snippet-copy");
   if (copy) copy.textContent = "Copy";
-  status("config.toml entry for " + m.provider + "/" + m.id + ".");
+  resetSaveButtons();
+  setSnippetNote("");
+  status("config.local.toml entry for " + m.provider + "/" + m.id + ".");
   try { host.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_) {}
+}
+
+function resetSaveButtons() {
+  var save = document.getElementById("models-snippet-save");
+  var def = document.getElementById("models-snippet-default");
+  if (save) { save.disabled = false; save.textContent = "Save to config.local.toml"; }
+  if (def) { def.disabled = false; def.textContent = "Set as default"; }
+}
+
+function setSnippetNote(text) {
+  var note = document.getElementById("models-snippet-note");
+  if (!note) return;
+  note.textContent = text;
+  note.hidden = !text;
+}
+
+function postConfig(path, payload, btn, confirmLabel, doneLabel) {
+  if (!snippetModel) return;
+  if (pendingSave !== path) {
+    pendingSave = path;
+    if (btn) btn.textContent = confirmLabel;
+    setSnippetNote("Click again to write this exact block to config.local.toml.");
+    return;
+  }
+  pendingSave = null;
+  if (btn) btn.disabled = true;
+  fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  })
+    .then(readJson)
+    .then(function (d) {
+      if (!d.ok) throw new Error(d.error || "write failed");
+      if (btn) btn.textContent = doneLabel;
+      setSnippetNote("Saved to config.local.toml. Restart clanker serve for this to take effect.");
+      status("Wrote " + (d.path || "config.local.toml") + ".");
+    })
+    .catch(function (err) {
+      if (btn) { btn.disabled = false; btn.textContent = "Retry"; }
+      setSnippetNote("Could not save: " + err.message);
+    });
+}
+
+function saveSnippet() {
+  if (!snippetModel) return;
+  postConfig(
+    "/api/config/model",
+    { provider: snippetModel.provider, model: snippetModel.id },
+    document.getElementById("models-snippet-save"),
+    "Confirm save",
+    "Saved"
+  );
+}
+
+function saveDefault() {
+  if (!snippetModel) return;
+  postConfig(
+    "/api/config/default",
+    { provider: snippetModel.provider, model: snippetModel.id },
+    document.getElementById("models-snippet-default"),
+    "Confirm default",
+    "Default set"
+  );
 }
 
 /* `navigator.clipboard` exists only in a secure context, and `clanker serve`
@@ -165,8 +234,8 @@ function snippetButton(m) {
   var btn = document.createElement("button");
   btn.type = "button";
   btn.className = "secondary models-snippet-btn";
-  btn.textContent = "config.toml";
-  btn.setAttribute("aria-label", "Show the config.toml entry for " + m.provider + "/" + m.id);
+  btn.textContent = "config.local.toml";
+  btn.setAttribute("aria-label", "Show the config.local.toml entry for " + m.provider + "/" + m.id);
   btn.addEventListener("click", function () { showSnippet(m); });
   return btn;
 }
@@ -346,6 +415,10 @@ export function bindModels() {
   if (refresh) refresh.addEventListener("click", function () { loadModelsView(); });
   var copy = document.getElementById("models-snippet-copy");
   if (copy) copy.addEventListener("click", copySnippet);
+  var save = document.getElementById("models-snippet-save");
+  if (save) save.addEventListener("click", saveSnippet);
+  var def = document.getElementById("models-snippet-default");
+  if (def) def.addEventListener("click", saveDefault);
   var close = document.getElementById("models-snippet-close");
   if (close) close.addEventListener("click", hideSnippet);
 }

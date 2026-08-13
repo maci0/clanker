@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. Sources of truth: `src/research/autoresearch.zig` (`Loop`) +
+Shipped. Sources of truth: `src/research/auto_research.zig` (`Loop`) +
 `src/research/ledger.zig` + `src/research/harness.zig`, and `src/cli.zig`'s
 `cmdAutoresearch` (`Command.autoresearch`). Surface: CLI `clanker
 autoresearch` (runs the loop directly), REPL `/autoresearch` (re-submits the

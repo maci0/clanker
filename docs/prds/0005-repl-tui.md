@@ -3,7 +3,7 @@
 ## Status
 
 Shipped (libvaxis-based), with known gaps tracked below. Source of truth:
-`src/tui/repl_vaxis.zig` (the `vxfw` app). Shared rendering with `clanker
+`src/tui/repl.zig` (the `vxfw` app). Shared rendering with `clanker
 run`: `src/tui/transcript.zig`, `theme.zig`, `syntax.zig`, `width.zig`.
 Surface: `clanker repl`.
 
@@ -156,7 +156,7 @@ specific `vxfw` shape, not an open-ended "figure it out":
 | Inline `ask_user`/confirm-before-write | **Shipped** | Dedicated ask modal (`ask_open` / `handleAskKey` / `drawAskModal`) on a pthread bridge; `ask_fn` always, `confirm_fn` when `confirm_writes=always` |
 | Multi-line input | **Gap** | `vxfw.TextField` has no multi-line mode; Shift+Enter has no vaxis primitive to hook |
 | Plan mode | **Gap** | `Agent.plan_mode` + `needsConfirm` exist (web UI); needs a REPL toggle |
-| Visible stats/compaction | **Shipped** | `src/tui/stats.zig`; status-bar context meter + per-turn line + compaction notices |
+| Visible stats/compaction | **Shipped** | `src/tui/turn_stats.zig`; status-bar context meter + per-turn line + compaction notices |
 
 ## Failure modes
 
@@ -237,7 +237,7 @@ Shipped:
       phase, the user's `clanker>` line in bold prompt-green)
 - [x] Multi-line transcript output renders one row per line (was collapsing
       onto one row: `/help` and completed replies; `row += 1` per Line)
-- [x] Per-turn stats line and visible compaction (`src/tui/stats.zig`,
+- [x] Per-turn stats line and visible compaction (`src/tui/turn_stats.zig`,
       shared with `clanker run`'s stderr footer): tokens in/out, wall time,
       tok/s, cache hit rate, cost (omitted for an unpriced model rather than
       shown as `$0.00`), and a `ctx used/window (%)` meter in both the turn

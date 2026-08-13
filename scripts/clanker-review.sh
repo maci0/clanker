@@ -26,12 +26,13 @@
 # repository with its own tools; nothing is patched unless --fix is given.
 
 set -uo pipefail
-cd "$(dirname "$0")" || exit 1
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT" || exit 1
 
 info() { printf '==> %s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '2,/^$/!d; s/^# \?//p' "$0"; }
+usage() { sed -En '2,/^$/{s/^# ?//p;}' "$0"; }
 
 PROMPT_DIR="$HOME/review-prompts/prompts"
 OUT_DIR="state/reviews"
@@ -66,7 +67,10 @@ done
 [ -d "$PROMPT_DIR" ] || die "prompt directory not found: $PROMPT_DIR"
 
 # Prompt files are "<name>-review.md"; the name alone is what users type.
-mapfile -t AVAILABLE < <(find "$PROMPT_DIR" -maxdepth 1 -name '*-review.md' -printf '%f\n' | sed 's/-review\.md$//' | sort)
+AVAILABLE=()
+while IFS= read -r name; do
+  AVAILABLE+=("$name")
+done < <(find "$PROMPT_DIR" -maxdepth 1 -name '*-review.md' -exec basename {} \; | sed 's/-review\.md$//' | sort)
 [ ${#AVAILABLE[@]} -gt 0 ] || die "no *-review.md prompts in $PROMPT_DIR"
 
 if [ "$LIST" -eq 1 ]; then
@@ -98,7 +102,7 @@ CLANKER_ARGS=()
 # The prompts are written for a tool that is handed the whole repository. The
 # agent instead reads what it needs, so it is told where it is and what shape
 # the answer should take.
-FRAMING='You are reviewing the repository in your current working directory: clanker, a self-improving agent harness written in Zig 0.16. Use your tools (search_code, read_file, roadmap, history) to read the actual source before judging it — do not review from memory or assume a file exists.
+FRAMING='You are reviewing the repository in your current working directory: clanker, a self-improving agent harness written in Zig 0.16. Use your tools (repo_search, read_file, roadmap, history) to read the actual source before judging it — do not review from memory or assume a file exists.
 
 Report findings only, do not patch anything. For each finding give: the file and line, what is wrong, why it matters, and the smallest concrete fix. Order by impact, put the strongest finding first, and say plainly when a section of the review has nothing worth reporting rather than padding it.'
 

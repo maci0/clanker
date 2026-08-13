@@ -123,9 +123,9 @@ Reference naming (from AGENTS.md and observed house style):
 | Functions / methods | `camelCase` | `compactMessages`, `writeStreamEvent`, `replShowThinking` |
 | Variables / fields / params | `snake_case` | `tool_call_id`, `run_stdout_color`, `max_iterations` |
 | Types | `PascalCase` | `Agent`, `MdStream`, `RunStats`, `ToolCall` |
-| Files | `snake_case.zig` | `cmd_status.zig`, `system_prompt.zig` |
+| Files | `snake_case.zig` | `status.zig`, `system_prompt.zig` |
 | Module constants | `snake_case` | `max_session_chars`, `parallel_tool_stack_bytes` |
-| WASM tool descriptor strings | Match the `.tool.json` `name` field exactly | `"webui"`, `"search_code"` |
+| WASM tool descriptor strings | Match the `.tool.json` `name` field exactly | `"webui"`, `"repo_search"` |
 
 ---
 
@@ -351,7 +351,7 @@ table below (from AGENTS.md).
 | `src/mcp/`, `src/peers/`, `src/util/`, `src/stats/` | MCP server, peer chatrooms, logging/dotenv/lock/io helpers, token usage stats | Agent-loop logic |
 | `src/evals/` + `src/gate/` | Eval harness, deterministic gates | Nothing outside verification |
 | `src/improve/` | Self-improvement engine (**protected**: see `wasm-review.md`'s trust-boundary section) | - |
-| `src/tools/` | Tool registry (`registry.zig`) and the WASM build pipeline (`builder.zig`, **protected**) | Agent orchestration |
+| `src/toolhost/` | Tool registry (`registry.zig`) and the WASM build pipeline (`builder.zig`, **protected**) | Agent orchestration |
 
 Findings: cyclic imports, god-files that should split, `pub` on helpers that
 should be file-private, a second implementation of something the registry or

@@ -14,7 +14,7 @@
 // message indices each replayed turn covers, and the turn is scrolled to,
 // flagged for a moment and marked with the query. On a long conversation
 // opening at the top was much the same as not going there.
-import { readJson, formatChatTime } from "../core/utils.js";
+import { readJson, formatChatTime, searchFoldFind } from "../core/utils.js";
 
 function byId(id) { return document.getElementById(id); }
 
@@ -31,19 +31,19 @@ export function bindSearchDeps(deps) {
    interpolation step here, so nothing needs escaping and nothing should be
    added that would. */
 function markInto(parent, text, needle) {
-  var hay = text.toLowerCase();
-  var pin = needle.toLowerCase();
-  var from = 0;
+  var origFrom = 0;
+  var foldFrom = 0;
   for (;;) {
-    var at = pin ? hay.indexOf(pin, from) : -1;
-    if (at === -1) break;
-    if (at > from) parent.appendChild(document.createTextNode(text.slice(from, at)));
+    var hit = searchFoldFind(text, needle, foldFrom);
+    if (!hit) break;
+    if (hit.start > origFrom) parent.appendChild(document.createTextNode(text.slice(origFrom, hit.start)));
     var m = document.createElement("mark");
-    m.textContent = text.slice(at, at + needle.length);
+    m.textContent = text.slice(hit.start, hit.end);
     parent.appendChild(m);
-    from = at + needle.length;
+    origFrom = hit.end;
+    foldFrom = hit.next;
   }
-  if (from < text.length) parent.appendChild(document.createTextNode(text.slice(from)));
+  if (origFrom < text.length) parent.appendChild(document.createTextNode(text.slice(origFrom)));
 }
 
 function hitRow(h) {

@@ -2,13 +2,11 @@
 
 ## Status
 
-Draft. Nothing in this PRD is built yet. Sources of truth once built:
-`src/config.zig` (`Model.temperature`/`top_p`/`reasoning_effort`),
-`src/llm/providers/common.zig` (`writeSamplingParams`, the only place these
-are put on the wire), `src/agent/loop.zig` (where a turn is actually
-dispatched, and the one place that knows whether the current turn is a plain
-answer or a tool-calling step), `ui/app/core/modelpicker.js` (today's
-manual temperature/top_p controls, `~L175-177`).
+Shipped. `src/llm/sampling_profiles.zig` holds the v1 table. 
+`writeSamplingParams` consults it as the last `orelse` after per-run
+override and model config. `reasoning_effort` is written there too, so
+OpenAI no longer has a second writer. Sources of truth:
+`src/llm/sampling_profiles.zig`, `src/llm/providers/common.zig`.
 
 ## Problem
 
@@ -188,18 +186,18 @@ relocating the picker fields must not reach into it.
 
 ## Acceptance criteria
 
-- [ ] A model with no configured `temperature`/`top_p` gets the v1 table
+- [x] A model with no configured `temperature`/`top_p` gets the v1 table
       defaults: chat non-thinking → temperature `0.7`, top_p unset; tool_use
       non-thinking → temperature `0.0`, top_p unset. Verified by inspecting
       the built request body in a unit test.
-- [ ] A model with an explicit `config.toml` `temperature` ships that value
+- [x] A model with an explicit `config.toml` `temperature` ships that value
       unchanged regardless of use case.
-- [ ] A `"thinking"`-capability model never gets an automatic `temperature`;
+- [x] A `"thinking"`-capability model never gets an automatic `temperature`;
       chat gets `reasoning_effort = "medium"`, tool_use gets `"high"`.
-- [ ] The webui default chat/composer flow no longer shows manual
+- [x] The webui default chat/composer flow no longer shows manual
       temperature/top_p fields; they remain reachable from an explicit
       advanced control.
-- [ ] No `top_k` field is added to the v1 table, `RequestParams`, or wire
+- [x] No `top_k` field is added to the v1 table, `RequestParams`, or wire
       codecs as part of this work.
 
 ## Open questions / future work

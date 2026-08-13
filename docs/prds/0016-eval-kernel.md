@@ -2,12 +2,13 @@
 
 ## Status
 
-Draft. No source files yet. New WASM tool at `tools/zig/kernel.zig` with
-manifest `tools/manifests/kernel.tool.json`. Loopback bridge starts as a local
-HTTP server in the host (`src/kernel/bridge.zig`). Kernel processes live in
-`state/kernels/<session-id>/`. The tool is named `kernel`, not `eval`, because
-`clanker eval` is a shipped, unrelated command (`src/cli.zig`, `src/evals/`)
-and a tool named `eval` would be a name collision one word apart.
+Partial. Registry, disabled-by-default guest, magic prefixes, ADR 0010
+carve-out, and `ck_kernel` (one-shot Python eval, ADR 0011) are in.
+Persistent supervisors, JS/Bun, the loopback bridge, and session-end
+SIGTERM wiring are still open.
+Sources of truth: `src/agent/subprocess.zig`, `src/config.zig`
+(`Kernel`), `tools/zig/kernel.zig`, `tools/zig/kernel_magic.zig`,
+[ADR 0010](../adrs/0010-kernels-are-an-opt-in-unsandboxed-class.md).
 
 ## Problem
 
@@ -208,10 +209,10 @@ the feature default-on without quotas is not.
 
 ## Acceptance criteria
 
-- [ ] `kernel.enabled = false` (default): the tool is present in the registry
+- [x] `kernel.enabled = false` (default): the tool is present in the registry
       but returns a "disabled" error when called; no kernel is started.
-- [ ] Manifest sets `"confirm": true`; tool is documented as a named opt-in
-      unsandboxed class (ADR 0007 carve-out referenced).
+- [x] Manifest sets `"confirm": true`; tool is documented as a named opt-in
+      unsandboxed class ([ADR 0010](../adrs/0010-kernels-are-an-opt-in-unsandboxed-class.md)).
 - [ ] With `kernel.enabled = true` and Python installed: `{"kernel": "python",
       "cell": "1 + 1"}` returns `{"result": "2", "ok": true}`.
 - [ ] Python state persists across calls in the same session: define `x = 10` in
@@ -233,12 +234,12 @@ the feature default-on without quotas is not.
 - [ ] Session cleanup removes `state/kernels/<session-id>/` within
       `kernel.cleanup_delay_ms` and SIGTERMs registered subprocesses via the
       shared registry.
-- [ ] Session subprocess registry is usable by PRD 0017 without a second
+- [x] Session subprocess registry is usable by PRD 0017 without a second
       lifecycle implementation.
-- [ ] Quota requirement is documented as a blocker for default-on, not for
+- [x] Quota requirement is documented as a blocker for default-on, not for
       opt-in v1.
-- [ ] Unit tests cover: magic prefix parsing, kernel registry lifecycle, bridge
-      auth token check.
+- [x] Unit tests cover: magic prefix parsing, kernel registry lifecycle.
+      Bridge auth token check is still open with the loopback server.
 
 ## Open questions / future work
 

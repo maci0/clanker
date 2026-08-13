@@ -1,4 +1,5 @@
 // Vanilla, no bundler. Transcript search helpers — DOM helpers, no app state.
+import { searchFoldFind } from "./utils.js";
 
 /* A search hit names a *message* index, and the transcript is drawn in turns:
    one question plus everything answered before the next question, so a turn
@@ -32,28 +33,31 @@ export function clearMarks(root) {
 }
 
 export function markMatches(root, needle) {
+  if (!needle) return 0;
   var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
   var targets = [];
   var node;
   while ((node = walker.nextNode())) {
-    if (node.nodeValue.toLowerCase().indexOf(needle) !== -1) targets.push(node);
+    if (searchFoldFind(node.nodeValue, needle) !== null) targets.push(node);
   }
   var hits = 0;
   targets.forEach(function (text) {
     var value = text.nodeValue;
     var frag = document.createDocumentFragment();
-    var at = 0;
-    var idx = value.toLowerCase().indexOf(needle, at);
-    while (idx !== -1) {
-      if (idx > at) frag.appendChild(document.createTextNode(value.slice(at, idx)));
+    var origFrom = 0;
+    var foldFrom = 0;
+    for (;;) {
+      var hit = searchFoldFind(value, needle, foldFrom);
+      if (!hit) break;
+      if (hit.start > origFrom) frag.appendChild(document.createTextNode(value.slice(origFrom, hit.start)));
       var mark = document.createElement("mark");
-      mark.textContent = value.substr(idx, needle.length);
+      mark.textContent = value.slice(hit.start, hit.end);
       frag.appendChild(mark);
       hits += 1;
-      at = idx + needle.length;
-      idx = value.toLowerCase().indexOf(needle, at);
+      origFrom = hit.end;
+      foldFrom = hit.next;
     }
-    if (at < value.length) frag.appendChild(document.createTextNode(value.slice(at)));
+    if (origFrom < value.length) frag.appendChild(document.createTextNode(value.slice(origFrom)));
     text.parentNode.replaceChild(frag, text);
   });
   return hits;

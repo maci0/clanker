@@ -1,0 +1,31 @@
+{
+  "name": "kernel",
+  "description": "Persistent Python or JS eval kernel for the current session. Off by default (kernel.enabled = false): this is an unsandboxed subprocess with the host's ambient filesystem permission. Input {kernel:\"python\"|\"js\", cell, reset?, timeout_ms?}. Magic prefixes: %pip install, %time, %%bash, !cmd.",
+  "llm_description": "Session-scoped Python/JS eval kernel. Disabled unless kernel.enabled=true (unsandboxed subprocess). {kernel:'python'|'js', cell, reset?, timeout_ms?}. Magics: %pip, %time, %%bash, !cmd.",
+  "wasm": "zig-out/tools/kernel.wasm",
+  "confirm": true,
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "kernel": {
+        "type": "string",
+        "enum": ["python", "js"],
+        "description": "python (default) or js."
+      },
+      "cell": {
+        "type": "string",
+        "description": "Code to execute in the persistent kernel."
+      },
+      "reset": {
+        "type": "boolean",
+        "description": "Kill and restart the kernel before this cell."
+      },
+      "timeout_ms": {
+        "type": "integer",
+        "description": "Cap cell execution (default 10000)."
+      }
+    },
+    "required": ["cell"]
+  },
+  "category": "compute"
+}

@@ -3,7 +3,7 @@
 ## Status
 
 Accepted. Shipped as [PRD 0004 — Autoresearch](../prds/0004-autoresearch.md);
-the implementation is `src/research/autoresearch.zig`, `src/research/ledger.zig`
+the implementation is `src/research/auto_research.zig`, `src/research/ledger.zig`
 and `src/research/harness.zig`.
 
 ## Context

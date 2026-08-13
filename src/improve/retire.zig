@@ -28,7 +28,7 @@
 const std = @import("std");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
-const ensuredir = @import("../util/ensuredir.zig");
+const ensure_dir = @import("../util/ensure_dir.zig");
 
 pub const registry_path = "state/worktrees.json";
 const goals_path = "state/goals.json";
@@ -78,7 +78,7 @@ pub fn read(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator) []Entry {
 fn write(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator, entries: []const Entry) !void {
     // `state/` may be a symlink into the checkout for an isolated run, and
     // createDirPath fails NotDir on one; ensureDir is the form that tolerates it.
-    try ensuredir.ensureDir(dir, io, "state");
+    try ensure_dir.ensureDir(dir, io, "state");
     var enc: std.Io.Writer.Allocating = .init(arena);
     try std.json.Stringify.value(entries, .{}, &enc.writer);
     try atomic_write.writeFile(io, dir, registry_path, enc.written());
@@ -318,7 +318,7 @@ test "reconcile classifies by goal status and drops rows whose worktree is gone"
     try tmp.dir.createDirPath(io, "live");
     try tmp.dir.createDirPath(io, "none");
     try tmp.dir.createDirPath(io, "missing-goal");
-    try ensuredir.ensureDir(tmp.dir, io, "state");
+    try ensure_dir.ensureDir(tmp.dir, io, "state");
     try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data =
         \\[{"id":"g-live","status":"active"},{"id":"g-arch","status":"archived"}]
     });

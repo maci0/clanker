@@ -12,8 +12,8 @@
 //! group (plus a totals row), newest usage counted exactly once.
 
 const std = @import("std");
-const ensuredir = @import("../util/ensuredir.zig");
-const filelock = @import("../util/filelock.zig");
+const ensure_dir = @import("../util/ensure_dir.zig");
+const file_lock = @import("../util/file_lock.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 
@@ -42,6 +42,12 @@ pub const Record = struct {
     err: []const u8 = "",
     /// Log correlation id when the call happened on an HTTP worker.
     request_id: []const u8 = "",
+    /// Optional advisor-completion tokens for this turn. Omitted when unset.
+    advisor_tokens: ?u64 = null,
+    /// Classifier result from auto-thinking (`low`/`medium`/`high`/`xhigh`).
+    thinking_level: ?[]const u8 = null,
+    /// Round-trip ms of the thinking classifier call.
+    thinking_classifier_ms: ?u64 = null,
 };
 
 /// Aggregated usage for one (provider, model) pair.
@@ -87,7 +93,7 @@ fn subPath(arena: std.mem.Allocator, state_dir: []const u8) ![]const u8 {
 /// a stats write must not break a chat completion. O(1) append via a
 /// truncate-free open + seek to end (the caller holds the only writer).
 pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, rec: Record) void {
-    if (state_dir.len > 0) ensuredir.ensureDir(base, io, state_dir) catch |err| {
+    if (state_dir.len > 0) ensure_dir.ensureDir(base, io, state_dir) catch |err| {
         log.log(.warn, "[stats] mkdir failed: {s}", .{@errorName(err)});
         return;
     };
@@ -101,7 +107,7 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     // waiter that already opened the old inode could append to an unlinked
     // file after the replacement and silently lose the record.
     const lock_dir = if (state_dir.len == 0) "." else state_dir;
-    var guard = filelock.acquire(io, base, lock_dir, "token_stats", arena);
+    var guard = file_lock.acquire(io, base, lock_dir, "token_stats", arena);
     defer guard.release();
 
     // Trim the log when it outgrows the cap. Done before the file is opened
@@ -250,6 +256,45 @@ pub fn totals(stats: []const Stat) Stat {
         t.error_calls += s.error_calls;
     }
     return t;
+}
+
+/// Human-readable table for `clanker stats` and any other native caller.
+/// The model_stats WASM guest keeps its own copy (it cannot import this
+/// module), but every host path should call here rather than open-coding
+/// columns.
+pub fn renderTable(arena: std.mem.Allocator, stats: []const Stat, totals_row: Stat) ![]const u8 {
+    if (stats.len == 0) return "no token usage recorded yet (run an agent task first)\n";
+    var text: std.ArrayList(u8) = .empty;
+    try text.appendSlice(arena, "provider        model                          calls  prompt  output   total  cache%  tok/s     cost$  fail\n");
+    for (stats) |stat| try appendTableRow(arena, &text, stat.provider, stat.model, stat);
+    try appendTableRow(arena, &text, "totals", "", totals_row);
+    return text.toOwnedSlice(arena);
+}
+
+fn appendTableRow(arena: std.mem.Allocator, text: *std.ArrayList(u8), provider: []const u8, model: []const u8, stat: Stat) !void {
+    const prompt = try compactCount(arena, stat.prompt_tokens);
+    const completion = try compactCount(arena, stat.completion_tokens);
+    const total = try compactCount(arena, stat.total_tokens);
+    const line = try std.fmt.allocPrint(arena, "{s:<15} {s:<30}{d:>5} {s:>7} {s:>7} {s:>7} {d:>5.1} {d:>7.1} {d:>8.2} {d:>5}\n", .{
+        provider,
+        model,
+        stat.calls,
+        prompt,
+        completion,
+        total,
+        stat.cacheHitRate(),
+        stat.tokensPerSec(),
+        stat.cost,
+        stat.error_calls,
+    });
+    try text.appendSlice(arena, line);
+}
+
+fn compactCount(arena: std.mem.Allocator, value: u64) ![]const u8 {
+    if (value < 1_000) return std.fmt.allocPrint(arena, "{d}", .{value});
+    if (value < 1_000_000) return std.fmt.allocPrint(arena, "{d:.1}K", .{@as(f64, @floatFromInt(value)) / 1_000.0});
+    if (value < 1_000_000_000) return std.fmt.allocPrint(arena, "{d:.1}M", .{@as(f64, @floatFromInt(value)) / 1_000_000.0});
+    return std.fmt.allocPrint(arena, "{d:.1}B", .{@as(f64, @floatFromInt(value)) / 1_000_000_000.0});
 }
 
 /// Serializes {ok, stats, totals} for the ck_stats host fn and /api/stats.

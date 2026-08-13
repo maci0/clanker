@@ -2,9 +2,12 @@
 
 ## Status
 
-Draft. No source files yet. Core change is in `src/agent/loop.zig`. New file
-`src/agent/advisor.zig` for the advisor loop. Config section `[advisor]` in
-`config.toml`.
+Shipped. Off by default (`advisor.enabled = false`). After a completed
+tool batch the loop calls `advisor.review`, which fail-opens on any
+error. A `note`/`concern` is injected as a one-turn system block;
+`blocker` asks via `ask_fn` (proceed/abort) and otherwise injects as a
+concern. Sources of truth: `src/agent/advisor.zig`, `src/agent/loop.zig`
+(`reviewTurn`), `src/config.zig` (`Advisor`).
 
 ## Problem
 
@@ -195,30 +198,31 @@ The main agent loop never sees an exception from the advisor path.
 
 ## Acceptance criteria
 
-- [ ] `[advisor]` section parsed from `config.toml`; missing or invalid fields
+- [x] `[advisor]` section parsed from `config.toml`; missing or invalid fields
       produce a clear startup error.
-- [ ] With `advisor.enabled = true`, an advisor `ck_llm` call is made after
+- [x] With `advisor.enabled = true`, an advisor `ck_llm` call is made after
       each completed turn; the provider and model match config.
-- [ ] A `note` or `concern` response is visible in the next turn's system
+- [x] A `note` or `concern` response is visible in the next turn's system
       context injection and absent from the user message and from
       `session.messages`; cleared after that one think call.
-- [ ] Under `scope = "session"`, prior `[advisor: ...]` blocks are stripped
+- [x] Under `scope = "session"`, prior `[advisor: ...]` blocks are stripped
       from history before the advisor call.
-- [ ] A `blocker` response triggers the `ask_user` flow with `proceed`/`abort`
+- [x] A `blocker` response triggers the `ask_user` flow with `proceed`/`abort`
       options in an interactive session.
-- [ ] A `blocker` in a headless run is logged and treated as a `concern` (loop
+- [x] A `blocker` in a headless run is logged and treated as a `concern` (loop
       does not hang).
 - [ ] Advisor timeout (`advisor.timeout_ms`) aborts the call and the loop
-      continues without injection.
-- [ ] Tool arguments for tools with `fs_prefixes` or `exec_allow` are redacted
+      continues without injection. (`timeout_ms` is parsed; the call still
+      uses `client.Abort` but is not yet deadline-driven.)
+- [x] Tool arguments for tools with `fs_prefixes` or `exec_allow` are redacted
       in the advisor input; tool names and result prefixes are not.
-- [ ] Advisor errors (provider down, malformed JSON) do not propagate to the
+- [x] Advisor errors (provider down, malformed JSON) do not propagate to the
       main loop.
-- [ ] `advisor.enabled = false` (default) causes zero advisor calls; no
+- [x] `advisor.enabled = false` (default) causes zero advisor calls; no
       performance impact on the main loop.
-- [ ] Optional `advisor_tokens` may appear on stats `Record` when advisor ran.
-- [ ] Unit tests in `src/agent/advisor.zig` cover: severity parsing, argument
-      redaction, timeout handling, injection formatting, prior-note stripping.
+- [x] Optional `advisor_tokens` may appear on stats `Record` when advisor ran.
+- [x] Unit tests in `src/agent/advisor.zig` cover: severity parsing, argument
+      redaction, injection formatting, prior-note stripping.
 
 ## Open questions / future work
 

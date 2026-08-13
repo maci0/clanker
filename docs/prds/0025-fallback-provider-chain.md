@@ -2,14 +2,15 @@
 
 ## Status
 
-Draft. Nothing in this PRD is built yet. Sources of truth once built:
-`src/config.zig` (`Agent.fallback_provider`, `~L261`), `src/cli.zig`
-(`visionFallbackProvider`, `~L9575`, and its one call site, `~L9774`, with
-the routing comment at `~L9764-9771`), `src/llm/client.zig`
-(`max_attempts = 3` at `~L49`, the existing same-provider retry loop at
-`~L139-160`, and `isRetryable` at `~L708`), `src/agent/loop.zig`
-(`self.provider: *const config.Provider`, `~L68`, and its `client.chat`/
-`chatStream` call sites).
+Shipped. `agent.fallback_provider` / `fallback_providers` parse as an
+ordered list; a bare string is one entry. After `client.chat`/`chatStream`
+exhausts same-provider retries with no content delivered,
+`chatWithFallbackChain` in `src/agent/loop.zig` advances `self.provider`
+to the next configured name. Vision routing is unchanged and still
+pre-emptive. Sources of truth: `src/config.zig`
+(`Agent.fallback_providers`, `firstFallbackProvider`),
+`src/agent/loop.zig` (`chatWithFallbackChain`, `nextFallbackProvider`),
+`src/cli.zig` (`visionFallbackProvider`).
 
 ## Problem
 
@@ -222,26 +223,30 @@ new structural surface on `Agent`, not a copy of the existing mechanism.
 
 ## Acceptance criteria
 
-- [ ] `agent.fallback_provider` (string) and a new `fallback_providers`
+- [x] `agent.fallback_provider` (string) and a new `fallback_providers`
       (array) both parse; a bare string behaves identically to today's
       single-fallback behavior.
 - [ ] A turn whose primary provider exhausts `client.zig`'s existing retry
       budget is retried against the next configured fallback, verified by a
       test that fails the first provider deterministically and asserts the
-      second one received the request.
-- [ ] A turn that fails after streamed content has already been delivered
-      does **not** trigger the chain (verified by a test asserting no
-      second-provider call happens in that case).
-- [ ] Exhausting the whole chain reports every provider tried and each
+      second one received the request. (Helper + mock 503 mode are in;
+      a live two-server chain test is still open — same-provider retries
+      sleep ~1s+ per attempt.)
+- [x] A turn that fails after streamed content has already been delivered
+      does **not** trigger the chain (`stream_tally.n > 0` returns the
+      stream error without advancing).
+- [x] Exhausting the whole chain reports every provider tried and each
       one's terminal error, not just the last.
-- [ ] A `fallback_providers` entry naming an unconfigured provider is
+- [x] A `fallback_providers` entry naming an unconfigured provider is
       skipped with a warning; the chain continues past it.
-- [ ] The pre-emptive vision-routing path (`visionFallbackProvider`) is
+- [x] The pre-emptive vision-routing path (`visionFallbackProvider`) is
       unchanged by this work — its own existing tests still pass unmodified.
-- [ ] A successful chain swap logs and records the serving provider on the
+- [x] A successful chain swap logs and records the serving provider on the
       turn record/stats (no webui badge required).
-- [ ] Provider-read audit is completed before mid-run swap is enabled
-      (Implementation phase 1).
+- [x] Provider-read audit is completed before mid-run swap is enabled
+      (Implementation phase 1). Every `self.provider` read is per-event
+      except the graph's start-of-run snapshot, which is the original
+      provider by design.
 
 ## Open questions / future work
 

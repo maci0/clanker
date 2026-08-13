@@ -17,8 +17,8 @@ const std = @import("std");
 const config_mod = @import("../config.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
-const filelock = @import("../util/filelock.zig");
-const ensuredir = @import("../util/ensuredir.zig");
+const file_lock = @import("../util/file_lock.zig");
+const ensure_dir = @import("../util/ensure_dir.zig");
 const utf8 = @import("../util/utf8.zig");
 const build_options = @import("build_options");
 
@@ -246,7 +246,7 @@ pub fn listRooms(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
 /// the exclusive `lock_file_name` lock, not because of any single-threading
 /// assumption.
 pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message) !void {
-    if (state_dir.len > 0) try ensuredir.ensureDir(base, io, state_dir);
+    if (state_dir.len > 0) try ensure_dir.ensureDir(base, io, state_dir);
     const path = try subPath(arena, state_dir, log_path);
 
     // This reads the whole log, adds a line, and writes the whole log back.
@@ -260,10 +260,10 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     // longer guards anything.
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     // createFileRetry, not createFile: racing creates of a not-yet-existing
-    // lock file spuriously fail ENOENT on macOS (see filelock.zig), and every
+    // lock file spuriously fail ENOENT on macOS (see file_lock.zig), and every
     // such failure here is a concurrent append running unserialised, i.e. a
     // silently dropped message.
-    const lock = filelock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| blk: {
+    const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| blk: {
         // Best effort: a chat message is worth delivering unserialised rather
         // than dropping outright, but say so.
         log.log(.warn, "[chat] could not lock {s} ({s}); a concurrent write may be lost", .{ lock_path, @errorName(err) });
@@ -400,7 +400,7 @@ pub fn toggleReaction(
 ) !bool {
     _ = cfg;
     const lock_path = try subPath(arena, state_dir, lock_file_name);
-    const lock = filelock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
     const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return false;
@@ -450,7 +450,7 @@ pub fn editMessage(
 ) !?Message {
     _ = cfg;
     const lock_path = try subPath(arena, state_dir, lock_file_name);
-    const lock = filelock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
     const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return null;
@@ -486,7 +486,7 @@ pub fn deleteMessage(
 ) !bool {
     _ = cfg;
     const lock_path = try subPath(arena, state_dir, lock_file_name);
-    const lock = filelock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
     const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return false;
@@ -544,7 +544,7 @@ fn saveMeta(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem
 
 pub fn setTopic(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, topic: []const u8) !void {
     const lock_path = try subPath(arena, state_dir, meta_lock_file_name);
-    const lock = filelock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
     defer if (lock) |f| f.close(io);
     var meta = try loadMeta(base, io, arena, state_dir);
     const gop = try meta.map.getOrPut(arena, room);
@@ -561,7 +561,7 @@ pub fn getTopic(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_di
 
 pub fn togglePin(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, msg_id: []const u8) !bool {
     const lock_path = try subPath(arena, state_dir, meta_lock_file_name);
-    const lock = filelock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
     defer if (lock) |f| f.close(io);
     var meta = try loadMeta(base, io, arena, state_dir);
     const gop = try meta.map.getOrPut(arena, room);
@@ -788,10 +788,10 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg
 /// can rejoin a config-default room); `on=false` leaves (adds to
 /// "unsubscribed" so it overrides a config-default subscription).
 pub fn subscribe(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, on: bool) !void {
-    if (state_dir.len > 0) try ensuredir.ensureDir(base, io, state_dir);
+    if (state_dir.len > 0) try ensure_dir.ensureDir(base, io, state_dir);
     // Subscription changes are read-modify-write operations. Serialize them
     // so concurrent join/leave requests cannot silently discard each other.
-    var guard = filelock.acquire(io, base, if (state_dir.len > 0) state_dir else ".", "chatrooms-sub", gpa);
+    var guard = file_lock.acquire(io, base, if (state_dir.len > 0) state_dir else ".", "chatrooms-sub", gpa);
     defer guard.release();
     const path = try subPath(arena, state_dir, sub_path);
     var rooms: std.ArrayList([]const u8) = .empty;
@@ -897,7 +897,7 @@ pub fn readCursor(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_
 
 pub fn writeCursor(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, state_dir: []const u8, msg: Message) void {
     _ = gpa;
-    if (state_dir.len > 0) ensuredir.ensureDir(base, io, state_dir) catch return;
+    if (state_dir.len > 0) ensure_dir.ensureDir(base, io, state_dir) catch return;
     var path_buf: [512]u8 = undefined;
     const path = if (state_dir.len == 0)
         cursor_path

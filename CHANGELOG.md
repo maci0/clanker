@@ -21,6 +21,50 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   or a container: a `[serve]` table (`host`, `webui_port`, `serve_as`) and the
   `CLANKER_HOST` / `CLANKER_WEBUI_PORT` environment variables. Precedence is
   config < environment < flags.
+- `agent.tools_dir` accepts a list of directories as well as a string, so a
+  third-party plugin can live beside the built-in tools instead of replacing
+  them. Later-listed wins on a name collision; a missing directory warns and
+  continues. Existing `tools_dir = "tools/manifests"` configs are unchanged.
+- `agent.fallback_provider` is now an ordered list (`fallback_providers`
+  also accepted). After the selected provider exhausts its own retries with
+  no content delivered, the next configured name is tried. A bare string
+  still means one fallback. Vision routing stays pre-emptive and unchanged.
+- The Models view can save a catalog snippet (or set the default
+  provider/model) into `config.local.toml`. Writes are surgical table/key
+  replacements and take effect on the next `clanker serve` restart.
+- `read_file` accepts `hashes: true` (4-hex xxHash per line) and
+  `edit_file` accepts `op: "hashline"` so an edit can target those hashes
+  instead of reproducing the exact text. A mismatch rejects the whole
+  patch; success returns the new hashes for a follow-up edit.
+- Optional `[advisor]` second-model critique after each completed turn.
+  Off by default; fail-open. A `blocker` asks proceed/abort when a human
+  is present and otherwise injects as a one-turn concern.
+- Turns with no configured `temperature`/`top_p` now pick a use-case
+  default (chat 0.7, tool-use 0.0). Thinking models get
+  `reasoning_effort` (`medium`/`high`) instead. An explicit config or
+  per-run value still wins.
+- Optional `agent.auto_thinking` classifies each user turn and selects a
+  `reasoning_effort` row. Off by default; fail-open.
+- `[ttsr]` stream rules can abort an in-flight completion on a
+  literal/`*` match, inject a note into the system prompt, and retry
+  the turn. Off unless rules are configured.
+- Session-scoped subprocess registry (`src/agent/subprocess.zig`) plus a
+  `kernel` guest that stays off unless `kernel.enabled = true`. Python/JS
+  supervisors are still landing; DAP will reuse the same registry.
+- `gh_read` fetches GitHub issues/PRs via `gh://` URLs with an
+  allowlisted `GITHUB_TOKEN`. Repeat reads within 5 minutes hit
+  `state/gh_cache/`. `read_file` stays network-free.
+- `clanker commit` / `smart_commit` groups a staged diff into
+  conventional commits. A dense import cycle becomes one commit with a
+  note instead of looping.
+- `write_goal` drafts a structured goal without persisting it.
+  `proof` and `stop_rule` now appear in the active-goal run preamble.
+- An opt-in REPL mascot (`--mascot`, `[tui] mascot`), off by default. Five
+  modes: it can track what you type, loop across the screen, run on the
+  spot above the composer, or run inside the composer, which grows to make
+  room. `--mascot-size` picks an 8x4, 10x5 or 21x10 cell grid and
+  `--mascot-facing` mirrors it. Drawn with kitty graphics where the
+  terminal supports it and unicode half-blocks everywhere else.
 
 ### Changed
 

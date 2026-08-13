@@ -7,8 +7,8 @@ const config = @import("../config.zig");
 const types = @import("../llm/types.zig");
 const client = @import("../llm/client.zig");
 const agent = @import("../agent/loop.zig");
-const registry = @import("../tools/registry.zig");
-const builder = @import("../tools/builder.zig");
+const registry = @import("../toolhost/registry.zig");
+const builder = @import("../toolhost/builder.zig");
 const scorers = @import("scorers.zig");
 const log = @import("../util/log.zig");
 

@@ -7,13 +7,13 @@
 const std = @import("std");
 const json = std.json;
 const config = @import("../config.zig");
-const providers = @import("../llm/providers.zig");
+const providers = @import("../llm/registry.zig");
 const auth = @import("../llm/auth.zig");
 const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
 const token_stats = @import("../stats/tokens.zig");
 const log = @import("../util/log.zig");
-const rawhttp = @import("../util/rawhttp.zig");
+const raw_http = @import("../util/raw_http.zig");
 const anthropic = @import("../llm/providers/anthropic.zig");
 const xcode = @import("proxy_transcode.zig");
 const build_options = @import("build_options");
@@ -364,8 +364,8 @@ fn pipe(
             if (nread == 0) break;
             watch.markByte();
             total += nread;
-            if (total > rawhttp.max_body_bytes) break;
-            rawhttp.writeAllFd(ctx.stream.socket.handle, buf[0..nread]);
+            if (total > raw_http.max_body_bytes) break;
+            raw_http.writeAllFd(ctx.stream.socket.handle, buf[0..nread]);
         }
         return status;
     }
@@ -379,7 +379,7 @@ fn pipe(
         const nread = reader.readSliceShort(&buf) catch break;
         if (nread == 0) break;
         watch.markByte();
-        if (body_buf.items.len + nread > rawhttp.max_body_bytes) {
+        if (body_buf.items.len + nread > raw_http.max_body_bytes) {
             return writeEnvelope(ctx, 502, null, "Upstream response too large");
         }
         body_buf.appendSlice(ctx.gpa, buf[0..nread]) catch return error.ConnectFailed;
@@ -439,7 +439,7 @@ fn xcodeStream(
         } else {
             watch.markByte();
             total += nread;
-            if (total > rawhttp.max_body_bytes) break;
+            if (total > raw_http.max_body_bytes) break;
             sse.appendSlice(ctx.gpa, buf[0..nread]) catch break;
         }
         while (std.mem.find(u8, sse.items, "\n\n")) |frame_end| {
@@ -453,13 +453,13 @@ fn xcodeStream(
                     .openai => {
                         if (try openai_st.writeEvent(ctx.gpa, ev)) |line| {
                             defer ctx.gpa.free(line);
-                            rawhttp.writeAllFd(ctx.stream.socket.handle, line);
+                            raw_http.writeAllFd(ctx.stream.socket.handle, line);
                         }
                     },
                     .anthropic => {
                         if (try anth_st.writeEvent(ctx.gpa, ev)) |line| {
                             defer ctx.gpa.free(line);
-                            rawhttp.writeAllFd(ctx.stream.socket.handle, line);
+                            raw_http.writeAllFd(ctx.stream.socket.handle, line);
                         }
                     },
                 }
@@ -474,12 +474,12 @@ fn xcodeStream(
     if (family == .openai) {
         if (try openai_st.writeEvent(ctx.gpa, .{ .done = true })) |line| {
             defer ctx.gpa.free(line);
-            rawhttp.writeAllFd(ctx.stream.socket.handle, line);
+            raw_http.writeAllFd(ctx.stream.socket.handle, line);
         }
     } else if (!anth_st.started) {
         if (try anth_st.writeEvent(ctx.gpa, .{ .done = true })) |line| {
             defer ctx.gpa.free(line);
-            rawhttp.writeAllFd(ctx.stream.socket.handle, line);
+            raw_http.writeAllFd(ctx.stream.socket.handle, line);
         }
     }
 }
@@ -1041,8 +1041,8 @@ fn writeAllow(ctx: Ctx, status: u16, allow: []const u8) u16 {
         allow,
         request_id,
     }) catch return status;
-    rawhttp.writeAllFd(ctx.stream.socket.handle, hdr);
-    rawhttp.writeAllFd(ctx.stream.socket.handle, body);
+    raw_http.writeAllFd(ctx.stream.socket.handle, hdr);
+    raw_http.writeAllFd(ctx.stream.socket.handle, body);
     return status;
 }
 
@@ -1056,8 +1056,8 @@ fn writeFixed(stream: std.Io.net.Stream, status: u16, reason: []const u8, conten
         body.len,
         request_id,
     }) catch return;
-    rawhttp.writeAllFd(stream.socket.handle, hdr);
-    rawhttp.writeAllFd(stream.socket.handle, body);
+    raw_http.writeAllFd(stream.socket.handle, hdr);
+    raw_http.writeAllFd(stream.socket.handle, body);
 }
 
 fn writeStreamHead(stream: std.Io.net.Stream, status: u16, reason: []const u8, content_type: []const u8) void {
@@ -1069,7 +1069,7 @@ fn writeStreamHead(stream: std.Io.net.Stream, status: u16, reason: []const u8, c
         content_type,
         request_id,
     }) catch return;
-    rawhttp.writeAllFd(stream.socket.handle, hdr);
+    raw_http.writeAllFd(stream.socket.handle, hdr);
 }
 
 fn reasonPhrase(status: u16) []const u8 {

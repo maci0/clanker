@@ -26,7 +26,7 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 ### P0 fixes (earlier)
 - `src/cli.zig:handleRuns` — accept `sub-<digits>` as well as `run-<digits>`
   (prefix_len branch). Makes nested runs linkable end-to-end.
-- `src/tui/repl_vaxis.zig:540` — `trimRight→trimEnd` (Zig 0.16 std.mem has no `trimRight`).
+- `src/tui/repl.zig:540` — `trimRight→trimEnd` (Zig 0.16 std.mem has no `trimRight`).
 
 ### ES-module split (no bundler)
 - `ui/app/core/utils.js` — `fmtBytes, clip, fuzzyMatch, escapeHtml, fmtMs, fmtInt, fmtCost, formatChatTime, fmtDeadline, fuzzyMatch`
@@ -70,7 +70,7 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 - Offline-capable, vendored `/webui/vendor/*` lazy via `loadVendor`, no third-party fetch, no new sockets, no `eval/new Function`.
 - `connect-src 'self'` only — only `fetch("/api/*")` + `fetch("/.well-known/agent.json")` + the existing `/api/run` SSE stream; proved by `curl http://…/.well-known/agent.json` returning agent card and `grep` for `fetch(` showing only same-origin endpoints.
 - Vendor cache: `GET /webui/vendor/*` → `Cache-Control: public, max-age=3600, must-revalidate` + gzip; webui assets → `no-cache` + `ETag`/`If-None-Match` → `304` (verified via `curl -H Accept-Encoding:gzip -si` showing `Content-Encoding: gzip`).
-- No `src/improve/`, `src/evals/`, `evals/`, `src/tools/builder.zig` edits (non-webui siblings reverted before gate).
+- No `src/improve/`, `src/evals/`, `evals/`, `src/toolhost/builder.zig` edits (non-webui siblings reverted before gate).
 - ES-module split: native `<script type="module">` (28 `type="module"` incl. `van-boot.js`), no bundler/npm build step, per-module embedding like `app.css/app.js` (`zig fmt` clean, `node --check` on all 28 js files).
 - A11y sweep: `axe-core` (vendored `/tmp` build) over live `clanker serve` DOM via `playwright` + `jsdom` — **0 critical, 0 serious, 0 total on all 8 views** (`chat/board/goals/runs/fleet/rooms/tools/system`); skip-links, 8 live regions, roving tabindex on rail, graph tabindex, toast keyboard dismiss, fleet single tab-stop, reduced-motion gated skeletons/animations. Artifact: `docs/assets/webui/axe.json`.
 
@@ -239,7 +239,7 @@ was never recorded.
   `truncatedArgs(tc.arguments)` on every tool node; a collapsed retry keeps
   the latest arguments; `persistGraphOrErr` writes the field only when
   non-empty, so old runs and non-tool nodes stay byte-identical.
-- **Pass-through:** `tools/zig/cmd_graph.zig` — `GraphNode.arguments`
+- **Pass-through:** `tools/zig/graph.zig` — `GraphNode.arguments`
   (`?[]const u8`, null for old runs) is re-emitted by `json <run-id>` so the
   web UI sees it; `writeGraph` round-trips it.
 - **Rendering:** `app.js` node detail — for a tool node whose arguments parse
@@ -252,7 +252,7 @@ was never recorded.
 - **Verified end-to-end** (playwright against live serve with a synthetic
   run): 3 edit_file nodes → "+3 −3" (with context), "+1 −0" (create), "+40
   −40"; 0 page errors; screenshot `docs/assets/webui/run-diff.png`. New
-  tests: cmd_graph GraphFile arguments round-trip + old-run compat,
+  tests: graph GraphFile arguments round-trip + old-run compat,
   `truncatedArgs` cap/UTF-8. Suite `429 pass, 1 skip (430 total)`.
 
 ## Preview pane — html/svg fences (2026-08-12)
@@ -506,7 +506,7 @@ had already watched the blind view that minted the id, which is what
   being un-blinded, so "the view is careful" is not a mechanism. `"reveal":
   false` on a read or a listing now withholds the key from the tool's *reply*:
   no `provider`, no `model`, not for the answers, not for the verdict.
-  `compare_blind.mayReveal` is the rule, on the host-tested side of the split
+  `compare_logic.mayReveal` is the rule, on the host-tested side of the split
   with the rest of them, and a recorded pick overrides it — being told who you
   picked is the point of having picked blind.
 - **The listing leaked worse than the read did.** `state/compare/log.jsonl`'s

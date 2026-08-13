@@ -58,7 +58,7 @@ engine section, `src/improve/engine.zig`, `src/improve/proposal.zig`,
 - **No em dashes. No AI attribution.**
 - **Keep `zig build && zig build test` green** if you propose an edit.
 - **The protected surface (`src/improve/`, `src/evals/`,
-  `src/tools/builder.zig`, `evals/`) is asserted in `proposal.zig`, not
+  `src/toolhost/builder.zig`, `evals/`) is asserted in `proposal.zig`, not
   assumed** — verify `allowed_prefixes` still excludes them by omission
   (there is no explicit deny list; a path not prefixed by an allowed entry is
   refused) rather than trusting the doc comment.

@@ -22,7 +22,7 @@ pub const Proposal = struct {
 /// Prefixes a file path must match to be part of the modifiable surface.
 /// Deliberately excludes the evaluation machinery so a single improvement pass
 /// cannot weaken its own gate: `src/evals/`, `src/improve/`, and
-/// `src/tools/builder.zig` are denied in `validatePath` (they sit inside the
+/// `src/toolhost/builder.zig` are denied in `validatePath` (they sit inside the
 /// allowed `src/` prefix).
 ///
 /// `evals/` is allowed but append-only (see `isAppendOnly`): a pass may add a
@@ -87,7 +87,7 @@ pub fn validatePath(path: []const u8) bool {
             // Fine-grained denials within allowed prefixes.
             if (std.mem.startsWith(u8, path, "src/evals/")) return false;
             if (std.mem.startsWith(u8, path, "src/improve/")) return false;
-            if (std.mem.eql(u8, path, "src/tools/builder.zig")) return false;
+            if (std.mem.eql(u8, path, "src/toolhost/builder.zig")) return false;
             // Descriptors are editable, but only as descriptors: a stray write
             // into tools/manifests/ must not drop a .wasm or anything else the
             // registry would then try to load.
@@ -319,7 +319,7 @@ test "validatePath" {
     try std.testing.expect(!validatePath("src/improve/engine.zig"));
     try std.testing.expect(!validatePath("src/improve/worktree.zig"));
     try std.testing.expect(!validatePath("src/improve/proposal.zig"));
-    try std.testing.expect(!validatePath("src/tools/builder.zig"));
+    try std.testing.expect(!validatePath("src/toolhost/builder.zig"));
     // Add-only rather than forbidden; the existence check that keeps it
     // add-only lives in the engine, which can see the tree.
     try std.testing.expect(validatePath("evals/math.task.json"));
@@ -439,7 +439,7 @@ test "the readable surface is wider than the writable one, and still closed" {
     // the model most needs to read before changing anything.
     try std.testing.expect(validateReadPath("src/evals/scorers.zig"));
     try std.testing.expect(validateReadPath("src/improve/proposal.zig"));
-    try std.testing.expect(validateReadPath("src/tools/builder.zig"));
+    try std.testing.expect(validateReadPath("src/toolhost/builder.zig"));
     try std.testing.expect(validateReadPath("docs/ROADMAP.md"));
     try std.testing.expect(validateReadPath("docs/adrs/0003-autoresearch.md"));
     try std.testing.expect(validateReadPath("AGENTS.md"));

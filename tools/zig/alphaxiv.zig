@@ -12,7 +12,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
-const mcp = @import("alphaxiv_mcp.zig");
+const mcp = @import("alphaxiv_client.zig");
 
 const endpoint = "https://api.alphaxiv.org/mcp/v1";
 const default_max_chars: usize = 16000;

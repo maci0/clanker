@@ -19,7 +19,7 @@
 //! asks to be kept blind. It withholds the key from the payload, not just from
 //! the render, and a recorded pick overrides it.
 //!
-//! The rules live in compare_blind.zig, which imports nothing from the guest
+//! The rules live in compare_logic.zig, which imports nothing from the guest
 //! ABI and is therefore unit-tested on the host. This file is the shell: it
 //! resolves targets, makes the calls, persists `state/compare/<id>.json`, and
 //! renders — the same split `arena.zig` has against `arena_match.zig`.
@@ -39,7 +39,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
-const b = @import("compare_blind.zig");
+const b = @import("compare_logic.zig");
 
 const alloc = lib.alloc;
 

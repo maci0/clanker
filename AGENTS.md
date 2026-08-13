@@ -35,16 +35,21 @@ through a gated loop. Follow these conventions when changing this codebase.
 ## Architecture
 
 - `src/llm/` — `client.zig` is the shared HTTP/SSE/retry/token-counting core,
-  one module for every provider. Each provider is a vtable
+  one module for every provider. `agent.fallback_providers` is a list
+  walked by `chatWithFallbackChain` in `src/agent/loop.zig` after
+  same-provider retries exhaust with no content delivered; the vision
+  swap in `cli.zig` stays pre-emptive and separate. `[advisor]` is a
+  fail-open post-turn critique (off by default), distinct from
+  `improve.arena_advisory`. Each provider is a vtable
   (`providers/api.zig`) implemented in its own `providers/<name>.zig` and
   listed in the `registry` table in `providers.zig`; `auth.zig` is the
   credential-acquisition axis, `gcp_jwt.zig`/`vertex_token.zig` the Vertex
   minting behind it. Adding a provider is one file, one registry row, and one
   `ProviderKind` tag in `config.zig` — never a new `switch (provider.kind)`.
 - `src/sandbox/`: zwasm runtime wrapper + `ck_*` host functions + policy.
-  Privileged channels (`ck_docker`, `ck_subagent`, `ck_swarm`, `ck_stats`,
+  Privileged channels (`ck_docker`, `ck_kernel`, `ck_subagent`, `ck_swarm`, `ck_stats`,
   `ck_ask`, `ck_std_api`, `ck_harness_config`) check `tool_self_name`; the
-  import existing is not a grant. The agent loop attaches a subagent runner
+  import existing is not a grant. `ck_kernel` also requires `kernel.enabled`. The agent loop attaches a subagent runner
   to every tool sandbox, so `ck_subagent`/`ck_swarm` would otherwise be
   callable by any guest. Structured harness config goes through
   `ck_harness_config`; `config_view`'s whole-file dump still reads
@@ -73,13 +78,17 @@ through a gated loop. Follow these conventions when changing this codebase.
   appended at the LLM client choke point to `state/token_stats.jsonl`.
   Failed completions are recorded too (`ok:false`, `http_status`, `err`);
   a log of only successes cannot answer "is the provider down?".
-- `src/tools/` — the native tool infrastructure: `registry.zig` (loads
+- `src/toolhost/` — the native tool infrastructure: `registry.zig` (loads
   `*.tool.json` descriptors), `manifest.zig` (validates them),
   `builder.zig` (compiles WASM tools), `usage.zig` (tool call accounting).
   `builder.zig` is part of the anti-cheat boundary.
 - `src/tui/` — libvaxis-backed REPL (`clanker repl`), syntax highlighting,
   theme, transcript rendering, control-character sanitizing, per-turn stats,
-  terminal width tracking, and the optional input-line mascot (`mascot.zig`).
+  terminal width tracking, and the optional mascot (`mascot.zig`, off by
+  default). The mascot's frames are generated, not hand-written:
+  `src/tui/mascot/gen_frames.py` turns the source gif into
+  `mascot_frames.zig` (three cell grids) plus the pngs the kitty-graphics path
+  transmits, and only needs rerunning when the artwork changes.
 - `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook,
   logging, dotenv, `ensureDir` (the one way to create `state/` when it may be
   a `--worktree` symlink; `createDirPath` reports NotDir), and the one UTF-8
@@ -97,7 +106,7 @@ through a gated loop. Follow these conventions when changing this codebase.
 - `src/evals/` + `src/gate/` — the eval harness and deterministic gates
   (build/test/tools/fmt/lint). These verify every promoted change.
 - `src/improve/` — the self-improvement engine. It is deliberately protected:
-  clanker cannot modify `src/improve/`, `src/evals/`, `src/tools/builder.zig`,
+  clanker cannot modify `src/improve/`, `src/evals/`, `src/toolhost/builder.zig`,
   or `evals/` in a single pass (anti-cheat boundary).
 - `tools/zig/` — LLM-callable WASM guest sources (Zig); `tools/ts/` — AssemblyScript
   sources; `tools/manifests/` — descriptors; `tools/ts/dist/` — committed AS build output
@@ -123,6 +132,9 @@ change a tool's behaviour without changing the thing running the gate.
 
 So, when adding a capability:
 
+- `read_file hashes:true` + `edit_file op=hashline` is the preferred
+  edit pairing: hashes are 4-hex xxHash32 of each line (no newline),
+  validated before any write. Exact `{old,new}` still works.
 - Write it as a guest module with a descriptor in `tools/manifests/`. Native
   code in `src/` needs a reason that survives the questions above.
   `clanker plugins new <name>` scaffolds both halves; `clanker plugins validate`
@@ -166,7 +178,7 @@ Promoted changes are committed as `clanker: <summary> [imp-<id>]`. Run the
 whole gate manually with `clanker gate`.
 
 Those gates all answer the same question — is this change *safe*? A change that
-does nothing is maximally safe, so `src/improve/inert.zig` asks the other one.
+does nothing is maximally safe, so `src/improve/inert_check.zig` asks the other one.
 It classifies each proposal from the staged source (never from the summary the
 model wrote about it) as `behavior`, `test_only`, `docs_only` or `inert`, and
 the engine refuses two shapes:

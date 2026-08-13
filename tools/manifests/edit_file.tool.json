@@ -1,7 +1,7 @@
 {
   "name": "edit_file",
-  "description": "Changes a file by replacing an exact piece of its text: pass path, old (the exact text to replace, copied from the file) and new. The match must be unique, so include enough surrounding lines to identify one place; the tool tells you how many times it matched rather than guessing. Pass create: true with content to write a whole new file; that is refused if the path already exists unless you also pass overwrite: true, so a guessed filename cannot quietly erase something. Read the file first with read_file: text reconstructed from memory usually differs in whitespace and will not match.",
-  "llm_description": "Replace exact text in a file: {path, old, new}. old must match exactly once (copy verbatim from read_file first; reconstructed text rarely matches whitespace). Empty new deletes the match. {create:true, content} writes a new file; refused if path exists unless overwrite:true.",
+  "description": "Changes a file by replacing an exact piece of its text: pass path, old (the exact text to replace, copied from the file) and new. The match must be unique, so include enough surrounding lines to identify one place; the tool tells you how many times it matched rather than guessing. Prefer op=hashline after a read_file with hashes:true: pass hunks of {anchor_hash, anchor_line, old_count, new_lines} and the host verifies hashes before writing. Pass create: true with content to write a whole new file; that is refused if the path already exists unless you also pass overwrite: true, so a guessed filename cannot quietly erase something. Read the file first with read_file: text reconstructed from memory usually differs in whitespace and will not match.",
+  "llm_description": "Replace exact text: {path, old, new} (old must match once; copy from read_file). Prefer {op:hashline, hunks:[{anchor_hash, anchor_line, old_count, new_lines}]} after read_file hashes:true — hashes are verified before any write. {create:true, content} writes a new file; refused if path exists unless overwrite:true.",
   "wasm": "zig-out/tools/edit_file.wasm",
   "enabled": true,
   "category": "code",
@@ -47,6 +47,14 @@
       "overwrite": {
         "type": "boolean",
         "description": "With create, replace an existing file's entire contents. Prefer old/new, which changes only what you name."
+      },
+      "op": {
+        "type": "string",
+        "description": "\"hashline\" to patch by 4-hex line hashes from read_file hashes:true. Omit for exact-text old/new."
+      },
+      "hunks": {
+        "type": "array",
+        "description": "hashline hunks: each {anchor_hash, anchor_line, old_count, new_lines}. All validated before any write."
       }
     },
     "required": [

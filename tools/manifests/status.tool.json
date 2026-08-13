@@ -1,0 +1,16 @@
+{
+  "name": "status",
+  "description": "show instance and peers",
+  "wasm": "zig-out/tools/status.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "args": {
+        "type": "string"
+      }
+    }
+  },
+  "fs_prefixes": [],
+  "internal": true,
+  "category": "harness"
+}

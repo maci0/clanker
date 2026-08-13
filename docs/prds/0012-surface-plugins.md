@@ -17,7 +17,7 @@ future editor would find them.
 
 **TUI plugins / CLI plugins: Draft.** Confirmed absent by grepping for any
 directory-scan, config-driven, or PATH-based extension point feeding
-`command_registry` (`src/tui/repl_vaxis.zig:492-507`, a hardcoded array) or
+`command_registry` (`src/tui/repl.zig:492-507`, a hardcoded array) or
 the `Command` enum (`src/cli.zig:68-105`, a closed compile-time set). Designed
 below; do not treat TUI/CLI acceptance criteria as shipped.
 
@@ -30,7 +30,7 @@ for itself, organically, with no PRD to constrain or explain the choice — so
 its capability model (same-origin JS trusted the same as the page's own code,
 no `fs_prefixes`/`network_allow`-style grant) was never weighed against the
 alternative the tool-calling system already uses (`docs/manifest.md`,
-`src/tools/registry.zig`), and nothing stops the TUI and CLI from growing two
+`src/toolhost/registry.zig`), and nothing stops the TUI and CLI from growing two
 more, mutually incompatible, ad hoc mechanisms the next time someone needs
 one.
 
@@ -44,7 +44,7 @@ one.
    with no new trust surface: a TUI plugin can only dispatch to a tool the
    sandboxed WASM tool system already trusts, the same one `/sessions`,
    `/graph`, `/status`, and `/plugins` already dispatch through
-   (`CommandSpec.action = .{ .tool = ... }`, `repl_vaxis.zig:497-500`).
+   (`CommandSpec.action = .{ .tool = ... }`, `repl.zig:497-500`).
 3. Give the CLI a way to add a subcommand two ways, tiered by trust: (a) a
    manifest that passes `clanker <name> [args]` straight to an existing
    sandboxed tool — no new trust, just a shorter invocation — and (b) an
@@ -171,7 +171,7 @@ one manifest per file, no code:
 enabled-list, default off) to the in-memory table alongside the hardcoded
 `command_registry` — same shape the hardcoded entries already use
 (`.action = .{ .tool = .{ .name = m.tool, .args = m.args } }`,
-`repl_vaxis.zig:492-507`), so `/help`, tab-complete, and dispatch all see a
+`repl.zig:492-507`), so `/help`, tab-complete, and dispatch all see a
 plugin command exactly like a built-in one, no separate code path.
 
 **Trust model.** No new trust surface at all: a TUI plugin can only name a
@@ -240,10 +240,10 @@ fetched.
 
 - Web UI plugin enabled-list pattern (`state/webui_plugins.json`,
   `handleWebuiPlugins`) as the state-file precedent.
-- TUI `command_registry` / `CommandSpec` (`src/tui/repl_vaxis.zig`) for
+- TUI `command_registry` / `CommandSpec` (`src/tui/repl.zig`) for
   slash-command registration shape.
 - CLI `Command` enum + dispatch (`src/cli.zig`) for built-in-first ordering.
-- Tool registry + sandbox (`src/tools/registry.zig`, PRD 0010 / 0022) for
+- Tool registry + sandbox (`src/toolhost/registry.zig`, PRD 0010 / 0022) for
   Tier 1 / TUI tool-backed plugins.
 - [PRD 0022](0022-out-of-tree-tools.md) for `agent.tools_dir` as a list (Tier 1
   name resolution) and string-or-array parse inherited by `*_plugins_dir`.
@@ -272,7 +272,7 @@ throw → tab error) if not already true in code.
   `state/webui_plugins.json` is an enabled-list (`{"enabled":[...]}`); the
   tool system's `state/plugins.json` is a disabled-list
   (`{"disabled":[...], "enabled":[...]}`, read at
-  `src/tools/registry.zig:156,288`). For TUI/CLI the choice is now locked in
+  `src/toolhost/registry.zig:156,288`). For TUI/CLI the choice is now locked in
   Design decisions: enabled-list, default off, matching web UI. The tool
   system's on-by-default shape stays as-is for WASM tools; do not "unify"
   them without a separate PRD.
@@ -312,7 +312,7 @@ throw → tab error) if not already true in code.
 - [x] A disabled web UI plugin's assets are unreachable by direct URL, not
       just absent from the nav (`src/cli.zig:7328-7331`).
 - [ ] A TUI plugin manifest naming an existing tool becomes a working slash
-      command with no code change to `repl_vaxis.zig`.
+      command with no code change to `repl.zig`.
 - [ ] A TUI plugin cannot name a command that collides with a built-in.
 - [ ] `clanker <name>` resolves a Tier 1 manifest before falling through to
       a Tier 2 `PATH` binary, and never shadows a built-in `Command`.

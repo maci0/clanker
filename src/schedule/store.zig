@@ -2,7 +2,7 @@
 //! `state/schedule/log.jsonl`, the append-only record of what actually fired.
 //!
 //! Persistence follows the discipline the rest of `state/` already uses: a
-//! read-modify-write is serialised by `util/filelock.zig` on a lock file of its
+//! read-modify-write is serialised by `util/file_lock.zig` on a lock file of its
 //! own, and the write itself goes through `util/atomic_write.zig` so a process
 //! killed mid-write leaves the old list intact rather than a truncated one.
 //! Neither is optional here: `clanker schedule run-due` runs from cron, so two
@@ -13,8 +13,8 @@
 //! temp directory instead of a mock.
 
 const std = @import("std");
-const ensuredir = @import("../util/ensuredir.zig");
-const filelock = @import("../util/filelock.zig");
+const ensure_dir = @import("../util/ensure_dir.zig");
+const file_lock = @import("../util/file_lock.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const log = @import("../util/log.zig");
 
@@ -101,7 +101,7 @@ pub const Session = struct {
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     base: std.Io.Dir,
-    guard: filelock.Guard,
+    guard: file_lock.Guard,
     entries: std.ArrayList(Entry),
 
     pub fn close(self: *Session) void {
@@ -127,10 +127,10 @@ pub const Session = struct {
 /// wrong call. A file that parses as neither is warned about so the operator
 /// finds out before the next write replaces it.
 pub fn open(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir) !Session {
-    ensuredir.ensureDir(base, io, state_dir) catch |err| {
+    ensure_dir.ensureDir(base, io, state_dir) catch |err| {
         log.log(.warn, "schedule: could not create {s}: {s}", .{ state_dir, @errorName(err) });
     };
-    var guard = filelock.acquire(io, base, state_dir, "schedule", gpa);
+    var guard = file_lock.acquire(io, base, state_dir, "schedule", gpa);
     errdefer guard.release();
 
     var entries: std.ArrayList(Entry) = .empty;
@@ -187,17 +187,20 @@ pub fn nextId(arena: std.mem.Allocator, entries: []const Entry) ![]const u8 {
 /// its cap. Best effort by design: losing the record of a run that happened is
 /// bad, and refusing to run because the record could not be written is worse.
 pub fn appendRecord(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, rec: Record) void {
-    ensuredir.ensureDir(base, io, ledger_dir) catch |err| {
+    ensure_dir.ensureDir(base, io, ledger_dir) catch |err| {
         log.log(.warn, "schedule: could not create {s}: {s}", .{ ledger_dir, @errorName(err) });
         return;
     };
-    var guard = filelock.acquire(io, base, ledger_dir, "log", gpa);
+    var guard = file_lock.acquire(io, base, ledger_dir, "log", gpa);
     defer guard.release();
 
     var line: std.Io.Writer.Allocating = .init(gpa);
     defer line.deinit();
     var s = std.json.Stringify{ .writer = &line.writer, .options = .{} };
-    s.write(rec) catch return;
+    s.write(rec) catch |err| {
+        log.log(.warn, "schedule: could not encode ledger record: {s}", .{@errorName(err)});
+        return;
+    };
 
     const existing = base.readFileAlloc(io, ledger_path, gpa, .limited(max_ledger_bytes)) catch null;
     defer if (existing) |e| gpa.free(e);
@@ -205,11 +208,23 @@ pub fn appendRecord(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, rec: R
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(gpa);
     if (existing) |e| {
-        out.appendSlice(gpa, e) catch return;
-        if (e.len > 0 and e[e.len - 1] != '\n') out.append(gpa, '\n') catch return;
+        out.appendSlice(gpa, e) catch |err| {
+            log.log(.warn, "schedule: could not merge ledger: {s}", .{@errorName(err)});
+            return;
+        };
+        if (e.len > 0 and e[e.len - 1] != '\n') out.append(gpa, '\n') catch |err| {
+            log.log(.warn, "schedule: could not merge ledger: {s}", .{@errorName(err)});
+            return;
+        };
     }
-    out.appendSlice(gpa, line.written()) catch return;
-    out.append(gpa, '\n') catch return;
+    out.appendSlice(gpa, line.written()) catch |err| {
+        log.log(.warn, "schedule: could not append ledger record: {s}", .{@errorName(err)});
+        return;
+    };
+    out.append(gpa, '\n') catch |err| {
+        log.log(.warn, "schedule: could not append ledger record: {s}", .{@errorName(err)});
+        return;
+    };
 
     if (out.items.len > max_ledger_bytes) {
         const floor = out.items.len - max_ledger_bytes;

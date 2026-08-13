@@ -1,3 +1,5 @@
+**.ignore
+
 # Zig build artifacts
 .zig-cache/
 zig-out/
@@ -45,4 +47,4 @@ tools/grammars/*.so
 # Runtime lock for the self-improvement review loop.
 .review-loop.lock
 
-**.ignore
+**.ignore.semcode.db/

@@ -1858,6 +1858,11 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 }
 .models-snippet pre:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .models-snippet-btn { white-space: nowrap; }
+.models-snippet-note {
+  margin: var(--space-2) 0 0;
+  font-size: var(--step-0);
+  color: var(--fg-muted);
+}
 
 /* ---- tools: every WASM plugin, and a switch for the optional ones ---- */
 .tool-group {

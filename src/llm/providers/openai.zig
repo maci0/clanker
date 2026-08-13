@@ -13,6 +13,7 @@ const common = @import("common.zig");
 const types = @import("../types.zig");
 const config = @import("../../config.zig");
 const log = @import("../../util/log.zig");
+const redact = @import("../../util/redact.zig");
 
 pub const provider: api.Provider = .{
     .kind = .openai_compat,
@@ -146,10 +147,8 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
         try s.write(true);
         try s.endObject();
     }
-    if (params.provider.activeModel().reasoning_effort) |re| {
-        try s.objectField("reasoning_effort");
-        try s.write(@tagName(re));
-    }
+    // reasoning_effort is written by writeSamplingParams (config, then the
+    // use-case table). A second write here would duplicate the field.
     if (params.response_format_json) {
         try s.objectField("response_format");
         try s.beginObject();
@@ -227,8 +226,10 @@ fn parseResponse(arena: std.mem.Allocator, body: []const u8, err_detail: ?*?[]co
         // A 200 carrying an error body never reaches the HTTP error path, so
         // this is the only place the provider's reason is visible: log it AND
         // hand it to the caller, or a rate limit reads identically to a bad key.
-        log.log(.error_, "openai provider error ({s}): {s}", .{ e.type orelse "unknown", e.message orelse "no message" });
-        if (err_detail) |d| d.* = if (e.message) |m| try arena.dupe(u8, m) else e.type;
+        var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
+        const msg = e.message orelse "no message";
+        log.log(.error_, "openai provider error ({s}): {s}", .{ e.type orelse "unknown", redact.forLog(&log_detail_buf, msg) });
+        if (err_detail) |d| d.* = if (e.message) |m| try redact.forCaller(arena, m) else e.type;
         return error.ApiError;
     }
     if (parsed.choices.len == 0) return error.EmptyChoices;
@@ -396,7 +397,11 @@ test "openai request body sends reasoning_effort and omits it when unset" {
         .messages = &messages,
     });
     defer arena.free(body);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"reasoning_effort\":\"high\"") != null);
+    // Exactly once: writeSamplingParams is the only writer. This codec used to
+    // write the field a second time from the model config directly, which a
+    // presence check would not have caught.
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, "\"reasoning_effort\":\"high\""));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, "reasoning_effort"));
 
     const plain = try config.Provider.single(arena, "ollama", "http://localhost:11434", .openai_compat, "llama3.3", .{ .max_tokens = 64 });
     const plain_body = try buildRequest(arena, .{
