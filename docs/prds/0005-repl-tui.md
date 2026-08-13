@@ -170,7 +170,14 @@ Shipped:
 - [x] SIGWINCH handled natively by `vxfw.App`
 - [x] Untrusted text control-stripped before rendering (CWE-150)
 - [x] `/model` fuzzy picker (grouped by provider, context window + $/1M
-      shown inline, mid-conversation switch)
+      shown inline, mid-conversation switch). The list shows eight rows and
+      scrolls: the window follows the selection (`pickerWindowStart`, derived
+      from the selection each frame rather than carried as a second piece of
+      state), with an `n/total` marker on the guide row once anything is off
+      screen. It previously indexed the list by screen row, so only the first
+      eight entries were ever drawn while Up/Down walked the selection across
+      the whole list — past the eighth match the highlight vanished and Enter
+      committed to a row that had never been on screen.
 - [x] `/help` / `?`
 - [x] Flag wiring
 - [x] Session persistence / resume

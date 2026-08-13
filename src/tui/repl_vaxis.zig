@@ -1204,6 +1204,10 @@ const Model = struct {
     picker_kind: PickerKind = .model,
     picker_query: std.ArrayList(u8) = .empty,
     picker_selected: usize = 0,
+    /// "<n>/<total>" for the picker's guide row, formatted into a field for
+    /// the same reason `status_buf` is one: cells borrow the slice until the
+    /// frame flushes, which is after `drawModelPicker` has returned.
+    picker_pos_buf: [32]u8 = undefined,
     /// The theme active when the theme picker opened, restored on Escape so a
     /// cancelled live-preview does not stick.
     theme_saved: ?[]const u8 = null,
@@ -2861,14 +2865,22 @@ const Model = struct {
             return;
         }
         const sel = @min(self.picker_selected, count - 1);
+        // The window scrolls with the selection. `i` used to index the list
+        // directly, so only entries 0..7 were ever drawn while Up/Down walked
+        // `picker_selected` across the whole list: past the eighth match the
+        // highlight left the box and the picker committed on Enter to a row
+        // that had never been on screen. Any real config reaches this — the
+        // repo's own has well over eight models.
+        const first = pickerWindowStart(sel, count, max_rows);
         var row: u16 = y + 2;
         var i: usize = 0;
         while (i < rows_shown) : (i += 1) {
-            const marker: []const u8 = if (i == sel) "\xe2\x80\xba " else "  ";
-            const style = if (i == sel) sel_style else vaxis.Style{};
+            const idx = first + i;
+            const marker: []const u8 = if (idx == sel) "\xe2\x80\xba " else "  ";
+            const style = if (idx == sel) sel_style else vaxis.Style{};
             writeRow(surface, row, marker, style);
             var col: u16 = 2;
-            const label = if (is_theme) theme_matches[i] else model_matches[i].label;
+            const label = if (is_theme) theme_matches[idx] else model_matches[idx].label;
             writeRowAt(surface, row, &col, label, style);
             row += 1;
         }
@@ -2877,6 +2889,18 @@ const Model = struct {
         else
             "  Up/Down move  \xc2\xb7  Enter select  \xc2\xb7  Esc cancel";
         writeRow(surface, y + h - 2, guide, .{ .dim = true });
+        // Position within the list, right-aligned on the guide row: with a
+        // scrolling window the eight visible rows no longer say how much list
+        // there is or where in it you are. Only shown when something is off
+        // screen. A Model field because vaxis cells borrow the slice until
+        // the frame flushes, which is after this function has returned.
+        if (count > max_rows) {
+            const pos = std.fmt.bufPrint(&self.picker_pos_buf, "{d}/{d}", .{ sel + 1, count }) catch "";
+            if (pos.len > 0 and surface.size.width > pos.len + 3) {
+                var pos_col: u16 = @intCast(surface.size.width - pos.len - 2);
+                writeRowAt(surface, y + h - 2, &pos_col, pos, .{ .dim = true });
+            }
+        }
     }
 
     /// Renders the live streaming buffer with the same fence-aware syntax
@@ -3006,6 +3030,54 @@ fn tailWindow(lines: []const Line, view_end: usize, avail_rows: u16, width: u16)
 // absolute line index (exclusive) the visible window ends at. Counted in
 // `lines` entries, same rough one-entry-per-row heuristic as tailStart.
 // ---------------------------------------------------------------------
+
+/// First list index the picker's visible window shows, given the selected
+/// index, how many entries there are, and how many rows fit.
+///
+/// Stateless: derived from the selection every frame rather than carried as
+/// a scroll offset, so there is no second piece of state to keep in sync with
+/// `picker_selected` (filtering already resets that to 0 on every keystroke,
+/// and an offset that did not reset with it would strand the window). While
+/// the selection is within the first page the window stays at the top, which
+/// is what makes the common case — a query narrowed to a handful of matches —
+/// look exactly as it did before; past that the selection rides the bottom
+/// row. Always returns a start whose full window fits inside `count`.
+fn pickerWindowStart(selected: usize, count: usize, max_rows: u16) usize {
+    if (count <= max_rows or max_rows == 0) return 0;
+    if (selected < max_rows) return 0;
+    const start = selected + 1 - max_rows;
+    return @min(start, count - max_rows);
+}
+
+test "pickerWindowStart keeps the selection on screen and the window in range" {
+    // Everything fits: no scrolling, ever.
+    try std.testing.expectEqual(@as(usize, 0), pickerWindowStart(0, 5, 8));
+    try std.testing.expectEqual(@as(usize, 0), pickerWindowStart(4, 5, 8));
+    try std.testing.expectEqual(@as(usize, 0), pickerWindowStart(7, 8, 8));
+
+    // Longer list: the first page stays pinned to the top...
+    try std.testing.expectEqual(@as(usize, 0), pickerWindowStart(0, 24, 8));
+    try std.testing.expectEqual(@as(usize, 0), pickerWindowStart(7, 24, 8));
+    // ...then the selection rides the bottom row.
+    try std.testing.expectEqual(@as(usize, 1), pickerWindowStart(8, 24, 8));
+    try std.testing.expectEqual(@as(usize, 9), pickerWindowStart(16, 24, 8));
+
+    // The last entry never scrolls past the end of the list: the window is
+    // full, not short, so no blank rows appear under the final match.
+    try std.testing.expectEqual(@as(usize, 16), pickerWindowStart(23, 24, 8));
+    try std.testing.expectEqual(@as(usize, 16), pickerWindowStart(99, 24, 8));
+
+    // The window always fits: start + max_rows never runs past count.
+    for (0..24) |sel| {
+        const start = pickerWindowStart(sel, 24, 8);
+        try std.testing.expect(start + 8 <= 24);
+        try std.testing.expect(sel >= start and sel < start + 8);
+    }
+
+    // Degenerate inputs stay in range rather than underflowing.
+    try std.testing.expectEqual(@as(usize, 0), pickerWindowStart(3, 24, 0));
+    try std.testing.expectEqual(@as(usize, 0), pickerWindowStart(0, 0, 8));
+}
 
 /// One PgUp/PgDn stride: a screenful less one line of overlap so the reader
 /// keeps a continuity line across pages, never less than one row.
