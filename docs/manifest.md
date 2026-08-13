@@ -115,7 +115,7 @@ The harness reads exactly three keys out of `config` for itself — `provider`,
 else reaches the guest untouched.
 
 Editability is opt-in per key on purpose. A plugin's config is often
-structural, not tunable: the four `chat_*` descriptors share one `chat.wasm` and
+structural, not tunable: the nine `chat_*` descriptors share one `chat.wasm` and
 select their behaviour with `"op"`, so letting a machine-local override reach
 that key would turn `chat_send` into `chat_rooms`. Only the tool knows which of
 its settings are safe to change, so only the tool declares them.
@@ -240,6 +240,6 @@ which surfaces as a crash in somebody else's tool.
 ```
 
 The guest side of that pair is the Tool ABI in
-[docs/README.md](README.md#tool-abi): export `scratch`, `host_arena` and `run`,
+[docs/README.md](README.md#wasm-tool-abi): export `scratch`, `host_arena` and `run`,
 import the `env.ck_*` host functions. `tools/zig/lib.zig` wraps all of it for a
 Zig guest, and `clanker plugins new` writes a working one.

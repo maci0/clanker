@@ -167,6 +167,16 @@ goal = true
 token_budget = true
 streaming = true
 dotenv = true
+# REPL/serve self-restart when the binary is rebuilt.
+hot_reload = true
+# Record usage patterns and feed them into the ROADMAP's Autolearn section.
+autolearn = true
+# Let the agent delegate work to nested sub-agent runs.
+subagents = true
+# Persist reasoning traces and expose them to the agent.
+rlm = true
+# Attach images to messages (image tool + image_url blocks).
+multimodal = true
 chatrooms = true
 token_stats = true
 

@@ -209,6 +209,9 @@ Run-loop and path settings. The commonly-touched keys:
 |---|---|---|
 | `max_iterations` | 50 | Tool-call rounds per turn before the run stops. Hitting it errors the turn, so keep it generous for multi-file work. |
 | `provider_check_timeout_seconds` | 10 | Global ceiling for `providers check`; override per provider with `check_timeout_seconds`. |
+| `ask_timeout_seconds` | 120 | How long a serve-side `ask_user`/confirm question waits for the browser before giving up. |
+| `confirm_writes` | `never` | Gate write-capable tool calls on a human's allow/deny. `browser` asks streaming web runs; `always` is reserved for the REPL and behaves like `browser` today. |
+| `fallback_provider` | (unset) | Provider to route image-bearing work to when the selected provider has no vision-capable model. |
 | `compact_threshold_bytes` | 24000 | Compact conversation history past this size (`0` uses the model window). |
 | `max_total_tokens`, `max_tokens_per_turn`, `max_history_tokens` | -, 4096, 16000 | Token budgets that drive compaction. |
 | `tool_catalog` | true | Send full schemas only for hot tools; let the model request the rest by name (saves thousands of tokens/request with many tools). |
@@ -259,13 +262,44 @@ chatrooms = false
   a peer URL is something this process connects to, never a port it opens, so
   nothing here is exposed by binding `serve` more widely.
 - **`[chatrooms]`** — `on`, `rooms` (default subscriptions), `max_history`.
-- **`[memory]`** — RAG backend: `backend` (`hybrid`/`vector`/`keyword`),
-  `chunk_strategy`/`chunk_size`/`chunk_overlap`, `vector_top_k`,
-  `vector_threshold`. (Note: several fields here are parsed but not yet honored
-  by the WASM memory tool — see `docs/prds/0007-memory.md` Known issues.)
+- **`[memory]`** — RAG backend. One key at the top level, `backend`
+  (`hybrid`/`vector`/`keyword`); everything else lives in a sub-table, so the
+  spellings are `[memory.chunk]` `size`/`overlap`/`strategy`,
+  `[memory.embedding]` `provider`/`model`, and `[memory.vector]`
+  `backend`/`top_k`/`threshold`. (Note: several fields here are parsed but not
+  yet honored by the WASM memory tool — see `docs/prds/0007-memory.md` Known
+  issues.)
+
+  | Key | Default |
+  | --- | --- |
+  | `backend` | `"hybrid"` |
+  | `chunk.size` | `800` |
+  | `chunk.overlap` | `120` |
+  | `chunk.strategy` | `"markdown"` |
+  | `embedding.provider` | `""` (unset) |
+  | `embedding.model` | `""` (unset) |
+  | `vector.backend` | `"builtin"` |
+  | `vector.top_k` | `5` |
+  | `vector.threshold` | `0.35` |
+
+  ```toml
+  [memory]
+  backend = "hybrid"
+
+  [memory.chunk]
+  size = 800
+  overlap = 120
+  strategy = "markdown"
+
+  [memory.vector]
+  backend = "builtin"
+  top_k = 5
+  threshold = 0.35
+  ```
 - **`[web]`** — `allow`: hostnames the research tools (`fetch_web`,
   `web_search`) may reach, added to their sandbox `network_allow` at load. A
-  research site is a config edit, not a manifest edit.
+  research site is a config edit, not a manifest edit. Entries may use `*` and
+  `?` globs, and a bare `"*"` allows any host.
 - **`[improve]`** — self-improvement loop gates: `capability_gate`,
   `inert_gate`, `plan_phase`, `max_consecutive_test_only`, `eval_provider`,
   `max_cache_bytes`, `arena_advisory`, and more. See `src/config.zig` `Improve`
