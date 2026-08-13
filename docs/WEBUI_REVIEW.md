@@ -1159,6 +1159,45 @@ after the first failure, and everything downstream of still-watching goes with
 it. Gate: `zig build`, `zig build tools`, `zig build test --summary all` —
 163/163 steps, 765/767 tests (2 skipped, the expected worktree pair).
 
+
+## The Prompts filter survives a re-render (2026-08-13)
+
+`#prompts-filter` hid non-matching cards from its own `input` handler, walking
+the cards that happened to exist at that moment. Nothing else knew the filter
+was there — so every re-render silently dropped it. `renderPrompts` starts with
+`listEl.textContent = ""` and rebuilds, and Refresh, Create and Delete all
+reload the list, which means:
+
+- typing a filter and pressing Refresh brought every prompt back while the
+  filter box still read `review`;
+- saving a new prompt did the same, so the one moment you most want the list
+  narrowed is the moment it widened;
+- `#prompts-status` reported the full count either way, contradicting a list
+  that was showing one card.
+
+The filter is now part of what "render" means. `applyPromptFilter()` decides
+which cards are on screen, owns the status line, and runs at the end of every
+render as well as on input — so the box and the list cannot disagree, and
+`loadPromptsView` no longer writes its own count over the top of it.
+
+A filter matching nothing used to leave a blank panel with no explanation:
+`#prompts-status` is `.sr-only`, so "0 of 4" was announced to a screen reader
+and to nobody else. There is now a visible note where the cards were, naming
+the query. It lives inside `#prompts-list` and is therefore thrown away by the
+next render's `textContent = ""`, which is why it is looked up by id rather
+than held in a variable.
+
+### Verified
+
+`node` + a DOM stub driving the real `features/prompts.js`: bind, load three
+prompts, filter to one, then Refresh, then create a fourth through the form's
+own `submit` — 17 assertions on card visibility, the status text and the
+no-match note. Against unmodified `main` the same harness fails 6 of the 17:
+the list unfilters on Refresh and again on create, the count ignores the filter,
+and the no-match case draws nothing at all. Gate: `zig build`,
+`zig build tools`, `zig build test --summary all` — 163/163 steps, 765/767
+tests (2 skipped, the expected worktree pair).
+
 ## The run graph points at the bottleneck (2026-08-13)
 
 A run graph already showed every step's duration, twice: a badge on the card and
