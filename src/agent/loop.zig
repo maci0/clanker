@@ -1875,6 +1875,52 @@ pub const Agent = struct {
         self.tool_defs = self.reg.lazyToolDefs(self.arena, core.items, &self.revealed) catch return;
     }
 
+    fn reviewTurn(self: *Agent, messages: []const types.Message, calls: []const types.ToolCall) ?advisor.Note {
+        var redact_buf: [32][]const u8 = undefined;
+        var n: usize = 0;
+        for (calls) |tc| {
+            if (n >= redact_buf.len) break;
+            if (self.reg.get(tc.name)) |tool| {
+                if (tool.fs_prefixes.len > 0 or tool.exec_allow.len > 0) {
+                    redact_buf[n] = tc.name;
+                    n += 1;
+                }
+            }
+        }
+        const window = if (std.mem.eql(u8, self.cfg.advisor.scope, "session"))
+            lastTurns(messages, self.cfg.advisor.context_turns)
+        else
+            lastTurns(messages, 1);
+        const summary = advisor.summarizeTurn(self.arena, window, redact_buf[0..n]) catch return null;
+        var note = advisor.review(self.ctx.io, self.ctx.gpa, self.ctx.environ_map, self.cfg, summary) orelse return null;
+        if (note.severity == .blocker) {
+            if (self.ask_fn) |ask| {
+                const opts = [_][]const u8{ "proceed", "abort" };
+                const answer = ask(self.arena, note.text, &opts) catch "proceed";
+                if (std.mem.eql(u8, std.mem.trim(u8, answer, " \t\r\n"), "abort")) {
+                    self.ctx.gpa.free(note.text);
+                    return null;
+                }
+            }
+            note.severity = .concern;
+        }
+        return note;
+    }
+
+    fn lastTurns(messages: []const types.Message, want: u32) []const types.Message {
+        if (want == 0 or messages.len == 0) return messages;
+        var seen: u32 = 0;
+        var i = messages.len;
+        while (i > 0) {
+            i -= 1;
+            if (messages[i].role == .user) {
+                seen += 1;
+                if (seen >= want) return messages[i..];
+            }
+        }
+        return messages;
+    }
+
     /// One blocking completion. On failure the graph still gets a node so a
     /// run that dies on the provider is visible in `clanker graph` and the
     /// web UI, not only as a stack trace on stderr.

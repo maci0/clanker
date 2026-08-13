@@ -35,7 +35,7 @@ and Implementation lists checkable file-level phases.
 | [0012](0012-surface-plugins.md) | Surface plugins | Partial | Web UI shipped; TUI/CLI draft |
 | [0013](0013-ttsr.md) | TTSR | Draft | Substring/`*` matcher (no full regex v1) |
 | [0014](0014-hashline.md) | Hashline edit format | Shipped | `hashes:true` + `op:hashline` |
-| [0015](0015-advisor.md) | Advisor | Draft | Shares side-channel pattern with 0020 |
+| [0015](0015-advisor.md) | Advisor | Shipped | Off by default; fail-open |
 | [0016](0016-eval-kernel.md) | Eval kernel | Draft | Hard prereq for 0017 |
 | [0017](0017-dap.md) | DAP | Draft | Needs 0016 subprocess registry |
 | [0018](0018-snapcompact.md) | Snapcompact | Draft | Opt-in; default stays LLM compact |
@@ -54,8 +54,8 @@ and Implementation lists checkable file-level phases.
 Packaging and reliability first, then agent-loop quality, then heavy
 optional subsystems:
 
-1. **0015** / **0020** — advisor + auto thinking (shared side-channel)
-2. **0024** — sampling profiles (after 0025; after numbers pinned)
+1. **0024** — sampling profiles (unlocks 0020 auto thinking)
+2. **0020** — auto thinking (after 0024)
 3. **0013** — TTSR (substring engine)
 4. **0016** then **0017** — eval kernel, then DAP
 5. **0019** — `gh_read`

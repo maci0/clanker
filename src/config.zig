@@ -2312,6 +2312,38 @@ test "a local override with only default_provider keeps the base providers" {
     try std.testing.expectEqualStrings("https://b.test", (try cfg.provider(null)).base_url);
 }
 
+test "advisor section parses and stays off by default" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[advisor]
+        \\enabled = true
+        \\provider = "a"
+        \\model = "m"
+        \\scope = "session"
+        \\timeout_ms = 2500
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expect(cfg.advisor.enabled);
+    try std.testing.expectEqualStrings("a", cfg.advisor.provider);
+    try std.testing.expectEqualStrings("session", cfg.advisor.scope);
+    try std.testing.expectEqual(@as(u32, 2500), cfg.advisor.timeout_ms);
+    try std.testing.expect(!(Advisor{}).enabled);
+}
+
 test "partial local agent keeps base tools_dir" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

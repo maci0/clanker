@@ -225,6 +225,20 @@ Run-loop and path settings. The commonly-touched keys:
 | `repl_exec_allow` | `[]` | Extra commands the REPL's `!cmd` escape may run, on top of the union of every tool's `exec_allow`. Widens the escape only, never a tool; the deny tokens and git's verb allowlist still apply. |
 | `seed` | 0 | RNG seed for reproducibility (`0` = time-seeded). |
 
+## `[advisor]`
+
+Post-turn second-model critique. Off by default. Distinct from
+`improve.arena_advisory`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Run the advisor after each completed tool batch. |
+| `provider` | (unset) | Provider name; falls back to `default_provider`. |
+| `model` | (unset) | Model name on that provider. |
+| `scope` | `turn` | `turn` = last user turn; `session` = last `context_turns` user turns. |
+| `context_turns` | 3 | How many user turns `scope = "session"` sends. |
+| `timeout_ms` | 5000 | Parsed now; deadline abort is still open. |
+
 ## `[modules]`
 
 Feature toggles, all boolean, all default `true` (except where noted). Turning
