@@ -120,6 +120,9 @@ pub const Options = struct {
     goal: ?[]const u8 = null,
     peer: ?[]const u8 = null,
     message: ?[]const u8 = null,
+    /// `autolearn reset`: archive the event log before refreshing, so the
+    /// next report starts from a clean slate.
+    autolearn_reset: bool = false,
     /// Sub-command for `chat`: "send", "history", "rooms" (default) or
     /// "subscribe". `room` holds the room name; `message` holds the text (send),
     /// an `after` ts (history) or an on/off token (subscribe).
@@ -721,6 +724,13 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 setDiag(diag, a);
                 return error.UnknownArg;
             }
+        } else if (opts.command == .autolearn) {
+            if (std.mem.eql(u8, a, "reset") and !opts.autolearn_reset) {
+                opts.autolearn_reset = true;
+            } else {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
         } else if (opts.command == .schedule) {
             // Positional-only: <sub> then up to two arguments whose meaning
             // depends on it (add takes a spec and a task, the rest an id).
@@ -1243,7 +1253,7 @@ const specs = [_]Spec{
     .{ .command = .gate, .usage = "gate", .blurb = "run the build/test/tools/fmt/lint gates", .group = .maintain },
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model }, .detail = "--tasks runs only the agent-driven evals, skipping the selfhost build gates.\n--provider/--model run the eval agents on a specific backend (cmdEval already resolves them; the improve loop's eval_provider rides this)." },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain },
-    .{ .command = .autolearn, .usage = "autolearn", .blurb = "fold recent runs into the ROADMAP's Autolearn section", .group = .maintain },
+    .{ .command = .autolearn, .usage = "autolearn [reset]", .blurb = "fold recent runs into the ROADMAP's Autolearn section", .group = .maintain, .detail = "Aggregates the last 7 days of state/autolearn.jsonl into actionable items.\n\nreset    archive the event log to state/autolearn.old.jsonl (overwriting any\n         previous archive) and start observations from a clean slate. Use it\n         after addressing the reported items, so they stop resurfacing." },
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
     .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own; the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields: minute hour day-of-month month day-of-week, each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
     .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
@@ -2340,7 +2350,6 @@ fn httpGetTask(
 /// logic lives in the cmd_autolearn tool (fs-scoped read/aggregate/write,
 /// same shape as roadmap/history/learnings); this just runs it and reports.
 fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
-    _ = opts;
     const io = init.io;
     const gpa = init.gpa;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -2350,8 +2359,20 @@ fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
     if (!cfg.modules.autolearn) {
         return error.ModuleDisabled;
     }
-    const section = try toolText(io, gpa, arena, &cfg, init.environ_map, "cmd_autolearn", "");
     const out = std.Io.File.stdout();
+    if (opts.autolearn_reset) {
+        // Archive rather than delete: the history stays greppable, the
+        // aggregation starts over. Overwrites the previous archive; one
+        // generation back is enough for "what did it say before the reset".
+        const cwd = std.Io.Dir.cwd();
+        if (cwd.rename("state/autolearn.jsonl", cwd, "state/autolearn.old.jsonl", io)) {
+            try out.writeStreamingAll(io, "Event log archived to state/autolearn.old.jsonl\n");
+        } else |err| switch (err) {
+            error.FileNotFound => try out.writeStreamingAll(io, "No event log to reset (state/autolearn.jsonl not found)\n"),
+            else => return err,
+        }
+    }
+    const section = try toolText(io, gpa, arena, &cfg, init.environ_map, "cmd_autolearn", "");
     try out.writeStreamingAll(io, "Autolearn section updated in docs/ROADMAP.md\n\n");
     try out.writeStreamingAll(io, section);
 }
