@@ -67,7 +67,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var end: usize = raw.len;
     if (raw.len == limit) {
         // More to come, so end on a line boundary rather than mid-statement.
-        if (std.mem.lastIndexOfScalar(u8, raw[start..], '\n')) |nl| end = start + nl + 1;
+        if (std.mem.findScalarLast(u8, raw[start..], '\n')) |nl| end = start + nl + 1;
     }
     // A line longer than the whole window has no boundary to snap to. Returning
     // it unsnapped is the only way the caller makes progress.

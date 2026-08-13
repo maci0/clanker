@@ -967,7 +967,7 @@ pub fn stripFence(raw: []const u8) []const u8 {
     if (!std.mem.startsWith(u8, s, "```")) return s;
     s = s[3..];
     if (std.mem.findScalar(u8, s, '\n')) |nl| s = s[nl + 1 ..];
-    if (std.mem.lastIndexOf(u8, s, "```")) |close| s = s[0..close];
+    if (std.mem.findLast(u8, s, "```")) |close| s = s[0..close];
     return std.mem.trim(u8, s, " \t\r\n");
 }
 

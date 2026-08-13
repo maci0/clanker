@@ -111,7 +111,7 @@ test "extract returns raw JSON for results without content" {
     defer arena.deinit();
     const r = try extract(arena.allocator(), "{\"result\":{\"tools\":[{\"name\":\"discover_papers\"}]}}");
     try std.testing.expect(r.ok);
-    try std.testing.expect(std.mem.indexOf(u8, r.text, "discover_papers") != null);
+    try std.testing.expect(std.mem.find(u8, r.text, "discover_papers") != null);
 }
 
 test "extract rejects a body with neither result nor error" {

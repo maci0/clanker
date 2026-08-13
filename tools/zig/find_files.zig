@@ -40,7 +40,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // an empty list: the leading part is where to look, the last component is
     // what to look for.
     var pattern = raw_pattern;
-    if (std.mem.lastIndexOfScalar(u8, pattern, '/')) |slash| {
+    if (std.mem.findScalarLast(u8, pattern, '/')) |slash| {
         if (dir.len == 0 and slash > 0) dir = pattern[0..slash];
         pattern = pattern[slash + 1 ..];
         if (pattern.len == 0) return lib.fail(out, "the pattern ends in a slash, so it names no file; give a file name or a glob");
