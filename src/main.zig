@@ -43,7 +43,7 @@ comptime {
     _ = @import("sandbox/host.zig");
     _ = @import("sandbox/runtime.zig");
     _ = @import("toolhost/registry.zig");
-    _ = @import("tools/manifest.zig");
+    _ = @import("toolhost/manifest.zig");
     _ = @import("toolhost/builder.zig");
     _ = @import("toolhost/usage.zig");
     _ = @import("agent/system_prompt.zig");

@@ -18,7 +18,7 @@ const zwasm = @import("zwasm");
 /// with the manifest validator, which rejects a descriptor asking for more
 /// than this rather than letting the clamp below silently disagree with what
 /// the file says.
-const default_fuel = @import("../tools/manifest.zig").default_fuel;
+const default_fuel = @import("../toolhost/manifest.zig").default_fuel;
 
 /// The effective budget for one call: a descriptor's `fuel` (0 = unset) may
 /// tighten the default but never exceed it, a fat-fingered manifest stays

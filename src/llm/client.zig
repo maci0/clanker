@@ -9,7 +9,7 @@
 
 const std = @import("std");
 const types = @import("types.zig");
-const providers = @import("providers.zig");
+const providers = @import("registry.zig");
 const auth = @import("auth.zig");
 const config = @import("../config.zig");
 const log = @import("../util/log.zig");
