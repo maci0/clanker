@@ -691,7 +691,7 @@ iter 2
 
 | Command | Description |
 |---------|-------------|
-| `help` | Print usage; `--help` / `-h` anywhere does the same |
+| `help` | Print usage; after a command it explains that command, and directly after an option it explains that option |
 | `version` | Print the version; `--version` anywhere does the same |
 | `init` | Create `config.local.toml` and `state/` |
 | `providers <check\|models\|catalog\|fill> [name]` | Verify connectivity, list models, search the models.dev catalog, or print catalog specs for configured models |

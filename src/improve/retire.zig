@@ -285,13 +285,25 @@ test "register replaces a row for the same path instead of appending" {
     const arena = arena_state.allocator();
 
     register(std.testing.allocator, io, tmp.dir, .{
-        .path = "/wt/1", .branch = "clanker/run-1", .base_branch = "main", .goal_id = "g1", .created = 1,
+        .path = "/wt/1",
+        .branch = "clanker/run-1",
+        .base_branch = "main",
+        .goal_id = "g1",
+        .created = 1,
     });
     register(std.testing.allocator, io, tmp.dir, .{
-        .path = "/wt/2", .branch = "clanker/run-2", .base_branch = "main", .goal_id = "g2", .created = 2,
+        .path = "/wt/2",
+        .branch = "clanker/run-2",
+        .base_branch = "main",
+        .goal_id = "g2",
+        .created = 2,
     });
     register(std.testing.allocator, io, tmp.dir, .{
-        .path = "/wt/1", .branch = "clanker/run-1b", .base_branch = "main", .goal_id = "g3", .created = 3,
+        .path = "/wt/1",
+        .branch = "clanker/run-1b",
+        .base_branch = "main",
+        .goal_id = "g3",
+        .created = 3,
     });
 
     const rows = read(io, tmp.dir, arena);
