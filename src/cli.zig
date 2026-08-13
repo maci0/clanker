@@ -4567,6 +4567,7 @@ const Connection = struct {
     /// safe on the same terms as `cfg`.
     serve_as_hosts: []const []const u8,
     stream: std.Io.net.Stream,
+    surface: proxy.Surface,
 };
 
 /// One accepted connection previously ran to completion inside the accept
@@ -4596,7 +4597,7 @@ var http_latency_le_10s = std.atomic.Value(u64).init(0);
 var http_latency_total_ms = std.atomic.Value(u64).init(0);
 var http_client_errors_total = std.atomic.Value(u64).init(0);
 
-fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream) void {
+fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream, surface: proxy.Surface) void {
     // A bound, so a flood of slow clients cannot make the process spawn
     // threads without limit. Over it, say so and close rather than queueing:
     // a client that waits behind 64 in-flight agent turns has already lost.
@@ -4607,20 +4608,26 @@ fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         stream.close(io);
         return;
     }
+    if (surface == .proxy and in_flight >= max_connection_threads - proxy.webui_reserved_slots) {
+        _ = connection_threads.fetchSub(1, .acq_rel);
+        respond(stream, 503, "Service Unavailable", "{\"ok\":false,\"error\":\"too many concurrent connections\"}");
+        stream.close(io);
+        return;
+    }
 
     const conn = gpa.create(Connection) catch {
         _ = connection_threads.fetchSub(1, .acq_rel);
-        handleConnectionGuarded(io, gpa, cfg, environ_map, port, serve_as_hosts, stream);
+        handleConnectionGuarded(io, gpa, cfg, environ_map, port, serve_as_hosts, stream, surface);
         return;
     };
-    conn.* = .{ .io = io, .gpa = gpa, .cfg = cfg, .environ_map = environ_map, .port = port, .serve_as_hosts = serve_as_hosts, .stream = stream };
+    conn.* = .{ .io = io, .gpa = gpa, .cfg = cfg, .environ_map = environ_map, .port = port, .serve_as_hosts = serve_as_hosts, .stream = stream, .surface = surface };
 
     const thread = std.Thread.spawn(.{}, connectionThread, .{conn}) catch {
         // Out of threads: serving it on the accept loop is slower than a
         // dedicated thread but still correct, and beats dropping the client.
         gpa.destroy(conn);
         _ = connection_threads.fetchSub(1, .acq_rel);
-        handleConnectionGuarded(io, gpa, cfg, environ_map, port, serve_as_hosts, stream);
+        handleConnectionGuarded(io, gpa, cfg, environ_map, port, serve_as_hosts, stream, surface);
         return;
     };
     thread.detach();
@@ -4632,10 +4639,10 @@ fn connectionThread(conn: *Connection) void {
         gpa.destroy(conn);
         _ = connection_threads.fetchSub(1, .acq_rel);
     }
-    handleConnectionGuarded(conn.io, conn.gpa, conn.cfg, conn.environ_map, conn.port, conn.serve_as_hosts, conn.stream);
+    handleConnectionGuarded(conn.io, conn.gpa, conn.cfg, conn.environ_map, conn.port, conn.serve_as_hosts, conn.stream, conn.surface);
 }
 
-fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream) void {
+fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream, surface: proxy.Surface) void {
     defer stream.close(io);
     const tv: std.posix.timeval = .{ .sec = connection_read_timeout_seconds, .usec = 0 };
     std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
@@ -4645,13 +4652,13 @@ fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const confi
         // A hot-reload must never fire mid-request (would drop the client
         // mid-response); see HotReload's doc comment.
         if (hot_reload_active) |hr| hr.begin();
-        handleConnection(io, gpa, cfg, environ_map, port, serve_as_hosts, stream);
+        handleConnection(io, gpa, cfg, environ_map, port, serve_as_hosts, stream, surface);
         if (hot_reload_active) |hr| hr.end();
         if (!request_keep_alive) break;
     }
 }
 
-fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream) void {
+fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream, surface: proxy.Surface) void {
     var request_id_buf: [24]u8 = undefined;
     const request_id = std.fmt.bufPrint(&request_id_buf, "http-{d}", .{request_sequence.fetchAdd(1, .monotonic)}) catch "http-unknown";
     log.setContext(request_id);
@@ -4728,15 +4735,61 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respond(stream, 421, "Misdirected Request", "{\"ok\":false,\"error\":\"invalid host\"}");
             return;
         }
+        const on_proxy = proxy.isProxyPath(path, surface);
+        var proxy_authorized = false;
+        if (on_proxy) {
+            if (cfg.serve.proxy_token_env) |env_name| {
+                if (environ_map.get(env_name)) |expected| {
+                    switch (proxy.authorize(headers_raw, expected)) {
+                        .ok => proxy_authorized = true,
+                        .missing, .mismatch => {
+                            request_status = proxy.writeAuthError(stream, proxy.stripProxyPrefix(path, surface), headers_raw);
+                            return;
+                        },
+                    }
+                }
+            }
+        }
         // The listen socket is loopback-only by default, but any page open in
         // the user's browser can still reach it: every non-GET route here either
         // runs the agent, execs sandboxed tools, or writes state, so a
         // cross-origin POST from an unrelated site the user happens to have
         // open is CSRF, not a hypothetical. A request with no Origin header
         // (curl, or the raw API used directly) is not a browser cross-site
-        // request and is let through.
-        if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "HEAD") and crossOriginRequest(headers_raw, port, serve_as_hosts)) {
+        // request and is let through. A valid proxy token is the CSRF defense
+        // for an SDK or browser that sent Origin plus the secret.
+        if (!proxy_authorized and !std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "HEAD") and crossOriginRequest(headers_raw, port, serve_as_hosts)) {
             respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"cross-origin request refused\"}");
+            return;
+        }
+        if (on_proxy) {
+            const stripped = proxy.stripProxyPrefix(path, surface);
+            const qmark = std.mem.findScalar(u8, target, '?');
+            const query = if (qmark) |i| target[i + 1 ..] else "";
+            request_status = proxy.handle(.{
+                .io = io,
+                .gpa = gpa,
+                .cfg = cfg,
+                .environ_map = environ_map,
+                .method = method,
+                .path = stripped,
+                .query = query,
+                .headers_raw = headers_raw,
+                .body = body,
+                .stream = stream,
+            });
+            return;
+        }
+        if (surface == .proxy) {
+            if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/health/live")) {
+                respond(stream, 200, "OK", "{\"ok\":true,\"status\":\"live\"}");
+                return;
+            }
+            if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/health/ready")) {
+                handleReadiness(stream);
+                return;
+            }
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
             return;
         }
         const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
@@ -11296,18 +11349,31 @@ test "the hot-reload re-exec keeps the bind address and the serve-as names" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const bare = try buildServeArgvTail(arena, 17921, "127.0.0.1", &.{});
-    try std.testing.expectEqual(@as(usize, 5), bare.len);
+    const bare = try buildServeArgvTail(arena, .{
+        .host = "127.0.0.1",
+        .port = 17921,
+        .serve_as_hosts = &.{},
+        .proxy_enabled = false,
+        .proxy_port = 17921,
+    });
+    try std.testing.expectEqual(@as(usize, 6), bare.len);
     try std.testing.expectEqualStrings("serve", bare[0]);
     try std.testing.expectEqualStrings("--host", bare[1]);
     try std.testing.expectEqualStrings("127.0.0.1", bare[2]);
     try std.testing.expectEqualStrings("--webui-port", bare[3]);
     try std.testing.expectEqualStrings("17921", bare[4]);
+    try std.testing.expectEqualStrings("--no-proxy", bare[5]);
 
     // Dropping these on re-exec would leave the rebuilt process refusing every
     // request the operator started the server to accept.
-    const wide = try buildServeArgvTail(arena, 8080, "0.0.0.0", &.{ "clanker.lan", "box.tailnet.ts.net" });
-    try std.testing.expectEqual(@as(usize, 9), wide.len);
+    const wide = try buildServeArgvTail(arena, .{
+        .host = "0.0.0.0",
+        .port = 8080,
+        .serve_as_hosts = &.{ "clanker.lan", "box.tailnet.ts.net" },
+        .proxy_enabled = false,
+        .proxy_port = 8080,
+    });
+    try std.testing.expectEqual(@as(usize, 10), wide.len);
     try std.testing.expectEqualStrings("0.0.0.0", wide[2]);
     try std.testing.expectEqualStrings("8080", wide[4]);
     try std.testing.expectEqualStrings("--serve-as", wide[5]);

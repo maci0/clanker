@@ -689,7 +689,7 @@ fn composite(cfg: *const config.Config, family: Family, name: []const u8) Lookup
 }
 
 fn aliasOf(cfg: *const config.Config, name: []const u8) ?[]const u8 {
-    return cfg.serve.proxy_aliases.get(name);
+    return cfg.serve.proxy_aliases.map.get(name);
 }
 
 fn uniqueProvider(cfg: *const config.Config, family: Family) LookupError!Resolved {
@@ -701,7 +701,7 @@ fn uniqueProvider(cfg: *const config.Config, family: Family) LookupError!Resolve
         found = kv.value_ptr;
     }
     const p = found orelse return error.ModelNotFound;
-    var copy = p.*;
+    const copy = p.*;
     return .{ .provider = copy, .wire_id = copy.default_model, .splice = false };
 }
 
@@ -1045,7 +1045,7 @@ test "lookup unique wire id, composite, alias, protocol mismatch" {
     var cfg = config.Config{};
     try cfg.providers.put(arena, "kimi-k3", try config.Provider.single(arena, "kimi-k3", "http://x/v1", .openai_compat, "kimi-k3", .{}));
     try cfg.providers.put(arena, "anthropic", try config.Provider.single(arena, "anthropic", "https://api.anthropic.com", .anthropic, "claude-sonnet-4-20250514", .{ .display = "Claude Sonnet 4" }));
-    try cfg.serve.proxy_aliases.put(arena, "claude-4-sonnet", "anthropic/claude-sonnet-4-20250514");
+    try cfg.serve.proxy_aliases.map.put(arena, "claude-4-sonnet", "anthropic/claude-sonnet-4-20250514");
 
     const a = try lookup(&cfg, .openai, "kimi-k3");
     try std.testing.expectEqualStrings("kimi-k3", a.wire_id);
