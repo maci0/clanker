@@ -6,7 +6,7 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "action": { "type": "string", "description": "definition (default) or references." },
+      "action": { "type": "string", "enum": ["definition", "references"], "description": "definition (default) or references." },
       "file": { "type": "string", "description": "Path to the Zig file, relative to the project root." },
       "line": { "type": "integer", "description": "0-based line of the symbol." },
       "character": { "type": "integer", "description": "0-based column within that line, pointing at the symbol." }
