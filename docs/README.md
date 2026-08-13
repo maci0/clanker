@@ -603,7 +603,7 @@ The shipped `translate` plugin combines all of it: an `after` transform on every
 
 ## REPL slash commands
 
-A line starting with `!` is a shell escape (see below), a line starting with `/` is a command, and anything else is sent to the agent as a task. The command set is one table in the source, `command_registry` in `src/tui/repl_vaxis.zig`, which is also what `/help` and Tab-complete are generated from. Some entries dispatch to the internal WASM tool `cmd_<name>`; the rest run in-process, either handling the line themselves or turning it into an agent task. A bare `exit` or `quit` also leaves the REPL.
+A line starting with `!` is a shell escape (see below), a line starting with `/` is a command, and anything else is sent to the agent as a task. Two keys reach the same set without typing a name: **Ctrl-P** opens a fuzzy palette over the whole registry, matching mid-word and on the description, and **Ctrl-R** searches the transcript. Tab completes a partly-typed `/command` in place. All three are listed in the keys block `/help` generates, so the in-app list is the one that cannot go stale. The command set is one table in the source, `command_registry` in `src/tui/repl_vaxis.zig`, which is also what `/help` and Tab-complete are generated from. Some entries dispatch to the internal WASM tool `cmd_<name>`; the rest run in-process, either handling the line themselves or turning it into an agent task. A bare `exit` or `quit` also leaves the REPL.
 
 | Command | Runs as | Description |
 |---------|---------|-------------|
