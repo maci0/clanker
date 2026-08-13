@@ -1173,7 +1173,9 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
         }
         if (access == .tools_dir) {
             try s.objectField("tools_dir");
-            try s.write(cfg.agent.tools_dir);
+            // Guest tools currently consume one writable/scaffold directory;
+            // registry discovery itself scans the complete host-side list.
+            try s.write(config_mod.firstToolsDir(cfg.agent.tools_dir));
         }
         try s.endObject();
     }

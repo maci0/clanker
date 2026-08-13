@@ -3672,7 +3672,8 @@ fn toolJson(
     const mod = runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, tool_name, &ctx) catch |err| {
         if (err == error.UnknownTool) {
             // Descriptor missing from tools_dir, not a missing .wasm rebuild.
-            log.log(.error_, "internal tool '{s}' not found in {s}", .{ tool_name, cfg.agent.tools_dir });
+            const dirs = config.toolsDirDisplay(arena, cfg.agent.tools_dir) catch "configured tool directories";
+            log.log(.error_, "internal tool '{s}' not found in {s}", .{ tool_name, dirs });
         } else {
             log.log(.error_, "'{s}' tool load failed: {s} (run `zig build tools`)", .{ tool_name, @errorName(err) });
         }
@@ -3910,12 +3911,12 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
         return;
     }
     if (std.mem.eql(u8, sub, "validate")) {
-        return pluginsValidate(init, opts.plugin_target orelse cfg.agent.tools_dir);
+        return pluginsValidate(init, opts.plugin_target orelse config.firstToolsDir(cfg.agent.tools_dir));
     }
     if (std.mem.eql(u8, sub, "new")) {
         const name = opts.plugin_target orelse
             usageExitFor(io, "plugins", "plugins new needs a tool name: clanker plugins new word_count", .{});
-        return pluginsNew(init, cfg.agent.tools_dir, name);
+        return pluginsNew(init, config.firstToolsDir(cfg.agent.tools_dir), name);
     }
     usageExitFor(io, "plugins", "unknown plugins subcommand '{s}' (list, on, off, validate, new)", .{sub});
 }
@@ -6766,7 +6767,8 @@ test "steer registry: a session-only (chat) run steers by session" {
 /// JSON `{"ok":false,"error":...}` body when the webui *descriptor* is absent
 /// from the tools registry (wrong/empty `tools_dir`, zero manifests).
 /// Distinct from a missing guest `.wasm`, which still wants `zig build tools`.
-fn webuiMissingRegistryError(allocator: std.mem.Allocator, tools_dir: []const u8) ![]const u8 {
+fn webuiMissingRegistryError(allocator: std.mem.Allocator, tools_dirs: []const []const u8) ![]const u8 {
+    const tools_dir = try config.toolsDirDisplay(allocator, tools_dirs);
     const detail = try std.fmt.allocPrint(
         allocator,
         "webui tool not found in registry (tools_dir={s}). Check agent.tools_dir points at the *.tool.json manifests directory.",
@@ -12511,7 +12513,7 @@ test "webui registry-miss error names tools_dir and does not sole-blame zig buil
 
     // Drive the real helper renderWebui uses for the HTTP error body when
     // reg.get("webui") is null, not a reimplementation of the string.
-    const body = try webuiMissingRegistryError(arena, "tools/no-such-manifests");
+    const body = try webuiMissingRegistryError(arena, &.{"tools/no-such-manifests"});
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
     const err_msg = parsed.object.get("error").?.string;
     try std.testing.expect(std.mem.find(u8, err_msg, "tools/no-such-manifests") != null);
