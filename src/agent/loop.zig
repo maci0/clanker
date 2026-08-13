@@ -2865,10 +2865,10 @@ test "maybeCompactMessages drops the middle, keeps the system prompt and the rec
 
     // Under budget: no compaction (an inverted budget check fails this).
     try std.testing.expect(Agent.compactionKeepStart(messages.items, estimated, estimated + 1) == null);
-    // Too short to compact even when over budget: system + 6 messages.
-    try std.testing.expect(Agent.compactionKeepStart(messages.items[0..7], estimated, threshold) == null);
+    // Too short to compact even when over budget: system + the kept tail.
+    try std.testing.expect(Agent.compactionKeepStart(messages.items[0 .. recent_tail_messages + 1], estimated, threshold) == null);
 
-    // Over budget with enough messages: keep system + summary + last 6.
+    // Over budget with enough messages: keep system + summary + the recent tail.
     const keep_start = Agent.compactionKeepStart(messages.items, estimated, threshold) orelse return error.TestExpectedCompaction;
     try std.testing.expect(keep_start == 3);
 
@@ -2993,8 +2993,8 @@ test "pruneOldToolResults shortens stale tool results outside the recent tail" {
     const big = try arena.alloc(u8, 2000);
     @memset(big, 'x');
     // 10 messages: sys + 4 user/tool pairs + a recent user message.
-    // The last 6 messages (indices 4..9) are the kept tail; the tool at
-    // index 2 is outside and should be pruned.
+    // The last recent_tail_messages (indices 4..9) are the kept tail; the tool
+    // at index 2 is outside and should be pruned.
     var msgs = [_]types.Message{
         .{ .role = .system, .content = "sys" }, // 0
         .{ .role = .user, .content = "u1" }, // 1
