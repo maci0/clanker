@@ -76,6 +76,7 @@ comptime {
     _ = @import("agent/private_todos.zig");
     _ = @import("stats/tokens.zig");
     _ = @import("tui/width.zig");
+    _ = @import("tui/sanitize.zig");
     _ = @import("tui/transcript.zig");
     _ = @import("tui/theme.zig");
     _ = @import("tui/syntax.zig");

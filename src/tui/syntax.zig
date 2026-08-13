@@ -21,6 +21,7 @@
 const std = @import("std");
 const vaxis = @import("vaxis");
 const theme_mod = @import("theme.zig");
+const sanitize = @import("sanitize.zig");
 
 /// Token categories. Deliberately few: six colors are plenty to read by,
 /// and every category maps to exactly one ANSI/vaxis style.
@@ -169,11 +170,7 @@ fn inList(list: []const []const u8, word: []const u8) bool {
     return false;
 }
 
-/// True for C0 controls and DEL, which must never reach the terminal.
-/// \n and \t stay (line structure / layout), matching transcript.zig.
-fn strippedControl(c: u8) bool {
-    return (c < 0x20 and c != '\n' and c != '\t') or c == 0x7F;
-}
+const strippedControl = sanitize.isControl;
 
 /// Mutable highlighter state carried across `highlightLine` calls: whether
 /// we are inside an unterminated string or block comment. `lang` is chosen
@@ -535,50 +532,8 @@ pub fn emit(w: *std.Io.Writer, style: *const Style, tokens: []const Token) void 
     }
 }
 
-/// Same control-stripping as transcript.zig's writeSanitized: C0 (except
-/// \n, \t), DEL, and UTF-8-encoded C1 (0xC2 0x80..0x9F) are dropped.
-fn writeSanitized(w: *std.Io.Writer, bytes: []const u8) void {
-    var start: usize = 0;
-    var i: usize = 0;
-    while (i < bytes.len) {
-        if (strippedControl(bytes[i])) {
-            if (i > start) w.writeAll(bytes[start..i]) catch {};
-            i += 1;
-            start = i;
-        } else if (bytes[i] == 0xC2 and i + 1 < bytes.len and bytes[i + 1] >= 0x80 and bytes[i + 1] <= 0x9F) {
-            if (i > start) w.writeAll(bytes[start..i]) catch {};
-            i += 2;
-            start = i;
-        } else {
-            i += 1;
-        }
-    }
-    if (start < bytes.len) w.writeAll(bytes[start..]) catch {};
-}
-
-fn sanitizeAlloc(gpa: std.mem.Allocator, bytes: []const u8) ![]const u8 {
-    var i: usize = 0;
-    while (i < bytes.len) : (i += 1) {
-        if (strippedControl(bytes[i]) or
-            (bytes[i] == 0xC2 and i + 1 < bytes.len and bytes[i + 1] >= 0x80 and bytes[i + 1] <= 0x9F))
-        {
-            var out: std.ArrayList(u8) = .empty;
-            var j: usize = 0;
-            while (j < bytes.len) {
-                if (strippedControl(bytes[j])) {
-                    j += 1;
-                } else if (bytes[j] == 0xC2 and j + 1 < bytes.len and bytes[j + 1] >= 0x80 and bytes[j + 1] <= 0x9F) {
-                    j += 2;
-                } else {
-                    try out.append(gpa, bytes[j]);
-                    j += 1;
-                }
-            }
-            return out.toOwnedSlice(gpa);
-        }
-    }
-    return bytes;
-}
+const writeSanitized = sanitize.writeSanitized;
+const sanitizeAlloc = sanitize.sanitizeAlloc;
 
 /// One full line of code highlighted straight to vaxis segments, for the
 /// cell-based renderer in repl_vaxis.zig. Controls are stripped per token;

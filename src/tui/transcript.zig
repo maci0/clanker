@@ -15,48 +15,11 @@ const std = @import("std");
 const width = @import("width.zig");
 const theme_mod = @import("theme.zig");
 const syntax = @import("syntax.zig");
+const sanitize = @import("sanitize.zig");
 pub const Theme = theme_mod.Theme;
 
-// -------------------------------------------------------- control stripping --
-//
-// Everything this file renders is text clanker didn't generate itself, LLM
-// responses, tool output, peer chat received over HTTP, so a raw ESC byte in
-// that text would otherwise print straight to the user's terminal (CWE-150,
-// terminal injection). Control bytes are dropped at these chokepoints; the
-// printable remainder of an escape sequence (e.g. the "[31m" after a stripped
-// ESC) stays as inert visible text, which keeps the pass stateless instead of
-// having to track CSI sequences across stream chunks. The ANSI clanker
-// intentionally emits comes from Theme and is written around the sanitized
-// text, never through it.
-
-/// A C0 control or DEL that must not reach the terminal. `\n` stays (line
-/// structure) and `\t` stays (layout, can't start an escape sequence).
-fn strippedControl(c: u8) bool {
-    return (c < 0x20 and c != '\n' and c != '\t') or c == 0x7F;
-}
-
-/// Writes `bytes` with C0 controls (except \n and \t), DEL, and UTF-8-encoded
-/// C1 controls (0xC2 0x80..0x9F, i.e. U+0080..U+009F) removed. Bare
-/// continuation bytes in that range are left alone, they are the tails of
-/// legitimate multi-byte codepoints like "€" (0xE2 0x82 0xAC).
-fn writeSanitized(w: *std.Io.Writer, bytes: []const u8) void {
-    var start: usize = 0;
-    var i: usize = 0;
-    while (i < bytes.len) {
-        if (strippedControl(bytes[i])) {
-            if (i > start) w.writeAll(bytes[start..i]) catch {};
-            i += 1;
-            start = i;
-        } else if (bytes[i] == 0xC2 and i + 1 < bytes.len and bytes[i + 1] >= 0x80 and bytes[i + 1] <= 0x9F) {
-            if (i > start) w.writeAll(bytes[start..i]) catch {};
-            i += 2;
-            start = i;
-        } else {
-            i += 1;
-        }
-    }
-    if (start < bytes.len) w.writeAll(bytes[start..]) catch {};
-}
+const strippedControl = sanitize.isControl;
+const writeSanitized = sanitize.writeSanitized;
 
 /// Renders the same markdown subset as the `format` WASM tool (bold, italic,
 /// inline code, fenced blocks, "- " bullets) straight into ANSI as content

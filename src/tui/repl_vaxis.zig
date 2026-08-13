@@ -53,6 +53,7 @@ const log = @import("../util/log.zig");
 const syntax = @import("syntax.zig");
 const theme_mod = @import("theme.zig");
 const width_mod = @import("width.zig");
+const sanitize = @import("sanitize.zig");
 // `_mod` because saveConversation has a local named `transcript`.
 const transcript_mod = @import("transcript.zig");
 const stats_mod = @import("stats.zig");
@@ -61,12 +62,7 @@ const stats_mod = @import("stats.zig");
 /// smoothly instead of in visible 50ms (20fps) batches. Idle, no timer runs.
 const stream_tick_ms: u32 = 33;
 
-/// A C0 control or DEL that must not reach the terminal, mirroring
-/// src/tui/transcript.zig's writeSanitized (CWE-150): everything rendered
-/// here is text clanker didn't generate itself.
-fn isDroppedControl(c: u8) bool {
-    return (c < 0x20 and c != '\n' and c != '\t') or c == 0x7F;
-}
+const isDroppedControl = sanitize.isControl;
 
 /// Most streamed deltas contain no control bytes, so this only allocates
 /// when one is actually found, keeping the common case alloc-free on the
