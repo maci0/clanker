@@ -210,7 +210,7 @@ Run-loop and path settings. The commonly-touched keys:
 | `max_iterations` | 50 | Tool-call rounds per turn before the run stops. Hitting it errors the turn, so keep it generous for multi-file work. |
 | `provider_check_timeout_seconds` | 10 | Global ceiling for `providers check`; override per provider with `check_timeout_seconds`. |
 | `ask_timeout_seconds` | 120 | How long a serve-side `ask_user`/confirm question waits for the browser before giving up. |
-| `confirm_writes` | `never` | Gate write-capable tool calls on a human's allow/deny. `browser` asks streaming web runs; `always` is reserved for the REPL and behaves like `browser` today. |
+| `confirm_writes` | `never` | Gate write-capable tool calls on a human's allow/deny. `browser` asks streaming web runs; `always` also opens the REPL's allow/deny modal. Runs with no human channel are never gated. |
 | `fallback_provider` / `fallback_providers` | (unset) | Ordered fallbacks after the selected provider cannot serve a request. A string or an array; later entries are tried in order. Also the preferred vision-routing target. |
 | `auto_thinking` | `false` | Per-turn classifier that selects a sampling-profile `reasoning_effort` row. Opt-in. |
 | `thinking_classifier_model` | (unset) | `provider` or `provider/model`. Empty = cheapest configured provider. |
@@ -228,6 +228,7 @@ Run-loop and path settings. The commonly-touched keys:
 | `repl_exec_allow` | `[]` | Extra commands the REPL's `!cmd` escape may run, on top of the union of every tool's `exec_allow`. Widens the escape only, never a tool; the deny tokens and git's verb allowlist still apply. |
 | `worktree` | `auto` | Default worktree isolation for a plain `clanker run` when neither `--worktree` nor `--no-worktree` is given. `yes`/`no` force a default for typed runs; `auto` keeps them unisolated. An explicit flag still wins. |
 | `goal_worktree` | `auto` | Same, but for `--goal` runs and scheduled (`unattended`) runs. `auto` keeps those isolated by default; `yes`/`no` force a default. |
+| `git_worktree_on` | `[]` | Extra modes to isolate by default: `run`, `goal`, `tui`, `schedule`. An explicit `--worktree`/`--no-worktree` still wins. |
 | `seed` | 0 | RNG seed for reproducibility (`0` = time-seeded). |
 
 ## `[advisor]`
@@ -237,7 +238,7 @@ Post-turn second-model critique. Off by default. Distinct from
 
 | Key | Default | Meaning |
 |---|---|---|
-| `enabled` | `false` | Run the advisor after each completed tool batch. |
+| `enabled` | `false` | Review each completed tool batch and inject any note into the next agent iteration. |
 | `provider` | (unset) | Provider name; falls back to `default_provider`. |
 | `model` | (unset) | Model name on that provider. |
 | `scope` | `turn` | `turn` = last user turn; `session` = last `context_turns` user turns. |
@@ -284,20 +285,24 @@ chatrooms = false
   itself as). `proxy` (default false) mounts an OpenAI/Anthropic compatibility
   surface at `/proxy/v1` on the same socket; `proxy_port` is an optional second
   listener with `/v1` at the root. `proxy_token_env` names an env var holding
-  a local token (never a secret in toml). The weakest of three layers —
+  a local token (never a secret in TOML); `proxy_aliases` maps client-facing
+  model names to configured `provider/model` ids. `proxy_first_byte_timeout_s`
+  and `proxy_idle_timeout_s` default to 300 and 60 seconds respectively; `0`
+  disables either ceiling. The weakest of three layers —
   `CLANKER_HOST` / `CLANKER_WEBUI_PORT` / `CLANKER_PROXY_PORT` override it, and
   `--host` / `--webui-port` / `--serve-as` / `--proxy` / `--no-proxy` /
   `--proxy-port` override those. Field-merged, so a `config.local.toml` that
-  only sets `host` keeps a base `proxy = true`. Without `--proxy` the process
-  opens exactly one socket.
+  only sets `host` keeps a base `proxy = true`. With no proxy enabled, the
+  process opens exactly one socket; a distinct `proxy_port` opens the only
+  second listener.
 
   ```toml
   [serve]
   host = "0.0.0.0"
   webui_port = 17921
   serve_as = ["clanker.lan"]
-  # proxy = true
-  # proxy_token_env = "CLANKER_PROXY_TOKEN"
+  proxy = true
+  proxy_token_env = "CLANKER_PROXY_TOKEN"
   ```
 - **`[[peers]]`** — repeated tables of `name` + `url`, other `clanker serve`
   instances this one can notify and share chatrooms/board with. Outbound only:

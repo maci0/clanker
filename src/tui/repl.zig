@@ -5998,9 +5998,9 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         model.lines.append(arena, .{
             .text = std.fmt.allocPrint(
                 arena,
-                "error: mascot size '{s}' is not one of small, medium, large; using medium",
-                .{bad},
-            ) catch "error: unknown mascot size; using medium",
+                "error: mascot size '{s}' is not one of mini, xsmall, small, medium, large; using {s}",
+                .{ bad, @tagName(mascot_choice.size) },
+            ) catch "error: unknown mascot size; using the mode's default",
         }) catch {};
     }
     if (mascot_choice.bad_facing) |bad| {
