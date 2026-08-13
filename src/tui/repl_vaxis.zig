@@ -1837,7 +1837,13 @@ const Model = struct {
         if (!ok) {
             const raw_detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "unknown") else "unknown";
             const detail = clean(self.arena, raw_detail) orelse "unknown";
-            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[{s}: {s}]", .{ tool_name, detail }) catch "[internal tool failed]", .dim = true }) catch {};
+            const extra: []const u8 = if (std.mem.eql(u8, detail, "no such run"))
+                "; /graph lists recorded runs"
+            else if (std.ascii.findIgnoreCase(detail, "not found") != null)
+                "; /sessions lists saved conversations"
+            else
+                "";
+            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[{s}: {s}{s}]", .{ tool_name, detail, extra }) catch "[internal tool failed]", .dim = true }) catch {};
             return true;
         }
         const text = parsed.object.get("text") orelse {

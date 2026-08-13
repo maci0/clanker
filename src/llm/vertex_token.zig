@@ -118,7 +118,7 @@ pub fn get(io: std.Io, gpa: std.mem.Allocator, service_account_file: []const u8)
     cached_token = try gpa.dupe(u8, reply.access_token);
     cached_for = try gpa.dupe(u8, service_account_file);
     expires_at = now + @max(0, reply.expires_in - refresh_margin_s);
-    log.log(.info, "vertex: access token minted, valid ~{d}s", .{reply.expires_in});
+    log.log(.debug, "vertex: access token minted, valid ~{d}s", .{reply.expires_in});
     return try gpa.dupe(u8, cached_token.?);
 }
 

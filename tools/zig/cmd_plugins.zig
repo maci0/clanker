@@ -226,13 +226,21 @@ fn writeDisabled(plugins: []const Plugin) !void {
     try lib.fsWrite(state_path, buf[0..w.end]);
 }
 
+fn clipDesc(desc: []const u8) []const u8 {
+    const first = desc[0 .. std.mem.findScalar(u8, desc, '\n') orelse desc.len];
+    return first[0..@min(first.len, 96)];
+}
+
 fn listJson(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plugin) !void {
     var text: std.ArrayList(u8) = .empty;
     for (plugins) |p| {
         const mark = if (p.core) "core" else if (p.enabled) " on " else " off";
         var tags: []const u8 = "";
         if (p.transform) |tr| tags = try std.fmt.allocPrint(alloc, "(transform {s}, order {d}{s}) ", .{ tr.phase, tr.order, if (p.llm) ", llm" else "" });
-        const line = try std.fmt.allocPrint(alloc, "[{s}] {s: <14} {s}{s}\n", .{ mark, p.name, tags, p.description });
+        const clipped = clipDesc(p.description);
+        const first = p.description[0 .. std.mem.findScalar(u8, p.description, '\n') orelse p.description.len];
+        const ellipsis: []const u8 = if (clipped.len < first.len) "\u{2026}" else "";
+        const line = try std.fmt.allocPrint(alloc, "[{s}] {s: <14} {s}{s}{s}\n", .{ mark, p.name, tags, clipped, ellipsis });
         try text.appendSlice(alloc, line);
     }
     try text.appendSlice(alloc, "\n/plugins off <name> to disable, /plugins on <name> to enable. Core tools back the REPL and HTTP routes and stay on; transforms rewrite other tools' input or output.\n");

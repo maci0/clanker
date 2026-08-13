@@ -1077,6 +1077,7 @@ fn primaryFlagName(f: Flag) []const u8 {
 }
 
 fn editDistance(a: []const u8, b: []const u8) usize {
+    var before: [33]usize = undefined;
     var previous: [33]usize = undefined;
     var current: [33]usize = undefined;
     for (0..b.len + 1) |i| previous[i] = i;
@@ -1085,7 +1086,14 @@ fn editDistance(a: []const u8, b: []const u8) usize {
         for (b, 0..) |bc, bi| {
             const substitution = previous[bi] + @intFromBool(ac != bc);
             current[bi + 1] = @min(@min(previous[bi + 1] + 1, current[bi] + 1), substitution);
+            // Adjacent transposition (`--modle` / `--model`) is the typo
+            // Levenshtein counts as two substitutions and would otherwise
+            // miss the one-edit suggestion threshold.
+            if (ai > 0 and bi > 0 and ac == b[bi - 1] and a[ai - 1] == bc) {
+                current[bi + 1] = @min(current[bi + 1], before[bi - 1] + 1);
+            }
         }
+        @memcpy(before[0 .. b.len + 1], previous[0 .. b.len + 1]);
         @memcpy(previous[0 .. b.len + 1], current[0 .. b.len + 1]);
     }
     return previous[b.len];
@@ -1329,7 +1337,7 @@ const specs = [_]Spec{
     .{ .command = .init, .usage = "init", .blurb = "create config.local.toml and state/", .group = .maintain },
     .{ .command = .gate, .usage = "gate", .blurb = "run the build/test/tools/fmt/lint gates", .group = .maintain },
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model }, .detail = "--tasks runs only the agent-driven evals, skipping the selfhost build gates.\n--provider/--model run the eval agents on a specific backend (cmdEval already resolves them; the improve loop's eval_provider rides this)." },
-    .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain },
+    .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain, .detail = "Ids look like imp-... and live in state/improvements.jsonl (the same list the\nimprove loop records). A missing id is refused; nothing is written." },
     .{ .command = .autolearn, .usage = "autolearn [reset]", .blurb = "fold recent runs into the ROADMAP's Autolearn section", .group = .maintain, .detail = "Aggregates the last 7 days of state/autolearn.jsonl into actionable items.\n\nreset    archive the event log to state/autolearn.old.jsonl (overwriting any\n         previous archive) and start observations from a clean slate. Use it\n         after addressing the reported items, so they stop resurfacing." },
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
     .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own; the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields: minute hour day-of-month month day-of-week, each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
@@ -3485,7 +3493,10 @@ fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
     const ExportResult = struct { ok: bool = false, path: []const u8 = "", messages: usize = 0, bytes: usize = 0, html: ?[]const u8 = null, @"error": ?[]const u8 = null };
     const result = std.json.parseFromSliceLeaky(ExportResult, arena, raw, .{ .ignore_unknown_fields = true }) catch return error.ToolFailed;
     if (!result.ok) {
-        log.log(.error_, "cannot export session '{s}': {s}", .{ id, result.@"error" orelse "tool failed" });
+        const err_text = result.@"error" orelse "tool failed";
+        if (std.ascii.findIgnoreCase(err_text, "not found") != null)
+            return error.InvalidSessionId;
+        log.log(.error_, "cannot export session '{s}': {s}", .{ id, err_text });
         return error.ToolFailed;
     }
     const path = opts.session_out orelse result.path;
@@ -3619,6 +3630,10 @@ fn toolText(
     }
     if (!ok) {
         const detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "unknown") else "unknown";
+        // A missing run/session is a lookup miss, not a broken tool: keep it
+        // off the timestamped error log so `clanker graph nosuch` does not
+        // look like the harness crashed.
+        if (std.mem.eql(u8, detail, "no such run")) return error.UnknownId;
         log.log(.error_, "{s}: {s}", .{ tool_name, detail });
         return error.ToolFailed;
     }
@@ -6794,6 +6809,10 @@ fn handleRuns(
     }
 
     const body = toolText(io, gpa, arena, cfg, environ_map, "cmd_graph", args) catch |err| {
+        if (err == error.UnknownId) {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such run\"}");
+            return;
+        }
         log.log(.error_, "GET /api/runs args={s}: {s}", .{ args, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"graph read failed\"}");
         return;
@@ -11226,6 +11245,7 @@ test "mistyped commands get conservative suggestions" {
 test "mistyped flags get a one-edit suggestion" {
     try std.testing.expectEqualStrings("--session", suggestFlag("--sesion").?);
     try std.testing.expectEqualStrings("--model", suggestFlag("--modell").?);
+    try std.testing.expectEqualStrings("--model", suggestFlag("--modle").?);
     try std.testing.expectEqualStrings("--provider", suggestFlag("--provder").?);
     try std.testing.expect(suggestFlag("--foo") == null);
     try std.testing.expect(suggestFlag("--bogus") == null);

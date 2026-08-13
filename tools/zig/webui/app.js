@@ -2099,7 +2099,10 @@ function loadRun(id) {
       el.runStatus.textContent = "";
     })
     .catch(function (err) {
-      showRunsError("Could not load that run: " + err.message);
+      var msg = err && err.message ? err.message : "unknown error";
+      showRunsError(msg === "no such run"
+        ? "No run by that id. Open Runs to pick one."
+        : "Could not load that run: " + msg);
     });
 }
 function populateCompareSelects(){
