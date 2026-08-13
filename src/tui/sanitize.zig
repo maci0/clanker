@@ -50,6 +50,8 @@ pub fn sanitizeAlloc(gpa: std.mem.Allocator, bytes: []const u8) ![]const u8 {
             (bytes[i] == 0xC2 and i + 1 < bytes.len and bytes[i + 1] >= 0x80 and bytes[i + 1] <= 0x9F))
         {
             var out: std.ArrayList(u8) = .empty;
+            errdefer out.deinit(gpa);
+            try out.ensureTotalCapacity(gpa, bytes.len);
             var j: usize = 0;
             while (j < bytes.len) {
                 if (isControl(bytes[j])) {
@@ -57,7 +59,7 @@ pub fn sanitizeAlloc(gpa: std.mem.Allocator, bytes: []const u8) ![]const u8 {
                 } else if (bytes[j] == 0xC2 and j + 1 < bytes.len and bytes[j + 1] >= 0x80 and bytes[j + 1] <= 0x9F) {
                     j += 2;
                 } else {
-                    try out.append(gpa, bytes[j]);
+                    out.appendAssumeCapacity(bytes[j]);
                     j += 1;
                 }
             }

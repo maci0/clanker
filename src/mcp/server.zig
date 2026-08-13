@@ -122,11 +122,16 @@ fn respondText(s: *json.Stringify, text: []const u8, is_error: bool) !void {
 }
 
 fn handleLine(io: std.Io, gpa: std.mem.Allocator, cache_arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry, tool_defs: []const types.ToolDef, module_cache: *ModuleCache, llm_ctx: *client.Ctx, line: []const u8) !void {
+    // Request-scoped: parseFromSliceLeaky on the process gpa leaked the
+    // JSON tree on every line of a long-lived stdio session.
+    var req_arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer req_arena_state.deinit();
+    const req_arena = req_arena_state.allocator();
     // A client that sends one request and blocks on the reply (every
     // interactive MCP client) must get a response even to garbage input, or
     // it hangs forever: JSON-RPC 2.0 requires an id-less error response when
     // the id itself could not be parsed, rather than silence.
-    const req = json.parseFromSliceLeaky(Request, gpa, line, .{ .ignore_unknown_fields = true }) catch {
+    const req = json.parseFromSliceLeaky(Request, req_arena, line, .{ .ignore_unknown_fields = true }) catch {
         var out_buf: [512]u8 = undefined;
         var w: std.Io.Writer = .fixed(&out_buf);
         var s = json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };

@@ -2131,8 +2131,11 @@ pub const Agent = struct {
         var handles: std.ArrayList(WorkerHandle) = .empty;
         defer {
             // Join + free anything not yet handled (e.g. on error return).
+            // A later spawn can fail after an earlier worker has already
+            // finished and stored `out`; destroy alone would leak that buffer.
             for (handles.items) |h| h.thread.join();
             for (handles.items) |h| {
+                if (h.worker.out) |out| self.ctx.gpa.free(out);
                 self.ctx.gpa.destroy(h.worker);
             }
             handles.deinit(self.ctx.gpa);
