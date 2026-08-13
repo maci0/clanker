@@ -31,8 +31,9 @@ a separate, small model call — fast and inexpensive.
    provider if unset.
 4. The classifier system prompt is built into the host and is not configurable
    per-run (to prevent the main agent from manipulating the effort it gets).
-5. The classifier result is logged per turn in `state/token_stats.jsonl` under a
-   `thinking_level` field alongside the existing token counts.
+5. The classifier result is logged per turn in `state/token_stats.jsonl` under
+   a new optional `thinking_level` field added to the record schema
+   (`src/stats/tokens.zig`) alongside the existing token counts.
 6. The feature is opt-in: `agent.auto_thinking = false` is the default. When
    disabled, `reasoning_effort` behaves as today.
 
@@ -97,8 +98,21 @@ accepts a string. The per-turn override sets:
 | `high` | `"high"` |
 | `xhigh` | `"high"` (most providers cap here; if the provider has an `xhigh` tier, it is used) |
 
-The override is applied only for the current turn's `buildRequest` call. It does
+The override is applied only for the current turn's request build. It does
 not mutate the provider config.
+
+Wiring note: `reasoning_effort` is not written by the shared
+`writeSamplingParams` (`src/llm/providers/common.zig`), which emits only
+`temperature` and `top_p`; each provider file serializes it in its own
+vendor-specific shape. The per-turn override therefore threads through
+`src/llm/client.zig`'s request path into each provider's request builder,
+rather than being set at one shared choke point.
+
+**Precedence vs. sampling profiles (PRD 0024).** PRD 0024's capability-keyed
+profile table owns writing `reasoning_effort`; this PRD's classifier, if built,
+selects WHICH row of that table applies to the turn (e.g. its `.chat` vs
+`.tool_use` vs `.reasoning` row). It is not a second independent writer of the
+field.
 
 **Classifier call mechanics.** The classifier `ck_llm` call is made with:
 - `system`: the hardcoded prompt above.
@@ -107,27 +121,34 @@ not mutate the provider config.
 - No tools, no streaming.
 
 It uses the configured classifier provider's auth, not the main provider's. The
-call is billed to the classifier provider's account and tracked in
-`token_stats.jsonl` under `source = "classifier"`.
+call is billed to the classifier provider's account. Tracking it distinctly in
+`token_stats.jsonl` depends on the schema change described under Logging; the
+record format has no source or event discriminator today.
 
 **Timeout and failure.** If the classifier call exceeds
 `thinking_classifier_timeout_ms` (default 3000 ms) or errors, the turn proceeds
 with the main provider's default `reasoning_effort`. The failure is logged at
 debug level; no error surfaces to the user.
 
-**Logging.** Each `token_stats.jsonl` entry gains an optional `thinking_level`
-field when `auto_thinking = true`:
+**Logging.** `token_stats.jsonl` records are the closed `Record` struct in
+`src/stats/tokens.zig` (ts, provider, model, token counts, cache hit/miss,
+cost, duration); none of the fields below exist yet. This PRD adds two optional
+fields to that struct: `thinking_level` (the classifier result, written on the
+main turn's record) and `thinking_classifier_ms` (round-trip time of the
+classifier call). Both are omitted when unset, so existing records and readers
+are unaffected:
 
 ```json
 {"ts": 1234567890, "provider": "anthropic", ..., "thinking_level": "high",
  "thinking_classifier_ms": 450}
 ```
 
-`thinking_classifier_ms` is the round-trip time for the classifier call.
-
-**`clanker stats` integration.** `GET /api/stats` and `clanker stats` expose the
-distribution of classifier results (how many turns at each level) as a
-`thinking_distribution` field in the session summary.
+**`clanker stats` integration.** `GET /api/stats` today serves aggregated
+per-(provider, model) usage, not per-turn events, so a distribution of
+classifier results has nothing to read until the `thinking_level` field from
+the Logging schema change lands in `Record`. With that in place, the endpoint
+and `clanker stats` expose the distribution (how many turns at each level) as
+a `thinking_distribution` field in the session summary.
 
 ## Failure modes
 
@@ -180,6 +201,9 @@ distribution of classifier results (how many turns at each level) as a
   several turns in a row (e.g., always bumps `low` to `medium`), the classifier
   could learn within the session. This would require storing the override history
   and prompting the classifier with it, adding complexity not justified for v1.
+- **Shared plumbing with the advisor (PRD 0015).** Both features add a
+  fail-open, budgeted, per-turn side-channel model call; that wrapper should be
+  extracted once and shared rather than built twice.
 - **Cost accounting.** Classifier calls add a fixed per-turn cost. For a session
   with 50 turns and a `gpt-4o-mini`-class classifier at $0.15/1M tokens, the
   overhead is negligible. For a local on-device classifier (Ollama), it approaches

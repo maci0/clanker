@@ -82,3 +82,7 @@ which is only a mitigation if people read it. If plugins ever arrive by any
 route other than a human copying two files they looked at, this ADR is the first
 thing to revisit, and the revisit is the whole of item 3 — not a signature field
 bolted onto the schema.
+
+[PRD 0022 (out-of-tree tools)](../prds/0022-out-of-tree-tools.md) now builds on
+exactly the `manifest_version` seam this ADR predicted: more local directories
+to load the same unsigned format from, with distribution still out of scope.

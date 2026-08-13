@@ -56,6 +56,9 @@ taking an action, not after.
 - Not a code reviewer. The advisor sees the turn summary, not the full file
   contents of every read. Deep code review belongs in Arena (PRD 0008) or a
   dedicated subagent.
+- Not a mid-stream interceptor. The advisor fires after a completed turn and
+  only annotates the next one; TTSR (PRD 0013) fires during a stream and aborts
+  it. Different interception points, deliberately.
 
 ## Design
 
@@ -73,6 +76,12 @@ scope    = "turn"            # "turn" (default) or "session" (full history)
 the last N turns (configurable as `advisor.context_turns`, default 3). Session
 scope costs more but gives the advisor enough history to notice drift across
 turns, not just within one.
+
+The `[advisor]` section is distinct from the shipped `improve.arena_advisory`
+flag (`src/config.zig`, `src/improve/engine.zig`): `arena_advisory` is a
+per-proposal Arena verdict inside the improve engine, while `[advisor]` is a
+per-turn critique in the main agent loop. A config reader should not conflate
+the two.
 
 **Advisor system prompt (built into the host, not configurable per-run).**
 
@@ -174,6 +183,10 @@ The main agent loop never sees an exception from the advisor path.
   surfaced in the web UI's turn card (it would require a new event type on the
   `/api/run` stream). Surfacing it with an amber `[advisor]` badge is a natural
   follow-on to the web UI's existing tool-card style.
+- **Shared plumbing with PRD 0020 (auto-thinking).** Both features add a
+  fail-open, budgeted, per-turn side-channel call to a separately configured
+  secondary model; whichever builds first should extract that timeout/budget
+  wrapper so the other reuses it rather than implementing its own.
 - **Advisor as Arena combatant.** The advisor role and the Arena combatant role
   share the "read a transcript, produce a structured critique" shape. Whether the
   advisor's system prompt and severity schema should be unified with Arena's judge

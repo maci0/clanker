@@ -947,8 +947,8 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/webui/app.css`, `/webui/core/*.js`, `/webui/features/*.js`, `/webui/lib/*.js` | GET | Web UI modules and stylesheet, each on its own route |
 | `/webui/vendor/*.js` | GET | Vendored `preact`, `htm`, `signals-core`, `d3-dag`, `hljs`, `mermaid` |
 | `/health/live` | GET | Liveness probe; always `{"ok":true,"status":"live"}` if the process is up |
-| `/health/ready` | GET | Readiness probe |
-| `/api/metrics` | GET | Request counters and latency buckets for this process (JSON) |
+| `/health/ready` | GET | Readiness probe. 200 with `in_flight`/`connection_limit` while the process can take work; 503 `saturated` when every connection slot is taken. Does not probe the LLM |
+| `/api/metrics` | GET | Process-local RED: HTTP request/error/4xx counters, latency buckets, in-flight connections, plus LLM request/error/retry counters (JSON, no high-cardinality labels) |
 | `/.well-known/agent.json` | GET | Agent card for A2A discovery |
 | `/api/status` | GET | Instance + peers status (JSON) |
 | `/api/peers` | GET | Every configured peer's live A2A agent card, via the sandboxed `peers` tool (JSON) |
@@ -973,7 +973,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/a2a/message` | POST | A2A message handler |
 | `/api/run` | POST | Run an agent task and return the response |
 | `/api/ask` | POST | Answer an `ask` or `confirm` event a streaming run raised |
-| `/api/stats` | GET | Aggregated token usage per provider/model (JSON) |
+| `/api/stats` | GET | Aggregated token usage per provider/model, including `ok_calls`/`error_calls`/`error_rate` (JSON) |
 | `/api/providers` | GET | Configured providers and models (JSON) |
 | `/api/goals` | GET, POST | Read or write the persisted structured goal |
 | `/api/plugins` | GET, POST | List plugins, or toggle one on/off |

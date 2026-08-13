@@ -2,7 +2,11 @@
 
 ## Status
 
-Draft. Nothing in this PRD is built yet. Sources of truth once built:
+Draft. Roughly the read half already shipped: the Models view, `/api/catalog`,
+`/api/providers/models`, `renderModelSnippet`, and the copy-with-fallback flow
+in `tools/zig/webui/features/models.js` all exist today. What is unbuilt is
+the write half: the two endpoints below and the span-replace primitive they
+need. Sources of truth once built:
 `tools/zig/webui/features/models.js` (today read-only — its own header
 comment: "Read-only by design: config.toml stays hand-edited, matching
 `providers fill`'s own never-writes-config stance"), `src/cli.zig`
@@ -31,7 +35,7 @@ Both restrictions exist for the same reason: nothing in the codebase can
 *edit* an existing TOML file without risking every hand-written comment and
 unrelated table in it. `config.zig` only ever **reads** `config.toml` and
 `config.local.toml` and merges them in memory (`Config.load`,
-`src/config.zig:561`); the only place either file is ever written from code
+`src/config.zig:563`); the only place either file is ever written from code
 is `clanker init` scaffolding a brand-new `config.local.toml` when none
 exists yet (`cmdInit`, `src/cli.zig:1548`, via `src/util/atomic_write.zig`).
 There is no partial-write path for a file that already has content.
@@ -42,6 +46,14 @@ add or update provider/model catalog blocks, with the write landing in
 `src/config.zig:2` — never `config.toml`, the shared/committed file) —
 without reintroducing the "lose the human's hand edits" risk that made both
 existing surfaces read-only in the first place.
+
+The copy-only flow is not just less convenient; it degrades outright on the
+deployment this server is built for. `navigator.clipboard` exists only in a
+secure context, so on a plain-http origin (anything that is not https or
+localhost) it is undefined and the Copy button can only tell the user to
+select the text by hand (`tools/zig/webui/features/models.js:133-137` and
+`copySnippet`). A server-side Save button fixes that real limitation, not
+just a papercut.
 
 ## Goals
 

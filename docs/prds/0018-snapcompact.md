@@ -36,8 +36,11 @@ text).
    the truncated messages. The image carries a preamble line: `[conversation
    history — <N> messages — rendered at <timestamp>]`.
 4. The strategy is skipped (falls back to LLM summarization) if the configured
-   provider does not support vision. Detection: `provider.vision = false` in
-   config, or runtime detection from the provider's model capabilities.
+   model does not support image input. Detection reuses the existing mechanism:
+   the model's `capabilities` list (`src/config.zig`) containing `"image_in"`,
+   as checked by `imageAttachmentsSupported` (`src/cli.zig`). An empty
+   capabilities list means assumed-supported, so snapcompact only falls back
+   when a model declares capabilities and omits `image_in`.
 5. Image size is bounded: if the rendered PNG exceeds `snapcompact.max_bytes`
    (default 200000), the renderer splits across multiple images, each as a
    separate content block.
@@ -86,8 +89,11 @@ data is embedded at compile time so there are no file I/O reads at runtime.
 
 1. Serialise the truncated messages to a plain-text transcript format:
    `[role] content\n` per message, tool calls as `[tool: name] args\n[result]
-   result\n`. This is the same format used by `clanker session export`'s `<pre>`
-   block.
+   result\n`. This is the same visual format as `clanker session export`'s
+   `<pre>` block, but that renderer lives in a WASM guest
+   (`tools/zig/session_export.zig`) and is not callable from host code, so
+   snapcompact carries its own serializer (or the renderer is extracted into
+   shared code both can build against).
 2. Break the text into lines at `width / (font_size + 1)` characters.
 3. Compute canvas height: `line_height * line_count + 4` (top/bottom margin).
 4. Allocate an RGBA pixel buffer (4 bytes per pixel).
@@ -111,25 +117,37 @@ require alternating roles.
 The preamble line at the top of the image reads:
 `[history: N messages, compacted <ISO8601 timestamp>]`
 
-**Vision capability detection.** Before using snapcompact, the host checks:
-1. `provider.vision = false` in config disables it explicitly.
-2. If not set, the host checks the model's known capabilities from the provider's
-   model list. If the model entry has `"vision": false` or the model name matches
-   a known non-vision pattern, it falls back to LLM compaction with a log
-   warning.
+**Vision capability detection.** Before using snapcompact, the host runs the
+existing `imageAttachmentsSupported` check (`src/cli.zig`) against the active
+model's `capabilities` list (`src/config.zig`). A model whose capabilities
+include `"image_in"` gets snapcompact. A model that declares capabilities but
+omits `"image_in"` falls back to LLM compaction with a log warning. An empty
+capabilities list means assumed-supported, so snapcompact proceeds; if the
+provider then rejects the image, that surfaces as a turn error the same way
+any unsupported image attachment does today.
 
 **Fallback.** Any error in the renderer (allocation failure, encoding error) falls
 back to LLM summarization and logs the error. The session continues; no crash.
 
-**Stats integration.** `snapcompact` compaction events appear in `state/token_stats.jsonl`
-as a new event type `compact_snap` with `image_bytes` and `messages_compacted`
-fields, alongside the existing `compact_llm` events. `clanker stats` shows both.
+Memory/knowledge injection (PRD 0007) happens at `/api/run` task assembly,
+before compaction runs, and is unaffected by this design.
+
+**Stats integration.** `state/token_stats.jsonl` records are the closed `Record`
+struct in `src/stats/tokens.zig` (ts, provider, model, token counts, cache
+hit/miss, cost, duration), appended at a single choke point in
+`src/llm/client.zig`; there is no event-type field today. Recording snapcompact
+therefore requires a schema change: an optional `event` field on `Record` (set
+to `"compact_snap"` here), plus optional `image_bytes` and `messages_compacted`
+fields, all omitted when unset so existing records and readers are unaffected.
+LLM-summarization compactions are ordinary LLM records today; distinguishing
+them means tagging them `event = "compact_llm"` under the same schema change.
+`clanker stats` shows both.
 
 ## Failure modes
 
 | Condition | Behaviour |
 |---|---|
-| Provider does not support vision | Falls back to LLM summarization; logs a `[snapcompact disabled: no vision]` warning |
+| Model declares `capabilities` without `image_in` | Falls back to LLM summarization; logs a `[snapcompact disabled: no image_in]` warning |
 | Renderer allocation failure | Falls back to LLM summarization; logs the error |
 | Rendered PNG exceeds `max_bytes` after splitting reaches 10 images | Falls back to LLM summarization for the remaining messages; logs the limit hit |
 | Model cannot read the image (returns a generic "I see an image" response) | No special handling; the model's next turn will have less context than expected. The session log shows the compact event so a human can diagnose |
@@ -148,8 +166,9 @@ fields, alongside the existing `compact_llm` events. `clanker stats` shows both.
       summary text.
 - [ ] The `[history: N messages, ...]` preamble is the first line of the
       rendered image text (verify by decoding the PNG pixels in a test).
-- [ ] A provider configured with `vision = false` falls back to LLM compaction;
-      no PNG is generated.
+- [ ] A model with a non-empty `capabilities` list omitting `image_in` falls
+      back to LLM compaction; no PNG is generated. A model with an empty
+      capabilities list proceeds with snapcompact (assumed-supported).
 - [ ] An oversized transcript is split across multiple images, each under
       `max_bytes`.
 - [ ] `clanker stats` shows `compact_snap` events with `image_bytes` and

@@ -41,19 +41,23 @@ not exist was any of the things that make a format a format:
   for a directory someone unpacked somewhere: a portable package cannot know
   what clanker's cwd will be.
 
-The cost of that last gap is not hypothetical. `4fadb86` renamed the ten
+The cost of that last gap was not hypothetical. `4fadb86` renamed the ten
 `board_*` manifests to `kanban_*` and left two things behind it: an eval still
 naming `board_list` (caught, loudly, by `src/evals/scorers.zig`) and
-`host.zig`'s `chatAccessAllowed`, which grants the board guest its chat ops by
-matching the string `"board"`, and now matches nothing. Per that function's own
-doc comment the board *ignores* a failed chat call, so cards stopped
-replicating into their room with no error anywhere; the host test that should
-have caught it iterates a hardcoded list of the eleven old names, so the rename
-went green. Nothing in the tree connects a manifest's `name` to the places that
-depend on it, and nothing checks a manifest against anything. A validator does
-not by itself close that specific hole — the fix is for that test to derive its
-names from the shipped manifests, and it is owned elsewhere — but "the manifest
-is the contract and nothing verifies it" is the same sentence in both cases.
+`host.zig`'s `chatAccessAllowed`, which granted the board guest its chat ops by
+matching the string `"board"`, and after the rename matched nothing. Per that
+function's own doc comment the board *ignores* a failed chat call, so cards
+stopped replicating into their room with no error anywhere; the host test that
+should have caught it iterated a hardcoded list of the eleven old names, so the
+rename went green. Both halves have since been fixed: commit `3402a2c` taught
+`chatAccessAllowed` the new names (it now matches `"board"` or the `kanban_`
+prefix, `src/sandbox/host.zig:1785-1794`), and commit `0d424f4` replaced the
+hardcoded eleven-name test with one that derives its names from the shipped
+manifests. The lesson stands: nothing in the tree connects a manifest's `name`
+to the places that depend on it, and at the time nothing checked a manifest
+against anything. A validator does not by itself close that specific hole (the
+derived test is what did), but "the manifest is the contract and nothing
+verifies it" is the same sentence in both cases.
 
 The constraint that shaped all of it: the loader must not get stricter.
 Ninety-three manifests ship in this repo and an unknown number exist in
@@ -173,7 +177,12 @@ existing docs:
   not exist. `host.execAllowed` compares `argv[0]` against the manifest's list
   and nothing else, and `host.zig`'s own test ("a tool may run only the commands
   its manifest names") pins that an empty list allows nothing. Three docs
-  described a tool as having exec authority it has never had. All three fixed.
+  described a tool as having exec authority it has never had. All three docs
+  are fixed; a fourth copy survives in code, unfixed:
+  `src/sandbox/host.zig:209-210`'s field comment still reads "Empty falls back
+  to the harness default set below" while `host.execAllowed` in the same file
+  allows nothing for an empty list. A reader who greps for the old claim
+  should know that surviving hit is the stale one, not a fourth doc.
 - **`wasm` is not "relative to the tools directory".** The field comment said
   it was; it has always been read relative to the process's working directory
   (`loop.zig`'s `wasmBytes`, `cli.zig`, `host.zig`). Comment corrected, and the
@@ -227,6 +236,8 @@ existing docs:
   alongside the built-in ones. The cost is not the config change; it is that
   `Registry.load` takes one directory today and several callers pass it, and
   name collisions between directories need a documented precedence rule.
+  Since taken up by
+  [PRD 0022 (out-of-tree tools)](0022-out-of-tree-tools.md).
 - **Should the validator run as part of `clanker gate`?** It is cheap and the
   tree is clean, so it would stay green — but it would also make the loader's
   forgiveness irrelevant inside this repo, which may be the point or may be a

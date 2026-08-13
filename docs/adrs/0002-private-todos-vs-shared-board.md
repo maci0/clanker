@@ -19,7 +19,7 @@ list, which is what made the board and a room's todo list disagree.
 ## Decision
 
 Two layers, same four verb names (`todo_add`/`todo_claim`/`todo_close`/
-`todo_list` for private; `board_*` for shared), disambiguated at the host by
+`todo_list` for private; `kanban_*` for shared), disambiguated at the host by
 whether a private list is attached to the run — not by a `room` parameter
 callers pass (an earlier shape did that; room-scoped shared todo lists were
 removed once the board covered that need, see `docs/prds/0001-chatrooms.md` §

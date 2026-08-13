@@ -8,11 +8,13 @@ Draft. No source files yet. Affects `tools/zig/read_file.zig`,
 
 ## Problem
 
-`edit_file`'s `exact_match` mode requires the model to reproduce the anchor text
-verbatim. On long files the model often drifts by a space, a comment, or a line
-ending. The resulting "the `old` text does not appear in the file" error is the
-most frequent `edit_file` failure in `state/autolearn.jsonl` (9 failures logged).
-The model retries, burning more tokens and often making the same mistake.
+`edit_file`'s exact-text replacement (`{path, old, new}`) requires the model to
+reproduce the anchor text verbatim. On long files the model often drifts by a
+space, a comment, or a line ending. The resulting "the `old` text does not
+appear in the file" error is the most frequent `edit_file` failure recorded in
+`state/autolearn.jsonl` (dozens of no-exact-match failures at the time of
+writing, and the log grows). The model retries, burning more tokens and often
+making the same mistake.
 
 omp's hashline format sidesteps this by replacing exact anchor text with 4-hex
 xxHash32 digests of each line. The model emits hashes it read from the file; the
@@ -26,21 +28,27 @@ tokens in the hashline mode and Grok Code Fast improved pass@1 from 6.7% to
 
 1. `read_file` gains a `hashes: true` option that annotates each output line with
    a 4-hex xxHash32 digest of that line's bytes (before the line ending).
-2. `edit_file` gains an operation type `hashline` where anchor lines are
-   identified by their hash tag rather than their text content.
+2. `edit_file` gains an `op` field dispatching to a new `hashline` operation
+   where anchor lines are identified by their hash tag rather than their text
+   content. Today's `edit_file` has no `op` field and no modes (its schema is
+   `{path, old, new, create, content, overwrite}`), so introducing the `op`
+   dispatch is itself a design step this PRD takes, not an extension of an
+   existing one.
 3. The host validates that every anchor hash in a `hashline` patch matches the
    current file before applying any hunk; a single mismatch rejects the entire
    patch with a message naming the line number and the expected vs. actual hash.
 4. The format is backwards-compatible: `read_file` without `hashes: true` and
-   `edit_file` with operation type `exact_match` are unchanged.
+   `edit_file` calls using the existing `{path, old, new}` replacement (no `op`
+   field) are unchanged.
 5. Hash computation uses the xxHash32 algorithm (already available via the Zig
    standard library's `std.hash.XxHash32`) formatted as exactly 4 lowercase hex
    characters (lower 16 bits, zero-padded).
 
 ## Non-goals
 
-- Not replacing `exact_match`. Both modes coexist; the system prompt can
-  recommend `hashline` for any file read via `read_file` with `hashes: true`.
+- Not replacing the existing `{path, old, new}` replacement. Both coexist; the
+  system prompt can recommend `hashline` for any file read via `read_file` with
+  `hashes: true`.
 - Not a general diff format. Hashline anchors identify lines to replace; the
   replacement content is still plain text. Structural merge (3-way, patch hunks)
   is out of scope.
@@ -115,16 +123,16 @@ hashline mismatch at line 3: expected hash c7de, got 9a12
 (file may have changed since it was read)
 ```
 
-This is the same error style as `exact_match`'s "the `old` text does not appear
-in the file" — actionable enough for the model to re-read and retry.
+This is the same error style as the existing replacement's "the `old` text does
+not appear in the file": actionable enough for the model to re-read and retry.
 
 **Multi-hunk atomicity.** All hunks are validated before any write. A partial
 write (first hunk applied, second fails) is not possible.
 
 **Manifest changes.** Both tools stay WASM with the same sandbox policy. The
-manifests gain a new `hashline` entry in their `description` and the system
-prompt snippet in each manifest's `hint` field is updated to mention `hashes:
-true` and the `hashline` operation.
+manifests gain a new `hashline` entry in their `description` and the
+model-facing text in each manifest's `llm_description` field is updated to
+mention `hashes: true` and the `hashline` operation.
 
 ## Failure modes
 
@@ -149,8 +157,8 @@ true` and the `hashline` operation.
       line and the hash mismatch; the file is not modified.
 - [ ] A multi-hunk patch with one valid and one invalid hunk is rejected in
       full; the file is not modified.
-- [ ] `exact_match` and plain `read_file` (no `hashes`) continue to work
-      unchanged; no regression in existing eval coverage.
+- [ ] Plain `{path, old, new}` edits and plain `read_file` (no `hashes`)
+      continue to work unchanged; no regression in existing eval coverage.
 - [ ] The tolerance window (default ±10) finds an anchor that shifted by 5
       lines from `anchor_line`.
 - [ ] Unit tests cover: hash computation, read output format, single-hunk apply,

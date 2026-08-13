@@ -2,10 +2,12 @@
 
 ## Status
 
-Draft. No source files yet. New WASM tool at `tools/zig/eval.zig` with manifest
-`tools/manifests/eval.tool.json`. Loopback bridge starts as a local HTTP server
-in the host (`src/eval/bridge.zig`). Kernel processes live in
-`state/kernels/<session-id>/`.
+Draft. No source files yet. New WASM tool at `tools/zig/kernel.zig` with
+manifest `tools/manifests/kernel.tool.json`. Loopback bridge starts as a local
+HTTP server in the host (`src/kernel/bridge.zig`). Kernel processes live in
+`state/kernels/<session-id>/`. The tool is named `kernel`, not `eval`, because
+`clanker eval` is a shipped, unrelated command (`src/cli.zig`, `src/evals/`)
+and a tool named `eval` would be a name collision one word apart.
 
 ## Problem
 
@@ -24,7 +26,7 @@ kernel can read a file or call another tool mid-execution.
 
 ## Goals
 
-1. A new `eval` WASM tool supporting two kernel types: `python` (subprocess,
+1. A new `kernel` WASM tool supporting two kernel types: `python` (subprocess,
    `python3`) and `js` (Bun worker). Both are optional; the tool reports a clear
    error if the runtime is not installed.
 2. Kernels are session-scoped: one per (session-id, kernel-type) pair, started on
@@ -39,7 +41,7 @@ kernel can read a file or call another tool mid-execution.
    shell command via `ck_exec`, `!cmd` runs a single command.
 5. Kernel state directories (`state/kernels/<session-id>/`) hold the venv and
    any files the kernel writes. They are cleaned up when the session ends (or
-   manually via `eval reset`).
+   manually via a `kernel` call with `reset: true`).
 6. The tool returns structured output: stdout, stderr, a `result` field (the last
    expression value, repr'd), and a `duration_ms` field.
 
@@ -48,10 +50,11 @@ kernel can read a file or call another tool mid-execution.
 - Not a Jupyter server. There is no `.ipynb` format, no cell IDs, no checkpoint
   files. The kernel is a stateful process; clanker manages it, not a notebook
   server.
-- Not sandboxed by the WASM runtime. The eval kernel runs a real Python or Bun
-  process with the ambient filesystem permissions. The `eval` tool manifest marks
-  it `"dangerous": true` and it is disabled by default (`eval.enabled = false` in
-  config).
+- Not sandboxed by the WASM runtime. The kernel runs a real Python or Bun
+  process with the ambient filesystem permissions. The `kernel` tool manifest
+  sets `"confirm": true` (the manifest schema has no `dangerous` key; per-call
+  confirmation is the existing mechanism) and it is disabled by default
+  (`kernel.enabled = false` in config).
 - Not persistent across clanker restarts. Kernel state is in-memory plus the
   kernel directory; a clanker restart kills the process. The directory survives
   for inspection but re-running the session starts a fresh kernel.
@@ -93,7 +96,7 @@ protocol as the Python supervisor. State is maintained in a JS module-level Map
 that persists across cells.
 
 **Loopback bridge.** The host starts an HTTP server on `localhost:0` at clanker
-startup (or lazily on first `eval` call). It listens for `POST /tool/<name>` with
+startup (or lazily on first `kernel` call). It listens for `POST /tool/<name>` with
 a JSON body matching the named tool's input schema and returns the tool's result
 as JSON. The kernel receives the port as `CLANKER_BRIDGE_URL=http://localhost:<port>`.
 
@@ -117,14 +120,17 @@ exactly as for WASM tool calls.
 
 **Output handling.** Stdout and stderr are captured per cell, not accumulated.
 `result` is the repr of the last expression in the cell if it is not `None` (Python)
-or not `undefined` (JS). Output is capped at `eval.max_output_bytes` (default
+or not `undefined` (JS). Output is capped at `kernel.max_output_bytes` (default
 65536) before returning.
 
 **Kernel lifecycle.** The host tracks a `KernelRegistry` (a `std.StringHashMap`
 keyed by `<session-id>/<kernel-type>`) mapping to OS process handles. On session
 end (detected by the session cleanup path in `src/agent/loop.zig`), all kernels
 for that session are sent SIGTERM and their directories are scheduled for
-deletion after `eval.cleanup_delay_ms` (default 5000, to allow in-flight reads).
+deletion after `kernel.cleanup_delay_ms` (default 5000, to allow in-flight
+reads). PRD 0017 (DAP) needs this same session-scoped, host-managed subprocess
+lifecycle (registry keyed by session, SIGTERM on session end); the lifecycle
+machinery should be designed once here and shared, not implemented twice.
 
 ## Failure modes
 
@@ -140,9 +146,9 @@ deletion after `eval.cleanup_delay_ms` (default 5000, to allow in-flight reads).
 
 ## Acceptance criteria
 
-- [ ] `eval.enabled = false` (default): the tool is present in the registry but
-      returns a "disabled" error when called; no kernel is started.
-- [ ] With `eval.enabled = true` and Python installed: `{"kernel": "python",
+- [ ] `kernel.enabled = false` (default): the tool is present in the registry
+      but returns a "disabled" error when called; no kernel is started.
+- [ ] With `kernel.enabled = true` and Python installed: `{"kernel": "python",
       "cell": "1 + 1"}` returns `{"result": "2", "ok": true}`.
 - [ ] Python state persists across calls in the same session: define `x = 10` in
       one call, read `x` in the next, get `10`.
@@ -158,19 +164,27 @@ deletion after `eval.cleanup_delay_ms` (default 5000, to allow in-flight reads).
 - [ ] Cell execution exceeding `timeout_ms` kills the kernel and returns a
       timeout error; the next call starts a fresh kernel.
 - [ ] Session cleanup removes `state/kernels/<session-id>/` within
-      `eval.cleanup_delay_ms`.
+      `kernel.cleanup_delay_ms`.
 - [ ] Unit tests cover: magic prefix parsing, kernel registry lifecycle, bridge
       auth token check.
 
 ## Open questions / future work
 
+- **ADR 0007 reconciliation.** ADR 0007's posture is that the manifest is the
+  security boundary and it is enforced. A kernel is an unsandboxed subprocess
+  running with the host's ambient filesystem permission, the inverse of that
+  posture: the manifest gates whether the tool runs, but nothing bounds what
+  the process does once running. The `confirm` flag and the `kernel.enabled`
+  config gate mitigate but do not resolve this tension. Landing the feature
+  needs either an explicit carve-out paragraph in this PRD (unsandboxed tools
+  as a named, opt-in class) or its own ADR.
 - **JS kernel state.** Bun worker module scope is wiped on restart. Whether to
   serialize the state Map to disk on each cell completion (for crash recovery)
   or accept ephemeral state is unresolved.
 - **Output streaming.** Cell output currently returned as a single chunk after
   completion. Long-running cells (training loops, slow HTTP calls) would benefit
   from streaming partial stdout back via the `/api/run` SSE channel, using the
-  same `\x01{"type":"eval_output",...}` protocol the tool-status events use.
+  same `\x01{"type":"kernel_output",...}` protocol the tool-status events use.
 - **Rich output (matplotlib, Vega).** Python cells that produce figure objects
   currently return only the repr text. Detecting `plt.show()` or a Vega spec and
   returning a base64 PNG or JSON for the web UI to render is a natural follow-on.

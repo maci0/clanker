@@ -20,10 +20,13 @@ This PRD is only about loading more than one already-trusted local directory.
 
 `agent.tools_dir` is one string (`src/config.zig:177`, default
 `"tools/manifests"`), and `registry.Registry.load` takes exactly one directory
-(`src/tools/registry.zig:167`). Nine call sites pass it straight through:
+(`src/tools/registry.zig:167`). Nineteen non-test call sites across nine files
+pass it straight through, ten of them in `src/cli.zig` alone:
 `src/cli.zig`, `src/tui/repl_vaxis.zig`, `src/agent/subagent.zig`,
 `src/peers/phonebook.zig`, `src/mcp/server.zig`, `src/research/autoresearch.zig`,
-`src/doctor.zig`, `src/gate/checks.zig` (`toolDescriptorGate`).
+`src/doctor.zig`, `src/improve/engine.zig` (`:1230`, `:1467`, `:1725`: three
+sites in the self-improve engine, the consumer most likely to break silently),
+`src/gate/checks.zig` (`toolDescriptorGate`).
 
 ADR 0007 already decided a plugin is "a directory holding a manifest and the
 module it names", moved there by hand, and that `agent.tools_dir` can point at
@@ -85,6 +88,9 @@ be fixed as part of this work, not filed separately.
   change what it is allowed to declare.
 - A `clanker plugins new --dir` flag on day one. Default behavior (see
   Design) covers the common cases; the flag is Open questions, not Goals.
+- Making a loaded tool reachable as `clanker <name>`. Which directories the
+  registry scans is this PRD; making a loaded tool invocable as a CLI
+  subcommand is PRD 0012's CLI Tier 1. Non-goal here.
 - Hot-reloading directories added to `tools_dir` mid-run. `agent.hot_tools`
   already governs re-scanning of *a* configured tree; multi-directory support
   rides that same mechanism unchanged rather than adding a second one.
@@ -141,7 +147,8 @@ it is easy to assume otherwise.
 
 **Call sites.** `src/cli.zig`, `src/tui/repl_vaxis.zig`,
 `src/agent/subagent.zig`, `src/peers/phonebook.zig`, `src/mcp/server.zig`,
-`src/research/autoresearch.zig`, `src/doctor.zig` all pass
+`src/research/autoresearch.zig`, `src/doctor.zig`, and `src/improve/engine.zig`
+(three sites: `:1230`, `:1467`, `:1725`) all pass
 `cfg.agent.tools_dir` straight to `Registry.load` today; each becomes a
 mechanical no-op change once the type is a slice, since none of them branch on
 it. `src/gate/checks.zig`'s `toolDescriptorGate` is called by the self-improve
@@ -212,8 +219,8 @@ exit semantics, just applied per-directory then OR'd together.
       remaining directories from loading.
 - [ ] Every existing call site (`cli.zig`, `repl_vaxis.zig`, `subagent.zig`,
       `phonebook.zig`, `mcp/server.zig`, `autoresearch.zig`, `doctor.zig`,
-      `gate/checks.zig`) compiles against the new signature with no added
-      branching on directory count.
+      `improve/engine.zig`, `gate/checks.zig`) compiles against the new
+      signature with no added branching on directory count.
 - [ ] `cmd_plugins` reads the configured directory list via
       `ck_harness_config` instead of its hardcoded default; `/plugins list`,
       `/api/plugins`, and `clanker plugins list` (which delegates to the same

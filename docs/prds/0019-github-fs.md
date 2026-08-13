@@ -8,19 +8,38 @@ Requires `GITHUB_TOKEN` in the environment.
 
 ## Problem
 
-When the agent works on a GitHub-hosted project it must switch between the local
-filesystem and the GitHub API: `read_file` for local paths, `ck_http` calls
-hand-rolled per task for issues and PRs. The model has to remember which tool to
-use, construct the API URL itself, handle pagination, and parse the response
-schema. Changing a PR's diff requires knowing the right `GET /repos/{owner}/{repo}/
-pulls/{number}/files` endpoint and the fields that matter.
+GitHub reads already have a shipped path: the `gh` tool
+(`tools/manifests/gh.tool.json`, `tools/zig/gh.zig`) runs the GitHub CLI
+through the sandbox (`exec_allow: ["gh"]`, gated by `exec_pattern_allow`), and
+`gh issue view`, `gh pr view`, `gh pr diff`, and `gh issue list` cover the
+resource list this PRD targets, with gh handling auth, URL construction, and
+pagination itself. The gaps this PRD addresses are narrower than "no GitHub
+access":
 
-Worse, every call to the GitHub API is uncached. Re-reading the same issue or PR
-diff in a long research task costs N API roundtrips and N sets of tokens.
+1. Every gh invocation is uncached. Re-reading the same issue or PR diff in a
+   long research task costs N CLI spawns, N API roundtrips, and N sets of
+   output tokens.
+2. gh requires the binary on the host and a matching `exec_pattern_allow`
+   grant. Environments with no exec surface (or no gh installed) have no read
+   path short of hand-rolling `ck_http` calls against `api.github.com`.
+3. gh's output is formatted for humans and varies by subcommand and flags, so
+   the model re-derives the structure on every call.
 
-omp's github-fs solves this by extending the `read` tool to accept URL schemes:
-`issue://`, `pr://`, `pr://<owner>/<repo>/<number>/diff/<file>`. The model uses
-the same tool for local files and GitHub resources, with transparent caching.
+omp's github-fs addresses this by extending the `read` tool to accept URL
+schemes: `issue://`, `pr://`, `pr://<owner>/<repo>/<number>/diff/<file>`. The
+model uses the same tool for local files and GitHub resources, with transparent
+caching.
+
+### Why not just the gh tool
+
+The gh tool remains the full-surface escape hatch (including writes, gated by
+pattern). This PRD earns its place only on what gh does not give: a read cache
+with TTLs and ETag revalidation, stable structured output shapes, and
+availability in sandboxes where exec or the gh binary is absent. If review
+finds those three insufficient to justify a parallel API client, the honest
+narrowing is to scope this PRD down to the caching layer alone and keep gh as
+the fetch mechanism. Either way, the feature is the cache plus a uniform read
+path; plain GitHub access already exists.
 
 ## Goals
 
@@ -52,7 +71,8 @@ the same tool for local files and GitHub resources, with transparent caching.
 
 - Not a write interface. `gh://` URLs are read-only. Creating issues, posting
   comments, and merging PRs belong to a separate write tool (or the existing
-  `git` + `ck_http` combination).
+  `git` + `ck_http` combination). Commit creation and any GitHub write path is
+  PRD 0021's territory; this PRD stays read-only.
 - Not a full GitHub API client. Only the resource types listed in Goals are
   supported. GraphQL, Actions, releases, and repository metadata are out of scope.
 - Not `git clone` or raw file access via the GitHub API (`GET /repos/.../
@@ -142,6 +162,16 @@ feature). If empty, return: `{"ok": false, "error": "GITHUB_TOKEN not set"}`.
 **Manifest.** `read_file`'s manifest gains `"network_allow": ["api.github.com"]`
 for `gh://` calls. Local filesystem access is unchanged; the existing `fs_prefixes`
 remain in effect for non-gh paths.
+
+That one manifest line deserves more weight than one sentence. `read_file` is
+the single most-called tool in the system and today has no network surface at
+all; adding `network_allow` makes every invocation of it a potential network
+actor from the sandbox's point of view, and any future bug in the URL-scheme
+dispatch becomes an exfiltration path from the most-trusted tool. The grant
+must be its own decision: a separate manifest change, flagged explicitly in
+review, not a rider on the feature commit. If reviewers reject it, the
+fallback is a dedicated `gh_read` tool carrying the same URL scheme and its
+own manifest, leaving `read_file` network-free.
 
 ## Failure modes
 

@@ -4,7 +4,7 @@
 
 Draft. No source files yet. New WASM tool at `tools/zig/smart_commit.zig` with
 manifest `tools/manifests/smart_commit.tool.json`. CLI subcommand `clanker
-commit` in `src/cli.zig`. Host-side topological sort in `src/commit/graph.zig`.
+commit` in `src/cli.zig`. All logic lives in the guest; no host module.
 
 ## Problem
 
@@ -17,8 +17,8 @@ session regardless of how many logical changes are present.
 
 omp's `omp commit` reads the working tree, groups unrelated hunks into atomic
 commits, orders them by dependency, rejects cycles, and places source files above
-tests, docs, and config files. The model does the grouping; the host enforces
-ordering and cycles.
+tests, docs, and config files. The model does the grouping; deterministic code
+enforces ordering and cycles.
 
 ## Goals
 
@@ -27,7 +27,7 @@ ordering and cycles.
    logical changes.
 2. The LLM grouping returns an ordered list of proposed commits, each with a list
    of file paths and a conventional commit message.
-3. The host builds a dependency graph from the groupings (group A depends on
+3. The guest builds a dependency graph from the groupings (group A depends on
    group B if A's files import or reference B's files, determined by a simple
    static grep) and performs a topological sort. Cycles are rejected with an error
    naming the cycle.
@@ -60,6 +60,12 @@ ordering and cycles.
   amend, squash, or reorder existing commits.
 
 ## Design
+
+**Placement.** All logic lives in the WASM guest. Every step below needs only
+what the guest already has: `ck_exec` for git, `ck_llm` for grouping, and
+string matching over the diff text for dependency edges. Per PRD 0001's
+convention of keeping a tool's logic on one side and saying which, this is a
+fully-guest tool; there is no host module.
 
 **`smart_commit` tool input schema.**
 
@@ -101,7 +107,7 @@ User: the filtered diff text.
 The LLM returns a JSON array of `{message, files}` objects. The guest parses
 this and validates the message types before proceeding.
 
-**Step 3: dependency graph.** The host builds a directed graph where an edge
+**Step 3: dependency graph.** The guest builds a directed graph where an edge
 `A -> B` means "commit A depends on commit B" (B must come first). Edges are
 added for:
 - A file in group A has a `import`, `const`, `use`, `require`, `from`, or `#include`
@@ -119,6 +125,16 @@ tool returns:
 ```
 
 No commits are made; the model must revise the grouping.
+
+An honest caveat about the edge heuristic on this codebase: in a Zig repo,
+`const x = @import("y.zig")` appears in nearly every source file, so the grep
+gives almost every pair of src groups an edge, and mutual references make the
+cycle path the common case, not the exception. When the graph collapses into
+one cyclic cluster spanning all groups, repeatedly asking the model to revise
+cannot converge, so the tool falls back to a single commit containing every
+group's files (with a `note` field naming the merged groups) instead of
+error-looping. A smarter boundary for edges (per-directory, or per-manifest
+for `tools/`) is the likely v2 of this step.
 
 **Step 5: source-before-tests ordering within levels.** Within each topological
 level (nodes with the same depth), source files (`src/`, `lib/`, non-test files)
@@ -154,8 +170,10 @@ Proposed 3 commits:
 Proceed? [y/N]
 ```
 
-If confirmed, calls `smart_commit` with `dry_run = false`. Uses the same `ask_user`
-path as `confirm_writes` if running under a browser session.
+If confirmed, calls `smart_commit` with `dry_run = false`. In a terminal the
+prompt is a plain stdin read; under a browser session the confirmation goes
+through `serveConfirm` (`src/cli.zig`), the same path the `agent.confirm_writes`
+config uses to confirm tool writes.
 
 ## Failure modes
 
@@ -164,6 +182,7 @@ path as `confirm_writes` if running under a browser session.
 | LLM returns malformed JSON | Tool returns the raw LLM output as an error; no commits made |
 | LLM proposes a file not in the diff | That file is silently removed from the group; if the group becomes empty, it is dropped |
 | Dependency cycle detected | Tool returns a cycle error; no commits made |
+| Cycle spans all groups (degenerate graph) | Single-commit fallback: all files in one commit, `note` names the merged groups |
 | `git add` fails (e.g., a file was deleted since the diff was collected) | Tool stops and reports the error; lists which commits succeeded before the failure |
 | Pre-commit hook fails | Tool stops and reports the hook's output; no rollback |
 | `max_commits` exceeded | Groups beyond the cap are merged into the last group |

@@ -7,12 +7,14 @@ and are live** — `tools/webui-plugins/<name>/` (`plugin.json` + `app.js` +
 optional `app.css`), discovered by `handleWebuiPlugins`
 (`src/cli.zig:7206-7299`), served same-origin from `/webui/plugins/<name>/*`
 (`handleWebuiPluginAsset`, `src/cli.zig:7305-7355`), registered client-side
-via `window.clanker.registerView()` (`tools/zig/webui/core/plugins.js:154-206`),
+via `window.clanker.registerView()` (`tools/zig/webui/core/plugins.js:171-221`),
 toggled in System → Web UI plugins, state in `state/webui_plugins.json`. Four
-real plugins ship today: `activity`, `office`, `files`, `health`. Its only prior
-documentation was `tools/webui-plugins/README.md` — no PRD or ADR covered it,
-which is why its design decisions (CSP-only trust, no declared-capability
-sandboxing) were never written down where a future editor would find them.
+real plugins ship today: `activity`, `office`, `files`, `health`. No PRD or ADR
+covered it before this one; its prior documentation was
+`tools/webui-plugins/README.md` plus the review log
+`docs/WEBUI_PLUGINS_REVIEW.md`, which is why its design decisions (CSP-only
+trust, no declared-capability sandboxing) were never written down where a
+future editor would find them.
 This PRD is that missing writeup, plus the design for the two surfaces that
 have nothing yet: **TUI plugins and CLI plugins do not exist** — confirmed by
 grepping for any directory-scan, config-driven, or PATH-based extension point
@@ -112,7 +114,7 @@ reaching the browser, not just from being invoked. Names pass `isSlug`/
 (tested `src/cli.zig:7157-7165`).
 
 **Registration API.** `app.js` calls `window.clanker.registerView(spec)`
-(`tools/zig/webui/core/plugins.js:154-206`) with `{id, title, group, mount,
+(`tools/zig/webui/core/plugins.js:171-221`) with `{id, title, group, mount,
 refresh?}`. `registerView` inserts a real `.rail-tab` button under the
 matching `.rail-group` heading, pushes the id into `VIEWS`, and wires it
 through the same `wireTab`/`showView` machinery as a built-in view — a
@@ -186,7 +188,11 @@ through to Tier 2, and invokes `my_report_tool` non-interactively with the
 remaining argv passed through as the tool's JSON input's `args` field (exact
 argv→JSON mapping is an implementation detail for whoever builds this, not a
 PRD-level decision). Same trust story as the TUI tier: the plugin can only
-name a tool the sandbox already trusts.
+name a tool the sandbox already trusts. Tier 1 resolves tool names against
+whatever directories `agent.tools_dir` names (PRD 0022 makes that a list);
+this PRD adds no tool-discovery path of its own, and any new `*_plugins_dir`
+key inherits 0022's string-or-array parse rather than introducing a second
+convention.
 
 **Tier 2 — external binary, `PATH`-based, operator-trusted.** If no Tier 1
 manifest matches, and the name is not a built-in `Command`, `clanker` checks
