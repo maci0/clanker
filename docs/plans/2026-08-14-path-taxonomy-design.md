@@ -119,7 +119,7 @@ If `tools` as a guest name is too ambiguous beside `tools/` the directory, prefe
 | `src/agent/autolearn.zig` | `src/agent/auto_learn.zig` |
 | `src/research/autoresearch.zig` | `src/research/auto_research.zig` |
 | `src/improve/inert.zig` | `src/improve/inert_check.zig` |
-| stale `src/main.zig` `@import("serve/proxy.zig")` | remove or restore real module |
+| `src/serve/` | keep (proxy surface landed; do not treat as drift) |
 
 ## Commit batches
 
@@ -129,7 +129,7 @@ If `tools` as a guest name is too ambiguous beside `tools/` the directory, prefe
 4. **Web UI hoist** — `tools/zig/webui` → `tools/webui`; update embed/allow-list/build; vendor move only if clean.
 5. **Guest catalog clarity** — drop `cmd_` stems; rename search tools; rewrite evals/skills/autolearn/docs refs; `zig build tools`.
 6. **Util + TUI names** — snake_case util + `repl` + `turn_stats` + smashed auto_* host modules; update imports and `main.zig` test registry.
-7. **Host role split** — `src/tools` → `src/toolhost`; `providers.zig` → `registry.zig`; fix `serve/proxy` drift; AGENTS.md architecture pass.
+7. **Host role split** — `src/tools` → `src/toolhost`; `providers.zig` → `registry.zig`; AGENTS.md architecture pass. Leave `src/serve/` in place.
 
 Each batch: hard cutover, `git mv` preferred, rewrite every reference, verify, commit, merge remote if needed, push. No AI attribution.
 
