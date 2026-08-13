@@ -842,6 +842,49 @@ the page. Against `main` the same harness fails 14 of its 23 assertions.
 Gate: `zig build`, `zig build tools`, `zig build test --summary all` —
 163/163 steps, 763/765 tests (2 skipped, the expected worktree pair).
 
+## The Knowledge "Linked folder" row no longer outlives its collection (2026-08-13)
+
+`#knowledge-sync-row` is the folder a collection mirrors, and in `index.html` it
+is a **sibling** of `#knowledge-detail`, not a child of it — it sits above
+`#knowledge-list` while the detail sits below. `openCollection` revealed both;
+everything that put the detail away only ever set `detail.hidden = true`. So:
+
+- **Close** left "Linked folder" on screen, filled with the path of a
+  collection that was no longer open, with nothing naming which collection it
+  now belonged to. `syncOpenId` still pointed at it, so "Sync changes" mirrored
+  a folder into a collection the reader had closed and moved on from.
+- **Delete the open collection** was worse. The detail was hidden, the row was
+  not, and `syncOpenId` still held the id the server had just deleted. Clicking
+  "Sync changes" POSTed to `/api/knowledge/<deleted-id>/sync` and reported the
+  404 on the status line as `Sync failed: …`, which reads as a bad path.
+
+`closeCollection()` is now the one way the detail is put away: it hides the
+detail, hides the row, and clears `syncOpenId` — the id is what the request
+sends, so it must not outlive the collection either. `showSyncRow` sets
+`syncOpenId` *before* its DOM guard rather than after, because it is "which
+collection is open" and making it conditional on the row's markup would let a
+delete miss the close.
+
+Deleting a **different** collection now leaves the open one alone. The old code
+hid the detail on any successful delete, so tidying up an unrelated collection
+shut the panel you were reading; the close is conditional on the deleted id
+being the open one.
+
+### Verified
+
+`node` + a DOM stub driving the real `features/knowledge.js`, with a fetch
+router for the collection list, the detail, DELETE and the sync POST. 16
+assertions over the real controls: Open reveals both, Close hides both, delete
+of the open collection closes both, and — the decisive one — "Sync changes"
+after that delete issues no request at all, where before it reached the dead
+id. The stub queues `dialog.close()` as a task rather than firing it inline,
+which is what a browser does and what `core/ui.js`'s `uiConfirm` depends on;
+firing it synchronously turns every confirmed dialog into a dismissed one and
+would have made the delete path untestable. Against unmodified `main` the same
+harness fails 4 of the 16. Gate: `zig build`, `zig build tools`,
+`zig build test --summary all` — 163/163 steps, 765/767 tests (2 skipped, the
+expected worktree pair).
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
