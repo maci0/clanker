@@ -1,0 +1,180 @@
+# PRD — Advisor
+
+## Status
+
+Draft. No source files yet. Core change is in `src/agent/loop.zig`. New file
+`src/agent/advisor.zig` for the advisor loop. Config section `[advisor]` in
+`config.toml`.
+
+## Problem
+
+The main agent loop runs a single model's think-act-observe cycle with no
+external check on the direction of reasoning. When the model pursues a flawed
+approach (wrong tool, bad assumption, risky command), the only correction
+mechanism is a human reading the REPL or web UI and intervening manually.
+Neither the loop nor any host function currently sends a turn's output to a
+second model for review before the next turn starts.
+
+omp's advisor pairs a second model to the main agent in a read-only role. After
+each turn it reads the transcript and emits a severity-tagged note that the main
+agent sees at the top of its next turn. The main agent can course-correct before
+taking an action, not after.
+
+## Goals
+
+1. After each main-agent turn completes (after `on_tool_result` fires), launch a
+   concurrent `ck_llm` call on a configurable provider/model with the turn
+   transcript and a fixed advisor system prompt.
+2. The advisor returns a structured JSON response: `{"severity": "note" |
+   "concern" | "blocker", "text": "..."}`.
+3. At `severity = "blocker"`, the agent loop pauses before the next turn and
+   presents the blocker text via the existing `ask_user` path. The human can
+   proceed or abort. Without a channel (headless run), the blocker is logged and
+   the turn proceeds, with the blocker injected into context.
+4. At `severity = "note"` or `"concern"`, the advisor text is injected into the
+   top of the next turn's user message as a fenced block
+   (`[advisor: concern] ...`). The main agent reads it before acting.
+5. Advisor is disabled by default. Enabled via `advisor.enabled = true` in
+   `config.toml`. Fails open (disabled) if the advisor model call errors.
+6. Advisor runs on its own context (no tool access, no shared session history
+   with the main agent). It receives only the text of the last completed turn:
+   the user message, the assistant's response, and any tool names called (not
+   tool arguments, to avoid leaking sensitive fs paths to a different provider).
+
+## Non-goals
+
+- Not a gate. The advisor cannot prevent a tool call from executing; it can only
+  inform the next turn. A blocker is a request for human confirmation, not a
+  hard refusal at the tool boundary. Hard refusals belong to `confirm_writes` and
+  the sandbox descriptor.
+- Not a second agent with tools. The advisor calls `ck_llm` (one bounded
+  completion), not `ck_subagent`. It cannot read files, run commands, or issue
+  corrections as tool calls.
+- Not always-on telemetry. The advisor is session-scoped. It has no persistent
+  log, no stats integration, no `GET /api/advisor` endpoint. Advisory notes are
+  only visible in the current run's transcript.
+- Not a code reviewer. The advisor sees the turn summary, not the full file
+  contents of every read. Deep code review belongs in Arena (PRD 0008) or a
+  dedicated subagent.
+
+## Design
+
+**Config.**
+
+```toml
+[advisor]
+enabled  = true
+provider = "openai_compat"   # any configured provider name
+model    = "gpt-4o-mini"     # cheap fast model; billing separate from main agent
+scope    = "turn"            # "turn" (default) or "session" (full history)
+```
+
+`scope = "turn"` sends only the last turn's messages; `scope = "session"` sends
+the last N turns (configurable as `advisor.context_turns`, default 3). Session
+scope costs more but gives the advisor enough history to notice drift across
+turns, not just within one.
+
+**Advisor system prompt (built into the host, not configurable per-run).**
+
+```
+You are a silent advisor reviewing an AI agent's last turn.
+Your role: flag mistakes before they compound.
+Reply with JSON only: {"severity": "note"|"concern"|"blocker", "text": "..."}
+- note: informational, something the agent might want to consider
+- concern: a likely mistake or suboptimal approach worth correcting
+- blocker: a dangerous or destructive action the human should confirm before continuing
+Keep text under 150 words. Do not repeat what the agent said; say what it missed.
+```
+
+**Concurrency.** The advisor call starts immediately after `on_tool_result`
+fires, before the agent loop's next think phase. In the existing loop structure
+(`src/agent/loop.zig`), this is a `std.Thread.spawn` on the advisor call, joined
+at the start of the next think phase. If the join takes longer than
+`advisor.timeout_ms` (default 5000), the advisor result is dropped and the turn
+proceeds without it.
+
+**Severity handling.**
+
+`note`: The advisor text is formatted as:
+
+```
+[advisor: note]
+<text>
+[/advisor]
+```
+
+and prepended to the assistant's system context for the next think call, not
+added to the conversation history. It disappears after one turn.
+
+`concern`: Same format but with `concern` in the tag. The web UI highlights the
+tag in amber in the turn card (same color as the `tool` status line).
+
+`blocker`: The advisor text is presented via the `ask_user` path with two
+options: `proceed` and `abort`. If `proceed` is chosen (or if there is no channel
+to ask), the text is injected as a concern-level note for the next turn. If
+`abort` is chosen, the run stops and the advisor text is the final message.
+
+**Tool argument redaction.** When building the advisor's input, tool call
+arguments are replaced with `<redacted>` for any tool whose manifest has
+`"fs_prefixes"` or `"exec_allow"` non-empty. Tool names and result summaries
+(first 200 bytes of result) are included unredacted.
+
+**Failure isolation.** Any error in the advisor call (provider error, timeout,
+JSON parse failure) is caught, logged at debug level, and produces no injection.
+The main agent loop never sees an exception from the advisor path.
+
+## Failure modes
+
+| Condition | Behaviour |
+|---|---|
+| Advisor provider not configured or key missing | `advisor.enabled = true` is treated as `false`; log a startup warning; main loop unaffected |
+| Advisor call times out | Result dropped; loop proceeds; logged at debug level |
+| Advisor returns malformed JSON | Treated as a `note` with `text = "<raw response truncated to 150 chars>"`; loop proceeds |
+| Advisor returns `blocker` in a headless run | Blocker text injected as a concern note; loop proceeds; logged as `[advisor blocker: proceeding headless]` |
+| Main agent's turn itself errors | Advisor is not called; it reviews only completed turns |
+| Advisor call itself calls a tool (not possible by design, but malformed JSON could claim one) | Ignored; the advisor completion is non-tool `ck_llm`, which returns text only |
+
+## Acceptance criteria
+
+- [ ] `[advisor]` section parsed from `config.toml`; missing or invalid fields
+      produce a clear startup error.
+- [ ] With `advisor.enabled = true`, an advisor `ck_llm` call is made after
+      each completed turn; the provider and model match config.
+- [ ] A `note` or `concern` response is visible at the top of the next turn's
+      system injection and absent from `session.messages`.
+- [ ] A `blocker` response triggers the `ask_user` flow with `proceed`/`abort`
+      options in an interactive session.
+- [ ] A `blocker` in a headless run is logged and treated as a `concern` (loop
+      does not hang).
+- [ ] Advisor timeout (`advisor.timeout_ms`) aborts the call and the loop
+      continues without injection.
+- [ ] Tool arguments for tools with `fs_prefixes` or `exec_allow` are redacted
+      in the advisor input; tool names and result prefixes are not.
+- [ ] Advisor errors (provider down, malformed JSON) do not propagate to the
+      main loop.
+- [ ] `advisor.enabled = false` (default) causes zero advisor calls; no
+      performance impact on the main loop.
+- [ ] Unit tests in `src/agent/advisor.zig` cover: severity parsing, argument
+      redaction, timeout handling, injection formatting.
+
+## Open questions / future work
+
+- **Advisor seeing its own prior notes.** Under `scope = "session"`, the advisor
+  sees turns that already had an advisor note injected. This could cause the
+  advisor to amplify its own previous concerns rather than evaluating the agent
+  independently. Whether to strip prior advisor blocks from the history before
+  sending is unresolved.
+- **Cost and billing.** Advisor calls are on a separate provider/model and are
+  not counted against the main session's token budget. Whether they should appear
+  in `clanker stats` under a separate `advisor_tokens` column is unresolved.
+- **Per-tool advisor bypass.** Some tools (e.g., read-only reads) are low-risk
+  and not worth advising on. A `advisor.skip_tools = ["read_file", "search_code"]`
+  list would skip the advisor call when the last turn only used those tools.
+- **Web UI visibility.** The advisor note injected into context is not currently
+  surfaced in the web UI's turn card (it would require a new event type on the
+  `/api/run` stream). Surfacing it with an amber `[advisor]` badge is a natural
+  follow-on to the web UI's existing tool-card style.
+- **Advisor as Arena combatant.** The advisor role and the Arena combatant role
+  share the "read a transcript, produce a structured critique" shape. Whether the
+  advisor's system prompt and severity schema should be unified with Arena's judge
+  protocol is worth investigating before either is changed.
