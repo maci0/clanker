@@ -175,7 +175,6 @@ fn executeSteps(out: *lib.Out, alloc: std.mem.Allocator, cfg: Config, steps: []c
                 error.TooLarge => "too large for one call",
                 error.NetworkError => "the request did not complete",
                 error.InvalidArg => "the arguments were rejected",
-                else => @errorName(err),
             };
             const msg = try std.fmt.allocPrint(alloc, "tool {s} failed: {s}", .{ tool_name, why });
             try trace.append(alloc, .{ .index = idx, .kind = "tool", .ok = false, .output = msg, .tool = tool_name });
