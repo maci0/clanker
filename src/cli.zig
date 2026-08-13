@@ -1049,6 +1049,23 @@ pub fn printUsageHint(io: std.Io) void {
     writeStdErr(io, "Run `clanker --help` for the command list.\n") catch {};
 }
 
+/// Point a rejected invocation at the narrowest useful help page. `name` is
+/// the first argv token, so aliases resolve through the same table as
+/// `clanker help <name>`; flags and unknown spellings fall back to the full
+/// command list.
+pub fn renderUsageHintFor(buf: []u8, name: []const u8) []const u8 {
+    const cmd = commandForHelp(name) orelse return "Run `clanker --help` for the command list.\n";
+    const spec = specFor(cmd) orelse return "Run `clanker --help` for the command list.\n";
+    const end = std.mem.findAny(u8, spec.usage, " [") orelse spec.usage.len;
+    return std.fmt.bufPrint(buf, "Run `clanker {s} --help` for usage.\n", .{spec.usage[0..end]}) catch
+        "Run `clanker --help` for the command list.\n";
+}
+
+pub fn printUsageHintFor(io: std.Io, name: []const u8) void {
+    var buf: [128]u8 = undefined;
+    writeStdErr(io, renderUsageHintFor(&buf, name)) catch {};
+}
+
 /// Usage mistakes are interactive diagnostics, not runtime logs. Keep them
 /// free of timestamps and log levels so the recovery action is the first
 /// thing a person or shell consumer sees.
@@ -11718,6 +11735,26 @@ test "top-level help stays within 80 columns" {
             return error.TestUnexpectedResult;
         }
     }
+}
+
+test "usage hints prefer a recognized command's own help" {
+    var buf: [128]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "Run `clanker stats --help` for usage.\n",
+        renderUsageHintFor(&buf, "stats"),
+    );
+    try std.testing.expectEqualStrings(
+        "Run `clanker janitor --help` for usage.\n",
+        renderUsageHintFor(&buf, "prune"),
+    );
+    try std.testing.expectEqualStrings(
+        "Run `clanker --help` for the command list.\n",
+        renderUsageHintFor(&buf, "not-a-command"),
+    );
+    try std.testing.expectEqualStrings(
+        "Run `clanker --help` for the command list.\n",
+        renderUsageHintFor(&buf, "--bogus"),
+    );
 }
 
 test "built-in command help stays within 80 columns" {

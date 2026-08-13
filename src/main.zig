@@ -204,7 +204,13 @@ pub fn main(init: std.process.Init) !void {
             error.UnknownArg => cli.suggestFlag(diag) != null,
             else => false,
         };
-        if (!skip_hint) cli.printUsageHint(init.io);
+        if (!skip_hint) {
+            if (err == error.UnknownCommand or arg_list.items.len < 2) {
+                cli.printUsageHint(init.io);
+            } else {
+                cli.printUsageHintFor(init.io, arg_list.items[1]);
+            }
+        }
         // Usage errors (bad/missing args) are the caller's fault, not
         // clanker's: exit nonzero so scripts and `&&` chains don't mistake a
         // rejected invocation for success.
