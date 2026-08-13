@@ -726,6 +726,68 @@ fails 10 of its 12 assertions, so it is testing the fix and not the harness.
 Gate: `zig build`, `zig build tools`, `zig build test --summary all` —
 163/163 steps, 763/765 tests (2 skipped, the expected worktree pair).
 
+## The digit shortcut says what it does (2026-08-13)
+
+Three places describe "a digit jumps to a view" and all three knew a different
+number:
+
+- `core/dialog.js`'s shortcut table — the `?` overlay, the page's own answer to
+  "what are the keys?" — still said **1 – 8**, from when there were eight views.
+- `core/palette.js` numbered **every** view, so Ctrl/⌘+K listed
+  `Schedule (10)` … `System (14)`. There is no "10" keystroke; those five were
+  advertising a key that does nothing, on the surface whose job is to teach
+  the keys.
+- Only `app.js`'s handler was right, and only by accident: `n <= VIEWS.length`
+  reads as "all fourteen", and it stops at nine because `parseInt(e.key)` on a
+  single keypress cannot be more.
+
+There are fourteen views and nine usable digits, so a fifth of the tablist was
+never going to have one; the tenth view onward is reached by the palette or by
+the tablist arrows, both of which already work. The fix is to stop claiming
+otherwise: `view_digit_max` in `core/utils.js` is the one number, the help
+table builds its row from it, the palette prints the `(n)` only below it, and
+the handler bounds on `Math.min(view_digit_max, VIEWS.length)` so the intent is
+in the code rather than in an arithmetic coincidence.
+
+### Verified
+
+`node` reads all three surfaces and checks they agree: it evaluates the
+handler's guard expression over 1–20, keeping only lone digits, and asserts the
+help table's printed range and `view_digit_max` both equal the resulting count
+(9 of 14), and that the palette's label is gated rather than unconditional.
+Against `main` five of the nine assertions fail. Gate: `zig build`,
+`zig build tools`, `zig build test --summary all` — 163/163 steps,
+763/765 tests (2 skipped, the expected worktree pair).
+
+## A failed schedule toggle no longer disables its own switch (2026-08-13)
+
+`setEnabled` disables the row's Pause/Resume for the duration of the POST
+(`toggle.disabled = state.busy === e.id`), then cleared `state.busy` and
+redrew **only on success** — `if (out) render()`. On the failure path the flag
+was cleared but nothing redrew, so the button kept the `disabled` it was given
+before the request. A server that refused once left a switch that could not be
+tried again for the rest of the visit: the only way back was to leave the view
+and return, and nothing on screen said so.
+
+The redraw is now unconditional. The reason it was not is that `render()` ends
+by writing the entry count to `#schedule-status`, which would have overwritten
+the message the `catch` had just put there — so the failure moved into
+`state.error`, and `render()` reports that instead of the count while it is
+set. `loadScheduleView` clears it, which makes Refresh the way to dismiss a
+stale failure. Same shape the Search view already uses for the same reason.
+
+### Verified
+
+`node` + a DOM stub driving the real `features/schedule.js`, with `fetch`
+stubbed to fail the POST and succeed the reload. After a failed toggle the row
+redraws, its button is enabled again, the failure is still on the status line
+(not replaced by the count), and a second click reaches the server. The stub
+refuses to fire `click` on a disabled element, as a browser does, so the retry
+assertion is real. Against `main` the same harness fails both: the button
+stays disabled and the retry never leaves the page. Gate: `zig build`,
+`zig build tools`, `zig build test --summary all` — 163/163 steps,
+763/765 tests (2 skipped, the expected worktree pair).
+
 ## Search hits land on the turn that matched (2026-08-13)
 
 The Search view shipped with the jump deliberately unwired, and said so: the

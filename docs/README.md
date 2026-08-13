@@ -171,7 +171,22 @@ root is what makes isolation work, and it is the reason the agent is never asked
 to keep track of two trees at once.
 
 `clanker run --worktree` isolates a run by moving it: it creates a worktree on a
-fresh branch cut from the current one, chdirs into it, and runs there. The
+fresh branch cut from the current one, chdirs into it, and runs there.
+
+Isolation is **already the default** where the run is unattended — a `--goal` run
+and any run the scheduler fires — and **off** for a plain typed `clanker run`.
+That split is the whole rule, and it is about two things a person notices
+immediately and a timer never does: an isolated run cannot see **uncommitted**
+work (the worktree is cut from the branch tip), and its output is commits on a
+side branch rather than changes in your working tree. Someone typing "fix what I
+just broke" means the edits in their tree; a scheduled run has no tree in mind.
+
+`--worktree` forces it on, `--no-worktree` forces it off, and `--worktree` wins if
+both appear. The explicit flag also decides what a failure means: `--worktree` is
+a requirement, so a checkout where `git worktree add` cannot succeed is a fatal
+error, while a default that cannot be met logs a warning and runs in the checkout.
+Without that split, defaulting it on would have made clanker unusable outside a
+git repo. (`clanker a2a` does not go through this path and is never isolated.) The
 worktree becomes the root, so cwd-relative paths need no prefix and
 `git rev-parse --show-toplevel` reports the worktree. `improve-self` takes the
 same isolation by default (`src/improve/worktree.zig`). Worktrees live in

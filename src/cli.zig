@@ -143,6 +143,15 @@ pub const Options = struct {
     /// than a second one it has to remember to address. The worktree and its
     /// branch are kept when the run ends: the commits are the deliverable.
     worktree: bool = false,
+    /// `run --no-worktree`: work in the shared checkout even where isolation
+    /// is the default (see `isolateByDefault`). Beats `unattended`; an explicit
+    /// `--worktree` beats it in turn.
+    no_worktree: bool = false,
+    /// Nobody is watching this run's working tree: it was fired by the
+    /// scheduler rather than typed. Not a flag -- set by the caller that knows
+    /// (ScheduleFire) -- and the reason isolation can default on without the
+    /// surprises it would cause for a typed `clanker run`.
+    unattended: bool = false,
     /// `prune --yes`: actually delete. Absent, it only reports, because a
     /// recursive delete is not undoable.
     apply: bool = false,
@@ -332,6 +341,9 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 used = .dry_run;
             } else if (std.mem.eql(u8, a, "--worktree")) {
                 opts.worktree = true;
+                used = .worktree;
+            } else if (std.mem.eql(u8, a, "--no-worktree")) {
+                opts.no_worktree = true;
                 used = .worktree;
             } else if (std.mem.eql(u8, a, "--yes")) {
                 opts.apply = true;
@@ -1118,7 +1130,7 @@ const Flag = enum {
             .goal => "run against a persisted goal by id",
             .iters => "cap the number of attempts (default 3)",
             .dry_run => "propose changes without applying them",
-            .worktree => "run in a private git worktree and branch, leaving the checkout untouched",
+            .worktree => "run in a private git worktree and branch, leaving the checkout untouched (--no-worktree opts out where it is the default)",
             .tasks => "run only the agent-driven evals, skipping the build gates",
             .port => "listen port (default 17921)",
             .host => "interface to bind; default 127.0.0.1, 0.0.0.0 reaches the LAN",
@@ -1185,7 +1197,7 @@ const Spec = struct {
 /// `--verbose`/`-v`, `--help`/`-h` and `--version` are accepted everywhere and
 /// so are not listed per command.
 const specs = [_]Spec{
-    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal, .worktree }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        run against a persisted goal\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends; session state is written inside it" },
+    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal, .worktree }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        run against a persisted goal\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
     .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
     .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
     .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--iters <n>        cap the number of attempts (default 3)\n--dry-run          propose changes without applying them" },
@@ -1318,6 +1330,12 @@ const ScheduleFire = struct {
         // session would grow one transcript forever on a timer.
         run_opts.session = null;
         run_opts.continue_last = false;
+        // Nobody is watching a working tree when a timer fires, so isolation is
+        // the default here (isolateByDefault): a scheduled run cannot walk into
+        // whatever a human has half-finished in the checkout, and its output is
+        // a branch, which is how these are read anyway. `--no-worktree` on the
+        // schedule entry still turns it off.
+        run_opts.unattended = true;
         run_opts.schedule_sub = null;
         run_opts.schedule_arg1 = null;
         run_opts.schedule_arg2 = null;
@@ -2588,6 +2606,58 @@ fn runIterationBudget(
     return null;
 }
 
+/// Whether this run should isolate itself in a worktree without being asked.
+///
+/// On where the run is unattended, off where someone is sitting in front of a
+/// working tree. That split is the whole rule, and it exists because isolation
+/// changes two things a person would notice immediately and a timer never will:
+///
+///  - An isolated run cannot see uncommitted work. `createOn` cuts the worktree
+///    from the branch tip, so edits that are not committed are invisible to it.
+///    Someone typing "fix what I just broke" means the edits in their tree.
+///  - The output is commits on a side branch, not changes in the working tree.
+///    A typed `clanker run "rename this"` that left the checkout untouched would
+///    read as having done nothing.
+///
+/// Neither matters for a scheduled run: nobody has a tree in mind, and "the
+/// result is a branch" is already how those are consumed. A `--goal` run is the
+/// same case -- goals are worked over many runs and reviewed as a diff, which is
+/// why the retirement lifecycle keys off goal status (src/improve/retire.zig).
+///
+/// `--worktree` forces it on, `--no-worktree` forces it off, and an explicit
+/// flag is also what decides whether a failure to create the worktree is fatal;
+/// see the call site.
+fn isolateByDefault(opts: Options) bool {
+    return opts.unattended or opts.goal != null;
+}
+
+test isolateByDefault {
+    // Typed, no goal: the two surprises above apply, so no isolation.
+    try std.testing.expect(!isolateByDefault(.{}));
+    // Fired by the scheduler, or carrying a goal.
+    try std.testing.expect(isolateByDefault(.{ .unattended = true }));
+    try std.testing.expect(isolateByDefault(.{ .goal = "g1" }));
+}
+
+/// Resolves the flags and the default into one answer. Explicit beats implicit,
+/// and `--worktree` beats `--no-worktree` so a config or wrapper that passes the
+/// negative cannot silently defeat someone asking for isolation by hand.
+fn shouldIsolate(opts: Options) bool {
+    if (opts.worktree) return true;
+    if (opts.no_worktree) return false;
+    return isolateByDefault(opts);
+}
+
+test shouldIsolate {
+    try std.testing.expect(!shouldIsolate(.{}));
+    try std.testing.expect(shouldIsolate(.{ .worktree = true }));
+    // The default, opted out of.
+    try std.testing.expect(!shouldIsolate(.{ .unattended = true, .no_worktree = true }));
+    try std.testing.expect(!shouldIsolate(.{ .goal = "g1", .no_worktree = true }));
+    // Explicit --worktree wins over an explicit --no-worktree.
+    try std.testing.expect(shouldIsolate(.{ .worktree = true, .no_worktree = true }));
+}
+
 fn cmdRun(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -2646,7 +2716,14 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // Where the harness itself lives, captured before the chdir: the guest
     // wasm modules are pinned to it below, since a worktree has no zig-out.
     var harness_root: ?[]const u8 = null;
-    if (opts.worktree) {
+    // Asked for by hand vs. defaulted on decides what a failure means below:
+    // `--worktree` is a requirement and a failure to honour it is fatal, while
+    // a default that cannot be met degrades to the shared checkout with a
+    // warning. Without that split, making isolation the default for scheduled
+    // and --goal runs would have made clanker unusable outside a git repo,
+    // where `git worktree add` cannot succeed at all.
+    const isolation_required = opts.worktree;
+    if (shouldIsolate(opts)) isolate: {
         harness_root = std.process.currentPathAlloc(io, arena) catch |err| {
             log.log(.error_, "run --worktree: could not read the current directory: {s}", .{@errorName(err)});
             return err;
@@ -2654,15 +2731,29 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         const wt_id = try std.fmt.allocPrint(gpa, "{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
         defer gpa.free(wt_id);
         var created = worktree_mod.createOn(gpa, io, wt_id, "clanker/run-", .run) catch |err| {
+            if (!isolation_required) {
+                log.log(.warn, "run: could not create an isolated worktree ({s}); running in the checkout instead (--worktree to require it)", .{@errorName(err)});
+                harness_root = null;
+                break :isolate;
+            }
             log.log(.error_, "run --worktree: could not create an isolated worktree: {s}", .{@errorName(err)});
             return err;
         };
         std.process.setCurrentPath(io, created.path) catch |err| {
-            // Refusing to continue is the point: falling back to the shared
-            // checkout is the exact outcome --worktree was passed to prevent,
-            // and it would be invisible in the run's own output.
-            log.log(.error_, "run --worktree: could not switch into {s}: {s}", .{ created.path, @errorName(err) });
+            // Refusing to continue is the point when isolation was *required*:
+            // falling back to the shared checkout is the exact outcome
+            // --worktree was passed to prevent, and it would be invisible in
+            // the run's own output. The defaulted case carries on in the
+            // checkout instead. Either way the worktree has already been
+            // created on disk and is left there unregistered, which the janitor
+            // reports as unrecognised and never removes on its own -- the right
+            // outcome for a directory whose state nothing here can vouch for.
+            log.log(if (isolation_required) .error_ else .warn, "run: could not switch into {s}: {s}", .{ created.path, @errorName(err) });
             created.deinit(gpa);
+            if (!isolation_required) {
+                harness_root = null;
+                break :isolate;
+            }
             return err;
         };
         // Untracked, checkout-wide paths (state/, .local/, .agents/, the
