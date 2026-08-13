@@ -1094,6 +1094,8 @@ function errorRecoveryHint(msg) {
     return " (cannot reach provider; check network)";
   if (m.indexOf("max_iterations") !== -1 || m.indexOf("iteration") !== -1)
     return " (hit iteration limit)";
+  if (m.indexOf("token_budget") !== -1 || m.indexOf("tokenbudget") !== -1)
+    return " (ran out of token budget)";
   return "";
 }
 

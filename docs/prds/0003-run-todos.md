@@ -10,10 +10,12 @@ Shipped. Two layers, meant to be deliberately separate:
   a fresh list for every top-level run and `subagent.runNested` supplies its
   own list for nested work. It is gone when that run ends.
 - **Shared work** — the Kanban board (`docs/prds/0002-kanban-board.md`): cards,
-  columns (`backlog`, `ready`, `doing`, `review`, `done` — five, not the
-  three this doc originally said), claims, subtasks, cost, replicated to
-  peers. `todo_*` **with** a `room` now hard-errors and points callers at
-  the board instead of routing to a shared room list.
+  columns (`backlog`, `ready`, `doing`, `review`, `done`, plus `archive` as a
+  second terminal state alongside `done` rather than a further step in the
+  flow — `cards.zig`'s `columns` list; six now, not the three this doc
+  originally said), claims, subtasks, cost, replicated to peers. `todo_*`
+  **with** a `room` now hard-errors and points callers at the board instead
+  of routing to a shared room list.
 
 ## Problem
 
@@ -45,7 +47,7 @@ be both; conflating them was the original `state/board.json` mistake.
 **Routing on absence.** The `todo_*` tools share the chat module. Naming
 `room` now unconditionally hard-errors (`src/sandbox/host.zig`: "room todo
 lists are board cards now: use kanban_add, kanban_move, kanban_claim or
-kanban_list."); the shared room-list path this doc originally described no
+kanban_list. …"); the shared room-list path this doc originally described no
 longer exists. Omitting `room` routes to `src/agent/private_todos.zig`.
 `Agent.run` attaches a fresh list for every top-level run and removes it when
 the run returns; `subagent.runNested` attaches a distinct list for its nested
@@ -55,8 +57,9 @@ run. A missing list is therefore a host wiring error, not a cue to pass
 **Lifecycle.** Private: open → claimed → closed, per run, in memory, capped
 at 100 items (error: "private todo list is full; close items instead of
 adding more") and 512-char titles. Shared: backlog → ready → doing → review
-→ done (five fixed columns), claims race and the first stands, cost accrues
-per run against the card.
+→ done, with archive as a second terminal state reachable from done rather
+than a further step (six fixed columns total), claims race and the first
+stands, cost accrues per run against the card.
 
 **Choosing the layer.** Rule of thumb in the tool catalog: a private todo is
 your working plan, gone when the run ends; if another clanker should see or

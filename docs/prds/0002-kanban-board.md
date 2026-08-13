@@ -63,12 +63,15 @@ would jump it past everything older than the newest page and fold a partial
 log below the cap. The host extends an oldest-first page through a shared
 boundary timestamp (timestamps are seconds; a burst of writes shares one), so
 the cursor never splits a timestamp group (`readHistoryAsc` in
-`chatrooms.zig`; regression-tested end to end in `runtime.zig` with a
-25-message room).
+`chatrooms.zig`; regression-tested end to end in `src/sandbox/runtime.zig`
+with a 25-message room).
 
 **Ops.** `list`, `create`/`add`, `update`, `move`, `claim`, `assign`,
 `close`, `delete`, `log`, `usage`, `subtask_add`, `subtask_toggle`,
-`subtask_remove`, `depend_add`, `depend_remove`. Eight of the ten
+`subtask_remove`, `subtask_depend`, `depend_add`, `depend_remove`.
+`subtask_depend` links one checklist item to another it depends on (`off`
+removes the edge); like `depend_add`/`depend_remove` at the card level, it
+rejects a self-dependency and rejects a cycle. Eight of the ten
 agent-facing tools pin their op in the descriptor's `config`; `kanban_subtask`
 and `kanban_depend` instead take `op` as a request field (one tool, several
 sub-ops each) since a subtask/dependency action needs more than a fixed verb.
@@ -97,6 +100,7 @@ edited fields, `""` unlinks — the web UI's goal↔board sync hangs off this
 one field, so the link survives reloads and replicates to peers),
 `subtasks[]`, `depends_on[]`, `blocked_by[]` (derived from cards
 whose dependencies are unfinished — shown as blocked, not forbidden),
+`labels[]` (`{color, text}`, max 10, settable on create or update),
 `log[]` (stamped entries), `usage` (aggregate object: `prompt_tokens`,
 `completion_tokens`, `cost`, and a `runs[]` breakdown; totals add up across
 runs — this one field is not itself an array, unlike the others above).

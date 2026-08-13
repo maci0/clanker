@@ -7940,10 +7940,19 @@ const max_skill_bytes = 24 * 1024;
 /// working directory so nothing needs the server's absolute location.
 const workspace_cap = 1 << 16;
 
+/// Ceiling on a previewed file's content, matching the cap this file already
+/// uses everywhere else it reads a whole file into memory for one response
+/// (`state/goals.json`, notification logs, etc.) rather than inventing a new
+/// number for this one call site.
+const file_preview_cap = 1 << 20;
+
 /// `GET /api/files?path=<rel>`, list one directory inside the current
-/// workspace. The workspace is the process working directory, which is all the
-/// server is allowed to see; a requested path is resolved component-wise and
-/// any attempt to escape above it (`..`) is clamped to the workspace root.
+/// workspace, or, when `path` names a file rather than a directory, that
+/// file's content (capped at `file_preview_cap`, refused as binary rather
+/// than sent if a NUL byte turns up in what was read). The workspace is the
+/// process working directory, which is all the server is allowed to see; a
+/// requested path is resolved component-wise and any attempt to escape above
+/// it (`..`) is clamped to the workspace root.
 fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -7978,6 +7987,16 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
         comps.append(arena, arena.dupe(u8, c) catch c) catch return;
     }
     const path = std.mem.join(arena, "/", comps.items) catch "";
+
+    // A resolved path naming a file, not a directory, is a content request:
+    // checked before openDir below, since openDir on a file fails in a way
+    // indistinguishable from "does not exist" and would otherwise silently
+    // clamp back to the workspace root instead of serving it.
+    if (path.len > 0) {
+        if (std.Io.Dir.cwd().statFile(io, path, .{}) catch null) |st| {
+            if (st.kind == .file) return handleFileContent(io, arena, path, workspaceName(io, arena), st, accepts_gzip, stream);
+        }
+    }
 
     // Open the resolved directory; a path that cannot be opened (nonexistent
     // after normalization) is clamped back to the workspace root.
@@ -8045,6 +8064,70 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
         s.endObject() catch return;
     }
     s.endArray() catch return;
+    s.endObject() catch return;
+    respondCompressible(arena, stream, accepts_gzip, out.written());
+}
+
+/// The content half of `GET /api/files?path=<rel>`, for a `path` that
+/// `handleFiles` already confirmed names a file. Read capped at
+/// `file_preview_cap`; a NUL byte anywhere in what was read marks the file
+/// binary and withholds `content` rather than shipping a preview no browser
+/// could usefully render.
+fn handleFileContent(io: std.Io, arena: std.mem.Allocator, path: []const u8, root: []const u8, st: std.Io.Dir.Stat, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+    // `readFileAlloc`'s own limit errors (`error.StreamTooLong`) rather than
+    // truncating, which is right for a hard ceiling but wrong for a preview
+    // that wants the first `file_preview_cap` bytes of a bigger file instead
+    // of a failure — so the read size is capped by hand from the stat this
+    // call already has, and read exactly that many bytes.
+    const want: usize = @intCast(@min(st.size, file_preview_cap));
+    const truncated = st.size > file_preview_cap;
+    var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"read failed\"}");
+        return;
+    };
+    defer file.close(io);
+    const data = arena.alloc(u8, want) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"read failed\"}");
+        return;
+    };
+    var reader = file.reader(io, &.{});
+    reader.interface.readSliceAll(data) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"read failed\"}");
+        return;
+    };
+    const binary = std.mem.findScalar(u8, data, 0) != null;
+    const mtime: i64 = std.math.cast(i64, @divTrunc(st.mtime.nanoseconds, @as(i96, std.time.ns_per_s))) orelse 0;
+    const name = if (std.mem.findScalarLast(u8, path, '/')) |slash| path[slash + 1 ..] else path;
+    var parent_buf: []const u8 = "";
+    if (std.mem.findScalarLast(u8, path, '/')) |slash| parent_buf = if (slash == 0) "" else path[0..slash];
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("path") catch return;
+    s.write(path) catch return;
+    s.objectField("name") catch return;
+    s.write(name) catch return;
+    s.objectField("root") catch return;
+    s.write(root) catch return;
+    s.objectField("parent") catch return;
+    s.write(parent_buf) catch return;
+    s.objectField("is_file") catch return;
+    s.write(true) catch return;
+    s.objectField("size") catch return;
+    s.print("{d}", .{st.size}) catch return;
+    s.objectField("mtime") catch return;
+    s.print("{d}", .{mtime}) catch return;
+    s.objectField("binary") catch return;
+    s.write(binary) catch return;
+    s.objectField("truncated") catch return;
+    s.write(truncated) catch return;
+    if (!binary) {
+        s.objectField("content") catch return;
+        s.write(data) catch return;
+    }
     s.endObject() catch return;
     respondCompressible(arena, stream, accepts_gzip, out.written());
 }

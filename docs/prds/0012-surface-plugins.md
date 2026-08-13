@@ -5,19 +5,19 @@
 Partially shipped, never documented until now. **Web UI plugins already exist
 and are live** — `tools/webui-plugins/<name>/` (`plugin.json` + `app.js` +
 optional `app.css`), discovered by `handleWebuiPlugins`
-(`src/cli.zig:6223-6316`), served same-origin from `/webui/plugins/<name>/*`
-(`handleWebuiPluginAsset`, `src/cli.zig:6322-6370`), registered client-side
+(`src/cli.zig:7206-7299`), served same-origin from `/webui/plugins/<name>/*`
+(`handleWebuiPluginAsset`, `src/cli.zig:7305-7355`), registered client-side
 via `window.clanker.registerView()` (`tools/zig/webui/core/plugins.js:154-206`),
-toggled in System → Web UI plugins, state in `state/webui_plugins.json`. Three
-real plugins ship today: `activity`, `office`, `files`. Its only prior
+toggled in System → Web UI plugins, state in `state/webui_plugins.json`. Four
+real plugins ship today: `activity`, `office`, `files`, `health`. Its only prior
 documentation was `tools/webui-plugins/README.md` — no PRD or ADR covered it,
 which is why its design decisions (CSP-only trust, no declared-capability
 sandboxing) were never written down where a future editor would find them.
 This PRD is that missing writeup, plus the design for the two surfaces that
 have nothing yet: **TUI plugins and CLI plugins do not exist** — confirmed by
 grepping for any directory-scan, config-driven, or PATH-based extension point
-feeding `command_registry` (`src/tui/repl_vaxis.zig:442-455`, a hardcoded
-array) or the `Command` enum (`src/cli.zig:65-102`, a closed compile-time
+feeding `command_registry` (`src/tui/repl_vaxis.zig:492-507`, a hardcoded
+array) or the `Command` enum (`src/cli.zig:68-105`, a closed compile-time
 set). Both are designed below and remain Draft until built.
 
 ## Problem
@@ -43,7 +43,7 @@ one.
    with no new trust surface: a TUI plugin can only dispatch to a tool the
    sandboxed WASM tool system already trusts, the same one `/sessions`,
    `/graph`, `/status`, and `/plugins` already dispatch through
-   (`CommandSpec.action = .{ .tool = ... }`, `repl_vaxis.zig:447-450`).
+   (`CommandSpec.action = .{ .tool = ... }`, `repl_vaxis.zig:497-500`).
 3. Give the CLI a way to add a subcommand two ways, tiered by trust: (a) a
    manifest that passes `clanker <name> [args]` straight to an existing
    sandboxed tool — no new trust, just a shorter invocation — and (b) an
@@ -86,30 +86,30 @@ one.
 ### Web UI plugins (documenting what is shipped)
 
 **Layout.** `tools/webui-plugins/<name>/`: `plugin.json` (required),
-`app.js` (required), `app.css` (optional). Three ship today: `activity`,
-`office` (with `sprites.png`/`characters.png`), `files`.
+`app.js` (required), `app.css` (optional). Four ship today: `activity`,
+`office` (with `sprites.png`/`characters.png`), `files`, `health`.
 
-**Manifest** (`WebuiPlugin`, `src/cli.zig:6143-6148`): `name`, `title`,
+**Manifest** (`WebuiPlugin`, `src/cli.zig:7126-7131`): `name`, `title`,
 `description`, `group` — `group` must be `Work`, `Watch`, or `Set up`,
 matching a real rail-nav heading. The manifest's own `name` is overwritten
-by the directory name (`src/cli.zig:6292-6294`), so a plugin cannot lie about
+by the directory name (`src/cli.zig:7275-7277`), so a plugin cannot lie about
 its own identity.
 
 **Discovery.** `GET /api/webui/plugins` scans `tools/webui-plugins/` fresh on
-every call (`handleWebuiPlugins`, `src/cli.zig:6223-6316`) — no rebuild
+every call (`handleWebuiPlugins`, `src/cli.zig:7206-7299`) — no rebuild
 needed to add, remove, or edit a plugin. Off by default; enabling one is
 recorded in `state/webui_plugins.json` (`{"enabled": [...]}`,
-`WebuiPluginState`, `src/cli.zig:6150-6152`) — presence on disk is not
-consent to run it (`src/cli.zig:6220-6222`).
+`WebuiPluginState`, `src/cli.zig:7133-7135`) — presence on disk is not
+consent to run it (`src/cli.zig:7203-7205`).
 
 **Asset serving.** `GET /webui/plugins/<name>/<file>`
-(`handleWebuiPluginAsset`, `src/cli.zig:6322-6370`), same-origin, read fresh
-from disk. `pluginAssetType` (`src/cli.zig:6189-6198`) allow-lists exactly
+(`handleWebuiPluginAsset`, `src/cli.zig:7305-7355`), same-origin, read fresh
+from disk. `pluginAssetType` (`src/cli.zig:7172-7181`) allow-lists exactly
 `app.js`/`app.css`/`sprites.png`/`characters.png`; anything else 404s, and a
 disabled plugin's assets 404 too — toggling off actually stops the code from
 reaching the browser, not just from being invoked. Names pass `isSlug`/
-`validPluginName` (`src/cli.zig:6162-6172`) against path traversal
-(tested `src/cli.zig:6174-6182`).
+`validPluginName` (`src/cli.zig:7145-7155`) against path traversal
+(tested `src/cli.zig:7157-7165`).
 
 **Registration API.** `app.js` calls `window.clanker.registerView(spec)`
 (`tools/zig/webui/core/plugins.js:154-206`) with `{id, title, group, mount,
@@ -117,7 +117,7 @@ refresh?}`. `registerView` inserts a real `.rail-tab` button under the
 matching `.rail-group` heading, pushes the id into `VIEWS`, and wires it
 through the same `wireTab`/`showView` machinery as a built-in view — a
 plugin's tab is genuinely indistinguishable from a built-in one once
-registered (`tools/zig/webui/app.js:4759-4760`).
+registered (`tools/zig/webui/app.js:4406-4429`).
 
 **`api` surface handed to a plugin's `mount`/`refresh`**
 (`tools/zig/webui/core/plugins.js`): `getJSON`, `el`, `status`, `fmt`
@@ -127,7 +127,7 @@ registered (`tools/zig/webui/app.js:4759-4760`).
 CSP exception.
 
 **Trust model.** `script-src 'self'`, no `eval`/`new Function`
-(`tools/webui-plugins/README.md:74-76`). No declared-reach sandboxing beyond
+(`tools/webui-plugins/README.md:88-90`). No declared-reach sandboxing beyond
 that — a web UI plugin's JS runs in the same page and DOM as the rest of the
 app, with whatever `api` exposes, constrained by browser CSP rather than a
 capability grant. This is a real gap relative to the tool system's model
@@ -153,7 +153,7 @@ one manifest per file, no code:
 manifest to the in-memory table alongside the hardcoded
 `command_registry` — same shape the hardcoded entries already use
 (`.action = .{ .tool = .{ .name = m.tool, .args = m.args } }`,
-`repl_vaxis.zig:426-455`), so `/help`, tab-complete, and dispatch all see a
+`repl_vaxis.zig:492-507`), so `/help`, tab-complete, and dispatch all see a
 plugin command exactly like a built-in one, no separate code path.
 
 **Trust model.** No new trust surface at all: a TUI plugin can only name a
@@ -221,7 +221,7 @@ fetched.
   today.** `state/webui_plugins.json` is an enabled-list
   (`{"enabled":[...]}`); the tool system's `state/plugins.json` is a
   disabled-list (`{"disabled":[...], "enabled":[...]}`, read at
-  `src/tools/registry.zig:156,259`). Both are defensible defaults (off by
+  `src/tools/registry.zig:156,288`). Both are defensible defaults (off by
   default vs. on by default) for their own surface, but a reader has no way
   to guess which shape a new `state/tui_plugins.json` or
   `state/cli_plugins.json` should follow without this note. Recommend: new
@@ -247,9 +247,9 @@ fetched.
 
 - [x] A web UI plugin directory with a valid `plugin.json` and `app.js`
       appears as a real rail-nav tab once enabled, indistinguishable from a
-      built-in view (already true today, `activity`/`office`/`files`).
+      built-in view (already true today, `activity`/`office`/`files`/`health`).
 - [x] A disabled web UI plugin's assets are unreachable by direct URL, not
-      just absent from the nav (`src/cli.zig:6345-6348`).
+      just absent from the nav (`src/cli.zig:7328-7331`).
 - [ ] A TUI plugin manifest naming an existing tool becomes a working slash
       command with no code change to `repl_vaxis.zig`.
 - [ ] A TUI plugin cannot name a command that collides with a built-in.

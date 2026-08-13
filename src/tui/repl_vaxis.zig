@@ -3986,6 +3986,15 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
             }) catch {};
         }
     }
+    // Fresh session: a one-line hint so the blank screen says something.
+    // Skipped on resume (the "[resumed session]" line is enough) and
+    // suppressed after the first task, so it never competes with real output.
+    if (model.lines.items.len == 0) {
+        model.lines.append(arena, .{
+            .text = "Type a task, or /help for commands. Tab completes /commands.",
+            .dim = true,
+        }) catch {};
+    }
     model.model_candidates = buildModelCandidates(arena, &model.cfg) catch &.{};
     // A resumed conversation already occupies part of the window, so the
     // meter and the mid-turn compaction baseline start from what was loaded

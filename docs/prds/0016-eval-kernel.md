@@ -101,9 +101,10 @@ Bridge authentication: a random token set as `CLANKER_BRIDGE_TOKEN`. The kernel
 must include it as `Authorization: Bearer <token>`. Requests without the token
 return 401.
 
-The bridge runs every call through the normal descriptor-gated dispatch (`host.zig`
-`callTool`), so sandbox policies (fs_prefixes, exec_allow, network_allow) are
-enforced exactly as for WASM tool calls.
+The bridge runs every call through the normal descriptor-gated dispatch
+(`runtime.loadNamedTool` + `ToolModule.executeTool` in `src/sandbox/runtime.zig`),
+so sandbox policies (fs_prefixes, exec_allow, network_allow) are enforced
+exactly as for WASM tool calls.
 
 **Magic prefixes.** Parsed by the WASM guest before sending to the kernel:
 

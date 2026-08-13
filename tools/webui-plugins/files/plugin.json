@@ -1,6 +1,6 @@
 {
   "name": "files",
   "title": "Files",
-  "description": "Browse the current workspace from the server's working directory: enter folders, and read file sizes and modification times.",
+  "description": "Browse the current workspace from the server's working directory: enter folders, read file sizes and modification times, and open a file to view it — markdown with code and mermaid rendering, source with syntax highlighting.",
   "group": "Work"
 }

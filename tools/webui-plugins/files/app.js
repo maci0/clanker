@@ -1,9 +1,36 @@
 /* files: browse the current workspace from the server's working directory.
 
-   Read-only. Directories open; files show their size and last-modified time.
-   Every string a row can hold — a filename, a fragment of a breadcrumb — comes
-   from the server and is attached as text, never innerHTML, so nothing a
-   directory happens to be named can run or paint markup we did not intend. */
+   Read-only. Directories open; files show their size and last-modified time,
+   and open into a viewer: markdown renders with its code/mermaid fences
+   handled (api.render.markdown), other recognized source renders as one
+   highlighted block (api.render.code), anything else — including binary
+   files, which the server refuses to send content for — falls back to a
+   plain-text or "can't preview" notice. Every string a row can hold — a
+   filename, a fragment of a breadcrumb — comes from the server and is
+   attached as text, never innerHTML, so nothing a directory or file happens
+   to be named can run or paint markup we did not intend; file *content* goes
+   through the same renderers the chat transcript already trusts for
+   model-written markdown, which treat their input as data, not markup, the
+   same way. */
+
+// Extension -> hljs language name, for files that are source but not
+// markdown. Missing from this map just means no syntax highlighting, not a
+// refusal to show the file — api.render.code with an empty lang still shows
+// the raw text.
+var LANG_BY_EXT = {
+  zig: "zig", js: "javascript", mjs: "javascript", cjs: "javascript",
+  ts: "typescript", tsx: "typescript", jsx: "javascript",
+  py: "python", rs: "rust", go: "go", c: "c", h: "c", cpp: "cpp", hpp: "cpp",
+  java: "java", rb: "ruby", php: "php", sh: "bash", bash: "bash", zsh: "bash",
+  json: "json", toml: "ini", yaml: "yaml", yml: "yaml", css: "css",
+  html: "xml", xml: "xml", sql: "sql"
+};
+var MD_EXT = { md: true, markdown: true };
+
+function extOf(name) {
+  var dot = name.lastIndexOf(".");
+  return dot === -1 ? "" : name.slice(dot + 1).toLowerCase();
+}
 
 clanker.registerView({
   id: "files",
@@ -49,7 +76,80 @@ clanker.registerView({
     empty.hidden = true;
     container.appendChild(empty);
 
+    // The viewer replaces the list (not the crumbs) while a file is open, so
+    // Up/a crumb click still means "leave the file, go to that directory" —
+    // the same navigation the list already offers, not a second one.
+    var viewerHead = api.el("div", "files-viewer-head");
+    viewerHead.hidden = true;
+    var viewerName = api.el("span", "files-viewer-name");
+    var viewerClose = api.el("button", "secondary", "Close");
+    viewerClose.type = "button";
+    viewerHead.appendChild(viewerName);
+    viewerHead.appendChild(viewerClose);
+    container.appendChild(viewerHead);
+
+    var viewer = api.el("div", "files-viewer");
+    viewer.hidden = true;
+    container.appendChild(viewer);
+
     function show(ctrl, on) { ctrl.disabled = !on; }
+
+    function showViewer(on) {
+      viewerHead.hidden = !on;
+      viewer.hidden = !on;
+      list.hidden = on;
+      empty.hidden = on || empty.hidden;
+    }
+
+    /// Renders a file's content into the viewer, by extension: markdown gets
+    /// the fence-aware renderer (code/mermaid fences included), a recognized
+    /// source extension gets one highlighted block, everything else is a
+    /// plain-text `<pre>` (still text-only — never innerHTML, see file
+    /// header comment) so an unrecognized-but-readable file is still
+    /// readable, just unstyled.
+    function drawFile(d) {
+      viewer.textContent = "";
+      viewerName.textContent = d.name;
+      if (d.binary) {
+        viewer.appendChild(api.el("p", "files-empty", "Binary file — no preview."));
+        return;
+      }
+      if (d.truncated) {
+        viewer.appendChild(api.el("p", "files-viewer-note", "Showing the first " + api.fmt.bytes(d.content.length) + " — the file is larger than that."));
+      }
+      var ext = extOf(d.name);
+      if (MD_EXT[ext]) {
+        api.render.markdown(viewer, d.content);
+      } else if (LANG_BY_EXT[ext]) {
+        viewer.appendChild(api.render.code(LANG_BY_EXT[ext], d.content));
+      } else {
+        var pre = api.el("pre", "files-viewer-plain");
+        pre.textContent = d.content;
+        viewer.appendChild(pre);
+      }
+    }
+
+    /// Opens a file into the viewer. Distinct from `load`: a file response
+    /// has no `entries` to draw and must not touch `cur`/breadcrumb state —
+    /// closing the viewer returns to exactly the directory listing that was
+    /// open before the file was, not wherever the file happened to live.
+    function openFile(path, name) {
+      var mine = ++generation;
+      api.status("Loading " + name + "…");
+      return api.getJSON("/api/files?path=" + encodeURIComponent(path))
+        .then(function (d) {
+          if (mine !== generation) return;
+          showViewer(true);
+          drawFile(d);
+          api.status(name + (d.binary ? " (binary)." : "."));
+        })
+        .catch(function (err) {
+          if (mine !== generation) return;
+          api.status("Files: " + err.message);
+        });
+    }
+
+    viewerClose.addEventListener("click", function () { showViewer(false); });
 
     // Nothing is known about the tree until the first response, so neither
     // control does anything useful yet. Up in particular started out enabled
@@ -129,7 +229,14 @@ clanker.registerView({
           });
           nameCell.appendChild(open);
         } else {
-          nameCell.textContent = e.name;
+          var openFileBtn = api.el("button", "files-open", e.name);
+          openFileBtn.type = "button";
+          openFileBtn.setAttribute("aria-label", "Open file " + e.name);
+          openFileBtn.title = "View file";
+          openFileBtn.addEventListener("click", function () {
+            openFile(cur.path ? cur.path + "/" + e.name : e.name, e.name);
+          });
+          nameCell.appendChild(openFileBtn);
         }
         row.appendChild(nameCell);
 
@@ -162,6 +269,7 @@ clanker.registerView({
     function load(path) {
       var want = path === undefined ? cur.path : path;
       var mine = ++generation;
+      showViewer(false);
       show(refresh, false);
       show(up, false);
       return api.getJSON("/api/files?path=" + encodeURIComponent(want))

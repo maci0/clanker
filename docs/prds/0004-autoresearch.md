@@ -72,7 +72,7 @@ staged content.
 arguments it re-submits the raw line as a normal chat message (`submitTask`)
 rather than calling `Loop` directly: `skills/autoresearch.md` is what tells
 the agent to exec `clanker autoresearch` itself. The WASM tool `autoresearch`
-(`tools/zig/autoresearch_tool.zig`, `fs_prefixes: ["state/autoresearch/"]`)
+(`tools/zig/autoresearch.zig`, `fs_prefixes: ["state/autoresearch/"]`)
 only lists run directories or tails a run's `ledger.jsonl`; it cannot start
 or stop a run. It is what any agent conversation, including one in the web
 UI, uses to read results; there is no dedicated web UI page for this

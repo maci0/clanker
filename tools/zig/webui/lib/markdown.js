@@ -465,10 +465,12 @@ export function renderMermaidBlocks(root) {
   });
 }
 
-export function finalizeAnswer(turn) {
-  if (turn.answer.querySelector(".failed")) return;
-  var raw = turn.root.markdownSource || turn.answer.textContent;
-  if (!raw) return;
+/* Markdown with ``` fences split out as real code/mermaid blocks instead of
+   inline `renderMarkdown` text — the one fence-aware renderer, shared by the
+   chat transcript (`finalizeAnswer`) and anything else that shows a whole
+   markdown document (e.g. the files plugin's viewer) so the two never grow
+   two different ideas of what a fence is. */
+export function renderMarkdownWithFences(raw) {
   var frag = document.createDocumentFragment();
   var re = /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)(?:```|$)/g;
   var last = 0, m;
@@ -479,9 +481,16 @@ export function finalizeAnswer(turn) {
     last = re.lastIndex;
   }
   if (last < raw.length) frag.appendChild(renderMarkdown(raw.slice(last)));
+  return frag;
+}
+
+export function finalizeAnswer(turn) {
+  if (turn.answer.querySelector(".failed")) return;
+  var raw = turn.root.markdownSource || turn.answer.textContent;
+  if (!raw) return;
   turn.answer.textContent = "";
   turn.answer.className = "turn-answer md";
-  turn.answer.appendChild(frag);
+  turn.answer.appendChild(renderMarkdownWithFences(raw));
   renderMermaidBlocks(turn.answer);
 }
 

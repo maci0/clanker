@@ -1,5 +1,6 @@
 // Vanilla, no bundler. Web UI plugin host — view registration + asset loading.
 import { T, state, add, effect } from "./ui.js";
+import { renderMarkdownWithFences, buildCodeBlock, renderMermaidBlocks } from "../lib/markdown.js";
 
 export var pluginViews = {};
 
@@ -41,7 +42,22 @@ export function pluginApi() {
     preact: window.preact,
     html: window.html,
     signals: window.signals,
-    showView: function (id) { _showView(id, false); }
+    showView: function (id) { _showView(id, false); },
+    // The same markdown/code/mermaid renderers the chat transcript uses
+    // (`lib/markdown.js`), so a plugin showing a whole document (markdown,
+    // source, a diagram fence) does not grow a second implementation of any
+    // of the three. `markdown` appends fence-aware markdown (code blocks and
+    // ```mermaid fences split out, everything else run through inline
+    // markdown) into `el` and kicks off mermaid rendering for any diagram
+    // fences it found; `code` returns one already-highlighted block for a
+    // file that is source but not markdown.
+    render: {
+      markdown: function (el, text) {
+        el.appendChild(renderMarkdownWithFences(text));
+        renderMermaidBlocks(el);
+      },
+      code: function (lang, text) { return buildCodeBlock(lang, text); }
+    }
   };
 }
 

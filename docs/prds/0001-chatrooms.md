@@ -72,7 +72,7 @@ can still explicitly name a DM room when reading history or subscribing.
 **Private todos.** The `todo_*` ops no longer accept `room` at all —
 `src/sandbox/host.zig` hard-errors any `todo_*` call that names one
 ("room todo lists are board cards now: use kanban_add, kanban_move,
-kanban_claim or kanban_list."). The shared/room-scoped todo list this section
+kanban_claim or kanban_list. …"). The shared/room-scoped todo list this section
 originally described has been fully replaced by the board (see
 `docs/prds/0002-kanban-board.md`). What remains: a room-less `todo_*` call
 routes to the run's private in-memory list (`src/agent/private_todos.zig`,

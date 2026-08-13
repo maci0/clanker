@@ -119,3 +119,56 @@
   margin-top: var(--space-5);
   color: var(--fg-muted);
 }
+
+/* `.files-list`'s own `display: flex` would otherwise outrank the UA
+   stylesheet's `[hidden] { display: none }` — same selector specificity,
+   author rule wins — so hiding these via the `hidden` attribute needs an
+   explicit rule here rather than relying on the attribute alone. */
+.files-list[hidden],
+.files-viewer[hidden],
+.files-viewer-head[hidden] {
+  display: none;
+}
+
+.files-viewer-head {
+  margin-top: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.files-viewer-name {
+  font-family: var(--mono);
+  font-size: var(--step-0);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.files-viewer {
+  margin-top: var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  background: var(--surface);
+  overflow-x: auto;
+}
+
+.files-viewer-note {
+  color: var(--fg-muted);
+  font-size: var(--step--1);
+  margin: 0 0 var(--space-3);
+}
+
+.files-viewer-plain {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: var(--step-0);
+  color: var(--fg);
+}
