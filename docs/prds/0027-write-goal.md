@@ -5,7 +5,7 @@
 Draft. No `write_goal` tool exists; nothing in `src/` or `tools/manifests/`
 names one. What does exist is `skills/write-goal.md` — 32 lines of prompt
 guidance folded into the system prompt by
-`src/agent/system_prompt.zig:338-376` — which tells the model to interview
+`system_prompt.zig`'s skill loop — which tells the model to interview
 with `ask_user` and then call the `goal` tool. This PRD promotes that
 guidance into a capability with a fixed output contract.
 
@@ -15,12 +15,12 @@ conflate them.** `goal` (`tools/zig/goal.zig`,
 job and this PRD does not change it. `write-goal` produces the draft that
 `goal` later persists. The pipeline `write-goal → draft → goal → clanker run
 --goal <id>` is not aspirational: everything downstream of the draft already
-ships (`src/cli.zig:3018-3024`, `:2680`).
+ships (`resolveRunTask`'s auto-steer and `goalFromObject` in `src/cli.zig`).
 
 Two things a reader should not walk away misinformed about:
 
 1. **`proof` and `stop_rule` are write-only today.** `goal.zig` writes them
-   and `StoredGoal` (`src/cli.zig:8960-8971`) stores them, but no reader
+   and `StoredGoal` (in `src/cli.zig`) stores them, but no reader
    exists — see Known issues. Drafting them better has no effect on a run
    until that is fixed.
 2. **The five-field list is not settled.** The repo already uses "all five
@@ -47,16 +47,16 @@ reports success it never verified, because nothing named the proof.
 Premature completion and endless polishing are the same missing field seen
 from two sides — fix one without the other and the failure just moves.
 
-Clanker feels this concretely. `clanker goal "<intent>"` (`src/cli.zig:4134`)
-and `/goal <intent>` (`src/tui/repl_vaxis.zig:640`) both synthesize the same
+Clanker feels this concretely. `clanker goal "<intent>"` (`cmdGoal` in `src/cli.zig`)
+and `/goal <intent>` (in `src/tui/repl_vaxis.zig`) both synthesize the same
 literal prompt — *"Define all five fields (objective, completion_criterion,
 proof, boundaries, stop_rule) and call the goal tool to persist it"*
-(`src/cli.zig:4142`, `src/tui/repl_vaxis.zig:2201`) — and then hand the whole
+(`cmdGoal`'s prompt and `/goal`'s prompt) — and then hand the whole
 job to a normal turn. The quality bar for a goal lives in one duplicated
 string plus a skill file, with no structured intermediate anyone can inspect,
 reuse, or refuse. Whatever the model produces is appended to
 `state/goals.json` and immediately becomes what steers runs, because the
-newest active goal auto-steers (`src/cli.zig:3018-3024`).
+newest active goal auto-steers (`resolveRunTask` in `src/cli.zig`).
 
 There is no point in the flow where a draft exists and has not yet been
 committed to. That is the gap.
@@ -85,7 +85,7 @@ committed to. That is the gap.
 
 - **Persisting or executing.** `goal` owns persistence
   (`tools/zig/goal.zig`) and `--goal <id>` / auto-steer owns execution
-  (`src/cli.zig:3018-3024`). `write-goal` stops at the draft. The split is
+  (`resolveRunTask` in `src/cli.zig`). `write-goal` stops at the draft. The split is
   the point: it creates the review moment that today's flow has nowhere to
   put, and it means a bad draft costs nothing but the draft.
 - **Changing the `goal` tool's append-only contract.** That it cannot update
@@ -147,7 +147,7 @@ matters is that someone who did not watch the run can inspect it afterwards.
 The stop rule is about **honesty, not spending** — it lets an agent end by
 reporting a blocker instead of faking a pass. It is deliberately not a
 budget; clanker already has a budget surface in the per-goal
-`max_iterations` (`src/cli.zig:8957`, clamped 1..1000 on write). Conflating
+`max_iterations` (`goalMaxIterations` in `src/cli.zig`, clamped 1..1000 on write). Conflating
 them produces goals that stop for the wrong reason.
 
 **Inspect before asking.** Resolve what the workspace answers — repo
@@ -176,7 +176,7 @@ change the goal. Four kinds of ambiguity, three of which are not questions:
 The Markdown is a rendering of the record, not the source of truth.
 
 The record's arrays do not match `StoredGoal`'s flat strings
-(`src/cli.zig:8960-8971`). Reconciling them is a lossy join in one direction
+(`StoredGoal` in `src/cli.zig`). Reconciling them is a lossy join in one direction
 only: the draft's arrays flatten to strings when handed to `goal`, and
 nothing flattens back. That is acceptable because `goal` is the terminal
 consumer, but it means **the draft, not the stored goal, is the reviewable
@@ -200,7 +200,7 @@ requirements intact. Rewriting an already-specific goal is a regression.
 Refining a goal that has *already been persisted* is constrained by
 `goal`'s append-only contract: `write-goal` can emit a corrected draft, but
 committing it means either a duplicate entry or a `POST /api/goals` update
-(`src/cli.zig:8949`, the only path that can modify an entry). The skill's
+(`handleGoals` in `src/cli.zig`, the only path that can modify an entry). The skill's
 existing duplicate-avoidance rule — read `state/goals.json` first, return the
 existing id rather than appending a near-copy — carries over unchanged.
 
@@ -248,12 +248,12 @@ the review moment the split exists to create.
 **Dependencies.**
 
 - Hard: `ask_user` (`tools/zig/ask_user.zig`) for clarification; the
-  skill-injection path (`src/agent/system_prompt.zig:338-376`, 24 KB cap at
-  `:29`) for any prompt-side component; the five-field decision above.
+  skill-injection path (`system_prompt.zig`'s skill loop, 24 KB cap at
+  `PromptParts.max_skill_bytes`) for any prompt-side component; the five-field decision above.
 - Hard, downstream: `goal` (`tools/zig/goal.zig`,
   `tools/manifests/goal.tool.json`) as the only persistence consumer of a
   draft, and its append-only limit.
-- Soft: `modules.goal` (`src/config.zig:465`) gates the goal surface;
+- Soft: `modules.goal` (in `src/config.zig`) gates the goal surface;
   `write-goal` should sit behind the same flag rather than a second one.
 - Related, not blocking: the proof/stop_rule read gap in Known issues. It
   can be fixed independently and this PRD is worth less until it is.
@@ -263,24 +263,24 @@ the review moment the split exists to create.
 1. **Decide the field list** (blocker; see Known issues). Everything below
    assumes it is settled.
 2. Fix the write-only fields first, as its own change:
-   `GoalContext` (`src/cli.zig:2604`) gains `proof` and `stop_rule`;
-   `goalFromObject` (`:2663`) reads them; `formatGoalSection` (`:2619`)
+   `GoalContext` (in `src/cli.zig`) gains `proof` and `stop_rule`;
+   `goalFromObject` reads them; `formatGoalSection`
    emits them into the `## Active goal` preamble. Without this, phases 3+
    improve a draft nothing reads.
 3. Tool: `tools/zig/write_goal.zig` + `tools/manifests/write_goal.tool.json`
-   (no `build.zig` edit — `build.zig:153-182` auto-discovers; no registry
-   edit — `src/tools/registry.zig:189` scans the manifest dir). Input
+   (no `build.zig` edit — its `tools_step` auto-discovers; no registry
+   edit — `registry.zig` scans the manifest dir). Input
    `{intent, context?, existing_goal?}`; output the structured record under
-   the `{"ok":true,…}` envelope (`tools/zig/lib.zig:187`). No `fs_prefixes`
+   the `{"ok":true,…}` envelope (`tools/zig/lib.zig`). No `fs_prefixes`
    — drafting writes nothing.
 4. Rewrite `skills/write-goal.md` to drive the tool and stop at the draft,
    replacing the current "interview then call `goal`" flow with "interview,
    draft, present, and only then hand to `goal` on approval".
-5. Deduplicate the two command prompts (`src/cli.zig:4142`,
-   `src/tui/repl_vaxis.zig:2201`) into one shared constant so the field list
+5. Deduplicate the two command prompts (`cmdGoal` in `src/cli.zig`,
+   `/goal` in `src/tui/repl_vaxis.zig`) into one shared constant so the field list
    cannot drift between surfaces again, then point both at the drafting step.
 6. Host-side type for the draft next to its consumer, matching house
-   convention (`StoredGoal` at `src/cli.zig:8960`); flatten arrays to
+   convention (`StoredGoal` in `src/cli.zig`); flatten arrays to
    `StoredGoal`'s strings at the hand-off, not before.
 7. Tests: a discoverable fact raises no question; a material fork does;
    question count ≤ 4; drafting leaves the tree clean (no
@@ -290,11 +290,11 @@ the review moment the split exists to create.
 
 ## Known issues
 
-- **`proof` and `stop_rule` are write-only.** `tools/zig/goal.zig:31,33`
-  writes them and `StoredGoal` (`src/cli.zig:8964-8966`) stores them, but
-  no reader exists: `GoalContext` (`src/cli.zig:2604-2616`) carries only
+- **`proof` and `stop_rule` are write-only.** `tools/zig/goal.zig`
+  writes them and `StoredGoal` (in `src/cli.zig`) stores them, but
+  no reader exists: `GoalContext` carries only
   `id`, `objective`, `completion_criterion`, `boundaries`, `max_iterations`,
-  and `section`, and `formatGoalSection` (`:2619-2630`) emits only
+  and `section`, and `formatGoalSection` emits only
   `objective`, `completion_criterion`, and `boundaries` into the run
   preamble. Promised: `skills/write-goal.md` tells the model to define proof
   and stop rule, and both command prompts demand "all five fields". Actual:
@@ -319,14 +319,13 @@ the review moment the split exists to create.
   PRD's grouping touches all of the same plus every existing entry in
   `state/goals.json`. Neither option touches `src/improve/retire.zig`, which
   reads only `id` and `status` under `ignore_unknown_fields`
-  (`src/improve/retire.zig:60-75`, `:164`) and so tolerates schema growth by
+  (`retire.zig`'s `reconcile`) and so tolerates schema growth by
   design. Undecided; see Design.
-- **The goal-designing prompt is duplicated verbatim.** `src/cli.zig:4142`
-  and `src/tui/repl_vaxis.zig:2201` hold the same string, including the field
+- **The goal-designing prompt is duplicated verbatim.** `cmdGoal` in
+  `src/cli.zig` and the `/goal` task in `src/tui/repl_vaxis.zig` hold the same
+  string, including the field
   list. Changing the fields in one and not the other is a silent surface
   split. Fix: one shared constant (Implementation phase 5).
-- **PRD 0027 is absent from the inventory.** `docs/prds/README.md`'s table
-  stops at 0026 and the build-order list does not mention it.
 
 ## Failure modes
 
@@ -338,11 +337,11 @@ the review moment the split exists to create.
 | Workspace unreadable / not a repo | Draft from conversation context only; list the workspace facts left unresolved |
 | `ask_user` unavailable (headless, improve loop, sub-agent) | Best-effort draft, assumptions recorded in `boundaries` as `skills/write-goal.md` already specifies; never invent silently |
 | User supplies no budget | No budget. Not a default, not a suggestion appended to objective text |
-| User supplies a budget | Goes to `max_iterations` on the persisted goal (`src/cli.zig:8957`), never into objective text |
+| User supplies a budget | Goes to `max_iterations` on the persisted goal (`goalMaxIterations` in `src/cli.zig`), never into objective text |
 | Intent restates an already-open goal | Return that goal's id and explain the overlap; do not draft a near-duplicate for `goal` to append |
 | Refining an already-specific goal | Preserve stated requirements; report "no material weaknesses" rather than rewriting to show effort |
 | Refining a goal already in `state/goals.json` | Emit the corrected draft, but note that committing needs `POST /api/goals`; `goal` cannot update |
-| `modules.goal` is off | Same refusal as `cmdGoal` (`src/cli.zig:4138`); do not offer a drafting flow whose output has nowhere to go |
+| `modules.goal` is off | Same refusal as `cmdGoal` (in `src/cli.zig`); do not offer a drafting flow whose output has nowhere to go |
 | Draft fails its own self-check | Incomplete — do not present it as finished |
 
 ## Acceptance criteria

@@ -47,6 +47,7 @@ and Implementation lists checkable file-level phases.
 | [0024](0024-sampling-profiles.md) | Sampling profiles | Draft | After 0025 |
 | [0025](0025-fallback-provider-chain.md) | Fallback provider chain | Draft | Before 0024 |
 | [0026](0026-llm-proxy.md) | LLM compatibility proxy | Draft | Independent of agent-loop drafts; four-PR plan |
+| [0027](0027-write-goal.md) | Write-goal (goal drafting) | Draft | Field-list decision is the blocker |
 
 ## Recommended build order (Drafts)
 
@@ -64,6 +65,7 @@ optional subsystems:
 9. **0019** — `gh_read`
 10. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
 11. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
+12. **0027** — write-goal (small, low-risk; field-list decision first)
 
 ## Editing rules (short)
 
