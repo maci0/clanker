@@ -2404,12 +2404,22 @@ function drawRun(g) {
   var mmViewport = document.createElement("div"); mmViewport.className = "run-minimap-viewport";
   minimap.appendChild(mmViewport);
   canvas.appendChild(minimap);
+  // Minimap content dimensions are cached (scrollWidth/scrollHeight never
+  // change while scrolling, only on a relayout) and repaints are coalesced to
+  // one per animation frame, so scroll events don't force a synchronous
+  // layout. Node positions come from the inline left/top the layout step set
+  // (lib/graph.js) instead of offsetLeft/offsetTop, which reflowed every node.
+  var mmSW = 1, mmSH = 1, mmRaf = 0;
+  function measureMinimap(){
+    try { mmSW = Math.max(1, canvas.scrollWidth); mmSH = Math.max(1, canvas.scrollHeight); }
+    catch(_){ mmSW = 1; mmSH = 1; }
+  }
   function paintMinimap(){
     try{
       var ctx = mmCanvas.getContext("2d");
       if (!ctx) return;
       ctx.clearRect(0,0,mmCanvas.width, mmCanvas.height);
-      var sw = Math.max(1, canvas.scrollWidth), sh = Math.max(1, canvas.scrollHeight);
+      var sw = mmSW, sh = mmSH;
       // light line for edges (a minimap overview)
       try{
         var svg = canvas.querySelector("svg.run-edges");
@@ -2433,8 +2443,11 @@ function drawRun(g) {
       }catch(_){}
       var nodes = canvas.querySelectorAll(".run-node");
       nodes.forEach(function(n){
-        var x = (n.offsetLeft / sw) * mmCanvas.width;
-        var y = (n.offsetTop / sh) * mmCanvas.height;
+        // Inline left/top are set by the layout pass (no forced layout), with
+        // offsetLeft/offsetTop only as a fallback for any node lacking them.
+        var lx = parseFloat(n.style.left), ly = parseFloat(n.style.top);
+        var x = ((isFinite(lx) ? lx : n.offsetLeft) / sw) * mmCanvas.width;
+        var y = ((isFinite(ly) ? ly : n.offsetTop) / sh) * mmCanvas.height;
         var w = 6, h = 4;
         var kind = n.getAttribute("data-kind") || "";
         if (kind === "llm") ctx.fillStyle = "rgba(11,87,208,0.75)";
@@ -2449,20 +2462,31 @@ function drawRun(g) {
     }catch(_){}
   }
   function updateMinimap(){
-    var needsMap = canvas.scrollWidth > canvas.clientWidth + 8 || canvas.scrollHeight > canvas.clientHeight + 8;
+    // Content size can change on relayout (search/filter/fit), so re-measure
+    // here — a single read, never one per node — before using the cached dims.
+    measureMinimap();
+    var needsMap = mmSW > canvas.clientWidth + 8 || mmSH > canvas.clientHeight + 8;
     minimap.hidden = !needsMap;
     if (minimap.hidden) return;
     paintMinimap();
-    var sx = canvas.scrollLeft / Math.max(1, canvas.scrollWidth - canvas.clientWidth);
-    var sy = canvas.scrollTop / Math.max(1, canvas.scrollHeight - canvas.clientHeight);
-    var vw = canvas.clientWidth / Math.max(1, canvas.scrollWidth) * 100;
-    var vh = canvas.clientHeight / Math.max(1, canvas.scrollHeight) * 100;
+    var sx = canvas.scrollLeft / Math.max(1, mmSW - canvas.clientWidth);
+    var sy = canvas.scrollTop / Math.max(1, mmSH - canvas.clientHeight);
+    var vw = canvas.clientWidth / mmSW * 100;
+    var vh = canvas.clientHeight / mmSH * 100;
     mmViewport.style.left = (sx * (100 - vw)) + "%";
     mmViewport.style.top = (sy * (100 - vh)) + "%";
     mmViewport.style.width = Math.max(12, vw) + "%";
     mmViewport.style.height = Math.max(12, vh) + "%";
   }
-  canvas.addEventListener("scroll", updateMinimap);
+  // A scroll can fire many times per frame; coalesce to one repaint per frame.
+  function scheduleMinimap(){
+    if (mmRaf) return;
+    mmRaf = requestAnimationFrame(function(){
+      mmRaf = 0;
+      updateMinimap();
+    });
+  }
+  canvas.addEventListener("scroll", scheduleMinimap);
   // click-to-jump: nearest node under cursor focuses & opens its detail (fallback to viewport jump)
   minimap.addEventListener("click", function(e){
     if (e.target === mmViewport) return;
@@ -3035,6 +3059,8 @@ function renderChatSidebarList(container, list, icon) {
       var dot = document.createElement("span");
       dot.className = "slack-presence-dot" + (peerUp ? " is-online" : "");
       dot.title = peerUp ? "Online" : "Offline";
+      dot.setAttribute("role", "img");
+      dot.setAttribute("aria-label", peerUp ? "Online" : "Offline");
       iconEl.appendChild(dot);
     } else {
       iconEl.textContent = icon;
@@ -4896,8 +4922,8 @@ function transcriptMarkdown() { return compTranscriptMarkdown(el.transcript, cur
       navigator.clipboard.writeText(url).then(function(){
         btn.textContent = "Copied";
         setTimeout(function(){ btn.textContent = "Share"; }, 1200);
-      }, function(){ prompt("Share link", url); });
-    } catch(_){ try { prompt("Share link", url); } catch(__){} }
+      }, function(){ uiPrompt("Share link", url); });
+    } catch(_){ try { uiPrompt("Share link", url); } catch(__){} }
   });
 })();
 var downloadText = compDownloadText;
@@ -4970,14 +4996,14 @@ bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: f
       var fr = new FileReader();
       fr.onload = function(){
         var text = String(fr.result || "");
-        var parsed = null; try { parsed = JSON.parse(text); } catch(e){ alert("Not valid JSON: "+e.message); return; }
+        var parsed = null; try { parsed = JSON.parse(text); } catch(e){ uiConfirm("Not valid JSON: "+e.message); return; }
         // Accept {messages:[{role,content}]} or {conversations:[...]} or bare array
         var msgs = null; var title = "";
         if (Array.isArray(parsed)) msgs = parsed;
         else if (parsed && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
         else if (parsed && Array.isArray(parsed.conversations) && parsed.conversations[0]) { var c = parsed.conversations[0]; msgs = c.messages || c.mapping && Object.values(c.mapping).map(function(v){ var m=v.message; return m?{role:m.author&&m.author.role,content:(m.content&&m.content.parts&&m.content.parts[0])||m.content} : null; }).filter(Boolean) || []; title = c.title || ""; }
         else if (parsed && parsed.id && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
-        if (!msgs || !msgs.length){ alert("No messages found in file. Expected {messages:[{role,content}]} or an array of messages."); return; }
+        if (!msgs || !msgs.length){ uiConfirm("No messages found in file. Expected {messages:[{role,content}]} or an array of messages."); return; }
         // Normalize to StoredMessage shape the server expects
         var norm = msgs.map(function(m){
           var role = (m.role==="assistant"||m.role==="assistant") ? "assistant" : (m.role==="user"?"user":String(m.role||"user"));
@@ -4985,14 +5011,14 @@ bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: f
           if (role!=="user" && role!=="assistant") role="user";
           return { role: role, content: content };
         }).filter(function(m){ return m.content && m.content.trim(); });
-        if (!norm.length){ alert("No importable messages."); return; }
+        if (!norm.length){ uiConfirm("No importable messages."); return; }
         fetch("/api/sessions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ import_chat: true, title: title || ("imported "+new Date().toLocaleString()), messages: norm }) })
           .then(function(r){ return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; }); })
           .then(function(d){
             el.sessionStatus.textContent = "Imported.";
             if (d.id){ sessionId = d.id; try{ window.localStorage.setItem("clanker.session", sessionId); }catch(_){} renderSessionChip(); }
             return loadSessions();
-          }).catch(function(err){ alert("Import failed: "+err.message); });
+          }).catch(function(err){ uiConfirm("Import failed: "+err.message); });
       };
       fr.readAsText(f);
     });
