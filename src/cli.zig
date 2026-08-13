@@ -2021,7 +2021,7 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
                         const id = fieldStr(item.object, "id") orelse continue;
                         var relevant = false;
                         for (families) |f| {
-                            if (std.ascii.indexOfIgnoreCase(id, f) != null) {
+                            if (std.ascii.findIgnoreCase(id, f) != null) {
                                 relevant = true;
                                 break;
                             }
@@ -2160,9 +2160,9 @@ fn cmdProvidersCatalog(init: std.process.Init, opts: Options) !void {
         while (mit.next()) |mkv| {
             const model_id = mkv.key_ptr.*;
             const family = if (mkv.value_ptr.* == .object) fieldStr(mkv.value_ptr.object, "family") orelse "" else "";
-            if (std.ascii.indexOfIgnoreCase(provider_id, query) == null and
-                std.ascii.indexOfIgnoreCase(model_id, query) == null and
-                std.ascii.indexOfIgnoreCase(family, query) == null) continue;
+            if (std.ascii.findIgnoreCase(provider_id, query) == null and
+                std.ascii.findIgnoreCase(model_id, query) == null and
+                std.ascii.findIgnoreCase(family, query) == null) continue;
             try out.writeStreamingAll(io, try renderCatalogRow(arena, provider_id, model_id, mkv.value_ptr.*));
         }
     }
@@ -7010,9 +7010,9 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
             const model_id = mkv.key_ptr.*;
             const m = mkv.value_ptr.*;
             const family = if (m == .object) fieldStr(m.object, "family") orelse "" else "";
-            if (std.ascii.indexOfIgnoreCase(provider_id, query) == null and
-                std.ascii.indexOfIgnoreCase(model_id, query) == null and
-                std.ascii.indexOfIgnoreCase(family, query) == null) continue;
+            if (std.ascii.findIgnoreCase(provider_id, query) == null and
+                std.ascii.findIgnoreCase(model_id, query) == null and
+                std.ascii.findIgnoreCase(family, query) == null) continue;
             s.beginObject() catch return;
             s.objectField("provider") catch return;
             s.write(provider_id) catch return;
@@ -9762,7 +9762,7 @@ fn enrichRunError(arena: std.mem.Allocator, provider_name: []const u8, had_image
 
 fn containsAnyCaseInsensitive(haystack: []const u8, needles: []const []const u8) bool {
     for (needles) |needle| {
-        if (std.ascii.indexOfIgnoreCase(haystack, needle) != null) return true;
+        if (std.ascii.findIgnoreCase(haystack, needle) != null) return true;
     }
     return false;
 }
@@ -11263,8 +11263,8 @@ test "stats table names the empty case and keeps columns aligned" {
     };
     const text = try renderStatsTable(arena_state.allocator(), &rows, token_stats.totals(&rows));
     try std.testing.expect(std.mem.startsWith(u8, text, "provider        model                          calls"));
-    try std.testing.expect(std.mem.indexOf(u8, text, "kimi-k3") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "totals") != null);
+    try std.testing.expect(std.mem.find(u8, text, "kimi-k3") != null);
+    try std.testing.expect(std.mem.find(u8, text, "totals") != null);
     try std.testing.expect(std.mem.endsWith(u8, text, "\n"));
 }
 

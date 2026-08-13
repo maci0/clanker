@@ -97,7 +97,7 @@ fn errorRecoveryHint(err: anyerror, detail: ?[]const u8) []const u8 {
     if (err == error.MaxIterationsExceeded) return " (hit iteration limit; try a simpler task or raise agent.max_iterations)";
     if (err == error.SessionTokenBudgetExceeded) return " (ran out of token budget)";
     if (detail) |d| {
-        const find = std.ascii.indexOfIgnoreCase;
+        const find = std.ascii.findIgnoreCase;
         if (find(d, "401") != null or find(d, "unauthorized") != null or find(d, "authentication") != null)
             return " (check API key; run `clanker doctor`)";
         if (find(d, "429") != null or find(d, "rate limit") != null or find(d, "rate_limit") != null)

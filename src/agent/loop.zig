@@ -1153,7 +1153,7 @@ pub const Agent = struct {
             // rewrote the result as preview + "... [pruned: N bytes total]";
             // allocPrint again would grow the run arena by another copy each
             // turn, because the arena never shrinks.
-            if (std.mem.indexOf(u8, content, "... [pruned: ")) |at| {
+            if (std.mem.find(u8, content, "... [pruned: ")) |at| {
                 if (at <= prune_preview_bytes) continue;
             }
             const preview = utf8.cap(content, prune_preview_bytes);

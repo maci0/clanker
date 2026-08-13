@@ -230,7 +230,7 @@ pub fn presence(adds: []const FileAdds, files: anytype) Presence {
 /// not read as the improvement it un-undid.
 fn isRevert(c: Commit) bool {
     if (std.mem.startsWith(u8, c.subject, "Revert ")) return true;
-    if (std.ascii.indexOfIgnoreCase(c.subject, "revert of ") != null) return true;
+    if (std.ascii.findIgnoreCase(c.subject, "revert of ") != null) return true;
     if (std.mem.find(u8, c.body, "This reverts commit ") != null) return true;
     return false;
 }
@@ -240,7 +240,7 @@ fn isRevert(c: Commit) bool {
 /// `(revert of cbe4e49/ea3c7b8)` style yields both shas.
 fn harvestShas(arena: std.mem.Allocator, refs: *std.ArrayList([]const u8), text: []const u8, marker: []const u8) !void {
     var rest = text;
-    while (std.ascii.indexOfIgnoreCase(rest, marker)) |at| {
+    while (std.ascii.findIgnoreCase(rest, marker)) |at| {
         var p = rest[at + marker.len ..];
         while (true) {
             var n: usize = 0;
