@@ -25,6 +25,8 @@ const graph = @import("agent/graph.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
 const rawhttp = @import("util/rawhttp.zig");
+const atomic_write = @import("util/atomic_write.zig");
+const toml_edit = @import("util/toml_edit.zig");
 // tui/transcript.zig's MdStream is still used by cmdRun's own run_md; the
 // rest of tui/* (input, region, statusbar, palette, approval, term) was
 // exclusive to the REPL that's now src/tui/repl_vaxis.zig, and was
@@ -4988,6 +4990,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_files = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/files");
         const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/logs");
         const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/plugins/config");
+        const is_config_model = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/model");
+        const is_config_default = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/default");
         if (is_webui and std.mem.eql(u8, method, "GET") and cfg.modules.webui) {
             const conn_val = headerValue(headers_raw, "connection") orelse "";
             if (!std.ascii.eqlIgnoreCase(conn_val, "close")) request_keep_alive = true;
@@ -5074,6 +5078,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleStats(io, gpa, cfg, stream);
         } else if (is_plugin_config) {
             handlePluginConfig(io, gpa, cfg, body, stream);
+        } else if (is_config_model) {
+            handleConfigModel(io, gpa, body, stream);
+        } else if (is_config_default) {
+            handleConfigDefault(io, gpa, body, stream);
         } else if (is_plugins) {
             handlePlugins(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_skills) {
@@ -7459,6 +7467,160 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
     s.write(written >= max_results) catch return;
     s.endObject() catch return;
     respondCompressible(arena, stream, accepts_gzip, out.written());
+}
+
+const local_config_name = "config.local.toml";
+
+fn jsonObjectStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    return switch (obj.get(key) orelse return null) {
+        .string => |s| if (s.len > 0) s else null,
+        else => null,
+    };
+}
+
+fn readLocalConfig(io: std.Io, arena: std.mem.Allocator) ![]const u8 {
+    return std.Io.Dir.cwd().readFileAlloc(io, local_config_name, arena, .limited(1 << 20)) catch |err| switch (err) {
+        error.FileNotFound => "",
+        else => err,
+    };
+}
+
+fn writeLocalConfig(io: std.Io, data: []const u8) !void {
+    try atomic_write.writeFile(io, std.Io.Dir.cwd(), local_config_name, data);
+}
+
+fn lookupCatalogModel(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8) !?std.json.Value {
+    const body = fetchModelsDevCached(io, gpa, arena) catch return error.CatalogUnreachable;
+    const catalog = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true }) catch
+        return error.CatalogUnreadable;
+    if (catalog != .object) return error.CatalogUnreadable;
+    const provider_entry = catalog.object.get(provider) orelse return null;
+    return findCatalogModel(provider_entry, model);
+}
+
+/// `POST /api/config/model {"provider":…,"model":…}` — table-replace the
+/// catalog snippet for that model into `config.local.toml`. Never touches
+/// the shared `config.toml`.
+fn handleConfigModel(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    if (parsed != .object) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    }
+    const provider = jsonObjectStr(parsed.object, "provider") orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing provider\"}");
+        return;
+    };
+    const model = jsonObjectStr(parsed.object, "model") orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing model\"}");
+        return;
+    };
+    const cat = lookupCatalogModel(io, gpa, arena, provider, model) catch |err| {
+        log.log(.error_, "POST /api/config/model: {s}", .{@errorName(err)});
+        respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"could not reach models.dev\"}");
+        return;
+    };
+    const entry = cat orelse {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no catalog match\"}");
+        return;
+    };
+    const snippet = renderModelSnippet(arena, provider, model, entry) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not render snippet\"}");
+        return;
+    };
+    const current = readLocalConfig(io, arena) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"config.local.toml unreadable\"}");
+        return;
+    };
+    const next = toml_edit.replaceTable(arena, current, snippet) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not edit config.local.toml\"}");
+        return;
+    };
+    writeLocalConfig(io, next) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"config.local.toml not writable\"}");
+        return;
+    };
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("path") catch return;
+    s.write(local_config_name) catch return;
+    s.objectField("written") catch return;
+    s.write(snippet) catch return;
+    s.objectField("restart") catch return;
+    s.write(true) catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
+}
+
+/// `POST /api/config/default {"provider":…,"model":…}` — set the top-level
+/// default_provider / default_model keys in `config.local.toml`.
+fn handleConfigDefault(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    if (parsed != .object) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    }
+    const provider = jsonObjectStr(parsed.object, "provider") orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing provider\"}");
+        return;
+    };
+    const model = jsonObjectStr(parsed.object, "model") orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing model\"}");
+        return;
+    };
+
+    var current = readLocalConfig(io, arena) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"config.local.toml unreadable\"}");
+        return;
+    };
+    current = toml_edit.setTopLevelString(arena, current, "default_provider", provider) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not edit config.local.toml\"}");
+        return;
+    };
+    current = toml_edit.setTopLevelString(arena, current, "default_model", model) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not edit config.local.toml\"}");
+        return;
+    };
+    writeLocalConfig(io, current) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"config.local.toml not writable\"}");
+        return;
+    };
+
+    const written = std.fmt.allocPrint(arena, "default_provider = \"{s}\"\ndefault_model = \"{s}\"\n", .{ provider, model }) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+        return;
+    };
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("path") catch return;
+    s.write(local_config_name) catch return;
+    s.objectField("written") catch return;
+    s.write(written) catch return;
+    s.objectField("restart") catch return;
+    s.write(true) catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
 }
 
 /// `GET /api/providers/models?name=<provider>` — a configured provider's own

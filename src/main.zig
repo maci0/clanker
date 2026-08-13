@@ -61,6 +61,7 @@ comptime {
     _ = @import("util/rawhttp.zig");
     _ = @import("util/runlock.zig");
     _ = @import("util/toml_bridge.zig");
+    _ = @import("util/toml_edit.zig");
     _ = @import("util/toolout.zig");
     _ = @import("util/utf8.zig");
     _ = @import("agent/autolearn.zig");
