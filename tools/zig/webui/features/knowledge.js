@@ -85,12 +85,31 @@ var syncOpenId = null;
 function savedSyncPath(id){ try { return window.localStorage.getItem("clanker.kbSync." + id) || ""; } catch(_){ return ""; } }
 function rememberSyncPath(id, path){ try { window.localStorage.setItem("clanker.kbSync." + id, path); } catch(_){} }
 function showSyncRow(id){
+  // Set before the DOM guard, not after it: this is "which collection is
+  // open", and closeCollection compares against it. Making it conditional on
+  // the row's markup being present would let a delete miss the close.
+  syncOpenId = id;
   var row = document.getElementById("knowledge-sync-row");
   var input = document.getElementById("knowledge-sync-path");
   if(!row || !input) return;
-  syncOpenId = id;
   input.value = savedSyncPath(id);
   row.hidden = false;
+}
+/* The row belongs to the open collection, and in index.html it is a *sibling*
+   of #knowledge-detail rather than a child of it — so hiding the detail did not
+   hide the row. Closing a collection left "Linked folder" on screen still
+   pointed at it, and deleting the open collection left the row pointed at a
+   collection the server had just removed: "Sync changes" then POSTed to a dead
+   id and reported the failure as if the path were wrong. Every place that puts
+   the detail away goes through here instead. */
+function closeCollection(){
+  var detail = document.getElementById("knowledge-detail");
+  if(detail){ detail.hidden = true; detail.textContent = ""; }
+  var row = document.getElementById("knowledge-sync-row");
+  if(row) row.hidden = true;
+  // Not just the row: the id is what runFolderSync sends, and it must not
+  // outlive the collection either.
+  syncOpenId = null;
 }
 function runFolderSync(){
   var input = document.getElementById("knowledge-sync-path");
@@ -127,7 +146,7 @@ function openCollection(id){
       try { navigator.clipboard.writeText(url); share.textContent="Copied"; setTimeout(function(){ share.textContent="Copy link"; }, 1200); } catch(_){ prompt("Share link", url); }
     }); head.appendChild(share);
     var close=document.createElement("button"); close.type="button"; close.className="secondary"; close.textContent="Close";
-    close.addEventListener("click",function(){ detail.hidden=true; }); head.appendChild(close); detail.appendChild(head);
+    close.addEventListener("click",closeCollection); head.appendChild(close); detail.appendChild(head);
     if(data.description){ var desc=document.createElement("p"); desc.className="meta"; desc.textContent=data.description; detail.appendChild(desc); }
     var docs=data.docs||[];
     if(!docs.length){ var empty=document.createElement("p"); empty.className="meta"; empty.textContent="No documents yet. Add one below."; detail.appendChild(empty); }
@@ -176,7 +195,7 @@ function deleteCollection(id,title){
     if(!yes) return;
     fetch("/api/knowledge/"+encodeURIComponent(id),{method:"DELETE"})
       .then(readJson)
-      .then(function(){ var at=selectedKnowledge.indexOf(id); if(at!==-1) selectedKnowledge.splice(at,1); var detail=document.getElementById("knowledge-detail"); if(detail) detail.hidden=true; loadKnowledge(); updateHint(); refreshBadge(); })
+      .then(function(){ var at=selectedKnowledge.indexOf(id); if(at!==-1) selectedKnowledge.splice(at,1); if(syncOpenId===id) closeCollection(); loadKnowledge(); updateHint(); refreshBadge(); })
       .catch(function(err){ alert(err.message); });
   });
 }
