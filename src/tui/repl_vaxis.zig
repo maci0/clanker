@@ -5095,7 +5095,6 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
                 "error: mascot mode '{s}' is not one of off, type, loop; mascot is off",
                 .{bad},
             ) catch "error: unknown mascot mode; mascot is off",
-            .is_error = true,
         }) catch {};
     }
     if (opts.theme) |name| {
@@ -5103,7 +5102,6 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
             model.theme_override = null;
             model.lines.append(arena, .{
                 .text = std.fmt.allocPrint(arena, "error: unknown theme '{s}'; type /theme to list available themes", .{name}) catch "error: unknown theme; type /theme to list available themes",
-                .is_error = true,
             }) catch {};
         }
     }
