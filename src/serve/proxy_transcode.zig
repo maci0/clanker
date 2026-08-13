@@ -764,7 +764,7 @@ fn appendAnthropicMessage(arena: std.mem.Allocator, messages: *std.ArrayList(typ
                         else => continue,
                     };
                     var args_w: std.Io.Writer.Allocating = .init(arena);
-                    if (po.get("input")) |inp| json.Stringify.value(inp, .{}, &args_w.writer) catch {};
+                    if (po.get("input")) |inp| try json.Stringify.value(inp, .{}, &args_w.writer);
                     const args = args_w.written();
                     try calls.append(arena, .{ .id = id, .name = name, .arguments = if (args.len > 0) args else "{}" });
                 } else if (std.mem.eql(u8, typ, "tool_result")) {

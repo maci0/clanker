@@ -9449,11 +9449,23 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
         }
 
         // Upsert: replace the existing doc of this name, if any.
+        var upsert_ok = true;
         for (col.docs) |d| {
             if (!std.mem.eql(u8, d.name, name)) continue;
             const del = std.fmt.allocPrint(arena, "{{\"action\":\"delete_doc\",\"collection_id\":\"{s}\",\"doc_id\":\"{s}\"}}", .{ col_id, d.id }) catch return;
-            _ = toolJson(io, gpa, arena, cfg, environ_map, "knowledge", del) catch {};
+            const del_out = toolJson(io, gpa, arena, cfg, environ_map, "knowledge", del) catch {
+                upsert_ok = false;
+                break;
+            };
+            if (toolResultFailed(del_out)) {
+                upsert_ok = false;
+                break;
+            }
             break;
+        }
+        if (!upsert_ok) {
+            skipped += 1;
+            continue;
         }
         var w: std.Io.Writer.Allocating = .init(arena);
         var s = std.json.Stringify{ .writer = &w.writer };
