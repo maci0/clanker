@@ -22,6 +22,8 @@ Then call the `goal` tool once:
   answer. This is what refuses scope creep later.
 - `stop_rule`: when to abandon the attempt rather than keep spending. An
   iteration cap, a failing gate, a missing dependency.
+- `worktree`: when the run lives in its own git worktree, name it (branch/path)
+  so the goal is tied to that worktree's context.
 
 Only the first two are required, and a goal that stops there is worth keeping
 when the rest is genuinely unknown. Prefer a short honest goal to a padded one.
