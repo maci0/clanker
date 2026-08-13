@@ -8,6 +8,11 @@ These notes are drawn from
 a standalone proxy that re-exposes Cursor as a real OpenAI `/v1/chat/completions`
 endpoint. The proxy exists precisely because none of the below is OpenAI-shaped.
 
+The inverse direction (clanker *being* an OpenAI/Anthropic front) is
+`clanker serve --proxy`. That is PRD 0026: a 1:1 forwarder onto configured
+providers, not an implementation of Cursor's Connect protocol. Point an SDK
+`baseURL` at `http://127.0.0.1:17921/proxy`.
+
 ## Auth: PKCE OAuth with JWT refresh (the `oauth_refresh` strategy, for real)
 
 Not an API key. A browser authorization-code flow:

@@ -245,17 +245,23 @@ chatrooms = false
 - **`[serve]`** — what `clanker serve` binds, for a deployment that cannot pass
   flags: `host` (interface, default `127.0.0.1`), `webui_port` (default
   `17921`), and `serve_as` (a TOML array of hostnames the server may present
-  itself as). The weakest of three layers — `CLANKER_HOST` /
-  `CLANKER_WEBUI_PORT` override it, and `--host` / `--webui-port` /
-  `--serve-as` override those. Field-merged, so a `config.local.toml` that only
-  sets `webui_port` keeps a `host` from the base file. `serve` opens exactly one
-  socket regardless of what is set here.
+  itself as). `proxy` (default false) mounts an OpenAI/Anthropic compatibility
+  surface at `/proxy/v1` on the same socket; `proxy_port` is an optional second
+  listener with `/v1` at the root. `proxy_token_env` names an env var holding
+  a local token (never a secret in toml). The weakest of three layers —
+  `CLANKER_HOST` / `CLANKER_WEBUI_PORT` / `CLANKER_PROXY_PORT` override it, and
+  `--host` / `--webui-port` / `--serve-as` / `--proxy` / `--no-proxy` /
+  `--proxy-port` override those. Field-merged, so a `config.local.toml` that
+  only sets `host` keeps a base `proxy = true`. Without `--proxy` the process
+  opens exactly one socket.
 
   ```toml
   [serve]
   host = "0.0.0.0"
   webui_port = 17921
   serve_as = ["clanker.lan"]
+  # proxy = true
+  # proxy_token_env = "CLANKER_PROXY_TOKEN"
   ```
 - **`[[peers]]`** — repeated tables of `name` + `url`, other `clanker serve`
   instances this one can notify and share chatrooms/board with. Outbound only:

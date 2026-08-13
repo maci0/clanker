@@ -151,6 +151,13 @@ id = "main"
 # host = "0.0.0.0"
 # webui_port = 17921
 # serve_as = ["clanker.lan"]
+# proxy = false
+# # proxy_port = 17922
+# # proxy_token_env = "CLANKER_PROXY_TOKEN"
+# # proxy_first_byte_timeout_s = 300
+# # proxy_idle_timeout_s = 60
+# # [serve.proxy_aliases]
+# # "claude-4-sonnet" = "anthropic/claude-sonnet-4-20250514"
 
 # Outbound only: a peer is a URL this instance connects to, never a port it
 # opens. `dummy-down` points at the discard port on purpose, so `phonebook`
