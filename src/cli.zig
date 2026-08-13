@@ -354,7 +354,15 @@ fn takeValue(
     return args[idx.*];
 }
 
+/// Convenience wrapper: parse without needing the resolved command out-param.
 pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
+    return parseWithCommand(args, diag, null);
+}
+
+/// Parse CLI args, returning the resolved command through `cmd_out` (set on
+/// `error.FlagNotForCommand` / `error.BadSubcommand`) so callers can name the
+/// actual command in a help hint even when a global flag precedes it.
+pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?*Command) !Options {
     var opts = Options{};
     var idx: usize = 1;
     var cmd_seen = false;
@@ -863,6 +871,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 return error.MissingArg;
             } else {
                 setDiag(diag, sub);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.BadSubcommand;
             }
         }
@@ -874,6 +883,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         for (seen_flags[0..seen_flags_len]) |f| {
             if (!commandAccepts(opts.command, f)) {
                 setDiag(diag, f.name());
+                if (cmd_out) |c| c.* = opts.command;
                 return error.FlagNotForCommand;
             }
         }
@@ -1064,6 +1074,15 @@ fn commandForHelp(name: []const u8) ?Command {
         if (std.mem.eql(u8, name, s.usage[0..end])) return s.command;
     }
     return command_aliases.get(name);
+}
+
+/// The canonical `clanker <name>` for a resolved command, used when a help
+/// hint has to name the command that was actually parsed (not the argv token
+/// that preceded a global flag, which may itself be a flag).
+pub fn commandName(c: Command) []const u8 {
+    const spec = specFor(c) orelse return "";
+    const end = std.mem.findAny(u8, spec.usage, " [") orelse spec.usage.len;
+    return spec.usage[0..end];
 }
 
 /// The whole command list, grouped. Rendered from `specs` so a new command
@@ -1421,7 +1440,7 @@ const Flag = enum {
             .session => "resume a saved conversation by id",
             .continue_last => "pick up the most recently touched session",
             .mascot => "run the mascot: off, type, loop, place, or input",
-            .mascot_size => "mascot size: small, medium (default), or large",
+            .mascot_size => "mascot size: mini, xsmall, small, medium (default), or large",
             .mascot_facing => "which way the mascot faces: left or right",
             .theme => "set the initial TUI color theme (use /theme to list names)",
             .goal => "run against a persisted goal by id",
@@ -1497,7 +1516,7 @@ const Spec = struct {
 /// so are not listed per command.
 const specs = [_]Spec{
     .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal, .worktree }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        run against a persisted goal\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
-    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .theme, .mascot, .mascot_size, .mascot_facing }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which grows\n                          to make room\n                   off    no mascot\n--mascot-size <s>  small, medium (default) or large. tui.mascot_size.\n                   small is the floor: below it the robot stops reading as one\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small and 23x18 at large; it is skipped, not\n                   clipped, below that" },
+    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .theme, .mascot, .mascot_size, .mascot_facing }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
     .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
     .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--iters <n>        cap the number of attempts (default 3)\n--dry-run          propose changes without applying them" },
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
@@ -1525,7 +1544,7 @@ const specs = [_]Spec{
     .{ .command = .gate, .usage = "gate", .blurb = "run the build/test/tools/fmt/lint gates", .group = .maintain },
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model }, .detail = "--tasks             run only agent-driven evals; skip self-host build gates\n--provider <name>   run agent-driven evals with this provider\n--model <name>      run agent-driven evals with this model" },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain, .detail = "Ids look like imp-... and live in state/improvements.jsonl (the same list the\nimprove loop records). A missing id is refused; nothing is written." },
-    .{ .command = .autolearn, .usage = "autolearn [reset]", .blurb = "fold recent runs into the ROADMAP's Autolearn section", .group = .maintain, .detail = "Aggregates the last 7 days of state/autolearn.jsonl into actionable items.\n\nreset    archive the event log to state/autolearn.old.jsonl (overwriting any\n         previous archive) and start observations from a clean slate. Use it\n         after addressing the reported items, so they stop resurfacing." },
+    .{ .command = .autolearn, .usage = "autolearn [reset] [--model <model>]", .blurb = "fold recent runs into the ROADMAP's Autolearn section", .group = .maintain, .flags = &.{ .provider, .model }, .detail = "Aggregates the last 7 days of state/autolearn.jsonl into actionable items.\n\nreset    archive the event log to state/autolearn.old.jsonl (overwriting any\n         previous archive) and start observations from a clean slate. Use it\n         after addressing the reported items, so they stop resurfacing.\n\n--provider <name>  run the item synthesis with this provider instead of the\n                   configured default\n--model, -m        run the item synthesis with this model, or\n                   <provider>/<model>. Default is the deterministic local\n                   aggregation; passing a model instead has the chosen model\n                   review the raw observations and write the Autolearn section." },
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
     .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own; the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields: minute hour day-of-month month day-of-week, each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
     .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
@@ -2723,6 +2742,114 @@ fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
     }
     try out.writeStreamingAll(io, "Autolearn section updated in docs/ROADMAP.md\n\n");
     try out.writeStreamingAll(io, result.text);
+    if (opts.model != null or opts.provider != null) {
+        const synthesized = try autolearnSynthesize(init, opts, &cfg, arena, result.text);
+        try upsertRoadmapSection(io, arena, synthesized);
+        try out.writeStreamingAll(io, "\n\nAutolearn section rewritten by the model.\n\n");
+        try out.writeStreamingAll(io, synthesized);
+    }
+}
+
+/// `clanker autolearn --model <m>` — the deterministic aggregation above is
+/// re-synthesized by the chosen model: it reviews the raw observations and the
+/// mechanical draft, and returns a refined "## Autolearn" section. A WASM guest
+/// cannot call the LLM, so this pass is native; it does not touch the tool's
+/// deterministic aggregation, only overlays the model's write.
+fn autolearnSynthesize(
+    init: std.process.Init,
+    opts: Options,
+    cfg: *const config.Config,
+    arena: std.mem.Allocator,
+    mechanical: []const u8,
+) ![]const u8 {
+    const io = init.io;
+    const gpa = init.gpa;
+
+    // Feed a bounded tail of the raw observation log so a long history does
+    // not blow the prompt; only whole lines, so JSON fragments are never cut.
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, "state/autolearn.jsonl", arena, .limited(1 << 20)) catch "";
+    const observations = lastLines(raw, 64 * 1024);
+    if (observations.len == 0) return error.NoObservations;
+
+    var ctx = client.Ctx{
+        .io = io,
+        .gpa = gpa,
+        .environ_map = init.environ_map,
+        .cfg = cfg,
+    };
+    const provider = try arena.create(config.Provider);
+    provider.* = try resolveProvider(cfg, opts);
+
+    const sys =
+        \\You are the autolearn synthesizer for the clanker agent harness. You
+        \\review raw usage observations from past runs and write an actionable
+        \\"## Autolearn" section for docs/ROADMAP.md: a short intro sentence
+        \\followed by a bullet list of concrete improvement items, each a
+        \\`- [ ]` checkbox whose title captures the change and whose one-line
+        \\body explains the observed reason. Ground every item in the
+        \\observations; do not invent work. Return ONLY the markdown section,
+        \\beginning with the "## Autolearn" heading.
+    ;
+    const user = std.fmt.allocPrint(arena,
+        \\Raw observations (state/autolearn.jsonl, tail):
+        \\```text
+        \\{s}
+        \\```
+        \\
+        \\Current deterministic aggregation:
+        \\```markdown
+        \\{s}
+        \\```
+        \\
+        \\Rewrite and refine the "## Autolearn" section. Keep what the
+        \\deterministic pass got right, fold in anything it missed, and return
+        \\the finished markdown section only, starting with the "## Autolearn"
+        \\heading.
+    , .{ observations, mechanical }) catch return error.OutOfMemory;
+    const messages = [_]types.Message{
+        .{ .role = .system, .content = sys },
+        .{ .role = .user, .content = user },
+    };
+
+    var err_detail: ?[]const u8 = null;
+    const resp = client.chat(&ctx, arena, .{
+        .provider = provider,
+        .messages = &messages,
+        .max_tokens = 2500,
+    }, &err_detail) catch |err| {
+        try std.Io.File.stderr().writer(io).print(
+            "autolearn: model synthesis failed ({s})\n",
+            .{err_detail orelse @errorName(err)},
+        );
+        return error.ModelSynthesisFailed;
+    };
+    return resp.message.content orelse return error.EmptySynthesis;
+}
+
+/// The tail of `s` bounded to at most `max_bytes`, aligned to a line boundary
+/// (a leading partial line is dropped so only whole lines are fed).
+fn lastLines(s: []const u8, max_bytes: usize) []const u8 {
+    if (s.len <= max_bytes) return s;
+    const start = s.len - max_bytes;
+    const first_nl = std.mem.find(u8, s[start..], "\n") orelse return s[start..];
+    return s[start + first_nl + 1 ..];
+}
+
+/// Replaces any existing "## Autolearn" section in docs/ROADMAP.md (from the
+/// marker to EOF, since it is always the last section) with `section`, or
+/// appends it. Mirrors the autolearn tool's upsert so the model's write lands
+/// in the same place.
+fn upsertRoadmapSection(io: std.Io, arena: std.mem.Allocator, section: []const u8) !void {
+    const cwd = std.Io.Dir.cwd();
+    const existing = cwd.readFileAlloc(io, "docs/ROADMAP.md", arena, .limited(1 << 22)) catch "";
+    const marker = "## Autolearn";
+    var out: []const u8 = undefined;
+    if (std.mem.find(u8, existing, marker)) |idx| {
+        out = try std.mem.concat(arena, u8, &.{ existing[0..idx], section });
+    } else {
+        out = try std.mem.concat(arena, u8, &.{ existing, "\n\n", section });
+    }
+    try atomic_write.writeFile(io, cwd, "docs/ROADMAP.md", out);
 }
 
 // ---------------------------------------------------------------------- run --
@@ -8347,6 +8474,16 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
             if (req.max_iterations) |n| {
                 updated.max_iterations = clampIterationBudget(n);
             }
+            // Only when the request names it, so a POST carrying just a status
+            // cannot clear a flag it never mentioned. `false` clears the field
+            // rather than storing a falsy string: the goal card reads presence
+            // as the flag, so "not worktree-scoped" has to be absence. Clearing
+            // it also discards a branch/path the `goal` tool wrote, which is the
+            // point -- the goal is no longer worktree-scoped, so the branch it
+            // used to name is not either.
+            if (req.worktree) |w| {
+                updated.worktree = if (w) "true" else null;
+            }
             updated.updated = now;
             kept.append(arena, updated) catch continue;
         }
@@ -9394,6 +9531,10 @@ const GoalPost = struct {
     /// string `"true"` so the goal card can show the worktree icon. The `goal`
     /// tool instead stores the worktree's branch/path here, and both read back
     /// as the same truthy string.
+    ///
+    /// Honoured on an update as well as a create, so a goal ticked (or left
+    /// unticked) by mistake can be corrected without deleting it. Absent means
+    /// "not mentioned" and leaves the stored value alone; `false` clears it.
     worktree: ?bool = null,
 };
 
@@ -11695,6 +11836,23 @@ test "--port still works as an alias for --webui-port" {
     var diag: []const u8 = "";
     try std.testing.expectError(error.FlagNotForCommand, parse(&.{ "clanker", "stats", "--port", "1" }, &diag));
     try std.testing.expectEqualStrings("--webui-port", diag);
+}
+
+test "parseWithCommand resolves the real command when a global flag precedes it" {
+    // `clanker --model x autolearn` refuses --model on autolearn, but the
+    // suggestion must name `autolearn`, not the leading `--model` token.
+    var diag: []const u8 = "";
+    var cmd: Command = .help;
+    try std.testing.expectError(error.FlagNotForCommand, parseWithCommand(&.{ "clanker", "--model", "x", "autolearn" }, &diag, &cmd));
+    try std.testing.expectEqual(Command.autolearn, cmd);
+    try std.testing.expectEqualStrings("--model", diag);
+    try std.testing.expectEqualStrings("autolearn", commandName(cmd));
+
+    // The subcommand case reports the parent command too.
+    var diag2: []const u8 = "";
+    var cmd2: Command = .help;
+    try std.testing.expectError(error.BadSubcommand, parseWithCommand(&.{ "clanker", "--model", "x", "session", "bogus" }, &diag2, &cmd2));
+    try std.testing.expectEqual(Command.session, cmd2);
 }
 
 test "the listener resolves config < env < flag, in that order" {

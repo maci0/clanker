@@ -10,30 +10,70 @@ Run from the repo root with the source gif as the only argument:
 
     python3 src/tui/mascot/gen_frames.py path/to/clanker-zooming.gif
 
+The gif is not in the repo, so that form needs the artwork to hand. To rebuild
+only some sizes without it, reconstruct the frames from the checked-in pngs:
+
+    python3 src/tui/mascot/gen_frames.py --from-pngs mini xsmall
+
+Named sizes are resampled; every other variant is copied through from the
+existing mascot_frames.zig byte for byte, so this cannot quietly restyle a size
+it was not asked about. The png path is faithful but not exact -- the pngs are
+the same frames after a square pad and a LANCZOS resize, and round-tripping
+`small` through it reproduces 95% of the baked bytes -- which is why it only
+ever writes the sizes you name.
+
 Needs Pillow. The checked-in outputs are what the build uses, so this only has
 to be rerun when the artwork itself changes.
 """
 
 import os
+import re
 import sys
+from collections import namedtuple
 
 from PIL import Image, ImageEnhance, ImageOps
 
-# Cell grids, smallest first. One terminal row is two stacked pixels, so the
-# sample grid for a size is COLS x ROWS*2.
+# One baked size. `cols` x `rows` cells; one terminal row is two stacked
+# pixels, so the sample grid is cols x rows*2.
 #
-# `small` is the floor, not a preference: below roughly 8x4 the robot stops
-# being a robot. Swept against the real frames, 6x3 and 5x3 are a featureless
-# vertical smear with no eye and no legs, and 3x2 -- which is what a literal
-# "a third of 10x5" works out to -- is two grey specks. 7x4 finds the legs but
-# the eye survives in only 2 of 11 frames; 8x4 gets it to 4 of 11 and keeps the
-# silhouette, so that is where the floor sits.
+# `keep` and `eye` exist because the sampling rules that suit 10x5 destroy a
+# 6x1. See SIZES.
+Grid = namedtuple("Grid", "cols rows keep eye")
+Grid.__new__.__defaults__ = (0.5, 2.5)
+
+# Cell grids, smallest first.
+#
+# 8x4 was once the floor, on the reasoning that below it the robot stops being
+# a robot: swept against the real frames, 6x3 and 5x3 are a featureless
+# vertical smear with no eye and no legs, and 3x2 is two grey specks. That
+# sweep held the sampling constant, and that was the mistake. Two rules tuned
+# at 10x5 are what actually destroy the small end:
+#
+#   `keep` -- a half-cell is ink only if this share of its source pixels is
+#   robot. At 0.5 (a majority) it is right for a big grid and brutal for a
+#   small one, where one cell covers so much background that nearly every cell
+#   votes itself empty. Lowering it fattens the silhouette back to something
+#   with legs.
+#
+#   `eye` -- the cyan eye's vote weight. The eye is most of what makes the
+#   shape read as a robot rather than a smudge, and the smaller the grid the
+#   more it has to punch above its pixel count to survive at all. At 6x1 the
+#   stock 2.5 loses it in 8 frames of 11; 8.0 keeps it in 10, and spills to a
+#   second cyan cell in only one.
+#
+# So the floor is lower than it looked, as long as the sampling moves with it.
+# `mini` is one row on purpose: that is what fits inside the ordinary 3-row
+# composer without growing it (see mascot.inputBoxHeight).
 SIZES = {
-    "small": (8, 4),
-    "medium": (10, 5),
-    "large": (21, 10),
+    "mini": Grid(6, 1, keep=0.25, eye=8.0),
+    "xsmall": Grid(7, 2, keep=0.28, eye=6.0),
+    "small": Grid(8, 4),
+    "medium": Grid(10, 5),
+    "large": Grid(21, 10),
 }
 DEFAULT_SIZE = "medium"
+
+FRAME_COUNT = 11
 
 PNG_SIZE = (192, 192)
 
@@ -45,10 +85,6 @@ FLIPS = {
     "-h": Image.FLIP_LEFT_RIGHT,
     "-v": Image.FLIP_TOP_BOTTOM,
 }
-
-# Set per size by `main`; `to_cells` reads them.
-COLS = SIZES[DEFAULT_SIZE][0]
-ROWS = SIZES[DEFAULT_SIZE][1]
 
 # The artwork's own colours, sampled from the gif: dark outline, three body
 # greys, the cyan eye, the tan chest patch, and the dust puffs. Quantizing to
@@ -126,7 +162,7 @@ def nearest(rgb):
     )
 
 
-def to_cells(img):
+def to_cells(img, grid):
     """One byte per cell: quantize at full resolution, then vote per half-cell.
 
     Deliberately *not* a resize-then-quantize. Downsampling first averages each
@@ -135,7 +171,13 @@ def to_cells(img):
     chest patch and most of the dust in one step. Quantizing first and then
     letting the source pixels vote keeps a small feature able to win its cell,
     which `VOTE_WEIGHT` then tunes.
+
+    `grid.keep` and `grid.eye` override the two thresholds that do not survive
+    the trip down to a couple of rows; see SIZES.
     """
+    cols, rows = grid.cols, grid.rows
+    weight = list(VOTE_WEIGHT)
+    weight[4] = grid.eye
     img = ImageEnhance.Contrast(img).enhance(1.35)
     img = ImageEnhance.Color(img).enhance(1.5)
     w, h = img.size
@@ -159,8 +201,8 @@ def to_cells(img):
 
     def sample(cx, cy):
         """Weighted vote over the source rectangle behind one half-cell."""
-        x0, x1 = w * cx // COLS, w * (cx + 1) // COLS
-        y0, y1 = h * cy // (ROWS * 2), h * (cy + 1) // (ROWS * 2)
+        x0, x1 = w * cx // cols, w * (cx + 1) // cols
+        y0, y1 = h * cy // (rows * 2), h * (cy + 1) // (rows * 2)
         tally = [0.0] * len(PALETTE)
         clear = 0
         total = 0
@@ -171,17 +213,17 @@ def to_cells(img):
                 if i == TRANSPARENT:
                     clear += 1
                 else:
-                    tally[i] += VOTE_WEIGHT[i]
-        # Mostly empty stays empty, so the robot keeps a silhouette instead of
+                    tally[i] += weight[i]
+        # Too empty stays empty, so the robot keeps a silhouette instead of
         # growing a one-cell halo of whatever colour was nearest the edge.
-        if total == 0 or clear * 2 > total:
+        if total == 0 or (total - clear) < grid.keep * total:
             return TRANSPARENT
         best = max(range(len(PALETTE)), key=lambda i: tally[i])
         return TRANSPARENT if tally[best] == 0 else best
 
     out = bytearray()
-    for r in range(ROWS):
-        for c in range(COLS):
+    for r in range(rows):
+        for c in range(cols):
             out.append((sample(c, r * 2) << 4) | sample(c, r * 2 + 1))
     return bytes(out)
 
@@ -244,23 +286,73 @@ def write_zig(path, per_size, frame_count):
         fh.write("\n".join(lines))
 
 
+def frames_from_pngs(here):
+    """Reconstruct the source frames from the checked-in per-frame pngs.
+
+    Each png is one union-cropped frame padded into a square and resized, so
+    cropping back to the union alpha bbox recovers the frame the gif path would
+    have sampled -- at the resolution the png kept, which is why this is only
+    trusted for sizes named on the command line.
+    """
+    return union_crop([
+        Image.open(os.path.join(here, f"frame-{i:02d}.png")).convert("RGBA")
+        for i in range(FRAME_COUNT)
+    ])
+
+
+def parse_baked(path):
+    """The variants already in mascot_frames.zig, as {name: (cols, rows, [frames])}.
+
+    Lets a partial regeneration copy through everything it was not asked to
+    touch, instead of restyling the whole family as a side effect.
+    """
+    with open(path) as fh:
+        src = fh.read()
+    out = {}
+    for m in re.finditer(
+        r"pub const (\w+): Variant = \.\{\s*\.cols = (\d+),\s*\.rows = (\d+),"
+        r"\s*\.cells = &\.\{(.*?)\n    \},",
+        src,
+        re.S,
+    ):
+        name, cols, rows = m.group(1), int(m.group(2)), int(m.group(3))
+        data = bytes(int(b, 16) for b in re.findall(r"0x([0-9A-Fa-f]{2}),", m.group(4)))
+        span = cols * rows
+        out[name] = (cols, rows, [data[i:i + span] for i in range(0, len(data), span)])
+    return out
+
+
 def main():
-    global COLS, ROWS
+    here = os.path.dirname(os.path.abspath(__file__))
+    zig_out = os.path.join(os.path.dirname(here), "mascot_frames.zig")
+
+    # --from-pngs: no gif to hand, so resample only the named sizes and keep
+    # the rest exactly as they are.
+    if len(sys.argv) >= 2 and sys.argv[1] == "--from-pngs":
+        names = sys.argv[2:] or list(SIZES)
+        unknown = [n for n in names if n not in SIZES]
+        if unknown:
+            raise SystemExit(f"unknown size(s): {', '.join(unknown)}")
+        frames = frames_from_pngs(here)
+        per_size = parse_baked(zig_out)
+        for name in names:
+            grid = SIZES[name]
+            per_size[name] = (grid.cols, grid.rows, [to_cells(f, grid) for f in frames])
+        # SIZES order, so the file reads smallest-first however it was built.
+        ordered = {n: per_size[n] for n in SIZES if n in per_size}
+        write_zig(zig_out, ordered, FRAME_COUNT)
+        print(f"{', '.join(names)} <- {FRAME_COUNT} pngs; other sizes copied through")
+        return
+
     if len(sys.argv) != 2:
         raise SystemExit(__doc__)
     src = sys.argv[1]
-    here = os.path.dirname(os.path.abspath(__file__))
     frames = union_crop(load_frames(src))
 
     per_size = {}
-    for name, (cols, rows) in SIZES.items():
-        COLS, ROWS = cols, rows
-        per_size[name] = (cols, rows, [to_cells(f) for f in frames])
-    write_zig(
-        os.path.join(os.path.dirname(here), "mascot_frames.zig"),
-        per_size,
-        len(frames),
-    )
+    for name, grid in SIZES.items():
+        per_size[name] = (grid.cols, grid.rows, [to_cells(f, grid) for f in frames])
+    write_zig(zig_out, per_size, len(frames))
 
     pngs = 0
     for i, f in enumerate(frames):
@@ -278,7 +370,7 @@ def main():
             out.save(os.path.join(here, f"frame-{i:02d}{suffix}.png"), optimize=True)
             pngs += 1
 
-    sizes = ", ".join(f"{n} {c}x{r}" for n, (c, r) in SIZES.items())
+    sizes = ", ".join(f"{n} {g.cols}x{g.rows}" for n, g in SIZES.items())
     print(f"{len(frames)} frames -> mascot_frames.zig ({sizes}) + {pngs} pngs")
 
 

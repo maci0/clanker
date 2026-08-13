@@ -64,14 +64,26 @@ pub const Flip = enum {
 };
 
 pub const Size = enum {
-    /// The floor, not a preference: below roughly 8x4 the robot stops reading
-    /// as a robot at all. See the sweep documented in `gen_frames.py`.
+    /// One row tall, which is the whole point: it is the only size that fits
+    /// inside the ordinary three-row composer without growing it, so
+    /// `--mascot=input` can be on by default without moving anything. At this
+    /// scale the robot is a silhouette and its cyan eye, and the eye is doing
+    /// most of the work -- see the `eye` weight in `gen_frames.py`.
+    mini,
+    /// Two rows: legs and an arm return, and the composer grows by exactly one
+    /// row to hold it.
+    xsmall,
+    /// Was once documented as the floor. It is not; `mini` and `xsmall` sit
+    /// below it, reached by moving the sampling thresholds down with the grid
+    /// rather than holding them at what suits 10x5.
     small,
     medium,
     large,
 
     pub fn variant(self: Size) Variant {
         return switch (self) {
+            .mini => frames.mini,
+            .xsmall => frames.xsmall,
             .small => frames.small,
             .medium => frames.medium,
             .large => frames.large,
@@ -80,6 +92,13 @@ pub const Size = enum {
 
     pub fn parse(text: []const u8) ?Size {
         const table = .{
+            .{ "mini", Size.mini },
+            .{ "xxs", Size.mini },
+            .{ "tiny", Size.mini },
+            .{ "xsmall", Size.xsmall },
+            .{ "extra-small", Size.xsmall },
+            .{ "extrasmall", Size.xsmall },
+            .{ "xs", Size.xsmall },
             .{ "small", Size.small },
             .{ "s", Size.small },
             .{ "medium", Size.medium },
@@ -171,6 +190,22 @@ pub const Mode = enum {
         return switch (self) {
             .place => .left,
             else => .right,
+        };
+    }
+
+    /// How big the robot is when the user did not say.
+    ///
+    /// `input` draws inside the composer, and any size above `mini` makes the
+    /// composer taller than the three rows it has when the mascot is off. That
+    /// is a fine thing to opt into and a bad thing to inflict: turning the
+    /// mascot on should not resize the box you type in. So `input` defaults to
+    /// the one size that fits, and an explicit `--mascot-size` still grows it.
+    /// Every other mode reserves transcript rows instead, where `medium` has
+    /// always been the right default.
+    pub fn defaultSize(self: Mode) Size {
+        return switch (self) {
+            .input => .mini,
+            else => .medium,
         };
     }
 };
@@ -583,14 +618,22 @@ test "Size and Facing parse their spellings" {
     try testing.expectEqual(Size.medium, Size.parse("MEDIUM").?);
     try testing.expectEqual(Size.large, Size.parse("big").?);
     try testing.expectEqual(@as(?Size, null), Size.parse("huge"));
+    // The two below `small`, in every spelling someone would reach for.
+    try testing.expectEqual(Size.mini, Size.parse("mini").?);
+    try testing.expectEqual(Size.mini, Size.parse("TINY").?);
+    try testing.expectEqual(Size.mini, Size.parse("xxs").?);
+    try testing.expectEqual(Size.xsmall, Size.parse("xsmall").?);
+    try testing.expectEqual(Size.xsmall, Size.parse("XS").?);
+    try testing.expectEqual(Size.xsmall, Size.parse("extra-small").?);
+    try testing.expectEqual(Size.xsmall, Size.parse("extrasmall").?);
     try testing.expectEqual(Facing.left, Facing.parse("left").?);
     try testing.expectEqual(Facing.right, Facing.parse("Right").?);
     try testing.expectEqual(@as(?Facing, null), Facing.parse("up"));
 }
 
 test "every baked size is well formed and distinct" {
-    var seen: [3]struct { cols: u16, rows: u16 } = undefined;
-    for ([_]Size{ .small, .medium, .large }, 0..) |s, i| {
+    var seen: [std.enums.values(Size).len]struct { cols: u16, rows: u16 } = undefined;
+    for (std.enums.values(Size), 0..) |s, i| {
         const v = s.variant();
         try testing.expect(v.cols > 0 and v.rows > 0);
         // The whole animation, concatenated: one frame's worth per frame.
@@ -606,15 +649,21 @@ test "every baked size is well formed and distinct" {
         }
         seen[i] = .{ .cols = v.cols, .rows = v.rows };
     }
-    // Strictly increasing, or "small" and "large" are not doing anything.
-    try testing.expect(seen[0].cols < seen[1].cols and seen[0].rows < seen[1].rows);
-    try testing.expect(seen[1].cols < seen[2].cols and seen[1].rows < seen[2].rows);
+    // Strictly increasing along the whole ladder, or a size in it is not
+    // doing anything. Declaration order is the ladder: mini to large.
+    for (seen[1..], seen[0 .. seen.len - 1]) |bigger, smaller| {
+        try testing.expect(smaller.cols < bigger.cols and smaller.rows < bigger.rows);
+    }
+    // The smallest is one row: that is what lets `.input` leave the composer
+    // the height it is when the mascot is off. Pinned because the whole
+    // default in `Mode.defaultSize` rests on it.
+    try testing.expectEqual(@as(u16, 1), Size.mini.variant().rows);
 }
 
 test "the baked frames are not all identical" {
     // Guards the generator: a resampling bug that collapsed every frame to the
     // same cells would still round-trip and still animate, silently.
-    for ([_]Size{ .small, .medium, .large }) |s| {
+    for (std.enums.values(Size)) |s| {
         const v = s.variant();
         const span = @as(usize, v.cols) * @as(usize, v.rows);
         const first = v.cells[0..span];
@@ -636,7 +685,7 @@ test "loopColumn enters from off-left and exits fully off-right" {
 }
 
 test "loopColumn is always somewhere on the wrap span, at every size" {
-    for ([_]Size{ .small, .medium, .large }) |s| {
+    for (std.enums.values(Size)) |s| {
         const v = s.variant();
         const width: u16 = 40;
         for (0..500) |t| {
@@ -677,7 +726,7 @@ test "cornerColumn parks against the right edge with a margin" {
 }
 
 test "cornerColumn keeps the whole robot on screen at every size" {
-    for ([_]Size{ .small, .medium, .large }) |s| {
+    for (std.enums.values(Size)) |s| {
         const v = s.variant();
         var width: u16 = v.cols;
         while (width < v.cols + 40) : (width += 1) {
@@ -838,7 +887,7 @@ test "clip resolves both edges and reports fully-hidden frames" {
 }
 
 test "clip never describes a region outside the surface, at every size" {
-    for ([_]Size{ .small, .medium, .large }) |s| {
+    for (std.enums.values(Size)) |s| {
         const v = s.variant();
         const width: u16 = 24;
         var col: i32 = -@as(i32, v.cols) - 2;
@@ -866,7 +915,7 @@ test "minTerminal is the real minimum, at every size" {
     // feature shipped a figure five rows short -- so derive it in one place
     // and pin that one place here.
     const chrome: u16 = 5;
-    for ([_]Size{ .small, .medium, .large }) |s| {
+    for (std.enums.values(Size)) |s| {
         const v = s.variant();
         const min = minTerminal(v);
         try testing.expect(fits(v, min.cols, min.rows - chrome));
@@ -884,8 +933,32 @@ test "inputBoxHeight makes room for the robot without ever shrinking the box" {
     try testing.expectEqual(frames.small.rows + 2, inputBoxHeight(frames.small));
     try testing.expectEqual(med.rows + 2, inputBoxHeight(med));
     try testing.expectEqual(frames.large.rows + 2, inputBoxHeight(frames.large));
-    for ([_]Size{ .small, .medium, .large }) |s| {
+    for (std.enums.values(Size)) |s| {
         try testing.expect(inputBoxHeight(s.variant()) >= 3);
+    }
+}
+
+test "only mini leaves the composer the height it has with no mascot" {
+    // The ordinary box is three rows: a text row between two borders. `.input`
+    // sizes the box from the robot, so this is the difference between a mascot
+    // you switch on and a mascot that rearranges your screen when you do.
+    const plain: u16 = 3;
+    try testing.expectEqual(plain, inputBoxHeight(Size.mini.variant()));
+    try testing.expectEqual(plain, inputBoxHeight(Mode.input.defaultSize().variant()));
+    // Every larger size grows it, by exactly the rows it needs.
+    for (std.enums.values(Size)) |s| {
+        if (s == .mini) continue;
+        const grown = inputBoxHeight(s.variant());
+        try testing.expect(grown > plain);
+        try testing.expectEqual(s.variant().rows + 2, grown);
+    }
+    // xsmall is the next step up, and costs exactly one row.
+    try testing.expectEqual(plain + 1, inputBoxHeight(Size.xsmall.variant()));
+    // No other mode is affected: they reserve transcript rows instead, where
+    // shrinking the robot to one row would be a downgrade nobody asked for.
+    for (std.enums.values(Mode)) |m| {
+        if (m == .input) continue;
+        try testing.expectEqual(Size.medium, m.defaultSize());
     }
 }
 
@@ -1082,7 +1155,7 @@ test "draw picks the kitty id set matching the current flip" {
 
 test "every size draws without escaping its box" {
     const gpa = testing.allocator;
-    for ([_]Size{ .small, .medium, .large }) |s| {
+    for (std.enums.values(Size)) |s| {
         const v = s.variant();
         const size: vxfw.Size = .{ .width = v.cols + 10, .height = v.rows + 4 };
         for ([_]Flip{ .none, .horizontal, .vertical }) |f| {

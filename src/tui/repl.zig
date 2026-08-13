@@ -5696,9 +5696,10 @@ const MascotChoice = struct {
 
 /// Resolves every mascot setting from its flag and its config key.
 ///
-/// Facing is the one that is not a plain two-way pick: its default depends on
-/// the mode that was just resolved, because `place` faces left unless told
-/// otherwise and nothing else does.
+/// Size and facing are not plain two-way picks: both default off the mode that
+/// was just resolved. `place` faces left unless told otherwise and nothing else
+/// does, and `input` is the only mode whose size changes the shape of the
+/// composer, so it defaults to the one that fits inside it (Mode.defaultSize).
 fn resolveMascot(
     mode_flag: ?[]const u8,
     mode_cfg: []const u8,
@@ -5708,7 +5709,7 @@ fn resolveMascot(
     facing_cfg: []const u8,
 ) MascotChoice {
     const mode = pickSetting(mascot.Mode, mascot.Mode.parse, mode_flag, mode_cfg, .off);
-    const size = pickSetting(mascot.Size, mascot.Size.parse, size_flag, size_cfg, .medium);
+    const size = pickSetting(mascot.Size, mascot.Size.parse, size_flag, size_cfg, mode.value.defaultSize());
     const facing = pickSetting(
         mascot.Facing,
         mascot.Facing.parse,
@@ -5755,7 +5756,7 @@ test "resolveMascot prefers the flag and tolerates junk from either side" {
     try std.testing.expectEqual(@as(?[]const u8, null), resolveMode("loop", "off").bad_mode);
 }
 
-test "resolveMascot resolves size independently of mode" {
+test "resolveMascot takes size from the flag, the config, then the mode" {
     try std.testing.expectEqual(mascot.Size.medium, resolveMode("loop", "").size);
     const small = resolveMascot("loop", "", "small", "", null, "");
     try std.testing.expectEqual(mascot.Size.small, small.size);
@@ -5774,6 +5775,36 @@ test "resolveMascot resolves size independently of mode" {
     try std.testing.expectEqualStrings("gigantic", bad.bad_size.?);
     // A bad size must not take the mode down with it.
     try std.testing.expectEqual(mascot.Mode.loop, bad.mode);
+}
+
+test "input mode defaults to the size that fits the composer" {
+    // `--mascot=input` with nothing else said must not make the box taller
+    // than it is with the mascot off, so its unasked-for size is `mini`.
+    try std.testing.expectEqual(mascot.Size.mini, resolveMode("input", "").size);
+    try std.testing.expectEqual(mascot.Size.mini, resolveMode(null, "input").size);
+    try std.testing.expectEqual(
+        @as(u16, 3),
+        mascot.inputBoxHeight(resolveMode("input", "").size.variant()),
+    );
+
+    // Asking for a bigger one still gets it, from either side, and that is
+    // when the box is allowed to grow.
+    const asked = resolveMascot("input", "", "small", "", null, "");
+    try std.testing.expectEqual(mascot.Size.small, asked.size);
+    try std.testing.expect(mascot.inputBoxHeight(asked.size.variant()) > 3);
+    try std.testing.expectEqual(
+        mascot.Size.xsmall,
+        resolveMascot("input", "", null, "xsmall", null, "").size,
+    );
+
+    // The default is per mode, not global: nothing else shrinks.
+    try std.testing.expectEqual(mascot.Size.medium, resolveMode("place", "").size);
+    try std.testing.expectEqual(mascot.Size.medium, resolveMode("on", "").size);
+    // A junk size under `input` falls back to mini, not to medium: falling
+    // back must not be the thing that resizes the box either.
+    const junk = resolveMascot("input", "", "gigantic", "", null, "");
+    try std.testing.expectEqual(mascot.Size.mini, junk.size);
+    try std.testing.expectEqualStrings("gigantic", junk.bad_size.?);
 }
 
 test "facing defaults per mode and is overridable" {
