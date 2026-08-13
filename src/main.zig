@@ -60,6 +60,7 @@ comptime {
     _ = @import("util/runlock.zig");
     _ = @import("util/toml_bridge.zig");
     _ = @import("util/toolout.zig");
+    _ = @import("util/utf8.zig");
     _ = @import("agent/autolearn.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("evals/runner.zig");

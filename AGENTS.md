@@ -58,8 +58,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   theme, transcript rendering, control-character sanitizing, per-turn stats,
   and terminal width tracking.
 - `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook,
-  logging and dotenv. Peer notify/phonebook, patch application, knowledge
-  store, and prompts store moved to sandboxed WASM tools (`tools/zig/`).
+  logging, dotenv, and the one UTF-8 byte-cap (`util/utf8.zig` `cap`). Peer
+  notify/phonebook, patch application, knowledge store, and prompts store
+  moved to sandboxed WASM tools (`tools/zig/`).
 - `src/webui_vendor/` — vendored JS dependencies for the web UI (preact,
   d3-dag, mermaid, highlight.js). Committed, not generated.
 - Every `.zig` file lives under a subsystem directory; only `main.zig`,

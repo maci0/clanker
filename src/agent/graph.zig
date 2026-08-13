@@ -5,6 +5,7 @@
 //! it back (`clanker graph [run-id]` as an ASCII tree).
 
 const std = @import("std");
+const utf8 = @import("../util/utf8.zig");
 
 pub const NodeKind = enum {
     llm,
@@ -63,12 +64,7 @@ pub const arguments_preview_cap = 8000;
 /// that codepoint so the preview never ends with a dangling continuation byte
 /// (which would corrupt the JSON or UI rendering).
 pub fn previewCap(s: []const u8, cap: usize) []const u8 {
-    if (s.len <= cap) return s;
-    var end: usize = cap;
-    // A continuation byte is 0b10xxxxxx. Back up while the byte at `end` is
-    // one, stepping out of the middle of a multi-byte character.
-    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
-    return s[0..end];
+    return utf8.cap(s, cap);
 }
 
 /// Bounds a node's recorded output to `output_preview_cap` bytes.

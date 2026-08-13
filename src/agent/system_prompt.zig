@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const types = @import("../llm/types.zig");
+const utf8 = @import("../util/utf8.zig");
 
 /// Per-file read cap for instruction layers and each `@` import hop.
 const max_instruction_file_bytes: usize = 64 * 1024;
@@ -70,10 +71,7 @@ const self_authored_notice =
 /// note written mid-codepoint would otherwise dangle a continuation byte into
 /// the system prompt as invalid UTF-8, which is sent to the provider as-is.
 fn capUtf8(s: []const u8, max_bytes: usize) []const u8 {
-    if (s.len <= max_bytes) return s;
-    var end = max_bytes;
-    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
-    return s[0..end];
+    return utf8.cap(s, max_bytes);
 }
 
 /// Resolves the path to device-global operator instructions.

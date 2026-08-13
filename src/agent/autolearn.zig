@@ -18,6 +18,7 @@ const ensuredir = @import("../util/ensuredir.zig");
 const log = @import("../util/log.zig");
 const filelock = @import("../util/filelock.zig");
 const atomic_write = @import("../util/atomic_write.zig");
+const utf8 = @import("../util/utf8.zig");
 
 const event_path = "state/autolearn.jsonl";
 /// Hard cap on the log so a busy harness cannot grow state without bound.
@@ -49,11 +50,7 @@ const cap_name_bytes: usize = 128;
 /// runs long; the cut backs up to a whole-codepoint boundary so a capped
 /// line is never corrupted by a dangling continuation byte.
 pub fn capUtf8(s: []const u8, max_bytes: usize) []const u8 {
-    if (s.len <= max_bytes) return s;
-    var end = max_bytes;
-    // gated on s.len > max_bytes, so end < s.len: the read is in bounds.
-    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
-    return s[0..end];
+    return utf8.cap(s, max_bytes);
 }
 
 /// Appends one event line to state/autolearn.jsonl (best effort).

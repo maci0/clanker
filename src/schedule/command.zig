@@ -12,6 +12,7 @@ const cron = @import("cron.zig");
 const store = @import("store.zig");
 const runner = @import("runner.zig");
 const log = @import("../util/log.zig");
+const utf8 = @import("../util/utf8.zig");
 
 pub const Options = struct {
     /// "list" (default), "add", "remove", "enable", "disable", "run-due",
@@ -317,10 +318,7 @@ fn ellipsize(s: []const u8, max: usize) []const u8 {
     const flat = std.mem.trim(u8, s, " \t\r\n");
     // A newline in a prompt would break the row apart; cut at the first one.
     const first_line = flat[0..(std.mem.findScalar(u8, flat, '\n') orelse flat.len)];
-    if (first_line.len <= max) return first_line;
-    var end = max;
-    while (end > 0 and (first_line[end] & 0xC0) == 0x80) end -= 1;
-    return first_line[0..end];
+    return utf8.cap(first_line, max);
 }
 
 // ------------------------------------------------------------------- tests --

@@ -17,6 +17,7 @@ const chatrooms = @import("../peers/chatrooms.zig");
 const filelock = @import("../util/filelock.zig");
 const log = @import("../util/log.zig");
 const toolout = @import("../util/toolout.zig");
+const utf8 = @import("../util/utf8.zig");
 const mock_server = @import("../llm/mock_server.zig");
 
 /// Appended to the system prompt so a model asked for an exact-format answer
@@ -2554,11 +2555,7 @@ const ToolWorker = struct {
 /// is re-encoded as JSON for the stream event, and a split code point there
 /// is not a smaller preview but a malformed one.
 fn argsPreview(args: []const u8) []const u8 {
-    const cap = 400;
-    if (args.len <= cap) return args;
-    var end: usize = cap;
-    while (end > 0 and (args[end] & 0xC0) == 0x80) end -= 1;
-    return args[0..end];
+    return utf8.cap(args, 400);
 }
 
 test argsPreview {
@@ -2582,10 +2579,7 @@ fn errorDetail(arena: std.mem.Allocator, content: []const u8) []const u8 {
     const e = parsed.object.get("error") orelse return "";
     if (e != .string) return "";
     const s = e.string;
-    if (s.len <= cap) return s;
-    var end: usize = cap;
-    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
-    return s[0..end];
+    return utf8.cap(s, cap);
 }
 
 test errorDetail {

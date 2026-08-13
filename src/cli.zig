@@ -44,6 +44,7 @@ const atomic_write = @import("util/atomic_write.zig");
 const diskcap = @import("util/diskcap.zig");
 const runlock = @import("util/runlock.zig");
 const filelock = @import("util/filelock.zig");
+const utf8 = @import("util/utf8.zig");
 const gate_checks = @import("gate/checks.zig");
 const schedule_cmd = @import("schedule/command.zig");
 const schedule_runner = @import("schedule/runner.zig");
@@ -3486,18 +3487,6 @@ fn toolText(
     tool_name: []const u8,
     args: []const u8,
 ) ![]const u8 {
-    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
-    const mod = runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, tool_name, &ctx) catch |err| {
-        if (err == error.UnknownTool) {
-            log.log(.error_, "internal tool '{s}' not found in {s}", .{ tool_name, cfg.agent.tools_dir });
-        } else {
-            log.log(.error_, "'{s}' tool load failed: {s} (run `zig build tools`)", .{ tool_name, @errorName(err) });
-        }
-        return error.ToolWasmMissing;
-    };
-    defer mod.deinit();
-
     var ibuf: [8192]u8 = undefined;
     var iw: std.Io.Writer = .fixed(&ibuf);
     var is = std.json.Stringify{ .writer = &iw, .options = .{} };
@@ -3506,8 +3495,7 @@ fn toolText(
     try is.write(args);
     try is.endObject();
 
-    const raw = try mod.executeTool(ibuf[0..iw.end]);
-    defer gpa.free(raw);
+    const raw = try toolJson(io, gpa, arena, cfg, environ_map, tool_name, ibuf[0..iw.end]);
 
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true });
     if (parsed != .object) return error.ToolBadOutput;
@@ -3548,19 +3536,7 @@ fn cmdPrune(init: std.process.Init, apply: bool) !void {
     try is.objectField("state_dir");
     try is.write(cfg.agent.state_dir);
     try is.endObject();
-    var reg = try registry.Registry.load(init.io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-    var ctx = client.Ctx{ .io = init.io, .gpa = init.gpa, .environ_map = init.environ_map, .cfg = &cfg };
-    const mod = runtime.loadNamedTool(init.gpa, init.io, arena, init.environ_map, &cfg, &reg, "cmd_janitor", &ctx) catch |err| {
-        if (err == error.UnknownTool) {
-            log.log(.error_, "internal tool 'cmd_janitor' not found in {s}", .{cfg.agent.tools_dir});
-        } else {
-            log.log(.error_, "'cmd_janitor' tool load failed: {s} (run `zig build tools`)", .{@errorName(err)});
-        }
-        return error.ToolWasmMissing;
-    };
-    defer mod.deinit();
-    const raw = try mod.executeTool(ibuf[0..iw.end]);
-    defer init.gpa.free(raw);
+    const raw = try toolJson(init.io, init.gpa, arena, &cfg, init.environ_map, "cmd_janitor", ibuf[0..iw.end]);
     const stdout = std.Io.File.stdout();
     // Empty output reads as "did it even run?": when the tool has nothing to
     // report, say so, and on scans point at the flag that would act on it.
@@ -3997,17 +3973,6 @@ fn cmdNotify(init: std.process.Init, opts: Options) !void {
     const peer_name = opts.peer orelse return error.MissingPeer;
     const message = opts.message orelse return error.MissingMessage;
 
-    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-    const mod = runtime.loadNamedTool(gpa, io, arena, init.environ_map, &cfg, &reg, "peers", null) catch |err| {
-        if (err == error.UnknownTool) {
-            log.log(.error_, "internal tool 'peers' not found in {s}", .{cfg.agent.tools_dir});
-        } else {
-            log.log(.error_, "'peers' tool load failed: {s} (run `zig build tools`)", .{@errorName(err)});
-        }
-        return error.ToolWasmMissing;
-    };
-    defer mod.deinit();
-
     var ibuf: [4096]u8 = undefined;
     var iw: std.Io.Writer = .fixed(&ibuf);
     var is = std.json.Stringify{ .writer = &iw, .options = .{} };
@@ -4020,8 +3985,7 @@ fn cmdNotify(init: std.process.Init, opts: Options) !void {
     try is.write(message);
     try is.endObject();
 
-    const raw = try mod.executeTool(ibuf[0..iw.end]);
-    defer gpa.free(raw);
+    const raw = try toolJson(io, gpa, arena, &cfg, init.environ_map, "peers", ibuf[0..iw.end]);
     const result = parseToolResult(arena, raw);
     if (!result.ok) {
         log.log(.error_, "notify to '{s}' failed: {s}", .{ peer_name, result.err });
@@ -5767,14 +5731,12 @@ fn runStreamToolCall(calls: []const types.ToolCall) void {
         s.write(tc.name) catch return;
         s.objectField("args") catch return;
         const cap: usize = 400;
-        if (tc.arguments.len > cap) {
-            var cut: usize = cap;
-            // Do not split a UTF-8 sequence at the cut.
-            while (cut > 0 and (tc.arguments[cut] & 0xC0) == 0x80) cut -= 1;
+        const clipped = utf8.cap(tc.arguments, cap);
+        if (clipped.len < tc.arguments.len) {
             var arg_buf: [cap + 3]u8 = undefined;
-            @memcpy(arg_buf[0..cut], tc.arguments[0..cut]);
-            @memcpy(arg_buf[cut..][0..3], "...");
-            s.write(arg_buf[0 .. cut + 3]) catch return;
+            @memcpy(arg_buf[0..clipped.len], clipped);
+            @memcpy(arg_buf[clipped.len..][0..3], "...");
+            s.write(arg_buf[0 .. clipped.len + 3]) catch return;
         } else {
             s.write(tc.arguments) catch return;
         }
@@ -7966,10 +7928,9 @@ fn scanSkills(arena: std.mem.Allocator, io: std.Io, base: std.Io.Dir, dir: []con
 
 /// Clips a line to `max` bytes without splitting a UTF-8 codepoint.
 fn clipTo(arena: std.mem.Allocator, s: []const u8, max: usize) []const u8 {
-    if (s.len <= max) return s;
-    var end: usize = max;
-    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
-    return arena.dupe(u8, s[0..end]) catch s[0..end];
+    const clipped = utf8.cap(s, max);
+    if (clipped.len == s.len) return s;
+    return arena.dupe(u8, clipped) catch clipped;
 }
 
 /// Skills the prompt embeds also get capped at the same bound (PromptParts
