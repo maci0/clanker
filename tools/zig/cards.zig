@@ -627,6 +627,49 @@ pub fn blockedBy(cards: []Card, card: *const Card, arena: std.mem.Allocator) ![]
     return out.items;
 }
 
+/// True when every checklist item on the card is done. A card cannot enter
+/// Done until this holds, at every depth.
+pub fn checklistComplete(card: *const Card) bool {
+    for (card.subtasks) |sub| {
+        if (!sub.done) return false;
+    }
+    return true;
+}
+
+/// Whether following `from`'s depends_on edges can reach `sought`. Used to
+/// refuse a new edge that would close a cycle.
+pub fn checklistReaches(card: *const Card, from: []const u8, sought: []const u8, depth: usize) bool {
+    if (std.mem.eql(u8, from, sought)) return true;
+    if (depth >= card.subtasks.len) return false;
+    for (card.subtasks) |sub| {
+        if (!std.mem.eql(u8, sub.id, from)) continue;
+        for (sub.depends_on) |next| {
+            if (checklistReaches(card, next, sought, depth + 1)) return true;
+        }
+    }
+    return false;
+}
+
+/// True when every depends_on neighbour of `id` is already done, so the item
+/// itself may be marked done.
+pub fn checklistItemReady(card: *const Card, id: []const u8) bool {
+    for (card.subtasks) |sub| {
+        if (!std.mem.eql(u8, sub.id, id)) continue;
+        for (sub.depends_on) |dep_id| {
+            var satisfied = false;
+            for (card.subtasks) |candidate| {
+                if (std.mem.eql(u8, candidate.id, dep_id) and candidate.done) {
+                    satisfied = true;
+                    break;
+                }
+            }
+            if (!satisfied) return false;
+        }
+        return true;
+    }
+    return false;
+}
+
 // ------------------------------------------------------------------- tests --
 
 const t_alloc = std.testing.allocator;
@@ -864,6 +907,19 @@ test "checklist items nest and carry independent dependency edges" {
     try std.testing.expectEqualStrings("child", folded[0].subtasks[2].parent);
     try std.testing.expectEqual(@as(usize, 1), folded[0].subtasks[2].depends_on.len);
     try std.testing.expectEqualStrings("root", folded[0].subtasks[2].depends_on[0]);
+}
+
+test "done requires every checklist node and dependency cycles are detectable" {
+    const subs = [_]Subtask{
+        .{ .id = "a", .text = "root", .done = true, .depends_on = &.{"b"} },
+        .{ .id = "b", .text = "child", .parent = "a", .done = false },
+    };
+    const card: Card = .{ .id = "c", .title = "goal", .created_by = "x", .ts = 1, .subtasks = &subs };
+    try std.testing.expect(!checklistComplete(&card));
+    try std.testing.expect(checklistReaches(&card, "a", "b", 0));
+    try std.testing.expect(!checklistReaches(&card, "b", "a", 0));
+    try std.testing.expect(!checklistItemReady(&card, "a"));
+    try std.testing.expect(checklistItemReady(&card, "b"));
 }
 
 test "usage cannot be made to wrap or go negative" {

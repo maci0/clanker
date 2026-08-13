@@ -82,56 +82,6 @@ fn pageCapExceeded(pages_read: usize, has_more: bool) bool {
     return pages_read >= max_pages and has_more;
 }
 
-fn checklistReaches(card: *const cards.Card, from: []const u8, sought: []const u8, depth: usize) bool {
-    if (std.mem.eql(u8, from, sought)) return true;
-    if (depth >= card.subtasks.len) return false;
-    for (card.subtasks) |sub| {
-        if (!std.mem.eql(u8, sub.id, from)) continue;
-        for (sub.depends_on) |next| {
-            if (checklistReaches(card, next, sought, depth + 1)) return true;
-        }
-    }
-    return false;
-}
-
-fn checklistComplete(card: *const cards.Card) bool {
-    for (card.subtasks) |sub| {
-        if (!sub.done) return false;
-    }
-    return true;
-}
-
-fn checklistItemReady(card: *const cards.Card, id: []const u8) bool {
-    for (card.subtasks) |sub| {
-        if (!std.mem.eql(u8, sub.id, id)) continue;
-        for (sub.depends_on) |dep_id| {
-            var satisfied = false;
-            for (card.subtasks) |candidate| {
-                if (std.mem.eql(u8, candidate.id, dep_id) and candidate.done) {
-                    satisfied = true;
-                    break;
-                }
-            }
-            if (!satisfied) return false;
-        }
-        return true;
-    }
-    return false;
-}
-
-test "done requires every checklist node and dependency cycles are detectable" {
-    const subs = [_]cards.Subtask{
-        .{ .id = "a", .text = "root", .done = true, .depends_on = &.{"b"} },
-        .{ .id = "b", .text = "child", .parent = "a", .done = false },
-    };
-    const card: cards.Card = .{ .id = "c", .title = "goal", .created_by = "x", .ts = 1, .subtasks = &subs };
-    try std.testing.expect(!checklistComplete(&card));
-    try std.testing.expect(checklistReaches(&card, "a", "b", 0));
-    try std.testing.expect(!checklistReaches(&card, "b", "a", 0));
-    try std.testing.expect(!checklistItemReady(&card, "a"));
-    try std.testing.expect(checklistItemReady(&card, "b"));
-}
-
 const Sent = struct {
     ok: bool = false,
     id: []const u8 = "",
@@ -426,7 +376,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     } else if (std.mem.eql(u8, op, "move")) blk: {
         const col = req.column orelse return lib.fail(out, "which column?");
         if (!cards.validColumn(col)) return lib.fail(out, "no such column");
-        if (std.mem.eql(u8, col, cards.done_column) and !checklistComplete(cards.get(list, req.id).?))
+        if (std.mem.eql(u8, col, cards.done_column) and !cards.checklistComplete(cards.get(list, req.id).?))
             return lib.fail(out, "finish every checklist item before moving this card to Done");
         break :blk .{ .action = "move", .todo = req.id, .column = col };
     } else if (std.mem.eql(u8, op, "claim"))
@@ -434,7 +384,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     else if (std.mem.eql(u8, op, "assign"))
         .{ .action = "assign", .todo = req.id, .who = req.who orelse "" }
     else if (std.mem.eql(u8, op, "close")) blk: {
-        if (!checklistComplete(cards.get(list, req.id).?))
+        if (!cards.checklistComplete(cards.get(list, req.id).?))
             return lib.fail(out, "finish every checklist item before closing this card");
         break :blk .{ .action = "close", .todo = req.id };
     } else if (std.mem.eql(u8, op, "delete"))
@@ -454,7 +404,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         break :blk .{ .action = "subtask_add", .todo = req.id, .text = text, .parent = req.parent_subtask_id };
     } else if (std.mem.eql(u8, op, "subtask_toggle")) blk: {
         const sid = subtask_id orelse return lib.fail(out, "which subtask?");
-        if ((req.done orelse true) and !checklistItemReady(cards.get(list, req.id).?, sid))
+        if ((req.done orelse true) and !cards.checklistItemReady(cards.get(list, req.id).?, sid))
             return lib.fail(out, "finish this checklist item's dependencies first");
         break :blk .{ .action = "subtask_toggle", .todo = req.id, .subtask = sid, .done = req.done orelse true };
     } else if (std.mem.eql(u8, op, "subtask_remove")) blk: {
@@ -472,7 +422,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             if (std.mem.eql(u8, sub.id, on)) has_on = true;
         }
         if (!has_sid or !has_on) return lib.fail(out, "checklist dependency must name two items on this card");
-        if (!(req.off orelse false) and checklistReaches(card, on, sid, 0))
+        if (!(req.off orelse false) and cards.checklistReaches(card, on, sid, 0))
             return lib.fail(out, "checklist dependency would create a cycle");
         break :blk .{ .action = "subtask_depend", .todo = req.id, .subtask = sid, .on = on, .off = req.off orelse false };
     } else if (std.mem.eql(u8, op, "depend_add") or std.mem.eql(u8, op, "depend_remove")) blk: {
