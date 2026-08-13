@@ -1159,6 +1159,55 @@ after the first failure, and everything downstream of still-watching goes with
 it. Gate: `zig build`, `zig build tools`, `zig build test --summary all` —
 163/163 steps, 765/767 tests (2 skipped, the expected worktree pair).
 
+## The run graph points at the bottleneck (2026-08-13)
+
+A run graph already showed every step's duration, twice: a badge on the card and
+a bar scaled against the slowest node. Neither says which step *was* the slowest
+one, so finding it meant reading fifteen badges and comparing them by eye, and
+the bar is no help at all for that — the slowest node's bar is full, and so is
+that of anything within a few percent of it. The sr-only summary, which is both
+what a screen reader hears and what `Copy summary` puts on the clipboard,
+described the shape of the run and said nothing about its cost.
+
+`lib/graph.js` now works out where the time went, and both surfaces say so:
+
+- **`graphTotals(built)`** — the sum of every timed step, how many there were,
+  the longest one and what kind of step it was. A sum of steps, not a wall
+  clock: tools in one iteration run in parallel, so the total can exceed the
+  elapsed time, and a step's share of the *work* is the number worth acting on.
+- **`slowestWorthNaming(totals)`** — the editorial half, kept separate because it
+  is a judgement rather than arithmetic. A step is only called out when there is
+  another timed step to compare it against and it took at least 40% of the
+  total. On a run of evenly matched calls "slowest" is noise, and a run with one
+  timed step is not its own bottleneck.
+- **The node** gets `data-slowest`, the words `· slowest step` on its metrics
+  line, and `, the slowest step of this run` in its accessible name. The colour
+  on the border and the duration badge is emphasis on top of a label, not the
+  thing carrying it.
+- **The summary** gains a closing sentence: `The slowest step was the tool grep
+  at 900ms, 67% of the 1,350ms the steps took together.` When nothing dominates
+  it says so instead, rather than promoting whichever step happened to come
+  first.
+
+`buildNodeBox` takes the pick through a new optional `opts` argument, so its
+existing signature and every other caller are unchanged.
+
+### Verified
+
+`node` + the DOM stub driving the real `lib/graph.js`, with `core/vendor.js`
+swapped for a stub whose `loadD3` installs a fake `dagStratify`/`sugiyama`, so
+`layoutGraph` really runs and really builds the nodes. 37 assertions, 17 of them
+this slice: exactly one node marked across a five-node graph, that it is the
+900ms `grep` and not the 300ms model call, the mark present in the metrics text
+and the accessible name as well as the attribute, the totals (1,350ms over four
+timed steps, longest `grep`, kind `tool`), the summary naming the step, its
+share and the total, and both refusals — three steps within 10ms of each other
+name nobody, and neither does a run with a single timed step. Against unmodified
+`main` the same harness fails 6 of them, including the two new exports not
+existing. The `app.css` rules are two lines and are checked as source shape.
+Gate: `zig build`, `zig build tools`, `zig build test --summary all` — 163/163
+steps, 766/768 tests (2 skipped, the expected worktree pair).
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
