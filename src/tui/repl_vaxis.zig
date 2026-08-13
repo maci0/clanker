@@ -412,6 +412,18 @@ fn internalToolFailureHint(tool_name: []const u8, detail: []const u8) []const u8
     return "";
 }
 
+/// Internal descriptor names are useful in logs, not in a command transcript.
+/// Name the surface the operator can actually retry.
+fn internalToolDisplayName(tool_name: []const u8) []const u8 {
+    if (std.mem.eql(u8, tool_name, "cmd_sessions")) return "/sessions";
+    if (std.mem.eql(u8, tool_name, "cmd_graph")) return "/graph";
+    if (std.mem.eql(u8, tool_name, "cmd_status")) return "/status";
+    if (std.mem.eql(u8, tool_name, "cmd_tools")) return "/tools";
+    if (std.mem.eql(u8, tool_name, "cmd_plugins")) return "/plugins";
+    if (std.mem.eql(u8, tool_name, "compare")) return "/compare";
+    return tool_name;
+}
+
 fn appendDimBlock(arena: std.mem.Allocator, lines: *std.ArrayList(Line), text: []const u8) void {
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |line| lines.append(arena, .{ .text = line, .dim = true }) catch {};
@@ -429,6 +441,13 @@ test "internal tool recovery hints point to the command that failed" {
     try std.testing.expectEqualStrings("; /sessions lists saved conversations", internalToolFailureHint("cmd_sessions", "conversation not found"));
     try std.testing.expectEqualStrings("", internalToolFailureHint("cmd_plugins", "manifest not found"));
     try std.testing.expectEqualStrings("", internalToolFailureHint("cmd_tools", "descriptor not found"));
+}
+
+test "internal tool errors name public commands" {
+    try std.testing.expectEqualStrings("/graph", internalToolDisplayName("cmd_graph"));
+    try std.testing.expectEqualStrings("/plugins", internalToolDisplayName("cmd_plugins"));
+    try std.testing.expectEqualStrings("/compare", internalToolDisplayName("compare"));
+    try std.testing.expectEqualStrings("custom", internalToolDisplayName("custom"));
 }
 
 /// Folds one completed answer into transcript lines: control-stripped, split
@@ -2132,6 +2151,7 @@ const Model = struct {
     /// the transcript rather than bubbling: a broken tool should not take
     /// down the REPL, just be visible.
     fn runToolJson(self: *Model, tool_name: []const u8, input: []const u8, reload_plugins: bool) bool {
+        const display_name = internalToolDisplayName(tool_name);
         const mod = runtime.loadNamedTool(
             self.gpa,
             self.io,
@@ -2143,13 +2163,13 @@ const Model = struct {
             null,
         ) catch |err| {
             const hint: []const u8 = if (err == error.ToolWasmMissing) "; run `zig build tools`" else "";
-            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}{s}", .{ tool_name, @errorName(err), hint }) catch "error: internal tool failed", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}{s}", .{ display_name, @errorName(err), hint }) catch "error: internal tool failed", .dim = true }) catch {};
             return true;
         };
         defer mod.deinit();
 
         const raw = mod.executeTool(input) catch |err| {
-            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}", .{ tool_name, @errorName(err) }) catch "error: internal tool failed", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}", .{ display_name, @errorName(err) }) catch "error: internal tool failed", .dim = true }) catch {};
             return true;
         };
         defer self.gpa.free(raw);
@@ -2170,7 +2190,7 @@ const Model = struct {
             const raw_detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "unknown") else "unknown";
             const detail = clean(self.arena, raw_detail) orelse "unknown";
             const extra = internalToolFailureHint(tool_name, detail);
-            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}{s}", .{ tool_name, detail, extra }) catch "error: internal tool failed", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}{s}", .{ display_name, detail, extra }) catch "error: internal tool failed", .dim = true }) catch {};
             return true;
         }
         const text = parsed.object.get("text") orelse {
