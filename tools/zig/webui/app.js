@@ -971,6 +971,24 @@ function createTurn(task) {
   return { root: turn, events: events, answer: answer, foot: foot };
 }
 
+function errorRecoveryHint(msg) {
+  if (!msg) return "";
+  var m = msg.toLowerCase();
+  if (m.indexOf("401") !== -1 || m.indexOf("unauthorized") !== -1 || m.indexOf("authentication") !== -1)
+    return " (check API key; try clanker doctor)";
+  if (m.indexOf("429") !== -1 || m.indexOf("rate limit") !== -1 || m.indexOf("rate_limit") !== -1)
+    return " (rate limited; wait a moment or switch model)";
+  if (m.indexOf("not found") !== -1 || m.indexOf("model_not_found") !== -1)
+    return " (model not found; try a different model)";
+  if (m.indexOf("timeout") !== -1 || m.indexOf("timed out") !== -1)
+    return " (request timed out)";
+  if (m.indexOf("onnection refused") !== -1 || m.indexOf("onnection reset") !== -1)
+    return " (cannot reach provider; check network)";
+  if (m.indexOf("max_iterations") !== -1 || m.indexOf("iteration") !== -1)
+    return " (hit iteration limit)";
+  return "";
+}
+
 function appendText(turn, text, failed) {
   /* The rendered answer is not the answer: finalizeAnswer replaces the
      source with elements, so the fences, hashes, hyphens and pipes are gone
@@ -1684,7 +1702,7 @@ el.form.addEventListener("submit", function (e) {
       else if (evt.type === "status") { appendText(turn, "\n[ " + evt.message + " ]\n", true); }
       else if (evt.type === "ask") { addAskEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "confirm") { addConfirmEvent(turn, evt); setTurnPhase(turn, "ask"); }
-      else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + "]\n", true); setTurnPhase(turn, ""); pushLiveNode("tool", evt.message, "error", 0); }
+      else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + errorRecoveryHint(evt.message) + "]\n", true); setTurnPhase(turn, ""); pushLiveNode("tool", evt.message, "error", 0); }
       else if (evt.type === "done") {
         renderStats(turn, evt, task);
         statsRendered = true;

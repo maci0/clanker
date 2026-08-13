@@ -1,6 +1,11 @@
 const std = @import("std");
 const build_zon = @import("build.zig.zon");
 
+// Pure-logic modules under tools/zig/ that don't export the tool ABI (run/scratch/host_arena).
+// They are imported by other tools, not standalone guests, so the wasm build skips them
+// and `zig build test` runs their tests on the host target instead.
+const host_tested_helpers = [_][]const u8{ "arena_match", "cards", "compare_blind", "search_parse" };
+
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
@@ -125,7 +130,7 @@ pub fn build(b: *std.Build) void {
     // declares `extern "env"` functions the host test binary cannot link — so
     // the pure ones are listed rather than globbed, which is also what keeps
     // "is this testable" an explicit property of a file.
-    for ([_][]const u8{ "arena_match", "cards", "compare_blind", "search_parse" }) |stem| {
+    for (host_tested_helpers) |stem| {
         const mod = b.createModule(.{
             .root_source_file = b.path(b.fmt("tools/zig/{s}.zig", .{stem})),
             .target = test_target,
@@ -166,7 +171,12 @@ pub fn build(b: *std.Build) void {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".zig")) continue;
         if (std.mem.eql(u8, entry.name, "lib.zig")) continue; // shared guest library
-        names.append(b.allocator, b.dupe(entry.name[0 .. entry.name.len - 4])) catch @panic("OOM");
+        const stem = entry.name[0 .. entry.name.len - 4];
+        const is_helper = for (host_tested_helpers) |h| {
+            if (std.mem.eql(u8, stem, h)) break true;
+        } else false;
+        if (is_helper) continue;
+        names.append(b.allocator, b.dupe(stem)) catch @panic("OOM");
     }
     std.mem.sort([]const u8, names.items, {}, struct {
         fn lt(_: void, a: []const u8, bb: []const u8) bool {

@@ -977,7 +977,7 @@ fn editDistance(a: []const u8, b: []const u8) usize {
 
 fn renderUsage(buf: []u8) []const u8 {
     var w: std.Io.Writer = .fixed(buf);
-    w.writeAll("clanker - self-improving AI agent harness\n\nusage: clanker [command] [options]\n       clanker            with no command, starts the REPL\n") catch {};
+    w.print("clanker {s}\n\nusage: clanker [command] [options]\n       clanker            with no command, starts the REPL\n", .{version}) catch {};
     for (std.enums.values(Group)) |g| {
         w.print("\n{s}\n", .{g.title()}) catch {};
         for (&specs) |*s| {

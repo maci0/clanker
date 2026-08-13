@@ -1975,9 +1975,9 @@ const Model = struct {
     fn printHelp(self: *Model) void {
         const commands = buildCommandHelp(self.arena) catch return;
         var it = std.mem.splitScalar(u8, commands, '\n');
-        while (it.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+        while (it.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = !isSectionHeader(line) }) catch {};
         var eit = std.mem.splitScalar(u8, shell_escape_help, '\n');
-        while (eit.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+        while (eit.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = !isSectionHeader(line) }) catch {};
         const keys =
             \\keys:
             \\  Tab               complete a /command
@@ -1989,7 +1989,14 @@ const Model = struct {
             \\  mouse drag        select text in the transcript (copies on release)
         ;
         var kit = std.mem.splitScalar(u8, keys, '\n');
-        while (kit.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+        while (kit.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = !isSectionHeader(line) }) catch {};
+    }
+
+    /// A help section header: "commands:", "keys:", "shell escape:" (no leading
+    /// whitespace, trailing colon). Rendered at normal weight so the three
+    /// sections are visually distinct from their dim content lines.
+    fn isSectionHeader(line: []const u8) bool {
+        return line.len > 1 and line[0] != ' ' and line[line.len - 1] == ':';
     }
 
     fn openModelPicker(self: *Model, seed_query: []const u8) void {
