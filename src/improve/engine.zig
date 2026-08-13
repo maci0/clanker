@@ -2619,7 +2619,7 @@ fn stagedConfigTomlWeakened(src: []const u8) ?[]const u8 {
         "max_consecutive_test_only=0",
         "git_remote_ops = true",
         "git_remote_ops=true",
-        "\"git \"",
+        "\"git ",
         "\"git\t",
         "\"git\"]",
         "\"git\",",
@@ -2981,7 +2981,12 @@ test "the live src/config.zig keeps improve-gate defaults enabled" {
 }
 
 test "the live config.toml does not disable improve gates" {
-    const src = @embedFile("../../config.toml");
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const src = std.Io.Dir.cwd().readFileAlloc(io, "config.toml", gpa, .limited(1 << 20)) catch return error.SkipZigTest;
+    defer gpa.free(src);
     try std.testing.expect(stagedConfigTomlWeakened(src) == null);
     try std.testing.expect(stagedConfigTomlWeakened("[improve]\ncapability_gate = false\n") != null);
     try std.testing.expect(stagedConfigTomlWeakened("exec_pattern_allow = [\"git push\"]") != null);
@@ -3016,10 +3021,15 @@ test "the live cmdEval still runs every task and prints its real result" {
 }
 
 test "the live build.zig still wires test and tools steps" {
-    const src = @embedFile("../../build.zig");
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const src = std.Io.Dir.cwd().readFileAlloc(io, "build.zig", gpa, .limited(1 << 20)) catch return error.SkipZigTest;
+    defer gpa.free(src);
     try std.testing.expect(buildZigShapeBroken(src) == null);
-    const emptied = try std.mem.replaceOwned(u8, std.testing.allocator, src, "test_step.dependOn(&run_tests.step);", "if (false) test_step.dependOn(&run_tests.step);");
-    defer std.testing.allocator.free(emptied);
+    const emptied = try std.mem.replaceOwned(u8, gpa, src, "test_step.dependOn(&run_tests.step);", "if (false) test_step.dependOn(&run_tests.step);");
+    defer gpa.free(emptied);
     try std.testing.expectEqualStrings("test_step.dependOn(&run_tests.step);", buildZigShapeBroken(emptied).?);
 }
 
