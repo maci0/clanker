@@ -383,6 +383,35 @@ test "openai request body golden" {
     try std.testing.expectEqualStrings(expected, body);
 }
 
+test "openai request body sends reasoning_effort and omits it when unset" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const p = try config.Provider.single(arena, "ollama", "http://localhost:11434", .openai_compat, "llama3.3", .{ .max_tokens = 64, .reasoning_effort = .high });
+    const messages = [_]types.Message{
+        .{ .role = .user, .content = "hi" },
+    };
+    const body = try buildRequest(arena, .{
+        .provider = &p,
+        .messages = &messages,
+    });
+    defer arena.free(body);
+    // Exactly once: writeSamplingParams is the only writer. This codec used to
+    // write the field a second time from the model config directly, which a
+    // presence check would not have caught.
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, "\"reasoning_effort\":\"high\""));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, "reasoning_effort"));
+
+    const plain = try config.Provider.single(arena, "ollama", "http://localhost:11434", .openai_compat, "llama3.3", .{ .max_tokens = 64 });
+    const plain_body = try buildRequest(arena, .{
+        .provider = &plain,
+        .messages = &messages,
+    });
+    defer arena.free(plain_body);
+    try std.testing.expect(std.mem.indexOf(u8, plain_body, "reasoning_effort") == null);
+}
+
 test "openai response parse with tool call" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

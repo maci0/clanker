@@ -64,7 +64,12 @@ pub fn writeSamplingParams(s: *json.Stringify, params: api.RequestParams) !void 
         try s.objectField("top_p");
         try s.print("{d}", .{tp});
     }
-    const effort = params.reasoning_effort orelse model.reasoning_effort orelse rec.reasoning_effort;
+    // The model's value is a validated enum — config rejects anything outside
+    // the five levels — while the per-run override and the use-case table are
+    // wire strings. Flatten to the wire form so the precedence chain stays one
+    // expression.
+    const model_effort: ?[]const u8 = if (model.reasoning_effort) |re| @tagName(re) else null;
+    const effort = params.reasoning_effort orelse model_effort orelse rec.reasoning_effort;
     if (effort) |re| {
         try s.objectField("reasoning_effort");
         try s.write(re);
