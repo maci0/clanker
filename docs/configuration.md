@@ -239,8 +239,25 @@ chatrooms = false
 ## Other sections
 
 - **`[instance]`** — `name` and `id`, this clanker's identity to peers.
+- **`[serve]`** — what `clanker serve` binds, for a deployment that cannot pass
+  flags: `host` (interface, default `127.0.0.1`), `webui_port` (default
+  `17921`), and `serve_as` (a TOML array of hostnames the server may present
+  itself as). The weakest of three layers — `CLANKER_HOST` /
+  `CLANKER_WEBUI_PORT` override it, and `--host` / `--webui-port` /
+  `--serve-as` override those. Field-merged, so a `config.local.toml` that only
+  sets `webui_port` keeps a `host` from the base file. `serve` opens exactly one
+  socket regardless of what is set here.
+
+  ```toml
+  [serve]
+  host = "0.0.0.0"
+  webui_port = 17921
+  serve_as = ["clanker.lan"]
+  ```
 - **`[[peers]]`** — repeated tables of `name` + `url`, other `clanker serve`
-  instances this one can notify and share chatrooms/board with.
+  instances this one can notify and share chatrooms/board with. Outbound only:
+  a peer URL is something this process connects to, never a port it opens, so
+  nothing here is exposed by binding `serve` more widely.
 - **`[chatrooms]`** — `on`, `rooms` (default subscriptions), `max_history`.
 - **`[memory]`** — RAG backend: `backend` (`hybrid`/`vector`/`keyword`),
   `chunk_strategy`/`chunk_size`/`chunk_overlap`, `vector_top_k`,

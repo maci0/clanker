@@ -1,6 +1,7 @@
 //! CLI argument parsing and command implementations.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const toml = @import("toml");
 const config = @import("config.zig");
 const client = @import("llm/client.zig");
@@ -156,13 +157,25 @@ pub const Options = struct {
     /// recursive delete is not undoable.
     apply: bool = false,
     verbose: bool = false,
-    port: u16 = 17921,
-    /// `serve --host <addr>`: the interface to bind the HTTP server to.
-    /// Defaults to 127.0.0.1 (loopback only). `0.0.0.0` (or `::`) makes the
-    /// web UI and HTTP API reachable from the LAN, which also exposes
-    /// whatever the server can do (tool calls, write confirmations) to anyone
-    /// who can reach the port, so prefer a firewall over binding broadly.
-    host: []const u8 = "127.0.0.1",
+    /// `serve --webui-port <port>` (and the older `--port`, still accepted).
+    /// Named for the surface it serves rather than for the process, leaving
+    /// room for a second surface to get its own port without either name
+    /// becoming ambiguous.
+    ///
+    /// Null is "the flag was not given", which is what lets the `[serve]`
+    /// config table and `CLANKER_WEBUI_PORT` still have a say; the effective
+    /// default is `default_webui_port`, applied in `resolveListen`.
+    webui_port: ?u16 = null,
+    /// `serve --host <addr>`: the interface to bind to. Deliberately not
+    /// per-surface: the process binds one address, and a second surface would
+    /// add a port next to `webui_port` rather than a host next to this.
+    ///
+    /// Defaults to `default_serve_host`, 127.0.0.1 (loopback only). `0.0.0.0`
+    /// (or `::`) makes the web UI and HTTP API reachable from the LAN, which
+    /// also exposes whatever the server can do (tool calls, write
+    /// confirmations) to anyone who can reach the port, so prefer a firewall
+    /// over binding broadly. Null is "not given" -- see `webui_port` above.
+    host: ?[]const u8 = null,
     /// `serve --serve-as <name>`, repeatable: hostnames this server may
     /// present itself as. IP literals and `localhost` are always accepted, so
     /// this is only needed when clanker is reached by a real name, a reverse
@@ -373,13 +386,17 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                     return error.BadIters;
                 };
                 used = .iters;
-            } else if (std.mem.eql(u8, a, "--port")) {
+            } else if (std.mem.eql(u8, a, "--webui-port") or std.mem.eql(u8, a, "--port")) {
+                // `--port` is the original spelling, kept working so existing
+                // service files and scripts do not break. `--webui-port` is
+                // the documented one: it names the surface, so an API port
+                // added later reads as a peer of it rather than a rename.
                 const v = try takeValue(args, &idx, inline_value, a, diag);
-                opts.port = std.fmt.parseInt(u16, v, 10) catch {
+                opts.webui_port = std.fmt.parseInt(u16, v, 10) catch {
                     setDiag(diag, v);
                     return error.BadPort;
                 };
-                used = .port;
+                used = .webui_port;
             } else if (std.mem.eql(u8, a, "--host")) {
                 opts.host = try takeValue(args, &idx, inline_value, a, diag);
                 used = .host;
@@ -1046,7 +1063,7 @@ const Flag = enum {
     dry_run,
     worktree,
     tasks,
-    port,
+    webui_port,
     host,
     serve_as,
     yes,
@@ -1086,7 +1103,7 @@ const Flag = enum {
             .dry_run => "--dry-run",
             .worktree => "--worktree",
             .tasks => "--tasks",
-            .port => "--port",
+            .webui_port => "--webui-port",
             .host => "--host",
             .serve_as => "--serve-as",
             .yes => "--yes",
@@ -1132,7 +1149,7 @@ const Flag = enum {
             .dry_run => "propose changes without applying them",
             .worktree => "run in a private git worktree and branch, leaving the checkout untouched (--no-worktree opts out where it is the default)",
             .tasks => "run only the agent-driven evals, skipping the build gates",
-            .port => "listen port (default 17921)",
+            .webui_port => "web UI listen port (default 17921; also [serve].webui_port, CLANKER_WEBUI_PORT)",
             .host => "interface to bind; default 127.0.0.1, 0.0.0.0 reaches the LAN",
             .serve_as => "a hostname this server may present itself as; repeatable",
             .yes => "confirm destructive actions without prompting",
@@ -1204,7 +1221,7 @@ const specs = [_]Spec{
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
     .{ .command = .compare, .usage = "compare \"<prompt>\" [--with <provider[@model]>]...", .blurb = "one prompt to several models at once, answers shown unlabeled", .group = .work, .flags = &.{ .compare_with, .compare_judge, .compare_show, .compare_pick, .compare_synthesize, .compare_reveal }, .detail = "Every model gets the same prompt, the calls run side by side, and the answers\ncome back as A, B, C with nothing saying which model wrote which. Use it to\ndecide where to route a class of work; use `providers check` for connectivity\nand latency, which says nothing about answer quality, and `arena` when you want\nthe models to argue with each other rather than answer independently.\n\n--with <provider>          add a model on its provider's configured model\n--with <provider@model>    add a specific model, so two models of one provider\n                           is expressible. Repeat 2-8 times; with no --with at\n                           all, every configured provider enters\n--judge <provider>         who scores the answers. Default \"auto\": the\n                           configured default provider, with a caveat on the\n                           verdict when it is itself an entrant, since it may\n                           recognise its own answer. \"none\" leaves the pick to\n                           you\n--synthesize               also merge the answers into one, as an extra call\n--reveal                   print the label-to-model key even with no verdict\n--show <id>                print a stored comparison instead of running one\n--pick <letter>            with --show, record that answer as your pick\n\nThe display order comes from the comparison id, not the order you typed the\nmodels in, and each model's own names are struck out of its own answer, so\nnothing before the reveal says who wrote what. Comparisons land in\nstate/compare/<id>.json; `compare --show` with no id is not a listing, use the\ncompare tool from a run or read state/compare/log.jsonl." },
-    .{ .command = .serve, .usage = "serve [--host <addr>] [--serve-as <name>]... [--port <port>]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .port, .host, .serve_as }, .detail = "Binds 127.0.0.1 (loopback) by default.\n\n--host <addr>          interface to bind. Default 127.0.0.1; use 0.0.0.0 (or\n                       ::) to reach the web UI and HTTP API from the LAN.\n                       Binding broadly exposes whatever the server can do\n                       (tool calls, write confirmations) to anyone who can\n                       reach the port, so pair it with a firewall.\n--serve-as <name>      a hostname this server may present itself as, so a\n                       reverse proxy or tailnet name is served. Repeatable.\n--port <port>          listen port (default 17921).\n\nWhatever it binds to, a request is served only when its Host header names\nthis listener. An IP literal at this port always passes, so --host 0.0.0.0\nis reachable from the LAN by IP with nothing else set. A hostname is not:\nDNS rebinding needs a name whose resolution an attacker controls, and an IP\nliteral cannot be rebound. Only localhost and the names listed by\n--serve-as pass, so a reverse proxy or a tailnet name has to be named:\n--serve-as clanker.lan." },
+    .{ .command = .serve, .usage = "serve [--host <addr>] [--serve-as <name>]... [--webui-port <port>]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .webui_port, .host, .serve_as }, .detail = "Binds 127.0.0.1 (loopback) by default.\n\n--host <addr>          interface to bind. Default 127.0.0.1; use 0.0.0.0 (or\n                       ::) to reach the web UI and HTTP API from the LAN.\n                       Binding broadly exposes whatever the server can do\n                       (tool calls, write confirmations) to anyone who can\n                       reach the port, so pair it with a firewall.\n--serve-as <name>      a hostname this server may present itself as, so a\n                       reverse proxy or tailnet name is served. Repeatable.\n--webui-port <port>    port the web UI and its API answer on (default 17921).\n                       Also accepted as --port, the original spelling.\n\nOne interface, named ports: --host is the address the process binds, and\neach surface gets its own port under its own name, so an API port split out\nfrom the web UI later would be --api-port rather than a rename of this one.\n\nWhatever it binds to, a request is served only when its Host header names\nthis listener. An IP literal at this port always passes, so --host 0.0.0.0\nis reachable from the LAN by IP with nothing else set. A hostname is not:\nDNS rebinding needs a name whose resolution an attacker controls, and an IP\nliteral cannot be rebound. Only localhost and the names listed by\n--serve-as pass, so a reverse proxy or a tailnet name has to be named:\n--serve-as clanker.lan.\n\nThe listener can also be set without flags, for a service file or a\ncontainer that cannot pass them. Three layers, weakest first:\n\n  [serve] in config.toml       host, webui_port, serve_as (a TOML array)\n  CLANKER_HOST, CLANKER_WEBUI_PORT\n  --host, --webui-port, --serve-as\n\nEach overrides the one above it, so a flag always wins over the env, which\nalways wins over the file. Only that one port is exposed to the network\neither way: serve opens exactly one socket, and configured [[peers]] are\noutbound URLs this process connects to, never anything it listens on." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
 
     .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect, .detail = "Lists every conversation in state/sessions, newest last. To resume one:\n  clanker run --session <id> \"continue where we left off\"\n  clanker repl --session <id>\nTo export one as a standalone HTML file:\n  clanker session export <id>" },
@@ -2995,7 +3012,25 @@ fn binaryUpdated(io: std.Io, exe_path: []const u8, start_mtime: i128) bool {
     defer f.close(io);
     var magic: [4]u8 = undefined;
     const n = f.readPositionalAll(io, &magic, 0) catch return false;
-    return n >= 4 and magic[0] == 0x7f and magic[1] == 'E' and magic[2] == 'L' and magic[3] == 'F';
+    return n >= 4 and looksLikeExecutable(&magic);
+}
+
+/// A rebuild has only "landed" once the file on disk is a complete executable
+/// image: a build still writing its output has a fresh mtime but a truncated
+/// or missing header, and re-execing into that is how a hot reload turns into
+/// a dead process.
+///
+/// Which header that is, is per-platform, and getting it wrong fails silently
+/// in the safe direction: this checked only for ELF, so on macOS -- where the
+/// binary is Mach-O -- it never matched and hot reload never fired at all.
+fn looksLikeExecutable(magic: []const u8) bool {
+    if (magic.len < 4) return false;
+    return switch (builtin.os.tag) {
+        .macos, .ios, .tvos, .watchos, .visionos => std.mem.eql(u8, magic, "\xcf\xfa\xed\xfe") // MH_MAGIC_64, little-endian
+        or std.mem.eql(u8, magic, "\xce\xfa\xed\xfe") // MH_MAGIC, 32-bit
+        or std.mem.eql(u8, magic, "\xca\xfe\xba\xbe"), // fat/universal
+        else => std.mem.eql(u8, magic, "\x7fELF"),
+    };
 }
 
 /// Replaces the current process image with `exe_path argv_tail...`. On
@@ -3020,11 +3055,13 @@ fn execSelf(gpa: std.mem.Allocator, exe_path: [:0]const u8, argv_tail: []const [
     const fd_max: i32 = @intCast(@min(nofile.cur, 65536));
     var fd: i32 = 3;
     while (fd < fd_max) : (fd += 1) {
-        _ = std.os.linux.fcntl(@intCast(fd), std.os.linux.F.SETFD, std.os.linux.FD_CLOEXEC);
+        // libc, not std.os.linux: a raw Linux syscall traps with SIGSYS on
+        // macOS, and this runs on the reload path of every platform.
+        _ = std.c.fcntl(fd, std.c.F.SETFD, @as(c_int, std.c.FD_CLOEXEC));
     }
     const path_z: [*:0]const u8 = exe_path.ptr;
     const argv_z: [*:null]const ?[*:0]const u8 = @ptrCast(argv.items.ptr);
-    _ = std.os.linux.execve(path_z, argv_z, @ptrCast(std.c.environ));
+    _ = std.c.execve(path_z, argv_z, @ptrCast(std.c.environ));
 }
 
 /// Watches the running binary for a rebuild and restarts the process with
@@ -3084,13 +3121,26 @@ const HotReload = struct {
         std.debug.print("[hot-reload] exec failed, continuing with the current build\n", .{});
     }
 
-    /// Blocks forever watching the binary's directory for `CLOSE_WRITE` /
-    /// `MOVED_TO` on its basename (covers both write-in-place and
-    /// atomic-rename-replace build outputs). Run on its own thread; returns
-    /// (silently giving up) if inotify is unavailable, e.g. an overlay/
-    /// network filesystem that doesn't support it, the process just never
-    /// gets an idle-triggered reload in that case.
+    /// Blocks forever watching the binary for a rebuild. Run on its own
+    /// thread.
+    ///
+    /// Linux watches the binary's directory with inotify; everything else
+    /// polls the binary's mtime. The split is not an optimization: the
+    /// `std.os.linux.*` calls below are raw syscalls, so on macOS
+    /// `inotify_init1` trapped with SIGSYS and killed the whole process
+    /// before its own `rc < 0` guard could run. That made `clanker serve`
+    /// and the REPL exit 140 at startup on any non-Linux host with
+    /// `modules.hot_reload` on (the default).
     fn watch(self: *HotReload) void {
+        if (builtin.os.tag == .linux) self.watchInotify() else self.watchPolling();
+    }
+
+    /// `CLOSE_WRITE` / `MOVED_TO` on the binary's basename covers both
+    /// write-in-place and atomic-rename-replace build outputs. Returns
+    /// (silently giving up) if inotify is unavailable, e.g. an overlay/
+    /// network filesystem that doesn't support it; the process just never
+    /// gets an idle-triggered reload in that case.
+    fn watchInotify(self: *HotReload) void {
         const dir_path = std.fs.path.dirname(self.exe_path) orelse ".";
         const base_name = std.fs.path.basename(self.exe_path);
 
@@ -3120,24 +3170,50 @@ const HotReload = struct {
             }
             if (!relevant) continue;
             if (!binaryUpdated(self.io, self.exe_path, self.start_mtime)) continue;
-            // Never exec inside a turn: if one is running, defer to `end()`.
-            if (!self.turn.tryLock(self.io)) {
-                self.pending.store(true, .release);
-                // The turn may have ended between the failed tryLock and the
-                // store above, in which case end() already ran its pending
-                // check and found nothing: retry once so that reload is not
-                // stranded until the next event.
-                if (!self.turn.tryLock(self.io)) continue;
-                if (!self.pending.swap(false, .acq_rel)) {
-                    self.turn.unlock(self.io);
-                    continue;
-                }
-            }
-            defer self.turn.unlock(self.io);
-            std.debug.print("\n\x1b[33m[hot-reload]\x1b[0m binary updated, restarting with the new build\n", .{});
-            execSelf(self.gpa, self.exe_path, self.argv_tail);
-            std.debug.print("[hot-reload] exec failed, continuing with the current build\n", .{});
+            // An exec that failed here is logged and the loop keeps waiting:
+            // the next build event is a fresh chance, and events are rare
+            // enough that a repeated message is not noise.
+            _ = self.reloadWhenIdle();
         }
+    }
+
+    /// mtime poll for platforms with no inotify. A second is far below the
+    /// time it takes to notice a stale build by hand, and it is one `stat` of
+    /// one file, so the idle cost is nil.
+    fn watchPolling(self: *HotReload) void {
+        while (true) {
+            std.Io.sleep(self.io, .{ .nanoseconds = std.time.ns_per_s }, .awake) catch return;
+            if (!binaryUpdated(self.io, self.exe_path, self.start_mtime)) continue;
+            // Unlike the event-driven path, a failed exec here would recur
+            // every tick for as long as the new binary sits on disk, so give
+            // up watching rather than reprint the same failure forever.
+            if (self.reloadWhenIdle()) return;
+        }
+    }
+
+    /// Takes the turn lock and re-execs. Returns true if the exec was
+    /// attempted and failed (so the caller can decide whether to keep
+    /// watching), false if the reload was deferred to `end()` because a turn
+    /// was in flight. On success it never returns: the process is replaced.
+    fn reloadWhenIdle(self: *HotReload) bool {
+        // Never exec inside a turn: if one is running, defer to `end()`.
+        if (!self.turn.tryLock(self.io)) {
+            self.pending.store(true, .release);
+            // The turn may have ended between the failed tryLock and the
+            // store above, in which case end() already ran its pending
+            // check and found nothing: retry once so that reload is not
+            // stranded until the next event.
+            if (!self.turn.tryLock(self.io)) return false;
+            if (!self.pending.swap(false, .acq_rel)) {
+                self.turn.unlock(self.io);
+                return false;
+            }
+        }
+        defer self.turn.unlock(self.io);
+        std.debug.print("\n\x1b[33m[hot-reload]\x1b[0m binary updated, restarting with the new build\n", .{});
+        execSelf(self.gpa, self.exe_path, self.argv_tail);
+        std.debug.print("[hot-reload] exec failed, continuing with the current build\n", .{});
+        return true;
     }
 
     /// Spawns the watcher thread; returns null (caller keeps running on the
@@ -3168,7 +3244,7 @@ fn buildServeArgvTail(arena: std.mem.Allocator, port: u16, bind_addr: []const u8
     try argv.append(arena, "serve");
     try argv.append(arena, "--host");
     try argv.append(arena, bind_addr);
-    try argv.append(arena, "--port");
+    try argv.append(arena, "--webui-port");
     try argv.append(arena, try std.fmt.allocPrint(arena, "{d}", .{port}));
     for (serve_as_hosts) |name| {
         try argv.append(arena, "--serve-as");
@@ -4032,6 +4108,63 @@ fn cmdRevert(init: std.process.Init, opts: Options) !void {
 
 // ------------------------------------------------------------ serve ------
 
+/// The interface `serve` binds when nothing says otherwise: loopback, so a
+/// fresh install is not on the network by accident.
+pub const default_serve_host = "127.0.0.1";
+pub const default_webui_port: u16 = 17921;
+
+/// What the listener ends up being, once every layer that can set it has had
+/// its turn.
+const ListenPolicy = struct {
+    host: []const u8,
+    port: u16,
+    serve_as_hosts: []const []const u8,
+};
+
+/// Resolves the listener across its three layers, weakest first:
+/// `[serve]` in config.toml < `CLANKER_HOST`/`CLANKER_WEBUI_PORT` <
+/// `--host`/`--webui-port`. The most persistent and least specific source
+/// loses to the most immediate and most specific one, which is the order
+/// `CLANKER_LOG_LEVEL` and `--verbose` already resolve in (src/main.zig) and
+/// the order `default_provider` and `--provider` already resolve in.
+///
+/// A malformed `CLANKER_WEBUI_PORT` warns and is skipped rather than aborting
+/// the server: the layer below it is still a usable answer, and matching
+/// `CLANKER_LOG_LEVEL`'s handling keeps one rule for bad env values.
+fn resolveListen(cfg: *const config.Config, environ_map: *std.process.Environ.Map, opts: Options) ListenPolicy {
+    var bind_host: []const u8 = default_serve_host;
+    var bind_port: u16 = default_webui_port;
+
+    if (cfg.serve.host) |h| bind_host = h;
+    if (cfg.serve.webui_port) |p| bind_port = p;
+
+    if (environ_map.get("CLANKER_HOST")) |v| {
+        const trimmed = std.mem.trim(u8, v, " \t");
+        if (trimmed.len > 0) bind_host = trimmed;
+    }
+    if (environ_map.get("CLANKER_WEBUI_PORT")) |v| {
+        const trimmed = std.mem.trim(u8, v, " \t");
+        if (std.fmt.parseInt(u16, trimmed, 10)) |p| {
+            if (p == 0) {
+                log.log(.warn, "CLANKER_WEBUI_PORT '{s}' is not a usable port; ignoring", .{v});
+            } else bind_port = p;
+        } else |_| {
+            log.log(.warn, "CLANKER_WEBUI_PORT '{s}' is not a 16-bit port number; ignoring", .{v});
+        }
+    }
+
+    if (opts.host) |h| bind_host = h;
+    if (opts.webui_port) |p| bind_port = p;
+
+    // An empty flag list means the flag was never given, so the config's
+    // names stand. `--serve-as` given at all replaces the set rather than
+    // adding to it: a command line that names the hosts should be readable
+    // as the whole policy, not as a delta against a file.
+    const serve_as = if (opts.serve_as_hosts.len > 0) opts.serve_as_hosts else cfg.serve.serve_as;
+
+    return .{ .host = bind_host, .port = bind_port, .serve_as_hosts = serve_as };
+}
+
 /// Bind address for `serve`: IPv6 if the host string contains a colon (e.g.
 /// `::` or `::1`), IPv4 otherwise (the default `127.0.0.1`, or `0.0.0.0` for
 /// all interfaces).
@@ -4045,11 +4178,15 @@ fn parseBindAddr(bind_addr: []const u8, port: u16) !std.Io.net.IpAddress {
 fn cmdServe(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
-    const port = opts.port;
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
 
-    const addr = try parseBindAddr(opts.host, port);
+    // Config must be loaded first: it is the weakest of the three layers that
+    // decide what gets bound, and the env and the flags override it in turn.
+    const listen = resolveListen(&cfg, init.environ_map, opts);
+    const port = listen.port;
+
+    const addr = try parseBindAddr(listen.host, port);
     // reuse_address lets a restarted `clanker serve` rebind immediately even
     // if a stale socket from a previous instance lingers (AddressInUse).
     var server = try std.Io.net.IpAddress.listen(&addr, io, .{ .reuse_address = true });
@@ -4067,11 +4204,11 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     // host:port for the log line and the clickable URL; IPv6 hosts get
     // brackets so the URL parses (`http://[::1]:17921/webui`).
     var hostbuf: [512]u8 = undefined;
-    const needs_bracket = std.mem.findScalar(u8, opts.host, ':') != null;
+    const needs_bracket = std.mem.findScalar(u8, listen.host, ':') != null;
     const disp = if (needs_bracket)
-        std.fmt.bufPrint(&hostbuf, "[{s}]:{d}", .{ opts.host, port }) catch "host:port"
+        std.fmt.bufPrint(&hostbuf, "[{s}]:{d}", .{ listen.host, port }) catch "host:port"
     else
-        std.fmt.bufPrint(&hostbuf, "{s}:{d}", .{ opts.host, port }) catch "host:port";
+        std.fmt.bufPrint(&hostbuf, "{s}:{d}", .{ listen.host, port }) catch "host:port";
 
     log.log(.info, "serve listening on {s}", .{disp});
     // Bare clickable URL (no log prefix) so terminals render it as a link.
@@ -4084,7 +4221,11 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     const exe_path = try std.process.executablePathAlloc(io, gpa);
     defer gpa.free(exe_path);
     if (cfg.modules.hot_reload) {
-        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, port, opts.host, opts.serve_as_hosts));
+        // The *resolved* policy, not the raw flags: passing it back as flags
+        // pins the child to what this process actually bound, so a reload
+        // cannot quietly rebind somewhere else because the config file was
+        // edited or the env changed underneath it.
+        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, port, listen.host, listen.serve_as_hosts));
     }
 
     while (true) {
@@ -4092,7 +4233,7 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
             log.log(.error_, "accept error: {s}", .{@errorName(err)});
             continue;
         };
-        serveConnection(io, gpa, &cfg, init.environ_map, port, opts.serve_as_hosts, stream);
+        serveConnection(io, gpa, &cfg, init.environ_map, port, listen.serve_as_hosts, stream);
     }
 }
 
@@ -10376,20 +10517,24 @@ test "a turn that read a large file does not wipe the conversation" {
 }
 
 test "flags take their value in either form" {
-    const a = try parse(&.{ "clanker", "serve", "--port=9099" }, null);
-    try std.testing.expectEqual(@as(u16, 9099), a.port);
-    const b = try parse(&.{ "clanker", "serve", "--port", "9099" }, null);
-    try std.testing.expectEqual(@as(u16, 9099), b.port);
+    const a = try parse(&.{ "clanker", "serve", "--webui-port=9099" }, null);
+    try std.testing.expectEqual(@as(u16, 9099), a.webui_port.?);
+    const b = try parse(&.{ "clanker", "serve", "--webui-port", "9099" }, null);
+    try std.testing.expectEqual(@as(u16, 9099), b.webui_port.?);
     // An empty value is missing, not empty.
-    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--port=" }, null));
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--webui-port=" }, null));
 
-    // --host: default is loopback; both = and space forms bind the given addr.
+    // --host/--port are null when absent rather than pre-filled with the
+    // default, because `resolveListen` has to be able to tell "the operator
+    // asked for loopback" apart from "nobody said", the second of which lets
+    // the [serve] table and CLANKER_HOST answer instead.
     const h1 = try parse(&.{ "clanker", "serve" }, null);
-    try std.testing.expectEqualStrings("127.0.0.1", h1.host);
+    try std.testing.expectEqual(@as(?[]const u8, null), h1.host);
+    try std.testing.expectEqual(@as(?u16, null), h1.webui_port);
     const h2 = try parse(&.{ "clanker", "serve", "--host", "0.0.0.0" }, null);
-    try std.testing.expectEqualStrings("0.0.0.0", h2.host);
+    try std.testing.expectEqualStrings("0.0.0.0", h2.host.?);
     const h3 = try parse(&.{ "clanker", "serve", "--host=::" }, null);
-    try std.testing.expectEqualStrings("::", h3.host);
+    try std.testing.expectEqualStrings("::", h3.host.?);
     try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--host=" }, null));
 
     // --serve-as: empty by default, repeatable, and takes its value in
@@ -10420,6 +10565,202 @@ test "flags take their value in either form" {
     try std.testing.expectEqualStrings("-", literal.research_pattern.?);
 }
 
+test "--port still works as an alias for --webui-port" {
+    // The flag was renamed to name its surface, so a later API port reads as
+    // a peer of it. Existing service files and scripts say --port, and a
+    // rename that turned those into `error.UnknownArg` at startup would be a
+    // silent outage for anyone who upgraded without reading the changelog.
+    const aliased = try parse(&.{ "clanker", "serve", "--port", "9099" }, null);
+    try std.testing.expectEqual(@as(u16, 9099), aliased.webui_port.?);
+    const inline_form = try parse(&.{ "clanker", "serve", "--port=9099" }, null);
+    try std.testing.expectEqual(@as(u16, 9099), inline_form.webui_port.?);
+
+    // Both spellings land on the same Flag, so the alias is accepted on serve
+    // and refused everywhere the real flag is refused, with no second entry
+    // in the help table.
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.FlagNotForCommand, parse(&.{ "clanker", "stats", "--port", "1" }, &diag));
+    try std.testing.expectEqualStrings("--webui-port", diag);
+}
+
+test "the listener resolves config < env < flag, in that order" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "zai"
+        \\
+        \\[providers.zai]
+        \\base_url = "http://x/v1"
+        \\
+        \\[models."zai/glm-5.2"]
+        \\provider = "zai"
+        \\
+        \\[serve]
+        \\host = "10.0.0.5"
+        \\webui_port = 8100
+        \\serve_as = ["from-config.lan"]
+        \\
+        ,
+    });
+    const cfg = try config.Config.load(io, arena, tmp.dir, "config.toml", "absent.toml");
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    // Layer 1 alone: the file decides.
+    {
+        const l = resolveListen(&cfg, &env, .{});
+        try std.testing.expectEqualStrings("10.0.0.5", l.host);
+        try std.testing.expectEqual(@as(u16, 8100), l.port);
+        try std.testing.expectEqual(@as(usize, 1), l.serve_as_hosts.len);
+        try std.testing.expectEqualStrings("from-config.lan", l.serve_as_hosts[0]);
+    }
+
+    // Layer 2 beats layer 1.
+    try env.put("CLANKER_HOST", "10.0.0.6");
+    try env.put("CLANKER_WEBUI_PORT", "8200");
+    {
+        const l = resolveListen(&cfg, &env, .{});
+        try std.testing.expectEqualStrings("10.0.0.6", l.host);
+        try std.testing.expectEqual(@as(u16, 8200), l.port);
+    }
+
+    // Layer 3 beats both.
+    {
+        const l = resolveListen(&cfg, &env, .{ .host = "0.0.0.0", .webui_port = 8300, .serve_as_hosts = &.{"from-flag.lan"} });
+        try std.testing.expectEqualStrings("0.0.0.0", l.host);
+        try std.testing.expectEqual(@as(u16, 8300), l.port);
+        try std.testing.expectEqual(@as(usize, 1), l.serve_as_hosts.len);
+        try std.testing.expectEqualStrings("from-flag.lan", l.serve_as_hosts[0]);
+    }
+
+    // A junk CLANKER_PORT is skipped, not fatal, and does not drag the port
+    // down to the struct default either: the layer below it still stands.
+    try env.put("CLANKER_WEBUI_PORT", "not-a-port");
+    {
+        const l = resolveListen(&cfg, &env, .{});
+        try std.testing.expectEqual(@as(u16, 8100), l.port);
+    }
+    try env.put("CLANKER_WEBUI_PORT", "0");
+    {
+        const l = resolveListen(&cfg, &env, .{});
+        try std.testing.expectEqual(@as(u16, 8100), l.port);
+    }
+}
+
+test "with nothing configured the listener is loopback on the default port" {
+    // The safe default has to survive the new layering: an install with no
+    // [serve] table, no CLANKER_* and no flags must still bind loopback
+    // rather than land on the network by accident.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "zai"
+        \\
+        \\[providers.zai]
+        \\base_url = "http://x/v1"
+        \\
+        \\[models."zai/glm-5.2"]
+        \\provider = "zai"
+        \\
+        ,
+    });
+    const cfg = try config.Config.load(io, arena, tmp.dir, "config.toml", "absent.toml");
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    const l = resolveListen(&cfg, &env, .{});
+    try std.testing.expectEqualStrings("127.0.0.1", l.host);
+    try std.testing.expectEqual(default_webui_port, l.port);
+    try std.testing.expectEqual(@as(usize, 0), l.serve_as_hosts.len);
+}
+
+test "a rebuild is recognised by this platform's own executable header" {
+    // The check was ELF-only. On macOS that meant `binaryUpdated` returned
+    // false for every rebuild of a perfectly good Mach-O binary, so hot
+    // reload was dead on arrival with nothing in the logs to say so.
+    const elf = "\x7fELF";
+    const macho64 = "\xcf\xfa\xed\xfe";
+    const fat = "\xca\xfe\xba\xbe";
+    switch (builtin.os.tag) {
+        .macos, .ios, .tvos, .watchos, .visionos => {
+            try std.testing.expect(looksLikeExecutable(macho64));
+            try std.testing.expect(looksLikeExecutable(fat));
+            try std.testing.expect(!looksLikeExecutable(elf));
+        },
+        else => {
+            try std.testing.expect(looksLikeExecutable(elf));
+            try std.testing.expect(!looksLikeExecutable(macho64));
+        },
+    }
+    // A half-written file is not an executable on any platform.
+    try std.testing.expect(!looksLikeExecutable(""));
+    try std.testing.expect(!looksLikeExecutable("\x7fEL"));
+    try std.testing.expect(!looksLikeExecutable("#!/b"));
+}
+
+test "the hot-reload watcher runs on this platform instead of killing the process" {
+    // `watch` called std.os.linux.inotify_init1 unconditionally. Off Linux
+    // that is a raw syscall the kernel has no handler for: it raised SIGSYS
+    // and took the entire process down before the function's own `rc < 0`
+    // fallback could run, so `clanker serve` and the REPL exited 140 at
+    // startup on macOS whenever modules.hot_reload was on (the default).
+    //
+    // Only actually starting the thread and letting it tick catches this --
+    // the crash was in the watcher, not in anything it returned.
+    //
+    // Everything the detached watcher touches is allocated from the page
+    // allocator and deliberately never freed: the thread outlives this test
+    // by design (as it outlives cmdServe in production), so a testing-
+    // allocator arena here would be a use-after-free the moment the test
+    // returned. This mirrors the process-lifetime leak `--serve-as` already
+    // takes in `parse`.
+    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const arena = arena_state.allocator();
+    const threaded = try arena.create(std.Io.Threaded);
+    threaded.* = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "pretend-clanker", .data = "\x7fELF not really" });
+    // HotReload stats through Dir.cwd(), so it needs a path relative to the
+    // same cwd that std.testing.tmpDir already resolved .zig-cache against,
+    // not one relative to the tmp dir handle.
+    const exe_path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/pretend-clanker", .{tmp.sub_path});
+
+    const hr = HotReload.start(arena, io, std.heap.page_allocator, exe_path, &.{"serve"}) orelse
+        return error.WatcherThreadDidNotStart;
+
+    // Comfortably past the polling watcher's one-second tick, so the crash
+    // would have happened by now on the platform that had it.
+    try std.Io.sleep(io, .{ .nanoseconds = 1500 * std.time.ns_per_ms }, .awake);
+
+    // Reaching here at all is the assertion: the process is still alive. The
+    // watched file never changed, so no reload should have been queued.
+    try std.testing.expect(!hr.pending.load(.acquire));
+}
+
 test "the hot-reload re-exec keeps the bind address and the serve-as names" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -10430,7 +10771,7 @@ test "the hot-reload re-exec keeps the bind address and the serve-as names" {
     try std.testing.expectEqualStrings("serve", bare[0]);
     try std.testing.expectEqualStrings("--host", bare[1]);
     try std.testing.expectEqualStrings("127.0.0.1", bare[2]);
-    try std.testing.expectEqualStrings("--port", bare[3]);
+    try std.testing.expectEqualStrings("--webui-port", bare[3]);
     try std.testing.expectEqualStrings("17921", bare[4]);
 
     // Dropping these on re-exec would leave the rebuilt process refusing every
@@ -10451,8 +10792,8 @@ test "the hot-reload re-exec keeps the bind address and the serve-as names" {
     try argv.append(std.testing.allocator, "clanker");
     for (wide) |x| try argv.append(std.testing.allocator, x);
     const reparsed = try parse(argv.items, null);
-    try std.testing.expectEqualStrings("0.0.0.0", reparsed.host);
-    try std.testing.expectEqual(@as(u16, 8080), reparsed.port);
+    try std.testing.expectEqualStrings("0.0.0.0", reparsed.host.?);
+    try std.testing.expectEqual(@as(u16, 8080), reparsed.webui_port.?);
     try std.testing.expectEqual(@as(usize, 2), reparsed.serve_as_hosts.len);
     try std.testing.expectEqualStrings("box.tailnet.ts.net", reparsed.serve_as_hosts[1]);
 }
