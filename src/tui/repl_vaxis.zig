@@ -654,7 +654,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/workflow", .takes_args = true, .arg_hint = "<name> [args]", .help = "run a workflow (expands {{args}} then runs as a task)", .action = .workflow },
     .{ .name = "/sessions", .aliases = &.{"/history"}, .help = "list saved conversations", .action = .{ .tool = .{ .name = "cmd_sessions", .args = "" } } },
     .{ .name = "/graph", .help = "list recorded runs (same as clanker graph)", .action = .{ .tool = .{ .name = "cmd_graph", .args = "list" } } },
-    .{ .name = "/status", .help = "show configuration and state status", .action = .{ .tool = .{ .name = "cmd_status", .args = "" } } },
+    .{ .name = "/status", .help = "show instance identity and configured peers", .action = .{ .tool = .{ .name = "cmd_status", .args = "" } } },
     .{ .name = "/tools", .help = "list registered tools (same as clanker tools)", .action = .{ .tool = .{ .name = "cmd_tools", .args = "" } } },
     .{ .name = "/plugins", .aliases = &.{"/plugin"}, .help = "list installed plugins", .action = .{ .tool = .{ .name = "cmd_plugins", .args = "" } } },
     .{ .name = "/goal", .takes_args = true, .arg_hint = "<intent>", .help = "design and persist a structured goal", .action = .goal },

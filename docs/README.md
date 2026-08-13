@@ -638,7 +638,7 @@ A line starting with `!` is a shell escape (see below), a line starting with `/`
 | `/workflow <name> [args]` | in-process | Run a workflow (expands `{{args}}`, then runs it as a task) |
 | `/sessions`, `/history` | `cmd_sessions` | List saved conversations |
 | `/graph` | `cmd_graph list` | List recorded runs (same as `clanker graph`) |
-| `/status` | `cmd_status` | Show configuration and state status |
+| `/status` | `cmd_status` | Show instance identity and configured peers |
 | `/tools` | `cmd_tools` | List registered tools (same as `clanker tools`) |
 | `/plugins`, `/plugin` | `cmd_plugins` | List installed plugins. Takes no arguments — toggling is `POST /api/plugins` |
 | `/theme [name]` | in-process | List or switch the color theme (`mocha`, `latte`, `tokyonight`, …) |
@@ -924,7 +924,7 @@ Fields:
 
 - `CLANKER_ENV_FILE`: path to the `.env`-style file `dotenv.load` reads (default `./.env`; gated by `modules.dotenv`). Real environment variables always win over values loaded from this file. See `.env.example` for the keys providers reference via `api_key_env`.
 - `CLANKER_LOG_LEVEL`: `debug` | `info` | `warn` | `error` (default `info`). Lets a headless deployment (systemd, docker) set the log level without editing the invocation. `--verbose`/`-v` still overrides it to `debug` when both are given.
-- `CLANKER_THEME`: palette name for the REPL and `clanker run` output (`mocha`/`catppuccin`, `latte`, `frappe`, `macchiato`, `tokyonight`, `storm`, `day`, `mono`, `default`). An env var because a theme is a property of the terminal, not of one invocation. `/theme <name>` overrides it per session.
+- `CLANKER_THEME`: default palette for the REPL and `clanker run` output (`mocha`/`catppuccin`, `latte`, `frappe`, `macchiato`, `tokyonight`, `storm`, `day`, `mono`, `default`). `clanker repl --theme <name>` overrides it for one invocation; `/theme <name>` switches the current session.
 - `CLANKER_DEBUG_BODY`: set to any value to log provider name and request byte count on each LLM call (to stderr). Only metadata is printed, never request content.
 - `CLANKER_HOST`, `CLANKER_WEBUI_PORT`: the interface and port `clanker serve` binds, for a headless deployment that cannot pass flags. Both override `[serve]` in the config file and are in turn overridden by `--host`/`--webui-port`. A `CLANKER_WEBUI_PORT` that is not a usable 16-bit port warns and is ignored rather than aborting startup. See [Binding and the trust model](#binding-and-the-trust-model).
 - `NO_COLOR`: standard ([no-color.org](https://no-color.org)) opt-out of colored output. When set to any non-empty value, forces the `mono` theme.
