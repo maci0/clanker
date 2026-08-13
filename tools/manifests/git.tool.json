@@ -20,5 +20,9 @@
   "category": "code",
   "exec_allow": [
     "git"
-  ]
+  ],
+  "config": {
+    "git_remote_ops": false,
+    "exec_pattern_allow": []
+  }
 }

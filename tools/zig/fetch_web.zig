@@ -1,6 +1,6 @@
 //! fetch_web: HTTP GET a URL (host must be in the tool's network allowlist).
 //! Input:  {"url": "https://..."}
-//! Output: {"ok": true, "status": <num>, "body": "<up to N chars>"} or error.
+//! Output: {"ok": true, "bytes": <num>, "body": "<up to N chars>"} or error.
 
 const std = @import("std");
 const lib = @import("lib.zig");

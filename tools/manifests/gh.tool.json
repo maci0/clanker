@@ -20,5 +20,8 @@
   "category": "code",
   "exec_allow": [
     "gh"
-  ]
+  ],
+  "config": {
+    "exec_pattern_allow": []
+  }
 }
