@@ -3426,6 +3426,24 @@ const Model = struct {
                     for (wfs) |w| names.append(self.arena, w.name) catch break;
                     return self.completeArg(ctx, cmd, partial, names.items);
                 },
+                .tool => |tool| if (std.mem.eql(u8, tool.name, "cmd_plugins")) {
+                    const verbs = [_][]const u8{ "on", "off" };
+                    const sep = std.mem.findScalar(u8, partial, ' ') orelse
+                        return self.completeArg(ctx, cmd, partial, &verbs);
+                    const verb = partial[0..sep];
+                    if (!std.mem.eql(u8, verb, "on") and !std.mem.eql(u8, verb, "off")) return false;
+                    const name_partial = std.mem.trimStart(u8, partial[sep + 1 ..], " ");
+                    var names: std.ArrayList([]const u8) = .empty;
+                    var tools = self.reg.tools.iterator();
+                    while (tools.next()) |entry| {
+                        const t = entry.value_ptr;
+                        // cmd_plugins treats internal non-transforms as core.
+                        if (!t.internal or t.transform != null) names.append(self.arena, t.name) catch break;
+                    }
+                    std.mem.sort([]const u8, names.items, {}, lessThanCmd);
+                    const prefix = std.fmt.allocPrint(self.arena, "{s} {s}", .{ cmd, verb }) catch return true;
+                    return self.completeArg(ctx, prefix, name_partial, names.items);
+                } else return false,
                 else => return false,
             }
         }
