@@ -2160,7 +2160,7 @@ fn findCatalogModel(provider_entry: std.json.Value, model_name: []const u8) ?std
     const models_v = provider_entry.object.get("models") orelse return null;
     if (models_v != .object) return null;
     if (models_v.object.get(model_name)) |m| return m;
-    if (std.mem.lastIndexOfScalar(u8, model_name, '/')) |slash| {
+    if (std.mem.findScalarLast(u8, model_name, '/')) |slash| {
         return models_v.object.get(model_name[slash + 1 ..]);
     }
     return null;
@@ -3678,7 +3678,7 @@ fn pluginsValidate(init: std.process.Init, path: []const u8) !void {
         // Not a directory: a single manifest, which is what an author editing
         // one file wants to check.
         try files.append(arena, path);
-        base = if (std.mem.lastIndexOfScalar(u8, path, '/')) |slash| path[0..slash] else "";
+        base = if (std.mem.findScalarLast(u8, path, '/')) |slash| path[0..slash] else "";
     }
 
     var errors: usize = 0;
@@ -3743,7 +3743,7 @@ fn withCrossChecks(
     // The guest source, if it travels with the manifest: `tools/manifests/x`
     // beside `tools/zig/x.zig` in this repo, or both in one directory for a
     // package someone unpacked.
-    const name_start = if (std.mem.lastIndexOfScalar(u8, file, '/')) |slash| slash + 1 else 0;
+    const name_start = if (std.mem.findScalarLast(u8, file, '/')) |slash| slash + 1 else 0;
     if (file.len < name_start + ".tool.json".len) return out.items;
     const stem = file[name_start .. file.len - ".tool.json".len];
     const candidates = [_][]const u8{
@@ -7955,7 +7955,7 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
     // Parent breadcrumb: the directory one level up, or empty at the root.
     var parent_buf: []const u8 = "";
     if (path.len > 0) {
-        if (std.mem.lastIndexOfScalar(u8, path, '/')) |slash| {
+        if (std.mem.findScalarLast(u8, path, '/')) |slash| {
             parent_buf = if (slash == 0) "" else path[0..slash];
         } else {
             parent_buf = "";
@@ -8016,7 +8016,7 @@ fn workspaceName(io: std.Io, arena: std.mem.Allocator) []const u8 {
     const abs = std.Io.Dir.cwd().realPathFileAlloc(io, ".", arena) catch return "";
     const trimmed = std.mem.trimEnd(u8, abs, "/");
     if (trimmed.len == 0) return "";
-    if (std.mem.lastIndexOfScalar(u8, trimmed, '/')) |slash| return trimmed[slash + 1 ..];
+    if (std.mem.findScalarLast(u8, trimmed, '/')) |slash| return trimmed[slash + 1 ..];
     return trimmed;
 }
 

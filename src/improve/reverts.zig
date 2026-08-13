@@ -49,7 +49,7 @@ const Commit = struct { sha: []const u8, subject: []const u8, body: []const u8 }
 /// The improvement id an engine-authored commit subject carries:
 /// `clanker: ... [imp-1786528675805548694]` -> `imp-1786528675805548694`.
 pub fn impTag(subject: []const u8) ?[]const u8 {
-    const open = std.mem.lastIndexOf(u8, subject, "[imp-") orelse return null;
+    const open = std.mem.findLast(u8, subject, "[imp-") orelse return null;
     const rest = subject[open + 1 ..];
     const close = std.mem.findScalar(u8, rest, ']') orelse return null;
     const id = rest[0..close];

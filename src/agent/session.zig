@@ -383,7 +383,7 @@ pub fn snippetAround(arena: std.mem.Allocator, text: []const u8, at: usize, matc
     if (end < text.len) {
         const tail_from = at + match_len;
         if (tail_from < end) {
-            if (std.mem.lastIndexOfScalar(u8, text[tail_from..end], ' ')) |sp| end = tail_from + sp;
+            if (std.mem.findScalarLast(u8, text[tail_from..end], ' ')) |sp| end = tail_from + sp;
         }
     }
     var out: std.ArrayList(u8) = .empty;
@@ -1293,7 +1293,7 @@ test "snippetAround keeps context, marks both cuts, and flattens the line" {
     const cut = snippetAround(arena, long, 301, 6);
     try std.testing.expect(std.mem.startsWith(u8, cut, "\u{2026}"));
     try std.testing.expect(std.mem.endsWith(u8, cut, "\u{2026}"));
-    try std.testing.expect(std.mem.indexOf(u8, cut, "needle") != null);
+    try std.testing.expect(std.mem.find(u8, cut, "needle") != null);
     // Bounded by the radius either side, not by the message length.
     try std.testing.expect(cut.len < 300);
 
@@ -1341,7 +1341,7 @@ test "searchSessions finds conversations by message text, newest first" {
     try std.testing.expectEqual(@as(usize, 0), hits[0].turn);
     try std.testing.expectEqualStrings("user", hits[0].role);
     try std.testing.expectEqual(@as(usize, 1), hits[0].more);
-    try std.testing.expect(std.mem.indexOf(u8, hits[0].snippet, "CRON") != null);
+    try std.testing.expect(std.mem.find(u8, hits[0].snippet, "CRON") != null);
 
     // A word in both conversations returns both, newest first.
     const both = try searchSessions(io, arena, tmp.dir, "spec", 10);

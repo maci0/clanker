@@ -1352,7 +1352,7 @@ pub const Agent = struct {
             const after_first = s[start + 3 ..];
             const body_start = if (std.mem.find(u8, after_first, "\n")) |nl| nl + 1 else 0;
             var body = after_first[body_start..];
-            if (std.mem.lastIndexOf(u8, body, "```")) |end| {
+            if (std.mem.findLast(u8, body, "```")) |end| {
                 body = body[0..end];
             }
             s = std.mem.trim(u8, body, " \t\r\n");

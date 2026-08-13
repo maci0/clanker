@@ -2382,7 +2382,7 @@ fn fsCopyImpl(h: *Host, mem_bytes: []u8, src_sub: []const u8, dst_sub: []const u
     defer h.sandbox.gpa.free(data);
 
     // Create parent directories for the destination.
-    if (std.mem.lastIndexOfScalar(u8, full_dst, '/')) |slash| {
+    if (std.mem.findScalarLast(u8, full_dst, '/')) |slash| {
         if (slash > 0) std.Io.Dir.cwd().createDirPath(h.sandbox.io, full_dst[0..slash]) catch {};
     }
 
@@ -2607,7 +2607,7 @@ fn fsWriteImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8, data: []const u8
     // Create parent directories first so a tool can scaffold a file in a
     // fresh directory without a separate ck_fs_mkdir round-trip. A failure
     // here is harmless: writeFile below then fails and reports Err.invalid.
-    if (std.mem.lastIndexOfScalar(u8, full, '/')) |slash| {
+    if (std.mem.findScalarLast(u8, full, '/')) |slash| {
         if (slash > 0) std.Io.Dir.cwd().createDirPath(h.sandbox.io, full[0..slash]) catch {};
     }
     std.Io.Dir.cwd().writeFile(h.sandbox.io, .{ .sub_path = full, .data = data }) catch |err| switch (err) {
@@ -2676,7 +2676,7 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
     }
 
     // Create parent directories.
-    if (std.mem.lastIndexOfScalar(u8, full, '/')) |slash| {
+    if (std.mem.findScalarLast(u8, full, '/')) |slash| {
         if (slash > 0) base.createDirPath(sb.io, full[0..slash]) catch {};
     }
 
@@ -2822,7 +2822,7 @@ fn execPolicyFor(
     var cmd: []const u8 = "";
     if (argv.len > 0) {
         const a0 = argv[0];
-        cmd = if (std.mem.lastIndexOfScalar(u8, a0, '/')) |slash| a0[slash + 1 ..] else a0;
+        cmd = if (std.mem.findScalarLast(u8, a0, '/')) |slash| a0[slash + 1 ..] else a0;
     }
     var j: usize = 0;
     const n0 = @min(cmd.len, join_buf.len);
@@ -2958,7 +2958,7 @@ pub fn execDenial(sb: *const Sandbox, cmd: []const u8, argv: []const []const u8)
 
 /// Whether `cmd` would interpret its arguments as shell syntax.
 fn runsAShell(cmd: []const u8) bool {
-    const base = if (std.mem.lastIndexOfScalar(u8, cmd, '/')) |i| cmd[i + 1 ..] else cmd;
+    const base = if (std.mem.findScalarLast(u8, cmd, '/')) |i| cmd[i + 1 ..] else cmd;
     for ([_][]const u8{ "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "env", "xargs" }) |shell| {
         if (std.mem.eql(u8, base, shell)) return true;
     }
@@ -3854,7 +3854,7 @@ pub fn execUnderPolicy(
 fn clipOutput(text: []const u8, keep: usize) []const u8 {
     if (text.len <= keep) return text;
     const head = text[0..keep];
-    if (std.mem.lastIndexOfScalar(u8, head, '\n')) |nl| return head[0 .. nl + 1];
+    if (std.mem.findScalarLast(u8, head, '\n')) |nl| return head[0 .. nl + 1];
     return head;
 }
 

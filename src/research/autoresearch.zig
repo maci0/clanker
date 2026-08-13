@@ -184,7 +184,7 @@ pub const Loop = struct {
             if (orig) |o| {
                 const staged_file = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ staging_path, ch.file });
                 defer gpa.free(staged_file);
-                if (std.mem.lastIndexOfScalar(u8, staged_file, '/')) |slash| std.Io.Dir.cwd().createDirPath(io, staged_file[0..slash]) catch {};
+                if (std.mem.findScalarLast(u8, staged_file, '/')) |slash| std.Io.Dir.cwd().createDirPath(io, staged_file[0..slash]) catch {};
                 try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = staged_file, .data = o });
             }
         }

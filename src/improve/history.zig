@@ -542,7 +542,7 @@ fn firstLine(s: []const u8, max: usize) []const u8 {
 }
 
 fn dirName(path: []const u8) []const u8 {
-    if (std.mem.lastIndexOfScalar(u8, path, '/')) |i| return path[0..i];
+    if (std.mem.findScalarLast(u8, path, '/')) |i| return path[0..i];
     return ".";
 }
 

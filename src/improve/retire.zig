@@ -252,7 +252,7 @@ pub fn countUnregistered(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) us
         for (rows) |r| {
             // Rows store the absolute path; compare on the final component,
             // which is the worktree id and unique within the container.
-            const base = if (std.mem.lastIndexOfScalar(u8, r.path, '/')) |i| r.path[i + 1 ..] else r.path;
+            const base = if (std.mem.findScalarLast(u8, r.path, '/')) |i| r.path[i + 1 ..] else r.path;
             if (std.mem.eql(u8, base, ent.name)) {
                 claimed = true;
                 break;

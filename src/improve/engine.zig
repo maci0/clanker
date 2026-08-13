@@ -233,7 +233,7 @@ fn nextQuotedType(text: []const u8) ?Found {
         // A type reference, not prose or a member name in quotes.
         if (std.mem.findScalar(u8, inner, '.') == null) continue;
         if (std.mem.findScalar(u8, inner, ' ') != null) continue;
-        var name = inner[std.mem.lastIndexOfScalar(u8, inner, '.').? + 1 ..];
+        var name = inner[std.mem.findScalarLast(u8, inner, '.').? + 1 ..];
         if (std.mem.find(u8, name, "__")) |cut| name = name[0..cut];
         if (name.len < 3) continue;
         return .{ .sym = name, .rest = rest };
@@ -2220,7 +2220,7 @@ pub const Engine = struct {
     fn prepareStaging(self: *Engine, staging: []const u8) !void {
         // Prune old staging dirs before creating a new one. Extract the id
         // from the path ("state/staging/<id>").
-        const current_id = if (std.mem.lastIndexOfScalar(u8, staging, '/')) |slash| staging[slash + 1 ..] else staging;
+        const current_id = if (std.mem.findScalarLast(u8, staging, '/')) |slash| staging[slash + 1 ..] else staging;
         self.pruneStaging(3, current_id);
         const dir = std.Io.Dir.cwd();
         try dir.createDirPath(self.ctx.io, staging);
@@ -2390,7 +2390,7 @@ fn stripFences(arena: std.mem.Allocator, content: []const u8) []const u8 {
     if (s.len > 0 and s[0] != '{') {
         if (std.mem.findScalar(u8, s, '{')) |i| s = s[i..];
     }
-    if (std.mem.lastIndexOfScalar(u8, s, '}')) |i| s = s[0 .. i + 1];
+    if (std.mem.findScalarLast(u8, s, '}')) |i| s = s[0 .. i + 1];
     return arena.dupe(u8, s) catch s;
 }
 
@@ -2456,7 +2456,7 @@ fn isDir(base: std.Io.Dir, io: std.Io, rel: []const u8) bool {
 }
 
 fn dirOf(path: []const u8) []const u8 {
-    if (std.mem.lastIndexOfScalar(u8, path, '/')) |i| return path[0..i];
+    if (std.mem.findScalarLast(u8, path, '/')) |i| return path[0..i];
     return "";
 }
 
