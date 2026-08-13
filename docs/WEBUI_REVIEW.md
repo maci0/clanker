@@ -726,6 +726,35 @@ fails 10 of its 12 assertions, so it is testing the fix and not the harness.
 Gate: `zig build`, `zig build tools`, `zig build test --summary all` —
 163/163 steps, 763/765 tests (2 skipped, the expected worktree pair).
 
+## A failed schedule toggle no longer disables its own switch (2026-08-13)
+
+`setEnabled` disables the row's Pause/Resume for the duration of the POST
+(`toggle.disabled = state.busy === e.id`), then cleared `state.busy` and
+redrew **only on success** — `if (out) render()`. On the failure path the flag
+was cleared but nothing redrew, so the button kept the `disabled` it was given
+before the request. A server that refused once left a switch that could not be
+tried again for the rest of the visit: the only way back was to leave the view
+and return, and nothing on screen said so.
+
+The redraw is now unconditional. The reason it was not is that `render()` ends
+by writing the entry count to `#schedule-status`, which would have overwritten
+the message the `catch` had just put there — so the failure moved into
+`state.error`, and `render()` reports that instead of the count while it is
+set. `loadScheduleView` clears it, which makes Refresh the way to dismiss a
+stale failure. Same shape the Search view already uses for the same reason.
+
+### Verified
+
+`node` + a DOM stub driving the real `features/schedule.js`, with `fetch`
+stubbed to fail the POST and succeed the reload. After a failed toggle the row
+redraws, its button is enabled again, the failure is still on the status line
+(not replaced by the count), and a second click reaches the server. The stub
+refuses to fire `click` on a disabled element, as a browser does, so the retry
+assertion is real. Against `main` the same harness fails both: the button
+stays disabled and the retry never leaves the page. Gate: `zig build`,
+`zig build tools`, `zig build test --summary all` — 163/163 steps,
+763/765 tests (2 skipped, the expected worktree pair).
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
