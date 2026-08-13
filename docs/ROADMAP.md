@@ -94,13 +94,35 @@
 
 ## Autolearn
 
-Automatically observed from usage patterns (`state/autolearn.jsonl` + `state/runs/`). Refresh with `clanker autolearn`.
+Automatically observed from usage patterns (state/autolearn.jsonl). Refresh with `clanker autolearn`.
 
-- Optimize the most-used tools: git, calculator (usage tracked in state/autolearn.jsonl).
-- Fix 'git' tool errors (1 failure(s), last: ).
-- Build a dedicated tool or skill for the recurring task 'Summarize the last 3 git commits' (seen 2 time(s)) — automate it so future runs are one tool call instead of a full agent loop.
+- Optimize the most-used tools: search_code,read_file,git (usage tracked in state/autolearn.jsonl).
+- Add missing tool 'load_tools' (the model requested it 18 time(s)): 
+- Fix 'git' tool errors (56 failure(s), last: identical tool call already executed twice with the same arguments; do not repeat it; answer with the information you already have)
+- Fix 'image' tool errors (3 failure(s), last: image too large (max 40000 bytes))
+- Fix 'search_code' tool errors (239 failure(s), last: running the search: refused by this tool's sandbox policy — its manifest has to allow the path (fs_prefixes), the command (exec_allow) or the host (network_allow))
+- Fix 'subagent' tool errors (23 failure(s), last: )
+- Fix 'read_file' tool errors (222 failure(s), last: identical tool call already executed twice with the same arguments; do not repeat it; answer with the information you already have)
+- Fix 'symbols' tool errors (2 failure(s), last: )
+- Fix 'zig_check' tool errors (3 failure(s), last: running zig: not found)
+- Fix 'ask_user' tool errors (6 failure(s), last: the peer did not answer)
+- Fix 'test_file' tool errors (8 failure(s), last: running zig test: not found)
+- Fix 'lsp' tool errors (6 failure(s), last: )
+- Fix 'gate' tool errors (16 failure(s), last: identical tool call already executed twice with the same arguments; do not repeat it; answer with the information you already have)
+- Fix 'edit_skill' tool errors (1 failure(s), last: )
+- Fix 'fetch_web' tool errors (9 failure(s), last: fetching the page: refused by this tool's sandbox policy — its manifest has to allow the path (fs_prefixes), the command (exec_allow) or the host (network_allow))
+- Fix 'calculator' tool errors (62 failure(s), last: )
+- Fix 'edit_file' tool errors (9 failure(s), last: the "old" text does not appear in the file; read it again and copy the exact bytes, including indentation)
+- Fix 'file_ops' tool errors (4 failure(s), last: .zig-cache/z/23265ea8c04f2c8382291f66c0a22bc1: refused by this tool's sandbox policy — its manifest has to allow the path (fs_prefixes), the command (exec_allow) or the host (network_allow))
+- Fix 'autoresearch' tool errors (2 failure(s), last: no autoresearch runs yet)
+- Fix 'peers' tool errors (1 failure(s), last: no peers configured)
+- Fix 'providers' tool errors (1 failure(s), last: no providers configured)
+- Fix 'list_files' tool errors (19 failure(s), last: src/tui2: not found)
+- Fix 'youtube_transcript' tool errors (3 failure(s), last: identical tool call already executed twice with the same arguments; do not repeat it — answer with the information you already have)
+- Improve prompt-cache hit rate (55% across 766 run(s)): keep the system prompt and skill context byte-stable so providers cache more of the prefix.
+- Re-evaluate default model: 'kimi-k3' used in 406 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
+- Re-evaluate default model: 'deepseek-v4-flash' used in 63 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
+- Re-evaluate default model: 'muse-spark-1.2-contributor' used in 3 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
+- Re-evaluate default model: 'claude-opus-4-6' used in 240 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
+- Re-evaluate default model: 'qwen3.5' used in 54 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
 
-## 2026-08-12 — gh workflow verification
-
-Verified the sandbox exec-pattern allow + gh tooling end-to-end by landing a
-real change through branch → commit → push → PR → merge.
