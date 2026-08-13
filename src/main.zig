@@ -150,7 +150,8 @@ pub fn main(init: std.process.Init) !void {
     while (args_it.next()) |arg| try arg_list.append(gpa, arg);
 
     var diag: []const u8 = "";
-    const opts = cli.parse(arg_list.items, &diag) catch |err| {
+    var cmd_out: cli.Command = .help;
+    const opts = cli.parseWithCommand(arg_list.items, &diag, &cmd_out) catch |err| {
         // Out of memory here is a system failure, not a malformed
         // invocation: exit 1 (general error), not 2 (usage error), so
         // scripts can tell "you typed it wrong" apart from "the machine
@@ -208,8 +209,8 @@ pub fn main(init: std.process.Init) !void {
             error.ArenaMixedPositions => cli.printUsageError(init.io, "use --for/--against for a two-way match or repeated --position for a battle royale, not both", .{}),
             error.ArenaTooFewPositions => cli.printUsageError(init.io, "a battle royale needs at least 2 --position flags (3 to 8 is the interesting range)", .{}),
             error.CompareTooFewModels => cli.printUsageError(init.io, "a comparison needs at least 2 --with flags, or none at all to compare every configured provider", .{}),
-            error.FlagNotForCommand => cli.printUsageError(init.io, "{s} is not an option for this command; run `clanker {s} --help`", .{ diag, arg_list.items[1] }),
-            error.BadSubcommand => cli.printUsageError(init.io, "unrecognized subcommand '{s}'; run `clanker {s} --help`", .{ shown, arg_list.items[1] }),
+            error.FlagNotForCommand => cli.printUsageError(init.io, "{s} is not an option for this command; run `clanker {s} --help`", .{ diag, cli.commandName(cmd_out) }),
+            error.BadSubcommand => cli.printUsageError(init.io, "unrecognized subcommand '{s}'; run `clanker {s} --help`", .{ shown, cli.commandName(cmd_out) }),
             error.PromptLooksLikeCommand => cli.printUsageError(init.io, "'{s}' looks like a quoted command; drop the quotes to run it, or use `clanker run \"{s}\"` to submit it as a task", .{ shown, shown }),
             error.OutOfMemory => unreachable,
         }
