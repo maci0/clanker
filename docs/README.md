@@ -22,7 +22,7 @@ Both `clanker repl` and `clanker run` render the same live status while a turn i
 - a dim animated braille spinner (`⠋⠙⠹…`) while waiting on the LLM or a tool,
 - a `⚙ <tool names>` line when a tool batch starts, and a `↳ <ms>` line when it finishes,
 - a bold `›` gutter marking where the model's actual answer begins,
-- the answer itself rendered live: `**bold**`, `*italic*`, `` `inline code` ``, fenced blocks, and `- ` bullets turn into real ANSI styling as tokens stream in (`MdStream` in `src/cli.zig`; a marker split across two deltas, e.g. `**` arriving as two 1-byte chunks, is buffered and resolved once the rest arrives),
+- the answer itself rendered live: `**bold**`, `*italic*`, `` `inline code` ``, fenced blocks, and `- ` bullets turn into real ANSI styling as tokens stream in (`MdStream` in `src/tui/transcript.zig`; a marker split across two deltas, e.g. `**` arriving as two 1-byte chunks, is buffered and resolved once the rest arrives),
 - a dim stats footer per turn: `[turn: 1234 in / 567 out · 4.2s · 135.1 tok/s · cache 82% · $0.0031 · ctx 12.3k/128k (10%)]`. One formatter behind both surfaces (`src/tui/stats.zig`): `clanker run` prints it on stderr, `clanker repl` appends it to the transcript as the last line of the turn. A model with no `cost_per_1m_input`/`cost_per_1m_output` in the catalogue drops the `$` segment rather than claiming the turn was free, and a provider that reported no cache accounting drops `cache` rather than showing 0%.
 
 The vaxis REPL adds two things `clanker run` has no use for, since a one-shot run has no history to lose:
@@ -422,7 +422,7 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `tools/` | `src/tools/` | Tool sources, descriptors, and committed WASM |
 | `evals/` | `src/evals/` | `*.task.json` eval definitions |
 | `skills/` | — | Markdown skills folded into the system prompt |
-| `workflows/` | — | Reusable prompt workflows (`agent.workflows_dir`) |
+| `workflows/` | `src/agent/workflows.zig` | Reusable prompt workflows (`agent.workflows_dir`) |
 | `chains/` | — | Transform chains (`agent.chains_dir`) |
 | `rules/` | — | Rule files |
 | `vendor/` | — | Vendored third-party source, committed rather than fetched |

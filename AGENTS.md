@@ -38,7 +38,7 @@ through a gated loop. Follow these conventions when changing this codebase.
   `ProviderKind` tag in `config.zig` — never a new `switch (provider.kind)`.
 - `src/sandbox/` — zwasm runtime wrapper + `ck_*` host functions + policy.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
-  execution graphs, sub-agents, autolearn.
+  execution graphs, sub-agents, autolearn, workflows.
 - `src/schedule/` — `clanker schedule`: the cron dialect and next-fire
   arithmetic (`cron.zig`, pure — no allocator, clock or `std.Io`, so it is
   fully host-testable), `state/schedule.json` + the fire ledger (`store.zig`),

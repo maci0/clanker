@@ -51,6 +51,7 @@ comptime {
     _ = @import("agent/graph.zig");
     _ = @import("agent/subagent.zig");
     _ = @import("util/dotenv.zig");
+    _ = @import("util/log.zig");
     _ = @import("util/atomic_write.zig");
     _ = @import("util/filelock.zig");
     _ = @import("util/diskcap.zig");
