@@ -5371,6 +5371,9 @@ const SteerSlot = struct {
     }
 };
 
+// Same rationale as ask_mutex above: called from bare function pointers with
+// no Io, and std.Io.Mutex has no timed-wait equivalent for the ask side that
+// shares this pattern. Zero-default is the static initializer.
 var steer_mutex: std.c.pthread_mutex_t = .{};
 var steer_slots: [max_connection_threads]SteerSlot = @splat(.{});
 
