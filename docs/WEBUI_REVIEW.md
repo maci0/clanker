@@ -1415,13 +1415,31 @@ vocabulary, including `false` and a non-object entry. That the extraction is
 behaviour-preserving was checked live rather than argued —
 `clanker providers fill deepseek` against the real models.dev catalog produces
 **byte-identical** output on this branch and on unmodified `main`
-(`clanker providers check deepseek: ok, 786ms`). The `/api/catalog` JSON
-emission itself is three straight-line `objectField` pairs next to the identical
-existing ones and is asserted on source shape, since `clanker serve` dies at
-`accept` in this environment.
+(`clanker providers check deepseek: ok, 786ms`).
+
+Then end to end, over real HTTP — `clanker serve` runs again since #188, so this
+no longer has to stop at the module boundary. `serve --port 41998`, then:
+
+- `/webui`, `/webui/features/models.js`, `/webui/app.css` all `200`, and each
+  really carries this change: `export function configSnippet` in the served
+  module, all five `id="models-snippet*"` in the served page, the
+  `.models-snippet` rules in the served stylesheet.
+- `GET /api/catalog?q=kimi-k3` → `200`, 63 entries from the real models.dev,
+  and **63 of 63** carry all three new fields. The sample carries
+  `capabilities: ["thinking","tool_use","image_in","video_in"]`, so the shared
+  helper's `modalities.input` branch is exercised by real data and not only by
+  the fixture.
+- The full loop: that live JSON fed through the real `configSnippet`, the result
+  pasted into a `config.toml` next to a `[providers.moonshotai]` table, and
+  `clanker providers check` run against it. clanker parses the generated block
+  with **no warnings** and resolves the model (`moonshotai  not configured
+  kimi-k3  *` — the only complaint is the missing API key, which is credentials,
+  not syntax). Appending one bogus key to the same block immediately produces
+  `config: unknown key 'bogus_key' in kimi-k3`, so the clean run is a real
+  result and not a check that never fires.
 
 Gate: `zig build`, `zig build tools`, `zig build test --summary all` — 163/163
-steps, 767/769 tests (2 skipped, the expected worktree pair).
+steps, 773/775 tests (2 skipped, the expected worktree pair).
 
 ## Left / next
 
