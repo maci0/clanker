@@ -288,9 +288,19 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
       24 -> 50, but the REPL should surface partial progress and offer to
       continue (append "keep going") rather than erroring, the way a coding CLI
       does. (Config bump: `config.zig`.)
-- [ ] **Real markdown outside fenced code.** Only fences get styled
-      (`syntax.zig`); bold/italic/inline-code/headings/bullets render as plain
-      text, unlike `clanker run`'s `MdStream` and every CLI above.
+- [x] **Real markdown outside fenced code.** Shipped: `mdLineSegments` parses
+      each line's inline markdown into styled segments — `**bold**`,
+      `*italic*`/`_italic_`, `` `code` ``, `#`..`######` headings, and
+      `-`/`*`/`+` bullets (which get an accent `•`) — with the markers
+      stripped and an unmatched marker left literal. Wired into both the
+      completed transcript and the live stream, so prose is styled as it
+      arrives rather than only once the turn lands, and it falls back to plain
+      on any parse failure.
+
+      What is still missing is narrower than this item used to claim: it is
+      line-level only, so multi-line constructs (tables, block quotes, nested
+      or ordered lists, setext headings) are not modelled. `clanker run`'s
+      `MdStream` remains the richer renderer.
 - [ ] **Multi-line input** (Shift+Enter or a heredoc paste mode). `vxfw.TextField`
       is single-line; Enter always submits.
 - [ ] **Image / multimodal input.** The web UI has an attachment path (webui
