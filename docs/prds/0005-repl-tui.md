@@ -210,7 +210,17 @@ Shipped:
 - [x] Manual scrollback (PgUp/PgDn, Home/End)
 - [x] Bottom-anchored transcript: at rest and while scrolled back the visible
       block hugs the input (chat-client layout); streaming still flows top-down
-      (`tailWindow`/`lineRows`, bottom-align offset in `draw`)
+      (`tailWindow`/`lineRows`, bottom-align offset in `draw`). One window
+      computation serves every case. Scrolling back *during* a stream used to
+      take a branch of its own that called `tailStart` — a one-line-per-row
+      guess that ignores wrapping — and top-aligned the result, so the same
+      anchor showed one window while a turn streamed and a different one the
+      moment it ended: wrapped lines were miscounted and the block jumped from
+      the top of the region to the bottom. That branch was also redundant.
+      `reserved` is only non-zero when the stream is at the tail, which
+      requires `view_end == null`, so in the frozen case the general path was
+      already computing what the special case was reaching for, only
+      wrap-accurately. `tailStart` is gone with it.
 - [x] Scrollbar in the rightmost column when the transcript overflows, thumb
       tracking the visible window (`drawScrollbar`)
 - [x] Prompt echo and status line coloured (accent brand/model, green idle
