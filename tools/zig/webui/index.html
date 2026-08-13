@@ -595,6 +595,18 @@ lamps carry further). The seven named palettes ride the same tokens.
         <button type="button" class="secondary" id="models-catalog-btn">Search</button>
       </div>
       <div id="models-catalog-out" style="margin-top: var(--space-3);"></div>
+      <!-- The [models."…"] block for a discovered model: the same TOML
+           `clanker providers fill` prints. Shown as selectable text rather than
+           only copied, because navigator.clipboard needs a secure context and
+           `clanker serve` speaks plain http. -->
+      <div id="models-snippet" class="models-snippet" role="region" aria-label="config.toml entry" hidden>
+        <div class="models-snippet-head">
+          <code id="models-snippet-title"></code>
+          <button type="button" class="secondary" id="models-snippet-copy">Copy</button>
+          <button type="button" class="secondary" id="models-snippet-close">Close</button>
+        </div>
+        <pre id="models-snippet-body" tabindex="0"></pre>
+      </div>
       <p class="sr-only" id="models-status" role="status" aria-live="polite"></p>
     </section>
   </div>

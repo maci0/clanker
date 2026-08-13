@@ -2171,6 +2171,30 @@ fn findCatalogModel(provider_entry: std.json.Value, model_name: []const u8) ?std
 /// shape: models.dev's own `reasoning`/`tool_call`/`modalities` fields,
 /// translated to the same tag vocabulary ("thinking", "tool_use", "image_in",
 /// "video_in", "audio_in") clanker's own Model.capabilities expects.
+///
+/// models.dev's `reasoning` / `tool_call` / `modalities.input`, as the tags
+/// `config.Model.capabilities` accepts. Extracted so the snippet
+/// `providers fill` prints and the one `/api/catalog` hands the web UI read one
+/// definition and cannot drift apart. Unquoted: TOML wants `"thinking"`, JSON
+/// wants a plain array element, so quoting stays with the caller.
+fn catalogCapabilities(arena: std.mem.Allocator, m: std.json.Value) ![]const []const u8 {
+    var caps: std.ArrayList([]const u8) = .empty;
+    if (m != .object) return caps.toOwnedSlice(arena);
+    if (m.object.get("reasoning")) |r| if (r == .bool and r.bool) try caps.append(arena, "thinking");
+    if (m.object.get("tool_call")) |t| if (t == .bool and t.bool) try caps.append(arena, "tool_use");
+    if (m.object.get("modalities")) |mo| if (mo == .object) {
+        if (mo.object.get("input")) |in| if (in == .array) {
+            for (in.array.items) |item| {
+                if (item != .string) continue;
+                if (std.mem.eql(u8, item.string, "image")) try caps.append(arena, "image_in");
+                if (std.mem.eql(u8, item.string, "video")) try caps.append(arena, "video_in");
+                if (std.mem.eql(u8, item.string, "audio")) try caps.append(arena, "audio_in");
+            }
+        };
+    };
+    return caps.toOwnedSlice(arena);
+}
+
 fn renderModelSnippet(arena: std.mem.Allocator, provider_name: []const u8, name: []const u8, m: std.json.Value) ![]const u8 {
     if (m != .object) return std.fmt.allocPrint(arena, "# {s}: malformed catalog entry\n", .{name});
     var fields: std.ArrayList([]const u8) = .empty;
@@ -2184,21 +2208,11 @@ fn renderModelSnippet(arena: std.mem.Allocator, provider_name: []const u8, name:
     };
     if (fieldStr(m.object, "name")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "display = \"{s}\"", .{disp}));
 
-    var caps: std.ArrayList([]const u8) = .empty;
-    if (m.object.get("reasoning")) |r| if (r == .bool and r.bool) try caps.append(arena, "\"thinking\"");
-    if (m.object.get("tool_call")) |t| if (t == .bool and t.bool) try caps.append(arena, "\"tool_use\"");
-    if (m.object.get("modalities")) |mo| if (mo == .object) {
-        if (mo.object.get("input")) |in| if (in == .array) {
-            for (in.array.items) |item| {
-                if (item != .string) continue;
-                if (std.mem.eql(u8, item.string, "image")) try caps.append(arena, "\"image_in\"");
-                if (std.mem.eql(u8, item.string, "video")) try caps.append(arena, "\"video_in\"");
-                if (std.mem.eql(u8, item.string, "audio")) try caps.append(arena, "\"audio_in\"");
-            }
-        };
-    };
-    if (caps.items.len > 0) {
-        const joined = try std.mem.join(arena, ", ", caps.items);
+    const caps = try catalogCapabilities(arena, m);
+    if (caps.len > 0) {
+        var quoted: std.ArrayList([]const u8) = .empty;
+        for (caps) |c| try quoted.append(arena, try std.fmt.allocPrint(arena, "\"{s}\"", .{c}));
+        const joined = try std.mem.join(arena, ", ", quoted.items);
         try fields.append(arena, try std.fmt.allocPrint(arena, "capabilities = [{s}]", .{joined}));
     }
 
@@ -6807,10 +6821,23 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
             s.objectField("id") catch return;
             s.write(model_id) catch return;
             if (m == .object) {
+                // `name` and `limit.output` are here for the Models view's
+                // config.toml snippet rather than for its table: a pasted
+                // [models."…"] block without max_tokens silently takes
+                // config.Model's 1024 default and truncates every answer, so a
+                // snippet that omits it is worse than no snippet.
+                if (fieldStr(m.object, "name")) |disp| {
+                    s.objectField("display") catch return;
+                    s.write(disp) catch return;
+                }
                 if (m.object.get("limit")) |l| if (l == .object) {
                     if (jsonNum(l.object, "context")) |ctx| {
                         s.objectField("context") catch return;
                         s.print("{d}", .{@as(i64, @trunc(ctx))}) catch return;
+                    }
+                    if (jsonNum(l.object, "output")) |o| {
+                        s.objectField("output") catch return;
+                        s.print("{d}", .{@as(i64, @trunc(o))}) catch return;
                     }
                 };
                 if (m.object.get("cost")) |c| if (c == .object) {
@@ -6831,6 +6858,17 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
                     s.objectField("tool_call") catch return;
                     s.write(true) catch return;
                 };
+                // The same tag vocabulary `providers fill` writes, from the same
+                // helper, so the snippet the page builds is the snippet the CLI
+                // prints.
+                if (catalogCapabilities(arena, m)) |caps| {
+                    if (caps.len > 0) {
+                        s.objectField("capabilities") catch return;
+                        s.beginArray() catch return;
+                        for (caps) |cap| s.write(cap) catch return;
+                        s.endArray() catch return;
+                    }
+                } else |_| {}
             }
             s.endObject() catch return;
             written += 1;
@@ -11518,6 +11556,37 @@ test "renderModelSnippet emits a valid, pasteable TOML models table" {
     try std.testing.expectEqualStrings("Kimi K3", entry.get("display").?.string);
     // "reasoning": true on the catalog entry becomes a "thinking" capability.
     try std.testing.expectEqualStrings("thinking", entry.get("capabilities").?.array.items[0].string);
+}
+
+test "catalogCapabilities is the one translation both the CLI snippet and /api/catalog use" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, fake_models_dev_catalog, .{});
+    const kimi = catalog.object.get("moonshotai").?.object.get("models").?.object.get("kimi-k3").?;
+    const caps = try catalogCapabilities(arena, kimi);
+    try std.testing.expectEqual(@as(usize, 1), caps.len);
+    try std.testing.expectEqualStrings("thinking", caps[0]);
+
+    // Every branch of the vocabulary, including the modalities the Models
+    // view's snippet would otherwise have had to translate a second time.
+    const rich = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"reasoning": true, "tool_call": true,
+        \\ "modalities": {"input": ["text", "image", "video", "audio"]}}
+    , .{});
+    const all = try catalogCapabilities(arena, rich);
+    try std.testing.expectEqual(@as(usize, 5), all.len);
+    try std.testing.expectEqualStrings("thinking", all[0]);
+    try std.testing.expectEqualStrings("tool_use", all[1]);
+    try std.testing.expectEqualStrings("image_in", all[2]);
+    try std.testing.expectEqualStrings("video_in", all[3]);
+    try std.testing.expectEqualStrings("audio_in", all[4]);
+
+    // `false` is not a capability, and neither is a non-object entry.
+    const off = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"reasoning\": false, \"tool_call\": false}", .{});
+    try std.testing.expectEqual(@as(usize, 0), (try catalogCapabilities(arena, off)).len);
+    try std.testing.expectEqual(@as(usize, 0), (try catalogCapabilities(arena, .{ .string = "nope" })).len);
 }
 
 test "webui registry-miss error names tools_dir and does not sole-blame zig build tools" {
