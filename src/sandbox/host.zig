@@ -1462,8 +1462,8 @@ fn runPythonCell(sb: *const Sandbox, arena: std.mem.Allocator, cell: []const u8)
     if (child.stdin) |stdin_file| {
         var wbuf: [4096]u8 = undefined;
         var writer = stdin_file.writer(sb.io, &wbuf);
-        writer.interface.writeAll(cell) catch {};
-        writer.interface.flush() catch {};
+        try writer.interface.writeAll(cell);
+        try writer.interface.flush();
         stdin_file.close(sb.io);
         child.stdin = null;
     }
@@ -1478,7 +1478,7 @@ fn runPythonCell(sb: *const Sandbox, arena: std.mem.Allocator, cell: []const u8)
             if (out.items.len > 512 * 1024) break;
         }
     }
-    _ = child.wait(sb.io) catch {};
+    _ = try child.wait(sb.io);
     if (out.items.len == 0) return error.Python3NotFound;
     return out.items;
 }

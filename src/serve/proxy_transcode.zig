@@ -545,7 +545,7 @@ fn parseAnthropicMessages(arena: std.mem.Allocator, provider: *const config.Prov
     };
     var messages: std.ArrayList(types.Message) = .empty;
     if (obj.get("system")) |sys| {
-        if (systemText(arena, sys)) |text| {
+        if (try systemText(arena, sys)) |text| {
             try messages.append(arena, .{ .role = .system, .content = text });
         }
     }
@@ -772,7 +772,7 @@ fn appendAnthropicMessage(arena: std.mem.Allocator, messages: *std.ArrayList(typ
                         .string => |s| s,
                         else => continue,
                     };
-                    const c = toolResultText(arena, po.get("content"));
+                    const c = try toolResultText(arena, po.get("content"));
                     try results.append(arena, .{ .role = .tool, .content = c, .tool_call_id = tid });
                 }
             }
@@ -808,7 +808,7 @@ fn imageFromAnthropic(v: ?json.Value) ?types.ImagePart {
     return .{ .mime = mime, .b64 = data };
 }
 
-fn toolResultText(arena: std.mem.Allocator, v: ?json.Value) []const u8 {
+fn toolResultText(arena: std.mem.Allocator, v: ?json.Value) ![]const u8 {
     const val = v orelse return "";
     return switch (val) {
         .string => |s| s,
@@ -820,17 +820,17 @@ fn toolResultText(arena: std.mem.Allocator, v: ?json.Value) []const u8 {
                     else => continue,
                 };
                 if (o.get("text")) |t| switch (t) {
-                    .string => |s| text.appendSlice(arena, s) catch {},
+                    .string => |s| try text.appendSlice(arena, s),
                     else => {},
                 };
             }
-            break :blk text.toOwnedSlice(arena) catch "";
+            break :blk try text.toOwnedSlice(arena);
         },
         else => "",
     };
 }
 
-fn systemText(arena: std.mem.Allocator, v: json.Value) ?[]const u8 {
+fn systemText(arena: std.mem.Allocator, v: json.Value) !?[]const u8 {
     return switch (v) {
         .string => |s| s,
         .array => |arr| blk: {
@@ -841,12 +841,12 @@ fn systemText(arena: std.mem.Allocator, v: json.Value) ?[]const u8 {
                     else => continue,
                 };
                 if (o.get("text")) |t| switch (t) {
-                    .string => |s| text.appendSlice(arena, s) catch {},
+                    .string => |s| try text.appendSlice(arena, s),
                     else => {},
                 };
             }
             if (text.items.len == 0) break :blk null;
-            break :blk text.toOwnedSlice(arena) catch null;
+            break :blk try text.toOwnedSlice(arena);
         },
         else => null,
     };
