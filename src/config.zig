@@ -273,6 +273,14 @@ pub const Agent = struct {
     thinking_classifier_timeout_ms: u32 = 3000,
 };
 
+/// Persistent eval kernels (PRD 0016). Off by default: a kernel is an
+/// unsandboxed subprocess with the host's ambient filesystem permission.
+pub const Kernel = struct {
+    enabled: bool = false,
+    max_output_bytes: u32 = 65536,
+    cleanup_delay_ms: u32 = 5000,
+};
+
 /// First configured fallback, used by the pre-emptive vision router. Empty
 /// when no chain is configured.
 pub fn firstFallbackProvider(dirs: []const []const u8) []const u8 {
@@ -624,6 +632,7 @@ pub const Config = struct {
     tui: Tui = .{},
     advisor: Advisor = .{},
     ttsr: Ttsr = .{},
+    kernel: Kernel = .{},
     chatrooms: Chatrooms = .{},
     memory: Memory = .{},
     modules: Modules = .{},
@@ -744,6 +753,7 @@ pub const Config = struct {
             "models",           "instance", "peers",   "notify",
             "chatrooms",        "modules",  "web",     "memory",
             "serve",            "tui",      "advisor", "ttsr",
+            "kernel",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -765,6 +775,9 @@ pub const Config = struct {
         }
         if (obj.get("ttsr")) |v| {
             cfg.ttsr = try parseTtsr(arena, v);
+        }
+        if (obj.get("kernel")) |v| {
+            cfg.kernel = try parseKernel(v);
         }
         if (obj.get("providers")) |v| {
             const pobj = switch (v) {
@@ -1514,6 +1527,22 @@ pub const Config = struct {
         if (fields.multimodal) dst.multimodal = src.multimodal;
         if (fields.chatrooms) dst.chatrooms = src.chatrooms;
         if (fields.token_stats) dst.token_stats = src.token_stats;
+    }
+
+    fn parseKernel(v: json.Value) !Kernel {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.KernelNotObject,
+        };
+        var k = Kernel{};
+        warnUnknownKeys(obj, &.{ "enabled", "max_output_bytes", "cleanup_delay_ms" }, "kernel");
+        if (obj.get("enabled")) |e| k.enabled = switch (e) {
+            .bool => |b| b,
+            else => return error.FieldNotBool,
+        };
+        if (obj.get("max_output_bytes")) |n| k.max_output_bytes = try jsonUnsigned(u32, n, "kernel.max_output_bytes");
+        if (obj.get("cleanup_delay_ms")) |n| k.cleanup_delay_ms = try jsonUnsigned(u32, n, "kernel.cleanup_delay_ms");
+        return k;
     }
 
     fn parseTtsr(arena: std.mem.Allocator, v: json.Value) !Ttsr {
