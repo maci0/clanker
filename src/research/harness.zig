@@ -108,6 +108,20 @@ test "extractMetric from metric.json" {
     const m = extractMetric(gpa, io, tmp.dir, "no metric here", "", "score", "score:");
     try std.testing.expect(m != null and m.? == 42.5);
 }
+test "extractMetric handles negatives and scientific notation" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const neg = extractMetric(gpa, io, tmp.dir, "score: -0.5 done", "", "score", "score:");
+    try std.testing.expect(neg != null and @abs(neg.? - (-0.5)) < 1e-9);
+    const sci = extractMetric(gpa, io, tmp.dir, "score: 1.2e3 end", "", "score", "score:");
+    try std.testing.expect(sci != null and @abs(sci.? - 1200.0) < 1e-9);
+    const none = extractMetric(gpa, io, tmp.dir, "no numbers", "", "x", "");
+    try std.testing.expect(none == null);
+}
 test "runHarness captures output" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
