@@ -33,7 +33,7 @@ and Implementation lists checkable file-level phases.
 | [0010](0010-plugin-manifest-sdk.md) | Plugin manifest SDK | Shipped | Out-of-tree list → 0022 |
 | [0011](0011-clanker-mesh.md) | Clanker mesh | Draft | Admission/TLS decided in Design |
 | [0012](0012-surface-plugins.md) | Surface plugins | Partial | Web UI shipped; TUI/CLI draft |
-| [0013](0013-ttsr.md) | TTSR | Draft | Substring/`*` matcher (no full regex v1) |
+| [0013](0013-ttsr.md) | TTSR | Shipped | Substring/`*` abort-and-retry |
 | [0014](0014-hashline.md) | Hashline edit format | Shipped | `hashes:true` + `op:hashline` |
 | [0015](0015-advisor.md) | Advisor | Shipped | Off by default; fail-open |
 | [0016](0016-eval-kernel.md) | Eval kernel | Draft | Hard prereq for 0017 |
@@ -54,9 +54,8 @@ and Implementation lists checkable file-level phases.
 Packaging and reliability first, then agent-loop quality, then heavy
 optional subsystems:
 
-1. **0013** — TTSR (substring engine)
-2. **0016** then **0017** — eval kernel, then DAP
-3. **0019** — `gh_read`
+1. **0016** then **0017** — eval kernel, then DAP
+2. **0019** — `gh_read`
 4. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
 5. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
 6. **0027** — `write-goal` (field-list blocker still open)

@@ -628,7 +628,7 @@ pub const Agent = struct {
                         }
                     }
                 };
-                var guard_buf = self.arena.alloc(u8, self.cfg.ttsr.buffer_bytes) catch
+                const guard_buf = self.arena.alloc(u8, self.cfg.ttsr.buffer_bytes) catch
                     try self.llmChat(messages.items, err_detail, &g, iteration, llm_t0, effort);
                 var guard = Guard{
                     .inner = cb,

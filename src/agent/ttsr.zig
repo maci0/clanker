@@ -3,7 +3,7 @@
 
 const std = @import("std");
 
-pub const PatternError = error{ EmptyPattern, BadEscape };
+pub const PatternError = error{ EmptyPattern, BadEscape, OutOfMemory };
 
 /// Compiled pattern: a sequence of literal fragments separated by `*`.
 pub const Pattern = struct {

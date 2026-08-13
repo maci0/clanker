@@ -45,6 +45,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   per-run value still wins.
 - Optional `agent.auto_thinking` classifies each user turn and selects a
   `reasoning_effort` row. Off by default; fail-open.
+- `[ttsr]` stream rules can abort an in-flight completion on a
+  literal/`*` match, inject a note into the system prompt, and retry
+  the turn. Off unless rules are configured.
 
 ### Changed
 
