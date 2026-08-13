@@ -2,10 +2,10 @@
 
 ## Status
 
-Partial. The session subprocess registry (`src/agent/subprocess.zig`),
-`kernel.enabled = false` default, `"confirm": true` guest, magic-prefix
-parser, and ADR 0010 carve-out are in. Python/JS supervisors, the
-loopback bridge, and session-end SIGTERM wiring are still open.
+Partial. Registry, disabled-by-default guest, magic prefixes, ADR 0010
+carve-out, and `ck_kernel` (one-shot Python eval, ADR 0011) are in.
+Persistent supervisors, JS/Bun, the loopback bridge, and session-end
+SIGTERM wiring are still open.
 Sources of truth: `src/agent/subprocess.zig`, `src/config.zig`
 (`Kernel`), `tools/zig/kernel.zig`, `tools/zig/kernel_magic.zig`,
 [ADR 0010](../adrs/0010-kernels-are-an-opt-in-unsandboxed-class.md).

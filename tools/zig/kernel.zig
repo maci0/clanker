@@ -42,11 +42,23 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         .pip, .time, .cell => {},
     }
 
-    if (std.mem.eql(u8, kind, "python")) {
-        return lib.fail(out, "python3 kernel not started: host subprocess registry is present but the supervisor spawn is still landing");
-    }
     if (std.mem.eql(u8, kind, "js")) {
-        return lib.fail(out, "js kernel not started: bun worker spawn is still landing");
+        return lib.fail(out, "js kernel not started: bun worker is still landing");
     }
-    return lib.fail(out, "kernel must be \"python\" or \"js\"");
+    if (!std.mem.eql(u8, kind, "python")) {
+        return lib.fail(out, "kernel must be \"python\" or \"js\"");
+    }
+
+    var req: std.Io.Writer.Allocating = .init(lib.alloc);
+    var s = std.json.Stringify{ .writer = &req.writer };
+    try s.beginObject();
+    try s.objectField("kernel");
+    try s.write("python");
+    try s.objectField("cell");
+    try s.write(parsed_cell.rest);
+    try s.endObject();
+    const raw = lib.kernelEval(req.written()) catch |err| {
+        return lib.failErr(out, err, "ck_kernel");
+    };
+    try out.writeAll(raw);
 }
