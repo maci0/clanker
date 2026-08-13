@@ -3255,6 +3255,14 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
     try std.testing.expectEqualStrings("gate returns before its load-bearing call", checksZigShapeBroken(early_run).?);
 }
 
+test "gate shape requirements must occur in executable source" {
+    const required = "return runZigArgs(gpa, io, dir, argv.items, \"zig build\")";
+    try std.testing.expect(findCodeLine("    " ++ required ++ ";\n", required) != null);
+    try std.testing.expect(findCodeLine("    // " ++ required ++ ";\n", required) == null);
+    try std.testing.expect(findCodeLine("    /* " ++ required ++ "; */\n", required) == null);
+    try std.testing.expect(findCodeLine("    const preserved = \"" ++ required ++ "\";\n", required) == null);
+}
+
 test "capabilityLineReports requires a named PASS or FAIL line" {
     const out =
         \\calculator: 1.00 PASS
