@@ -260,9 +260,13 @@ until cgroups quotas exist.
 
 Feature toggles, all boolean, all default `true` (except where noted). Turning
 one off removes its tools, endpoints, and prompt surface: `mcp`, `peers`,
-`a2a`, `webui`, `graphs`, `sessions`, `goal`, `token_budget`, `streaming`,
-`dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`,
-`chatrooms`, `token_stats`.
+`a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`,
+`token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`,
+`rlm`, `multimodal`, `chatrooms`, `token_stats`.
+
+`goal_auto_steer` is the one that is not a whole subsystem: off, the goal module
+stays on — explicit `--goal`, `/goal` and tracking all still work — but a run
+with no goal named stops attaching itself to whatever goal is newest.
 
 ```toml
 [modules]
@@ -338,6 +342,11 @@ chatrooms = false
   `web_search`) may reach, added to their sandbox `network_allow` at load. A
   research site is a config edit, not a manifest edit. Entries may use `*` and
   `?` globs, and a bare `"*"` allows any host.
+- **`[ttsr]`** — turn-time self-repair: watch the stream for a pattern and
+  inject a correction instead of letting the turn fail on a known-shaped
+  mistake. `max_retries_per_turn`, `buffer_bytes`, and repeated
+  `[[ttsr.rules]]` tables of `name` / `pattern` / `inject` / `max_fires`. No
+  rules by default, which leaves the whole thing inert.
 - **`[improve]`** — self-improvement loop gates: `capability_gate`,
   `inert_gate`, `plan_phase`, `max_consecutive_test_only`, `eval_provider`,
   `max_cache_bytes`, `arena_advisory`, and more. See `src/config.zig` `Improve`

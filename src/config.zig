@@ -299,6 +299,12 @@ pub const Agent = struct {
     /// have historically isolated by default. `auto` keeps that; `yes`/`no`
     /// force a default.
     goal_worktree: WorktreeDefault = .auto,
+    /// Per-mode opt-in to worktree isolation. Each mode named here isolates
+    /// by default (as if that mode's `worktree`/`goal_worktree` were `yes`);
+    /// a mode left out keeps its historical default, and an empty list keeps
+    /// every mode on those defaults. An explicit `--worktree`/`--no-worktree`
+    /// still wins over the list. Modes: `run`, `goal`, `tui`, `schedule`.
+    git_worktree_on: []const WorktreeMode = &.{},
 };
 
 /// Persistent eval kernels (PRD 0016). Off by default: a kernel is an
@@ -364,6 +370,7 @@ pub const AgentFields = struct {
     thinking_classifier_timeout_ms: bool = false,
     worktree: bool = false,
     goal_worktree: bool = false,
+    git_worktree_on: bool = false,
 };
 
 /// Who must approve a write-capable tool call before it runs.
@@ -373,6 +380,8 @@ pub const ConfirmWrites = enum { never, browser, always };
 /// each command kind's historical default (off for a plain run, on for
 /// goal/scheduled runs); `yes`/`no` force a default for that kind.
 pub const WorktreeDefault = enum { auto, yes, no };
+/// A session kind a `git_worktree_on` entry can name.
+pub const WorktreeMode = enum { run, goal, tui, schedule };
 
 pub const Improve = struct {
     /// null (or 0 in the file) means the engine sizes the context from the
@@ -1363,6 +1372,7 @@ pub const Config = struct {
             "fallback_provider",         "fallback_providers",             "auto_thinking",
             "thinking_classifier_model", "thinking_classifier_timeout_ms", "worktree",
             "goal_worktree",
+            "git_worktree_on",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -1538,6 +1548,16 @@ pub const Config = struct {
                 return error.GoalWorktreeDefaultInvalid;
             f.goal_worktree = true;
         }
+        if (obj.get("git_worktree_on")) |k| {
+            const names = try jsonNameList(arena, k, "git_worktree_on");
+            const modes = try arena.alloc(WorktreeMode, names.len);
+            for (names, 0..) |s, i| {
+                modes[i] = std.meta.stringToEnum(WorktreeMode, s) orelse
+                    return error.WorktreeModeInvalid;
+            }
+            a.git_worktree_on = modes;
+            f.git_worktree_on = true;
+        }
         return .{ .agent = a, .fields = f };
     }
 
@@ -1572,6 +1592,7 @@ pub const Config = struct {
         if (fields.thinking_classifier_timeout_ms) dst.thinking_classifier_timeout_ms = src.thinking_classifier_timeout_ms;
         if (fields.worktree) dst.worktree = src.worktree;
         if (fields.goal_worktree) dst.goal_worktree = src.goal_worktree;
+        if (fields.git_worktree_on) dst.git_worktree_on = src.git_worktree_on;
     }
 
     fn applyModulesFields(dst: *Modules, src: Modules, fields: ModulesFields) void {
@@ -2239,6 +2260,61 @@ test "worktree and goal_worktree parse and default to auto" {
         ,
     });
     try std.testing.expectError(error.WorktreeDefaultInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
+}
+
+test "agent.git_worktree_on parses per-mode list and rejects unknown modes" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "ollama"
+        \\
+        \\[providers.ollama]
+        \\base_url = "http://127.0.0.1:11434/v1"
+        \\
+        \\[models."ollama/llama3.1"]
+        \\provider = "ollama"
+        \\
+        \\[agent]
+        \\git_worktree_on = ["goal", "schedule"]
+        \\
+        ,
+    });
+    const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqualSlices(WorktreeMode, &.{ .goal, .schedule }, cfg.agent.git_worktree_on);
+
+    // Left out, the list defaults to empty (the historical per-run-kind behaviour).
+    try std.testing.expectEqualSlices(WorktreeMode, &.{}, (Agent{}).git_worktree_on);
+
+    // An unknown mode fails the load rather than being silently ignored.
+    try dir.writeFile(io, .{
+        .sub_path = "bad.toml",
+        .data =
+        \\default_provider = "ollama"
+        \\
+        \\[providers.ollama]
+        \\base_url = "http://127.0.0.1:11434/v1"
+        \\
+        \\[models."ollama/llama3.1"]
+        \\provider = "ollama"
+        \\
+        \\[agent]
+        \\git_worktree_on = ["goal", "nope"]
+        \\
+        ,
+    });
+    try std.testing.expectError(error.WorktreeModeInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
 }
 
 test "agent.fallback_provider parses and is not reset by a partial local override" {
@@ -3281,5 +3357,88 @@ test "modules flags reject non-bool values instead of silently defaulting" {
         error.FieldNotBool,
         Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
     );
+}
+
+/// Whether `config.toml` documents `key`: a line that sets it, live or
+/// commented out, or a table header that names it (`[[ttsr.rules]]`).
+///
+/// Line-anchored rather than a substring search, or `allow` would be
+/// "documented" by `exec_pattern_allow` and the whole check would pass on
+/// coincidences.
+fn documentsKey(text: []const u8, key: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        // `# # proxy_port = 17922`: a key commented out inside an
+        // already-commented block is still documented, so strip every layer
+        // rather than one.
+        const line = std.mem.trim(u8, raw, " \t#");
+        if (std.mem.startsWith(u8, line, key)) {
+            const rest = std.mem.trimStart(u8, line[key.len..], " \t");
+            if (rest.len > 0 and rest[0] == '=') return true;
+        }
+        // `[memory.chunk]`, `[[ttsr.rules]]`: the key names a table.
+        if (std.mem.startsWith(u8, line, "[")) {
+            if (std.mem.indexOf(u8, line, key)) |at| {
+                const before = line[at - 1];
+                const after = line[at + key.len ..];
+                if ((before == '.' or before == '[') and (after.len > 0 and after[0] == ']')) return true;
+            }
+        }
+    }
+    return false;
+}
+
+test "config.toml documents every key the loader accepts" {
+    // The committed config is the only place most of these keys are written
+    // down at all: a key added to the schema and not to the file is one
+    // nobody outside this source file will ever find. Reflection over the
+    // structs rather than a hand-kept list, so the guard cannot go stale the
+    // same way the file did.
+    const text = @embedFile("config_toml");
+
+    // Fields that are not config keys. `shared_root` is set by `run
+    // --worktree` at runtime and deliberately unreadable from a file; the
+    // rest are the parsed *results* of keys rather than keys themselves.
+    const not_keys = [_][]const u8{ "shared_root", "name", "models" };
+    inline for (.{ Agent, Improve, Modules, Web, Notify, Chatrooms, Kernel, Ttsr, TtsrRule, Advisor, Instance, Tui, Serve, Model, Provider }) |T| {
+        inline for (@typeInfo(T).@"struct".fields) |f| {
+            comptime var skip = false;
+            inline for (not_keys) |n| {
+                if (comptime std.mem.eql(u8, f.name, n)) skip = true;
+            }
+            // Provider.name and Instance.name are different things: the
+            // instance really does take a `name =` key.
+            if (comptime std.mem.eql(u8, f.name, "name") and (T == Instance or T == TtsrRule)) skip = false;
+            if (!skip and !documentsKey(text, f.name)) {
+                std.debug.print("config.toml does not document {s}.{s}\n", .{ @typeName(T), f.name });
+                return error.UndocumentedConfigKey;
+            }
+        }
+    }
+
+    // `[memory]`'s keys are nested tables, so its field names (chunk_size,
+    // vector_top_k, ...) are not the spellings a file uses. Check those.
+    inline for ([_][]const u8{ "memory", "chunk", "embedding", "vector", "size", "overlap", "strategy", "top_k", "threshold", "backend" }) |key| {
+        if (!documentsKey(text, key)) {
+            std.debug.print("config.toml does not document memory key {s}\n", .{key});
+            return error.UndocumentedConfigKey;
+        }
+    }
+
+    // And the alternate spelling the loader accepts for one-entry chains.
+    try std.testing.expect(documentsKey(text, "fallback_provider"));
+}
+
+test "documentsKey does not accept a coincidental substring" {
+    const text =
+        \\exec_pattern_allow = []
+        \\# [memory.chunk]
+        \\# size = 800
+    ;
+    try std.testing.expect(!documentsKey(text, "allow"));
+    try std.testing.expect(documentsKey(text, "exec_pattern_allow"));
+    try std.testing.expect(documentsKey(text, "size"));
+    try std.testing.expect(documentsKey(text, "chunk"));
+    try std.testing.expect(!documentsKey(text, "vector"));
 }
 // --- memory helpers (appended via patch) ---

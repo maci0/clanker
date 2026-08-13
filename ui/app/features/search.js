@@ -101,8 +101,14 @@ function render() {
 
   if (state.searching) {
     if (status) status.textContent = "Searching…";
+    list.setAttribute("aria-busy", "true");
+    var loading = document.createElement("p");
+    loading.className = "run-empty";
+    loading.textContent = "Searching…";
+    list.appendChild(loading);
     return;
   }
+  list.removeAttribute("aria-busy");
   if (state.query.length < state.minLen) {
     var hint = document.createElement("p");
     hint.className = "run-empty";
@@ -140,6 +146,13 @@ function render() {
 }
 
 var seq = 0;
+function setSearchBusy(on) {
+  var btn = byId("search-go");
+  var input = byId("search-q");
+  if (btn) btn.disabled = on;
+  if (input) input.setAttribute("aria-busy", on ? "true" : "false");
+}
+
 export function runSearch(q) {
   state.query = (q || "").trim();
   if (state.query.length < state.minLen) {
@@ -147,6 +160,7 @@ export function runSearch(q) {
     state.truncated = false;
     state.searching = false;
     state.error = "";
+    setSearchBusy(false);
     render();
     return Promise.resolve(null);
   }
@@ -155,6 +169,7 @@ export function runSearch(q) {
   var mine = ++seq;
   state.searching = true;
   state.error = "";
+  setSearchBusy(true);
   render();
   return fetch("/api/sessions/search?q=" + encodeURIComponent(state.query))
     .then(readJson)
@@ -164,6 +179,7 @@ export function runSearch(q) {
       state.truncated = !!(data && data.truncated);
       state.error = "";
       state.searching = false;
+      setSearchBusy(false);
       render();
       return data;
     })
@@ -172,6 +188,7 @@ export function runSearch(q) {
       state.searching = false;
       state.hits = [];
       state.error = err.message;
+      setSearchBusy(false);
       render();
       return null;
     });

@@ -2819,10 +2819,13 @@ fn autolearnSynthesize(
         .messages = &messages,
         .max_tokens = 2500,
     }, &err_detail) catch |err| {
-        const msg = std.fmt.allocPrint(arena, "autolearn: model synthesis failed ({s})\n", .{
-            err_detail orelse @errorName(err),
-        }) catch return error.ModelSynthesisFailed;
-        try writeStdErr(io, msg);
+        var stderr_buf: [512]u8 = undefined;
+        var stderr = std.Io.File.stderr().writer(io, &stderr_buf);
+        try stderr.interface.print(
+            "autolearn: model synthesis failed ({s})\n",
+            .{err_detail orelse @errorName(err)},
+        );
+        try stderr.interface.flush();
         return error.ModelSynthesisFailed;
     };
     return resp.message.content orelse return error.EmptySynthesis;
@@ -3190,9 +3193,13 @@ test isolateByDefault {
 /// hand. With no flag, the `[agent]` default for this run kind decides:
 /// `goal_worktree` for goal-driven and scheduled runs, `worktree` for a typed
 /// run.
-fn shouldIsolate(opts: Options, cfg: *const config.Config) bool {
+fn shouldIsolate(opts: Options, mode: config.WorktreeMode, cfg: *const config.Config) bool {
     if (opts.worktree) return true;
     if (opts.no_worktree) return false;
+    // `git_worktree_on` names modes that isolate by default. A named mode
+    // opts in regardless of `worktree`/`goal_worktree`; one left out (or an
+    // empty list) keeps the historical default below.
+    if (containsMode(cfg.agent.git_worktree_on, mode)) return true;
     const def = if (opts.unattended or opts.goal != null)
         cfg.agent.goal_worktree
     else
@@ -3200,24 +3207,39 @@ fn shouldIsolate(opts: Options, cfg: *const config.Config) bool {
     return isolateByDefault(opts, def);
 }
 
+/// Whether `m` is named in `modes` (the `[agent] git_worktree_on` list).
+fn containsMode(modes: []const config.WorktreeMode, m: config.WorktreeMode) bool {
+    for (modes) |x| if (x == m) return true;
+    return false;
+}
+
 test shouldIsolate {
     const auto = config.Config{};
     const force = config.Config{ .agent = .{ .worktree = .yes, .goal_worktree = .yes } };
     const optout = config.Config{ .agent = .{ .worktree = .no, .goal_worktree = .no } };
 
-    try std.testing.expect(!shouldIsolate(.{}, &auto));
-    try std.testing.expect(shouldIsolate(.{ .goal = "g1" }, &auto));
-    try std.testing.expect(shouldIsolate(.{ .worktree = true }, &auto));
+    try std.testing.expect(!shouldIsolate(.{}, .run, &auto));
+    try std.testing.expect(shouldIsolate(.{ .goal = "g1" }, .goal, &auto));
+    try std.testing.expect(shouldIsolate(.{ .worktree = true }, .run, &auto));
     // A config `.yes` isolates a plain run by default, `.no` opts a goal out.
-    try std.testing.expect(shouldIsolate(.{}, &force));
-    try std.testing.expect(!shouldIsolate(.{ .goal = "g1" }, &optout));
+    try std.testing.expect(shouldIsolate(.{}, .run, &force));
+    try std.testing.expect(!shouldIsolate(.{ .goal = "g1" }, .goal, &optout));
     // A flag still wins over the config default.
-    try std.testing.expect(!shouldIsolate(.{ .no_worktree = true }, &force));
+    try std.testing.expect(!shouldIsolate(.{ .no_worktree = true }, .run, &force));
     // The default, opted out of.
-    try std.testing.expect(!shouldIsolate(.{ .goal = "g1", .no_worktree = true }, &auto));
-    try std.testing.expect(!shouldIsolate(.{ .unattended = true, .no_worktree = true }, &auto));
+    try std.testing.expect(!shouldIsolate(.{ .goal = "g1", .no_worktree = true }, .goal, &auto));
+    try std.testing.expect(!shouldIsolate(.{ .unattended = true, .no_worktree = true }, .schedule, &auto));
     // Explicit --worktree wins over an explicit --no-worktree.
-    try std.testing.expect(shouldIsolate(.{ .worktree = true, .no_worktree = true }, &auto));
+    try std.testing.expect(shouldIsolate(.{ .worktree = true, .no_worktree = true }, .run, &auto));
+
+    // `git_worktree_on` names modes that isolate by default.
+    const listed = config.Config{ .agent = .{ .git_worktree_on = &.{ .goal, .schedule } } };
+    try std.testing.expect(shouldIsolate(.{}, .goal, &listed));
+    try std.testing.expect(shouldIsolate(.{ .unattended = true }, .schedule, &listed));
+    // A mode not named keeps the historical (auto) default: a typed run off.
+    try std.testing.expect(!shouldIsolate(.{}, .run, &listed));
+    // Explicit flag still beats the list.
+    try std.testing.expect(!shouldIsolate(.{ .no_worktree = true }, .goal, &listed));
 }
 
 fn cmdRun(init: std.process.Init, opts: Options) !void {
@@ -3285,7 +3307,13 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // and --goal runs would have made clanker unusable outside a git repo,
     // where `git worktree add` cannot succeed at all.
     const isolation_required = opts.worktree;
-    if (shouldIsolate(opts, &cfg)) isolate: {
+    const mode: config.WorktreeMode = if (opts.unattended)
+        .schedule
+    else if (opts.goal != null)
+        .goal
+    else
+        .run;
+    if (shouldIsolate(opts, mode, &cfg)) isolate: {
         harness_root = std.process.currentPathAlloc(io, arena) catch |err| {
             log.log(.error_, "run --worktree: could not read the current directory: {s}", .{@errorName(err)});
             return err;
@@ -6961,6 +6989,8 @@ fn handleSteer(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io
 /// cannot leave finished work marked active. Best-effort, a goal already
 /// moved by hand (or deleted) is left alone, and failures only log.
 fn setGoalStatusIf(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, goal_id: []const u8, from: []const u8, to: []const u8) void {
+    var guard = file_lock.acquire(io, dir, "state", "goals", gpa);
+    defer guard.release();
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -7014,6 +7044,50 @@ test "a finished run moves its goal to review, and only from active" {
     try std.testing.expectEqualStrings("review", goals[0].status);
     try std.testing.expect(goals[0].updated > 1);
     try std.testing.expectEqualStrings("done", goals[1].status);
+}
+
+test "concurrent goal status updates do not lose each other" {
+    // serve runs one thread per connection; two runs finishing at once both
+    // call setGoalStatusIf. Without the goals lock they read the same file,
+    // each flip one goal, and the second write drops the first.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.writeFile(io, .{ .sub_path = goals_path, .data =
+        \\[{"id":"g1","objective":"a","completion_criterion":"b","status":"active","created":1,"updated":1},
+        \\ {"id":"g2","objective":"c","completion_criterion":"d","status":"active","created":1,"updated":1}]
+    });
+
+    const Worker = struct {
+        dir: std.Io.Dir,
+        io: std.Io,
+        id: []const u8,
+        fn go(self: *@This()) void {
+            setGoalStatusIf(self.io, std.testing.allocator, self.dir, self.id, "active", "review");
+        }
+    };
+
+    var workers: [2]Worker = .{
+        .{ .dir = tmp.dir, .io = io, .id = "g1" },
+        .{ .dir = tmp.dir, .io = io, .id = "g2" },
+    };
+    var threads: [2]std.Thread = undefined;
+    for (&workers, 0..) |*w, i| {
+        threads[i] = try std.Thread.spawn(.{}, Worker.go, .{w});
+    }
+    for (&threads) |*t| t.join();
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const raw = try tmp.dir.readFileAlloc(io, goals_path, arena, .limited(1 << 20));
+    const goals = try std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqualStrings("review", goals[0].status);
+    try std.testing.expectEqualStrings("review", goals[1].status);
 }
 
 test "steer registry: register by goal or session, steer, poll, release" {
@@ -8411,7 +8485,9 @@ const goals_path = "state/goals.json";
 /// Adding a goal and changing one's status, the two things the `goal` tool and
 /// `clanker run --goal` already assume someone can do. One POST shape covers
 /// both: an objective creates, an id updates.
-fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+    var guard = file_lock.acquire(io, std.Io.Dir.cwd(), "state", "goals", gpa);
+    defer guard.release();
     const req = std.json.parseFromSliceLeaky(GoalPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
@@ -10416,7 +10492,7 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, me
     const arena = arena_state.allocator();
 
     if (std.mem.eql(u8, method, "POST")) {
-        handleGoalWrite(io, arena, body, stream);
+        handleGoalWrite(io, gpa, arena, body, stream);
         return;
     }
 

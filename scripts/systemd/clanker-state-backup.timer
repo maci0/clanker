@@ -1,0 +1,10 @@
+[Unit]
+Description=Run clanker state backup every 30 minutes
+
+[Timer]
+OnCalendar=*-*-* *:00,30:00
+Persistent=true
+Unit=clanker-state-backup.service
+
+[Install]
+WantedBy=timers.target

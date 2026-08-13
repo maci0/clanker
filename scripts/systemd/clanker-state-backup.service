@@ -1,0 +1,6 @@
+[Unit]
+Description=Back up clanker runtime-local data
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/clanker-state-backup

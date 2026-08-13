@@ -4638,12 +4638,17 @@ if (window.MutationObserver) {
       var text = el0.textContent.trim();
       // The same message written twice in one tick is one event.
       if (!text || seen[text]) return;
+      // In-flight progress belongs in the view (or sr-only status), not a
+      // toast that vanishes before the work finishes.
+      if (/^(Loading|Searching|Refreshing|Pausing|Resuming)\b/.test(text)) return;
       seen[text] = true;
       var shown = showToast(text);
       if (shown) statusToasts.set(el0, shown);
     });
   });
-  ["session-status", "run-status", "chat-status", "board-status", "webui-plugins-status", "tools-status", "logs-status", "goals-status"].forEach(function (id) {
+  ["session-status", "run-status", "chat-status", "board-status", "webui-plugins-status", "tools-status", "logs-status", "goals-status",
+   "search-status", "schedule-status", "knowledge-status", "prompts-status", "models-status", "fleet-status",
+   "progress-status", "settings-status", "skills-status", "workflows-status"].forEach(function (id) {
     var node = document.getElementById(id);
     if (node) statusObserver.observe(node, { childList: true, characterData: true, subtree: true });
   });
