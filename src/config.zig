@@ -526,6 +526,7 @@ pub const Config = struct {
     memory_present: bool = false,
     instance_present: bool = false,
     serve_present: bool = false,
+    serve_as_present: bool = false,
     default_provider_present: bool = false,
     peers_present: bool = false,
     web_present: bool = false,
@@ -679,6 +680,7 @@ pub const Config = struct {
         if (obj.get("serve")) |v| {
             cfg.serve = try parseServe(arena, v);
             cfg.serve_present = true;
+            cfg.serve_as_present = v.object.get("serve_as") != null;
         }
         if (obj.get("peers")) |v| {
             cfg.peers = try parsePeers(arena, v);
@@ -1381,7 +1383,7 @@ pub const Config = struct {
         if (src.serve_present) {
             if (src.serve.host) |h| dst.serve.host = h;
             if (src.serve.webui_port) |p| dst.serve.webui_port = p;
-            if (src.serve.serve_as.len > 0) dst.serve.serve_as = src.serve.serve_as;
+            if (src.serve_as_present) dst.serve.serve_as = src.serve.serve_as;
         }
         if (src.notify_present) dst.notify = src.notify;
         if (src.tui_present) dst.tui = src.tui;
@@ -1679,6 +1681,28 @@ test "config.local.toml web.allow replaces the global web allowlist" {
     const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(@as(usize, 1), cfg.web.allow.len);
     try std.testing.expectEqualStrings("local.example", cfg.web.allow[0]);
+}
+
+test "config.local.toml can clear serve_as" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+        \\serve = { host = "127.0.0.1", serve_as = ["base.example"] }
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
+        \\serve = { serve_as = [] }
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqualStrings("127.0.0.1", cfg.serve.host.?);
+    try std.testing.expectEqual(@as(usize, 0), cfg.serve.serve_as.len);
 }
 
 test "confirm_writes parses its three values and rejects anything else" {
