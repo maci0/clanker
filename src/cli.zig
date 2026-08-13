@@ -832,6 +832,16 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else {
                 try joinOwned(&opts.workflow_args, &workflow_args_owned, a);
             }
+        } else if (opts.command == .run and opts.task != null) {
+            // A second positional here is hardly ever a second task. It is one
+            // task the shell tore in half, and the usual tear is an unescaped
+            // `"` inside the prompt: the quote that was meant to be literal
+            // ends the outer string, and the first unquoted space after it
+            // starts a new argument. "unrecognized argument" is true but
+            // unhelpful for that, since the argument the caller sees is the
+            // task they just typed.
+            setDiag(diag, a);
+            return error.ExtraTask;
         } else {
             setDiag(diag, a);
             return error.UnknownArg;
@@ -1084,13 +1094,63 @@ pub fn printUsageHintFor(io: std.Io, name: []const u8) void {
     writeStdErr(io, renderUsageHintFor(&buf, name)) catch {};
 }
 
+/// Longest rejected argument echoed back in full. Past this the message stops
+/// being a diagnostic and becomes a wall of the caller's own prose.
+const elide_limit = 96;
+
+/// The one-line form of an argument, for quoting back in a diagnostic.
+///
+/// A rejected argument is usually a short typo, but it can also be a whole
+/// task prompt: one unescaped `"` inside a task splits it into two positionals
+/// at the shell, and the second half arrives here at kilobyte scale. Echoing
+/// that verbatim used to overflow the message buffer and take the entire
+/// diagnostic down with it (see renderUsageError), so keep the first line and
+/// mark the cut instead. Cuts land on a UTF-8 boundary: the prompts that reach
+/// this path are full of em dashes and arrows, and half a codepoint renders as
+/// a replacement character right where the caller is trying to recognize their
+/// own text.
+pub fn elideArg(buf: []u8, s: []const u8) []const u8 {
+    const line = s[0..(std.mem.findScalar(u8, s, '\n') orelse s.len)];
+    if (line.len == s.len and line.len <= elide_limit) return s;
+    var end = @min(line.len, elide_limit);
+    while (end > 0 and end < line.len and line[end] & 0xC0 == 0x80) end -= 1;
+    const cut = "…";
+    if (buf.len < end + cut.len) return line[0..@min(line.len, buf.len)];
+    @memcpy(buf[0..end], line[0..end]);
+    @memcpy(buf[end..][0..cut.len], cut);
+    return buf[0 .. end + cut.len];
+}
+
+/// Renders a usage message, keeping as much of it as fits.
+///
+/// The previous version fell back to a bare "invalid command line" whenever the
+/// formatted message did not fit, which is the worst thing to print at exactly
+/// the moment the caller needs to know *which* argument was wrong: it names
+/// neither the argument nor the mistake, and it reads like the flags themselves
+/// stopped working. Callers elide long values (elideArg) so overflow should no
+/// longer happen; if one slips through, a truncated message still beats a
+/// contentless one.
+fn renderUsageError(buf: []u8, comptime fmt: []const u8, args: anytype) []const u8 {
+    const cut = "…\n";
+    var w: std.Io.Writer = .fixed(buf[0 .. buf.len - cut.len]);
+    w.print("error: " ++ fmt ++ "\n", args) catch {
+        var n = w.buffered().len;
+        // The write can stop mid-codepoint; drop the partial one so the cut
+        // marker is not preceded by a broken byte sequence.
+        while (n > 0 and buf[n - 1] & 0xC0 == 0x80) n -= 1;
+        if (n > 0 and buf[n - 1] & 0x80 != 0) n -= 1;
+        @memcpy(buf[n..][0..cut.len], cut);
+        return buf[0 .. n + cut.len];
+    };
+    return w.buffered();
+}
+
 /// Usage mistakes are interactive diagnostics, not runtime logs. Keep them
 /// free of timestamps and log levels so the recovery action is the first
 /// thing a person or shell consumer sees.
 pub fn printUsageError(io: std.Io, comptime fmt: []const u8, args: anytype) void {
     var buf: [1024]u8 = undefined;
-    const line = std.fmt.bufPrint(&buf, "error: " ++ fmt ++ "\n", args) catch "error: invalid command line\n";
-    writeStdErr(io, line) catch {};
+    writeStdErr(io, renderUsageError(&buf, fmt, args)) catch {};
 }
 
 /// Returns the closest public command spelling for a short mistyped token.
@@ -11508,6 +11568,67 @@ test "flags take their value in either form" {
     // Dash-prefixed literal values still have an explicit, unambiguous form.
     const literal = try parse(&.{ "clanker", "autoresearch", "--pattern=-", "--target=x", "--harness=true" }, null);
     try std.testing.expectEqualStrings("-", literal.research_pattern.?);
+}
+
+test "a task the shell split is an extra argument, not a broken flag" {
+    // The report this came from read as "some of the clanker flags got
+    // broken". They had not: `clanker run --worktree --goal g "...an
+    // "escaped" word..."` reaches argv as two positionals, because the inner
+    // quote ends the outer string and the next unquoted space starts a new
+    // argument. The second half then hit the catch-all `UnknownArg`, whose
+    // message quotes the whole kilobyte back, overflows the render buffer,
+    // and used to be replaced wholesale by "error: invalid command line" -
+    // which names neither the argument nor the mistake, so the flags right
+    // before it look like the culprits.
+    const tail = "iterations list under the spec.\n" ** 40;
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.ExtraTask, parse(&.{ "clanker", "run", "--worktree", "--goal", "g1", "take care of this: ", tail }, &diag));
+    try std.testing.expectEqualStrings(tail, diag);
+
+    // The flags parse exactly as before; only the extra positional is refused.
+    const ok = try parse(&.{ "clanker", "run", "--worktree", "--goal", "g1", "take care of this" }, null);
+    try std.testing.expect(ok.worktree);
+    try std.testing.expectEqualStrings("g1", ok.goal.?);
+    try std.testing.expectEqualStrings("take care of this", ok.task.?);
+
+    // Commands whose second positional means something keep it.
+    const notify = try parse(&.{ "clanker", "notify", "peer", "a message" }, null);
+    try std.testing.expectEqualStrings("a message", notify.message.?);
+}
+
+test "a rejected argument is quoted back in one readable line" {
+    var buf: [128]u8 = undefined;
+    // Short single-line arguments, which is nearly all of them, are exact.
+    try std.testing.expectEqualStrings("--wroktree", elideArg(&buf, "--wroktree"));
+    try std.testing.expectEqualStrings("", elideArg(&buf, ""));
+    // A multi-line argument is cut at the first line break and marked, so a
+    // pasted prompt cannot scroll the diagnostic off the screen.
+    try std.testing.expectEqualStrings("take care of this:…", elideArg(&buf, "take care of this:\n  state of the feature\n"));
+    // A long line is cut on a codepoint boundary: these prompts are full of
+    // em dashes and arrows, and half a sequence renders as a replacement
+    // character right where the caller is trying to recognize their own text.
+    const straddling = ("x" ** (elide_limit - 1)) ++ "—tail";
+    const cut = elideArg(&buf, straddling);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(cut));
+    try std.testing.expect(std.mem.endsWith(u8, cut, "…"));
+    try std.testing.expect(cut.len <= elide_limit + "…".len);
+}
+
+test "an oversized usage message is truncated, never blanked" {
+    // Belt and braces for the overflow path itself: callers elide their
+    // values now, but a message that outgrows the buffer must still say what
+    // it can. Anything is more use than "invalid command line".
+    var buf: [64]u8 = undefined;
+    const line = renderUsageError(&buf, "unrecognized argument '{s}'", .{"y" ** 200});
+    try std.testing.expect(std.mem.startsWith(u8, line, "error: unrecognized argument 'yyy"));
+    try std.testing.expect(std.mem.endsWith(u8, line, "…\n"));
+    try std.testing.expect(line.len <= buf.len);
+
+    // A message that fits is untouched, cut marker and all absent.
+    try std.testing.expectEqualStrings(
+        "error: unrecognized argument '--wroktree'\n",
+        renderUsageError(&buf, "unrecognized argument '{s}'", .{"--wroktree"}),
+    );
 }
 
 test "--port still works as an alias for --webui-port" {
