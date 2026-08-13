@@ -190,6 +190,7 @@ pub const Agent = struct {
     /// chatroom logs, run records, cursors.
     state_dir: []const u8 = "state",
     sandbox_root: []const u8 = ".",
+
     /// Absolute path of the checkout an isolated run was started from, set at
     /// runtime by `run --worktree` (see cmdRun) and deliberately NOT readable
     /// from a config file: it describes how this process was invoked, not a
@@ -264,6 +265,21 @@ pub const Agent = struct {
     /// configured provider that can. Names a `[providers.<name>]` entry.
     fallback_provider: []const u8 = "",
 };
+
+/// First configured manifest directory, used by `plugins new` and similar
+/// "write into one place" surfaces. An empty list is treated as the in-tree
+/// default so a malformed config cannot strand the scaffolder.
+pub fn firstToolsDir(dirs: []const []const u8) []const u8 {
+    return if (dirs.len > 0) dirs[0] else "tools/manifests";
+}
+
+/// Comma-separated `tools_dir` list for diagnostics. One entry is returned
+/// as-is so existing single-directory messages stay unchanged.
+pub fn toolsDirDisplay(arena: std.mem.Allocator, dirs: []const []const u8) ![]const u8 {
+    if (dirs.len == 0) return "(empty)";
+    if (dirs.len == 1) return dirs[0];
+    return std.mem.join(arena, ", ", dirs);
+}
 
 /// Which agent keys a config file actually set. Used so a partial
 /// `config.local.toml` `"agent"` object does not replace the whole agent
