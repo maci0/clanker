@@ -16,6 +16,7 @@ const std = @import("std");
 const config = @import("config.zig");
 const registry = @import("tools/registry.zig");
 const log = @import("util/log.zig");
+const ensuredir = @import("util/ensuredir.zig");
 
 const Status = enum {
     ok,
@@ -244,7 +245,7 @@ pub fn cmdSetup(init: std.process.Init) !void {
         out.interface.flush() catch {};
         std.process.exit(1);
     }
-    dir.createDirPath(io, "state") catch |err| {
+    ensuredir.ensureDir(dir, io, "state") catch |err| {
         log.log(.warn, "setup: mkdir 'state' failed: {s}", .{@errorName(err)});
         w.print("  state/ could not be created: {s}. Check the directory is writable.\n", .{@errorName(err)}) catch {};
     };

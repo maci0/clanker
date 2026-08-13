@@ -42,6 +42,7 @@ const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
 const atomic_write = @import("util/atomic_write.zig");
 const diskcap = @import("util/diskcap.zig");
+const ensuredir = @import("util/ensuredir.zig");
 const runlock = @import("util/runlock.zig");
 const filelock = @import("util/filelock.zig");
 const utf8 = @import("util/utf8.zig");
@@ -1641,7 +1642,7 @@ fn cmdInit(init: std.process.Init, announce: bool) !void {
         },
         else => return err,
     };
-    dir.createDirPath(io, "state") catch |err|
+    ensuredir.ensureDir(dir, io, "state") catch |err|
         log.log(.warn, "init: mkdir 'state' failed: {s}", .{@errorName(err)});
     if (announce) log.log(.info, "clanker initialized. Run `clanker setup` to check it over.", .{});
 }
@@ -2122,7 +2123,7 @@ fn fetchModelsDevCached(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloc
         } else |_| {}
         return err;
     };
-    cwd.createDirPath(io, "state/cache") catch {};
+    ensuredir.ensureDir(cwd, io, "state/cache") catch {};
     atomic_write.writeFile(io, cwd, models_dev_cache_path, body) catch |err|
         log.log(.warn, "could not cache models.dev catalog: {s}", .{@errorName(err)});
     return body;
@@ -3963,9 +3964,9 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
 
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
         log.log(.warn, "improve-self: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });
-    std.Io.Dir.cwd().createDirPath(io, "state") catch |err|
+    ensuredir.ensureDir(std.Io.Dir.cwd(), io, "state") catch |err|
         log.log(.warn, "improve-self: mkdir 'state' failed: {s}", .{@errorName(err)});
-    std.Io.Dir.cwd().createDirPath(io, "state/staging") catch |err|
+    ensuredir.ensureDir(std.Io.Dir.cwd(), io, "state/staging") catch |err|
         log.log(.warn, "improve-self: mkdir 'state/staging' failed: {s}", .{@errorName(err)});
 
     // Before any staging or gate work: two runs against one tree gate each
@@ -4772,7 +4773,7 @@ const NotificationRecord = struct {
 const notifications_max_bytes = 1 << 20;
 
 fn storeNotification(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, record: NotificationRecord) !void {
-    try base.createDirPath(io, "state");
+    try ensuredir.ensureDir(base, io, "state");
     var guard = filelock.acquire(io, base, "state", "notifications", gpa);
     defer guard.release();
 
@@ -10016,7 +10017,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     var session_lock: filelock.Guard = .{ .io = io };
     defer session_lock.release();
     if (has_session) {
-        std.Io.Dir.cwd().createDirPath(io, "state/sessions") catch |err|
+        ensuredir.ensureDir(std.Io.Dir.cwd(), io, "state/sessions") catch |err|
             log.log(.warn, "run: mkdir 'state/sessions' failed: {s}", .{@errorName(err)});
         session_lock = filelock.acquire(io, std.Io.Dir.cwd(), "state/sessions", req.session, gpa);
         if (session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), req.session)) |s| {

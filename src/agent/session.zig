@@ -5,6 +5,7 @@ const std = @import("std");
 const json = std.json;
 const types = @import("../llm/types.zig");
 const atomic_write = @import("../util/atomic_write.zig");
+const ensuredir = @import("../util/ensuredir.zig");
 
 pub const Session = struct {
     id: []const u8,
@@ -37,7 +38,7 @@ pub fn validSessionId(id: []const u8) bool {
 pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, session: Session) !void {
     _ = arena;
     if (!validSessionId(session.id)) return error.InvalidSessionId;
-    try base.createDirPath(io, store_dir);
+    try ensuredir.ensureDir(base, io, store_dir);
 
     // Grows to fit the conversation rather than a fixed cap: a fixed buffer
     // silently failed (and callers `catch {}`'d the failure away) once a

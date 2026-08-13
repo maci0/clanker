@@ -15,6 +15,7 @@ const graph_mod = @import("graph.zig");
 const autolearn = @import("autolearn.zig");
 const chatrooms = @import("../peers/chatrooms.zig");
 const filelock = @import("../util/filelock.zig");
+const ensuredir = @import("../util/ensuredir.zig");
 const log = @import("../util/log.zig");
 const toolout = @import("../util/toolout.zig");
 const utf8 = @import("../util/utf8.zig");
@@ -961,7 +962,7 @@ pub const Agent = struct {
     /// since it bypassed the lock other state logs use (see filelock.zig).
     fn recordReasoning(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8, task: []const u8, reasoning: []const u8) void {
         _ = arena;
-        std.Io.Dir.cwd().createDirPath(io, "state") catch return;
+        ensuredir.ensureDir(std.Io.Dir.cwd(), io, "state") catch return;
         const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         var buf: [reasoning_record_buf_bytes]u8 = undefined;
         var w: std.Io.Writer = .fixed(&buf);
@@ -974,9 +975,9 @@ pub const Agent = struct {
         s.objectField("model") catch return;
         s.write(model) catch return;
         s.objectField("task") catch return;
-        s.write(autolearn.capUtf8(task, reasoning_record_task_chars)) catch return;
+        s.write(utf8.cap(task, reasoning_record_task_chars)) catch return;
         s.objectField("reasoning") catch return;
-        s.write(autolearn.capUtf8(reasoning, reasoning_record_reasoning_chars)) catch return;
+        s.write(utf8.cap(reasoning, reasoning_record_reasoning_chars)) catch return;
         s.endObject() catch return;
 
         appendReasoningLine(std.Io.Dir.cwd(), io, gpa, buf[0..w.end]);

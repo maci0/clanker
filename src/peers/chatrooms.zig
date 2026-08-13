@@ -18,6 +18,7 @@ const config_mod = @import("../config.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const filelock = @import("../util/filelock.zig");
+const ensuredir = @import("../util/ensuredir.zig");
 const utf8 = @import("../util/utf8.zig");
 const build_options = @import("build_options");
 
@@ -245,7 +246,7 @@ pub fn listRooms(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
 /// the exclusive `lock_file_name` lock, not because of any single-threading
 /// assumption.
 pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message) !void {
-    if (state_dir.len > 0) try base.createDirPath(io, state_dir);
+    if (state_dir.len > 0) try ensuredir.ensureDir(base, io, state_dir);
     const path = try subPath(arena, state_dir, log_path);
 
     // This reads the whole log, adds a line, and writes the whole log back.
@@ -787,7 +788,7 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg
 /// can rejoin a config-default room); `on=false` leaves (adds to
 /// "unsubscribed" so it overrides a config-default subscription).
 pub fn subscribe(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, on: bool) !void {
-    if (state_dir.len > 0) try base.createDirPath(io, state_dir);
+    if (state_dir.len > 0) try ensuredir.ensureDir(base, io, state_dir);
     // Subscription changes are read-modify-write operations. Serialize them
     // so concurrent join/leave requests cannot silently discard each other.
     var guard = filelock.acquire(io, base, if (state_dir.len > 0) state_dir else ".", "chatrooms-sub", gpa);
@@ -896,7 +897,7 @@ pub fn readCursor(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_
 
 pub fn writeCursor(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, state_dir: []const u8, msg: Message) void {
     _ = gpa;
-    if (state_dir.len > 0) base.createDirPath(io, state_dir) catch return;
+    if (state_dir.len > 0) ensuredir.ensureDir(base, io, state_dir) catch return;
     var path_buf: [512]u8 = undefined;
     const path = if (state_dir.len == 0)
         cursor_path

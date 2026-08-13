@@ -5,6 +5,7 @@ const json = std.json;
 const log = @import("../util/log.zig");
 const filelock = @import("../util/filelock.zig");
 const atomic_write = @import("../util/atomic_write.zig");
+const ensuredir = @import("../util/ensuredir.zig");
 const inert = @import("inert.zig");
 
 pub const Status = enum {
@@ -299,9 +300,9 @@ pub const History = struct {
         /// one anyway would put guesses into the record the next run reads.
         class: ?inert.Class,
     ) !void {
-        self.base.createDirPath(self.io, self.state_dir) catch |err|
+        ensuredir.ensureDir(self.base, self.io, self.state_dir) catch |err|
             log.log(.warn, "mkdir {s} failed: {t}", .{ self.state_dir, err });
-        self.base.createDirPath(self.io, self.history_dir) catch |err|
+        ensuredir.ensureDir(self.base, self.io, self.history_dir) catch |err|
             log.log(.warn, "mkdir {s} failed: {t}", .{ self.history_dir, err });
 
         // Serialised: an improve run and the staged evals a gate spawns are
@@ -374,7 +375,7 @@ pub const History = struct {
         for (files) |f| {
             const dst = try std.fmt.allocPrint(self.gpa, "{s}/{s}/{s}", .{ self.history_dir, id, f });
             defer self.gpa.free(dst);
-            self.base.createDirPath(self.io, dirName(dst)) catch {};
+            ensuredir.ensureDir(self.base, self.io, dirName(dst)) catch {};
             copyFile(self.io, self.gpa, self.base, f, dst) catch |err| {
                 // A new file has no previous version to snapshot; that is not
                 // a failure and should not hide real snapshot problems.

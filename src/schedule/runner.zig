@@ -23,6 +23,7 @@ const std = @import("std");
 const cron = @import("cron.zig");
 const store = @import("store.zig");
 const filelock = @import("../util/filelock.zig");
+const ensuredir = @import("../util/ensuredir.zig");
 const log = @import("../util/log.zig");
 
 /// Held for the whole of one `run-due`, so a cron that fires every minute
@@ -256,7 +257,7 @@ fn fireOne(
 /// there reads as abandoned and gets taken over. A kernel-held flock needs no
 /// liveness check, it is released when the process dies, however it dies.
 fn acquireRunLock(io: std.Io, base: std.Io.Dir) !std.Io.File {
-    base.createDirPath(io, store.ledger_dir) catch {};
+    ensuredir.ensureDir(base, io, store.ledger_dir) catch {};
     return filelock.createFileRetry(io, base, run_lock_path, .{
         .truncate = false,
         .lock = .exclusive,

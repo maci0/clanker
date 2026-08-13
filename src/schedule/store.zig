@@ -187,7 +187,7 @@ pub fn nextId(arena: std.mem.Allocator, entries: []const Entry) ![]const u8 {
 /// its cap. Best effort by design: losing the record of a run that happened is
 /// bad, and refusing to run because the record could not be written is worse.
 pub fn appendRecord(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, rec: Record) void {
-    base.createDirPath(io, ledger_dir) catch |err| {
+    ensuredir.ensureDir(base, io, ledger_dir) catch |err| {
         log.log(.warn, "schedule: could not create {s}: {s}", .{ ledger_dir, @errorName(err) });
         return;
     };

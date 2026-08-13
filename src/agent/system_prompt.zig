@@ -69,14 +69,6 @@ const self_authored_notice =
     \\
 ;
 
-/// Truncates `s` to at most `max_bytes` bytes without splitting a UTF-8
-/// codepoint. The learnings section is capped to a fixed byte budget, and a
-/// note written mid-codepoint would otherwise dangle a continuation byte into
-/// the system prompt as invalid UTF-8, which is sent to the provider as-is.
-fn capUtf8(s: []const u8, max_bytes: usize) []const u8 {
-    return utf8.cap(s, max_bytes);
-}
-
 /// Resolves the path to device-global operator instructions.
 /// Config override wins; otherwise `$HOME/.agents/AGENTS.md` when `home` is set.
 /// Returns null when neither yields a path (caller omits the section).
@@ -388,7 +380,7 @@ pub fn build(
         if (l.len > 0) {
             try buf.appendSlice(arena, "## Learnings (persistent memory)\n\n" ++ self_authored_notice);
             if (l.len > max_learnings_prompt_bytes) {
-                try buf.appendSlice(arena, capUtf8(l, max_learnings_prompt_bytes));
+                try buf.appendSlice(arena, utf8.cap(l, max_learnings_prompt_bytes));
                 try buf.appendSlice(arena, "...");
             } else {
                 try buf.appendSlice(arena, l);
@@ -532,20 +524,15 @@ test "resolveGlobalInstructionsPath: override wins, home default, empty is null"
     try std.testing.expectEqualStrings(".agents/AGENTS.md", parts.local_instructions_file);
 }
 
-test "capUtf8 never splits a codepoint" {
-    // At or under the cap the input is returned unchanged.
-    try std.testing.expectEqualStrings("hello", capUtf8("hello", 100));
-
-    // ASCII truncates at the byte cap.
-    try std.testing.expectEqualStrings("hel", capUtf8("hello", 3));
-
-    // "é" is 2 bytes (0xC3 0xA9). A cap of 3 lands mid-é; the cut backs up
-    // to "hé" so no dangling continuation byte is emitted.
-    try std.testing.expectEqualStrings("hé", capUtf8("héllo", 3));
-    // A cap inside a lone multi-byte codepoint yields the empty string.
-    try std.testing.expectEqualStrings("", capUtf8("é", 1));
-    // A cap that lands exactly on a codepoint end keeps it whole.
-    try std.testing.expectEqualStrings("é", capUtf8("é", 2));
+test "learnings cap never splits a codepoint" {
+    // The learnings section is capped to a fixed byte budget via utf8.cap.
+    // A note written mid-codepoint would otherwise dangle a continuation
+    // byte into the system prompt as invalid UTF-8.
+    try std.testing.expectEqualStrings("hello", utf8.cap("hello", 100));
+    try std.testing.expectEqualStrings("hel", utf8.cap("hello", 3));
+    try std.testing.expectEqualStrings("hé", utf8.cap("héllo", 3));
+    try std.testing.expectEqualStrings("", utf8.cap("é", 1));
+    try std.testing.expectEqualStrings("é", utf8.cap("é", 2));
 }
 
 test "default prompt marks model-visible external content as untrusted data" {
