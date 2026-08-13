@@ -9,7 +9,7 @@ Accepted.
 A provider today is a `config.ProviderKind` enum (`openai_compat`, `anthropic`,
 `vertex_anthropic`) switched on in ~7 places across two files:
 
-- `src/llm/providers.zig` (pure): `buildRequest`, `parseResponse`,
+- `src/llm/registry.zig` (pure): `buildRequest`, `parseResponse`,
   `parseErrorDetail`, and the streaming-event parse. JSON in, JSON out, no I/O,
   no keys. Already unit-tested per kind.
 - `src/llm/client.zig` (trust root): `authHeaders` and `resolveBearer` (read
@@ -81,7 +81,7 @@ cheaper.
 ## Implementation notes
 
 Landed in `src/llm/`: the vtable is `providers/api.zig`, the registry is the
-`registry` table in `providers.zig`, and `providers/{openai,anthropic,vertex}.zig`
+`registry` table in `registry.zig`, and `providers/{openai,anthropic,vertex}.zig`
 are the three provider files. `client.zig` is the shared core and holds no
 `switch (provider.kind)`. Three things came out differently from the sketch
 above, recorded rather than papered over:

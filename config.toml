@@ -248,6 +248,7 @@ repl_exec_allow = []
 # wins over both.
 # worktree = "auto"
 # goal_worktree = "auto"
+# git_worktree_on = []           # modes that isolate by default: run, goal, tui, schedule
 
 [instance]
 name = "clanker"

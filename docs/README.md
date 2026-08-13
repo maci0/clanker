@@ -43,7 +43,7 @@ pointers (`buildRequest`, `parseResponse`, `parseErrorDetail`,
 `parseStreamEvent`, `authHeaders`, `endpointUrl`) declared in
 `src/llm/providers/api.zig`, implemented by exactly one file under
 `src/llm/providers/`, and listed in the single `registry` table in
-`src/llm/providers.zig`. Keys must not enter the sandbox and the transport is
+`src/llm/registry.zig`. Keys must not enter the sandbox and the transport is
 on the per-token hot path, which is what rules WASM out:
 [docs/adrs/0004](adrs/0004-providers-are-a-native-vtable-not-wasm.md).
 

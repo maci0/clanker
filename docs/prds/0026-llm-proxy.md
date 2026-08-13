@@ -18,7 +18,7 @@ Sources of truth:
 - `src/serve/proxy_transcode.zig`: OpenAI↔Anthropic request/response/SSE, Vertex `anthropic_version` body swap
 - `src/cli.zig`: `cmdServe`, `resolveListen`, `handleConnection` (Host → token → CSRF → dispatch), `buildServeArgvTail`
 - `src/config.zig`: `Serve`, `ServeFields`, `proxy_aliases` as `std.json.ArrayHashMap`
-- `src/llm/auth.zig` `resolve`, `src/llm/providers.zig` `forKind`, each kind's `authHeaders` / `endpointUrl`
+- `src/llm/auth.zig` `resolve`, `src/llm/registry.zig` `forKind`, each kind's `authHeaders` / `endpointUrl`
 - `src/stats/tokens.zig` `append`
 - `docs/README.md` Binding, `docs/configuration.md` `[serve]`
 
@@ -819,7 +819,7 @@ Listen default (shared socket + `/proxy/v1`), Vertex advertise, and chat/message
 - `docs/README.md` Binding and the trust model (`~L1030-1068`)
 - `docs/configuration.md` `[serve]` (`~L245-258`)
 - `AGENTS.md` (WASM by default; native needs a reason)
-- `src/llm/providers/api.zig`, `src/llm/providers.zig`, `src/llm/client.zig`
+- `src/llm/providers/api.zig`, `src/llm/registry.zig`, `src/llm/client.zig`
 - `src/llm/providers/openai.zig` `buildRequest` / `stream_options` (`~L140-148`)
 - `src/llm/providers/anthropic.zig` `buildBody` / `authHeaders` / `endpointUrl`
 - `src/llm/providers/vertex.zig` `endpointUrl` (`:rawPredict` / `:streamRawPredict`)

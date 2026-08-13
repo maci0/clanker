@@ -44,7 +44,6 @@ comptime {
     _ = @import("sandbox/runtime.zig");
     _ = @import("toolhost/registry.zig");
     _ = @import("toolhost/manifest.zig");
-    _ = @import("toolhost/builder.zig");
     _ = @import("toolhost/usage.zig");
     _ = @import("agent/system_prompt.zig");
     _ = @import("agent/loop.zig");
@@ -71,7 +70,6 @@ comptime {
     _ = @import("util/utf8.zig");
     _ = @import("agent/auto_learn.zig");
     _ = @import("evals/scorers.zig");
-    _ = @import("evals/runner.zig");
     _ = @import("improve/proposal.zig");
     _ = @import("improve/plan.zig");
     _ = @import("improve/history.zig");

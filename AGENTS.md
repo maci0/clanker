@@ -42,7 +42,7 @@ through a gated loop. Follow these conventions when changing this codebase.
   fail-open post-turn critique (off by default), distinct from
   `improve.arena_advisory`. Each provider is a vtable
   (`providers/api.zig`) implemented in its own `providers/<name>.zig` and
-  listed in the `registry` table in `providers.zig`; `auth.zig` is the
+  listed in the `registry` table in `registry.zig`; `auth.zig` is the
   credential-acquisition axis, `gcp_jwt.zig`/`vertex_token.zig` the Vertex
   minting behind it. Adding a provider is one file, one registry row, and one
   `ProviderKind` tag in `config.zig` — never a new `switch (provider.kind)`.

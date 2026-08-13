@@ -174,7 +174,7 @@ an explicit user-triggered action rather than something that reshapes
 context on its own with nothing shown.
 
 **Provider/model switching.** `RunRequestBody` takes an optional
-`provider`/`model` (the plumbing already existed in `providers.zig`'s
+`provider`/`model` (the plumbing already existed in `registry.zig`'s
 `Params`); `/api/providers` emits `cost_per_1m_input`/`cost_per_1m_output`
 per model. The composer's visible search box (`#model-search`/
 `#model-list`, `core/modelpicker.js`) is a second view onto the pre-existing
