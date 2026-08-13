@@ -3552,7 +3552,7 @@ fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
     if (!result.ok) {
         const err_text = result.@"error" orelse "tool failed";
         if (std.ascii.findIgnoreCase(err_text, "not found") != null)
-            return error.InvalidSessionId;
+            return error.SessionNotFound;
         log.log(.error_, "cannot export session '{s}': {s}", .{ id, err_text });
         return error.ToolFailed;
     }
@@ -8069,7 +8069,7 @@ fn handleSessions(
         if (std.mem.eql(u8, method, "POST")) {
             if (branchSuffix(id)) |branch| {
                 const src_id = branch.src;
-                if (!validSessionId(src_id)) {
+                if (!session.validSessionId(src_id)) {
                     respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
                     return;
                 }
@@ -8094,7 +8094,7 @@ fn handleSessions(
         // "<id>/fork" itself contains a separator and would never pass it.
         if (std.mem.eql(u8, method, "POST") and std.mem.endsWith(u8, id, "/fork")) {
             const src_id = id[0 .. id.len - "/fork".len];
-            if (!validSessionId(src_id)) {
+            if (!session.validSessionId(src_id)) {
                 respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
                 return;
             }
@@ -8112,7 +8112,7 @@ fn handleSessions(
         // transcript grows past it. Suffix first, for the reason fork gives.
         if (std.mem.eql(u8, method, "POST") and std.mem.endsWith(u8, id, "/compact")) {
             const src_id = id[0 .. id.len - "/compact".len];
-            if (!validSessionId(src_id)) {
+            if (!session.validSessionId(src_id)) {
                 respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
                 return;
             }
@@ -8125,7 +8125,7 @@ fn handleSessions(
             respond(stream, 200, "OK", cbody);
             return;
         }
-        if (!validSessionId(id)) {
+        if (!session.validSessionId(id)) {
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
             return;
         }
@@ -8249,12 +8249,12 @@ test "branch route suffix parsing yields a valid source id and refuses traversal
     // a 1-based turn number.
     const r1 = branchSuffix("sess-abc/branch/3");
     try std.testing.expect(r1 != null);
-    try std.testing.expect(validSessionId(r1.?.src));
+    try std.testing.expect(session.validSessionId(r1.?.src));
     try std.testing.expectEqual(@as(usize, 3), r1.?.turn);
     // A traversal attempt in the source id is refused, not sanitised.
     const bad = branchSuffix("../../etc/branch/1");
     try std.testing.expect(bad != null);
-    try std.testing.expect(!validSessionId(bad.?.src));
+    try std.testing.expect(!session.validSessionId(bad.?.src));
     // A real session id never contains the marker, so the rename POST for a
     // plain id cannot be shadowed by the branch route.
     try std.testing.expect(branchSuffix("sess-abc") == null);
@@ -8649,32 +8649,14 @@ test "scanSkills mirrors the system prompt's discovery" {
     try std.testing.expectEqual(@as(usize, 0), none.len);
 }
 
-/// Session ids reach the filesystem as a path fragment, so they are restricted
-/// to the shapes this server itself mints: a UUID from the browser, or the
-/// `sess-<base36>` fallback. Anything with a separator or a dot is refused
-/// before it can be used to walk out of `state/sessions/`.
-fn validSessionId(id: []const u8) bool {
-    return isSlug(id);
-}
-
-test "validSessionId refuses path traversal" {
-    try std.testing.expect(validSessionId("7f3a1c2e-0b44-4a91-9d3e-1c2b3a4d5e6f"));
-    try std.testing.expect(validSessionId("sess-m1x2y3-ab12cd"));
-    try std.testing.expect(!validSessionId("../../etc/passwd"));
-    try std.testing.expect(!validSessionId("a/b"));
-    try std.testing.expect(!validSessionId("a.json"));
-    try std.testing.expect(!validSessionId(""));
-    try std.testing.expect(!validSessionId("x" ** 65));
-}
-
 test "fork route suffix parsing yields a valid source id and refuses traversal" {
     // POST /api/sessions/<id>/fork strips the suffix before validating.
     const id = "sess-abc/fork";
     try std.testing.expect(std.mem.endsWith(u8, id, "/fork"));
-    try std.testing.expect(validSessionId(id[0 .. id.len - "/fork".len]));
+    try std.testing.expect(session.validSessionId(id[0 .. id.len - "/fork".len]));
     // A traversal attempt in the source id is refused, not sanitised.
     const bad = "../../etc/fork";
-    try std.testing.expect(!validSessionId(bad[0 .. bad.len - "/fork".len]));
+    try std.testing.expect(!session.validSessionId(bad[0 .. bad.len - "/fork".len]));
     // A real session id never ends in the fork marker, so the rename POST
     // for a plain id cannot be shadowed by the fork branch.
     try std.testing.expect(!std.mem.endsWith(u8, "sess-abc", "/fork"));
@@ -8702,7 +8684,7 @@ test "forkSession mints an id that still passes validSessionId" {
     const forked = try session.forkSession(io, std.testing.allocator, arena, tmp.dir, "sess-1");
     // The fork id is returned to the client and must itself stay addressable
     // through the id-validated session endpoints.
-    try std.testing.expect(validSessionId(forked));
+    try std.testing.expect(session.validSessionId(forked));
 }
 
 fn sessionListJSON(arena: std.mem.Allocator, list: []const session.SessionMeta) ![]const u8 {
@@ -10018,7 +10000,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     // This id becomes both a lock-file name and
     // `state/sessions/<id>.json`. The dedicated session routes validate the
     // same path fragment; the run route must not provide a traversal bypass.
-    if (req.session.len > 0 and !validSessionId(req.session)) {
+    if (req.session.len > 0 and !session.validSessionId(req.session)) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid session id\"}");
         return;
     }

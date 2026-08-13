@@ -2372,7 +2372,7 @@ const Model = struct {
             log.log(.warn, "repl: could not mint a session id; conversation not saved", .{});
             return;
         });
-        if (!validSessionId(id)) {
+        if (!session_mod.validSessionId(id)) {
             log.log(.warn, "repl: refusing to save under invalid session id '{s}'", .{id});
             return;
         }
@@ -4832,20 +4832,6 @@ test "resolveMascot prefers the flag and tolerates junk from either side" {
     try std.testing.expectEqual(@as(?[]const u8, null), resolveMascot("loop", "off").bad);
 }
 
-/// Session ids become path fragments under `state/sessions/`, so only the
-/// same slug shape the rest of clanker accepts is allowed here (alphanumeric,
-/// `-`, `_`, length 1..64). Anything with a separator or a dot is refused
-/// before it could walk out of the store, this mirrors `cli.zig`'s
-/// `validSessionId`, restated locally because the REPL deliberately does not
-/// import cli.zig.
-fn validSessionId(id: []const u8) bool {
-    if (id.len == 0 or id.len > 64) return false;
-    for (id) |c| {
-        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
-    }
-    return true;
-}
-
 /// The id `--continue` means: the saved session touched most recently.
 /// Returns null when there are none, so a first `--continue` starts a fresh
 /// session rather than failing at someone who has not made one yet.
@@ -4860,21 +4846,10 @@ fn latestSessionId(io: std.Io, arena: std.mem.Allocator) ?[]const u8 {
 
 /// A fresh conversation's id, minted the first time it is saved. The
 /// nanosecond suffix keeps rapid successive sessions distinct and stays
-/// within the slug alphabet `validSessionId` accepts, like the server's
+/// within the slug alphabet `session.validSessionId` accepts, like the server's
 /// `sess-<base36>` fallback.
 fn mintSessionId(io: std.Io, arena: std.mem.Allocator) ![]const u8 {
     return try std.fmt.allocPrint(arena, "sess-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
-}
-
-test "validSessionId refuses path traversal and accepts the minted shape" {
-    try std.testing.expect(validSessionId("sess-123"));
-    try std.testing.expect(validSessionId("7f3a1c2e-0b44-4a91-9d3e-1c2b3a4d5e6f"));
-    try std.testing.expect(validSessionId("sess-m1x2y3_ab12cd"));
-    try std.testing.expect(!validSessionId("../../etc/passwd"));
-    try std.testing.expect(!validSessionId("a/b"));
-    try std.testing.expect(!validSessionId("a.json"));
-    try std.testing.expect(!validSessionId(""));
-    try std.testing.expect(!validSessionId("x" ** 65));
 }
 
 test "mintSessionId produces a distinct valid id each call" {
@@ -4887,8 +4862,8 @@ test "mintSessionId produces a distinct valid id each call" {
 
     const a = try mintSessionId(io, arena);
     const b = try mintSessionId(io, arena);
-    try std.testing.expect(validSessionId(a));
-    try std.testing.expect(validSessionId(b));
+    try std.testing.expect(session_mod.validSessionId(a));
+    try std.testing.expect(session_mod.validSessionId(b));
     try std.testing.expect(std.mem.startsWith(u8, a, "sess-"));
     // Nanosecond-resolution ids of two consecutive mints are not equal.
     try std.testing.expect(!std.mem.eql(u8, a, b));
@@ -5035,13 +5010,10 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     if (session_id == null and opts.continue_last) {
         session_id = session_mod.latestSessionId(io, arena, std.Io.Dir.cwd());
     }
-    // The id becomes a path fragment under state/sessions/, so it is validated
-    // before it could walk out of the store (mirrors cli.zig's validSessionId).
+    // The id becomes a path fragment under state/sessions/, so the shared
+    // session-store validator rejects it before it could walk out of the store.
     if (session_id) |sid| {
-        if (!validSessionId(sid)) {
-            log.log(.warn, "repl: ignoring invalid --session id '{s}'", .{sid});
-            session_id = null;
-        }
+        if (!session_mod.validSessionId(sid)) return error.InvalidSessionId;
     }
     if (session_id == null and cfg.modules.sessions) {
         session_id = try std.fmt.allocPrint(arena, "repl-{d}", .{now_s});
