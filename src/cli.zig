@@ -4360,19 +4360,25 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     // otherwise request_path dangles and reading it faults.
     var total: std.ArrayList(u8) = .empty;
     defer total.deinit(gpa);
+    // Whether this pass ever saw a byte. A keep-alive connection always ends
+    // with one pass that reads nothing and closes, which is the protocol
+    // working rather than a request failing -- see `connectionSawRequest`.
+    var received_any = false;
     defer {
-        const elapsed_ns = started_at.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
-        const elapsed_ms: i128 = @divTrunc(elapsed_ns, std.time.ns_per_ms);
-        recordHttpRequest(request_status, @intCast(@max(elapsed_ms, 0)));
-        if (std.mem.startsWith(u8, request_path, "/api/") or request_status >= 400 or request_status == 0) {
-            const level: log.Level = if (request_status >= 500 or request_status == 0) .error_ else if (request_status >= 400) .warn else .info;
-            log.log(level, "http request complete method={s} path={s} status={d} duration_ms={d}", .{ request_method, request_path, request_status, elapsed_ms });
+        if (connectionSawRequest(received_any)) {
+            const elapsed_ns = started_at.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
+            const elapsed_ms: i128 = @divTrunc(elapsed_ns, std.time.ns_per_ms);
+            recordHttpRequest(request_status, @intCast(@max(elapsed_ms, 0)));
+            if (completionLogLevel(request_path, request_status)) |level| {
+                log.log(level, "http request complete method={s} path={s} status={d} duration_ms={d}", .{ request_method, request_path, request_status, elapsed_ms });
+            }
         }
     }
     var tmp: [4096]u8 = undefined;
     while (true) {
         const n = std.posix.read(stream.socket.handle, &tmp) catch return;
         if (n == 0) return;
+        received_any = true;
         total.appendSlice(gpa, tmp[0..n]) catch return;
         // The body allowance is separate from its HTTP headers. Counting both
         // against max_body_bytes made a body at the advertised boundary
@@ -5365,6 +5371,38 @@ fn handleStats(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, st
         return;
     };
     respond(stream, 200, "OK", json_out);
+}
+
+/// Did this pass through the connection loop carry a request at all?
+///
+/// `handleConnectionGuarded` loops while the client keeps the connection
+/// alive, and every keep-alive connection therefore ends with one extra pass
+/// that blocks on a read, gets nothing, and returns. A client that connects
+/// and sends nothing (a browser preconnecting) looks the same. Neither is a
+/// request, so neither is counted or logged.
+///
+/// This used to be reported like any other pass, with `status` still at its
+/// initial 0 and method/path never assigned. That produced one
+/// `[ERROR] ... method=unknown path=unknown status=0` line, one
+/// `http_requests_total` and one `http_errors_total` per keep-alive response
+/// served -- which is one per web UI asset, so a single page load read as
+/// dozens of server errors in both the log and `/api/metrics`.
+///
+/// Bytes that arrive and then stop are a different case and deliberately
+/// still count: that is a truncated request, and `status` stays 0 for it, so
+/// it is still reported as an error.
+fn connectionSawRequest(received_any: bool) bool {
+    return received_any;
+}
+
+/// The level a finished request is logged at, or null to not log it.
+/// Successful non-API traffic (web UI assets, health probes) is the bulk of
+/// the volume and says nothing, so it stays silent.
+fn completionLogLevel(path: []const u8, status: u16) ?log.Level {
+    if (!(std.mem.startsWith(u8, path, "/api/") or status >= 400 or status == 0)) return null;
+    if (status >= 500 or status == 0) return .error_;
+    if (status >= 400) return .warn;
+    return .info;
 }
 
 fn recordHttpRequest(status: u16, duration_ms: u64) void {
@@ -10355,6 +10393,35 @@ fn unexpectedHost(headers_raw: []const u8, port: u16, serve_as_hosts: []const []
     }
     const value = authority orelse return true;
     return !allowedAuthority(value, port, serve_as_hosts);
+}
+
+test "an idle keep-alive pass is not a request, a truncated one still is" {
+    // Every keep-alive connection ends with a pass that reads nothing. Those
+    // were reported as failed requests: one ERROR line and one
+    // http_errors_total per keep-alive response served, so one per web UI
+    // asset. A page load looked like dozens of server errors.
+    try std.testing.expect(!connectionSawRequest(false));
+    // Bytes that arrive and then stop are a real truncated request and must
+    // keep being reported, which is why this is not simply "status != 0".
+    try std.testing.expect(connectionSawRequest(true));
+}
+
+test "only requests worth reading about are logged, at a level matching the status" {
+    // Successful asset and health traffic is the bulk of the volume and says
+    // nothing; logging it drowns the lines that matter.
+    try std.testing.expectEqual(@as(?log.Level, null), completionLogLevel("/webui/vendor/htm.module.js", 200));
+    try std.testing.expectEqual(@as(?log.Level, null), completionLogLevel("/health/live", 200));
+    try std.testing.expectEqual(@as(?log.Level, null), completionLogLevel("/", 304));
+
+    // API traffic is logged whatever it did, so a run can be traced.
+    try std.testing.expectEqual(@as(?log.Level, .info), completionLogLevel("/api/status", 200));
+
+    // Failures are logged wherever they happen, API or not.
+    try std.testing.expectEqual(@as(?log.Level, .warn), completionLogLevel("/webui/nope.js", 404));
+    try std.testing.expectEqual(@as(?log.Level, .warn), completionLogLevel("/api/run", 421));
+    try std.testing.expectEqual(@as(?log.Level, .error_), completionLogLevel("/api/run", 500));
+    // A parsed-but-unanswered request keeps status 0 and stays an error.
+    try std.testing.expectEqual(@as(?log.Level, .error_), completionLogLevel("unknown", 0));
 }
 
 test "unexpectedHost accepts IP literals, localhost and allowlisted names only" {
