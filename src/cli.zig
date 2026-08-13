@@ -5423,7 +5423,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
         }
     } else {
-        respond(stream, 400, "Bad Request", "{}");
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"malformed request\"}");
     }
 }
 
@@ -9430,7 +9430,6 @@ fn handlePlugins(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var args: []const u8 = "json";
     if (std.mem.eql(u8, method, "POST")) {
         const req = std.json.parseFromSliceLeaky(PluginToggleBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
@@ -9446,13 +9445,74 @@ fn handlePlugins(
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad plugin name\"}");
             return;
         }
-        args = std.fmt.allocPrint(arena, "{s} {s}", .{ if (req.on) "on" else "off", name }) catch {
+        const args = std.fmt.allocPrint(arena, "{s} {s}", .{ if (req.on) "on" else "off", name }) catch {
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
+        var ibuf: [256]u8 = undefined;
+        var iw: std.Io.Writer = .fixed(&ibuf);
+        var is = std.json.Stringify{ .writer = &iw, .options = .{} };
+        is.beginObject() catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+            return;
+        };
+        is.objectField("args") catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+            return;
+        };
+        is.write(args) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+            return;
+        };
+        is.endObject() catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+            return;
+        };
+        const result = toolJson(io, gpa, arena, cfg, environ_map, "plugins", ibuf[0..iw.end]) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"plugin toggle failed\"}");
+            return;
+        };
+        if (toolResultFailed(result)) {
+            respond(stream, 400, "Bad Request", result);
+            return;
+        }
+        const parsed = parseToolResult(arena, result);
+        if (pluginToggleFailed(parsed.text)) {
+            const msg = if (parsed.text.len > "error: ".len) parsed.text["error: ".len..] else parsed.text;
+            var w: std.Io.Writer.Allocating = .init(arena);
+            var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+            s.beginObject() catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+                return;
+            };
+            s.objectField("ok") catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+                return;
+            };
+            s.write(false) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+                return;
+            };
+            s.objectField("error") catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+                return;
+            };
+            s.write(msg) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+                return;
+            };
+            s.endObject() catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+                return;
+            };
+            respond(stream, 400, "Bad Request", w.written());
+            return;
+        }
+        respond(stream, 200, "OK", "{\"ok\":true}");
+        return;
     }
 
-    const out = toolText(io, gpa, arena, cfg, environ_map, "plugins", args) catch {
+    const out = toolText(io, gpa, arena, cfg, environ_map, "plugins", "json") catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"plugin read failed\"}");
         return;
     };
@@ -9672,7 +9732,13 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     }
 
     const tool_input = knowledgeRouteToToolInput(arena, method, rest, target, body) orelse {
-        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
+        if (std.mem.eql(u8, method, "PUT") or std.mem.eql(u8, method, "PATCH")) {
+            respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        } else if (std.mem.startsWith(u8, rest, "/search") and std.mem.eql(u8, method, "GET")) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing q\"}");
+        } else {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
+        }
         return;
     };
     const result = toolJson(io, gpa, arena, cfg, environ_map, "knowledge", tool_input) catch {
@@ -10174,7 +10240,7 @@ fn handleSchedule(
     }
 
     if (!std.mem.eql(u8, method, "GET")) {
-        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"GET or POST\"}");
+        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
         return;
     }
 

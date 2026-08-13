@@ -274,18 +274,13 @@ export function toggleTool(t, btn) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: t.name, on: want })
-  }).then(function (r) {
-    return r.text().then(function (text) {
-      if (!r.ok) throw new Error(String(text).trim() || "HTTP " + r.status);
-      return text;
-    });
-  }).then(function (reply) {
+  }).then(_readJson).then(function () {
     t.enabled = want;
     btn.dataset.on = String(want);
     btn.textContent = want ? "on" : "off";
     btn.setAttribute("aria-pressed", String(want));
     btn.setAttribute("aria-label", (want ? "Disable " : "Enable ") + t.name);
-    _el.toolsStatus.textContent = String(reply).trim();
+    _el.toolsStatus.textContent = (want ? "Enabled " : "Disabled ") + t.name;
   }).catch(function (err) {
     _el.toolsStatus.textContent = "Could not switch " + t.name + ": " + err.message;
   }).finally(function () {
