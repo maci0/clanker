@@ -258,6 +258,45 @@ pub fn totals(stats: []const Stat) Stat {
     return t;
 }
 
+/// Human-readable table for `clanker stats` and any other native caller.
+/// The model_stats WASM guest keeps its own copy (it cannot import this
+/// module), but every host path should call here rather than open-coding
+/// columns.
+pub fn renderTable(arena: std.mem.Allocator, stats: []const Stat, totals_row: Stat) ![]const u8 {
+    if (stats.len == 0) return "no token usage recorded yet (run an agent task first)\n";
+    var text: std.ArrayList(u8) = .empty;
+    try text.appendSlice(arena, "provider        model                          calls  prompt  output   total  cache%  tok/s     cost$  fail\n");
+    for (stats) |stat| try appendTableRow(arena, &text, stat.provider, stat.model, stat);
+    try appendTableRow(arena, &text, "totals", "", totals_row);
+    return text.toOwnedSlice(arena);
+}
+
+fn appendTableRow(arena: std.mem.Allocator, text: *std.ArrayList(u8), provider: []const u8, model: []const u8, stat: Stat) !void {
+    const prompt = try compactCount(arena, stat.prompt_tokens);
+    const completion = try compactCount(arena, stat.completion_tokens);
+    const total = try compactCount(arena, stat.total_tokens);
+    const line = try std.fmt.allocPrint(arena, "{s:<15} {s:<30}{d:>5} {s:>7} {s:>7} {s:>7} {d:>5.1} {d:>7.1} {d:>8.2} {d:>5}\n", .{
+        provider,
+        model,
+        stat.calls,
+        prompt,
+        completion,
+        total,
+        stat.cacheHitRate(),
+        stat.tokensPerSec(),
+        stat.cost,
+        stat.error_calls,
+    });
+    try text.appendSlice(arena, line);
+}
+
+fn compactCount(arena: std.mem.Allocator, value: u64) ![]const u8 {
+    if (value < 1_000) return std.fmt.allocPrint(arena, "{d}", .{value});
+    if (value < 1_000_000) return std.fmt.allocPrint(arena, "{d:.1}K", .{@as(f64, @floatFromInt(value)) / 1_000.0});
+    if (value < 1_000_000_000) return std.fmt.allocPrint(arena, "{d:.1}M", .{@as(f64, @floatFromInt(value)) / 1_000_000.0});
+    return std.fmt.allocPrint(arena, "{d:.1}B", .{@as(f64, @floatFromInt(value)) / 1_000_000_000.0});
+}
+
 /// Serializes {ok, stats, totals} for the ck_stats host fn and /api/stats.
 pub fn statsJSON(arena: std.mem.Allocator, stats: []const Stat, total: Stat) ![]const u8 {
     var buf: [64 * 1024]u8 = undefined;

@@ -4452,43 +4452,8 @@ fn cmdStats(init: std.process.Init) !void {
     // lines fails as "too large for one call" even though the table itself
     // is a handful of rows. /api/stats already takes this path.
     const stats = try token_stats.aggregate(std.Io.Dir.cwd(), init.io, init.gpa, arena, cfg.agent.state_dir);
-    const text = try renderStatsTable(arena, stats, token_stats.totals(stats));
+    const text = try token_stats.renderTable(arena, stats, token_stats.totals(stats));
     try writeStdOut(init.io, text);
-}
-
-fn renderStatsTable(arena: std.mem.Allocator, stats: []const token_stats.Stat, totals_row: token_stats.Stat) ![]const u8 {
-    if (stats.len == 0) return "no token usage recorded yet (run an agent task first)\n";
-    var text: std.ArrayList(u8) = .empty;
-    try text.appendSlice(arena, "provider        model                          calls  prompt  output   total  cache%  tok/s     cost$  fail\n");
-    for (stats) |stat| try appendStatsRow(arena, &text, stat.provider, stat.model, stat);
-    try appendStatsRow(arena, &text, "totals", "", totals_row);
-    return text.toOwnedSlice(arena);
-}
-
-fn appendStatsRow(arena: std.mem.Allocator, text: *std.ArrayList(u8), provider: []const u8, model: []const u8, stat: token_stats.Stat) !void {
-    const prompt = try compactStatsCount(arena, stat.prompt_tokens);
-    const completion = try compactStatsCount(arena, stat.completion_tokens);
-    const total = try compactStatsCount(arena, stat.total_tokens);
-    const line = try std.fmt.allocPrint(arena, "{s:<15} {s:<30}{d:>5} {s:>7} {s:>7} {s:>7} {d:>5.1} {d:>7.1} {d:>8.2} {d:>5}\n", .{
-        provider,
-        model,
-        stat.calls,
-        prompt,
-        completion,
-        total,
-        stat.cacheHitRate(),
-        stat.tokensPerSec(),
-        stat.cost,
-        stat.error_calls,
-    });
-    try text.appendSlice(arena, line);
-}
-
-fn compactStatsCount(arena: std.mem.Allocator, value: u64) ![]const u8 {
-    if (value < 1_000) return std.fmt.allocPrint(arena, "{d}", .{value});
-    if (value < 1_000_000) return std.fmt.allocPrint(arena, "{d:.1}K", .{@as(f64, @floatFromInt(value)) / 1_000.0});
-    if (value < 1_000_000_000) return std.fmt.allocPrint(arena, "{d:.1}M", .{@as(f64, @floatFromInt(value)) / 1_000_000.0});
-    return std.fmt.allocPrint(arena, "{d:.1}B", .{@as(f64, @floatFromInt(value)) / 1_000_000_000.0});
 }
 
 fn cmdGit(init: std.process.Init, opts: Options) !void {
@@ -11892,7 +11857,7 @@ test "bare tools lists, session without export names the next step" {
 }
 
 test "stats table names the empty case and keeps columns aligned" {
-    const empty = try renderStatsTable(std.testing.allocator, &.{}, .{ .provider = "", .model = "" });
+    const empty = try token_stats.renderTable(std.testing.allocator, &.{}, .{ .provider = "", .model = "" });
     try std.testing.expectEqualStrings("no token usage recorded yet (run an agent task first)\n", empty);
 
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -11913,7 +11878,7 @@ test "stats table names the empty case and keeps columns aligned" {
             .error_calls = 0,
         },
     };
-    const text = try renderStatsTable(arena_state.allocator(), &rows, token_stats.totals(&rows));
+    const text = try token_stats.renderTable(arena_state.allocator(), &rows, token_stats.totals(&rows));
     try std.testing.expect(std.mem.startsWith(u8, text, "provider        model                          calls"));
     try std.testing.expect(std.mem.find(u8, text, "kimi-k3") != null);
     try std.testing.expect(std.mem.find(u8, text, "totals") != null);

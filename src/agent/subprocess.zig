@@ -5,6 +5,23 @@
 const std = @import("std");
 const session = @import("session.zig");
 
+/// Blocking lock around `std.atomic.Mutex` for structures that do not carry
+/// an `std.Io` handle (the subprocess registry is touched at spawn/teardown,
+/// not on the agent-loop hot path).
+const SpinMutex = struct {
+    raw: std.atomic.Mutex = .unlocked,
+
+    fn lock(self: *SpinMutex) void {
+        while (!self.raw.tryLock()) {
+            std.Thread.yield() catch {};
+        }
+    }
+
+    fn unlock(self: *SpinMutex) void {
+        self.raw.unlock();
+    }
+};
+
 pub const Handle = struct {
     session_id: []const u8,
     kind: []const u8,
