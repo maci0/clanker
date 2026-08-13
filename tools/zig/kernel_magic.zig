@@ -11,7 +11,7 @@ pub const Parsed = struct {
 };
 
 pub fn parse(cell: []const u8) Parsed {
-    const trimmed = std.mem.trimLeft(u8, cell, " \t");
+    const trimmed = std.mem.trimStart(u8, cell, " \t");
     if (std.mem.startsWith(u8, trimmed, "%pip ")) {
         return .{ .kind = .pip, .rest = std.mem.trim(u8, trimmed["%pip ".len..], " \t\r\n") };
     }
@@ -22,7 +22,7 @@ pub fn parse(cell: []const u8) Parsed {
     }
     if (std.mem.startsWith(u8, trimmed, "%%bash")) {
         const after = trimmed["%%bash".len..];
-        const rest = if (after.len > 0 and after[0] == '\n') after[1..] else std.mem.trimLeft(u8, after, " \t");
+        const rest = if (after.len > 0 and after[0] == '\n') after[1..] else std.mem.trimStart(u8, after, " \t");
         return .{ .kind = .bash, .rest = rest };
     }
     if (std.mem.startsWith(u8, trimmed, "!")) {

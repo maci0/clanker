@@ -12,17 +12,18 @@ pub const Handle = struct {
 };
 
 pub const Registry = struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
     items: std.ArrayList(Handle) = .empty,
     gpa: std.mem.Allocator,
+    io: std.Io,
 
-    pub fn init(gpa: std.mem.Allocator) Registry {
-        return .{ .gpa = gpa };
+    pub fn init(gpa: std.mem.Allocator, io: std.Io) Registry {
+        return .{ .gpa = gpa, .io = io };
     }
 
     pub fn deinit(self: *Registry) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
         for (self.items.items) |h| {
             self.gpa.free(h.session_id);
             self.gpa.free(h.kind);
@@ -38,8 +39,8 @@ pub const Registry = struct {
     pub fn register(self: *Registry, session_id: []const u8, kind: []const u8, pid: std.posix.pid_t) !void {
         if (!session.validSessionId(session_id)) return error.InvalidSessionId;
         if (kind.len == 0) return error.EmptyKind;
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
         var i: usize = 0;
         while (i < self.items.items.len) {
             const h = self.items.items[i];
@@ -59,8 +60,8 @@ pub const Registry = struct {
     }
 
     pub fn get(self: *Registry, session_id: []const u8, kind: []const u8) ?std.posix.pid_t {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
         for (self.items.items) |h| {
             if (std.mem.eql(u8, h.session_id, session_id) and std.mem.eql(u8, h.kind, kind))
                 return h.pid;
@@ -70,8 +71,8 @@ pub const Registry = struct {
 
     /// SIGTERM every process for this session. Missing pids are ignored.
     pub fn terminateSession(self: *Registry, session_id: []const u8) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
         var i: usize = 0;
         while (i < self.items.items.len) {
             const h = self.items.items[i];
@@ -87,14 +88,20 @@ pub const Registry = struct {
     }
 
     pub fn count(self: *Registry) usize {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
         return self.items.items.len;
     }
 };
 
+fn testIo() std.Io.Threaded {
+    return std.Io.Threaded.init(std.testing.allocator, .{});
+}
+
 test "register and get by session+kind" {
-    var reg = Registry.init(std.testing.allocator);
+    var threaded = testIo();
+    defer threaded.deinit();
+    var reg = Registry.init(std.testing.allocator, threaded.io());
     defer reg.deinit();
     try reg.register("sess-1", "python", 42);
     try std.testing.expectEqual(@as(std.posix.pid_t, 42), reg.get("sess-1", "python").?);
@@ -103,7 +110,9 @@ test "register and get by session+kind" {
 }
 
 test "register replaces the previous pid for the same key" {
-    var reg = Registry.init(std.testing.allocator);
+    var threaded = testIo();
+    defer threaded.deinit();
+    var reg = Registry.init(std.testing.allocator, threaded.io());
     defer reg.deinit();
     try reg.register("sess-1", "python", 1);
     try reg.register("sess-1", "python", 2);
@@ -112,7 +121,9 @@ test "register replaces the previous pid for the same key" {
 }
 
 test "terminateSession drops every kind for that session" {
-    var reg = Registry.init(std.testing.allocator);
+    var threaded = testIo();
+    defer threaded.deinit();
+    var reg = Registry.init(std.testing.allocator, threaded.io());
     defer reg.deinit();
     try reg.register("a", "python", 1);
     try reg.register("a", "js", 2);
@@ -123,7 +134,9 @@ test "terminateSession drops every kind for that session" {
 }
 
 test "invalid session id is refused" {
-    var reg = Registry.init(std.testing.allocator);
+    var threaded = testIo();
+    defer threaded.deinit();
+    var reg = Registry.init(std.testing.allocator, threaded.io());
     defer reg.deinit();
     try std.testing.expectError(error.InvalidSessionId, reg.register("../x", "python", 1));
 }
