@@ -57,6 +57,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - `clanker commit` / `smart_commit` groups a staged diff into
   conventional commits. A dense import cycle becomes one commit with a
   note instead of looping.
+- `write_goal` drafts a structured goal without persisting it.
+  `proof` and `stop_rule` now appear in the active-goal run preamble.
 
 ### Changed
 

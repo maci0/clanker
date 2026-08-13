@@ -2,12 +2,12 @@
 
 ## Status
 
-Draft. No `write_goal` tool exists; nothing in `src/` or `tools/manifests/`
-names one. What does exist is `skills/write-goal.md` — 32 lines of prompt
-guidance folded into the system prompt by
-`src/agent/system_prompt.zig:338-376` — which tells the model to interview
-with `ask_user` and then call the `goal` tool. This PRD promotes that
-guidance into a capability with a fixed output contract.
+Shipped. The five-field list is the shipped one (`objective,
+completion_criterion, proof, boundaries, stop_rule`). `write_goal` drafts
+without persisting; `proof`/`stop_rule` now reach the run preamble;
+`goal_prompt` + the skill drive `write_goal` then `goal`. Sources of
+truth: `tools/zig/write_goal.zig`, `src/agent/goal_prompt.zig`,
+`src/cli.zig` (`GoalContext`).
 
 **`write-goal` and `goal` are different things and this PRD does not
 conflate them.** `goal` (`tools/zig/goal.zig`,
@@ -123,7 +123,12 @@ rather than a style guide:
 | Execution loop | How should it iterate toward the criteria? | Agent stops at the first failed attempt |
 | Stop rule | When must it stop and report? | Agent forces past a real blocker, or grinds |
 
-**Which five is not decided.** The table above is six rows because the repo
+**Which five is decided: keep the shipped five.** The table above is six
+rows because an earlier draft framed a sixth `execution_loop`. That is
+not a persisted field. The closed list is `objective,
+completion_criterion, proof, boundaries, stop_rule`.
+
+**Historical note.** The table above is six rows because the repo
 disagrees with itself about the grouping. `skills/write-goal.md`,
 `goal.tool.json`, and both command prompts say the five are *objective,
 completion_criterion, proof, boundaries, stop_rule* — splitting end-state
