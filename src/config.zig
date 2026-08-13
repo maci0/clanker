@@ -3389,6 +3389,10 @@ fn documentsKey(text: []const u8, key: []const u8) bool {
 }
 
 test "config.toml documents every key the loader accepts" {
+    // Grows with the schema; the full struct walk plus memory-key pass can
+    // exceed Zig's default comptime branch quota when compiled with the
+    // rest of the harness tests.
+    @setEvalBranchQuota(4000);
     // The committed config is the only place most of these keys are written
     // down at all: a key added to the schema and not to the file is one
     // nobody outside this source file will ever find. Reflection over the
