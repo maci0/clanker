@@ -33,7 +33,7 @@ export function paletteEntries() {
   _refs.allRunsHolder.list.forEach(function (r) {
     var taskPart = r.task ? " " + r.task.slice(0, 80) : "";
     out.push({ kind: "run", label: _refs.runLabel(r) + taskPart, run: function () { _openRun(r.run_id); } });
-    // OpenWebUI-style: also index node labels so palette search can hit inside a run
+    // Also index node labels so palette search can hit inside a run
     if (r.nodes && r.nodes.length) {
       for (var ni=0; ni<Math.min(r.nodes.length, 6); ni++) {
         (function(rr, nd){ var lbl = nd.label || nd.detail || ""; if(!lbl) return; out.push({ kind: "node", label: lbl.slice(0,64) + " · " + rr.run_id.slice(0,8), run: function(){ _openRun(rr.run_id); } }); })(r, r.nodes[ni]);

@@ -1,4 +1,4 @@
-// Knowledge view — OpenWebUI parity single-user. Collections of documents.
+// Knowledge view — single-user. Collections of documents.
 export var selectedKnowledge = (function(){ try { var raw = window.localStorage.getItem("clanker.knowledge"); if (raw) return JSON.parse(raw); } catch(_){} return []; })();
 function persistKnowledge(){ try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(selectedKnowledge)); } catch(_){} }
 function ensureBadge(){

@@ -5023,7 +5023,7 @@ const RunRequestBody = struct {
     /// is set, cfg.agent.max_iterations applies. Clamped to 1..=1000.
     max_iterations: ?u32 = null,
     /// Knowledge context: collection ids whose documents are injected into the
-    /// task context (OpenWebUI parity, #<collection> / @doc pattern).
+    /// task context (#<collection> / @doc pattern).
     knowledge: []const []const u8 = &.{},
 };
 
@@ -7362,9 +7362,9 @@ const SessionPatchBody = struct {
     title: ?[]const u8 = null,
     /// Absent means "leave it where it is"; "" means the default folder.
     workspace: ?[]const u8 = null,
-    /// When set, archives/unarchives the chat (OpenWebUI parity, archive).
+    /// When set, archives/unarchives the chat.
     archived: ?bool = null,
-    /// When true with messages, creates a new imported chat (OpenWebUI parity, import).
+    /// When true with messages, creates a new imported chat.
     import_chat: ?bool = null,
     /// Messages array for import, array of {role,content}
     messages: ?[]const session.StoredMessage = null,

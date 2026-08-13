@@ -897,7 +897,7 @@ pub fn setArchived(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     try saveSession(io, gpa, arena, base, s);
 }
 
-/// Imports an OpenAI/OpenWebUI-style chat export into a new local session.
+/// Imports a JSON chat export (OpenAI format) into a new local session.
 /// Accepts an array of {"role":"user"|"assistant","content":string} (unknown
 /// roles/tools are skipped) so both providers' exports and our own
 /// /api/sessions/<id> JSON can be pasted without conversion.

@@ -264,8 +264,8 @@ function abortGoalRun(gid) {
 }
 
 /* Sends a mid-run message to the agent working this goal (POST /api/steer).
-   The run picks it up between iterations — the same way Claude Code, Codex
-   and friends accept a correction without restarting the task. The echo into
+   The run picks it up between iterations, accepting a correction without
+   restarting the task. The echo into
    the panel is local; the run's own stream shows a "steering message
    applied" status line when the loop actually consumes it. */
 function sendSteer(gid) {

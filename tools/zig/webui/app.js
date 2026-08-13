@@ -231,8 +231,8 @@ function renderSessionChip() {
     el.headerModel.title = sel ? ("Model: " + sel + " (click to change)") : "Model: default (from config) (click to change)";
   }
   // The composer's model pill is the same value in a place the eye already
-  // is when composing — the Kimi/ChatGPT idiom — and clicking it opens the
-  // same picker the header chip opens.
+  // is when composing, and clicking it opens the same picker the header
+  // chip opens.
   if (el.composerModel) {
     el.composerModel.textContent = label || "default model";
     el.composerModel.title = sel ? ("Model: " + sel + " (click to change)") : "Model: default (from config) (click to change)";
@@ -1333,7 +1333,7 @@ function renderStats(turn, stats, task) {
     });
     actions.appendChild(branchBtn);
 
-    // Branch timeline: which forks came from here (like ChatGPT/Cursor)
+    // Branch timeline: which forks came from here
     (function(){
       if (!knownSessions || !knownSessions.length) return;
       var title = ((turn.root.querySelector(".turn-you") || {}).textContent || "").trim();
@@ -1375,7 +1375,7 @@ function renderStats(turn, stats, task) {
       scrollTo(el.task, "center");
     });
     actions.appendChild(editBtn);
-    // OpenWebUI-style history hygiene affordances (no invented state):
+    // History hygiene affordances (no invented state):
     // - Copy turn copies the transcript slice for that turn via the same
     //   helper Copy answer uses (still the per-turn source, not invented).
     var copyTurnBtn = document.createElement("button");
@@ -1462,7 +1462,7 @@ el.form.addEventListener("drop", function (e) {
 
 el.task.addEventListener("input", syncControls);
 
-// Voice input — Web Speech API (ChatGPT/OpenWebUI parity)
+// Voice input — Web Speech API
 (function(){
   var btn = document.getElementById("voice-btn");
   if (!btn) return;
@@ -1523,7 +1523,7 @@ function handleSlashDocFile(task){
   // Create a Knowledge collection on-the-fly if needed and add the file as a doc via a hint
   // We can't read the file client-side (sandbox), so we inject a task header that tells
   // the agent to read that path via read_file/file_ops and treat it as RAG.
-  // This mirrors OpenWebUI #file / @doc — here it's /doc <path> as an alias for #knowledge.
+  // #file / @doc convention — here it's /doc <path> as an alias for #knowledge.
   return "[File: " + path + "]\n\n" + task;
 }
 
@@ -2249,7 +2249,7 @@ function drawRun(g) {
       if (!ctx) return;
       ctx.clearRect(0,0,mmCanvas.width, mmCanvas.height);
       var sw = Math.max(1, canvas.scrollWidth), sh = Math.max(1, canvas.scrollHeight);
-      // light line for edges (Slack/Qwen-style overview)
+      // light line for edges (a minimap overview)
       try{
         var svg = canvas.querySelector("svg.run-edges");
         if (svg) {
@@ -2386,7 +2386,7 @@ function drawRun(g) {
     matches[_matchIdx].focus();
     matches[_matchIdx].scrollIntoView({ block: "nearest", inline: "center" });
   }
-  // Qwen-like: link to OpenWebUI's error lens — one button jumps to failed nodes
+  // An error lens — one button jumps to failed nodes
   var graphFailedBtn = document.createElement("button"); graphFailedBtn.type = "button"; graphFailedBtn.className = "secondary"; graphFailedBtn.textContent = "⚠ Failed";
   graphFailedBtn.title = "Next failed node";
   graphSearch.appendChild(graphFailedBtn);
@@ -2407,7 +2407,7 @@ function drawRun(g) {
   });
   graphNextBtn.addEventListener("click", focusNextMatch);
   graphClearBtn.addEventListener("click", function(){ graphSearchInput.value = ""; _searchQ = ""; _matchIdx = -1; try{ localStorage.removeItem("clanker.graphSearch"); }catch(_){} doLayout(""); graphSearchInput.focus(); });
-  // Codex-like j/k step tour between iterations
+  // j/k step tour between iterations
   var _iterIdx = 0;
   function focusIter(dir){
     var chips = crumb.querySelectorAll("button");
@@ -2618,7 +2618,7 @@ function showNodeDetail(kind, node) {
   // <details> elements, and <pre> implies preformatted text content, not a
   // widget tree. .run-detail-output already sets white-space: pre-wrap
   // itself, so nothing about the flat-text case depends on the tag.
-  // Qwen / Codex idea: clickable trace refs inside the detail (file:line, run ids) jump to source / graph
+  // Clickable trace refs inside the detail (file:line, run ids) jump to source / graph
   var traceBar = document.createElement("div");
   traceBar.style.display = "flex"; traceBar.style.gap = "0.4rem"; traceBar.style.flexWrap = "wrap"; traceBar.style.marginBottom = "0.5rem";
   var rawOut = node.output || "";

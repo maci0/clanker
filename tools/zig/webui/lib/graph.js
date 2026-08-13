@@ -99,7 +99,7 @@ export function buildNodeBox(d, slowest, nodeW) {
   if (!fm && node.output) fm = node.output.slice(0, 600).match(/([a-zA-Z0-9_\-]+\.(?:zig|ts|js|py|rs|go|md))/);
   if (fm) fileHint = fm[1];
   box.appendChild(label);
-  // Codex-like: show truncated duration on the card itself (Qwen's badge style)
+  // Show truncated duration on the card itself as a small badge
   if (node.duration_ms) {
     var dur = document.createElement("span");
     dur.className = "run-node-duration";

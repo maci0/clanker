@@ -1,4 +1,4 @@
-// Prompts library — OpenWebUI parity single-user. Browse / create / use / delete prompt templates backed by GET/POST/DELETE /api/prompts.
+// Prompts library — single-user. Browse / create / use / delete prompt templates backed by GET/POST/DELETE /api/prompts.
 
 export function loadPromptsView() {
   var status = document.getElementById("prompts-status");

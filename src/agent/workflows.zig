@@ -1,4 +1,4 @@
-//! Workflows: reusable prompt templates, like Cursor's desktop workflows.
+//! Workflows: reusable prompt templates.
 //!
 //! A workflow is a markdown file in `workflows_dir` (default "workflows/").
 //! Filename (without .md) is the workflow name. Optional YAML frontmatter between
@@ -8,10 +8,11 @@
 //! `{{$args}}` are replaced with the caller's argument string at run time.
 //! Remaining content is used verbatim.
 //!
-//! Cursor parity: project workflows in `.cursor/workflows/*.md`, listed in the
-//! command palette / slash menu, invoked as `/workflow-name`. Clanker mirrors
-//! that with `workflows/*.md` (configurable), `clanker workflow list|show|run`,
-//! REPL `/workflows` + `/workflow`, and a `workflows` WASM tool for the agent.
+//! `.cursor/workflows/*.md` is also read as a fallback source (see
+//! `loadAllMerged`), so a project already using that convention needs no
+//! duplicate files: `workflows/*.md` (configurable), `clanker workflow
+//! list|show|run`, REPL `/workflows` + `/workflow`, and a `workflows` WASM
+//! tool all see the same merged set.
 
 const std = @import("std");
 
@@ -92,7 +93,7 @@ pub fn loadAll(arena: std.mem.Allocator, io: std.Io, workflows_dir: []const u8) 
     return out.toOwnedSlice(arena);
 }
 
-/// Cursor parity: also reads `.cursor/workflows` when different from `workflows_dir`.
+/// Also reads `.cursor/workflows` when different from `workflows_dir`.
 /// Primary wins on duplicate names. Re-sorts merged result. Keeping plain `loadAll`
 /// single-dir for test stability.
 pub fn loadAllMerged(arena: std.mem.Allocator, io: std.Io, workflows_dir: []const u8) ![]Workflow {
