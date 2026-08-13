@@ -4530,8 +4530,8 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     }
 }
 
-fn isLoopbackHost(host: []const u8) bool {
-    return std.mem.eql(u8, host, "127.0.0.1") or std.mem.eql(u8, host, "::1") or std.ascii.eqlIgnoreCase(host, "localhost");
+fn isLoopbackHost(addr: []const u8) bool {
+    return std.mem.eql(u8, addr, "127.0.0.1") or std.mem.eql(u8, addr, "::1") or std.ascii.eqlIgnoreCase(addr, "localhost");
 }
 
 const ProxyListener = struct {

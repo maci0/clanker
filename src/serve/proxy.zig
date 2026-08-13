@@ -564,8 +564,6 @@ fn jsonU32(v: ?std.json.Value) ?u32 {
     };
 }
 
-const json = std.json;
-
 const Peek = struct {
     model: ?[]const u8 = null,
     stream: enum { absent, yes, no, bad } = .absent,
