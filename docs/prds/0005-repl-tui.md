@@ -116,6 +116,18 @@ since `sanitize.zig` already documents itself as owning the one definition.
 That gap applied even to paths described as already stripped, `!` escape
 output among them.
 
+**Repainting is opt-in, so one seam owns it.** `vxfw` redraws when an event
+handler sets `ctx.redraw` and not otherwise. A submitted line fans out to a
+dozen places that append to `lines` — the generated `/help`, each `cmd_*`
+tool's output, every command's usage block, the unknown-command notice, the
+whole `!` escape path — and asking each to remember the flag does not work:
+only `/theme` and `/compare` ever did, so everything else wrote into a buffer
+nothing repainted and surfaced later, attached to whatever unrelated
+keystroke came next. (Agent tasks looked fine only because `submitTask`
+schedules a `ctx.tick`, which redraws for its own reasons.) The Enter handler
+now sets it once for every path through `submit`, which is why none of those
+call sites carry it.
+
 **Closing the remaining gaps — widget mapping.** Most open items below have a
 specific `vxfw` shape, not an open-ended "figure it out":
 
@@ -133,6 +145,7 @@ specific `vxfw` shape, not an open-ended "figure it out":
 | Condition | Behaviour |
 |---|---|
 | SIGWINCH mid-render | Handled by `vxfw.App`'s own event loop; no self-pipe, no dropped resize |
+| A command that only prints (`/help`, `/status`, `!`) | Repaints on the Enter that ran it, not on the next unrelated keystroke |
 | Ctrl-C, idle prompt | Quits the REPL (`ctx.quit = true`) |
 | Ctrl-C, mid-stream | Sets the same `stop_flag` `client.chatStream` already checks |
 | `ask_user` invoked here | No `ask_fn` is wired; falls back to the same "nobody attached" default (`not_found`) a headless run gets. No prompt-rendering path exists yet (tracked below) |

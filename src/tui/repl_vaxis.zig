@@ -1498,12 +1498,10 @@ const Model = struct {
                 // picker menu; `/theme <exact-name>` still switches directly.
                 if (pc.args.len == 0 or !theme_mod.isKnown(pc.args)) {
                     self.openThemePicker(pc.args);
-                    ctx.redraw = true;
                     return;
                 }
                 self.theme_override = self.arena.dupe(u8, pc.args) catch pc.args;
                 self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "theme set to {s}", .{pc.args}) catch "theme set", .dim = true }) catch {};
-                ctx.redraw = true;
             },
             .workflows => {
                 _ = self.runWorkflowsTool("");
@@ -1600,7 +1598,6 @@ const Model = struct {
                 try self.submitTask(ctx, prompt);
             },
         }
-        ctx.redraw = true;
     }
 
     /// Runs one internal `cmd_*` WASM tool ({"args":"<text>"} -> {"text":"..."})
@@ -2310,7 +2307,19 @@ const Model = struct {
                         return;
                     }
                     try self.submit(ctx);
-                    return;
+                    // Every submitted line repaints, here, once. `submit`
+                    // fans out to a dozen places that append to `self.lines`
+                    // (the generated /help, each `cmd_*` tool's output, the
+                    // per-command usage blocks, the unknown-command notice,
+                    // the whole `!` escape path) and asking each of them to
+                    // remember `ctx.redraw` is the bug this replaces: only
+                    // `.theme` and `/compare` ever did. vxfw redraws when the
+                    // flag is set and not otherwise, so everything else
+                    // printed into a buffer nobody repainted, and the output
+                    // surfaced later, attached to whatever unrelated
+                    // keystroke happened next. `submitTask` looked fine only
+                    // because `ctx.tick` schedules a tick that redraws.
+                    return ctx.consumeAndRedraw();
                 }
                 try self.text_field.handleEvent(ctx, event);
             },
