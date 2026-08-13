@@ -4,6 +4,10 @@
 //! way the improvement engine does, instead of declaring success and hoping.
 //!
 //! Input:  {} or {"gates": ["build", "test", "tools", "fmt"]}
+//!         {"dir": "..."} runs every step with that directory as cwd, for
+//!         checking a subdirectory such as a git worktree. The host resolves
+//!         `dir` against the sandbox root and refuses anything outside the
+//!         roots the descriptor grants.
 //! Output: {"ok": true,  "text": "build ok; test ok"}
 //!         {"ok": false, "error": "test failed", "text": "<tail of the output>"}
 
@@ -21,6 +25,7 @@ const default_gates = [_][]const u8{ "build", "tools", "test" };
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const alloc = lib.alloc;
     var gates: []const []const u8 = &default_gates;
+    var dir: ?[]const u8 = null;
 
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, input, .{}) catch std.json.Value{ .object = .empty };
     if (parsed == .object) {
@@ -32,6 +37,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 }
                 if (chosen.items.len > 0) gates = chosen.items;
             }
+        }
+        if (parsed.object.get("dir")) |d| {
+            if (d == .string and d.string.len > 0) dir = d.string;
         }
     }
 
@@ -73,7 +81,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         else
             &[_][]const u8{ "build", gate };
 
-        const res = lib.exec("zig", args) catch return lib.fail(out, "could not run zig");
+        const res = if (dir) |d|
+            lib.execCwd("zig", args, d) catch return lib.fail(out, "could not run zig")
+        else
+            lib.exec("zig", args) catch return lib.fail(out, "could not run zig");
         const failed = std.mem.find(u8, res, "\"code\":0") == null;
         if (failed) {
             var buf: [4096]u8 = undefined;

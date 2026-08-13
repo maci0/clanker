@@ -787,6 +787,19 @@ pub fn execStdin(cmd: []const u8, args: []const []const u8, input: []const u8) E
 /// Runs an allowlisted host command (git / rg / ast-grep / semcode) with the
 /// given arguments. Returns the raw {"ok","code","stdout","stderr"} JSON.
 pub fn exec(cmd: []const u8, args: []const []const u8) ExecError![]const u8 {
+    return execCommon(cmd, args, null);
+}
+
+/// Same as `exec`, but runs the command with `cwd` as its working directory.
+/// The host resolves `cwd` against the sandbox root through `safeJoinSecure`,
+/// so it cannot escape the roots the tool's descriptor grants (a `..` or
+/// absolute path is refused). Use for running in a subdirectory such as a
+/// git worktree.
+pub fn execCwd(cmd: []const u8, args: []const []const u8, cwd: []const u8) ExecError![]const u8 {
+    return execCommon(cmd, args, cwd);
+}
+
+fn execCommon(cmd: []const u8, args: []const []const u8, cwd: ?[]const u8) ExecError![]const u8 {
     const wbuf = std.heap.wasm_allocator.alloc(u8, 8 * 1024) catch return error.OutOfMemory;
     defer std.heap.wasm_allocator.free(wbuf);
     var w: std.Io.Writer = .fixed(wbuf);
@@ -798,6 +811,10 @@ pub fn exec(cmd: []const u8, args: []const []const u8) ExecError![]const u8 {
     try s.beginArray();
     for (args) |a| try s.write(a);
     try s.endArray();
+    if (cwd) |c| {
+        try s.objectField("cwd");
+        try s.write(c);
+    }
     try s.endObject();
 
     const b = sliceToMem(wbuf[0..w.end]);
