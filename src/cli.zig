@@ -6408,7 +6408,7 @@ fn writeLiveModels(
     environ_map: *const std.process.Environ.Map,
     s: *std.json.Stringify,
 ) void {
-    const base = std.mem.trimRight(u8, provider.base_url, "/");
+    const base = std.mem.trimEnd(u8, provider.base_url, "/");
     if (base.len == 0) return;
     const url = std.fmt.allocPrint(arena, "{s}/models", .{base}) catch return;
     var bearer: ?[]const u8 = null;
