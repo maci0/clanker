@@ -116,6 +116,7 @@ test "tail keeps last lines" {
     try std.testing.expectEqualStrings("f", tail("a\nb\nc\nd\ne\nf", 3));
     try std.testing.expectEqualStrings("e\nf", tail("a\nb\nc\nd\ne\nf", 4));
     try std.testing.expectEqualStrings("e\nf", tail("a\nb\nc\nd\ne\nf", 5));
+    try std.testing.expectEqualStrings("d\ne\nf", tail("a\nb\nc\nd\ne\nf", 7));
 }
 test "bestMetric reads ledger" {
     const gpa = std.testing.allocator;
