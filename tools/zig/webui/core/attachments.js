@@ -58,6 +58,16 @@ export function addImageFile(file, els, iconFn, fmtBytesFn) {
       els.sessionStatus.textContent = "That image is " + fmtBytesFn(bytes) + "; the limit is " + fmtBytesFn(max_image_bytes) + ".";
       return;
     }
+    // Checked again here, not only on the way in. A drop or a paste hands
+    // over every file at once, so N synchronous calls all read a length of 0
+    // before any FileReader has finished and all N pass the check above; six
+    // dropped images became six attachments, and the server then refused the
+    // whole run with "at most 4 images may be attached". This is the same
+    // push-time test the video sampler already makes for its frames.
+    if (pendingImages.length >= max_images) {
+      els.sessionStatus.textContent = "At most " + max_images + " images can be attached to one message.";
+      return;
+    }
     pendingImages.push({ mime: file.type, b64: b64, bytes: bytes });
     renderAttachments(els, iconFn, fmtBytesFn);
     els.hint.textContent = pendingImages.length + (pendingImages.length === 1 ? " image attached." : " images attached.");
