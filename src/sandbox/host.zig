@@ -3368,10 +3368,20 @@ pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
 /// True if `path` (split on '/') descends through a directory named
 /// `.clanker-worktrees`, the per-run improve worktree container. Used to
 /// stop an exec `cwd`/`dir` from landing inside a sibling run's worktree.
+///
+/// "Through", not "at": the container holds every run's worktree and is not
+/// itself any run's, so landing on it is allowed and only going *into* it is
+/// refused. A bare `.clanker-worktrees` therefore passes, which is what the
+/// test below has always asserted and what this used to get wrong by matching
+/// the component wherever it appeared, last one included.
 fn pathHasWorktreeDir(path: []const u8) bool {
     var it = std.mem.splitScalar(u8, path, '/');
+    var inside = false;
     while (it.next()) |comp| {
-        if (std.mem.eql(u8, comp, ".clanker-worktrees")) return true;
+        // A trailing slash and a `.` segment are the same directory, not a
+        // descent into it, so neither counts as going deeper.
+        if (inside and comp.len > 0 and !std.mem.eql(u8, comp, ".")) return true;
+        if (std.mem.eql(u8, comp, ".clanker-worktrees")) inside = true;
     }
     return false;
 }
@@ -4443,6 +4453,13 @@ test "pathHasWorktreeDir flags descent into another run's worktree" {
     try std.testing.expect(!pathHasWorktreeDir("state/runs"));
     try std.testing.expect(!pathHasWorktreeDir(""));
     try std.testing.expect(!pathHasWorktreeDir("clanker-worktrees/123")); // sibling name
+    // Naming the container is naming the container however it is spelled.
+    try std.testing.expect(!pathHasWorktreeDir(".clanker-worktrees/"));
+    try std.testing.expect(!pathHasWorktreeDir("state/.clanker-worktrees"));
+    try std.testing.expect(!pathHasWorktreeDir("./.clanker-worktrees/."));
+    // And one level in is one level in, whatever it is called.
+    try std.testing.expect(pathHasWorktreeDir(".clanker-worktrees/./123"));
+    try std.testing.expect(pathHasWorktreeDir(".clanker-worktrees/.clanker-worktrees"));
 }
 
 test "ckHash produces correct SHA-256 hex digest" {
