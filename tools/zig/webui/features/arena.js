@@ -9,6 +9,8 @@
 //
 // Reference: docs/prds/0008-arena.md, "Web UI: the arena view".
 
+import { readJson } from "../core/utils.js";
+
 function byId(id) { return document.getElementById(id); }
 
 function reducedMotion() {
@@ -59,7 +61,7 @@ function fetchMatch(id, quiet) {
   if (!id) return Promise.resolve(null);
   var status = byId("arena-status");
   if (!quiet && status) status.textContent = "Loading match " + id + "…";
-  return fetch("/api/arena/" + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (data) {
+  return fetch("/api/arena/" + encodeURIComponent(id)).then(readJson).then(function (data) {
     if (!data || !data.ok || !data.match) throw new Error((data && data.error) || "no such match");
     state.id = id;
     // The address bar names the open match, so it can be bookmarked and
@@ -96,7 +98,7 @@ export function loadArenaView() {
     state.id = window._pendingArenaId;
     window._pendingArenaId = null;
   }
-  return fetch("/api/arena").then(function (r) { return r.json(); }).then(function (data) {
+  return fetch("/api/arena").then(readJson).then(function (data) {
     var matches = (data && data.matches) || [];
     state.matches = matches;
     renderPicker(matches);

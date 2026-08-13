@@ -1,10 +1,11 @@
 // Prompts library — single-user. Browse / create / use / delete prompt templates backed by GET/POST/DELETE /api/prompts.
 import { uiConfirm } from "../core/ui.js";
+import { readJson } from "../core/utils.js";
 
 export function loadPromptsView() {
   var status = document.getElementById("prompts-status");
   if (status) status.textContent = "Loading…";
-  return fetch("/api/prompts").then(function(r){return r.json();}).then(function(data){
+  return fetch("/api/prompts").then(readJson).then(function(data){
     var prompts = (data && data.prompts) || [];
     renderPrompts(prompts);
     if (status) status.textContent = prompts.length + (prompts.length===1 ? " prompt." : " prompts.");
@@ -42,7 +43,7 @@ function renderPrompts(prompts){
       uiConfirm("Delete prompt \""+(p.title||p.id)+"\"?", { danger: true, confirmLabel: "Delete" }).then(function(yes){
         if(!yes) return;
         fetch("/api/prompts",{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:p.id})})
-          .then(function(r){return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; });})
+          .then(readJson)
           .then(function(){ loadPromptsView(); try{ refreshLocalPrompts(); }catch(_){} })
           .catch(function(e){ alert(e.message); });
       });
@@ -60,7 +61,7 @@ function renderPrompts(prompts){
 
 function refreshLocalPrompts(){
   try{
-    fetch("/api/prompts").then(function(r){return r.json();}).then(function(data){
+    fetch("/api/prompts").then(readJson).then(function(data){
       var server=(data&&data.prompts)||[];
       var texts=server.map(function(p){ return p.content; });
       try{ window.localStorage.setItem("clanker.prompts", JSON.stringify(texts)); }catch(_){}
@@ -81,7 +82,7 @@ export function bindPrompts(){
     if(title.length>200||content.length>20000){ alert("Title 1-200, content 1-20000."); return; }
     createBtn.disabled=true;
     fetch("/api/prompts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:title,content:content})})
-      .then(function(r){return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; });})
+      .then(readJson)
       .then(function(){ if(titleEl) titleEl.value=""; if(contentEl) contentEl.value=""; loadPromptsView(); refreshLocalPrompts(); })
       .catch(function(e){ alert(e.message); }).finally(function(){ createBtn.disabled=false; });
   });

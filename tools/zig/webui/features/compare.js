@@ -18,6 +18,8 @@
 //
 // Reference: docs/prds/0006-webui.md, "Compare view".
 
+import { readJson } from "../core/utils.js";
+
 function byId(id) { return document.getElementById(id); }
 
 var state = {
@@ -41,7 +43,7 @@ export function loadCompareView() {
     state.id = window._pendingCompareId;
     window._pendingCompareId = null;
   }
-  return fetch("/api/compare").then(function (r) { return r.json(); }).then(function (data) {
+  return fetch("/api/compare").then(readJson).then(function (data) {
     var rows = (data && data.comparisons) || [];
     state.list = rows;
     renderPicker(rows);
@@ -89,7 +91,7 @@ function fetchComparison(id) {
   if (!id) return Promise.resolve(null);
   var status = byId("compare-status");
   if (status) status.textContent = "Loading comparison " + id + "…";
-  return fetch("/api/compare/" + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (data) {
+  return fetch("/api/compare/" + encodeURIComponent(id)).then(readJson).then(function (data) {
     if (!data || !data.ok) throw new Error((data && data.error) || "no such comparison");
     state.id = id;
     state.doc = data;
@@ -263,7 +265,7 @@ function recordPick(id, label) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ pick: label })
-  }).then(function (r) { return r.json(); }).then(function (data) {
+  }).then(readJson).then(function (data) {
     if (!data || !data.ok) throw new Error((data && data.error) || "pick refused");
     state.doc = data;
     renderComparison(data);
