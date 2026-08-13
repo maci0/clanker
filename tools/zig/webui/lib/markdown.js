@@ -162,6 +162,38 @@ export function splitRow(line) {
   return t.split("|");
 }
 
+/* Which lines open a block, asked once so the block dispatcher and the
+   paragraph accumulator cannot disagree about it.
+
+   They did disagree. The accumulator stopped at a heading, a list marker and a
+   blockquote, but not at a thematic break or a table, and a model writes both
+   directly under the line that introduces them — "Here are the results:" and
+   then the table, no blank line between. The dispatcher never got the chance
+   to look at those lines because the paragraph had already eaten them, so a
+   table rendered as the wall of literal `|` characters this file exists to
+   avoid, and `---` as three hyphens mid-sentence. */
+export function ruleAt(line) {
+  return /^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line);
+}
+
+/* A table is its header plus the `|---|---|` line under it: the header alone
+   is just a line with pipes in it, so both are needed to tell one from prose. */
+export function tableAt(lines, i) {
+  return lines[i].indexOf("|") !== -1 &&
+    i + 1 < lines.length &&
+    /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1]);
+}
+
+export function blockAt(lines, i) {
+  var line = lines[i];
+  return /^(#{1,6})\s/.test(line) ||
+    /^\s*[-*+]\s/.test(line) ||
+    /^\s*\d+[.)]\s/.test(line) ||
+    /^\s*>/.test(line) ||
+    ruleAt(line) ||
+    tableAt(lines, i);
+}
+
 export function renderMarkdown(text) {
   var frag = document.createDocumentFragment();
   var lines = text.split("\n");
@@ -223,7 +255,7 @@ export function renderMarkdown(text) {
       i += 1;
       continue;
     }
-    if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line)) {
+    if (ruleAt(line)) {
       frag.appendChild(document.createElement("hr"));
       i += 1;
       continue;
@@ -241,7 +273,7 @@ export function renderMarkdown(text) {
     }
     if (/^\s*[-*+]\s+/.test(line)) { flushList(false); continue; }
     if (/^\s*\d+[.)]\s+/.test(line)) { flushList(true); continue; }
-    if (line.indexOf("|") !== -1 && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1])) {
+    if (tableAt(lines, i)) {
       var table = document.createElement("table");
       table.className = "md-table";
       var thead = document.createElement("thead");
@@ -265,8 +297,7 @@ export function renderMarkdown(text) {
       continue;
     }
     var para = [];
-    while (i < lines.length && lines[i].trim() &&
-           !/^(#{1,6})\s|^\s*[-*+]\s|^\s*\d+[.)]\s|^\s*>/.test(lines[i])) {
+    while (i < lines.length && lines[i].trim() && !blockAt(lines, i)) {
       para.push(lines[i]);
       i += 1;
     }
