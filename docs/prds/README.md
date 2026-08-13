@@ -43,7 +43,7 @@ and Implementation lists checkable file-level phases.
 | [0020](0020-auto-thinking.md) | Auto thinking | Draft | Selects effort; 0024 writes params |
 | [0021](0021-smart-commit.md) | Smart commit | Draft | |
 | [0022](0022-out-of-tree-tools.md) | Out-of-tree tools | Shipped | `tools_dir` is a list; last-listed wins |
-| [0023](0023-webui-model-config.md) | Web UI model config | Draft | Read half shipped; write half open |
+| [0023](0023-webui-model-config.md) | Web UI model config | Shipped | Writes `config.local.toml` only |
 | [0024](0024-sampling-profiles.md) | Sampling profiles | Draft | After 0025 |
 | [0025](0025-fallback-provider-chain.md) | Fallback provider chain | Shipped | Reactive list; vision path unchanged |
 | [0026](0026-llm-proxy.md) | LLM compatibility proxy | Draft | Independent of agent-loop drafts; four-PR plan |
@@ -54,16 +54,15 @@ and Implementation lists checkable file-level phases.
 Packaging and reliability first, then agent-loop quality, then heavy
 optional subsystems:
 
-1. **0023** — web UI model config writes
-2. **0014** — hashline (edit reliability)
-3. **0015** / **0020** — advisor + auto thinking (shared side-channel)
-4. **0024** — sampling profiles (after 0025; after numbers pinned)
-5. **0013** — TTSR (substring engine)
-6. **0016** then **0017** — eval kernel, then DAP
-7. **0019** — `gh_read`
-8. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
-9. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
-10. **0027** — `write-goal` (field-list blocker still open)
+1. **0014** — hashline (edit reliability)
+2. **0015** / **0020** — advisor + auto thinking (shared side-channel)
+3. **0024** — sampling profiles (after 0025; after numbers pinned)
+4. **0013** — TTSR (substring engine)
+5. **0016** then **0017** — eval kernel, then DAP
+6. **0019** — `gh_read`
+7. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
+8. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
+9. **0027** — `write-goal` (field-list blocker still open)
 
 ## Editing rules (short)
 

@@ -39,7 +39,7 @@ const Span = struct { start: usize, end: usize };
 fn tableHeaderLine(block: []const u8) ?[]const u8 {
     var it = std.mem.splitScalar(u8, block, '\n');
     const first = it.next() orelse return null;
-    const line = std.mem.trimRight(u8, first, "\r");
+    const line = std.mem.trimEnd(u8, first, "\r");
     if (line.len < 3 or line[0] != '[') return null;
     return line;
 }
@@ -49,7 +49,7 @@ fn findTableSpan(src: []const u8, header: []const u8) ?Span {
     var found: ?Span = null;
     while (i < src.len) {
         const nl = std.mem.indexOfScalarPos(u8, src, i, '\n') orelse src.len;
-        const line = std.mem.trimRight(u8, src[i..nl], "\r");
+        const line = std.mem.trimEnd(u8, src[i..nl], "\r");
         if (std.mem.eql(u8, line, header)) {
             const end = nextTableOffset(src, if (nl < src.len) nl + 1 else src.len);
             found = .{ .start = i, .end = end };
@@ -64,7 +64,7 @@ fn nextTableOffset(src: []const u8, from: usize) usize {
     var i = from;
     while (i < src.len) {
         const nl = std.mem.indexOfScalarPos(u8, src, i, '\n') orelse src.len;
-        const line = std.mem.trimRight(u8, src[i..nl], "\r");
+        const line = std.mem.trimEnd(u8, src[i..nl], "\r");
         if (line.len > 0 and line[0] == '[') return i;
         if (nl == src.len) return src.len;
         i = nl + 1;
@@ -76,7 +76,7 @@ fn firstTableOffset(src: []const u8) ?usize {
     var i: usize = 0;
     while (i < src.len) {
         const nl = std.mem.indexOfScalarPos(u8, src, i, '\n') orelse src.len;
-        const line = std.mem.trimRight(u8, src[i..nl], "\r");
+        const line = std.mem.trimEnd(u8, src[i..nl], "\r");
         if (line.len > 0 and line[0] == '[') return i;
         if (nl == src.len) return null;
         i = nl + 1;
@@ -90,7 +90,7 @@ fn findTopLevelKey(src: []const u8, key: []const u8) ?Span {
     var found: ?Span = null;
     while (i < src.len) {
         const nl = std.mem.indexOfScalarPos(u8, src, i, '\n') orelse src.len;
-        const line = std.mem.trimRight(u8, src[i..nl], "\r");
+        const line = std.mem.trimEnd(u8, src[i..nl], "\r");
         if (line.len > 0 and line[0] == '[') {
             in_table = true;
         } else if (!in_table and lineStartsWithKey(line, key)) {

@@ -12649,8 +12649,10 @@ test "findCatalogModel tries the bare id when the config name carries an OpenRou
 }
 
 test "vendored TOML last table with the same header wins" {
-    var parser = toml.Parser.init(std.testing.allocator);
-    defer parser.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var parser = toml.Parser(toml.Table).init(arena);
     var result = try parser.parseString(
         \\[models."a/x"]
         \\provider = "first"

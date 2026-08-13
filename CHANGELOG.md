@@ -29,6 +29,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   also accepted). After the selected provider exhausts its own retries with
   no content delivered, the next configured name is tried. A bare string
   still means one fallback. Vision routing stays pre-emptive and unchanged.
+- The Models view can save a catalog snippet (or set the default
+  provider/model) into `config.local.toml`. Writes are surgical table/key
+  replacements and take effect on the next `clanker serve` restart.
 
 ### Changed
 
