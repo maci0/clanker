@@ -9,10 +9,11 @@
 // nearly every conversation, and a search that always answers "all of them"
 // is a search that answers nothing.
 //
-// Opening a hit switches to that conversation, which is the only action here.
-// Jumping to the matching turn is not wired: the transcript renders from the
-// top and there is no per-turn anchor to scroll to yet, so the turn number is
-// shown but not followed. Better to say where it is than to pretend to go.
+// Opening a hit switches to that conversation and lands on the turn that
+// matched: the message index travels with the click, app.js records which
+// message indices each replayed turn covers, and the turn is scrolled to,
+// flagged for a moment and marked with the query. On a long conversation
+// opening at the top was much the same as not going there.
 import { readJson, formatChatTime } from "../core/utils.js";
 
 function byId(id) { return document.getElementById(id); }
@@ -49,7 +50,7 @@ function hitRow(h) {
   var row = document.createElement("button");
   row.type = "button";
   row.className = "secondary search-hit";
-  row.setAttribute("aria-label", "Open " + (h.title || h.id));
+  row.setAttribute("aria-label", "Open " + (h.title || h.id) + " at turn " + (h.turn + 1));
 
   var head = document.createElement("div");
   head.className = "search-hit-head";
@@ -84,7 +85,10 @@ function hitRow(h) {
   row.appendChild(foot);
 
   row.addEventListener("click", function () {
-    if (openSession) openSession(h.id);
+    // The query goes with the index so the turn can be marked on arrival with
+    // the same text the server matched, rather than with whatever is in the
+    // box by the time the transcript finishes loading.
+    if (openSession) openSession(h.id, { index: h.turn, query: state.query });
   });
   return row;
 }
