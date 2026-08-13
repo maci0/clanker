@@ -1,7 +1,7 @@
 {
   "name": "read_file",
-  "description": "Reads a file by path and returns its text. Address it by line with start_line and line_count (the result reports start_line, end_line, the file's total lines, and next_line), or by byte with offset and limit. Either way whole lines are returned, never a fragment, and a short result reports where to resume. Prefer this over search_code when you need a file's exact contents (e.g. src/agent/loop.zig, AGENTS.md, manifests).",
-  "llm_description": "Read a file's text, by line (start_line/line_count) or by byte (offset/limit); reports where to resume. Prefer over search_code for exact contents.",
+  "description": "Reads a file by path and returns its text. Address it by line with start_line and line_count (the result reports start_line, end_line, the file's total lines, and next_line), or by byte with offset and limit. Either way whole lines are returned, never a fragment, and a short result reports where to resume. Prefer this over repo_search when you need a file's exact contents (e.g. src/agent/loop.zig, AGENTS.md, manifests).",
+  "llm_description": "Read a file's text, by line (start_line/line_count) or by byte with offset/limit; reports where to resume. Prefer over repo_search for exact contents.",
   "wasm": "zig-out/tools/read_file.wasm",
   "enabled": true,
   "fs_prefixes": [
