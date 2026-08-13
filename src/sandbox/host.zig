@@ -3365,16 +3365,26 @@ pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     return h.writeResult(bytes, buf[0..w.end]);
 }
 
-/// True if `path` (split on '/') descends through a directory named
-/// `.clanker-worktrees`, the per-run improve worktree container. Used to
-/// stop an exec `cwd`/`dir` from landing inside a sibling run's worktree.
+/// True if `path` (split on '/') names or enters a directory called
+/// `.clanker-worktrees`, the per-run improve worktree container. Used to stop
+/// an exec `cwd`/`dir` from landing inside a sibling run's worktree.
+///
+/// The container itself is refused too, and that is not an oversight to be
+/// tidied up: this path becomes an exec'd child's cwd, and the child's own
+/// arguments resolve against it. A cwd of `.clanker-worktrees` reaches
+/// `123/src` with no `.clanker-worktrees` component left for this function to
+/// see, so allowing the container does not merely permit a harmless
+/// directory, it hands over every worktree under it. The container holds
+/// nothing but sibling runs' trees, so refusing it costs nothing real, and
+/// `ck_fs_list` can still enumerate it, which was its only use.
+///
+/// Please leave this matching the component wherever it appears. It has been
+/// loosened to "only a descent counts" once already, which put the guard and
+/// its own test in direct contradiction and left main red.
 fn pathHasWorktreeDir(path: []const u8) bool {
     var it = std.mem.splitScalar(u8, path, '/');
     while (it.next()) |comp| {
-        if (std.mem.eql(u8, comp, ".clanker-worktrees")) {
-            // The container itself is fine; only descent *into* it matters.
-            return it.rest().len > 0;
-        }
+        if (std.mem.eql(u8, comp, ".clanker-worktrees")) return true;
     }
     return false;
 }
