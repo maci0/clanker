@@ -112,14 +112,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     return textJson(out, alloc, if (want_enabled) "enabled: " else "disabled: ", name);
 }
 
-/// Every descriptor in the configured tools directory, merged with the
-/// disabled list in state/.
+/// Every descriptor in the configured tools directories, merged with the
+/// disabled list in state/. Later directories win on a name collision, the
+/// same last-listed-wins rule `Registry.load` uses.
 fn readPlugins(alloc: std.mem.Allocator) ![]Plugin {
-    const tools_dir = lib.toolsDir();
-    const raw = try lib.fsList(tools_dir);
-    const names = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{});
-    if (names != .array) return error.BadToolsDir;
-
     var disabled: std.ArrayList([]const u8) = .empty;
     var forced_on: std.ArrayList([]const u8) = .empty;
     if (lib.fsRead(state_path)) |state_raw| {
@@ -141,32 +137,44 @@ fn readPlugins(alloc: std.mem.Allocator) ![]Plugin {
     } else |_| {}
 
     var out: std.ArrayList(Plugin) = .empty;
-    for (names.array.items) |item| {
-        if (item != .string) continue;
-        if (!std.mem.endsWith(u8, item.string, ".tool.json")) continue;
-        const path = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ tools_dir, item.string });
-        const body = lib.fsRead(path) catch continue;
-        const d = std.json.parseFromSliceLeaky(Descriptor, alloc, body, .{ .ignore_unknown_fields = true }) catch continue;
-        if (d.name.len == 0) continue;
-        const core = d.internal and d.transform == null;
-        var enabled = d.enabled;
-        for (disabled.items) |name| {
-            if (std.mem.eql(u8, name, d.name)) enabled = false;
+    var index: std.StringHashMapUnmanaged(usize) = .empty;
+    for (lib.toolsDirs()) |tools_dir| {
+        const raw = lib.fsList(tools_dir) catch continue;
+        const names = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{});
+        if (names != .array) continue;
+        for (names.array.items) |item| {
+            if (item != .string) continue;
+            if (!std.mem.endsWith(u8, item.string, ".tool.json")) continue;
+            const path = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ tools_dir, item.string });
+            const body = lib.fsRead(path) catch continue;
+            const d = std.json.parseFromSliceLeaky(Descriptor, alloc, body, .{ .ignore_unknown_fields = true }) catch continue;
+            if (d.name.len == 0) continue;
+            const core = d.internal and d.transform == null;
+            var enabled = d.enabled;
+            for (disabled.items) |name| {
+                if (std.mem.eql(u8, name, d.name)) enabled = false;
+            }
+            for (forced_on.items) |name| {
+                if (std.mem.eql(u8, name, d.name)) enabled = true;
+            }
+            const plugin = Plugin{
+                .name = d.name,
+                .description = d.description,
+                .core = core,
+                .llm = d.llm,
+                .transform = d.transform,
+                .enabled = enabled or core,
+                .config = effectiveConfig(alloc, d, overrides),
+                .config_editable = d.config_editable,
+                .d = d,
+            };
+            if (index.get(d.name)) |i| {
+                out.items[i] = plugin;
+            } else {
+                try index.put(alloc, d.name, out.items.len);
+                try out.append(alloc, plugin);
+            }
         }
-        for (forced_on.items) |name| {
-            if (std.mem.eql(u8, name, d.name)) enabled = true;
-        }
-        try out.append(alloc, .{
-            .name = d.name,
-            .description = d.description,
-            .core = core,
-            .llm = d.llm,
-            .transform = d.transform,
-            .enabled = enabled or core,
-            .config = effectiveConfig(alloc, d, overrides),
-            .config_editable = d.config_editable,
-            .d = d,
-        });
     }
     std.mem.sort(Plugin, out.items, {}, lessByName);
     return out.items;

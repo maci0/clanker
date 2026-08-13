@@ -23,24 +23,32 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     _ = parsed;
 
     const alloc = lib.alloc;
-    const tools_dir = lib.toolsDir();
-    const raw = lib.fsList(tools_dir) catch |err| return lib.failErr(out, err, "listing the tools directory");
-    const names = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{});
 
     const Entry = struct { name: []const u8, meta: Meta };
     var tools: std.ArrayList(Entry) = .empty;
     defer tools.deinit(alloc);
     var plugins: std.ArrayList(Entry) = .empty;
     defer plugins.deinit(alloc);
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
 
-    if (names == .array) {
+    for (lib.toolsDirs()) |tools_dir| {
+        const raw = lib.fsList(tools_dir) catch continue;
+        const names = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{});
+        if (names != .array) continue;
         for (names.array.items) |item| {
             if (item != .string) continue;
             const file = item.string;
             if (!std.mem.endsWith(u8, file, ".tool.json")) continue;
             const base = file[0 .. file.len - ".tool.json".len];
-            const meta = describeFull(file);
+            const meta = describeAt(tools_dir, file);
             const entry = Entry{ .name = base, .meta = meta };
+            if (seen.contains(base)) {
+                // Later directory wins: drop the earlier listing of this name.
+                removeNamed(Entry, &tools, base);
+                removeNamed(Entry, &plugins, base);
+            } else {
+                try seen.put(alloc, base, {});
+            }
             if (meta.plugin) try plugins.append(alloc, entry) else try tools.append(alloc, entry);
         }
     }
@@ -115,8 +123,18 @@ const Meta = struct {
 /// from fsRead's result is safe here — the host arena bump-allocates for
 /// the whole call without resetting (lib.zig), so earlier reads survive
 /// later ones.
-fn describeFull(file_name: []const u8) Meta {
-    const tools_dir = lib.toolsDir();
+fn removeNamed(comptime T: type, list: *std.ArrayList(T), name: []const u8) void {
+    var i: usize = 0;
+    while (i < list.items.len) {
+        if (std.mem.eql(u8, list.items[i].name, name)) {
+            _ = list.orderedRemove(i);
+            return;
+        }
+        i += 1;
+    }
+}
+
+fn describeAt(tools_dir: []const u8, file_name: []const u8) Meta {
     var path_buf: [512]u8 = undefined;
     const path = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ tools_dir, file_name }) catch return .{};
     const raw = lib.fsRead(path) catch return .{};

@@ -3911,7 +3911,10 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
         return;
     }
     if (std.mem.eql(u8, sub, "validate")) {
-        if (opts.plugin_target) |path| return pluginsValidate(init, path);
+        if (opts.plugin_target) |path| {
+            try pluginsValidate(init, path);
+            return;
+        }
         return pluginsValidateAll(init, cfg.agent.tools_dir);
     }
     if (std.mem.eql(u8, sub, "new")) {
@@ -3940,8 +3943,10 @@ fn usageExitFor(io: std.Io, command: []const u8, comptime fmt: []const u8, args:
 
 /// Validate every configured `tools_dir` and OR the exit status together.
 fn pluginsValidateAll(init: std.process.Init, dirs: []const []const u8) !void {
-    if (dirs.len == 0) return pluginsValidate(init, config.firstToolsDir(dirs));
-    if (dirs.len == 1) return pluginsValidate(init, dirs[0]);
+    if (dirs.len == 0) {
+        try pluginsValidate(init, config.firstToolsDir(dirs));
+        return;
+    }
     var failed = false;
     for (dirs) |dir| {
         pluginsValidate(init, dir) catch |err| switch (err) {
