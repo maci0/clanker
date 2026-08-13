@@ -56,12 +56,12 @@ optional subsystems:
 
 1. **0015** / **0020** — advisor + auto thinking (shared side-channel)
 2. **0024** — sampling profiles (after 0025; after numbers pinned)
-4. **0013** — TTSR (substring engine)
-5. **0016** then **0017** — eval kernel, then DAP
-6. **0019** — `gh_read`
-7. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
-8. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
-9. **0027** — `write-goal` (field-list blocker still open)
+3. **0013** — TTSR (substring engine)
+4. **0016** then **0017** — eval kernel, then DAP
+5. **0019** — `gh_read`
+6. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
+7. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
+8. **0027** — `write-goal` (field-list blocker still open)
 
 ## Editing rules (short)
 

@@ -126,6 +126,9 @@ change a tool's behaviour without changing the thing running the gate.
 
 So, when adding a capability:
 
+- `read_file hashes:true` + `edit_file op=hashline` is the preferred
+  edit pairing: hashes are 4-hex xxHash32 of each line (no newline),
+  validated before any write. Exact `{old,new}` still works.
 - Write it as a guest module with a descriptor in `tools/manifests/`. Native
   code in `src/` needs a reason that survives the questions above.
   `clanker plugins new <name>` scaffolds both halves; `clanker plugins validate`
