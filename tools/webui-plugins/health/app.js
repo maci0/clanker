@@ -41,6 +41,18 @@ clanker.registerView({
     var BUSY_AT = 0.6;
     var SATURATED_AT = 1;
 
+    /* When the error tile escalates past "something happened" to "something is
+       wrong". A share alone is not enough: these are totals since start, so
+       early on the denominator is tiny and one 404 for a path that does not
+       exist reads as 1%, or 12%, or 50%. That is a client asking for something
+       absent, not a server in trouble, and painting it the same as a server
+       failing half its requests is how a panel earns being ignored. So the
+       share has to clear a bar *and* there has to be enough of it to be a
+       pattern; below that it stays a warning, with the counts beside it doing
+       the talking. */
+    var BAD_SHARE_PCT = 1;
+    var BAD_ERRORS_MIN = 5;
+
     /* Bands are cut from the cumulative `le_*` buckets. The server loads each
        counter with its own atomic read, so a sample taken mid-request can have
        a bucket slightly ahead of `requests_total`; every subtraction is
@@ -105,6 +117,14 @@ clanker.registerView({
       if (p < 0.1) return "<0.1%";
       if (p >= 10) return Math.round(p) + "%";
       return (Math.round(p * 10) / 10) + "%";
+    }
+
+    /// How alarming the error total is. Three states, and the middle one is
+    /// where a handful of errors on a young counter belongs.
+    function errorState(errors, sharePct) {
+      if (errors === 0) return "good";
+      if (sharePct !== null && sharePct >= BAD_SHARE_PCT && errors >= BAD_ERRORS_MIN) return "bad";
+      return "warn";
     }
 
     /// The saturation wording. A state, not a colour: the word is what carries
@@ -187,7 +207,7 @@ clanker.registerView({
       tiles.appendChild(tile(
         "Errors", fmtRate(errRate.rate),
         errors + " of " + total + " (" + fmtPct(errShare) + ")",
-        errors > 0 ? (errShare !== null && errShare >= 1 ? "bad" : "warn") : "good"));
+        errorState(errors, errShare)));
       tiles.appendChild(tile(
         // in_flight counts the connection serving this very poll, so it never
         // reads zero from the browser. Said out loud rather than adjusted for.

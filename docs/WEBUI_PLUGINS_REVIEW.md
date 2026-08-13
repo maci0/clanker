@@ -280,3 +280,39 @@ with real traffic in between, rendered `44/s` against an independently computed
 `10 of 88 (11%)` errors, a `0.2ms` mean and all 88 requests in the `up to 10ms`
 band. Gate: `zig build`, `zig build tools`, `zig build test --summary all` —
 163/163 steps, 776/778 tests, 2 skipped, the expected worktree pair.
+
+## The Health error tile needed evidence, not just a share (2026-08-13)
+
+Follow-up to the entry above, prompted by #199. That fix stopped
+`handleConnectionGuarded`'s final keep-alive pass being counted as a request:
+`errors_total` for ordinary browsing went from 8 to 0 and `requests_total` from
+14 to 7 on the same workload. The counters this view reads are now real.
+
+Which made a threshold visible that had never had a chance to behave. The error
+tile escalated to its worst state on `share >= 1%`, and under the old phantom
+counts the share was permanently around 11%, so the tile was always red and the
+rule was never actually exercised. With real numbers, one 404 out of 89 requests
+reads as 1.1% — and painted the panel red.
+
+These are totals since start, so early on the denominator is tiny: a single
+request for a path that does not exist reads as 1%, or 12%, or 50%, depending
+only on how long the server has been up. That is a client asking for something
+absent, not a server in trouble, and colouring it the same as a server failing
+half its requests is how a panel earns being ignored. The worst state now needs
+the share to clear its bar **and** at least five errors, so a share computed
+over almost nothing cannot reach it; below that it is a warning, with the counts
+beside it doing the talking. The counts are on screen in every state, which is
+what the colour was never allowed to be the only carrier of anyway.
+
+Verified against the live server that prompted it: `1 of 89 (1.1%)` now reads as
+a warning rather than a fault, while the bucket arithmetic is unchanged and
+still exact — 15 requests, bands summing to 15, `le_10000 <= requests_total`,
+no negative band.
+
+### Verified
+
+The same harness, 74 assertions now (60 plus 14 for this): a clean server is
+good; 1 of 89, 4 of 8 and 1 of 1 are warnings; 5 of 500, 10 of 88 and 50 of 100
+are faults; and the counts are shown regardless of state. Against `main` the
+three warning cases fail, all reading `bad`. Gate: `zig build`,
+`zig build tools`, `zig build test --summary all`.
