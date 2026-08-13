@@ -237,6 +237,10 @@ pub fn main(init: std.process.Init) !void {
         }
     }
     cli.run(init, opts) catch |err| {
+        // A downstream reader such as `head` closing early is successful
+        // pipeline control, not an operator-facing clanker failure. Every
+        // list/table command writes through this boundary, so handle it once.
+        if (err == error.BrokenPipe) std.process.exit(0);
         // Common failures get a human line with a recovery hint, not a
         // timestamped log record: this is an interactive moment, not a log
         // collector ingest path.
