@@ -935,7 +935,7 @@ fn lessThanCmd(_: void, a: []const u8, b: []const u8) bool {
 /// registry also keeps `buildCommandHelp`'s "every entry is a `/command`"
 /// shape intact.
 const shell_escape_help =
-    \\shell escape:
+    \\Shell escape:
     \\  !<command>        run it here, now, under the same ck_exec policy the
     \\                    tools run under, not a shell, so no pipes, globs,
     \\                    redirections or $VAR expansion
@@ -1013,6 +1013,16 @@ fn suggestSlashCommand(input: []const u8) ?[]const u8 {
     return best;
 }
 
+/// Matches the CLI diagnostic grammar while keeping the recovery action
+/// native to this surface (`/help` rather than `clanker --help`).
+fn unknownSlashCommandText(alloc: std.mem.Allocator, input: []const u8) ![]const u8 {
+    const typed = std.mem.trim(u8, input, " \t");
+    if (suggestSlashCommand(typed)) |suggestion| {
+        return std.fmt.allocPrint(alloc, "error: unknown command '{s}'; did you mean `{s}`?", .{ typed, suggestion });
+    }
+    return std.fmt.allocPrint(alloc, "error: unknown command '{s}'; try `/help`", .{typed});
+}
+
 /// One registry spelling that matched a Tab-complete prefix, paired with
 /// the spec it belongs to (needed to know `takes_args` when a single match
 /// completes the line).
@@ -1075,7 +1085,7 @@ const help_names_width = blk: {
 fn buildCommandHelp(alloc: std.mem.Allocator) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
-    try out.appendSlice(alloc, "commands:");
+    try out.appendSlice(alloc, "Commands:");
     for (command_registry) |spec| {
         try out.appendSlice(alloc, "\n  ");
         var col: usize = spec.name.len;
@@ -1106,6 +1116,7 @@ test "every command registry entry is documented" {
 test "generated help mentions every command spelling and help line" {
     const text = try buildCommandHelp(std.testing.allocator);
     defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.startsWith(u8, text, "Commands:\n"));
     for (command_registry) |spec| {
         try std.testing.expect(std.mem.find(u8, text, spec.name) != null);
         for (spec.aliases) |alias| {
@@ -1309,6 +1320,16 @@ test "suggestSlashCommand offers did-you-mean for close misspellings" {
     try std.testing.expectEqualStrings("/model", suggestSlashCommand("/modle").?);
     try std.testing.expectEqualStrings("/quit", suggestSlashCommand("/qit").?);
     try std.testing.expect(suggestSlashCommand("/xyzzy") == null);
+}
+
+test "unknown slash command diagnostics match CLI grammar" {
+    const suggested = try unknownSlashCommandText(std.testing.allocator, "  /modle  ");
+    defer std.testing.allocator.free(suggested);
+    try std.testing.expectEqualStrings("error: unknown command '/modle'; did you mean `/model`?", suggested);
+
+    const unknown = try unknownSlashCommandText(std.testing.allocator, "/xyzzy");
+    defer std.testing.allocator.free(unknown);
+    try std.testing.expectEqualStrings("error: unknown command '/xyzzy'; try `/help`", unknown);
 }
 
 test "matchingSpellings finds a unique prefix and every ambiguous one" {
@@ -1699,11 +1720,7 @@ const Model = struct {
             return;
         }
         if (looksLikeSlashCommand(task)) {
-            const typed = std.mem.trim(u8, task, " \t");
-            const text = if (suggestSlashCommand(typed)) |suggestion|
-                std.fmt.allocPrint(self.arena, "error: unknown command: {s}; did you mean {s}?", .{ typed, suggestion }) catch "error: unknown command; try /help"
-            else
-                std.fmt.allocPrint(self.arena, "error: unknown command: {s}; try /help", .{typed}) catch "error: unknown command; try /help";
+            const text = unknownSlashCommandText(self.arena, task) catch "error: unknown command; try `/help`";
             self.lines.append(self.arena, .{
                 .text = text,
                 .dim = true,
@@ -2354,7 +2371,7 @@ const Model = struct {
         var eit = std.mem.splitScalar(u8, shell_escape_help, '\n');
         while (eit.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = !isSectionHeader(line) }) catch {};
         const keys =
-            \\keys:
+            \\Keys:
             \\  Tab               complete a /command
             \\  Ctrl-P            command palette (fuzzy: matches mid-word and on description)
             \\  Ctrl-R            search the transcript (Up/Down step hits, Enter stays, Esc back)
@@ -2370,7 +2387,7 @@ const Model = struct {
         while (kit.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = !isSectionHeader(line) }) catch {};
     }
 
-    /// A help section header: "commands:", "keys:", "shell escape:" (no leading
+    /// A help section header: "Commands:", "Keys:", "Shell escape:" (no leading
     /// whitespace, trailing colon). Rendered at normal weight so the three
     /// sections are visually distinct from their dim content lines.
     fn isSectionHeader(line: []const u8) bool {
