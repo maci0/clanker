@@ -1696,7 +1696,9 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 }
 
 /* ── Mobile responsive ── */
-@media (max-width: 768px) {
+/* 48rem, not 768px: every other breakpoint here is rem so zoomed-text users
+   get consistent trigger points. */
+@media (max-width: 48rem) {
   .slack-layout { height: calc(100vh - 48px); height: calc(100dvh - 48px); }
   .slack-sidebar {
     position: absolute; z-index: 30; height: 100%;
@@ -2863,7 +2865,7 @@ h2#session-title {
    deliberately theme-constant (like Trello's own label colors): saturated
    mid-tones carrying white text, legible on light and dark alike, so a
    card's color means the same thing whichever theme a browser picked. */
-.card-cover { height: 4px; border-radius: 8px 8px 0 0; margin: 0; background: var(--rule); flex-shrink: 0; transition: height 160ms ease; }
+.card-cover { height: 4px; border-radius: 8px 8px 0 0; margin: 0; background: var(--rule); flex-shrink: 0; }
 .card-cover[data-priority="high"] { background: linear-gradient(90deg, var(--danger), color-mix(in srgb, var(--danger) 75%, #ff6b6b)); height: 4px; }
 .card-cover[data-priority="low"] { background: var(--surface-2); height: 3px; }
 .card-cover[data-color] { height: 40px; border-radius: 8px 8px 0 0; }
