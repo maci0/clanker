@@ -1173,26 +1173,48 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
         try s.endArray();
     }
 
-    if (access == .full or access == .workflows or access == .chains) {
+    // Narrow views only get the one directory they read. The full view is
+    // config_view's section mode, which looks up any top-level key of the
+    // merged config, so a truncated `agent` (just the two dirs) would report
+    // max_iterations and the other budgets as unset.
+    if (access == .full) {
+        try s.objectField("agent");
+        try s.write(cfg.agent);
+    } else if (access == .workflows or access == .chains) {
         try s.objectField("agent");
         try s.beginObject();
-        if (access == .full or access == .workflows) {
+        if (access == .workflows) {
             try s.objectField("workflows_dir");
             try s.write(cfg.agent.workflows_dir);
         }
-        if (access == .full or access == .chains) {
+        if (access == .chains) {
             try s.objectField("chains_dir");
             try s.write(cfg.agent.chains_dir);
         }
         try s.endObject();
     }
 
-    // config_view's section mode promises the merged `modules` table. Keep
-    // this on the full view only: no other guest consumer needs feature
-    // flags, and narrower views should not grow unrelated config fields.
+    // config_view's section mode looks up one top-level key of this object.
+    // Emit every non-secret section so `{"section":"chatrooms"}` (or tui,
+    // improve, web, ...) is not reported as missing when the file has it.
+    // api_key_env / service_account_file stay off every access level.
     if (access == .full) {
         try s.objectField("modules");
         try s.write(cfg.modules);
+        try s.objectField("improve");
+        try s.write(cfg.improve);
+        try s.objectField("web");
+        try s.write(cfg.web);
+        try s.objectField("serve");
+        try s.write(cfg.serve);
+        try s.objectField("memory");
+        try s.write(cfg.memory);
+        try s.objectField("notify");
+        try s.write(cfg.notify);
+        try s.objectField("chatrooms");
+        try s.write(cfg.chatrooms);
+        try s.objectField("tui");
+        try s.write(cfg.tui);
     }
 
     try s.endObject();
@@ -5375,17 +5397,28 @@ test "harness config access is scoped to each tool's consumed fields" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const cfg = config_mod.Config{};
+    var cfg = config_mod.Config{};
+    var p = config_mod.Provider{
+        .name = "v",
+        .base_url = "https://x.test",
+        .api_key_env = "VERTEX_KEY",
+        .service_account_file = "/secret/sa.json",
+        .default_model = "m",
+    };
+    try p.models.put(arena, "m", .{});
+    try cfg.providers.put(arena, "v", p);
 
     const workflows = try harnessConfigJSON(arena, &cfg, .workflows);
     try std.testing.expect(std.mem.find(u8, workflows, "workflows_dir") != null);
     try std.testing.expect(std.mem.find(u8, workflows, "chains_dir") == null);
     try std.testing.expect(std.mem.find(u8, workflows, "providers") == null);
     try std.testing.expect(std.mem.find(u8, workflows, "peers") == null);
+    try std.testing.expect(std.mem.find(u8, workflows, "max_iterations") == null);
 
     const providers_json = try harnessConfigJSON(arena, &cfg, .providers);
     try std.testing.expect(std.mem.find(u8, providers_json, "default_provider") != null);
     try std.testing.expect(std.mem.find(u8, providers_json, "api_key_env") == null);
+    try std.testing.expect(std.mem.find(u8, providers_json, "service_account_file") == null);
     try std.testing.expect(std.mem.find(u8, providers_json, "peers") == null);
     try std.testing.expect(std.mem.find(u8, providers_json, "agent") == null);
 
@@ -5397,8 +5430,12 @@ test "harness config access is scoped to each tool's consumed fields" {
 
     const full = try harnessConfigJSON(arena, &cfg, .full);
     try std.testing.expect(std.mem.find(u8, full, "\"modules\"") != null);
-    // No access level, not even .full, should expose api_key_env names.
+    try std.testing.expect(std.mem.find(u8, full, "max_iterations") != null);
+    try std.testing.expect(std.mem.find(u8, full, "chatrooms") != null);
+    try std.testing.expect(std.mem.find(u8, full, "\"tui\"") != null);
+    // No access level, not even .full, should expose credential fields.
     try std.testing.expect(std.mem.find(u8, full, "api_key_env") == null);
+    try std.testing.expect(std.mem.find(u8, full, "service_account_file") == null);
 }
 
 test "ck_chat access covers every shipped caller, one op at a time" {
