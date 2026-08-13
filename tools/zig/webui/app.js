@@ -3674,8 +3674,9 @@ function buildChatMessage(m) {
   // Pin button
   if (canAct) {
     var pinBtn = document.createElement("button");
-    pinBtn.type = "button"; pinBtn.className = "secondary"; pinBtn.textContent = "📌"; pinBtn.title = "Pin/Unpin";
+    pinBtn.type = "button"; pinBtn.className = "secondary"; pinBtn.title = "Pin/Unpin";
     pinBtn.setAttribute("aria-label", "Pin message");
+    pinBtn.appendChild(icon("pin", 14));
     pinBtn.addEventListener("click", function(e){ e.stopPropagation();
       fetch("/api/chat/pin", { method: "POST", headers: {"Content-Type":"application/json"},
         body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
@@ -5171,7 +5172,25 @@ var textPrompt = dialogTextPrompt;
 var finishTextPrompt = dialogFinishTextPrompt;
 dialogBindDialog(el, overlayOpen, overlayClose);
 
-uiAdd(el.helpOpen, icon("help", 15));
+function mountIcon(node, name, size) {
+  if (!node) return;
+  node.textContent = "";
+  node.appendChild(icon(name, size || 15));
+}
+mountIcon(el.helpOpen, "help", 15);
+mountIcon(document.getElementById("rail-collapse"), "panel", 15);
+mountIcon(document.getElementById("voice-btn"), "mic", 16);
+mountIcon(document.getElementById("chat-sidebar-toggle"), "list", 16);
+mountIcon(document.getElementById("chat-search-toggle"), "find", 16);
+mountIcon(document.getElementById("chat-pin-toggle"), "pin", 16);
+mountIcon(document.getElementById("chat-refresh"), "refresh", 16);
+mountIcon(document.getElementById("chat-search-close"), "close", 16);
+mountIcon(document.getElementById("chat-pins-close"), "close", 16);
+var pinsTitle = document.getElementById("chat-pins-title");
+if (pinsTitle && !pinsTitle.querySelector(".icon")) {
+  pinsTitle.insertBefore(icon("pin", 14), pinsTitle.firstChild);
+  pinsTitle.insertBefore(document.createTextNode(" "), pinsTitle.lastChild);
+}
 el.helpOpen.addEventListener("click", function () { openOverlay(el.help, el.helpClose); });
 el.helpClose.addEventListener("click", function () { closeOverlay(el.help); });
 
