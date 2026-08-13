@@ -629,16 +629,9 @@ fn parseCkLlmRequest(arena: std.mem.Allocator, raw: []const u8) ?CkLlmRequest {
     if (v.object.get("prompt")) |p| {
         if (p == .string) req.prompt = p.string;
     }
-    if (v.object.get("max_tokens")) |m| {
-        // Reject out-of-u32-range values instead of panicking in @intCast.
-        if (m == .integer and m.integer > 0 and m.integer <= std.math.maxInt(u32)) req.max_tokens = @intCast(m.integer);
-    }
-    if (v.object.get("provider")) |pn| {
-        if (pn == .string and pn.string.len > 0) req.provider = pn.string;
-    }
-    if (v.object.get("model")) |mn| {
-        if (mn == .string and mn.string.len > 0) req.model = mn.string;
-    }
+    req.max_tokens = json_util.pluginU32(v, "max_tokens");
+    req.provider = json_util.pluginStr(v, "provider");
+    req.model = json_util.pluginStr(v, "model");
     if (v.object.get("system")) |sp| {
         if (sp == .string and sp.string.len > 0) req.system = sp.string;
     }
@@ -857,9 +850,7 @@ pub fn ckLlmMany(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         if (s == .string and s.string.len > 0) system = s.string;
     }
     var max_tokens = access.max_tokens;
-    if (obj.get("max_tokens")) |m| {
-        if (m == .integer and m.integer > 0 and m.integer <= std.math.maxInt(u32)) max_tokens = @intCast(m.integer);
-    }
+    if (json_util.pluginU32(parsed, "max_tokens")) |mt| max_tokens = mt;
 
     const targets_val = obj.get("targets") orelse return Err.invalid;
     if (targets_val != .array) return Err.invalid;
