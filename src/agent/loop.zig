@@ -2222,6 +2222,7 @@ pub const Agent = struct {
                 log.log(.error_, "tool '{s}' failed: {s}", .{ h.worker.tool.name, @errorName(e) });
                 results[h.slot] = toolErrorJson(self.arena, "tool execution failed: {s} ({s})", .{ h.worker.tool.name, @errorName(e) }) catch "{\"ok\":false,\"error\":\"tool execution failed\"}";
             } else if (h.worker.out) |out| {
+                h.worker.out = null;
                 // Handled without `try`: an error here would return through
                 // the enclosing defer, which joins and frees every handle a
                 // second time (the join/destroy loops above already ran).
