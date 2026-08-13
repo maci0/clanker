@@ -405,9 +405,9 @@ fn isErrorLine(text: []const u8) bool {
 /// A generic "not found" cannot imply sessions: graph, plugin, and tool
 /// failures use the same result envelope and need their own destination.
 fn internalToolFailureHint(tool_name: []const u8, detail: []const u8) []const u8 {
-    if (std.mem.eql(u8, tool_name, "cmd_graph") and std.mem.eql(u8, detail, "no such run"))
+    if (std.mem.eql(u8, tool_name, "graph") and std.mem.eql(u8, detail, "no such run"))
         return "; /graph lists recorded runs";
-    if (std.mem.eql(u8, tool_name, "cmd_sessions") and std.ascii.findIgnoreCase(detail, "not found") != null)
+    if (std.mem.eql(u8, tool_name, "sessions") and std.ascii.findIgnoreCase(detail, "not found") != null)
         return "; /sessions lists saved conversations";
     return "";
 }
@@ -415,11 +415,11 @@ fn internalToolFailureHint(tool_name: []const u8, detail: []const u8) []const u8
 /// Internal descriptor names are useful in logs, not in a command transcript.
 /// Name the surface the operator can actually retry.
 fn internalToolDisplayName(tool_name: []const u8) []const u8 {
-    if (std.mem.eql(u8, tool_name, "cmd_sessions")) return "/sessions";
-    if (std.mem.eql(u8, tool_name, "cmd_graph")) return "/graph";
-    if (std.mem.eql(u8, tool_name, "cmd_status")) return "/status";
-    if (std.mem.eql(u8, tool_name, "cmd_tools")) return "/tools";
-    if (std.mem.eql(u8, tool_name, "cmd_plugins")) return "/plugins";
+    if (std.mem.eql(u8, tool_name, "sessions")) return "/sessions";
+    if (std.mem.eql(u8, tool_name, "graph")) return "/graph";
+    if (std.mem.eql(u8, tool_name, "status")) return "/status";
+    if (std.mem.eql(u8, tool_name, "tools")) return "/tools";
+    if (std.mem.eql(u8, tool_name, "plugins")) return "/plugins";
     if (std.mem.eql(u8, tool_name, "compare")) return "/compare";
     return tool_name;
 }
@@ -437,15 +437,15 @@ test "TUI error lines use the CLI error prefix" {
 }
 
 test "internal tool recovery hints point to the command that failed" {
-    try std.testing.expectEqualStrings("; /graph lists recorded runs", internalToolFailureHint("cmd_graph", "no such run"));
-    try std.testing.expectEqualStrings("; /sessions lists saved conversations", internalToolFailureHint("cmd_sessions", "conversation not found"));
-    try std.testing.expectEqualStrings("", internalToolFailureHint("cmd_plugins", "manifest not found"));
-    try std.testing.expectEqualStrings("", internalToolFailureHint("cmd_tools", "descriptor not found"));
+    try std.testing.expectEqualStrings("; /graph lists recorded runs", internalToolFailureHint("graph", "no such run"));
+    try std.testing.expectEqualStrings("; /sessions lists saved conversations", internalToolFailureHint("sessions", "conversation not found"));
+    try std.testing.expectEqualStrings("", internalToolFailureHint("plugins", "manifest not found"));
+    try std.testing.expectEqualStrings("", internalToolFailureHint("tools", "descriptor not found"));
 }
 
 test "internal tool errors name public commands" {
-    try std.testing.expectEqualStrings("/graph", internalToolDisplayName("cmd_graph"));
-    try std.testing.expectEqualStrings("/plugins", internalToolDisplayName("cmd_plugins"));
+    try std.testing.expectEqualStrings("/graph", internalToolDisplayName("graph"));
+    try std.testing.expectEqualStrings("/plugins", internalToolDisplayName("plugins"));
     try std.testing.expectEqualStrings("/compare", internalToolDisplayName("compare"));
     try std.testing.expectEqualStrings("custom", internalToolDisplayName("custom"));
 }
@@ -695,11 +695,11 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/model", .takes_args = true, .arg_hint = "[query]", .help = "switch provider/model (fuzzy picker; Enter picks, Esc cancels)", .action = .model },
     .{ .name = "/workflows", .help = "list reusable prompt workflows", .action = .workflows },
     .{ .name = "/workflow", .takes_args = true, .arg_hint = "<name> [args]", .help = "run a workflow (expands {{args}} then runs as a task)", .action = .workflow },
-    .{ .name = "/sessions", .aliases = &.{"/history"}, .help = "list saved conversations", .action = .{ .tool = .{ .name = "cmd_sessions", .args = "" } } },
-    .{ .name = "/graph", .takes_args = true, .arg_hint = "[run-id]", .help = "list runs or draw one as a timeline (same as clanker graph)", .action = .{ .tool = .{ .name = "cmd_graph", .args = "list", .forward_args = true } } },
-    .{ .name = "/status", .help = "show instance identity and configured peers", .action = .{ .tool = .{ .name = "cmd_status", .args = "" } } },
-    .{ .name = "/tools", .help = "list registered tools (same as clanker tools)", .action = .{ .tool = .{ .name = "cmd_tools", .args = "" } } },
-    .{ .name = "/plugins", .aliases = &.{"/plugin"}, .takes_args = true, .arg_hint = "[on|off <name>]", .help = "list plugins or switch an optional one on or off", .action = .{ .tool = .{ .name = "cmd_plugins", .args = "", .forward_args = true } } },
+    .{ .name = "/sessions", .aliases = &.{"/history"}, .help = "list saved conversations", .action = .{ .tool = .{ .name = "sessions", .args = "" } } },
+    .{ .name = "/graph", .takes_args = true, .arg_hint = "[run-id]", .help = "list runs or draw one as a timeline (same as clanker graph)", .action = .{ .tool = .{ .name = "graph", .args = "list", .forward_args = true } } },
+    .{ .name = "/status", .help = "show instance identity and configured peers", .action = .{ .tool = .{ .name = "status", .args = "" } } },
+    .{ .name = "/tools", .help = "list registered tools (same as clanker tools)", .action = .{ .tool = .{ .name = "tools", .args = "" } } },
+    .{ .name = "/plugins", .aliases = &.{"/plugin"}, .takes_args = true, .arg_hint = "[on|off <name>]", .help = "list plugins or switch an optional one on or off", .action = .{ .tool = .{ .name = "plugins", .args = "", .forward_args = true } } },
     .{ .name = "/goal", .takes_args = true, .arg_hint = "<intent>", .help = "design and persist a structured goal", .action = .goal },
     .{ .name = "/autoresearch", .takes_args = true, .arg_hint = "...", .help = "measurement loop (see /autoresearch --help)", .action = .autoresearch },
     .{ .name = "/arena", .takes_args = true, .arg_hint = "...", .help = "judged debate between two positions (see /arena --help)", .action = .arena },
@@ -999,10 +999,10 @@ const escape_stderr_limit = 64 * 1024;
 const command_output_max_lines = 200;
 
 fn fullCliCommand(tool_name: []const u8) ?[]const u8 {
-    if (std.mem.eql(u8, tool_name, "cmd_sessions")) return "clanker sessions";
-    if (std.mem.eql(u8, tool_name, "cmd_graph")) return "clanker graph";
-    if (std.mem.eql(u8, tool_name, "cmd_tools")) return "clanker tools";
-    if (std.mem.eql(u8, tool_name, "cmd_plugins")) return "clanker plugins";
+    if (std.mem.eql(u8, tool_name, "sessions")) return "clanker sessions";
+    if (std.mem.eql(u8, tool_name, "graph")) return "clanker graph";
+    if (std.mem.eql(u8, tool_name, "tools")) return "clanker tools";
+    if (std.mem.eql(u8, tool_name, "plugins")) return "clanker plugins";
     return null;
 }
 
@@ -1044,13 +1044,13 @@ test "internal slash-command output is bounded and names the full CLI escape hat
         try source.appendSlice(std.testing.allocator, "row");
     }
     var lines: std.ArrayList(Line) = .empty;
-    try std.testing.expect(appendInternalToolOutput(arena, &lines, "cmd_graph", source.items));
+    try std.testing.expect(appendInternalToolOutput(arena, &lines, "graph", source.items));
     try std.testing.expectEqual(command_output_max_lines + 1, lines.items.len);
     try std.testing.expectEqualStrings("row", lines.items[command_output_max_lines - 1].text);
     try std.testing.expectEqualStrings("notice: output truncated after 200 lines; run `clanker graph` for complete output", lines.items[command_output_max_lines].text);
 
     var empty: std.ArrayList(Line) = .empty;
-    try std.testing.expect(!appendInternalToolOutput(arena, &empty, "cmd_status", "\n"));
+    try std.testing.expect(!appendInternalToolOutput(arena, &empty, "status", "\n"));
     try std.testing.expectEqualStrings("notice: command returned no output", empty.items[0].text);
 }
 
@@ -1267,7 +1267,7 @@ test "tools command routes through the same internal tool as the CLI" {
     const pc = parseCommand("/tools") orelse return error.TestExpectedCommand;
     switch (pc.spec.action) {
         .tool => |tool| {
-            try std.testing.expectEqualStrings("cmd_tools", tool.name);
+            try std.testing.expectEqualStrings("tools", tool.name);
             try std.testing.expectEqualStrings("", tool.args);
         },
         else => return error.TestExpectedToolCommand,
@@ -1276,8 +1276,8 @@ test "tools command routes through the same internal tool as the CLI" {
 
 test "REPL accepts the CLI aliases for sessions and plugins" {
     const cases = [_]struct { input: []const u8, tool: []const u8 }{
-        .{ .input = "/history", .tool = "cmd_sessions" },
-        .{ .input = "/plugin", .tool = "cmd_plugins" },
+        .{ .input = "/history", .tool = "sessions" },
+        .{ .input = "/plugin", .tool = "plugins" },
     };
     for (cases) |case| {
         const pc = parseCommand(case.input) orelse return error.TestExpectedCommand;
@@ -1293,7 +1293,7 @@ test "plugins command forwards its documented toggle arguments" {
     try std.testing.expectEqualStrings("off translate", pc.args);
     switch (pc.spec.action) {
         .tool => |tool| {
-            try std.testing.expectEqualStrings("cmd_plugins", tool.name);
+            try std.testing.expectEqualStrings("plugins", tool.name);
             try std.testing.expect(tool.forward_args);
         },
         else => return error.TestExpectedToolCommand,
@@ -1304,7 +1304,7 @@ test "graph command accepts the CLI run-id shape and keeps list as its default" 
     const listed = parseCommand("/graph") orelse return error.TestExpectedCommand;
     switch (listed.spec.action) {
         .tool => |tool| {
-            try std.testing.expectEqualStrings("cmd_graph", tool.name);
+            try std.testing.expectEqualStrings("graph", tool.name);
             try std.testing.expectEqualStrings("list", tool.args);
             try std.testing.expect(tool.forward_args);
         },
@@ -1350,7 +1350,7 @@ test "parseCommand matches names, aliases, and arguments" {
     try std.testing.expectEqualStrings("fix the failing eval", goal.args);
 
     const sessions = parseCommand("/sessions") orelse return error.TestExpectedCommand;
-    try std.testing.expectEqualStrings("cmd_sessions", sessions.spec.action.tool.name);
+    try std.testing.expectEqualStrings("sessions", sessions.spec.action.tool.name);
     // Sessions remains a listing rather than accepting an arbitrary id.
     try std.testing.expect(parseCommand("/sessions foo") == null);
 
@@ -2142,7 +2142,7 @@ const Model = struct {
         is.objectField("args") catch return true;
         is.write(args) catch return true;
         is.endObject() catch return true;
-        return self.runToolJson(tool_name, ibuf[0..iw.end], std.mem.eql(u8, tool_name, "cmd_plugins") and args.len > 0);
+        return self.runToolJson(tool_name, ibuf[0..iw.end], std.mem.eql(u8, tool_name, "plugins") and args.len > 0);
     }
 
     /// Runs any registered tool on a caller-built JSON input and folds its
@@ -3499,7 +3499,7 @@ const Model = struct {
                     for (wfs) |w| names.append(self.arena, w.name) catch break;
                     return self.completeArg(ctx, cmd, partial, names.items);
                 },
-                .tool => |tool| if (std.mem.eql(u8, tool.name, "cmd_plugins")) {
+                .tool => |tool| if (std.mem.eql(u8, tool.name, "plugins")) {
                     const verbs = [_][]const u8{ "on", "off" };
                     const sep = std.mem.findScalar(u8, partial, ' ') orelse
                         return self.completeArg(ctx, cmd, partial, &verbs);
