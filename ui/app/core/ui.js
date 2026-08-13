@@ -181,15 +181,24 @@ export function uiPrompt(message, initial, opts) {
     var id = "ui-prompt-" + Math.floor(Math.random() * 1e9);
     label.setAttribute("for", id);
     form.appendChild(label);
-    var input = document.createElement("input");
-    input.type = "text";
+    var multiline = !!opts.multiline;
+    var input = document.createElement(multiline ? "textarea" : "input");
+    if (!multiline) input.type = "text";
     input.id = id;
     input.value = initial == null ? "" : String(initial);
     if (opts.placeholder) input.placeholder = opts.placeholder;
     if (opts.maxlength) input.maxLength = opts.maxlength;
-    input.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") { e.preventDefault(); done(input.value); }
-    });
+    if (multiline) {
+      input.rows = opts.rows || 4;
+      input.className = "ui-dialog-textarea";
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); done(input.value); }
+      });
+    } else {
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") { e.preventDefault(); done(input.value); }
+      });
+    }
     form.appendChild(input);
     var actions = document.createElement("div");
     actions.className = "slack-dialog-actions";
@@ -278,4 +287,3 @@ export var UI = {
     return T.div({ class: "section-head" }, T.h2(title), controls || null);
   }
 };
-

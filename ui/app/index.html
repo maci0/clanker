@@ -222,13 +222,17 @@ lamps carry further). The seven named palettes ride the same tokens.
             <input type="checkbox" id="unlimited-iterations">
             <span>No limit</span>
           </label>
+          <label for="worktree-mode" class="checkbox-row plan-toggle" title="Run this chat in its own git worktree and branch, leaving the shared checkout untouched.">
+            <input type="checkbox" id="worktree-mode">
+            <span>Worktree</span>
+          </label>
           <button type="button" class="secondary" id="voice-btn" title="Voice input (hold or click)" aria-label="Voice input"></button>
           <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
           <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
         </div>
       </div>
       <div class="chat-steer" id="steer-row" hidden>
-        <input type="text" id="steer-input" placeholder="Steer the running turn mid-flight (optional)…" autocomplete="off" aria-label="Steer the running turn">
+        <textarea id="steer-input" rows="2" placeholder="Steer the running turn mid-flight (optional)…" autocomplete="off" aria-label="Steer the running turn"></textarea>
         <button type="button" class="secondary" id="steer-btn">Steer</button>
         <span class="meta" id="steer-hint"></span>
       </div>

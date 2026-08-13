@@ -59,10 +59,16 @@ const sanitize = @import("sanitize.zig");
 const transcript_mod = @import("transcript.zig");
 const stats_mod = @import("turn_stats.zig");
 const mascot = @import("mascot.zig");
+const worktree_mod = @import("../improve/worktree.zig");
 
 /// Redraw cadence while a turn is streaming: ~30fps, so streamed tokens land
 /// smoothly instead of in visible 50ms (20fps) batches. Idle, no timer runs.
 const stream_tick_ms: u32 = 33;
+
+fn containsWorktreeMode(modes: []const config.WorktreeMode, wanted: config.WorktreeMode) bool {
+    for (modes) |mode| if (mode == wanted) return true;
+    return false;
+}
 
 /// Redraw cadence the mascot's `loop` mode runs at, ~20fps: one animation
 /// frame and one column of travel per tick, so it crosses a 100-column
@@ -5987,10 +5993,39 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     bridge_gpa = gpa;
     bridge_io = io;
     var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    // A REPL owns the terminal and has one live conversation, so it is safe
+    // to move this standalone process into its worktree before anything else
+    // opens a cwd-relative file. (The concurrent Web UI cannot do that and
+    // instead passes an absolute sandbox root per request.)
+    var wt: ?worktree_mod.Worktree = null;
+    defer if (wt) |*w| w.deinit(gpa);
+    var harness_root: ?[]const u8 = null;
+    if (cfg.agent.isolated_tui or containsWorktreeMode(cfg.agent.git_worktree_on, .tui)) {
+        const root_z = try std.process.currentPathAlloc(io, gpa);
+        defer gpa.free(root_z);
+        const root = try arena.dupe(u8, root_z);
+        const wt_id = try std.fmt.allocPrint(gpa, "tui-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
+        defer gpa.free(wt_id);
+        if (worktree_mod.createOn(gpa, io, wt_id, "clanker/tui-", .run)) |created| {
+            if (std.process.setCurrentPath(io, created.path)) {
+                cfg.agent.shared_root = root;
+                harness_root = root;
+                wt = created;
+                log.log(.info, "repl: isolated in {s} on branch {s}", .{ created.path, created.branch });
+            } else |err| {
+                log.log(.warn, "repl: could not switch into isolated worktree: {s}", .{@errorName(err)});
+                var failed = created;
+                failed.deinit(gpa);
+            }
+        } else |err| {
+            log.log(.warn, "repl: could not create isolated worktree ({s}); using the checkout", .{@errorName(err)});
+        }
+    }
     // The ask/confirm modal's timeout backstop, same knob serve uses.
     ask_timeout_ns = @as(u64, cfg.agent.ask_timeout_seconds) * std.time.ns_per_s;
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
+    if (harness_root) |root| try reg.rebaseWasmPaths(arena, root);
     const tool_defs = try reg.toToolDefs(arena);
     // `--provider`/`--model` pick the starting provider/model; `--model
     // <provider>/<model>` picks both at once, resolved by the same
