@@ -2210,6 +2210,66 @@ fn httpGet(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []
     return arena.dupe(u8, body.written());
 }
 
+/// `httpGet` under a wall-clock ceiling, the shape `pingWithTimeout` uses and
+/// for the same reason: a host that is reachable but never answers costs the OS
+/// connect timeout (~75s on macOS). Callers on the webui's page-load path
+/// cannot afford that, so a spent budget is reported as no answer.
+///
+/// Null on every failure, timeout included, so the caller treats a slow
+/// provider exactly as it treats an absent one. Unlike the sweep this does not
+/// fall back to an unbounded call when there is no spare concurrency: waiting
+/// without a ceiling is the thing being avoided, and the caller already has a
+/// well-defined behaviour for a provider that did not answer.
+fn httpGetWithTimeout(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    url: []const u8,
+    bearer: ?[]const u8,
+    budget_ms: i64,
+) ?[]const u8 {
+    var done: std.Io.Event = .unset;
+    if (budget_ms <= 0) return httpGetTask(io, gpa, arena, url, bearer, &done);
+    var fut = io.concurrent(httpGetTask, .{ io, gpa, arena, url, bearer, &done }) catch return null;
+    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = @as(i96, budget_ms) * std.time.ns_per_ms },
+    });
+    while (!done.isSet()) {
+        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
+            // Spurious wakeups report Timeout too, so the deadline decides
+            // whether the budget is really spent, not this return.
+            error.Timeout => {
+                if (done.isSet()) break;
+                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
+                // cancel() interrupts the blocking syscall and joins the task,
+                // so nothing is left writing into `arena` after this returns.
+                _ = fut.cancel(io);
+                return null;
+            },
+            error.Canceled => {
+                _ = fut.cancel(io);
+                return null;
+            },
+        };
+    }
+    return fut.await(io);
+}
+
+/// The fetch half of `httpGetWithTimeout`, as a concurrent task. Every exit has
+/// to set `done`, cancelation included, or the waiter is never woken.
+fn httpGetTask(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    url: []const u8,
+    bearer: ?[]const u8,
+    done: *std.Io.Event,
+) ?[]const u8 {
+    defer done.set(io);
+    return httpGet(io, gpa, arena, url, bearer) catch null;
+}
+
 /// `clanker autolearn`, review usage observations, refresh the roadmap
 /// Autolearn section, and print the generated items. The aggregate-and-write
 /// logic lives in the cmd_autolearn tool (fs-scoped read/aggregate/write,
@@ -6325,9 +6385,12 @@ fn handleProviders(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var buf: [1 << 16]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    // Allocating rather than a fixed 64 KiB buffer: the live listing below is
+    // remote data of no bounded size, and overflowing a fixed writer bails out
+    // before `respond`, so one provider with a long catalog would answer the
+    // picker with no HTTP response at all instead of with a shorter list.
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
     s.beginObject() catch return;
     s.objectField("ok") catch return;
     s.write(true) catch return;
@@ -6381,14 +6444,18 @@ fn handleProviders(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
             s.endObject() catch return;
         }
         if (prov.models.count() == 0) {
-            writeLiveModels(io, gpa, arena, prov, environ_map, &s);
+            // The same ceiling `providers check` puts on this provider: the
+            // picker asks the same endpoint from a page load, where a stalled
+            // request is more expensive, not less.
+            const budget_s = prov.check_timeout_seconds orelse cfg.agent.provider_check_timeout_seconds;
+            writeLiveModels(io, gpa, arena, prov, environ_map, @as(i64, budget_s) * std.time.ms_per_s, &s);
         }
         s.endArray() catch return;
         s.endObject() catch return;
     }
     s.endArray() catch return;
     s.endObject() catch return;
-    respond(stream, 200, "OK", buf[0..w.end]);
+    respond(stream, 200, "OK", out.written());
 }
 
 /// A configured provider with an empty static `models` map (a locally-run
@@ -6406,21 +6473,28 @@ fn writeLiveModels(
     arena: std.mem.Allocator,
     provider: *const config.Provider,
     environ_map: *const std.process.Environ.Map,
+    budget_ms: i64,
     s: *std.json.Stringify,
 ) void {
-    const base = std.mem.trimRight(u8, provider.base_url, "/");
+    const base = std.mem.trimEnd(u8, provider.base_url, "/");
     if (base.len == 0) return;
     const url = std.fmt.allocPrint(arena, "{s}/models", .{base}) catch return;
-    var bearer: ?[]const u8 = null;
-    if (provider.api_key_env) |env_name| {
-        if (environ_map.get(env_name)) |key| {
-            var b = std.ArrayList(u8).empty;
-            b.appendSlice(arena, "Bearer ") catch return;
-            b.appendSlice(arena, key) catch return;
-            bearer = b.items;
-        }
-    }
-    const body = httpGet(io, gpa, arena, url, bearer) catch return;
+    const bearer = if (provider.api_key_env) |env_name| blk: {
+        const key = environ_map.get(env_name) orelse break :blk null;
+        break :blk std.fmt.allocPrint(arena, "Bearer {s}", .{key}) catch null;
+    } else null;
+    const body = httpGetWithTimeout(io, gpa, arena, url, bearer, budget_ms) orelse return;
+    writeListingModels(arena, body, provider, s);
+}
+
+/// The `data[]` half of `writeLiveModels`, split from the fetch so the shapes a
+/// provider can hand back are testable without one on the other end.
+fn writeListingModels(
+    arena: std.mem.Allocator,
+    body: []const u8,
+    provider: *const config.Provider,
+    s: *std.json.Stringify,
+) void {
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return;
     if (parsed != .object) return;
     const data = parsed.object.get("data") orelse return;
@@ -10268,6 +10342,51 @@ test "provider sweep ends with recovery when the default cannot answer" {
         "\nDefault provider 'openai' is not configured. Fix its config or choose another with `default_provider` in config.local.toml.\n",
         out.written(),
     );
+}
+
+test "a live /models listing fills the picker, skipping entries it cannot name" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    // The array is normally opened by handleProviders around this call.
+    try s.beginArray();
+    const provider = config.Provider{ .name = "ollama", .base_url = "http://127.0.0.1:11434/v1" };
+    writeListingModels(arena,
+        \\{"data":[
+        \\  {"id":"qwen3.5","context_length":32768},
+        \\  {"id":"llama4"},
+        \\  {"id":""},
+        \\  {"id":"zero-ctx","context_length":0},
+        \\  {"no_id":true},
+        \\  "not-an-object"
+        \\]}
+    , &provider, &s);
+    try s.endArray();
+    // A missing or zero context_length drops the field rather than reporting a
+    // window of 0, which the picker would render as "0 ctx".
+    try std.testing.expectEqualStrings(
+        \\[{"name":"qwen3.5","context_window":32768},{"name":"llama4"},{"name":"zero-ctx"}]
+    , out.written());
+}
+
+test "a /models body that is not a listing leaves the picker's array empty" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const provider = config.Provider{ .name = "ollama", .base_url = "http://127.0.0.1:11434/v1" };
+    // Anything a provider without a `/models` route can answer with: an HTML
+    // error page, a bare array, a JSON object with no `data`. None of these may
+    // leave a half-written object behind in the still-open array.
+    for ([_][]const u8{ "<html>404</html>", "[]", "{}", "{\"data\":{}}", "null" }) |body| {
+        var out: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+        try s.beginArray();
+        writeListingModels(arena, body, &provider, &s);
+        try s.endArray();
+        try std.testing.expectEqualStrings("[]", out.written());
+    }
 }
 
 test "a canceled or refused socket is unreachable, an HTTP error status is a failure" {
