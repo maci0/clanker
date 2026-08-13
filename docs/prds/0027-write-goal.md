@@ -315,7 +315,7 @@ the review moment the split exists to create.
   execution-loop field anywhere. Adopting shipped and adding `execution_loop`
   as a sixth touches `goal.tool.json`, `tools/zig/goal.zig`, `StoredGoal`,
   `GoalContext`, `formatGoalSection`, the two prompt strings,
-  `skills/write-goal.md`, and `tools/zig/webui/core/goals.js`. Adopting the
+  `skills/write-goal.md`, and `ui/app/core/goals.js`. Adopting the
   PRD's grouping touches all of the same plus every existing entry in
   `state/goals.json`. Neither option touches `src/improve/retire.zig`, which
   reads only `id` and `status` under `ignore_unknown_fields`

@@ -1,7 +1,7 @@
 {
   "name": "webui",
   "description": "serve the clanker web UI (single self-contained page, no external assets)",
-  "wasm": "zig-out/tools/webui.wasm",
+  "wasm": "zig-out/ui/app.wasm",
   "input_schema": {
     "type": "object",
     "properties": {

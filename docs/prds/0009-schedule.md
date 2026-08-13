@@ -10,7 +10,7 @@ next-fire arithmetic, pure), `src/schedule/store.zig`
 `clanker schedule [list|add|remove|enable|disable|run|run-due|log]`
 (`Command.schedule` in `src/cli.zig`, which contributes the flag table, one
 dispatch arm, and the callback that turns an entry into a `cmdRun`), plus a
-web UI Schedule view (`tools/zig/webui/features/schedule.js`) over
+web UI Schedule view (`ui/app/features/schedule.js`) over
 `GET /api/schedule` (entries with next-fire times and a ledger tail) and
 `POST /api/schedule/<id>` `{"enabled": bool}`, both routed in `src/cli.zig`.
 The browser reads the schedule and can enable/disable an entry; nothing in

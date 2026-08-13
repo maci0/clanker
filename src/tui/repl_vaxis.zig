@@ -564,7 +564,7 @@ fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config) ![]
 
 /// Case-insensitive subsequence match ("kc3" finds "kimi-k3"): the same
 /// forgiving-order fuzzy match the web UI's command palette and saved-prompt
-/// list already use (`fuzzyMatch` in `tools/zig/webui/app.js`), so `/model`
+/// list already use (`fuzzyMatch` in `ui/app/app.js`), so `/model`
 /// behaves like the picker it is modeled on rather than inventing a second
 /// notion of "fuzzy" for the terminal.
 fn fuzzyMatch(query: []const u8, haystack: []const u8) bool {

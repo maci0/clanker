@@ -38,6 +38,7 @@ pub const allowed_prefixes = [_][]const u8{
     "src/",
     "evals/",
     "tools/",
+    "ui/",
     "skills/",
     "tests/",
     "docs/",
@@ -94,6 +95,10 @@ pub fn validatePath(path: []const u8) bool {
             // tools/ts/dist holds committed AssemblyScript build output; it is
             // produced by the TS toolchain, never hand-patched.
             if (std.mem.startsWith(u8, path, "tools/ts/dist/")) return false;
+            // ui/vendor/ holds committed third-party JS; never hand-patched.
+            // ui/vendor.zig embeds it and is generated — patch ui/vendor.zig only
+            // if the vendor file set changes.
+            if (std.mem.startsWith(u8, path, "ui/vendor/")) return false;
             return true;
         }
     }
@@ -111,6 +116,7 @@ const readable_prefixes = [_][]const u8{
     "src/",
     "evals/",
     "tools/",
+    "ui/",
     "skills/",
     "tests/",
     "docs/",
@@ -438,7 +444,7 @@ test "the readable surface is wider than the writable one, and still closed" {
     try std.testing.expect(validateReadPath("docs/adrs/0003-autoresearch.md"));
     try std.testing.expect(validateReadPath("AGENTS.md"));
     try std.testing.expect(validateReadPath("src/cli.zig"));
-    try std.testing.expect(validateReadPath("tools/zig/webui/index.html"));
+    try std.testing.expect(validateReadPath("ui/app/index.html"));
     try std.testing.expect(validateReadPath("config.toml"));
 
     // A granted path is read and echoed straight back into a model request, so

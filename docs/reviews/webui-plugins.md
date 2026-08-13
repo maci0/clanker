@@ -1,7 +1,7 @@
 # Web UI plugins — review log
 
-The plugin surface under `tools/webui-plugins/`: the views that are part of the
-page without being part of `tools/zig/webui/`. `docs/reviews/webui.md` covers the
+The plugin surface under `ui/plugins/`: the views that are part of the
+page without being part of `ui/app/`. `docs/reviews/webui.md` covers the
 page itself; this file covers the plugins and the host that loads them, because
 they are edited independently and a shared log makes every plugin change collide
 with every page change.
@@ -10,7 +10,7 @@ New entries go at the end of this file.
 
 ## Constraints these entries honor
 
-The plugin rules in `tools/webui-plugins/README.md`, unchanged:
+The plugin rules in `ui/plugins/README.md`, unchanged:
 
 - No build step, no dependencies, no `eval`/`new Function` — the CSP is
   `script-src 'self'` and the file that ships is the file that runs.
@@ -186,7 +186,7 @@ Against unmodified `main` the same harness fails 6 of the 16. Gate: `zig build`,
 
 `GET /api/metrics` has been served since it was added and **no code in the
 browser ever called it**. A grep for each `/api/*` route across
-`tools/zig/webui/` finds a consumer for every one of them except this. So
+`ui/app/` finds a consumer for every one of them except this. So
 everything `handleHttpMetrics` reports was invisible from the page: how much
 traffic the server is taking, how much of it is failing, how close it is to its
 connection limit, and how long it takes to answer.

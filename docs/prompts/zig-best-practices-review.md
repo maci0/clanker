@@ -241,7 +241,7 @@ rather than re-litigating the 0.16 facts here.
 - [ ] `@cImport` is deprecated (0.16, moves to the build system); nothing in
       clanker should introduce it.
 - [ ] `@embedFile` for small comptime assets is the existing, correct
-      pattern (`tools/zig/webui.zig` embeds `webui/index.html`); don't flag
+      pattern (`ui/app.zig` embeds `webui/index.html`); don't flag
       it, but do flag a new `@embedFile` of something large enough to bloat
       every WASM module that doesn't need it.
 

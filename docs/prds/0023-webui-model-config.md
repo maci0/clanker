@@ -4,10 +4,10 @@
 
 Draft. Roughly the read half already shipped: the Models view, `/api/catalog`,
 `/api/providers/models`, `renderModelSnippet`, and the copy-with-fallback flow
-in `tools/zig/webui/features/models.js` all exist today. What is unbuilt is
+in `ui/app/features/models.js` all exist today. What is unbuilt is
 the write half: the two endpoints below and the span-replace primitive they
 need. Sources of truth once built:
-`tools/zig/webui/features/models.js` (today read-only — its own header
+`ui/app/features/models.js` (today read-only — its own header
 comment: "Read-only by design: config.toml stays hand-edited, matching
 `providers fill`'s own never-writes-config stance"), `src/cli.zig`
 (`cmdProvidersFill`, `renderModelSnippet`, `findCatalogProvider`/
@@ -28,7 +28,7 @@ read-only:
 2. The web UI's Models view calls the same rendering logic
    (`renderModelSnippet`) through `/api/catalog` and shows the result as a
    selectable/copyable snippet with a "config.toml" button that only copies
-   text to the clipboard (`tools/zig/webui/features/models.js:133-161`) — it
+   text to the clipboard (`ui/app/features/models.js:133-161`) — it
    never touches disk either.
 
 Both restrictions exist for the same reason: nothing in the codebase can
@@ -51,7 +51,7 @@ The copy-only flow is not just less convenient; it degrades outright on the
 deployment this server is built for. `navigator.clipboard` exists only in a
 secure context, so on a plain-http origin (anything that is not https or
 localhost) it is undefined and the Copy button can only tell the user to
-select the text by hand (`tools/zig/webui/features/models.js:133-137` and
+select the text by hand (`ui/app/features/models.js:133-137` and
 `copySnippet`). A server-side Save button fixes that real limitation, not
 just a papercut.
 
@@ -193,7 +193,7 @@ button or self-restart in v1.
   pinned by test before shipping).
 - Soft: [PRD 0024](0024-sampling-profiles.md) / [PRD 0020](0020-auto-thinking.md)
   do not block this; Models write path is independent of sampling.
-- Existing: `tools/zig/webui/features/models.js` (read-only UI to extend),
+- Existing: `ui/app/features/models.js` (read-only UI to extend),
   `Config.load` base+local merge (`src/config.zig`).
 
 **Implementation.**

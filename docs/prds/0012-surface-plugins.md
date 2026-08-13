@@ -2,15 +2,15 @@
 
 ## Status
 
-**Web UI plugins: Shipped.** `tools/webui-plugins/<name>/` (`plugin.json` +
+**Web UI plugins: Shipped.** `ui/plugins/<name>/` (`plugin.json` +
 `app.js` + optional `app.css`), discovered by `handleWebuiPlugins`
 (`src/cli.zig:7206-7299`), served same-origin from `/webui/plugins/<name>/*`
 (`handleWebuiPluginAsset`, `src/cli.zig:7305-7355`), registered client-side
-via `window.clanker.registerView()` (`tools/zig/webui/core/plugins.js:171-221`),
+via `window.clanker.registerView()` (`ui/app/core/plugins.js:171-221`),
 toggled in System → Web UI plugins, state in `state/webui_plugins.json`. Four
 real plugins ship today: `activity`, `office`, `files`, `health`. No PRD or ADR
 covered the web UI half before this one; its prior documentation was
-`tools/webui-plugins/README.md` plus the review log
+`ui/plugins/README.md` plus the review log
 `docs/reviews/webui-plugins.md`, which is why its design decisions (CSP-only
 trust, no declared-capability sandboxing) were never written down where a
 future editor would find them.
@@ -102,7 +102,7 @@ one.
 
 ### Web UI plugins (documenting what is shipped)
 
-**Layout.** `tools/webui-plugins/<name>/`: `plugin.json` (required),
+**Layout.** `ui/plugins/<name>/`: `plugin.json` (required),
 `app.js` (required), `app.css` (optional). Four ship today: `activity`,
 `office` (with `sprites.png`/`characters.png`), `files`, `health`.
 
@@ -112,7 +112,7 @@ matching a real rail-nav heading. The manifest's own `name` is overwritten
 by the directory name (`src/cli.zig:7275-7277`), so a plugin cannot lie about
 its own identity.
 
-**Discovery.** `GET /api/webui/plugins` scans `tools/webui-plugins/` fresh on
+**Discovery.** `GET /api/webui/plugins` scans `ui/plugins/` fresh on
 every call (`handleWebuiPlugins`, `src/cli.zig:7206-7299`) — no rebuild
 needed to add, remove, or edit a plugin. Off by default; enabling one is
 recorded in `state/webui_plugins.json` (`{"enabled": [...]}`,
@@ -129,22 +129,22 @@ reaching the browser, not just from being invoked. Names pass `isSlug`/
 (tested `src/cli.zig:7157-7165`).
 
 **Registration API.** `app.js` calls `window.clanker.registerView(spec)`
-(`tools/zig/webui/core/plugins.js:171-221`) with `{id, title, group, mount,
+(`ui/app/core/plugins.js:171-221`) with `{id, title, group, mount,
 refresh?}`. `registerView` inserts a real `.rail-tab` button under the
 matching `.rail-group` heading, pushes the id into `VIEWS`, and wires it
 through the same `wireTab`/`showView` machinery as a built-in view — a
 plugin's tab is genuinely indistinguishable from a built-in one once
-registered (`tools/zig/webui/app.js:4406-4429`).
+registered (`ui/app/app.js:4406-4429`).
 
 **`api` surface handed to a plugin's `mount`/`refresh`**
-(`tools/zig/webui/core/plugins.js`): `getJSON`, `el`, `status`, `fmt`
+(`ui/app/core/plugins.js`): `getJSON`, `el`, `status`, `fmt`
 (`bytes`/`int`/`cost`/`time`), `showView`, `van` (tags/state/derive/add),
 `preact`/`html` (vendored Preact + htm), `signals` (vendored
 @preact/signals-core). All vendored and same-origin — no extra request, no
 CSP exception.
 
 **Trust model.** `script-src 'self'`, no `eval`/`new Function`
-(`tools/webui-plugins/README.md:88-90`). No declared-reach sandboxing beyond
+(`ui/plugins/README.md:88-90`). No declared-reach sandboxing beyond
 that — a web UI plugin's JS runs in the same page and DOM as the rest of the
 app, with whatever `api` exposes, constrained by browser CSP rather than a
 capability grant. This is a real gap relative to the tool system's model
@@ -282,7 +282,7 @@ throw → tab error) if not already true in code.
   not warn. Failure modes require a warn once on load; fix belongs beside
   that catch in `src/cli.zig`.
 - **Plugin `mount` throw is uncaught.** `registerView`'s view loader calls
-  `spec.mount` with no try/catch (`tools/zig/webui/core/plugins.js`), so a
+  `spec.mount` with no try/catch (`ui/app/core/plugins.js`), so a
   throwing mount can break the tab switch rather than show the tab error
   Failure modes describe. Fix belongs in the view loader: catch, render an
   error into the panel, keep the rest of the page alive.

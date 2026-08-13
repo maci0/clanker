@@ -82,16 +82,25 @@ git push origin main
 
 ---
 
-### Task 4: Web UI hoist
+### Task 4: UI surface split
+
+**Principle:** `tools/` = LLM-callable guests only. Web UI is a surface, not a tool.
 
 **Files:**
-- Move: `tools/zig/webui/` → `tools/webui/`
-- Modify: embed/`@embedFile` paths, allow-lists, `src/cli.zig` source-tree tests walking webui, `AGENTS.md`, PRDs/ROADMAP mentioning `tools/zig/webui`
-- Optional same batch: `src/webui_vendor/` → `tools/webui/vendor/` only if all consumers update cleanly; else leave and note in commit
+- Create: `ui/`
+- Move: `tools/zig/webui/` → `ui/app/`
+- Move: `tools/zig/webui.zig` → `ui/webui.zig`
+- Move: `tools/webui-plugins/` → `ui/plugins/`
+- Move: `src/webui_vendor/` → `ui/vendor/`
+- Create: `ui/vendor.zig` — embeds `ui/vendor/*`; exported as module `vendor` for host
+- Modify: `tools/zig/webui.zig` `@embedFile("webui/...")` → `@embedFile("app/...")` after moving source
+- Modify: `src/cli.zig` — vendor `@embedFile` calls replaced by `@import("vendor")` module; `openDir` test paths; `webui_plugins_dir` → `"ui/plugins"`
+- Modify: `build.zig` — add `ui/vendor.zig` as named module on main exe; add explicit `ui/webui.zig` tool compilation; remove webui from `tools/zig/` glob if needed
+- Modify: `AGENTS.md`, `docs/README.md`, all PRDs/ROADMAP mentioning old paths; `improve/proposal.zig` allow-list
 
-- [ ] **Step 1:** `git mv tools/zig/webui tools/webui`
-- [ ] **Step 2:** Rewrite references; `zig build` && `zig build tools` && `zig build test`
-- [ ] **Step 3:** `rg 'tools/zig/webui'` → empty
+- [ ] **Step 1:** `git mv` all four trees + create `ui/vendor.zig`
+- [ ] **Step 2:** Rewrite embed paths in `ui/webui.zig`, vendor module in `src/cli.zig`, build.zig wiring
+- [ ] **Step 3:** `zig build tools` && `zig build test`; `rg 'tools/zig/webui|webui_vendor|webui-plugins'` → empty outside plans/
 - [ ] **Step 4:** Commit + push
 
 ---
@@ -99,7 +108,7 @@ git push origin main
 ### Task 5: Guest catalog clarity
 
 **Files:**
-- Rename each `tools/zig/cmd_*.zig` + matching `tools/manifests/cmd_*.tool.json` by dropping `cmd_`
+- Rename each surviving `tools/zig/cmd_*.zig` + matching `tools/manifests/cmd_*.tool.json` by dropping `cmd_` (note: `cmd_help` already removed in remote)
 - Rename `search_code` → `repo_search`, `code_search` → `sourcegraph_search` (zig + manifests + evals + skills + docs)
 - Rename helpers: `compare_blind.zig` → `compare_logic.zig`, `alphaxiv_mcp.zig` → `alphaxiv_client.zig`
 - If bare `tools` guest is too ambiguous, use `tool_catalog`

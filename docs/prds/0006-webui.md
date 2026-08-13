@@ -2,9 +2,9 @@
 
 ## Status
 
-Shipped. Source of truth: `tools/zig/webui/*`
+Shipped. Source of truth: `ui/app/*`
 (`index.html`/`app.css`/`app.js` + `core/*`/`lib/*`/`features/*` ES modules),
-comptime-embedded via `tools/zig/webui.zig`, routed in `src/cli.zig`
+comptime-embedded via `ui/app.zig`, routed in `src/cli.zig`
 (`handleConnection`/`handleRun`/`handleWebuiAsset`/`handleWebuiPeers`/etc).
 Surface: `clanker serve`, served at `GET /`. Co-equal product surface with
 the CLI. Turn-by-turn audit trail of the module-split and accessibility work
@@ -52,7 +52,7 @@ iteration cap the parent couldn't see how far it got).
 the product:
 
 1. **One comptime-embedded file.** `index.html` is JSON-encoded through
-   `lib.zig`'s `out_cap` (2 MiB); `tools/zig/webui.zig`'s comptime loop fails
+   `lib.zig`'s `out_cap` (2 MiB); `ui/app.zig`'s comptime loop fails
    the build if any asset no longer fits. Anything large is a vendored
    asset served from `/webui/vendor/` (immutable cache + gzip, fetched only
    on first use), the way `d3-dag` and `highlight.js` already are.
@@ -87,7 +87,7 @@ here as the design rationale it is, not kept as a separate file.
 **ES module split.** The actual fix for the one-giant-file problem: native
 `<script type="module">`, no bundler, one file per concern, embedded and
 routed the same way `app.css`/`app.js` already were —
-`tools/zig/webui.zig`'s `assetFor` is a lookup table, adding a module is
+`ui/app.zig`'s `assetFor` is a lookup table, adding a module is
 mechanical. `app.js` dropped from 5,511 lines to 3,545 right after the
 `board.js`/`goals.js` split, and sits at 5,341 today from later inline growth
 (Phase 6, Kimi-parity); the Models/Schedule/Search views landed as real
@@ -107,7 +107,7 @@ real `import`/`export`, not `window.ck*` bridge globals. `app.js` itself is
 a native ES module (`type="module"`), not a classic deferred script. Every
 module needs three things wired together or a
 request 404s or hits the wrong cache: an `@embedFile` + comptime `encodedLen`
-guard in `tools/zig/webui.zig`, a `<script type="module">` tag in
+guard in `ui/app.zig`, a `<script type="module">` tag in
 `index.html`, an entry in `src/cli.zig`'s `webui_asset_paths`, *and* a
 dedicated `RenderCache`/`GzipCache` pair in `handleWebuiAsset` — a
 module missing the last part silently shares the generic `render_js`/
@@ -117,7 +117,7 @@ because it used to be two: the module gate and the asset route were
 hand-maintained copies of the same set, and `features/arena.js` appeared in
 neither, so the Arena view's dynamic `import()` 404'd against a server that
 held its bytes (hit twice independently in one day — see `644dc37` and
-`docs/reviews/webui.md`). A test now walks `tools/zig/webui/{core,lib,features}`
+`docs/reviews/webui.md`). A test now walks `ui/app/{core,lib,features}`
 and fails on any module the list has never heard of.
 
 **Ask bridge (`ask_user`).** A streaming run writes

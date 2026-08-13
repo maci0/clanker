@@ -330,7 +330,7 @@ const staging_runtime_files = [_][]const u8{ "config.local.toml", ".env" };
 /// Repeated verbatim to the model whenever it writes somewhere it may not, so
 /// the retry has the whole rule and not just the refusal.
 const surface_rules =
-    \\You may change: src/ (but not src/evals/, src/improve/, or src/tools/builder.zig), tools/ (but not tools/ts/dist/, and under tools/manifests/ only *.tool.json), skills/, tests/, docs/, README.md, AGENTS.md, build.zig, build.zig.zon, config.toml.
+    \\You may change: src/ (but not src/evals/, src/improve/, or src/tools/builder.zig), tools/ (but not tools/ts/dist/, and under tools/manifests/ only *.tool.json), ui/ (but not ui/vendor/), skills/, tests/, docs/, README.md, AGENTS.md, build.zig, build.zig.zon, config.toml.
     \\You may CREATE a new evals/<name>.task.json, which adds a case to the suite your work is graded against. You may never modify or delete an eval that already exists.
 ;
 
@@ -2145,7 +2145,7 @@ pub const Engine = struct {
         const focus_budget = max_bytes / 4;
         // A file the instruction names is the file being patched, so it goes in
         // whatever its size: dropping it is how a run ends in "no changes
-        // needed" about a file it was never shown. tools/zig/webui/index.html
+        // needed" about a file it was never shown. ui/app/index.html
         // is 133 KB on its own, and the fix for that was once to quadruple the
         // whole context, which quadrupled the bill for every unrelated run too.
         for (cands.items) |c| {
@@ -2266,7 +2266,7 @@ pub const Engine = struct {
         while (it.next()) |tok| {
             const path = std.mem.trim(u8, tok, ".");
             if (std.mem.findScalar(u8, path, '/') == null) continue;
-            // .html is here for tools/zig/webui/index.html: the whole web UI is
+            // .html is here for ui/app/index.html: the whole web UI is
             // one file, validatePath already lets a proposal write it, and
             // without it in context clanker could edit a page it had never
             // seen. It asked for "no changes needed" on web UI work for
@@ -3519,7 +3519,7 @@ test "the context budget follows the model's own window" {
     //
     // Raising it to fit one large file is the wrong lever: a file the
     // instruction names bypasses the focus share entirely (see
-    // collectContext), so tools/zig/webui/index.html at 133 KiB arrives whole
+    // collectContext), so ui/app/index.html at 133 KiB arrives whole
     // under this ceiling. Widening the ceiling instead makes every unrelated
     // run pay for it.
     try std.testing.expect(engine.contextBudget() <= 256 * 1024);

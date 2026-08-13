@@ -7,7 +7,7 @@ Draft. Nothing in this PRD is built yet. Sources of truth once built:
 `src/llm/providers/common.zig` (`writeSamplingParams`, the only place these
 are put on the wire), `src/agent/loop.zig` (where a turn is actually
 dispatched, and the one place that knows whether the current turn is a plain
-answer or a tool-calling step), `tools/zig/webui/core/modelpicker.js` (today's
+answer or a tool-calling step), `ui/app/core/modelpicker.js` (today's
 manual temperature/top_p controls, `~L175-177`).
 
 ## Problem
@@ -158,7 +158,7 @@ relocating the picker fields must not reach into it.
   `reasoning_effort` writer; can land after this PRD's write path exists.
 - Existing: `src/llm/providers/common.zig` (`writeSamplingParams`),
   `src/config.zig` (`Model` capabilities / sampling fields),
-  `src/agent/loop.zig` (use-case signal), `tools/zig/webui/core/modelpicker.js`.
+  `src/agent/loop.zig` (use-case signal), `ui/app/core/modelpicker.js`.
 
 **Implementation.**
 

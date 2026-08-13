@@ -1,7 +1,7 @@
 # Agent prompt: delight review — clanker's web UI, TUI, and CLI
 
 Your goal is to find where clanker's three user-facing surfaces — the web UI
-(`tools/zig/webui/`), the vaxis TUI REPL (`src/tui/repl_vaxis.zig`), and the
+(`ui/app/`), the vaxis TUI REPL (`src/tui/repl_vaxis.zig`), and the
 CLI itself (`clanker --help`, per-command help, argument errors, and the
 output of the non-interactive commands: `doctor`, `providers check`, `stats`,
 `sessions`, `history`) — feel flat, mechanical, or annoying to actually use,
@@ -49,9 +49,9 @@ already closed.
 | `docs/reviews/webui.md` | The polish/animation work already shipped, turn by turn — do not re-propose anything logged here as done |
 | `docs/prds/0006-webui.md` | Phase plan, the named reference products, what's still marked Open |
 | `docs/prds/0005-repl-tui.md` | TUI acceptance criteria, the widget-mapping table, what's still marked Open |
-| `tools/zig/webui/index.html` | The 11 real views: chat, board, goals, runs, fleet, rooms, knowledge, prompts, tools, system, plus rail/header structure |
-| `tools/zig/webui/app.css` | Design tokens (`--accent`/`--surface`/`--fg-muted`), existing motion (`@keyframes suggestion-in`, `.skeleton`, lamp states), `prefers-reduced-motion` gating |
-| `tools/zig/webui/app.js` + `core/*.js` + `lib/*.js` | What actually drives interaction: composer, streaming, toasts, palette |
+| `ui/app/index.html` | The 11 real views: chat, board, goals, runs, fleet, rooms, knowledge, prompts, tools, system, plus rail/header structure |
+| `ui/app/app.css` | Design tokens (`--accent`/`--surface`/`--fg-muted`), existing motion (`@keyframes suggestion-in`, `.skeleton`, lamp states), `prefers-reduced-motion` gating |
+| `ui/app/app.js` + `core/*.js` + `lib/*.js` | What actually drives interaction: composer, streaming, toasts, palette |
 | `src/tui/repl_vaxis.zig` (module doc comment, `command_registry`, `printHelp`, `completeSlashCommand`, `handlePickerKey`) | The TUI's whole interaction surface — one file, single `Model` widget |
 | `src/tui/transcript.zig`, `src/tui/theme.zig` | Card rendering (left-bar tool-call style), the theme/color mapping the TUI draws with |
 | `src/cli.zig` (`command_specs`, `printUsage`, `printUsageHint`, `printCommandHelp`, the `ErrorDiag` machinery) | The whole CLI surface: every command's usage/blurb/detail, how `--help` is grouped and rendered, how argument errors are worded |
@@ -206,17 +206,17 @@ a multi-second wait, a control that looks interactive but does nothing).
 
 ```bash
 # What motion already exists (web UI) — don't re-propose these
-rg -n '@keyframes|animation:|transition:' tools/zig/webui/app.css
+rg -n '@keyframes|animation:|transition:' ui/app/app.css
 
 # Where errors actually surface to the user
-rg -n 'toast\(|catch.*status\(' tools/zig/webui/app.js tools/zig/webui/core/*.js
+rg -n 'toast\(|catch.*status\(' ui/app/app.js ui/app/core/*.js
 rg -n 'log\.log\(\.(warn|err)' src/tui/repl_vaxis.zig
 
 # TUI's whole interaction surface in one read
 rg -n 'fn handlePickerKey|fn completeSlashCommand|fn submit\(|fn printHelp' src/tui/repl_vaxis.zig
 
 # Empty-state handling, web UI and TUI (for the CLI, drive the commands instead)
-rg -n 'empty|No items|nothing (saved|found)' tools/zig/webui/app.js src/tui/repl_vaxis.zig -i
+rg -n 'empty|No items|nothing (saved|found)' ui/app/app.js src/tui/repl_vaxis.zig -i
 ```
 
 ## Response contents

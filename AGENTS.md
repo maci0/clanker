@@ -85,7 +85,7 @@ through a gated loop. Follow these conventions when changing this codebase.
   a `--worktree` symlink; `createDirPath` reports NotDir), and the one UTF-8
   byte-cap (`util/utf8.zig` `cap`, exposed to Zig guests as `@import("utf8")`). Peer notify/phonebook, patch application,
   knowledge store, and prompts store moved to sandboxed WASM tools (`tools/zig/`).
-- `src/webui_vendor/` — vendored JS dependencies for the web UI (preact,
+- `ui/vendor/` — vendored JS dependencies for the web UI (preact,
   d3-dag, mermaid, highlight.js). Committed, not generated.
 - `src/serve/` — the OpenAI/Anthropic compatibility proxy (`clanker serve --proxy`).
   Native because it attaches provider credentials. It forwards `/v1/*` 1:1 and
@@ -99,13 +99,15 @@ through a gated loop. Follow these conventions when changing this codebase.
 - `src/improve/` — the self-improvement engine. It is deliberately protected:
   clanker cannot modify `src/improve/`, `src/evals/`, `src/tools/builder.zig`,
   or `evals/` in a single pass (anti-cheat boundary).
-- `tools/zig/` — WASM tool sources (Zig); `tools/ts/` — AssemblyScript
+- `tools/zig/` — LLM-callable WASM guest sources (Zig); `tools/ts/` — AssemblyScript
   sources; `tools/manifests/` — descriptors; `tools/ts/dist/` — committed AS build output
   (built via `npm run build:all` in `tools/ts/`; guest ABI: exports
   scratch/host_arena/run, imports env.ck_*); `zig-out/tools/` — Zig tool build
-  output (`zig build tools`), gitignored. The web UI is that guest: `clanker serve`
-  loads `webui.wasm` at start, so a `.js`/`.css` edit needs `zig build tools` and
-  a serve restart; rebuilding the host binary does not pick it up.
+  output (`zig build tools`), gitignored.
+- `ui/` — web UI surface (not a tool): `ui/app/` (HTML/JS/CSS), `ui/plugins/` (plugin
+  apps), `ui/vendor/` (vendored JS), `ui/webui.zig` (internal WASM guest). The web UI
+  is that guest: `clanker serve` loads `webui.wasm` at start, so a `.js`/`.css` edit
+  needs `zig build tools` and a serve restart; rebuilding the host binary does not pick it up.
 
 ## WASM by default
 

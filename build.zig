@@ -67,6 +67,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // ui/vendor.zig: embeds ui/vendor/* (vendored third-party JS served by the
+    // host HTTP server). Separate module so @embedFile resolves within ui/.
+    const ui_vendor_mod = b.createModule(.{
+        .root_source_file = b.path("ui/vendor.zig"),
+        .target = exe_target,
+        .optimize = optimize,
+    });
+
     // ---------------------------------------------------------------- harness
     const exe = b.addExecutable(.{
         .name = "clanker",
@@ -87,6 +95,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "build_options", .module = build_options.createModule() },
                 .{ .name = "vaxis", .module = vaxis_mod },
                 .{ .name = "toml", .module = toml_mod },
+                .{ .name = "vendor", .module = ui_vendor_mod },
             },
         }),
     });
@@ -212,6 +221,36 @@ pub fn build(b: *std.Build) void {
             .dest_dir = .{ .override = .{ .custom = "tools" } },
         });
         tools_step.dependOn(&install.step);
+    }
+
+    // ui/webui.zig: internal WASM guest that serves the web UI. Not in
+    // tools/zig/ (web UI is not an LLM-callable tool), so added explicitly.
+    // Imports tools/zig/lib.zig as "lib.zig" to match @import("lib.zig").
+    {
+        const lib_mod = b.createModule(.{
+            .root_source_file = b.path("tools/zig/lib.zig"),
+            .target = tool_target,
+            .optimize = .ReleaseSmall,
+        });
+        const webui_mod = b.createModule(.{
+            .root_source_file = b.path("ui/webui.zig"),
+            .target = tool_target,
+            .optimize = .ReleaseSmall,
+            .imports = &.{
+                .{ .name = "lib.zig", .module = lib_mod },
+            },
+        });
+        const webui_tool = b.addExecutable(.{
+            .name = "webui",
+            .root_module = webui_mod,
+        });
+        webui_tool.entry = .disabled;
+        webui_tool.rdynamic = true;
+        const webui_install = b.addInstallArtifact(webui_tool, .{
+            .dest_dir = .{ .override = .{ .custom = "ui" } },
+            .dest_sub_path = "app.wasm",
+        });
+        tools_step.dependOn(&webui_install.step);
     }
 
     // C and C++ tools (tools/c/*.c, tools/cpp/*.cpp) compile through Zig's

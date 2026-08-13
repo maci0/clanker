@@ -3,7 +3,7 @@
 A web UI plugin adds a view to the page without being part of the page. Each
 one is a directory here:
 
-    tools/webui-plugins/<name>/
+    ui/plugins/<name>/
       plugin.json    required — what it is and where it belongs
       app.js         required — registers the view
       app.css        optional — its own styles
@@ -82,7 +82,7 @@ curl -X POST -H 'Content-Type: application/json' \
 ```
 
 `clanker serve` also needs `zig build tools` before it can render any
-`/webui/*` path: the page comes out of `zig-out/tools/webui.wasm`, and without
+`/webui/*` path: the page comes out of `zig-out/ui/app.wasm`, and without
 it those paths return `500` while `/api/*` keeps answering `200`.
 
 Constraints, which are the page's constraints:

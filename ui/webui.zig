@@ -1,7 +1,7 @@
 //! webui: serves the clanker web UI from the sandbox — markup, styles and
-//! behaviour, each its own file under webui/ and embedded at comptime.
+//! behaviour, each its own file under ui/app/ and embedded at comptime.
 //! Third-party JS the page needs (graph layout, code highlighting) is vendored
-//! and served separately by the native HTTP server from webui/vendor/ — see
+//! and served separately by the native HTTP server from ui/vendor/ — see
 //! handleWebui/handleWebuiVendor in cli.zig — rather than routed through this
 //! tool, because those files are not ours to edit and never change.
 //! Internal tool: it is never offered to the LLM; the `clanker serve` HTTP
@@ -15,49 +15,49 @@ const lib = @import("lib.zig");
 /// One file per language, so each can be edited, searched and reviewed as
 /// what it is. They were a single 5,500-line index.html until the page needed
 /// three different kinds of change at once.
-const page = @embedFile("webui/index.html");
-const styles = @embedFile("webui/app.css");
-const script = @embedFile("webui/app.js");
+const page = @embedFile("app/index.html");
+const styles = @embedFile("app/app.css");
+const script = @embedFile("app/app.js");
 /// Bridges the vendored Preact/htm/signals ES modules onto window for the plugin API. Its
 /// own file because the policy forbids inline script.
-const preact_boot = @embedFile("webui/preact-boot.js");
-const fleet = @embedFile("webui/features/fleet.js");
-const arena_view = @embedFile("webui/features/arena.js");
-const arena3d_view = @embedFile("webui/features/arena3d.js");
-const board_view = @embedFile("webui/features/board.js");
-const compare_view = @embedFile("webui/features/compare.js");
-const goals_view = @embedFile("webui/features/goals.js");
-const knowledge_view = @embedFile("webui/features/knowledge.js");
-const prompts_view = @embedFile("webui/features/prompts.js");
-const todos_view = @embedFile("webui/features/todos.js");
-const models_view = @embedFile("webui/features/models.js");
-const schedule_view = @embedFile("webui/features/schedule.js");
-const search_view = @embedFile("webui/features/search.js");
-const icons = @embedFile("webui/core/icons.js");
-const ui = @embedFile("webui/core/ui.js");
-const utils = @embedFile("webui/core/utils.js");
-const vendor = @embedFile("webui/core/vendor.js");
-const chat = @embedFile("webui/core/chat.js");
-const labels = @embedFile("webui/core/labels.js");
-const goals = @embedFile("webui/core/goals.js");
-const stream = @embedFile("webui/core/stream.js");
-const theme = @embedFile("webui/core/theme.js");
-const overlay = @embedFile("webui/core/overlay.js");
-const search = @embedFile("webui/core/search.js");
-const composer = @embedFile("webui/core/composer.js");
-const scroll = @embedFile("webui/core/scroll.js");
-const dialog = @embedFile("webui/core/dialog.js");
-const usage = @embedFile("webui/core/usage.js");
-const status = @embedFile("webui/core/status.js");
-const attachments = @embedFile("webui/core/attachments.js");
-const logs = @embedFile("webui/core/logs.js");
-const plugins = @embedFile("webui/core/plugins.js");
-const palette = @embedFile("webui/core/palette.js");
-const modelpicker = @embedFile("webui/core/modelpicker.js");
-const tools = @embedFile("webui/core/tools.js");
-const markdown = @embedFile("webui/lib/markdown.js");
-const graph = @embedFile("webui/lib/graph.js");
-const board = @embedFile("webui/lib/board.js");
+const preact_boot = @embedFile("app/preact-boot.js");
+const fleet = @embedFile("app/features/fleet.js");
+const arena_view = @embedFile("app/features/arena.js");
+const arena3d_view = @embedFile("app/features/arena3d.js");
+const board_view = @embedFile("app/features/board.js");
+const compare_view = @embedFile("app/features/compare.js");
+const goals_view = @embedFile("app/features/goals.js");
+const knowledge_view = @embedFile("app/features/knowledge.js");
+const prompts_view = @embedFile("app/features/prompts.js");
+const todos_view = @embedFile("app/features/todos.js");
+const models_view = @embedFile("app/features/models.js");
+const schedule_view = @embedFile("app/features/schedule.js");
+const search_view = @embedFile("app/features/search.js");
+const icons = @embedFile("app/core/icons.js");
+const ui = @embedFile("app/core/ui.js");
+const utils = @embedFile("app/core/utils.js");
+const vendor = @embedFile("app/core/vendor.js");
+const chat = @embedFile("app/core/chat.js");
+const labels = @embedFile("app/core/labels.js");
+const goals = @embedFile("app/core/goals.js");
+const stream = @embedFile("app/core/stream.js");
+const theme = @embedFile("app/core/theme.js");
+const overlay = @embedFile("app/core/overlay.js");
+const search = @embedFile("app/core/search.js");
+const composer = @embedFile("app/core/composer.js");
+const scroll = @embedFile("app/core/scroll.js");
+const dialog = @embedFile("app/core/dialog.js");
+const usage = @embedFile("app/core/usage.js");
+const status = @embedFile("app/core/status.js");
+const attachments = @embedFile("app/core/attachments.js");
+const logs = @embedFile("app/core/logs.js");
+const plugins = @embedFile("app/core/plugins.js");
+const palette = @embedFile("app/core/palette.js");
+const modelpicker = @embedFile("app/core/modelpicker.js");
+const tools = @embedFile("app/core/tools.js");
+const markdown = @embedFile("app/lib/markdown.js");
+const graph = @embedFile("app/lib/graph.js");
+const board = @embedFile("app/lib/board.js");
 
 /// Bytes this asset occupies once JSON-encoded into the response envelope.
 /// Matches std.json's default (escape_unicode = false): bytes 0x20-0x21,

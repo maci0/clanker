@@ -90,7 +90,7 @@ pub fn compactCount(buf: []u8, n: u64) []const u8 {
 }
 
 /// Byte counts, in the units and rounding the web UI's `fmtBytes` uses
-/// (`tools/zig/webui/core/utils.js`), so "freed 48.2 KB" here and the size
+/// (`ui/app/core/utils.js`), so "freed 48.2 KB" here and the size
 /// the browser shows for the same conversation are the same number.
 pub fn compactBytes(buf: []u8, n: usize) []const u8 {
     const f: f64 = @floatFromInt(n);

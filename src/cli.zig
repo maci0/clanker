@@ -57,14 +57,15 @@ const schedule_cron = @import("schedule/cron.zig");
 // WASM "webui" tool, its shared output buffer, lib.zig's out_cap, is 64 KiB,
 // far smaller than these). Vendored rather than CDN-loaded so the page has
 // zero runtime network dependencies and needs no change to the webui CSP.
-const webui_vendor_preact = @embedFile("webui_vendor/preact.module.js");
-const webui_vendor_htm = @embedFile("webui_vendor/htm.module.js");
-const webui_vendor_signals = @embedFile("webui_vendor/signals-core.module.js");
-const webui_vendor_d3dag = @embedFile("webui_vendor/d3-dag.min.js");
-const webui_vendor_hljs = @embedFile("webui_vendor/hljs.min.js");
-const webui_vendor_mermaid = @embedFile("webui_vendor/mermaid.min.js");
-const webui_vendor_three = @embedFile("webui_vendor/three.module.min.js");
-const webui_vendor_three_core = @embedFile("webui_vendor/three.core.min.js");
+const ui_vendor = @import("vendor");
+const webui_vendor_preact = ui_vendor.preact;
+const webui_vendor_htm = ui_vendor.htm;
+const webui_vendor_signals = ui_vendor.signals;
+const webui_vendor_d3dag = ui_vendor.d3dag;
+const webui_vendor_hljs = ui_vendor.hljs;
+const webui_vendor_mermaid = ui_vendor.mermaid;
+const webui_vendor_three = ui_vendor.three;
+const webui_vendor_three_core = ui_vendor.three_core;
 
 /// Sourced from build.zig.zon's `.version` field via the `build_options`
 /// module (see build.zig), so the two can no longer drift apart.
@@ -6828,10 +6829,10 @@ fn renderWebuiCached(
 /// One list, because there used to be two: the module gate (`is_webui`, which
 /// decides whether a disabled `modules.webui` should 404) and the asset route
 /// itself were hand-maintained copies of the same set, and
-/// `features/arena.js`, embedded and routed in `tools/zig/webui.zig`, was
+/// `features/arena.js`, embedded and routed in `ui/webui.zig`, was
 /// missing from both, so the Arena view's dynamic `import()` 404'd. Keeping
 /// the set in one place is what stops the next module from doing the same.
-/// `tools/zig/webui.zig`'s `assetFor` still has to learn each new path too;
+/// `ui/webui.zig`'s `assetFor` still has to learn each new path too;
 /// the test below walks the source tree and fails if a file exists that this
 /// list has never heard of.
 const webui_asset_paths = [_][]const u8{
@@ -7545,7 +7546,7 @@ fn writeListingModels(
     }
 }
 
-const webui_plugins_dir = "tools/webui-plugins";
+const webui_plugins_dir = "ui/plugins";
 const webui_plugins_state = "state/webui_plugins.json";
 
 const WebuiPlugin = struct {
@@ -12717,7 +12718,7 @@ fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
 
 test "the webui asset route covers every embedded module, arena.js included" {
     // The regression this pins: features/arena.js was @embedFile'd and routed
-    // in tools/zig/webui.zig but named in neither list here, so the Arena
+    // in ui/webui.zig but named in neither list here, so the Arena
     // view's dynamic import() 404'd against a server that had the bytes.
     try std.testing.expect(isWebuiAssetPath("/webui/features/arena.js"));
     try std.testing.expect(isWebuiAssetPath("/webui/features/compare.js"));
@@ -12743,7 +12744,7 @@ test "no webui module file exists that the asset route has never heard of" {
 
     // Source-tree test: skipped when run from anywhere but the repo root,
     // the same way registry.zig skips without tools/manifests.
-    var root = std.Io.Dir.cwd().openDir(io, "tools/zig/webui", .{}) catch return error.SkipZigTest;
+    var root = std.Io.Dir.cwd().openDir(io, "ui/app", .{}) catch return error.SkipZigTest;
     defer root.close(io);
 
     for ([_][]const u8{ "core", "lib", "features" }) |sub| {
@@ -12775,7 +12776,7 @@ test "no webui source hand-rolls a partial HTML escape" {
     // keeps markup out, so the miss was invisible until a run's text held an
     // entity and came back decoded. There is one escaper; a second partial
     // one is the bug, not the fix, so scan for the shape of it.
-    var root = std.Io.Dir.cwd().openDir(io, "tools/zig/webui", .{}) catch return error.SkipZigTest;
+    var root = std.Io.Dir.cwd().openDir(io, "ui/app", .{}) catch return error.SkipZigTest;
     defer root.close(io);
 
     const needles = [_][]const u8{ "replace(/</g", "replace(/&/g", "replace(/>/g" };
@@ -12809,7 +12810,7 @@ test "webui chrome icons are drawn, not typed as unicode" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var root = std.Io.Dir.cwd().openDir(io, "tools/zig/webui", .{}) catch return error.SkipZigTest;
+    var root = std.Io.Dir.cwd().openDir(io, "ui/app", .{}) catch return error.SkipZigTest;
     defer root.close(io);
 
     const icons = root.readFileAlloc(io, "core/icons.js", std.testing.allocator, .limited(1 << 20)) catch return error.SkipZigTest;

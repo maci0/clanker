@@ -21,7 +21,7 @@
 3. Guest sources stay under `tools/`; host tool infrastructure is `src/toolhost/` (today `src/tools/`).
 4. Operator scripts live under `scripts/`, not the repo root.
 5. Docs shelves: `docs/{prds,adrs,reviews,prompts,digests,assets,plans}/`. Review writeups are not loose `docs/WEBUI_*.md`.
-6. Web UI app sources hoist to `tools/webui/`; plugins stay `tools/webui-plugins/`; vendored JS colocate under `tools/webui/vendor/` when practical.
+6. `tools/` holds LLM-callable guest sources only. Web UI concerns live under `ui/`: app source (`ui/app/`), plugins (`ui/plugins/`), vendored JS (`ui/vendor/`), and the internal WASM guest that serves them (`ui/webui.zig`). A thin `ui/vendor.zig` module embeds `ui/vendor/*` and is imported by the host; this keeps vendor within its own package root and out of `src/`.
 7. AssemblyScript build output: `tools/ts/dist/` (not `tools/ts/dist/`).
 8. Example manifests: `tools/examples/manifests/` (out of the live load path).
 9. Tool identity: manifest stem == wasm stem == catalog name. Drop the `cmd_` prefix; internal harness guests keep `"internal": true`.
@@ -44,12 +44,17 @@ docs/
     2026-08-14-path-taxonomy-design.md
     …
 
-tools/
-  webui/                 # was tools/zig/webui/
-  webui-plugins/         # unchanged home
-  examples/manifests/    # was tools/examples/manifests/
-  ts/dist/               # was tools/ts/dist/
-  zig/                   # guest Zig; no nested webui app
+ui/
+  app/                   # was tools/zig/webui/ (HTML/CSS/JS)
+  plugins/               # was tools/webui-plugins/
+  vendor/                # was src/webui_vendor/
+  vendor.zig             # new: embeds ui/vendor/* for the host
+  webui.zig              # was tools/zig/webui.zig (internal WASM guest)
+
+tools/                   # LLM-callable guest sources only
+  examples/manifests/    # was tools/manifests/examples/
+  ts/dist/               # was tools/bin/
+  zig/                   # Zig WASM guest sources (no nested ui content)
   manifests/             # live *.tool.json only
 
 src/
@@ -80,8 +85,13 @@ src/
 
 | From | To |
 |------|----|
-| `tools/zig/webui/` | `tools/webui/` |
-| `src/webui_vendor/` | `tools/webui/vendor/` (only if embed/build paths update cleanly; else keep and document) |
+| `tools/zig/webui/` | `ui/app/` |
+| `tools/zig/webui.zig` | `ui/webui.zig` |
+| `tools/webui-plugins/` | `ui/plugins/` |
+| `src/webui_vendor/` | `ui/vendor/` |
+| _(new)_ | `ui/vendor.zig` — embeds `ui/vendor/*`, imported by host |
+
+Note: `tools/` becomes LLM-callable guests only. `ui/` holds all web UI concerns. The Zig `@embedFile` package path constraint (`ui/webui.zig` package root = `ui/`) is satisfied because app and vendor both sit under `ui/`.
 
 ### Public tools (hard cutover)
 
@@ -94,6 +104,7 @@ src/
 | `cmd_sessions` | `sessions` | |
 | `cmd_status` | `status` | |
 | `cmd_tools` | `tools` | watch collision with generic word "tools" in docs |
+| ~~`cmd_help`~~ | ~~`help`~~ | already removed in remote (built in-process) |
 | `search_code` | `repo_search` | local project search |
 | `code_search` | `sourcegraph_search` | public Sourcegraph |
 | `compare_blind.zig` | `compare_logic.zig` | helper only, no tool.json |
@@ -125,7 +136,7 @@ If `tools` as a guest name is too ambiguous beside `tools/` the directory, prefe
 1. **Docs shelf** — create `docs/reviews/`, move WEBUI reviews, fix links, optional ROADMAP PRD-id citations.
 2. **Scripts home** — create `scripts/`, move root shell scripts, fix CI/docs references.
 3. **Tools examples + AS dist** — move examples and `tools/ts/dist` → `tools/ts/dist`; update manifests/`wasm` fields and AS verify scripts; opencv path tidy.
-4. **Web UI hoist** — `tools/zig/webui` → `tools/webui`; update embed/allow-list/build; vendor move only if clean.
+4. **UI surface split** — introduce `ui/`; move `tools/zig/webui/` → `ui/app/`, `tools/zig/webui.zig` → `ui/webui.zig`, `tools/webui-plugins/` → `ui/plugins/`, `src/webui_vendor/` → `ui/vendor/`; create `ui/vendor.zig`; update `build.zig`, all embed paths, `webui_plugins_dir`, AGENTS.md, PRDs/ROADMAP.
 5. **Guest catalog clarity** — drop `cmd_` stems; rename search tools; rewrite evals/skills/autolearn/docs refs; `zig build tools`.
 6. **Util + TUI names** — snake_case util + `repl` + `turn_stats` + smashed auto_* host modules; update imports and `main.zig` test registry.
 7. **Host role split** — `src/tools` → `src/toolhost`; `providers.zig` → `registry.zig`; AGENTS.md architecture pass. Leave `src/serve/` in place.

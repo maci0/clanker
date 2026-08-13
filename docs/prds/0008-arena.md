@@ -3,7 +3,7 @@
 ## Status
 
 In progress (Phase 3 open). Sources of truth: `tools/zig/arena.zig`,
-`tools/zig/arena_match.zig`, `tools/zig/webui/features/arena.js`, and the
+`tools/zig/arena_match.zig`, `ui/app/features/arena.js`, and the
 CLI/HTTP routes in `src/cli.zig` (`cmdArena`, `GET /api/arena/<id>`).
 Surfaces: `clanker arena`, REPL `/arena`, Arena web UI view.
 
@@ -276,7 +276,7 @@ way its own non-goal requires.
   concession sinks and dims, an elimination shatters the solid into
   particles that spiral into the centre — the compactor as a vortex); the
   winner gets an orbiting halo. Camera slow-orbits, drag to steer, wheel to
-  zoom. three.js 0.180 is vendored (`src/webui_vendor/three.module.min.js`
+  zoom. three.js 0.180 is vendored (`ui/app/vendor/three.module.min.js`
   + `three.core.min.js` — the minified module build is split in two and the
   first imports the second), served under `/webui/vendor/` like mermaid,
   and loaded by dynamic `import()` on first toggle only, so a session that

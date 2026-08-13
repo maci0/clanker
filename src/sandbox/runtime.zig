@@ -736,7 +736,7 @@ test "webui wasm tool serves every module the asset route names" {
     defer env_map.deinit();
     var cfg = config_mod.Config{};
 
-    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/webui.wasm", std.testing.allocator, .limited(8 << 20));
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/ui/app.wasm", std.testing.allocator, .limited(8 << 20));
     defer std.testing.allocator.free(wasm);
 
     var sb = host.Sandbox{

@@ -5053,7 +5053,7 @@ bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: f
 
    The page is itself served by a WASM tool, so it is already a plugin; this
    lets it host plugins of its own. A plugin is a directory under
-   tools/webui-plugins/ with a manifest and an app.js, served same-origin so
+   ui/plugins/ with a manifest and an app.js, served same-origin so
    the strict CSP covers it without widening: no eval, no other origin, and a
    disabled plugin's assets are never served at all.
 
