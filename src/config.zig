@@ -564,6 +564,18 @@ pub const Tui = struct {
     mascot: []const u8 = "off",
 };
 
+/// Post-turn second-model critique. Off by default; fails open. Distinct
+/// from `improve.arena_advisory`, which is a per-proposal Arena verdict
+/// inside the improve engine.
+pub const Advisor = struct {
+    enabled: bool = false,
+    provider: []const u8 = "",
+    model: []const u8 = "",
+    scope: []const u8 = "turn",
+    context_turns: u32 = 3,
+    timeout_ms: u32 = 5000,
+};
+
 pub const Config = struct {
     agent_present: bool = false,
     /// Which keys inside `"agent"` were set when this Config was parsed.
@@ -580,6 +592,7 @@ pub const Config = struct {
     serve_fields: ServeFields = .{},
     notify: Notify = .{},
     tui: Tui = .{},
+    advisor: Advisor = .{},
     chatrooms: Chatrooms = .{},
     memory: Memory = .{},
     modules: Modules = .{},
@@ -699,7 +712,7 @@ pub const Config = struct {
             "default_provider", "agent",    "improve", "providers",
             "models",           "instance", "peers",   "notify",
             "chatrooms",        "modules",  "web",     "memory",
-            "serve",            "tui",
+            "serve",            "tui",      "advisor",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -715,6 +728,9 @@ pub const Config = struct {
         if (obj.get("improve")) |v| {
             cfg.improve = try parseImprove(arena, v);
             cfg.improve_present = true;
+        }
+        if (obj.get("advisor")) |v| {
+            cfg.advisor = try parseAdvisor(v);
         }
         if (obj.get("providers")) |v| {
             const pobj = switch (v) {
@@ -1443,6 +1459,31 @@ pub const Config = struct {
         if (fields.multimodal) dst.multimodal = src.multimodal;
         if (fields.chatrooms) dst.chatrooms = src.chatrooms;
         if (fields.token_stats) dst.token_stats = src.token_stats;
+    }
+
+    fn parseAdvisor(v: json.Value) !Advisor {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.AdvisorNotObject,
+        };
+        var a = Advisor{};
+        warnUnknownKeys(obj, &.{ "enabled", "provider", "model", "scope", "context_turns", "timeout_ms" }, "advisor");
+        if (obj.get("enabled")) |k| a.enabled = switch (k) {
+            .bool => |b| b,
+            else => return error.FieldNotBool,
+        };
+        if (obj.get("provider")) |k| a.provider = try jsonStr(k, "advisor.provider");
+        if (obj.get("model")) |k| a.model = try jsonStr(k, "advisor.model");
+        if (obj.get("scope")) |k| a.scope = try jsonStr(k, "advisor.scope");
+        if (obj.get("context_turns")) |k| {
+            const n = try jsonInt(k, "advisor.context_turns");
+            a.context_turns = if (n <= 0) 1 else @intCast(n);
+        }
+        if (obj.get("timeout_ms")) |k| {
+            const n = try jsonInt(k, "advisor.timeout_ms");
+            a.timeout_ms = if (n <= 0) 0 else @intCast(n);
+        }
+        return a;
     }
 
     fn parseImprove(arena: std.mem.Allocator, v: json.Value) !Improve {
