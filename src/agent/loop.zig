@@ -2913,6 +2913,16 @@ test "capToolResult leaves small results untouched and truncates large ones" {
     try std.testing.expect(std.mem.find(u8, capped, "Ask for specific parts") != null);
     // The first max_tool_result_bytes bytes are preserved.
     try std.testing.expectEqualStrings(big[0..max_tool_result_bytes], capped[0..max_tool_result_bytes]);
+
+    // A multi-byte code point at the cut is dropped whole, not split.
+    const mid = try arena.alloc(u8, max_tool_result_bytes + 8);
+    @memset(mid, 'y');
+    mid[max_tool_result_bytes - 1] = 0xC3;
+    mid[max_tool_result_bytes] = 0xA9;
+    const capped_utf8 = try capToolResult(arena, mid);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(capped_utf8));
+    try std.testing.expectEqual(@as(u8, 'y'), capped_utf8[max_tool_result_bytes - 2]);
+    try std.testing.expect(capped_utf8[max_tool_result_bytes - 1] != 0xC3);
 }
 
 test "compactionKeepStart never splits a tool-call exchange" {
@@ -2924,7 +2934,7 @@ test "compactionKeepStart never splits a tool-call exchange" {
     var i: usize = 1;
     while (i < 9) : (i += 1) msgs[i] = .{ .role = .user, .content = "turn" };
     // A tool exchange straddling the window boundary: assistant at index 2,
-    // tool results at 3 and 4; len - 6 = 3 lands on a tool message.
+    // tool results at 3 and 4; len - recent_tail_messages = 3 lands on a tool message.
     msgs[2] = .{ .role = .assistant, .content = "calls" };
     msgs[3] = .{ .role = .tool, .content = "r1" };
     msgs[4] = .{ .role = .tool, .content = "r2" };
@@ -2998,7 +3008,7 @@ test "pruneOldToolResults shortens stale tool results outside the recent tail" {
         .{ .role = .user, .content = "u5" }, // 9
     };
 
-    Agent.pruneOldToolResults(&msgs, arena, 6);
+    Agent.pruneOldToolResults(&msgs, arena, recent_tail_messages);
 
     // The tool at index 2 (outside the tail) was pruned.
     try std.testing.expect(msgs[2].content.?.len < big.len);
@@ -3024,7 +3034,7 @@ test "pruneOldToolResults leaves short results untouched" {
         .{ .role = .assistant, .content = "a3" }, // 7
     };
 
-    Agent.pruneOldToolResults(&msgs, arena, 6);
+    Agent.pruneOldToolResults(&msgs, arena, recent_tail_messages);
 
     // Still "ok", untouched.
     try std.testing.expectEqualStrings("ok", msgs[1].content.?);
@@ -3046,10 +3056,68 @@ test "pruneOldToolResults is a no-op when history is shorter than the tail" {
         .{ .role = .user, .content = "u2" },
     };
 
-    Agent.pruneOldToolResults(&msgs, arena, 6);
+    Agent.pruneOldToolResults(&msgs, arena, recent_tail_messages);
 
     // Everything untouched, the history is too short to prune.
     try std.testing.expectEqual(big.len, msgs[1].content.?.len);
+}
+
+test "pruneOldToolResults does not re-allocate an already-pruned result" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const big = try arena.alloc(u8, 2000);
+    @memset(big, 'x');
+    var msgs = [_]types.Message{
+        .{ .role = .system, .content = "sys" },
+        .{ .role = .user, .content = "u1" },
+        .{ .role = .tool, .content = big },
+        .{ .role = .user, .content = "u2" },
+        .{ .role = .tool, .content = big },
+        .{ .role = .user, .content = "u3" },
+        .{ .role = .assistant, .content = "a1" },
+        .{ .role = .user, .content = "u4" },
+        .{ .role = .assistant, .content = "a2" },
+        .{ .role = .user, .content = "u5" },
+    };
+
+    Agent.pruneOldToolResults(&msgs, arena, recent_tail_messages);
+    const first = msgs[2].content.?;
+    try std.testing.expect(std.mem.find(u8, first, "pruned") != null);
+
+    Agent.pruneOldToolResults(&msgs, arena, recent_tail_messages);
+    try std.testing.expectEqual(first.ptr, msgs[2].content.?.ptr);
+    try std.testing.expectEqualStrings(first, msgs[2].content.?);
+}
+
+test "pruneOldToolResults does not split a UTF-8 codepoint" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const big = try arena.alloc(u8, 2000);
+    @memset(big, 'x');
+    // "é" straddles the 200-byte preview cut.
+    big[199] = 0xC3;
+    big[200] = 0xA9;
+    var msgs = [_]types.Message{
+        .{ .role = .system, .content = "sys" },
+        .{ .role = .user, .content = "u1" },
+        .{ .role = .tool, .content = big },
+        .{ .role = .user, .content = "u2" },
+        .{ .role = .assistant, .content = "a1" },
+        .{ .role = .user, .content = "u3" },
+        .{ .role = .assistant, .content = "a2" },
+        .{ .role = .user, .content = "u4" },
+        .{ .role = .assistant, .content = "a3" },
+        .{ .role = .user, .content = "u5" },
+    };
+
+    Agent.pruneOldToolResults(&msgs, arena, recent_tail_messages);
+    const pruned = msgs[2].content.?;
+    try std.testing.expect(std.unicode.utf8ValidateSlice(pruned));
+    try std.testing.expect(!std.mem.startsWith(u8, pruned[199..], "\xc3"));
 }
 
 test "max_history_tokens feeds into compaction threshold" {
