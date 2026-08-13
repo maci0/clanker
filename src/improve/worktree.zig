@@ -206,10 +206,18 @@ pub const Worktree = struct {
 /// tip. Must be called before any chdir into the result: `git worktree add`
 /// targets the repo the caller's cwd is already in.
 pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
+    return createOn(gpa, io, id, "clanker/improve-self-");
+}
+
+/// `create` with the branch name's prefix chosen by the caller, so a plain
+/// agent run gets a branch that reads as one (`clanker/run-<id>`) instead of
+/// claiming to be an improve-self run. Everything else is identical: same
+/// parent directory, same shared-state linking, same base branch.
+pub fn createOn(gpa: std.mem.Allocator, io: std.Io, id: []const u8, branch_prefix: []const u8) !Worktree {
     const base_branch = currentBranch(gpa, io) catch try gpa.dupe(u8, "main");
     errdefer gpa.free(base_branch);
 
-    const branch = try std.fmt.allocPrint(gpa, "clanker/improve-self-{s}", .{id});
+    const branch = try std.fmt.allocPrint(gpa, "{s}{s}", .{ branch_prefix, id });
     errdefer gpa.free(branch);
 
     // Deliberately outside state/: a worktree under state/ would contain its
@@ -245,7 +253,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
     }
 
     linkSharedState(gpa, io, path) catch |err|
-        log.log(.warn, "improve-self: could not link state/.env/config.local.toml into the worktree: {s}", .{@errorName(err)});
+        log.log(.warn, "isolated run: could not link state/.env/config.local.toml into the worktree: {s}", .{@errorName(err)});
 
     // The fresh branch's tip IS the base commit the branch was cut at;
     // record it as the pinned merge base (see `created_from`).
@@ -305,6 +313,19 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     defer gpa.free(state_dir);
     try std.Io.Dir.cwd().createDirPath(io, state_dir);
 
+    // Runtime state stays empty in a fresh worktree (see the note below on why
+    // it is neither linked nor copied), but the DIRECTORIES have to exist: the
+    // writers here create a file inside them, not the path to them, so an
+    // absent state/runs made every run-graph write fail ("graph write failed:
+    // FileNotFound", once per isolated run). Empty is the intended starting
+    // state; missing is just a write error.
+    for ([_][]const u8{ "runs", "sessions" }) |leaf| {
+        const dir = try std.fmt.allocPrint(gpa, "{s}/state/{s}", .{ worktree_path, leaf });
+        defer gpa.free(dir);
+        std.Io.Dir.cwd().createDirPath(io, dir) catch |err|
+            log.log(.warn, "isolated run: could not create state/{s} in the worktree: {s}", .{ leaf, @errorName(err) });
+    }
+
     // The dividing line for everything under state/ is WHO reads the path.
     //
     // Symlinks work only for paths read by the HOST (native I/O follows
@@ -350,8 +371,15 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
         defer gpa.free(target);
         const link_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
         defer gpa.free(link_path);
-        std.Io.Dir.cwd().symLink(io, target, link_path, .{ .is_directory = true }) catch |err|
-            log.log(.warn, "improve-self: could not link {s} into the worktree: {s}", .{ name, @errorName(err) });
+        std.Io.Dir.cwd().symLink(io, target, link_path, .{ .is_directory = true }) catch |err| switch (err) {
+            // Both directories are tracked, so `git worktree add` has already
+            // checked them out and there is nothing to link: the worktree's own
+            // copy is the same content at the same commit. Warning about it
+            // meant two alarming lines at the head of every isolated run's
+            // output for the one case that is entirely fine.
+            error.PathAlreadyExists => {},
+            else => log.log(.warn, "isolated run: could not link {s} into the worktree: {s}", .{ name, @errorName(err) }),
+        };
     }
 
     for ([_][]const u8{ "state/learnings.md", "state/autolearn.jsonl", "state/plugin_config.json", "state/token_stats.jsonl", "state/reasoning.jsonl" }) |name| {

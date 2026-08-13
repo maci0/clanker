@@ -134,6 +134,13 @@ pub const Options = struct {
     eval_tasks_only: bool = false,
     iters: u32 = 3,
     dry_run: bool = false,
+    /// `run --worktree`: isolate the run in its own git worktree and branch
+    /// instead of working in the shared checkout, the same isolation
+    /// improve-self takes by default. The run's whole toolchain moves with it
+    /// (see cmdRun), so the worktree is the only tree the agent can see rather
+    /// than a second one it has to remember to address. The worktree and its
+    /// branch are kept when the run ends: the commits are the deliverable.
+    worktree: bool = false,
     /// `prune --yes`: actually delete. Absent, it only reports, because a
     /// recursive delete is not undoable.
     apply: bool = false,
@@ -321,6 +328,9 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else if (std.mem.eql(u8, a, "--dry-run")) {
                 opts.dry_run = true;
                 used = .dry_run;
+            } else if (std.mem.eql(u8, a, "--worktree")) {
+                opts.worktree = true;
+                used = .worktree;
             } else if (std.mem.eql(u8, a, "--yes")) {
                 opts.apply = true;
                 used = .yes;
@@ -1018,6 +1028,7 @@ const Flag = enum {
     goal,
     iters,
     dry_run,
+    worktree,
     tasks,
     port,
     host,
@@ -1057,6 +1068,7 @@ const Flag = enum {
             .goal => "--goal",
             .iters => "--iters",
             .dry_run => "--dry-run",
+            .worktree => "--worktree",
             .tasks => "--tasks",
             .port => "--port",
             .host => "--host",
@@ -1102,6 +1114,7 @@ const Flag = enum {
             .goal => "run against a persisted goal by id",
             .iters => "cap the number of attempts (default 3)",
             .dry_run => "propose changes without applying them",
+            .worktree => "run in a private git worktree and branch, leaving the checkout untouched",
             .tasks => "run only the agent-driven evals, skipping the build gates",
             .port => "listen port (default 17921)",
             .host => "interface to bind; default 127.0.0.1, 0.0.0.0 reaches the LAN",
@@ -1168,7 +1181,7 @@ const Spec = struct {
 /// `--verbose`/`-v`, `--help`/`-h` and `--version` are accepted everywhere and
 /// so are not listed per command.
 const specs = [_]Spec{
-    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        run against a persisted goal" },
+    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal, .worktree }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        run against a persisted goal\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends; session state is written inside it" },
     .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
     .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
     .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--iters <n>        cap the number of attempts (default 3)\n--dry-run          propose changes without applying them" },
@@ -2582,11 +2595,72 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     var provider_val = try resolveProvider(&cfg, opts);
     const provider = &provider_val;
 
+    // `--worktree`: give the run its own worktree and branch, then chdir into
+    // it for the rest of the run.
+    //
+    // Isolation is done by MOVING the run rather than by handing the agent a
+    // second path to be careful with. An agent told "your work belongs in a
+    // worktree" while its tools still resolve against the shared checkout has
+    // to prefix every single path by hand, and the failure is silent both
+    // ways: paths written without the prefix edit the shared checkout, and
+    // `git status` (which runs at the process cwd) reports on the shared
+    // checkout either way, so the agent's own attempt to verify where its
+    // edits went confirms the wrong answer. Observed repeatedly: edits landing
+    // on the checkout's main branch, then being "recovered" onto it a second
+    // time. After the chdir there is only one tree to address, cwd-relative
+    // paths are the worktree, and `git rev-parse --show-toplevel` agrees.
+    //
+    // Everything must move together, which is why this happens before the
+    // registry, session and goal loads below (all cwd-relative) and before any
+    // sandbox is built. Consequence, deliberate and documented on the flag:
+    // session state is written under the worktree, so `--continue` after an
+    // isolated run does not find it in the shared checkout. The worktree is
+    // kept, so nothing is lost, it just lives with the branch it belongs to.
+    //
+    // The load-bearing part is the ORDER: config is already read (from the
+    // shared checkout, whose config.local.toml carries the API keys), and
+    // linkSharedState wires that plus the cross-run memory into the worktree.
+    var wt: ?worktree_mod.Worktree = null;
+    defer if (wt) |*w| w.deinit(gpa);
+    // Registered after the deinit above, so it runs before it (LIFO). A defer
+    // rather than a line at the end of the function: an isolated run that
+    // errors out halfway still leaves commits in the worktree, and the path to
+    // them is the one thing the operator cannot reconstruct from the error.
+    defer if (wt) |*w| log.log(.info, "run: work is on branch {s} in {s} (kept; `git worktree remove` it when done)", .{ w.branch, w.path });
+    // Where the harness itself lives, captured before the chdir: the guest
+    // wasm modules are pinned to it below, since a worktree has no zig-out.
+    var harness_root: ?[]const u8 = null;
+    if (opts.worktree) {
+        harness_root = std.process.currentPathAlloc(io, arena) catch |err| {
+            log.log(.error_, "run --worktree: could not read the current directory: {s}", .{@errorName(err)});
+            return err;
+        };
+        const wt_id = try std.fmt.allocPrint(gpa, "{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
+        defer gpa.free(wt_id);
+        var created = worktree_mod.createOn(gpa, io, wt_id, "clanker/run-") catch |err| {
+            log.log(.error_, "run --worktree: could not create an isolated worktree: {s}", .{@errorName(err)});
+            return err;
+        };
+        std.process.setCurrentPath(io, created.path) catch |err| {
+            // Refusing to continue is the point: falling back to the shared
+            // checkout is the exact outcome --worktree was passed to prevent,
+            // and it would be invisible in the run's own output.
+            log.log(.error_, "run --worktree: could not switch into {s}: {s}", .{ created.path, @errorName(err) });
+            created.deinit(gpa);
+            return err;
+        };
+        log.log(.info, "run: isolated in {s} on branch {s} (branched from {s})", .{ created.path, created.branch, created.base_branch });
+        wt = created;
+    }
+
     // Make sure the sandbox root exists.
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
         log.log(.warn, "cmdRun: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });
 
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
+    // The manifests came from the worktree (they are tracked, so it has them),
+    // but the wasm they name did not: keep pointing at the harness's own build.
+    if (harness_root) |root| try reg.rebaseWasmPaths(arena, root);
     const tool_defs = try reg.toToolDefs(arena);
 
     var a = try agent.Agent.init(&ctx, arena, provider, &cfg, &reg, tool_defs);
@@ -10078,6 +10152,25 @@ test "parse reports the offending token via the diag out-param" {
 
     try std.testing.expectError(error.BadIters, parse(&.{ "clanker", "improve-self", "--iters", "abc", "x" }, &diag));
     try std.testing.expectEqualStrings("abc", diag);
+}
+
+test "--worktree is accepted by run and refused elsewhere" {
+    var diag: []const u8 = "";
+
+    const isolated = try parse(&.{ "clanker", "run", "--worktree", "do the thing" }, &diag);
+    try std.testing.expect(isolated.worktree);
+    try std.testing.expectEqual(Command.run, isolated.command);
+
+    // Off unless asked for: the shared checkout stays the default, so no
+    // existing invocation starts writing somewhere else.
+    const plain = try parse(&.{ "clanker", "run", "do the thing" }, &diag);
+    try std.testing.expect(!plain.worktree);
+
+    // A flag that does nothing is worse than one that is rejected (see Flag):
+    // improve-self already isolates unconditionally, so --worktree there would
+    // read as a switch that turns something on.
+    try std.testing.expectError(error.FlagNotForCommand, parse(&.{ "clanker", "improve-self", "--worktree", "x" }, &diag));
+    try std.testing.expectEqualStrings("--worktree", diag);
 }
 
 test "the run request body carries optional images, and the cap counts decoded bytes" {
