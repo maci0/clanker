@@ -5460,6 +5460,13 @@ test "harness config access is scoped to each tool's consumed fields" {
     try std.testing.expect(std.mem.find(u8, full, "max_iterations") != null);
     try std.testing.expect(std.mem.find(u8, full, "chatrooms") != null);
     try std.testing.expect(std.mem.find(u8, full, "\"tui\"") != null);
+    // The on-disk top-level models table is reconstructed so section mode
+    // can look it up by the same key a human wrote in config.toml.
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, full, .{});
+    const models = parsed.object.get("models") orelse return error.TestExpectedEqual;
+    try std.testing.expect(models == .object);
+    const entry = models.object.get("v/m") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqualStrings("v", entry.object.get("provider").?.string);
     // No access level, not even .full, should expose credential fields.
     try std.testing.expect(std.mem.find(u8, full, "api_key_env") == null);
     try std.testing.expect(std.mem.find(u8, full, "service_account_file") == null);

@@ -5,7 +5,8 @@
 //! HOST-MERGED config via ck_harness_config -- a wasm guest carries no TOML
 //! parser, so structured access goes through the host, which already parsed
 //! and merged both files. Known keys include providers, agent, modules,
-//! instance, peers, chatrooms, tui, improve, web, serve, memory, notify.
+//! instance, peers, chatrooms, tui, improve, web, serve, memory, notify,
+//! models (the reconstructed flat `[models."provider/name"]` table).
 //! Input:  {"section": "modules" | "providers" | "agent" | ""}
 //! Output: {"ok": true, "text": "<TOML dump or JSON section>"}
 
