@@ -1196,10 +1196,9 @@ fn writeWrappedHelpBlurb(w: *std.Io.Writer, blurb: []const u8) !void {
 /// `clanker <command> --help`: what that one command takes, rather than the
 /// whole list. Previously this errored with "unrecognized argument '--help'",
 /// which is the least helpful thing a --help can do.
-fn printCommandHelp(io: std.Io, cmd: Command) void {
-    const s = specFor(cmd) orelse return printUsage(io);
-    var buf: [8192]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
+fn renderCommandHelp(buf: []u8, cmd: Command) []const u8 {
+    const s = specFor(cmd) orelse return "";
+    var w: std.Io.Writer = .fixed(buf);
     w.print("usage: clanker {s}\n\n{s}\n", .{ s.usage, s.blurb }) catch {};
     if (s.detail.len > 0) {
         w.print("\n{s}\n", .{s.detail}) catch {};
@@ -1210,7 +1209,13 @@ fn printCommandHelp(io: std.Io, cmd: Command) void {
         }
     }
     w.writeAll("\nAlso accepted everywhere: --verbose, -v; --help, -h.\n") catch {};
-    writeStdOut(io, buf[0..w.end]) catch {};
+    return buf[0..w.end];
+}
+
+fn printCommandHelp(io: std.Io, cmd: Command) void {
+    if (specFor(cmd) == null) return printUsage(io);
+    var buf: [8192]u8 = undefined;
+    writeStdOut(io, renderCommandHelp(&buf, cmd)) catch {};
 }
 
 /// Every flag the parser knows. A command declares the ones it accepts, so
@@ -1406,18 +1411,18 @@ const specs = [_]Spec{
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
     .{ .command = .tools_list, .usage = "tools [list]", .blurb = "list the registered WASM tools", .group = .inspect },
     .{ .command = .plugins, .usage = "plugins [list|on <name>|off <name>|validate [path]|new <name>]", .blurb = "list, switch, validate, or scaffold plugins", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\non <name>         switch an optional plugin on\noff <name>        switch an optional plugin off\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nCore tools cannot be switched off. Changes take effect in the next command; a\nrunning REPL reloads its tool catalog immediately.\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
-    .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, caps it at\n                agent.provider_check_timeout_seconds, and ends with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the public models.dev directory by id/family\nfill <name>     print models.dev specs for a configured provider's models" },
+    .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, uses\n                agent.provider_check_timeout_seconds as its timeout, then ends\n                with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the public models.dev directory by id/family\nfill <name>     print models.dev specs for a configured provider's models" },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
     .{ .command = .notify, .usage = "notify <peer> \"<message>\"", .blurb = "send a notification to a peer", .group = .peers },
     .{ .command = .phonebook, .usage = "phonebook", .blurb = "list peer agent cards", .group = .peers },
 
-    .{ .command = .setup, .usage = "setup", .blurb = "guided first run: check config, keys and tools", .group = .maintain, .detail = "Scaffolds what is missing, says which provider this environment can actually reach,\nand finishes with the same checks `clanker doctor` runs." },
+    .{ .command = .setup, .usage = "setup", .blurb = "guided first run: check config, keys and tools", .group = .maintain, .detail = "Scaffolds what is missing, says which provider this environment can\nactually reach, and finishes with the same checks `clanker doctor` runs." },
     .{ .command = .prune, .usage = "janitor [--yes]", .blurb = "sweep up what old runs left behind", .group = .maintain, .flags = &.{.yes}, .detail = "Also reachable as `clanker prune`.\n\nReports by default and deletes nothing. --yes removes: staging copies left by\nimprove runs that were killed, run graphs beyond the newest 200, improve logs\nbeyond the newest 20, and the worktrees of goals that have been archived or\nabandoned whose branch is already merged. Sessions, goals, learnings and chat\nhistory are never touched, and neither is a worktree whose branch still holds\ncommits the base does not." },
-    .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can guard a\nscript or a CI step. Connectivity is `clanker providers check`." },
+    .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can\nguard a script or CI step. Connectivity is `clanker providers check`." },
     .{ .command = .init, .usage = "init", .blurb = "create config.local.toml and state/", .group = .maintain, .detail = "Writes config.local.toml if it is missing, creates state/, and stops.\nDoes not check keys or tools; `clanker setup` is the guided first run." },
     .{ .command = .gate, .usage = "gate", .blurb = "run the build/test/tools/fmt/lint gates", .group = .maintain },
-    .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model }, .detail = "--tasks runs only the agent-driven evals, skipping the selfhost build gates.\n--provider/--model run the eval agents on a specific backend (cmdEval already resolves them; the improve loop's eval_provider rides this)." },
+    .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model }, .detail = "--tasks             run only agent-driven evals; skip self-host build gates\n--provider <name>   run agent-driven evals with this provider\n--model <name>      run agent-driven evals with this model" },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain, .detail = "Ids look like imp-... and live in state/improvements.jsonl (the same list the\nimprove loop records). A missing id is refused; nothing is written." },
     .{ .command = .autolearn, .usage = "autolearn [reset]", .blurb = "fold recent runs into the ROADMAP's Autolearn section", .group = .maintain, .detail = "Aggregates the last 7 days of state/autolearn.jsonl into actionable items.\n\nreset    archive the event log to state/autolearn.old.jsonl (overwriting any\n         previous archive) and start observations from a clean slate. Use it\n         after addressing the reported items, so they stop resurfacing." },
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
@@ -11713,6 +11718,29 @@ test "top-level help stays within 80 columns" {
             return error.TestUnexpectedResult;
         }
     }
+}
+
+test "built-in command help stays within 80 columns" {
+    var buf: [16384]u8 = undefined;
+    for (specs) |spec| {
+        const help = renderCommandHelp(&buf, spec.command);
+        var lines = std.mem.splitScalar(u8, help, '\n');
+        while (lines.next()) |line| {
+            if (line.len > 80) {
+                std.debug.print("{s} help line is {d} columns: {s}\n", .{ @tagName(spec.command), line.len, line });
+                return error.TestUnexpectedResult;
+            }
+        }
+    }
+}
+
+test "eval help uses operator-facing names" {
+    var buf: [8192]u8 = undefined;
+    const help = renderCommandHelp(&buf, .eval);
+    try std.testing.expect(std.mem.find(u8, help, "--provider <name>") != null);
+    try std.testing.expect(std.mem.find(u8, help, "--model <name>") != null);
+    try std.testing.expect(std.mem.find(u8, help, "cmdEval") == null);
+    try std.testing.expect(std.mem.find(u8, help, "eval_provider") == null);
 }
 
 test "--model provider/model picks both, and leaves a slashed model id alone" {
