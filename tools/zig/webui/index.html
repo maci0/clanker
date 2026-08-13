@@ -424,6 +424,8 @@ lamps carry further). The seven named palettes ride the same tokens.
         </div>
         <!-- Message log -->
         <div class="chat-log" id="chat-log" role="log" aria-label="Room messages" aria-live="polite" tabindex="0"></div>
+        <!-- Typing indicator -->
+        <div class="slack-typing-indicator" id="chat-typing" aria-live="polite"></div>
         <!-- Composer -->
         <form class="chat-composer" id="chat-form">
           <div class="slack-composer-row">
@@ -446,10 +448,10 @@ lamps carry further). The seven named palettes ride the same tokens.
       <form method="dialog" class="slack-dialog-form">
         <h3>Create a channel</h3>
         <label for="chat-new-room-name">Channel name</label>
-        <input type="text" id="chat-new-room-name" placeholder="e.g. project-alpha" pattern="[a-zA-Z0-9_-]+" maxlength="64" required>
+        <input type="text" id="chat-new-room-name" placeholder="e.g. project-alpha" pattern="[a-zA-Z0-9_\-]+" maxlength="64" required>
         <div class="slack-dialog-actions">
           <button type="button" class="secondary" id="chat-create-cancel">Cancel</button>
-          <button type="submit" id="chat-create-confirm">Create</button>
+          <button type="submit" id="chat-create-confirm" value="ok">Create</button>
         </div>
       </form>
     </dialog>

@@ -100,6 +100,28 @@ var el = {
   chatSend: document.getElementById("chat-send"),
   chatRefresh: document.getElementById("chat-refresh"),
   chatStatus: document.getElementById("chat-status"),
+  chatSidebar: document.getElementById("chat-sidebar"),
+  chatSidebarToggle: document.getElementById("chat-sidebar-toggle"),
+  chatRoomFilter: document.getElementById("chat-room-filter"),
+  chatRoomsItems: document.getElementById("chat-rooms-items"),
+  chatDmsItems: document.getElementById("chat-dms-items"),
+  chatChannelTitle: document.getElementById("chat-channel-title"),
+  chatChannelTopic: document.getElementById("chat-channel-topic"),
+  chatCreateRoomBtn: document.getElementById("chat-create-room"),
+  chatCreateDialog: document.getElementById("chat-create-dialog"),
+  chatNewRoomName: document.getElementById("chat-new-room-name"),
+  chatCreateCancel: document.getElementById("chat-create-cancel"),
+  chatSearchToggle: document.getElementById("chat-search-toggle"),
+  chatSearchBar: document.getElementById("chat-search-bar"),
+  chatSearchInput: document.getElementById("chat-search-input"),
+  chatSearchResults: document.getElementById("chat-search-results"),
+  chatSearchClose: document.getElementById("chat-search-close"),
+  chatPinToggle: document.getElementById("chat-pin-toggle"),
+  chatPinsPanel: document.getElementById("chat-pins-panel"),
+  chatPinsList: document.getElementById("chat-pins-list"),
+  chatPinsClose: document.getElementById("chat-pins-close"),
+  chatEmojiBtn: document.getElementById("chat-emoji-btn"),
+  chatEmojiPicker: document.getElementById("chat-emoji-picker"),
   goals: document.getElementById("goals"),
   goalsRefresh: document.getElementById("goals-refresh"),
   goalForm: document.getElementById("goal-form"),
@@ -2835,6 +2857,77 @@ var chatFailing = false;
    because the caller polls it — a derivation that silently changed the
    selection would leave the log showing one room and the composer sending to
    another. */
+/* ── Unread tracking ──
+   Each room's "last read" timestamp is persisted in localStorage. Messages
+   with ts > lastRead are unread. Opening a room marks it as read. */
+var _chatReadTimestamps = (function(){
+  try { return JSON.parse(localStorage.getItem("clanker.chatRead") || "{}"); } catch(_){ return {}; }
+})();
+function _markRoomRead(room) {
+  _chatReadTimestamps[room] = Math.floor(Date.now() / 1000);
+  try { localStorage.setItem("clanker.chatRead", JSON.stringify(_chatReadTimestamps)); } catch(_){}
+}
+function _roomHasUnread(r) {
+  var lastRead = _chatReadTimestamps[r.room] || 0;
+  return r.last_ts && r.last_ts > lastRead;
+}
+/* The sidebar (channel list) is a second view over the same room data the
+   hidden <select> already holds — built here rather than replacing the
+   select, so every existing chat_* call site that reads el.chatRoom.value
+   keeps working unchanged. Rows are real buttons (not <option>s) so they can
+   carry a Slack-style "#"/"@" prefix and unread/presence text a <select>
+   can't style. */
+function renderChatSidebarList(container, list, icon) {
+  if (!container) return;
+  container.textContent = "";
+  list.forEach(function (r) {
+    var row = document.createElement("button");
+    row.type = "button";
+    row.className = "slack-room-item";
+    row.dataset.room = r.room;
+    var iconEl = document.createElement("span");
+    iconEl.className = "slack-room-icon";
+    iconEl.setAttribute("aria-hidden", "true");
+    var isRoomDm = r.room.indexOf("dm:") === 0;
+    var peerUp = knownPeers.some(function (p) { return p.name === r.room || p.name === dmPartner(r.room); });
+    if (isRoomDm) {
+      var dot = document.createElement("span");
+      dot.className = "slack-presence-dot" + (peerUp ? " is-online" : "");
+      dot.title = peerUp ? "Online" : "Offline";
+      iconEl.appendChild(dot);
+    } else {
+      iconEl.textContent = icon;
+    }
+    row.appendChild(iconEl);
+    var name = document.createElement("span");
+    name.className = "slack-room-name";
+    name.textContent = chatRoomLabel(r).replace(/^[#@]/, "");
+    row.appendChild(name);
+    /* Unread indicator: bold name + dot when room has unread messages */
+    var hasUnread = _roomHasUnread(r) && el.chatRoom.value !== r.room;
+    if (hasUnread) {
+      row.classList.add("has-unread");
+      var unreadDot = document.createElement("span");
+      unreadDot.className = "slack-room-item-count";
+      unreadDot.textContent = "•";
+      unreadDot.title = "New messages";
+      row.appendChild(unreadDot);
+    } else if (r.messages) {
+      var badge = document.createElement("span");
+      badge.className = "slack-room-badge";
+      badge.textContent = String(r.messages);
+      row.appendChild(badge);
+    }
+    row.addEventListener("click", function () {
+      if (el.chatRoom.value === r.room) return;
+      el.chatRoom.value = r.room;
+      _markRoomRead(r.room);
+      openChatRoom(r.room);
+    });
+    container.appendChild(row);
+  });
+}
+
 function renderChatRooms(rooms) {
   var previous = el.chatRoom.value;
 
@@ -2868,6 +2961,8 @@ function renderChatRooms(rooms) {
         return T.option({ value: r.room }, label);
       }));
     }));
+  renderChatSidebarList(el.chatRoomsItems, shared, "#");
+  renderChatSidebarList(el.chatDmsItems, dms, "@");
 
   var options = el.chatRoom.querySelectorAll("option");
   var empty = options.length === 0;
@@ -2903,8 +2998,11 @@ function loadChatRooms() {
     });
 }
 
+var _chatUnreadCutoff = 0;   /* ts before which msgs are "read" (for divider) */
 function openChatRoom(room) {
   stopChatPoll();
+  _chatUnreadCutoff = _chatReadTimestamps[room] || 0;
+  _markRoomRead(room);
   el.chatLog.textContent = "";
   chatLastTs = 0;
   chatSeen = {};
@@ -2915,26 +3013,31 @@ function openChatRoom(room) {
   el.chatText.disabled = false;
   el.chatSend.disabled = false;
   el.chatText.placeholder = isDm(room) ? "Message " + dmPartner(room) + "…" : "Message " + room + "…";
-  // Topic bar
-  var existingTopic = document.querySelector(".chat-topic");
-  if(existingTopic) existingTopic.remove();
-  if(roomTopics[room]){
-    var topicEl = document.createElement("div"); topicEl.className="chat-topic";
-    topicEl.textContent = "📌 " + roomTopics[room];
-    topicEl.title = "Channel topic — click to change";
-    topicEl.style.cursor = "pointer";
-    topicEl.addEventListener("click", function(){
-      var newTopic = prompt("Set channel topic:", roomTopics[room]||"");
-      if(newTopic !== null){
-        fetch("/api/chat/topic", { method:"POST", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({room:room,topic:newTopic})
-        }).then(function(r){ return r.json(); }).then(function(d){
-          if(d.ok){ roomTopics[room]=newTopic; topicEl.textContent="📌 "+newTopic; }
-        }).catch(function(){});
-      }
-    });
-    el.chatLog.parentNode.insertBefore(topicEl, el.chatLog);
+  // Channel header: title + topic (click to set/change). DMs get no topic —
+  // it is a per-channel concept, and a DM has nothing to name.
+  if (el.chatChannelTitle) el.chatChannelTitle.textContent = isDm(room) ? "@" + dmPartner(room) : "#" + room;
+  if (el.chatChannelTopic) {
+    el.chatChannelTopic.textContent = roomTopics[room] || "";
+    el.chatChannelTopic.onclick = isDm(room) ? null : function () {
+      var newTopic = prompt("Set channel topic:", roomTopics[room] || "");
+      if (newTopic === null) return;
+      fetch("/api/chat/topic", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room: room, topic: newTopic })
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        if (d.ok) { roomTopics[room] = newTopic; el.chatChannelTopic.textContent = newTopic; }
+      }).catch(function () {});
+    };
   }
+  // Active-room highlight in the sidebar.
+  [el.chatRoomsItems, el.chatDmsItems].forEach(function (list) {
+    if (!list) return;
+    Array.prototype.forEach.call(list.querySelectorAll(".slack-room-item"), function (row) {
+      row.classList.toggle("is-active", row.dataset.room === room);
+    });
+  });
+  // A room switch invalidates whatever the pins/search panels were showing.
+  if (el.chatPinsPanel && !el.chatPinsPanel.hidden) loadChatPins(room);
+  if (el.chatSearchBar && !el.chatSearchBar.hidden) el.chatSearchResults.textContent = "";
   // Opening a room fills the log with its history, and a live region would
   // read every one of those out as if it had just arrived. Announcements
   // start once the backlog is in place.
@@ -2986,14 +3089,28 @@ function pollChat(room) {
       // Only sender grouping resets across batches; the day key must persist
       // or every poll batch would open with a repeat of the same date banner.
       if (fresh.length) { _lastChatFrom = null; _lastChatTs = 0; }
+      var _unreadDividerPlaced = false;
       fresh.forEach(function (m) {
         rememberChatId(m.id);
         if (m.ts > chatLastTs) chatLastTs = m.ts;
         lastSeenAt[m.from] = m.ts;
+        /* Slack-style "New messages" divider: shown once, before the first
+           message whose ts exceeds the cutoff captured when the room opened. */
+        if (!_unreadDividerPlaced && _chatUnreadCutoff > 0 && m.ts > _chatUnreadCutoff) {
+          _unreadDividerPlaced = true;
+          var divider = document.createElement("div");
+          divider.className = "chat-unread-divider";
+          divider.setAttribute("role", "separator");
+          divider.setAttribute("aria-label", "New messages");
+          divider.innerHTML = "<span>New messages</span>";
+          el.chatLog.appendChild(divider);
+        }
         var node = buildChatMessage(m);
         if (node._daySep) el.chatLog.appendChild(node._daySep);
         el.chatLog.appendChild(node);
       });
+      /* Consumed — subsequent poll batches should not re-insert the divider */
+      _chatUnreadCutoff = 0;
       // presence dot freshness handled via CSS only — timestamps already in lastSeenAt for future use
       if (fresh.length && following) el.chatLog.scrollTop = el.chatLog.scrollHeight;
     })
@@ -3023,6 +3140,141 @@ function rememberChatId(id) {
 
 
 
+/* ── Slack-style message formatting ──────────────────────────────────
+   Converts Slack-style markup to DOM nodes:
+   ```code blocks```, `inline code`, *bold*, _italic_, ~strike~,
+   > blockquotes, :emoji_shortcodes:, and auto-links.
+   All output is XSS-safe (no innerHTML, only textContent + classList). */
+var _emojiShortcodes = {
+  ":thumbsup:":"👍",":thumbsdown:":"👎",":heart:":"❤️",":fire:":"🔥",
+  ":eyes:":"👀",":rocket:":"🚀",":check:":"✅",":white_check_mark:":"✅",
+  ":x:":"❌",":warning:":"⚠️",":bug:":"🐛",":tada:":"🎉",":sparkles:":"✨",
+  ":star:":"⭐",":wave:":"👋",":thinking:":"🤔",":laugh:":"😂",":cry:":"😢",
+  ":angry:":"😡",":sweat:":"😅",":100:":"💯",":clap:":"👏",":pray:":"🙏",
+  ":muscle:":"💪",":bulb:":"💡",":wrench:":"🔧",":hammer:":"🔨",
+  ":gear:":"⚙️",":lock:":"🔒",":key:":"🔑",":link:":"🔗",":zap:":"⚡",
+  ":hourglass:":"⏳",":calendar:":"📅",":memo:":"📝",":package:":"📦",
+  ":bell:":"🔔",":mute:":"🔇",":speaker:":"🔊",":mic:":"🎤",
+  ":camera:":"📷",":film:":"🎬",":art:":"🎨",":trophy:":"🏆",
+  ":medal:":"🏅",":crown:":"👑",":gem:":"💎",":money:":"💰",
+  ":chart:":"📈",":chart_down:":"📉",":inbox:":"📥",":outbox:":"📤",
+  ":mailbox:":"📬",":paperclip:":"📎",":scissors:":"✂️",":pin:":"📌",
+  ":pushpin:":"📌",":bookmark:":"🔖",":label:":"🏷️",":flag:":"🚩",
+  ":construction:":"🚧",":recycle:":"♻️",":heavy_plus_sign:":"+",
+  ":heavy_minus_sign:":"−",":question:":"❓",":exclamation:":"❗",
+  ":ok:":"🆗",":new:":"🆕",":up:":"🆙",":cool:":"🆒",":free:":"🆓",
+  ":1:":"1️⃣",":2:":"2️⃣",":3:":"3️⃣",":4:":"4️⃣",":5:":"5️⃣",
+  ":arrow_right:":"➡️",":arrow_left:":"⬅️",":arrow_up:":"⬆️",":arrow_down:":"⬇️",
+  ":smile:":"😊",":grin:":"😀",":wink:":"😉",":sunglasses:":"😎",
+  ":nerd:":"🤓",":robot:":"🤖",":alien:":"👽",":ghost:":"👻",
+  ":skull:":"💀",":poop:":"💩",":cat:":"🐱",":dog:":"🐶",
+  "+1":"👍","-1":"👎",":ship:":"🚢",":airplane:":"✈️",":car:":"🚗"
+};
+function formatChatText(raw) {
+  var frag = document.createDocumentFragment();
+  if (!raw) return frag;
+
+  /* --- Code blocks: ```...``` (must come first, greedy) --- */
+  var codeBlockRe = /```([\s\S]*?)```/g;
+  var parts = [];
+  var lastIdx = 0;
+  var cbMatch;
+  while ((cbMatch = codeBlockRe.exec(raw)) !== null) {
+    if (cbMatch.index > lastIdx) parts.push({ type: "text", val: raw.slice(lastIdx, cbMatch.index) });
+    parts.push({ type: "codeblock", val: cbMatch[1] });
+    lastIdx = codeBlockRe.lastIndex;
+  }
+  if (lastIdx < raw.length) parts.push({ type: "text", val: raw.slice(lastIdx) });
+
+  parts.forEach(function(part) {
+    if (part.type === "codeblock") {
+      var pre = document.createElement("span");
+      pre.className = "fmt-codeblock";
+      pre.textContent = part.val;
+      frag.appendChild(pre);
+      return;
+    }
+    /* --- Blockquotes: lines starting with > --- */
+    var lines = part.val.split("\n");
+    var i = 0;
+    while (i < lines.length) {
+      if (/^>\s?/.test(lines[i])) {
+        var bq = document.createElement("span");
+        bq.className = "fmt-blockquote";
+        var bqLines = [];
+        while (i < lines.length && /^>\s?/.test(lines[i])) {
+          bqLines.push(lines[i].replace(/^>\s?/, ""));
+          i++;
+        }
+        bq.appendChild(_formatInline(bqLines.join("\n")));
+        frag.appendChild(bq);
+      } else {
+        if (i > 0) frag.appendChild(document.createTextNode("\n"));
+        frag.appendChild(_formatInline(lines[i]));
+        i++;
+      }
+    }
+  });
+  return frag;
+}
+function _formatInline(line) {
+  var frag = document.createDocumentFragment();
+  /* Inline formatting: `code`, *bold*, _italic_, ~strike~, :emoji:, URLs */
+  var re = /(`[^`]+`)|(\*[^\s*][^*]*[^\s*]\*|\*[^\s*]\*)|(_[^\s_][^_]*[^\s_]_|_[^\s_]_)|(~[^\s~][^~]*[^\s~]~|~[^\s~]~)|(:[a-z0-9_+-]+:)|(https?:\/\/[^\s<]+)/g;
+  var last = 0;
+  var match;
+  while ((match = re.exec(line)) !== null) {
+    if (match.index > last) {
+      frag.appendChild(document.createTextNode(line.slice(last, match.index)));
+    }
+    if (match[1]) {
+      /* inline code */
+      var code = document.createElement("span");
+      code.className = "fmt-code";
+      code.textContent = match[1].slice(1, -1);
+      frag.appendChild(code);
+    } else if (match[2]) {
+      /* bold */
+      var b = document.createElement("span");
+      b.className = "fmt-bold";
+      b.textContent = match[2].slice(1, -1);
+      frag.appendChild(b);
+    } else if (match[3]) {
+      /* italic */
+      var em = document.createElement("span");
+      em.className = "fmt-italic";
+      em.textContent = match[3].slice(1, -1);
+      frag.appendChild(em);
+    } else if (match[4]) {
+      /* strikethrough */
+      var s = document.createElement("span");
+      s.className = "fmt-strike";
+      s.textContent = match[4].slice(1, -1);
+      frag.appendChild(s);
+    } else if (match[5]) {
+      /* emoji shortcode */
+      var emoji = _emojiShortcodes[match[5]];
+      if (emoji) {
+        frag.appendChild(document.createTextNode(emoji));
+      } else {
+        frag.appendChild(document.createTextNode(match[5]));
+      }
+    } else if (match[6]) {
+      /* URL auto-link */
+      var a = document.createElement("a");
+      a.href = match[6]; a.target = "_blank"; a.rel = "noopener noreferrer";
+      a.textContent = match[6];
+      a.style.color = "var(--accent)";
+      frag.appendChild(a);
+    }
+    last = re.lastIndex;
+  }
+  if (last < line.length) {
+    frag.appendChild(document.createTextNode(line.slice(last)));
+  }
+  return frag;
+}
+
 var _lastChatFrom = null;
 var _lastChatTs = 0;
 function _chatDayKey(ts){ try{ var d=new Date(ts*1000); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }catch(_){ return ""; } }
@@ -3032,6 +3284,7 @@ function buildChatMessage(m) {
   var wrap = document.createElement("div");
   wrap.className = "chat-msg" + (m.from === instanceName ? " mine" : "");
   if (grouped) wrap.setAttribute("data-grouped", "true");
+  if (m.id) wrap.dataset.msgId = m.id;
 
   // day separator (Slack-style)
   var dayKey = _chatDayKey(m.ts);
@@ -3098,7 +3351,7 @@ function buildChatMessage(m) {
     // but we add a subtle link card when the message is exactly a URL)
     var trimmed = m.text.trim();
     var isBareUrl = /^https?:\/\/\S+$/.test(trimmed);
-    text.textContent = m.text;
+    text.appendChild(formatChatText(m.text));
     if (isBareUrl) {
       var linkCard = document.createElement("a");
       linkCard.href = trimmed;
@@ -3313,11 +3566,214 @@ el.chatRefresh.addEventListener("click", function () {
   loadChatRooms().finally(function () { el.chatRefresh.disabled = false; });
 });
 
+// ---- Slack-layout chrome: sidebar collapse, channel filter, pins, search,
+//      emoji picker, create-channel. All thin wrappers over state and
+//      endpoints the message-level code above already uses. ----
+
+if (el.chatSidebarToggle) el.chatSidebarToggle.addEventListener("click", function () {
+  el.chatSidebar.classList.toggle("is-collapsed");
+});
+
+// Group headers (Channels / Direct Messages) fold their own items away —
+// .slack-room-group.is-collapsed hides .slack-room-items via CSS.
+Array.prototype.forEach.call(document.querySelectorAll(".slack-room-group-head"), function (head) {
+  head.addEventListener("click", function () {
+    var group = head.closest(".slack-room-group");
+    if (group) group.classList.toggle("is-collapsed");
+  });
+});
+
+if (el.chatRoomFilter) el.chatRoomFilter.addEventListener("input", function () {
+  var q = el.chatRoomFilter.value.trim().toLowerCase();
+  [el.chatRoomsItems, el.chatDmsItems].forEach(function (list) {
+    if (!list) return;
+    Array.prototype.forEach.call(list.querySelectorAll(".slack-room-item"), function (row) {
+      row.hidden = q.length > 0 && row.textContent.toLowerCase().indexOf(q) === -1;
+    });
+  });
+});
+
+function closeChatPins() { if (el.chatPinsPanel) el.chatPinsPanel.hidden = true; }
+function loadChatPins(room) {
+  if (!el.chatPinsList) return;
+  el.chatPinsList.textContent = "Loading…";
+  fetch("/api/chat/pins?room=" + encodeURIComponent(room))
+    .then(readJson)
+    .then(function (data) {
+      var ids = data.pins || [];
+      el.chatPinsList.textContent = "";
+      if (!ids.length) {
+        var empty = document.createElement("p");
+        empty.style.color = "var(--fg-muted)";
+        empty.textContent = "No pinned messages in this channel.";
+        el.chatPinsList.appendChild(empty);
+        return;
+      }
+      // Pins are ids; resolve against the currently loaded log first (cheap,
+      // covers the common case), falling back to a history fetch for ids
+      // that scrolled out of what is currently rendered.
+      var have = {};
+      ids.forEach(function (id) {
+        var node = el.chatLog.querySelector('[data-msg-id="' + CSS.escape(id) + '"]');
+        if (node) have[id] = node;
+      });
+      var missing = ids.filter(function (id) { return !have[id]; });
+      (missing.length ? fetch("/api/chat/messages?room=" + encodeURIComponent(room) + "&after=0").then(readJson) : Promise.resolve({ messages: [] }))
+        .then(function (hist) {
+          var byId = {};
+          (hist.messages || []).forEach(function (m) { byId[m.id] = m; });
+          ids.forEach(function (id) {
+            var node = have[id];
+            var m = byId[id];
+            var sender = node ? node.querySelector(".chat-from").textContent : m ? m.from : "";
+            var text = node ? node.querySelector(".chat-text").textContent : m ? m.text : id;
+            var row = document.createElement("div");
+            row.className = "slack-pin-item";
+            row.setAttribute("role", "button");
+            row.tabIndex = 0;
+            var senderEl = document.createElement("span");
+            senderEl.className = "slack-pin-sender";
+            senderEl.textContent = sender;
+            row.appendChild(senderEl);
+            var textEl = document.createElement("span");
+            textEl.className = "slack-pin-text";
+            textEl.textContent = text;
+            row.appendChild(textEl);
+            function jump() {
+              closeChatPins();
+              var target = el.chatLog.querySelector('[data-msg-id="' + CSS.escape(id) + '"]');
+              if (target) { target.scrollIntoView({ block: "center" }); target.classList.add("chat-highlight"); setTimeout(function () { target.classList.remove("chat-highlight"); }, 1500); }
+            }
+            row.addEventListener("click", jump);
+            row.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jump(); } });
+            el.chatPinsList.appendChild(row);
+          });
+        });
+    })
+    .catch(function () { el.chatPinsList.textContent = "Could not load pins."; });
+}
+if (el.chatPinToggle) el.chatPinToggle.addEventListener("click", function () {
+  var open = el.chatPinsPanel.hidden;
+  el.chatPinsPanel.hidden = !open;
+  if (open && el.chatRoom.value) loadChatPins(el.chatRoom.value);
+});
+if (el.chatPinsClose) el.chatPinsClose.addEventListener("click", closeChatPins);
+
+function closeChatSearch() { if (el.chatSearchBar) { el.chatSearchBar.hidden = true; el.chatSearchResults.textContent = ""; el.chatSearchInput.value = ""; } }
+if (el.chatSearchToggle) el.chatSearchToggle.addEventListener("click", function () {
+  var open = el.chatSearchBar.hidden;
+  el.chatSearchBar.hidden = !open;
+  if (open) el.chatSearchInput.focus();
+  else closeChatSearch();
+});
+if (el.chatSearchClose) el.chatSearchClose.addEventListener("click", closeChatSearch);
+var chatSearchTimer = null;
+if (el.chatSearchInput) el.chatSearchInput.addEventListener("input", function () {
+  if (chatSearchTimer) window.clearTimeout(chatSearchTimer);
+  var q = el.chatSearchInput.value.trim();
+  var room = el.chatRoom.value;
+  if (!q || !room) { el.chatSearchResults.textContent = ""; return; }
+  chatSearchTimer = window.setTimeout(function () {
+    fetch("/api/chat/messages?room=" + encodeURIComponent(room) + "&after=0")
+      .then(readJson)
+      .then(function (data) {
+        var ql = q.toLowerCase();
+        var hits = (data.messages || []).filter(function (m) { return !m.deleted && m.text && m.text.toLowerCase().indexOf(ql) !== -1; }).slice(0, 30);
+        el.chatSearchResults.textContent = "";
+        if (!hits.length) {
+          var empty = document.createElement("p");
+          empty.textContent = "No matches.";
+          el.chatSearchResults.appendChild(empty);
+          return;
+        }
+        hits.forEach(function (m) {
+          var row = document.createElement("button");
+          row.type = "button";
+          row.className = "slack-search-result";
+          row.textContent = m.from + ": " + m.text;
+          row.addEventListener("click", function () {
+            closeChatSearch();
+            var target = el.chatLog.querySelector('[data-msg-id="' + CSS.escape(m.id) + '"]');
+            if (target) { target.scrollIntoView({ block: "center" }); target.classList.add("chat-highlight"); setTimeout(function () { target.classList.remove("chat-highlight"); }, 1500); }
+          });
+          el.chatSearchResults.appendChild(row);
+        });
+      })
+      .catch(function () { el.chatSearchResults.textContent = "Search failed."; });
+  }, 200);
+});
+
+var CHAT_EMOJI_PICKER_SET = ["👍","❤️","🎉","🔥","👀","✅","😀","😂","😅","😊","🙌","🙏","👏","💯","🚀","⚠️","❌","🤔","😢","👋","🎯","💡","✨","🐛"];
+if (el.chatEmojiBtn && el.chatEmojiPicker) {
+  el.chatEmojiBtn.addEventListener("click", function () {
+    if (!el.chatEmojiPicker.hidden) { el.chatEmojiPicker.hidden = true; return; }
+    el.chatEmojiPicker.textContent = "";
+    CHAT_EMOJI_PICKER_SET.forEach(function (emoji) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "slack-emoji-option";
+      b.textContent = emoji;
+      b.addEventListener("click", function () {
+        var start = el.chatText.selectionStart || el.chatText.value.length;
+        var end = el.chatText.selectionEnd || el.chatText.value.length;
+        el.chatText.value = el.chatText.value.slice(0, start) + emoji + el.chatText.value.slice(end);
+        el.chatText.focus();
+        el.chatText.selectionStart = el.chatText.selectionEnd = start + emoji.length;
+        el.chatEmojiPicker.hidden = true;
+      });
+      el.chatEmojiPicker.appendChild(b);
+    });
+    el.chatEmojiPicker.hidden = false;
+  });
+  document.addEventListener("click", function (e) {
+    if (el.chatEmojiPicker.hidden) return;
+    if (e.target === el.chatEmojiBtn || el.chatEmojiPicker.contains(e.target)) return;
+    el.chatEmojiPicker.hidden = true;
+  });
+}
+
+if (el.chatCreateRoomBtn && el.chatCreateDialog) {
+  el.chatCreateRoomBtn.addEventListener("click", function () {
+    el.chatNewRoomName.value = "";
+    el.chatCreateDialog.showModal();
+    el.chatNewRoomName.focus();
+  });
+  if (el.chatCreateCancel) el.chatCreateCancel.addEventListener("click", function () { el.chatCreateDialog.close(); });
+  el.chatCreateDialog.addEventListener("close", function () {
+    if (el.chatCreateDialog.returnValue !== "ok") return;
+    var name = el.chatNewRoomName.value.trim();
+    if (!name) return;
+    fetch("/api/chat/subscribe", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ room: name, on: true })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) { el.chatStatus.textContent = "Could not create channel: " + (d.error || "unknown error"); return; }
+      loadChatRooms().then(function () {
+        el.chatRoom.value = name;
+        openChatRoom(name);
+      });
+    }).catch(function (err) { el.chatStatus.textContent = "Could not create channel: " + err.message; });
+  });
+}
+
 var typingAt = 0, typingTimer = null;
 function setTyping(on){
   var ind = document.getElementById("chat-typing");
-  if(!ind){ ind=document.createElement("span"); ind.id="chat-typing"; ind.className="meta"; ind.style.marginLeft="0.6rem"; var picker=document.querySelector(".run-picker"); if(picker) picker.appendChild(ind); }
-  ind.textContent = on ? "typing…" : "";
+  if(!ind) return;
+  if (on) {
+    ind.innerHTML = "";
+    var name = (window._clankerInstance || "you");
+    ind.appendChild(document.createTextNode(name + " is typing"));
+    var dots = document.createElement("span");
+    dots.className = "slack-typing-dots";
+    for (var i = 0; i < 3; i++) {
+      var dot = document.createElement("span");
+      dot.className = "slack-typing-dot";
+      dots.appendChild(dot);
+    }
+    ind.appendChild(dots);
+  } else {
+    ind.textContent = "";
+  }
   ind.hidden = !on;
 }
 el.chatText.addEventListener("input", function(){
@@ -3325,6 +3781,64 @@ el.chatText.addEventListener("input", function(){
   setTyping(true);
   if(typingTimer) clearTimeout(typingTimer);
   typingTimer = setTimeout(function(){ if(Date.now()-typingAt >= 1800) setTyping(false); }, 2000);
+});
+
+/* ── Ctrl+K / Cmd+K: Quick channel switcher (Slack-style) ── */
+document.addEventListener("keydown", function(e){
+  if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+    /* Only intercept when the chat view is visible */
+    var chatView = document.getElementById("view-rooms");
+    if (!chatView || chatView.hidden) return;
+    e.preventDefault();
+    var existing = document.getElementById("slack-quick-switch");
+    if (existing) { existing.remove(); return; }
+    var overlay = document.createElement("div");
+    overlay.id = "slack-quick-switch";
+    overlay.style.cssText = "position:fixed;inset:0;z-index:100;display:flex;align-items:flex-start;justify-content:center;padding-top:20vh;background:rgba(0,0,0,.5);";
+    var box = document.createElement("div");
+    box.style.cssText = "background:var(--surface);border:1px solid var(--rule);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.3);width:480px;max-width:90vw;overflow:hidden;";
+    var input = document.createElement("input");
+    input.type = "text"; input.placeholder = "Switch to channel or DM…";
+    input.style.cssText = "width:100%;padding:0.75rem 1rem;border:none;background:transparent;color:var(--fg);font-size:15px;outline:none;";
+    var results = document.createElement("div");
+    results.style.cssText = "max-height:300px;overflow-y:auto;";
+    box.appendChild(input);
+    box.appendChild(results);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    input.focus();
+
+    function renderResults(filter) {
+      results.textContent = "";
+      var opts = Array.from(el.chatRoom.options);
+      var filtered = opts.filter(function(o){ return !filter || o.value.toLowerCase().indexOf(filter.toLowerCase()) !== -1; });
+      filtered.forEach(function(o){
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.style.cssText = "display:block;width:100%;text-align:left;padding:0.5rem 1rem;border:none;background:none;color:var(--fg);font-size:14px;cursor:pointer;";
+        var isDM = o.value.indexOf("dm:") === 0;
+        btn.textContent = (isDM ? "@ " : "# ") + chatRoomLabel(o.value);
+        btn.addEventListener("mouseenter", function(){ btn.style.background = "var(--surface-hover)"; });
+        btn.addEventListener("mouseleave", function(){ btn.style.background = "none"; });
+        btn.addEventListener("click", function(){
+          el.chatRoom.value = o.value;
+          openChatRoom(o.value);
+          overlay.remove();
+        });
+        results.appendChild(btn);
+      });
+    }
+    renderResults("");
+    input.addEventListener("input", function(){ renderResults(input.value); });
+    input.addEventListener("keydown", function(ev){
+      if (ev.key === "Escape") { overlay.remove(); ev.stopPropagation(); }
+      if (ev.key === "Enter") {
+        var first = results.querySelector("button");
+        if (first) first.click();
+      }
+    });
+    overlay.addEventListener("click", function(ev){ if (ev.target === overlay) overlay.remove(); });
+  }
 });
 el.chatText.addEventListener("keydown", function(e){
   if (e.key === "@" || (e.key.length === 1 && el.chatText.value.slice(-1) === "@")) {

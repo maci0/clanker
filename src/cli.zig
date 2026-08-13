@@ -4763,6 +4763,10 @@ fn handleChatRooms(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         s.write(r.last_from) catch return;
         s.objectField("last_text") catch return;
         s.write(r.last_text) catch return;
+        if (r.topic) |t| {
+            s.objectField("topic") catch return;
+            s.write(t) catch return;
+        }
         s.endObject() catch return;
     }
     s.endArray() catch return;
