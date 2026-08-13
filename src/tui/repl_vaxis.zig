@@ -415,6 +415,9 @@ const CommandAction = union(enum) {
     autoresearch,
     /// Prints usage, or runs one judged debate as a normal agent task.
     arena,
+    /// Prints usage, starts a blind comparison as an agent task, or reads a
+    /// stored one back through the tool directly (see `runCompare`).
+    compare,
     /// Lists themes (no args) or switches the active color theme for this
     /// session (with a name).
     theme,
@@ -451,6 +454,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/goal", .takes_args = true, .arg_hint = "<intent>", .help = "design and persist a structured goal", .action = .goal },
     .{ .name = "/autoresearch", .takes_args = true, .arg_hint = "...", .help = "measurement loop (see /autoresearch --help)", .action = .autoresearch },
     .{ .name = "/arena", .takes_args = true, .arg_hint = "...", .help = "judged debate between two positions (see /arena --help)", .action = .arena },
+    .{ .name = "/compare", .takes_args = true, .arg_hint = "...", .help = "one prompt to several models at once, answers unlabeled (see /compare --help)", .action = .compare },
     .{ .name = "/theme", .takes_args = true, .arg_hint = "[name]", .help = "list or switch color theme (mocha, latte, tokyonight, ...)", .action = .theme },
     .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
 };
@@ -488,6 +492,68 @@ fn parseCommand(task: []const u8) ?ParsedCommand {
         }
     }
     return null;
+}
+
+// ---------------------------------------------------------------------
+// `/compare`, which is two commands wearing one name.
+//
+// Starting a comparison is N model calls that want to stream, so it goes
+// through an agent turn the way `/arena` does. Reading one back is a
+// read of state/compare/<id>.json and nothing else: routing that through
+// the model would cost a completion, take seconds, and put a paraphraser
+// between the reader and a document whose whole point is that its
+// wording was not chosen by any of the models in it. So the read paths
+// call the tool directly and print what it returns.
+// ---------------------------------------------------------------------
+
+/// Which half of `/compare` a line asked for.
+const CompareCommand = union(enum) {
+    /// No arguments, or an explicit --help.
+    usage,
+    /// `--list`: every stored comparison.
+    list,
+    /// `--show <id>`, optionally with `--pick <letter>` to record a pick.
+    show: struct { id: []const u8, pick: []const u8 = "" },
+    /// Anything else: a prompt (plus flags) to put to several models.
+    run,
+};
+
+/// Sorts a `/compare` line into the four cases above. Pure, so the routing
+/// is testable without a terminal, a config or a provider. Slices borrow
+/// from `argv`. A `--show` or `--pick` with nothing after it falls back to
+/// usage rather than guessing: `--show` alone would otherwise become a run
+/// whose prompt is the word "--show", which is a paid model call for a typo.
+fn parseCompareCommand(argv: []const []const u8) CompareCommand {
+    if (argv.len == 0) return .usage;
+    if (std.mem.eql(u8, argv[0], "--help") or std.mem.eql(u8, argv[0], "-h")) return .usage;
+
+    var id: []const u8 = "";
+    var pick: []const u8 = "";
+    var saw_list = false;
+    var saw_show = false;
+    var i: usize = 0;
+    while (i < argv.len) : (i += 1) {
+        if (std.mem.eql(u8, argv[i], "--list")) {
+            saw_list = true;
+        } else if (std.mem.eql(u8, argv[i], "--show")) {
+            saw_show = true;
+            if (i + 1 >= argv.len) return .usage;
+            i += 1;
+            id = argv[i];
+        } else if (std.mem.eql(u8, argv[i], "--pick")) {
+            if (i + 1 >= argv.len) return .usage;
+            i += 1;
+            pick = argv[i];
+        }
+    }
+    // --show wins over --list: it is the more specific of the two, and asking
+    // for one comparison by id while also asking for the listing is a line
+    // that cannot mean the listing.
+    if (saw_show) return .{ .show = .{ .id = id, .pick = pick } };
+    if (saw_list) return .list;
+    // `--pick` on its own has no comparison to record against.
+    if (pick.len > 0) return .usage;
+    return .run;
 }
 
 // ---------------------------------------------------------------------
@@ -781,6 +847,61 @@ test "parseCommand matches names, aliases, and arguments" {
 
     try std.testing.expect(parseCommand("hello world") == null);
     try std.testing.expect(parseCommand("/nope") == null);
+}
+
+/// Splits like the REPL does before handing the pieces to the parser, so the
+/// tests below exercise the same path a typed line takes.
+fn compareCommandFor(line: []const u8) CompareCommand {
+    var buf: [max_escape_args][]const u8 = undefined;
+    const argv = splitShellArgs(line, &buf) catch return .usage;
+    return parseCompareCommand(argv);
+}
+
+test "/compare separates starting a comparison from reading one back" {
+    // Nothing to do, and the two spellings of asking what this is.
+    try std.testing.expect(compareCommandFor("") == .usage);
+    try std.testing.expect(compareCommandFor("--help") == .usage);
+    try std.testing.expect(compareCommandFor("-h") == .usage);
+
+    // A prompt, with or without flags, is a run: several model calls, so it
+    // goes through an agent turn.
+    try std.testing.expect(compareCommandFor("\"rewrite this error\"") == .run);
+    try std.testing.expect(compareCommandFor("\"which sort?\" --with deepseek --with kimi-k3 --synthesize") == .run);
+
+    // Reading one back is a local file read and never reaches the model.
+    const shown = compareCommandFor("--show compare-123-abc");
+    try std.testing.expectEqualStrings("compare-123-abc", shown.show.id);
+    try std.testing.expectEqualStrings("", shown.show.pick);
+
+    const picked = compareCommandFor("--show compare-123-abc --pick B");
+    try std.testing.expectEqualStrings("compare-123-abc", picked.show.id);
+    try std.testing.expectEqualStrings("B", picked.show.pick);
+    // Order is not significant: the flags are scanned, not positional.
+    const reordered = compareCommandFor("--pick B --show compare-123-abc");
+    try std.testing.expectEqualStrings("B", reordered.show.pick);
+
+    try std.testing.expect(compareCommandFor("--list") == .list);
+    // --show names one comparison, which the listing cannot also mean.
+    try std.testing.expect(compareCommandFor("--list --show compare-1") == .show);
+
+    // A flag with nothing after it is a typo, not a prompt. Sending it on as
+    // a run would spend a model call per entrant on the word "--show".
+    try std.testing.expect(compareCommandFor("--show") == .usage);
+    try std.testing.expect(compareCommandFor("--show compare-1 --pick") == .usage);
+    try std.testing.expect(compareCommandFor("--pick B") == .usage);
+}
+
+test "/compare is in the registry and routes to its own action" {
+    const bare = parseCommand("/compare") orelse return error.TestExpectedCommand;
+    try std.testing.expect(bare.spec.action == .compare);
+    try std.testing.expectEqualStrings("", bare.args);
+
+    const with_args = parseCommand("/compare \"which sort?\" --with deepseek") orelse return error.TestExpectedCommand;
+    try std.testing.expect(with_args.spec.action == .compare);
+    try std.testing.expectEqualStrings("\"which sort?\" --with deepseek", with_args.args);
+
+    // Prefix, not substring: a longer name of its own is not /compare.
+    try std.testing.expect(parseCommand("/compared") == null);
 }
 
 test "parseShellEscape claims a leading bang and nothing else" {
@@ -1348,6 +1469,7 @@ const Model = struct {
                 };
                 try self.submitTask(ctx, prompt);
             },
+            .compare => try self.runCompare(ctx, pc.args),
             .theme => {
                 // Bare `/theme` (or a fuzzy seed) opens the live-preview
                 // picker menu; `/theme <exact-name>` still switches directly.
@@ -1389,12 +1511,99 @@ const Model = struct {
         }
     }
 
+    /// `/compare`: put one prompt to several models at once and read the
+    /// answers back with nothing saying which model wrote which.
+    ///
+    /// Starting one runs as an ordinary agent turn, for the reason `/arena`
+    /// does — several multi-second calls that would otherwise freeze the REPL
+    /// with nothing on screen. Reading one back calls the tool here and now:
+    /// it is a file read, and a completion spent paraphrasing it would be slow,
+    /// billed, and free to name the models the blind view is withholding.
+    fn runCompare(self: *Model, ctx: *vxfw.EventContext, args: []const u8) !void {
+        var argv_buf: [max_escape_args][]const u8 = undefined;
+        const argv = splitShellArgs(args, &argv_buf) catch |err| {
+            const msg = switch (err) {
+                error.UnterminatedQuote => "[compare: unbalanced quote in the arguments]",
+                error.TooManyArgs => "[compare: too many arguments]",
+            };
+            self.lines.append(self.arena, .{ .text = msg, .dim = true }) catch {};
+            return;
+        };
+
+        switch (parseCompareCommand(argv)) {
+            .usage => {
+                self.lines.append(self.arena, .{ .text = "usage: /compare \"<prompt>\" [--with <provider[@model]>]... [--judge <p>|auto|none] [--synthesize]", .dim = true }) catch {};
+                self.lines.append(self.arena, .{ .text = "  every model answers the same prompt at once; the answers come back as A, B, C", .dim = true }) catch {};
+                self.lines.append(self.arena, .{ .text = "  with nothing saying which model wrote which, so the pick is on the answer", .dim = true }) catch {};
+                self.lines.append(self.arena, .{ .text = "  --with repeats 2-8 times; with none, every configured provider enters", .dim = true }) catch {};
+                self.lines.append(self.arena, .{ .text = "  /compare --list                    past comparisons", .dim = true }) catch {};
+                self.lines.append(self.arena, .{ .text = "  /compare --show <id> [--pick <A>]  read one back, and record your pick", .dim = true }) catch {};
+                self.lines.append(self.arena, .{ .text = "  example: /compare \"rewrite this error message\" --with deepseek --with kimi-k3", .dim = true }) catch {};
+            },
+            // No fields at all is the compare tool's own listing input.
+            .list => _ = self.runToolJson("compare", "{}"),
+            .show => |s| {
+                var buf: [1024]u8 = undefined;
+                var w: std.Io.Writer = .fixed(&buf);
+                var js = std.json.Stringify{ .writer = &w, .options = .{} };
+                js.beginObject() catch return;
+                js.objectField("id") catch return;
+                js.write(s.id) catch return;
+                if (s.pick.len > 0) {
+                    js.objectField("pick") catch return;
+                    js.write(s.pick) catch return;
+                }
+                js.endObject() catch return;
+                _ = self.runToolJson("compare", buf[0..w.end]);
+            },
+            .run => {
+                const prompt = std.fmt.allocPrint(
+                    self.arena,
+                    "Run one blind model comparison with these arguments: {s}\n\n" ++
+                        "Call the `compare` tool exactly once, mapping the flags onto its input fields " ++
+                        "(each --with <provider> or --with <provider@model> becomes one entry in " ++
+                        "\"targets\" as {{\"provider\": ..., \"model\": ...}} with \"model\" left out when " ++
+                        "no @ was given, --judge -> \"judge\", --synthesize -> \"synthesize\": true, " ++
+                        "--reveal -> \"reveal\": true), with the quoted text before the first flag as " ++
+                        "\"prompt\". Then print the tool's \"text\" field verbatim as your whole answer. " ++
+                        "Do not summarize it, re-rank the answers, or add commentary, and do not say " ++
+                        "which model wrote which answer: the answers are shown unlabeled on purpose, " ++
+                        "and naming them is the one thing that undoes the comparison.",
+                    .{args},
+                ) catch {
+                    self.lines.append(self.arena, .{ .text = "[compare: out of memory]", .dim = true }) catch {};
+                    return;
+                };
+                try self.submitTask(ctx, prompt);
+            },
+        }
+        ctx.redraw = true;
+    }
+
     /// Runs one internal `cmd_*` WASM tool ({"args":"<text>"} -> {"text":"..."})
     /// and folds its output into the transcript as dim lines. Returns true so
-    /// submit treats it as handled. A failure is reported in the transcript
-    /// rather than bubbling: a broken internal tool should not take down the
-    /// REPL, just be visible.
+    /// submit treats it as handled.
     fn runInternalTool(self: *Model, tool_name: []const u8, args: []const u8) bool {
+        var ibuf: [8192]u8 = undefined;
+        var iw: std.Io.Writer = .fixed(&ibuf);
+        var is = std.json.Stringify{ .writer = &iw, .options = .{} };
+        is.beginObject() catch return true;
+        is.objectField("args") catch return true;
+        is.write(args) catch return true;
+        is.endObject() catch return true;
+        return self.runToolJson(tool_name, ibuf[0..iw.end]);
+    }
+
+    /// Runs any registered tool on a caller-built JSON input and folds its
+    /// `text` into the transcript as dim lines. Split out of
+    /// `runInternalTool` for the tools whose input is a structure rather than
+    /// the `cmd_*` convention's one `args` string — `/compare --show <id>`
+    /// sends `{"id": "..."}`, which no amount of `args` text expresses.
+    ///
+    /// Returns true so submit treats it as handled. A failure is reported in
+    /// the transcript rather than bubbling: a broken tool should not take
+    /// down the REPL, just be visible.
+    fn runToolJson(self: *Model, tool_name: []const u8, input: []const u8) bool {
         const mod = runtime.loadNamedTool(
             self.gpa,
             self.io,
@@ -1410,15 +1619,7 @@ const Model = struct {
         };
         defer mod.deinit();
 
-        var ibuf: [8192]u8 = undefined;
-        var iw: std.Io.Writer = .fixed(&ibuf);
-        var is = std.json.Stringify{ .writer = &iw, .options = .{} };
-        is.beginObject() catch return true;
-        is.objectField("args") catch return true;
-        is.write(args) catch return true;
-        is.endObject() catch return true;
-
-        const raw = mod.executeTool(ibuf[0..iw.end]) catch |err| {
+        const raw = mod.executeTool(input) catch |err| {
             self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[{s}: {s}]", .{ tool_name, @errorName(err) }) catch "[internal tool failed]", .dim = true }) catch {};
             return true;
         };
