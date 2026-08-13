@@ -17,6 +17,29 @@ var _openRun = null;
 var _getKnownPeers = null;
 var _renderBoardList = null;
 
+/* Lightweight toast notification for board actions */
+function boardToast(msg, kind) {
+  var container = document.getElementById("board-toast-container");
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "board-toast-container";
+    container.style.cssText = "position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);z-index:10000;display:flex;flex-direction:column-reverse;gap:0.4rem;align-items:center;pointer-events:none;";
+    document.body.appendChild(container);
+  }
+  var t = document.createElement("div");
+  t.className = "board-toast" + (kind === "error" ? " board-toast-error" : "");
+  t.style.cssText = "padding:0.5rem 1.2rem;border-radius:8px;font-size:13px;font-weight:500;color:#fff;pointer-events:auto;opacity:0;transform:translateY(12px);transition:opacity 220ms,transform 220ms;max-width:360px;text-align:center;" +
+    (kind === "error" ? "background:#c0392b;" : "background:#27ae60;");
+  t.textContent = msg;
+  container.appendChild(t);
+  requestAnimationFrame(function(){ t.style.opacity = "1"; t.style.transform = "translateY(0)"; });
+  setTimeout(function(){
+    t.style.opacity = "0";
+    t.style.transform = "translateY(12px)";
+    setTimeout(function(){ t.remove(); }, 250);
+  }, 2400);
+}
+
 
 export var board = { columns: [], cards: [] };
 var openCardId = null;
@@ -118,11 +141,15 @@ export function postBoard(payload, status) {
           }
         }
       }
-      if (status) el.boardStatus.textContent = status;
+      if (status) {
+        el.boardStatus.textContent = status;
+        boardToast(status, "ok");
+      }
       return d;
     })
     .catch(function (err) {
       el.boardStatus.textContent = "Board: " + err.message;
+      boardToast(err.message, "error");
       return false;
     });
 }
@@ -866,8 +893,50 @@ function showCardDetail(id) {
     closeCardDetail();
     renderBoard(board);
   });
+  // Header layout with title and "in list" subtitle
+  var headerTextWrap = document.createElement("div");
+  headerTextWrap.style.cssText = "flex:1;min-width:0;";
+  headerTextWrap.appendChild(headerTitle);
+  // "in list" subtitle like Trello
+  var colLabel = c.column || "";
+  var colTitle = colLabel.replace(/_/g, " ").replace(/\b\w/g, function(l){ return l.toUpperCase(); });
+  var inListEl = document.createElement("div");
+  inListEl.style.cssText = "font-size:12px;color:var(--fg-muted);margin-top:2px;";
+  inListEl.innerHTML = "in list <strong style=\"color:var(--fg);cursor:pointer;text-decoration:underline dotted;\">" + colTitle + "</strong>";
+  inListEl.querySelector("strong").addEventListener("click", function() {
+    // Open column picker
+    var existing = headerTextWrap.querySelector(".col-move-menu");
+    if (existing) { existing.remove(); return; }
+    var menu = document.createElement("div");
+    menu.className = "col-move-menu";
+    menu.style.cssText = "position:absolute;z-index:999;background:var(--surface);border:1px solid var(--rule);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.15);padding:0.5rem;min-width:140px;margin-top:4px;";
+    var menuTitle = document.createElement("div");
+    menuTitle.style.cssText = "font-weight:600;font-size:12px;color:var(--fg-muted);padding:0.3rem 0.4rem 0.5rem;border-bottom:1px solid var(--rule);margin-bottom:0.3rem;";
+    menuTitle.textContent = "Move to…";
+    menu.appendChild(menuTitle);
+    COLS.forEach(function(col) {
+      var opt = document.createElement("button");
+      opt.type = "button";
+      opt.style.cssText = "display:block;width:100%;text-align:left;padding:0.4rem 0.5rem;border:none;background:none;cursor:pointer;color:var(--fg);font-size:13px;border-radius:4px;";
+      opt.textContent = col.title;
+      if (col.id === c.column) { opt.style.fontWeight = "700"; opt.style.background = "color-mix(in srgb, var(--accent) 12%, transparent)"; }
+      opt.addEventListener("click", function() {
+        menu.remove();
+        if (col.id === c.column) return;
+        postBoard({ op: "move", id: c.id, column: col.id }, "Moved to " + col.title + ".");
+      });
+      opt.addEventListener("mouseenter", function(){ opt.style.background = "var(--surface-2)"; });
+      opt.addEventListener("mouseleave", function(){ opt.style.background = col.id === c.column ? "color-mix(in srgb, var(--accent) 12%, transparent)" : "none"; });
+      menu.appendChild(opt);
+    });
+    var closePop = function(ev) { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener("click", closePop, true); } };
+    setTimeout(function(){ document.addEventListener("click", closePop, true); }, 0);
+    inListEl.style.position = "relative";
+    inListEl.appendChild(menu);
+  });
+  headerTextWrap.appendChild(inListEl);
   header.appendChild(headerIcon);
-  header.appendChild(headerTitle);
+  header.appendChild(headerTextWrap);
   header.appendChild(close);
 
   // ---- Cover color bar at top of panel ----
