@@ -31,6 +31,14 @@ clanker.registerView({
     var SLEEP_AFTER = 300;
     var RING_COOLDOWN = 600;
     var RING_MS = 4000;
+
+    /* How long one of the janitor's lines stays up, and how long he says
+       nothing afterwards. Both in ms, against performance.now(), because that
+       is the clock the frame loop hands him. Two numbers rather than one: with
+       only a "next line at" deadline the previous line has nothing to expire
+       against, which is exactly how his bubble became permanent. */
+    var QUIP_MS = 4500;
+    var QUIP_GAP_MS = 9000;
     var alarmOn = van.state(localStorage.getItem("clanker-office-alarm") === "on");
 
     function nowSec() { return Math.floor(Date.now() / 1000); }
@@ -149,7 +157,10 @@ clanker.registerView({
       tx: null, ty: null,          // current waypoint
       pile: null,                  // the pile being rushed / cleaned
       cleaning_until: 0,
-      quip: null, quipUntil: 0,
+      // quipUntil is when the current line comes down; nextQuipAt is when he
+      // is allowed to start another. null means he has not spoken yet, so the
+      // view opens quietly rather than with a bubble already up.
+      quip: null, quipUntil: 0, nextQuipAt: null,
     };
     var PILE_CHANCE = 3;           // 1 in N board actions drops garbage
     /* Short, apologetic, understated: the character says very little, and a
@@ -395,7 +406,11 @@ clanker.registerView({
       }
       ctx2d.fillStyle = cssVar("--ok", "#7aa");
       ctx2d.fillRect(cx + janitor.dir * 15 - 4, foot - 2, 9, 4); // mop head
-      if (janitor.quip && offices.length > 0) bubble(px, py, janitor.quip, ox, offices[janitor.office].layout.w);
+      // The window is checked here as well as in the step, so a line cannot
+      // outlive it by a frame on a path that draws without stepping.
+      if (janitor.quip && performance.now() < janitor.quipUntil && offices.length > 0) {
+        bubble(px, py, janitor.quip, ox, offices[janitor.office].layout.w);
+      }
     }
 
     function drawBoard(o, ox, oy) {
@@ -630,7 +645,16 @@ clanker.registerView({
             });
             var cursor = 0;
             msgs.forEach(function (m) { if (m.ts > cursor) cursor = m.ts; });
-            var o = { layout: layoutFor(room, agents.length), cards: cards, agents: agents, cursor: cursor, room: room, ringAt: 0, ringUntil: 0 };
+            // piles and index are set here rather than after the /api/goals
+            // round-trip below. The message poll only gates on offices being
+            // non-empty, so one landing in between found o.piles undefined and
+            // threw inside applyMessage — where poll()'s per-room catch
+            // swallowed it, dropping every later message in that batch with
+            // the cursor already advanced past them.
+            var o = {
+              layout: layoutFor(room, agents.length), cards: cards, agents: agents,
+              cursor: cursor, room: room, ringAt: 0, ringUntil: 0, piles: [], index: 0
+            };
             seatAgents(o);
             return o;
           });
@@ -640,7 +664,9 @@ clanker.registerView({
         return api.getJSON("/api/goals").catch(function () { return { goals: [] }; });
       }).then(function (g) {
         goals = (g.goals || []).filter(function (x) { return x.status === "active"; });
-        offices.forEach(function (o, i) { o.index = i; o.piles = o.piles || []; });
+        // Only the position is settled here; the fields themselves exist from
+        // the moment the office does.
+        offices.forEach(function (o, i) { o.index = i; });
         return api.getJSON("/api/janitor").catch(function () { return null; });
       }).then(function (jr) {
         if (jr && jr.ok) {
@@ -785,8 +811,26 @@ clanker.registerView({
       janitor.ty = L.h - 2;
     }
 
+    /// Says a line, for QUIP_MS, and books the earliest he may say the next
+    /// one. Every quip goes through here so none can be set without a deadline
+    /// to take it down again.
+    function janitorSays(quips, now) {
+      janitor.quip = quips[quipIdx % quips.length];
+      quipIdx += 1;
+      janitor.quipUntil = now + QUIP_MS;
+      janitor.nextQuipAt = janitor.quipUntil + QUIP_GAP_MS;
+      dirty = true;
+    }
+
     function stepJanitor(dt, now) {
       if (offices.length === 0) return false;
+      // Take the current line down when its time is up. Before the pile
+      // branch, so a line survives neither a rush to fresh garbage nor a
+      // scrub: it used to survive both, and everything after it, forever.
+      if (janitor.quip && now >= janitor.quipUntil) {
+        janitor.quip = null;
+        dirty = true;
+      }
       // A pile anywhere summons him; oldest first.
       var target_office = null;
       var pile = null;
@@ -817,10 +861,7 @@ clanker.registerView({
           if (at >= 0) o.piles.splice(at, 1);
           janitor.pile = null;
           janitor.cleaning_until = 0;
-          janitor.quip = CLEAN_QUIPS[quipIdx % CLEAN_QUIPS.length];
-          quipIdx += 1;
-          janitor.quipUntil = now + 6000;
-          dirty = true;
+          janitorSays(CLEAN_QUIPS, now);
           return true;
         }
         if (!janitor.path) {
@@ -856,12 +897,10 @@ clanker.registerView({
         }
         return true;
       }
-      // Rounds: amble between waypoints, one dry line every so often.
-      if (now > janitor.quipUntil) {
-        janitor.quip = JANITOR_QUIPS[quipIdx % JANITOR_QUIPS.length];
-        quipIdx += 1;
-        janitor.quipUntil = now + 9000;
-      }
+      // Rounds: amble between waypoints, one dry line every so often. The
+      // first line waits out a gap, so opening the Office is quiet.
+      if (janitor.nextQuipAt === null) janitor.nextQuipAt = now + QUIP_GAP_MS;
+      else if (!janitor.quip && now >= janitor.nextQuipAt) janitorSays(JANITOR_QUIPS, now);
       if (reduced) return false;
       if (janitor.tx === null || (Math.abs(janitor.tx - janitor.x) < 0.3 && Math.abs(janitor.ty - janitor.y) < 0.3)) pickWaypoint(L);
       var wx = janitor.tx - janitor.x;
