@@ -264,6 +264,13 @@ pub const Agent = struct {
     /// or `fallback_providers` (array); a bare string becomes one entry so
     /// existing configs keep working. Empty means no reactive chain.
     fallback_providers: []const []const u8 = &.{},
+    /// Opt-in per-turn classifier that selects a sampling-profile
+    /// `reasoning_effort` row. Off until a calibration eval justifies it.
+    auto_thinking: bool = false,
+    /// `provider` or `provider/model`. Empty means cheapest configured
+    /// provider by `cost_per_1m_input`, then first alphabetically.
+    thinking_classifier_model: []const u8 = "",
+    thinking_classifier_timeout_ms: u32 = 3000,
 };
 
 /// First configured fallback, used by the pre-emptive vision router. Empty
@@ -316,6 +323,9 @@ pub const AgentFields = struct {
     provider_check_timeout_seconds: bool = false,
     confirm_writes: bool = false,
     fallback_provider: bool = false,
+    auto_thinking: bool = false,
+    thinking_classifier_model: bool = false,
+    thinking_classifier_timeout_ms: bool = false,
 };
 
 /// Who must approve a write-capable tool call before it runs.
@@ -1262,15 +1272,16 @@ pub const Config = struct {
         var a = Agent{};
         var f = AgentFields{};
         warnUnknownKeys(obj, &.{
-            "max_iterations",      "compact_threshold_bytes", "max_total_tokens",
-            "max_tokens_per_turn", "max_history_tokens",      "tool_catalog",
-            "hot_tools",           "tools_dir",               "skills_dir",
-            "system_prompt_file",  "learnings_file",          "global_instructions_file",
-            "state_dir",           "sandbox_root",            "workflows_dir",
-            "chains_dir",          "git_commit",              "git_remote_ops",
-            "exec_pattern_allow",  "repl_exec_allow",         "seed",
-            "ask_timeout_seconds", "confirm_writes",          "provider_check_timeout_seconds",
-            "fallback_provider",   "fallback_providers",
+            "max_iterations",            "compact_threshold_bytes",        "max_total_tokens",
+            "max_tokens_per_turn",       "max_history_tokens",             "tool_catalog",
+            "hot_tools",                 "tools_dir",                      "skills_dir",
+            "system_prompt_file",        "learnings_file",                 "global_instructions_file",
+            "state_dir",                 "sandbox_root",                   "workflows_dir",
+            "chains_dir",                "git_commit",                     "git_remote_ops",
+            "exec_pattern_allow",        "repl_exec_allow",                "seed",
+            "ask_timeout_seconds",       "confirm_writes",                 "provider_check_timeout_seconds",
+            "fallback_provider",         "fallback_providers",             "auto_thinking",
+            "thinking_classifier_model", "thinking_classifier_timeout_ms",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -1419,6 +1430,21 @@ pub const Config = struct {
             a.fallback_providers = try jsonNameList(arena, k, "fallback_provider");
             f.fallback_provider = true;
         }
+        if (obj.get("auto_thinking")) |k| {
+            a.auto_thinking = switch (k) {
+                .bool => |b| b,
+                else => return error.FieldNotBool,
+            };
+            f.auto_thinking = true;
+        }
+        if (obj.get("thinking_classifier_model")) |k| {
+            a.thinking_classifier_model = try jsonStr(k, "thinking_classifier_model");
+            f.thinking_classifier_model = true;
+        }
+        if (obj.get("thinking_classifier_timeout_ms")) |k| {
+            a.thinking_classifier_timeout_ms = try jsonUnsigned(u32, k, "thinking_classifier_timeout_ms");
+            f.thinking_classifier_timeout_ms = true;
+        }
         return .{ .agent = a, .fields = f };
     }
 
@@ -1448,6 +1474,9 @@ pub const Config = struct {
         if (fields.provider_check_timeout_seconds) dst.provider_check_timeout_seconds = src.provider_check_timeout_seconds;
         if (fields.confirm_writes) dst.confirm_writes = src.confirm_writes;
         if (fields.fallback_provider) dst.fallback_providers = src.fallback_providers;
+        if (fields.auto_thinking) dst.auto_thinking = src.auto_thinking;
+        if (fields.thinking_classifier_model) dst.thinking_classifier_model = src.thinking_classifier_model;
+        if (fields.thinking_classifier_timeout_ms) dst.thinking_classifier_timeout_ms = src.thinking_classifier_timeout_ms;
     }
 
     fn applyModulesFields(dst: *Modules, src: Modules, fields: ModulesFields) void {

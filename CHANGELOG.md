@@ -39,6 +39,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Optional `[advisor]` second-model critique after each completed turn.
   Off by default; fail-open. A `blocker` asks proceed/abort when a human
   is present and otherwise injects as a one-turn concern.
+- Turns with no configured `temperature`/`top_p` now pick a use-case
+  default (chat 0.7, tool-use 0.0). Thinking models get
+  `reasoning_effort` (`medium`/`high`) instead. An explicit config or
+  per-run value still wins.
 
 ### Changed
 

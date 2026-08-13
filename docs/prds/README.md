@@ -59,8 +59,8 @@ optional subsystems:
 3. **0016** then **0017** — eval kernel, then DAP
 4. **0019** — `gh_read`
 5. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
-7. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
-8. **0027** — `write-goal` (field-list blocker still open)
+6. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
+7. **0027** — `write-goal` (field-list blocker still open)
 
 ## Editing rules (short)
 
