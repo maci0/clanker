@@ -20,7 +20,9 @@ through a gated loop. Follow these conventions when changing this codebase.
 
 - Target Zig 0.16 APIs: `std.Io` (Dir/File/Threaded), `std.process.Init`,
   `std.json.Stringify` + `parseFromSliceLeaky`, `std.ArrayList` with
-  `.empty` + `append(alloc, ...)`.
+  `.empty` + `append(alloc, ...)`. `@intFromFloat` is `@trunc` (or `@floor`/
+  `@round`) with an integer dest type; `@trunc(opt orelse 800)` treats the
+  default as comptime_float, so bind the `f64` first.
 - No libc-dependent code in the harness beyond what the build links.
 - Allocators are explicit; arena for run-scoped data, gpa for ownership.
 - New code must be `zig fmt` clean (the improve gate auto-formats and checks).
