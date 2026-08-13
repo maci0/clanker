@@ -1819,9 +1819,9 @@ const Model = struct {
             self.lines.append(self.arena, .{ .text = "error: steer failed: out of memory", .dim = true }) catch {};
             return;
         };
-        const echo = std.fmt.allocPrint(bridge_gpa, "[steering queued: {s}]", .{task}) catch "[steering queued]";
+        const echo = std.fmt.allocPrint(bridge_gpa, "notice: steering queued: {s}", .{task}) catch "notice: steering queued";
         bridge_tool_lines.append(bridge_gpa, echo) catch {
-            if (echo.ptr != "[steering queued]".ptr) bridge_gpa.free(echo);
+            if (echo.ptr != "notice: steering queued".ptr) bridge_gpa.free(echo);
         };
         ctx.redraw = true;
     }
@@ -1908,7 +1908,7 @@ const Model = struct {
                     return;
                 }
                 self.theme_override = self.arena.dupe(u8, pc.args) catch pc.args;
-                self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "theme set to {s}", .{pc.args}) catch "theme set", .dim = true }) catch {};
+                self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "notice: theme switched to {s}", .{pc.args}) catch "notice: theme switched", .dim = true }) catch {};
             },
             .workflows => {
                 _ = self.runWorkflowsTool("");
@@ -1931,7 +1931,7 @@ const Model = struct {
                 defer self.gpa.free(prompt);
                 try self.submitTask(ctx, prompt);
             },
-            // /sessions, /graph, /status, /plugins run the same internal
+            // /sessions, /graph, /status, /tools, and /plugins run the same internal
             // `cmd_*` WASM tools the CLI subcommands invoke, so the REPL is
             // not a walled-off corner of clanker. Output is folded into the
             // transcript as dim lines, exactly like a tool result.
@@ -2249,13 +2249,19 @@ const Model = struct {
 
     fn runWorkflowsTool(self: *Model, name: []const u8) bool {
         const workflows_mod = @import("../agent/workflows.zig");
-        const wfs = workflows_mod.loadAllMerged(self.arena, self.io, self.cfg.agent.workflows_dir) catch {
-            self.lines.append(self.arena, .{ .text = "error: could not list workflows", .dim = true }) catch {};
+        const wfs = workflows_mod.loadAllMerged(self.arena, self.io, self.cfg.agent.workflows_dir) catch |err| {
+            self.lines.append(self.arena, .{
+                .text = std.fmt.allocPrint(self.arena, "error: could not list workflows from {s}: {s}; check agent.workflows_dir", .{ self.cfg.agent.workflows_dir, @errorName(err) }) catch "error: could not list workflows; check agent.workflows_dir",
+                .dim = true,
+            }) catch {};
             return true;
         };
         if (name.len == 0) {
             if (wfs.len == 0) {
-                self.lines.append(self.arena, .{ .text = "notice: no workflows found; add Markdown files to workflows/", .dim = true }) catch {};
+                self.lines.append(self.arena, .{
+                    .text = std.fmt.allocPrint(self.arena, "notice: no workflows found; add Markdown files to {s}", .{self.cfg.agent.workflows_dir}) catch "notice: no workflows found",
+                    .dim = true,
+                }) catch {};
                 return true;
             }
             for (wfs) |wf| {
@@ -2288,8 +2294,11 @@ const Model = struct {
             "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.",
             .{intent},
         ) catch return true;
-        self.submitTask(ctx, task) catch {
-            self.lines.append(self.arena, .{ .text = "error: could not start the goal task", .dim = true }) catch {};
+        self.submitTask(ctx, task) catch |err| {
+            self.lines.append(self.arena, .{
+                .text = std.fmt.allocPrint(self.arena, "error: could not start goal task: {s}", .{@errorName(err)}) catch "error: could not start goal task",
+                .dim = true,
+            }) catch {};
             return true;
         };
         return true;
@@ -2680,7 +2689,7 @@ const Model = struct {
             np.default_model = cand.model;
             self.provider = np;
             self.lines.append(self.arena, .{
-                .text = std.fmt.allocPrint(self.arena, "[model: {s}/{s}]", .{ cand.provider, cand.model }) catch "[model switched]",
+                .text = std.fmt.allocPrint(self.arena, "notice: model switched to {s}/{s}", .{ cand.provider, cand.model }) catch "notice: model switched",
                 .dim = true,
             }) catch {};
         } else |_| {
@@ -5076,7 +5085,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         }
         if (non_system > 0) {
             model.lines.append(arena, .{
-                .text = std.fmt.allocPrint(arena, "[resumed session {s}: {d} messages]", .{ sid, non_system }) catch "[resumed session]",
+                .text = std.fmt.allocPrint(arena, "notice: resumed conversation {s} ({d} messages)", .{ sid, non_system }) catch "notice: resumed conversation",
                 .dim = true,
             }) catch {};
         }
@@ -5084,7 +5093,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // Fresh session leaves `lines` empty so draw's empty-state hero (examples
     // + Tab/Ctrl-P) can show. A seed transcript line used to hide that
     // forever, and was never removed after the first task. A resume already
-    // has the "[resumed session]" line; a bad mascot spelling is appended
+    // has the resumed-conversation notice; a bad mascot spelling is appended
     // below and takes the same slot.
     if (mascot_choice.bad) |bad| {
         model.lines.append(arena, .{
