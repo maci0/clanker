@@ -413,7 +413,7 @@ chatrooms = false
   | `mascot` | `"off"` | `off`, `type`, `loop`, `place`, `input` |
   | `mascot_size` | `""` (= per mode) | `mini`, `xsmall`, `small`, `medium`, `large` |
   | `mascot_facing` | `""` (= per mode) | `left`, `right` |
-  | `mascot_speed` | `""` (= `5`) | `0` through `10`; `0` never moves, `10` is fastest |
+  | `mascot_speed` | unset (= `5`) | Integer `0` through `10`; `0` never moves, `10` is fastest |
 
   The modes differ in where the robot lives and what moves it:
 
@@ -443,20 +443,22 @@ chatrooms = false
   `mascot_facing` applies only to `loop` and `place`. `type` sets its own
   orientation and `input` is never mirrored.
 
-  `mascot_speed` sets the movement pace. Unset is the regular pace (`5`); `0`
-  freezes movement, and `10` is the fastest. `--mascot-speed <0..10>` overrides
-  it for one REPL session.
+  `mascot_speed` is an integer setting: write an unquoted value from `0`
+  through `10`. Unset is the regular pace (`5`); `0` freezes movement, and
+  `10` is the fastest. `--mascot-speed <0..10>` overrides it for one REPL
+  session.
 
-  `--mascot[=<mode>]`, `--mascot-size` and `--mascot-facing` override all three
-  for one session; a bare `--mascot` means `loop`. An unparseable value in
-  either place is reported on the transcript and falls back rather than
-  refusing to start the REPL.
+  `--mascot[=<mode>]`, `--mascot-size`, `--mascot-facing`, and
+  `--mascot-speed` override these settings for one session; a bare `--mascot`
+  means `loop`. An invalid command-line value is reported on the transcript
+  and falls back rather than refusing to start the REPL; an invalid config
+  value is rejected while loading the configuration.
 
   ```toml
   [tui]
   mascot = "input"
   mascot_size = "small"
-  mascot_speed = "6"
+  mascot_speed = 6
   ```
 
 ## Minimal working config
