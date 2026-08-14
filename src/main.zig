@@ -201,6 +201,8 @@ pub fn main(init: std.process.Init) !void {
                 cli.printUsageError(init.io, "clanker revert needs an improvement id", .{})
             else if (std.mem.eql(u8, diag, "<intent>"))
                 cli.printUsageError(init.io, "`clanker goal` needs an intent: clanker goal \"improve the REPL\"", .{})
+            else if (std.mem.eql(u8, diag, "<write-goal intent>"))
+                cli.printUsageError(init.io, "`clanker write-goal` needs an intent: clanker write-goal \"improve the REPL\"", .{})
             else if (std.mem.eql(u8, diag, "<instructions>"))
                 cli.printUsageError(init.io, "`clanker improve-self` needs instructions", .{})
             else if (std.mem.eql(u8, diag, "<peer>"))
