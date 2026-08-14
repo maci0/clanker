@@ -788,6 +788,8 @@ const CommandAction = union(enum) {
     workflow,
     /// Routes into a goal-design agent turn (see `runGoalTask`).
     goal,
+    /// Invokes the draft-only write_goal tool directly (see `runWriteGoal`).
+    write_goal,
     /// Prints usage, or runs the measurement loop as a normal agent task.
     autoresearch,
     /// Prints usage, or runs one judged debate as a normal agent task.
@@ -840,6 +842,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/tools", .help = "list registered tools (same as clanker tools)", .action = .{ .tool = .{ .name = "tools", .args = "" } } },
     .{ .name = "/plugins", .aliases = &.{"/plugin"}, .takes_args = true, .arg_hint = "[on|off <name>]", .help = "list plugins or switch an optional one on or off", .action = .{ .tool = .{ .name = "plugins", .args = "", .forward_args = true } } },
     .{ .name = "/goal", .takes_args = true, .arg_hint = "<intent>", .help = "design and persist a structured goal", .action = .goal },
+    .{ .name = "/write-goal", .takes_args = true, .arg_hint = "<intent>", .help = "draft a structured goal without saving it", .action = .write_goal },
     .{ .name = "/autoresearch", .takes_args = true, .arg_hint = "...", .help = "measurement loop (see /autoresearch --help)", .action = .autoresearch },
     .{ .name = "/arena", .takes_args = true, .arg_hint = "...", .help = "judged debate between two positions (see /arena --help)", .action = .arena },
     .{ .name = "/compare", .takes_args = true, .arg_hint = "...", .help = "one prompt to several models at once, answers unlabeled (see /compare --help)", .action = .compare },
@@ -1554,6 +1557,10 @@ test "parseCommand matches names, aliases, and arguments" {
     const goal = parseCommand("/goal fix the failing eval") orelse return error.TestExpectedCommand;
     try std.testing.expect(goal.spec.action == .goal);
     try std.testing.expectEqualStrings("fix the failing eval", goal.args);
+
+    const write_goal = parseCommand("/write-goal fix the failing eval") orelse return error.TestExpectedCommand;
+    try std.testing.expect(write_goal.spec.action == .write_goal);
+    try std.testing.expectEqualStrings("fix the failing eval", write_goal.args);
 
     const sessions = parseCommand("/sessions") orelse return error.TestExpectedCommand;
     try std.testing.expectEqualStrings("sessions", sessions.spec.action.tool.name);
@@ -2314,6 +2321,13 @@ const Model = struct {
                 }
                 _ = self.runGoalTask(ctx, pc.args);
             },
+            .write_goal => {
+                if (pc.args.len == 0) {
+                    self.lines.append(self.arena, .{ .text = "usage: /write-goal <intent> (e.g. /write-goal fix the failing eval)", .dim = true }) catch {};
+                    return;
+                }
+                _ = self.runWriteGoal(pc.args);
+            },
             .autoresearch => {
                 if (pc.args.len == 0 or std.mem.eql(u8, pc.args, "--help") or std.mem.eql(u8, pc.args, "-h")) {
                     self.lines.append(self.arena, .{ .text = "usage: /autoresearch --target <file> --harness \"<cmd>\" [--iters N] [--dry-run]", .dim = true }) catch {};
@@ -2540,7 +2554,7 @@ const Model = struct {
             self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}{s}", .{ display_name, detail, extra }) catch "error: internal tool failed", .dim = true }) catch {};
             return true;
         }
-        const text = parsed.object.get("text") orelse {
+        const text = parsed.object.get("text") orelse parsed.object.get("markdown") orelse {
             self.lines.append(self.arena, .{ .text = "error: internal tool returned no text", .dim = true }) catch {};
             return true;
         };
@@ -2773,6 +2787,17 @@ const Model = struct {
             return true;
         };
         return true;
+    }
+
+    /// Runs the draft-only goal writer locally. The TUI has no inline
+    /// ask_user UI yet, so the tool records any unanswered forks as explicit
+    /// assumptions rather than silently persisting or inventing a goal.
+    fn runWriteGoal(self: *Model, intent: []const u8) bool {
+        const input = std.fmt.allocPrint(self.arena, "{{\"intent\":{f}}}", .{std.json.fmt(intent, .{})}) catch {
+            self.lines.append(self.arena, .{ .text = "error: could not prepare write-goal draft", .dim = true }) catch {};
+            return true;
+        };
+        return self.runToolJson("write_goal", input, false);
     }
 
     /// The tail of `submit` that runs a task: echoes it, records it in

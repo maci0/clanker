@@ -101,6 +101,7 @@ pub const Command = enum {
     mcp,
     acp,
     goal,
+    write_goal,
     notify,
     chat,
     stats,
@@ -731,6 +732,8 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.command = .acp;
             } else if (std.mem.eql(u8, a, "goal")) {
                 opts.command = .goal;
+            } else if (std.mem.eql(u8, a, "write-goal")) {
+                opts.command = .write_goal;
             } else if (std.mem.eql(u8, a, "notify")) {
                 opts.command = .notify;
             } else if (std.mem.eql(u8, a, "chat")) {
@@ -822,6 +825,8 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
         } else if (opts.command == .eval and opts.eval_name == null) {
             opts.eval_name = a;
         } else if (opts.command == .goal and opts.task == null) {
+            opts.task = a;
+        } else if (opts.command == .write_goal and opts.task == null) {
             opts.task = a;
         } else if (opts.command == .revert and opts.task == null) {
             opts.task = a;
@@ -941,12 +946,16 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
     }
 
     if (opts.command == .run and opts.task == null) return error.MissingTask;
-    // goal, improve-self and revert all take one required positional too, but
+    // goal, write-goal, improve-self and revert all take one required positional too, but
     // used to fall through to a bare error name at runtime (exit 1) instead
     // of the friendly, exit-2 usage error the other required-arg commands
     // get; catch them here on the same path as notify/chat below.
     if (opts.command == .goal and opts.task == null) {
         setDiag(diag, "<intent>");
+        return error.MissingArg;
+    }
+    if (opts.command == .write_goal and opts.task == null) {
+        setDiag(diag, "<write-goal intent>");
         return error.MissingArg;
     }
     if (opts.command == .improve_self and opts.task == null) {
@@ -1632,6 +1641,7 @@ const specs = [_]Spec{
     .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal, .worktree }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        run against a persisted goal\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
     .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
     .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
+    .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the write_goal tool directly and prints a reviewable draft. It never writes state/goals.json or starts an agent run; use `clanker goal \"<intent>\"` when you want the reviewed goal persisted." },
     .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--iters <n>        cap the number of attempts (default 3)\n--dry-run          propose changes without applying them" },
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
@@ -1719,6 +1729,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .mcp => try cmdMcp(init, opts),
         .acp => try cmdAcp(init, opts),
         .goal => try cmdGoal(init, opts),
+        .write_goal => try cmdWriteGoal(init, opts),
         .notify => try cmdNotify(init, opts),
         .chat => try cmdChat(init, opts),
         .stats => try cmdStats(init),
@@ -4744,6 +4755,31 @@ fn cmdGoal(init: std.process.Init, opts: Options) !void {
     var goal_opts = opts;
     goal_opts.task = task;
     try cmdRun(init, goal_opts);
+}
+
+/// `clanker write-goal <intent>` invokes the draft-only WASM tool directly.
+/// Unlike `goal`, this does not need a model: its output is a reviewable draft
+/// and it never persists state/goals.json or starts a run.
+fn cmdWriteGoal(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    if (!cfg.modules.goal) return error.ModuleDisabled;
+    const intent = opts.task orelse return error.MissingTask;
+    const input = try std.fmt.allocPrint(arena, "{{\"intent\":{f}}}", .{std.json.fmt(intent, .{})});
+    const raw = try toolJson(io, init.gpa, arena, &cfg, init.environ_map, "write_goal", input);
+    const result = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return error.ToolFailed;
+    if (result != .object) return error.ToolFailed;
+    const ok = result.object.get("ok") orelse return error.ToolFailed;
+    if (ok != .bool or !ok.bool) {
+        const detail = if (result.object.get("error")) |e| if (e == .string) e.string else "tool failed" else "tool failed";
+        log.log(.error_, "write-goal: {s}", .{detail});
+        return error.ToolFailed;
+    }
+    const markdown = result.object.get("markdown") orelse return error.ToolFailed;
+    if (markdown != .string) return error.ToolFailed;
+    try writeStdOut(io, markdown.string);
+    if (!std.mem.endsWith(u8, markdown.string, "\n")) try writeStdOut(io, "\n");
 }
 
 /// `clanker notify <peer> <message>` sends through the same sandboxed
@@ -13088,6 +13124,17 @@ test "history is the sessions alias people type first" {
     const opts = try parse(&.{ "clanker", "history" }, null);
     try std.testing.expectEqual(Command.sessions, opts.command);
     try std.testing.expectEqual(Command.sessions, commandForHelp("history").?);
+}
+
+test "write-goal accepts one intent and is listed as a command" {
+    const opts = try parse(&.{ "clanker", "write-goal", "draft the release checklist" }, null);
+    try std.testing.expectEqual(Command.write_goal, opts.command);
+    try std.testing.expectEqualStrings("draft the release checklist", opts.task.?);
+    try std.testing.expectEqual(Command.write_goal, commandForHelp("write-goal").?);
+
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "write-goal" }, &diag));
+    try std.testing.expectEqualStrings("<write-goal intent>", diag);
 }
 
 test "plugin switches have the same command shape as the REPL" {
