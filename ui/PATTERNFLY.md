@@ -18,7 +18,7 @@ to [PatternFly 6](https://www.patternfly.org/) HTML/CSS. The app stays vanilla J
 | 1 | Vendored `patternfly.min.css` (+ optional `patternfly-addons.css` kept on disk), served from `/webui/vendor/*` | done |
 | 2 | Page shell: `pf-v6-c-page`, Masthead, sidebar, `main` (`#main` unchanged) | done |
 | 3 | Rail navigation → PF Nav (vertical tabs, groups) | done |
-| 4 | Buttons (`primary`, `secondary`, `danger`, icon buttons) | done |
+| 4 | Buttons (`primary`, `secondary`, `danger`; skip chip-btn + composer submit/cancel) | done |
 | 5 | Forms (composer, filters, goal form, settings) | done |
 | 6 | Overlays (palette, help, dialogs, card detail) | done |
 | 7 | Toasts, chips, status indicators | done |
@@ -59,10 +59,12 @@ PF's page shell paints a glass frame on `.pf-v6-c-page__main-container` (4px
 accent border). Zero those tokens on `#app-page` and `.shell` so the cabinet
 surface shows through instead of a blue chrome box.
 
-`index.html` loads `patternfly.min.css` only (not addons): no `pf-v6-u-*`
-utilities are used. Upstream `@font-face` blocks are stripped from the
-vendored min CSS; cabinet type uses `--sans` / `--mono` via the PF font
-bridge tokens.
+`index.html` loads `patternfly.min.css` with `media="print"` first, then
+`app.js` flips it to `all` (CSP blocks inline `onload`). Cabinet `app.css`
+stays after PF in document order so token remaps win.
+
+Masthead `chip-btn` controls and `#submit`/`#cancel` stay off `pf-v6-c-button`:
+PF brand/plain colours were beating `--accent` / `--fg-muted` across themes.
 
 ## Updating vendored PatternFly
 

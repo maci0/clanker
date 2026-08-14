@@ -92,11 +92,12 @@ var pfButtonSkip = {
   /* Status lamps and model pills are labels, not actuators. Upgrading them to
      pf-m-primary painted the masthead solid PatternFly blue. */
   "chip": 1, "header-model": 1, "model-pill": 1,
+  /* Masthead chips and icon chrome: PF plain keeps light-scheme greys that
+     ignore cabinet tokens even when --fg-muted is correct. Stay cabinet-native. */
+  "chip-btn": 1, "slack-btn-icon": 1, "slack-sidebar-toggle": 1,
 };
 
 function pfButtonVariant(el) {
-  if (el.classList.contains("chip-btn") || el.classList.contains("slack-btn-icon") ||
-      el.classList.contains("slack-sidebar-toggle")) return "plain";
   if (el.classList.contains("secondary") && el.classList.contains("danger")) return "secondary-danger";
   if (el.classList.contains("secondary") || el.classList.contains("scroll-bottom")) return "secondary";
   if (el.classList.contains("danger")) return "danger";
@@ -150,6 +151,9 @@ export function upgradePfButton(el) {
   for (var cls in pfButtonSkip) {
     if (el.classList.contains(cls)) return el;
   }
+  /* Composer Run/Cancel must follow --accent/--on-accent across themes; PF
+     primary paints a fixed brand blue that survives token remaps. */
+  if (el.id === "submit" || el.id === "cancel") return el;
   if (!el.classList.contains("pf-v6-c-button")) {
     var variant = pfButtonVariant(el);
     el.classList.add("pf-v6-c-button");

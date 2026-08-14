@@ -137,7 +137,9 @@ is rare and actionable.
 **The Lamp Rule.** Status colour lives in lamps and chips, not in large washes.
 **The Token Bridge Rule.** PatternFly globals (`--pf-t--global-*`) and button
 component vars must remap to cabinet tokens so theme flips never leave light
-greys on dark panels.
+greys on dark panels. Masthead `chip-btn` controls and the composer Run/Cancel
+buttons stay off `pf-v6-c-button` so PF brand colours cannot override `--accent`.
+Each `data-theme` sets `color-scheme: light|dark` to match.
 
 ## Typography
 
