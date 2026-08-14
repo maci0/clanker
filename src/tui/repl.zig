@@ -4181,8 +4181,14 @@ const Model = struct {
                     self.fold_hits.append(self.arena, .{ .row = row, .fold = fk }) catch {};
                     writeWrapped(surface, &row, bottom, text_width, self.foldHeader(ctx.arena, f), tool_style);
                     row += 1;
+                    // In scrollback the fold may straddle the anchored `view_end`
+                    // (start < view_end < start+count); only its body lines inside
+                    // the visible window may be drawn, else rows past the anchor
+                    // leak onto the screen. `view_end <= self.lines.items.len` and
+                    // `i == f.start < view_end`, so the clamp is always in range.
+                    const body_limit = @min(shown, view_end - f.start);
                     var k: usize = 0;
-                    while (k < shown and row < bottom) : (k += 1) {
+                    while (k < body_limit and row < bottom) : (k += 1) {
                         writeWrapped(surface, &row, bottom, text_width, self.lines.items[f.start + k].text, vaxis.Style{});
                         row += 1;
                     }
@@ -4533,7 +4539,11 @@ fn streamRows(text: []const u8, width: u16) usize {
 /// Folds (see `Fold`) are atomic blocks: any line inside a reply's range
 /// contributes that reply's folded height (1 header row + the currently
 /// revealed body rows) and the walk jumps the whole block in one step, so a
-/// reply is either fully visible or not at all — never cut mid-way.
+/// reply is treated as a unit. In scrollback the block can straddle the
+/// anchored `view_end` (start < view_end < start+count); only its body lines
+/// inside `[start, view_end)` are counted, since the draw loop renders no
+/// more than those (see its `body_limit` clamp). `lines` here is
+/// `self.lines.items[0..view_end]`, so slicing past `view_end` would panic.
 fn tailWindow(
     lines: []const Line,
     folds: []const Fold,
@@ -4550,9 +4560,13 @@ fn tailWindow(
         for (folds) |f| {
             if (i >= f.start and i < f.start + f.count) {
                 // Header row plus exactly the lines the draw loop will render,
-                // counted the same way it counts them (`foldShownLines`).
+                // counted the same way it counts them (`foldShownLines`, clamped
+                // to the visible window). `f.start < view_end` here because
+                // `i == start - 1 >= f.start` and `start <= view_end`, so the
+                // clamped range never starts past `lines.len`.
                 rows = 1;
-                for (lines[f.start .. f.start + foldShownLines(f)]) |l| {
+                const body_end = @min(f.start + foldShownLines(f), view_end);
+                for (lines[f.start..body_end]) |l| {
                     rows += lineRows(l.text, width);
                 }
                 block_start = f.start;
@@ -5158,6 +5172,36 @@ test "tailWindow counts wrapped rows, which the old line-count guess did not" {
     try std.testing.expectEqual(@as(u16, 3), anchored.used_rows);
 }
 
+test "tailWindow clamps a fold that straddles the anchored view_end" {
+    // Regression: scrolled back so `view_end` falls inside an open fold
+    // (start < view_end < start+count). The fold branch used to slice
+    // `lines[f.start .. f.start + shown]`, but `lines` is `items[0..view_end]`,
+    // so a fold reaching past the anchor read out of bounds and panicked
+    // ("index 102, len 100").
+    const lines = [_]Line{
+        .{ .text = "clanker> ask" },
+        .{ .text = "a1" },
+        .{ .text = "a2" },
+        .{ .text = "a3" },
+        .{ .text = "a4" },
+        .{ .text = "receipt" },
+    };
+    // Fold covers lines 1..5; anchor at 3 leaves body lines a1..a3 visible
+    // (a3 is past the anchor and must not be counted).
+    const open = [_]Fold{.{ .start = 1, .count = 4, .expanded = true, .anim = 1 }};
+    // avail_rows of 3 stops the walk right at the fold start, so the result
+    // isolates the clamp: header + a1 + a2 (a3 is past the anchor, uncounted).
+    const win = tailWindow(lines[0..3], &open, 3, 3, 80);
+    try std.testing.expectEqual(@as(usize, 1), win.start);
+    try std.testing.expectEqual(@as(u16, 3), win.used_rows);
+
+    // Collapsed folds straddle the anchor too: just the header, no body.
+    const collapsed = [_]Fold{.{ .start = 1, .count = 4, .expanded = false, .anim = 0 }};
+    const win_c = tailWindow(lines[0..3], &collapsed, 3, 1, 80);
+    try std.testing.expectEqual(@as(usize, 1), win_c.start);
+    try std.testing.expectEqual(@as(u16, 1), win_c.used_rows);
+}
+
 fn writeRow(surface: vxfw.Surface, row: u16, text: []const u8, style: vaxis.Style) void {
     var col: u16 = 0;
     writeRowAt(surface, row, &col, text, style);
@@ -5721,8 +5765,10 @@ pub const ReplOptions = struct {
     mascot: ?[]const u8 = null,
     /// `--mascot-size=<small|medium|large>`, unparsed, same null convention.
     mascot_size: ?[]const u8 = null,
-    /// `--mascot-facing=<left|right>`, unparsed, same null convention.
+    /// `--mascot-facing=<default|inverted>`, unparsed, same null convention.
     mascot_facing: ?[]const u8 = null,
+    /// `--mascot-speed=<0..10>`, unparsed, same null convention.
+    mascot_speed: ?[]const u8 = null,
     /// Initial palette for this invocation, overriding `CLANKER_THEME`.
     theme: ?[]const u8 = null,
 };
@@ -5760,17 +5806,18 @@ const MascotChoice = struct {
     mode: mascot.Mode,
     size: mascot.Size,
     facing: mascot.Facing,
+    speed: u8,
     bad_mode: ?[]const u8,
     bad_size: ?[]const u8,
     bad_facing: ?[]const u8,
+    bad_speed: ?[]const u8,
 };
 
 /// Resolves every mascot setting from its flag and its config key.
 ///
-/// Size and facing are not plain two-way picks: both default off the mode that
-/// was just resolved. `place` faces left unless told otherwise and nothing else
-/// does, and `input` is the only mode whose size changes the shape of the
-/// composer, so it defaults to the one that fits inside it (Mode.defaultSize).
+/// Size is not a plain two-way pick: `input` is the only mode whose size
+/// changes the shape of the composer, so it defaults to the one that fits
+/// inside it (Mode.defaultSize). Facing and speed default independently.
 fn resolveMascot(
     mode_flag: ?[]const u8,
     mode_cfg: []const u8,
@@ -5778,28 +5825,27 @@ fn resolveMascot(
     size_cfg: []const u8,
     facing_flag: ?[]const u8,
     facing_cfg: []const u8,
+    speed_flag: ?[]const u8,
+    speed_cfg: []const u8,
 ) MascotChoice {
     const mode = pickSetting(mascot.Mode, mascot.Mode.parse, mode_flag, mode_cfg, .off);
     const size = pickSetting(mascot.Size, mascot.Size.parse, size_flag, size_cfg, mode.value.defaultSize());
-    const facing = pickSetting(
-        mascot.Facing,
-        mascot.Facing.parse,
-        facing_flag,
-        facing_cfg,
-        mode.value.defaultFacing(),
-    );
+    const facing = pickSetting(mascot.Facing, mascot.Facing.parse, facing_flag, facing_cfg, .default);
+    const speed = pickSetting(u8, mascot.parseSpeed, speed_flag, speed_cfg, 5);
     return .{
         .mode = mode.value,
         .size = size.value,
         .facing = facing.value,
+        .speed = speed.value,
         .bad_mode = mode.bad,
         .bad_size = size.bad,
         .bad_facing = facing.bad,
+        .bad_speed = speed.bad,
     };
 }
 
 fn resolveMode(flag: ?[]const u8, configured: []const u8) MascotChoice {
-    return resolveMascot(flag, configured, null, "", null, "");
+    return resolveMascot(flag, configured, null, "", null, "", null, "");
 }
 
 test "resolveMascot prefers the flag and tolerates junk from either side" {
@@ -5829,19 +5875,19 @@ test "resolveMascot prefers the flag and tolerates junk from either side" {
 
 test "resolveMascot takes size from the flag, the config, then the mode" {
     try std.testing.expectEqual(mascot.Size.medium, resolveMode("loop", "").size);
-    const small = resolveMascot("loop", "", "small", "", null, "");
+    const small = resolveMascot("loop", "", "small", "", null, "", null, "");
     try std.testing.expectEqual(mascot.Size.small, small.size);
     // Config supplies it when the flag does not, and the flag wins when both do.
     try std.testing.expectEqual(
         mascot.Size.large,
-        resolveMascot("loop", "", null, "large", null, "").size,
+        resolveMascot("loop", "", null, "large", null, "", null, "").size,
     );
     try std.testing.expectEqual(
         mascot.Size.small,
-        resolveMascot("loop", "", "small", "large", null, "").size,
+        resolveMascot("loop", "", "small", "large", null, "", null, "").size,
     );
     // Junk keeps the default and is reported.
-    const bad = resolveMascot("loop", "", "gigantic", "", null, "");
+    const bad = resolveMascot("loop", "", "gigantic", "", null, "", null, "");
     try std.testing.expectEqual(mascot.Size.medium, bad.size);
     try std.testing.expectEqualStrings("gigantic", bad.bad_size.?);
     // A bad size must not take the mode down with it.
@@ -5860,12 +5906,12 @@ test "input mode defaults to the size that fits the composer" {
 
     // Asking for a bigger one still gets it, from either side, and that is
     // when the box is allowed to grow.
-    const asked = resolveMascot("input", "", "small", "", null, "");
+    const asked = resolveMascot("input", "", "small", "", null, "", null, "");
     try std.testing.expectEqual(mascot.Size.small, asked.size);
     try std.testing.expect(mascot.inputBoxHeight(asked.size.variant()) > 3);
     try std.testing.expectEqual(
         mascot.Size.xsmall,
-        resolveMascot("input", "", null, "xsmall", null, "").size,
+        resolveMascot("input", "", null, "xsmall", null, "", null, "").size,
     );
 
     // The default is per mode, not global: nothing else shrinks.
@@ -5873,32 +5919,55 @@ test "input mode defaults to the size that fits the composer" {
     try std.testing.expectEqual(mascot.Size.medium, resolveMode("on", "").size);
     // A junk size under `input` falls back to mini, not to medium: falling
     // back must not be the thing that resizes the box either.
-    const junk = resolveMascot("input", "", "gigantic", "", null, "");
+    const junk = resolveMascot("input", "", "gigantic", "", null, "", null, "");
     try std.testing.expectEqual(mascot.Size.mini, junk.size);
     try std.testing.expectEqualStrings("gigantic", junk.bad_size.?);
 }
 
-test "facing defaults per mode and is overridable" {
-    // `place` faces left unless told otherwise; the travelling modes face right.
-    try std.testing.expectEqual(mascot.Facing.left, resolveMode("place", "").facing);
-    try std.testing.expectEqual(mascot.Facing.right, resolveMode("loop", "").facing);
-    // Either source can override it, flag winning.
+test "facing defaults to the mode's natural pose and is invertible" {
+    // Every mode defaults to `.default` (the natural orientation); only an
+    // explicit request inverts it, and either source can, flag winning.
+    try std.testing.expectEqual(mascot.Facing.default, resolveMode("place", "").facing);
+    try std.testing.expectEqual(mascot.Facing.default, resolveMode("loop", "").facing);
     try std.testing.expectEqual(
-        mascot.Facing.right,
-        resolveMascot("place", "", null, "", "right", "").facing,
+        mascot.Facing.inverted,
+        resolveMascot("place", "", null, "", "inverted", "", null, "").facing,
     );
     try std.testing.expectEqual(
-        mascot.Facing.left,
-        resolveMascot("loop", "", null, "", null, "left").facing,
+        mascot.Facing.inverted,
+        resolveMascot("loop", "", null, "", null, "inverted", null, "").facing,
     );
     try std.testing.expectEqual(
-        mascot.Facing.left,
-        resolveMascot("loop", "", null, "", "left", "right").facing,
+        mascot.Facing.default,
+        resolveMascot("loop", "", null, "", "default", "inverted", null, "").facing,
     );
-    // Junk falls back to the mode's default and is reported.
-    const bad = resolveMascot("place", "", null, "", "sideways", "");
-    try std.testing.expectEqual(mascot.Facing.left, bad.facing);
+    // Junk falls back to `.default` and is reported.
+    const bad = resolveMascot("place", "", null, "", "sideways", "", null, "");
+    try std.testing.expectEqual(mascot.Facing.default, bad.facing);
     try std.testing.expectEqualStrings("sideways", bad.bad_facing.?);
+}
+
+test "resolveMascot takes speed from the flag, the config, then 5" {
+    // 5 is the regular pace; 0 and 10 are the bounds.
+    try std.testing.expectEqual(@as(u8, 5), resolveMode("loop", "").speed);
+    const fast = resolveMascot("loop", "", null, "", null, "", "10", "");
+    try std.testing.expectEqual(@as(u8, 10), fast.speed);
+    // Config supplies it when the flag does not, and the flag wins when both do.
+    try std.testing.expectEqual(
+        @as(u8, 2),
+        resolveMascot("loop", "", null, "", null, "", null, "2").speed,
+    );
+    try std.testing.expectEqual(
+        @as(u8, 8),
+        resolveMascot("loop", "", null, "", null, "", "8", "2").speed,
+    );
+    // Out of range or junk keeps the default and is reported.
+    const high = resolveMascot("loop", "", null, "", null, "", "11", "");
+    try std.testing.expectEqual(@as(u8, 5), high.speed);
+    try std.testing.expectEqualStrings("11", high.bad_speed.?);
+    const junk = resolveMascot("loop", "", null, "", null, "", "zoom", "");
+    try std.testing.expectEqual(@as(u8, 5), junk.speed);
+    try std.testing.expectEqualStrings("zoom", junk.bad_speed.?);
 }
 
 /// The id `--continue` means: the saved session touched most recently.
@@ -6167,11 +6236,14 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         cfg.tui.mascot_size,
         opts.mascot_facing,
         cfg.tui.mascot_facing,
+        opts.mascot_speed,
+        cfg.tui.mascot_speed,
     );
     model.mascot = .{
         .mode = mascot_choice.mode,
         .size = mascot_choice.size,
         .facing = mascot_choice.facing,
+        .speed = mascot_choice.speed,
     };
     // Only borrowed when there is something to draw, so nothing else in this
     // model can quietly start depending on a live app handle.
@@ -6224,9 +6296,18 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         model.lines.append(arena, .{
             .text = std.fmt.allocPrint(
                 arena,
-                "error: mascot facing '{s}' is not one of left, right; using the mode's default",
+                "error: mascot facing '{s}' is not one of default, inverted; using the mode's default",
                 .{bad},
             ) catch "error: unknown mascot facing; using the mode's default",
+        }) catch {};
+    }
+    if (mascot_choice.bad_speed) |bad| {
+        model.lines.append(arena, .{
+            .text = std.fmt.allocPrint(
+                arena,
+                "error: mascot speed '{s}' is not an integer 0..10; using 5",
+                .{bad},
+            ) catch "error: unknown mascot speed; using 5",
         }) catch {};
     }
     if (opts.theme) |name| {

@@ -413,6 +413,7 @@ chatrooms = false
   | `mascot` | `"off"` | `off`, `type`, `loop`, `place`, `input` |
   | `mascot_size` | `""` (= per mode) | `mini`, `xsmall`, `small`, `medium`, `large` |
   | `mascot_facing` | `""` (= per mode) | `left`, `right` |
+  | `mascot_speed` | `""` (= `5`) | `0` through `10`; `0` never moves, `10` is fastest |
 
   The modes differ in where the robot lives and what moves it:
 
@@ -442,6 +443,10 @@ chatrooms = false
   `mascot_facing` applies only to `loop` and `place`. `type` sets its own
   orientation and `input` is never mirrored.
 
+  `mascot_speed` sets the movement pace. Unset is the regular pace (`5`); `0`
+  freezes movement, and `10` is the fastest. `--mascot-speed <0..10>` overrides
+  it for one REPL session.
+
   `--mascot[=<mode>]`, `--mascot-size` and `--mascot-facing` override all three
   for one session; a bare `--mascot` means `loop`. An unparseable value in
   either place is reported on the transcript and falls back rather than
@@ -451,6 +456,7 @@ chatrooms = false
   [tui]
   mascot = "input"
   mascot_size = "small"
+  mascot_speed = "6"
   ```
 
 ## Minimal working config

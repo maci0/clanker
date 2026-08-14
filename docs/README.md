@@ -4,6 +4,8 @@ External-project digests (what we can learn from them) live in [docs/digests/](d
 Product requirement docs live in [docs/prds/](prds/) ([index](prds/README.md), [template](prds/TEMPLATE.md));
 the Done/Planned narrative is [docs/ROADMAP.md](ROADMAP.md).
 Working review logs live in [docs/reviews/](reviews/); design/implementation plans in [docs/plans/](plans/).
+Operational bugs and their evidence-led investigations live in [docs/reports/](reports/).
+Current recovery procedures for recurring failures live in [docs/runbooks/](runbooks/).
 
 
 ## Architecture

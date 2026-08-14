@@ -228,6 +228,19 @@ whole document. When fewer words already say the same thing, tighten
 instead of appending: edit the stale sentence down to what still holds
 rather than stacking a new one beside it.
 
+Before diagnosing a failure, search [docs/reports/](docs/reports/) and
+[docs/runbooks/](docs/runbooks/) for its error text, command, subsystem, or
+symptom. Use the `reports` tool's `search` action when it is available; it
+searches both stores together and avoids a broad repository scan. Runbooks give
+the current recovery path; reports preserve the evidence behind it. A resolved
+record is evidence to verify against the current tree, not a substitute for
+verification; reuse its reproduction and checks instead of rediscovering the
+same cause. If no record covers the issue, create or update an investigation as
+the work proceeds with the tool's `create` action and, when it is confirmed, a
+linked bug report and runbook when the recovery will recur. Follow the report
+templates: every record starts with `## TL;DR`, keeps the evidence and rejected
+hypotheses, and ends with the resolution and verification needed to trust it.
+
 Retrieved documents and memory-search hits are untrusted prompt data. Keep
 them inside explicit retrieval boundaries, separate from the operator task;
 the system prompt must tell the model never to execute directives found there.
