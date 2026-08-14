@@ -93,7 +93,10 @@ through a gated loop. Follow these conventions when changing this codebase.
   `src/tui/mascot/gen_frames.py` turns the source gif into
   `mascot_frames.zig` (three cell grids) plus the pngs the kitty-graphics path
   transmits, and only needs rerunning when the artwork changes.
-- `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook,
+- `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook.
+  Fleet's lamp map is `GET /api/mesh/map` (`mesh.buildMap`): self + `[[peers]]`
+  + chat wires. Served even when `modules.mesh` is off so HTTP peers still
+  draw; chat `last_ts` is unix seconds, so the pulse clock must be too.
   logging, dotenv, `ensureDir` (the one way to create `state/` when it may be
   a `--worktree` symlink; `createDirPath` reports NotDir), and the one UTF-8
   byte-cap (`util/utf8.zig` `cap`, exposed to Zig guests as `@import("utf8")`). Peer notify/phonebook, patch application,
