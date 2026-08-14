@@ -2,9 +2,10 @@
 
 ## Status
 
-Draft. **Do not implement until the Design decisions below are treated as
-locked.** They are locked in this revision. Nothing described here is
-implemented yet.
+In progress. Design is locked. Phase 1 codec, admission, leave-vs-unreachable,
+simultaneous-open, and CHAT id-dedup live in `src/peers/mesh.zig` (host
+tests, no NIC). Serve listener, `ck_mesh`, CLI, and chat fan-out are still
+open.
 
 Single source of truth once built: `src/peers/mesh.zig` (host-side, the
 same "thin guest, honest host" shape as `src/peers/chatrooms.zig`) plus
