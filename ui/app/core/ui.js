@@ -182,6 +182,7 @@ export function upgradePfFormControl(el) {
   var tag = el.tagName;
   if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") return el;
   if (tag === "INPUT" && pfControlSkip[el.type]) return el;
+  if (el.classList.contains("sr-only") || el.getAttribute("aria-hidden") === "true") return el;
   if (el.type === "checkbox" || el.type === "radio") return upgradePfCheckInput(el);
   if (!el.classList.contains("pf-v6-c-form-control")) el.classList.add("pf-v6-c-form-control");
   return el;
