@@ -5,6 +5,7 @@ const std = @import("std");
 const mesh = @import("../peers/mesh.zig");
 const config = @import("../config.zig");
 const log = @import("../util/log.zig");
+const live = @import("live.zig");
 
 pub const ChatBody = struct {
     room: []const u8,
@@ -45,6 +46,10 @@ var runtime: ?*Runtime = null;
 
 pub fn active() bool {
     return runtime != null;
+}
+
+pub fn publishLive(msg: ChatBody) void {
+    live.noteChat(msg.room, msg.id, msg.from, msg.text, msg.ts);
 }
 
 fn copyField(dst: []u8, src: []const u8) u8 {

@@ -39,6 +39,15 @@ pub fn allTopics() u8 {
     return topicBit(.chat) | topicBit(.mesh) | topicBit(.arena) | topicBit(.run);
 }
 
+pub fn topicsFromTarget(target: []const u8) []const u8 {
+    const qmark = std.mem.findScalar(u8, target, '?') orelse return "";
+    var it = std.mem.splitScalar(u8, target[qmark + 1 ..], '&');
+    while (it.next()) |pair| {
+        if (std.mem.startsWith(u8, pair, "topics=")) return pair["topics=".len..];
+    }
+    return "";
+}
+
 pub fn parseTopics(s: []const u8) u8 {
     if (s.len == 0) return allTopics();
     var mask: u8 = 0;
@@ -121,6 +130,52 @@ pub fn writeSse(out: []u8, json: []const u8) ?[]const u8 {
     @memcpy(out[prefix.len .. prefix.len + json.len], json);
     @memcpy(out[prefix.len + json.len .. prefix.len + json.len + suffix.len], suffix);
     return out[0 .. prefix.len + json.len + suffix.len];
+}
+
+pub fn noteChat(room: []const u8, id: []const u8, from: []const u8, text: []const u8, ts: i64) void {
+    var buf: [event_cap]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.write(.{ .t = "chat", .room = room, .id = id, .from = from, .text = text, .ts = ts }) catch return;
+    publish(.chat, buf[0..w.end]);
+    w.end = 0;
+    s.write(.{ .t = "talk", .from = from, .room = room, .ts = ts }) catch return;
+    publish(.mesh, buf[0..w.end]);
+}
+
+pub fn noteRun(working: bool) void {
+    var buf: [64]u8 = undefined;
+    const json = std.fmt.bufPrint(&buf, "{{\"t\":\"run\",\"working\":{}}}", .{working}) catch return;
+    publish(.run, json);
+}
+
+/// Long-lived SSE write loop. Caller must have already decided this
+/// connection is not keep-alive.
+pub fn serveSse(fd: std.posix.fd_t, topics: []const u8) void {
+    const id = subscribe(parseTopics(topics)) orelse {
+        const body = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 52\r\n\r\n{\"ok\":false,\"error\":\"too many live subscribers\"}";
+        writeAllOrErr(fd, body) catch {};
+        return;
+    };
+    defer unsubscribe(id);
+    writeAllOrErr(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\nX-Accel-Buffering: no\r\n\r\nretry: 2000\n\n") catch return;
+    var evbuf: [event_cap]u8 = undefined;
+    var ssebuf: [event_cap + 32]u8 = undefined;
+    var idle: u32 = 0;
+    while (true) {
+        if (take(id, &evbuf)) |ev| {
+            const framed = writeSse(&ssebuf, ev.json) orelse continue;
+            writeAllOrErr(fd, framed) catch return;
+            idle = 0;
+            continue;
+        }
+        std.Thread.sleep(50 * std.time.ns_per_ms);
+        idle += 1;
+        if (idle >= 300) {
+            writeAllOrErr(fd, ": ping\n\n") catch return;
+            idle = 0;
+        }
+    }
 }
 
 pub fn writeAllOrErr(fd: std.posix.fd_t, bytes: []const u8) !void {
