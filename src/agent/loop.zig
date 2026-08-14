@@ -25,6 +25,8 @@ const mock_server = @import("../llm/mock_server.zig");
 const advisor = @import("advisor.zig");
 const prune = @import("prune.zig");
 const loop_guard = @import("loop_guard.zig");
+const hooks_config = @import("../hooks/config.zig");
+const hooks_runner = @import("../hooks/runner.zig");
 const thinking = @import("thinking.zig");
 const ttsr = @import("ttsr.zig");
 
@@ -221,6 +223,10 @@ pub const Agent = struct {
     /// Cumulative session-level stats across multiple runs (e.g. REPL).
     /// Updated at the end of each run() call so callers can inspect totals.
     session_stats: RunStats = .{},
+    /// Parsed once at construction. An invalid or missing file leaves this
+    /// empty, so every disabled/fail-open path is a zero-length iteration.
+    lifecycle_hooks: hooks_config.Config = .{},
+    pending_hook_contexts: std.ArrayList([]const u8) = .empty,
 
     /// Frees session-scoped resources (gpa-owned wasm_cache). Call when the
     /// Agent is no longer needed (end of a REPL session / single-shot run).
@@ -281,8 +287,15 @@ pub const Agent = struct {
             .home = home,
             .git_remote_ops = cfg.agent.git_remote_ops,
         }, defs);
-        const prompt_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ base_prompt, exact_format_suffix });
-        return .{
+        var prompt_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ base_prompt, exact_format_suffix });
+        const lifecycle_hooks = if (cfg.hooks.enabled)
+            hooks_config.load(ctx.io, arena, std.Io.Dir.cwd(), cfg.hooks.config_path, cfg.hooks.default_timeout_ms) catch |err| blk: {
+                log.log(.warn, "hooks: disabling '{s}' for this agent: {s}", .{ cfg.hooks.config_path, @errorName(err) });
+                break :blk hooks_config.Config{};
+            }
+        else
+            hooks_config.Config{};
+        var result: Agent = .{
             .ctx = ctx,
             .arena = arena,
             .provider = provider,
@@ -298,7 +311,17 @@ pub const Agent = struct {
             .instance_id = cfg.instance.id,
             .peer_names = peer_names.items,
             .stats = .{},
+            .lifecycle_hooks = lifecycle_hooks,
         };
+        if (lifecycle_hooks.hooks.len > 0) {
+            const payload = try result.hookPayload(.SessionStart, "", "", "");
+            const hook_result = try result.runLifecycleHook(.SessionStart, "", payload);
+            if (hook_result.context.len > 0) {
+                prompt_text = try std.fmt.allocPrint(arena, "{s}\n\n[SessionStart hook context]\n{s}", .{ prompt_text, hook_result.context });
+                result.system_prompt_text = prompt_text;
+            }
+        }
+        return result;
     }
 
     /// Runs the agent on a task; returns the final assistant response.
@@ -313,6 +336,60 @@ pub const Agent = struct {
     /// must not cancel the turn after it.
     fn stopRequested(self: *Agent) bool {
         return takeStopRequest(self.stop_flag);
+    }
+
+    fn hookSandbox(self: *Agent) !host.Sandbox {
+        return .{
+            .gpa = self.ctx.gpa,
+            .io = self.ctx.io,
+            .root_dir = self.cfg.agent.sandbox_root,
+            .shared_root = self.cfg.agent.shared_root,
+            .network_allow = &.{},
+            .fs_prefixes = &.{},
+            .environ_map = self.ctx.environ_map,
+            .exec_allow = try self.reg.execAllowUnion(self.arena, self.cfg.agent.repl_exec_allow),
+            .git_remote_ops = self.cfg.agent.git_remote_ops,
+            .exec_pattern_allow = self.cfg.agent.exec_pattern_allow,
+            .cfg = self.cfg,
+        };
+    }
+
+    fn runLifecycleHook(self: *Agent, event: hooks_config.Event, tool_name: []const u8, payload: []const u8) !hooks_runner.Result {
+        if (self.lifecycle_hooks.hooks.len == 0) return .{};
+        var sb = try self.hookSandbox();
+        return hooks_runner.run(self.arena, self.lifecycle_hooks, &sb, event, tool_name, payload);
+    }
+
+    fn hookPayload(self: *Agent, event: hooks_config.Event, tool_name: []const u8, tool_input: []const u8, value: []const u8) ![]const u8 {
+        var out: std.Io.Writer.Allocating = .init(self.arena);
+        var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+        try s.beginObject();
+        try s.objectField("hook_event_name");
+        try s.write(@tagName(event));
+        try s.objectField("session_id");
+        try s.write(self.current_run_id);
+        try s.objectField("cwd");
+        try s.write(self.cfg.agent.sandbox_root);
+        if (tool_name.len > 0) {
+            try s.objectField("tool_name");
+            try s.write(tool_name);
+            try s.objectField("tool_input");
+            const input_value = std.json.parseFromSliceLeaky(std.json.Value, self.arena, tool_input, .{}) catch null;
+            if (input_value) |parsed| try s.write(parsed) else try s.write(tool_input);
+        }
+        switch (event) {
+            .UserPromptSubmit => {
+                try s.objectField("prompt");
+                try s.write(value);
+            },
+            .PostToolUse => {
+                try s.objectField("tool_response");
+                try s.write(value);
+            },
+            else => {},
+        }
+        try s.endObject();
+        return out.written();
     }
 
     fn refreshSystemPrompt(self: *Agent, messages: *std.ArrayList(types.Message)) void {
@@ -491,7 +568,13 @@ pub const Agent = struct {
             self.pending_images = null;
             if (imgs.len > 0) task_images = imgs;
         }
+        const prompt_hook = try self.runLifecycleHook(.UserPromptSubmit, "", try self.hookPayload(.UserPromptSubmit, "", "", task));
+        if (prompt_hook.decision != .allow) {
+            log.log(.warn, "UserPromptSubmit hook rejected the turn: {s}", .{prompt_hook.reason});
+            return error.HookRejectedPrompt;
+        }
         try messages.append(self.arena, .{ .role = .user, .content = task, .images = task_images });
+        if (prompt_hook.context.len > 0) try messages.append(self.arena, .{ .role = .system, .content = prompt_hook.context });
         // Chatrooms inbox: surface messages that arrived since the last run
         // so a subscribed clanker actually notices what its peers said.
         if (self.cfg.modules.chatrooms and self.cfg.chatrooms.on) {
@@ -722,6 +805,14 @@ pub const Agent = struct {
 
             // wants to call tools.
             if (maybe_calls == null or maybe_calls.?.len == 0) {
+                const stop_hook = try self.runLifecycleHook(.Stop, "", try self.hookPayload(.Stop, "", "", resp.message.content orelse ""));
+                if (stop_hook.decision != .allow) {
+                    const feedback = if (stop_hook.reason.len > 0) stop_hook.reason else "A Stop hook requested another step; continue working before answering.";
+                    try messages.append(self.arena, .{ .role = .system, .content = feedback });
+                    if (stop_hook.context.len > 0) try messages.append(self.arena, .{ .role = .system, .content = stop_hook.context });
+                    log.log(.info, "Stop hook forced another step at iteration {d}", .{iteration + 1});
+                    continue;
+                }
                 try g.add(self.ctx.gpa, .{
                     .kind = .final,
                     .iteration = iteration + 1,
@@ -906,6 +997,10 @@ pub const Agent = struct {
                     "[loop guard] You have repeated the same tool call several times. Reassess the approach before calling it again.";
                 try messages.append(self.arena, .{ .role = .system, .content = reminder });
             }
+            for (self.pending_hook_contexts.items) |context| {
+                try messages.append(self.arena, .{ .role = .system, .content = context });
+            }
+            self.pending_hook_contexts.clearRetainingCapacity();
         }
         if (budget_hit) return error.SessionTokenBudgetExceeded;
         log.log(.error_, "agent hit the {d}-iteration limit without a final answer", .{self.max_iterations});
