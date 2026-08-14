@@ -84,6 +84,65 @@ export function bind(node, st, render) {
   });
 }
 
+/* PatternFly button bridge (step 4): add pf-v6-c-button + variant modifiers and
+   wrap label/icon children without removing cabinet classes yet. */
+var pfButtonSkip = {
+  "rail-tab": 1, "rail-item": 1, "tool-name": 1, "suggestion": 1,
+  "palette-item": 1, "board-header-btn": 1, "rail-pin": 1, "label-picker-item": 1,
+};
+
+function pfButtonVariant(el) {
+  if (el.classList.contains("chip-btn") || el.classList.contains("slack-btn-icon")) return "plain";
+  if (el.classList.contains("secondary") && el.classList.contains("danger")) return "secondary-danger";
+  if (el.classList.contains("secondary")) return "secondary";
+  if (el.classList.contains("danger")) return "danger";
+  if (el.classList.contains("primary") || el.id === "submit" || el.type === "submit") return "primary";
+  if (!el.classList.contains("secondary") && !el.classList.contains("chip-btn")) return "primary";
+  return "secondary";
+}
+
+function wrapPfButtonContent(el) {
+  if (el.querySelector(".pf-v6-c-button__text, .pf-v6-c-button__icon")) return;
+  var svg = el.querySelector("svg");
+  var text = (el.textContent || "").trim();
+  if (svg && (!text || el.getAttribute("aria-label"))) {
+    el.textContent = "";
+    var iconWrap = document.createElement("span");
+    iconWrap.className = "pf-v6-c-button__icon";
+    iconWrap.appendChild(svg);
+    el.appendChild(iconWrap);
+    return;
+  }
+  if (!text) return;
+  el.textContent = "";
+  var span = document.createElement("span");
+  span.className = "pf-v6-c-button__text";
+  span.textContent = text;
+  el.appendChild(span);
+}
+
+export function upgradePfButton(el) {
+  if (!el || el.tagName !== "BUTTON" || el.classList.contains("pf-v6-c-button")) return el;
+  for (var cls in pfButtonSkip) {
+    if (el.classList.contains(cls)) return el;
+  }
+  var variant = pfButtonVariant(el);
+  el.classList.add("pf-v6-c-button");
+  if (variant === "plain") el.classList.add("pf-m-plain");
+  else if (variant === "secondary") el.classList.add("pf-m-secondary");
+  else if (variant === "danger") el.classList.add("pf-m-danger");
+  else if (variant === "secondary-danger") el.classList.add("pf-m-secondary", "pf-m-danger");
+  else if (variant === "primary") el.classList.add("pf-m-primary");
+  wrapPfButtonContent(el);
+  return el;
+}
+
+export function upgradePfButtons(root) {
+  var scope = root || document;
+  scope.querySelectorAll("button").forEach(function (btn) { upgradePfButton(btn); });
+  return scope;
+}
+
 // A fixed timer is too short to read a long message, so hovering or
 // focusing a toast (mouse or keyboard) holds it on screen.
 export function toast(msg, kind) {
@@ -159,12 +218,14 @@ export function uiConfirm(message, opts) {
     cancel.type = "button";
     cancel.className = "secondary";
     cancel.textContent = "Cancel";
+    upgradePfButton(cancel);
     cancel.addEventListener("click", function () { done(false); });
     actions.appendChild(cancel);
     var ok = document.createElement("button");
     ok.type = "button";
     ok.className = opts.danger ? "danger" : "";
     ok.textContent = opts.confirmLabel || "OK";
+    upgradePfButton(ok);
     ok.addEventListener("click", function () { done(true); });
     actions.appendChild(ok);
     form.appendChild(actions);
@@ -207,11 +268,13 @@ export function uiPrompt(message, initial, opts) {
     cancel.type = "button";
     cancel.className = "secondary";
     cancel.textContent = "Cancel";
+    upgradePfButton(cancel);
     cancel.addEventListener("click", function () { done(null); });
     actions.appendChild(cancel);
     var ok = document.createElement("button");
     ok.type = "button";
     ok.textContent = opts.confirmLabel || "Save";
+    upgradePfButton(ok);
     ok.addEventListener("click", function () { done(input.value); });
     actions.appendChild(ok);
     form.appendChild(actions);
@@ -259,18 +322,27 @@ import { icon as iconFn } from "./icons.js";
 export var UI = {
   button: function (label, onclick, opts) {
     opts = opts || {};
-    var cls = "secondary";
-    if (opts.kind === "danger") cls += " danger";
+    var cls = "pf-v6-c-button ";
+    if (opts.kind === "plain") cls += "pf-m-plain chip-btn";
+    else if (opts.kind === "primary") cls += "pf-m-primary";
+    else if (opts.kind === "danger") cls += "pf-m-danger danger";
+    else if (opts.kind === "secondary-danger") cls += "pf-m-secondary pf-m-danger secondary danger";
+    else cls += "pf-m-secondary secondary";
     var icon = iconFn || function(){ return document.createElement("span"); };
     var attrs = {
       type: "button",
-      class: opts.kind === "primary" ? "" : cls,
+      class: cls.trim(),
       onclick: onclick
     };
     if (opts.label) attrs["aria-label"] = opts.label;
     if (opts.title) attrs.title = opts.title;
-    if (opts.icon) return T.button(attrs, icon(opts.icon, 14), label);
-    return T.button(attrs, label);
+    if (opts.icon) {
+      var node = T.button(attrs,
+        T.span({ class: "pf-v6-c-button__icon" }, icon(opts.icon, 14)),
+        label ? T.span({ class: "pf-v6-c-button__text" }, label) : null);
+      return node;
+    }
+    return T.button(attrs, T.span({ class: "pf-v6-c-button__text" }, label));
   },
   field: function (id, label, control) {
     return [T.label({ for: id }, label), control];
