@@ -64,6 +64,13 @@
 
 ## Planned
 
+- **SIXEL mascot rendering** — terminals that positively report SIXEL support
+  but not Kitty graphics will render the existing animated mascot as a raster
+  at the configured cell footprint. Renderer order is Kitty → SIXEL → Unicode
+  half-block cells; capability discovery, image lifecycle, clipping, resize,
+  and cleanup must be supplied through libvaxis rather than a raw TTY side
+  channel. Full scope: [PRD 0036](prds/0036-sixel-mascot-rendering.md);
+  decision: [ADR 0013](adrs/0013-sixel-precedes-unicode-mascot-fallback.md).
 - **vaxis REPL: close the gap left by the deleted REPL** — full audit of `src/tui/repl.zig` against both the implementation it replaced and the other interactive surfaces (`clanker run`, the web UI) it now sits beside. `/model`, `/help`, the flag wiring, session persistence, and (2026-08-12) manual scrollback, the slash-command registry, and left-bar tool-call cards (all landed — see above and below) close seven items that used to be on this list; everything below is still open, roughly most-surprising first:
   - **No Tab-complete or fuzzy command palette.** (2026-08-13: both shipped, and this item is closed. Tab-complete is `completeSlashCommand` in `src/tui/repl.zig`, prefix completion over `command_registry` that edits the TextField in place rather than opening a modal. The fuzzy palette is Ctrl-P, a modal over the whole registry that matches mid-word and on the description, alongside Ctrl-R for transcript search.)
   - **No inline `ask_user`/approval or confirm-before-write UI.** (2026-08-13: shipped — `ask_fn`/`confirm_fn` wired to a pthread modal bridge in `src/tui/repl.zig`; `confirm_writes=always` denies by default on Escape/timeout/abandon. See [PRD 0005](prds/0005-repl-tui.md). This item is closed.)

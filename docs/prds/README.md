@@ -56,6 +56,7 @@ and Implementation lists checkable file-level phases.
 | [0033](0033-agent-presets.md) | Agent presets | Draft | deepseek-code.com audit; supersedes the Feynman "role prompt files" note |
 | [0034](0034-session-subprocs.md) | Session subprocess inspector | Draft | Lists/kills 0016 registry rows from doctor + a guest |
 | [0035](0035-goal-lifecycle.md) | Goal lifecycle capabilities | Shipped | Draft, persist, and execute are independent |
+| [0036](0036-sixel-mascot-rendering.md) | SIXEL mascot rendering | Draft | Kitty → SIXEL → Unicode cells; depends on libvaxis support |
 
 ## Recommended build order (Drafts)
 
