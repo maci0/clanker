@@ -1,6 +1,15 @@
 # Autoresearch
 
-Use `clanker autoresearch` to autonomously search for a better version of any measurable target — a Zig micro-bench, a WASM tool's throughput, a prompt's eval score. Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch): fixed time budget per experiment, one scalar metric.
+When asked to run autoresearch, optimize a scalar metric, or drive `/autoresearch`
+from the REPL: the measurement loop runs only through the host CLI, not WASM tools.
+
+Run it with `clanker autoresearch` to search for a better version of any measurable
+target (a Zig micro-bench, a WASM tool's throughput, a prompt's eval score).
+Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch):
+fixed time budget per experiment, one scalar metric. From an agent turn you cannot
+invoke this CLI from a tool sandbox; tell the operator to run it, or use REPL `!`
+only when clanker is listed in `agent.repl_exec_allow`. The `autoresearch` WASM
+tool lists prior runs and tails `ledger.jsonl`; it cannot start a run.
 
 The harness is executed as a local command for every experiment. Verify that
 its dependencies are available, that it exits on its own, and that the metric

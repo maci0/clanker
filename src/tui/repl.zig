@@ -115,8 +115,33 @@ fn errorRecoveryHint(err: anyerror, detail: ?[]const u8) []const u8 {
             return " (request timed out)";
         if (find(d, "onnection refused") != null or find(d, "onnection reset") != null)
             return " (cannot reach provider; check network)";
+        if (find(d, "max_iterations") != null or find(d, "iteration limit") != null)
+            return " (hit iteration limit; try a simpler task or raise agent.max_iterations)";
+        if (find(d, "token_budget") != null or find(d, "token budget") != null)
+            return " (ran out of token budget)";
     }
     return "";
+}
+
+/// Parse `/plan on`, `/research off`, or a bare toggle. Returns null when the
+/// argument is not one of on/off/empty.
+fn parseModeToggle(args: []const u8) ?bool {
+    const trimmed = std.mem.trim(u8, args, " \t\r\n");
+    if (trimmed.len == 0) return null;
+    if (std.ascii.eqlIgnoreCase(trimmed, "on") or std.ascii.eqlIgnoreCase(trimmed, "enable") or std.ascii.eqlIgnoreCase(trimmed, "true"))
+        return true;
+    if (std.ascii.eqlIgnoreCase(trimmed, "off") or std.ascii.eqlIgnoreCase(trimmed, "disable") or std.ascii.eqlIgnoreCase(trimmed, "false"))
+        return false;
+    return null;
+}
+
+fn idlePhaseLabel(self: *const Model, buf: []u8) []const u8 {
+    if (!self.plan_mode and !self.research_mode) return "ready";
+    if (self.plan_mode and self.research_mode)
+        return std.fmt.bufPrint(buf, "ready · plan · research", .{}) catch "ready";
+    if (self.plan_mode)
+        return std.fmt.bufPrint(buf, "ready · plan", .{}) catch "ready";
+    return std.fmt.bufPrint(buf, "ready · research", .{}) catch "ready";
 }
 
 // ---------------------------------------------------------------------
@@ -364,6 +389,8 @@ fn runThreadMain(args: RunThreadArgs) void {
     // gating only serve's streaming runs, as documented.)
     a.ask_fn = &tuiAsk;
     if (self.cfg.agent.confirm_writes == .always) a.confirm_fn = &tuiConfirm;
+    a.plan_mode = self.plan_mode;
+    a.research_mode = self.research_mode;
 
     // Wall time spans the whole turn, tool rounds included, because that is
     // the wait the person at the keyboard actually sat through.
@@ -745,6 +772,10 @@ const CommandAction = union(enum) {
     /// Lists themes (no args) or switches the active color theme for this
     /// session (with a name).
     theme,
+    /// Toggle proposal-only runs for subsequent tasks (`/plan [on|off]`).
+    plan,
+    /// Toggle web-research runs for subsequent tasks (`/research [on|off]`).
+    research,
     /// Runs the named internal `cmd_*` tool via `runInternalTool`.
     tool: struct {
         name: []const u8,
@@ -787,6 +818,8 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/arena", .takes_args = true, .arg_hint = "...", .help = "judged debate between two positions (see /arena --help)", .action = .arena },
     .{ .name = "/compare", .takes_args = true, .arg_hint = "...", .help = "one prompt to several models at once, answers unlabeled (see /compare --help)", .action = .compare },
     .{ .name = "/theme", .takes_args = true, .arg_hint = "[name]", .help = "list or switch color theme (mocha, latte, tokyonight, ...)", .action = .theme },
+    .{ .name = "/plan", .takes_args = true, .arg_hint = "[on|off]", .help = "toggle plan mode (proposal only; write tools refused)", .action = .plan },
+    .{ .name = "/research", .takes_args = true, .arg_hint = "[on|off]", .help = "toggle research mode (prefer web_search/fetch_web for current facts)", .action = .research },
     .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
 };
 
@@ -1225,6 +1258,14 @@ test "isBlankSubmission refuses empty and whitespace-only lines" {
     // A bare punctuation mark is content, not blank: `!` alone is the shell
     // escape's own usage listing and must still reach runShellEscape.
     try std.testing.expect(!isBlankSubmission("  !  "));
+}
+
+test "parseModeToggle accepts on/off and rejects unknown tokens" {
+    try std.testing.expectEqual(@as(?bool, true), parseModeToggle("on"));
+    try std.testing.expectEqual(@as(?bool, false), parseModeToggle("off"));
+    try std.testing.expectEqual(@as(?bool, true), parseModeToggle(" ON "));
+    try std.testing.expectEqual(@as(?bool, null), parseModeToggle(""));
+    try std.testing.expectEqual(@as(?bool, null), parseModeToggle("maybe"));
 }
 
 /// True for input that was clearly meant as a slash command (leading '/'):
@@ -1807,6 +1848,11 @@ const Model = struct {
     /// `/theme <name>` sets this for the session, overriding `CLANKER_THEME`.
     /// Arena-owned. Null = fall back to the env var (then the default).
     theme_override: ?[]const u8 = null,
+    /// `/plan` toggles proposal-only runs (write-capable tools refused), matching
+    /// the web UI's Plan checkbox for this session.
+    plan_mode: bool = false,
+    /// `/research` toggles web-research runs, matching the web UI's Research checkbox.
+    research_mode: bool = false,
     /// Between a bracketed-paste start/end pair. `vxfw.TextField` is a
     /// single-line widget (Enter either submits or is a no-op, there is no
     /// way to insert a literal newline into one), so a multi-line paste's
@@ -2313,6 +2359,30 @@ const Model = struct {
                 }
                 self.theme_override = self.arena.dupe(u8, pc.args) catch pc.args;
                 self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "notice: theme switched to {s}", .{pc.args}) catch "notice: theme switched", .dim = true }) catch {};
+            },
+            .plan => {
+                if (parseModeToggle(pc.args)) |want| {
+                    self.plan_mode = want;
+                } else if (pc.args.len > 0) {
+                    self.lines.append(self.arena, .{ .text = "usage: /plan [on|off] (bare /plan toggles)", .dim = true }) catch {};
+                    return;
+                } else {
+                    self.plan_mode = !self.plan_mode;
+                }
+                const state: []const u8 = if (self.plan_mode) "on" else "off";
+                self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "notice: plan mode {s} (write-capable tools refused while on)", .{state}) catch "notice: plan mode toggled", .dim = true }) catch {};
+            },
+            .research => {
+                if (parseModeToggle(pc.args)) |want| {
+                    self.research_mode = want;
+                } else if (pc.args.len > 0) {
+                    self.lines.append(self.arena, .{ .text = "usage: /research [on|off] (bare /research toggles)", .dim = true }) catch {};
+                    return;
+                } else {
+                    self.research_mode = !self.research_mode;
+                }
+                const state: []const u8 = if (self.research_mode) "on" else "off";
+                self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "notice: research mode {s} (web_search/fetch_web preferred for current facts)", .{state}) catch "notice: research mode toggled", .dim = true }) catch {};
             },
             .workflows => {
                 _ = self.runWorkflowsTool("");
@@ -3963,7 +4033,7 @@ const Model = struct {
         // arms below are static strings, but " running <tool>" is formatted
         // here, and that one was pointing at dead stack by render time.
         const phase: []const u8 = if (!streaming)
-            "ready"
+            idlePhaseLabel(self, &self.phase_buf)
         else if (tool_snap_len > 0)
             std.fmt.bufPrint(&self.phase_buf, " running {s}", .{tool_snap[0..tool_snap_len]}) catch " tool"
         else
@@ -4068,7 +4138,7 @@ const Model = struct {
             }
             if (row < bottom) row += 1;
             if (row < bottom) {
-                writeWrapped(surface, &row, bottom, text_width, "Tab completes /commands. Ctrl-P opens the palette. /help for the rest.", dim);
+                writeWrapped(surface, &row, bottom, text_width, "Tab completes /commands. Ctrl-P opens the palette. /plan and /research match the web UI toggles.", dim);
             }
         }
         // Transcript layout: the visible block is bottom-aligned, chat-style,

@@ -1,7 +1,8 @@
 # Writing a goal
 
-When asked to write, define or set a goal (including `clanker goal "<intent>"`),
-draft first with `write_goal`, present the draft, and only then persist. A
+When asked to write, define or set a goal (including `clanker goal "<intent>"`,
+`/goal <intent>`, or a board card that needs a linked goal), draft first with
+`write_goal`, present the draft, and only then persist. A
 one-line intent never contains all five fields, and inventing them produces a
 goal that reads well and cannot be checked.
 
@@ -10,7 +11,9 @@ inspected). It asks only the material forks via `ask_user`, or records
 assumptions when nobody is reachable. It never writes `state/goals.json`.
 
 Present the returned markdown. Only after the user approves (or a headless
-run has no one to ask) call the `goal` tool once with the five fields.
+run has no one to ask) call the `goal` tool once. Map the draft onto the goal
+tool's field names (`completion_criterion`, `proof`, `stop_rule`, not the
+`write_goal` record's `completion_criteria` / `verification` / `stop_rules`).
 A well-formed goal carries these five fields
 (`objective, completion_criterion, proof, boundaries, stop_rule`):
 

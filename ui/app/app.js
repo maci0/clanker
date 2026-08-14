@@ -1099,9 +1099,9 @@ function errorRecoveryHint(msg) {
     return " (request timed out)";
   if (m.indexOf("onnection refused") !== -1 || m.indexOf("onnection reset") !== -1)
     return " (cannot reach provider; check network)";
-  if (m.indexOf("max_iterations") !== -1 || m.indexOf("iteration") !== -1)
-    return " (hit iteration limit)";
-  if (m.indexOf("token_budget") !== -1 || m.indexOf("tokenbudget") !== -1)
+  if (m.indexOf("max_iterations") !== -1 || m.indexOf("iteration limit") !== -1)
+    return " (hit iteration limit; try a simpler task or raise agent.max_iterations)";
+  if (m.indexOf("token_budget") !== -1 || m.indexOf("token budget") !== -1)
     return " (ran out of token budget)";
   return "";
 }
