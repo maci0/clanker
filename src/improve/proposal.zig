@@ -112,7 +112,10 @@ pub fn validatePath(path: []const u8) bool {
 /// closed list, because a granted path is echoed back into a model request:
 /// `.env`, `config.local.*`, `state/` and `.git/` hold API keys, session
 /// transcripts and credentials, and none of them match anything here.
-const readable_prefixes = [_][]const u8{
+/// Repository roots safe to place in an improve prompt. The staging gate uses
+/// the same roots, so an allowed proposal and the checks judging it always see
+/// the same project inputs.
+pub const readable_roots = [_][]const u8{
     "src/",
     "evals/",
     "tools/",
@@ -146,7 +149,7 @@ pub fn validateReadPath(path: []const u8) bool {
         if (std.mem.endsWith(u8, path, e)) ext_ok = true;
     }
     if (!ext_ok) return false;
-    for (readable_prefixes) |p| {
+    for (readable_roots) |p| {
         if (std.mem.startsWith(u8, path, p)) return true;
     }
     return false;
@@ -443,6 +446,8 @@ test "the readable surface is wider than the writable one, and still closed" {
     try std.testing.expect(validateReadPath("docs/ROADMAP.md"));
     try std.testing.expect(validateReadPath("docs/adrs/0003-autoresearch.md"));
     try std.testing.expect(validateReadPath("AGENTS.md"));
+    try std.testing.expect(validateReadPath("CHANGELOG.md"));
+    try std.testing.expect(validateReadPath("RELEASES.md"));
     try std.testing.expect(validateReadPath("src/cli.zig"));
     try std.testing.expect(validateReadPath("ui/app/index.html"));
     try std.testing.expect(validateReadPath("config.toml"));
