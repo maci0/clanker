@@ -65,15 +65,29 @@ fn decode(arena: std.mem.Allocator, stdout: []const u8) Result {
         else => return .{},
     };
     var result: Result = .{};
-    if (object.get("decision")) |v| if (v == .string) result.decision = parseDecision(v.string);
-    if (object.get("reason")) |v| if (v == .string) result.reason = v.string;
-    if (object.get("additionalContext")) |v| if (v == .string) result.context = v.string;
-    if (object.get("hookSpecificOutput")) |v| if (v == .object) {
-        const specific = v.object;
-        if (specific.get("permissionDecision")) |d| if (d == .string) result.decision = parseDecision(d.string);
-        if (specific.get("permissionDecisionReason")) |r| if (r == .string and result.reason.len == 0) result.reason = r.string;
-        if (specific.get("additionalContext")) |c| if (c == .string) result.context = c.string;
-    };
+    if (object.get("decision")) |v| {
+        if (v == .string) result.decision = parseDecision(v.string);
+    }
+    if (object.get("reason")) |v| {
+        if (v == .string) result.reason = v.string;
+    }
+    if (object.get("additionalContext")) |v| {
+        if (v == .string) result.context = v.string;
+    }
+    if (object.get("hookSpecificOutput")) |v| {
+        if (v == .object) {
+            const specific = v.object;
+            if (specific.get("permissionDecision")) |d| {
+                if (d == .string) result.decision = parseDecision(d.string);
+            }
+            if (specific.get("permissionDecisionReason")) |r| {
+                if (r == .string and result.reason.len == 0) result.reason = r.string;
+            }
+            if (specific.get("additionalContext")) |c| {
+                if (c == .string) result.context = c.string;
+            }
+        }
+    }
     return result;
 }
 
