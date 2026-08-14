@@ -6,4 +6,5 @@ comptime {
     _ = @import("mock_llm.zig");
     _ = @import("harness.zig");
     _ = @import("tool_roundtrip_test.zig");
+    _ = @import("hooks_test.zig");
 }
