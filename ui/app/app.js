@@ -1451,6 +1451,7 @@ function renderStats(turn, stats, task) {
     applyBtn.addEventListener("click", function () {
       if (busy) return;
       if (el.planMode) el.planMode.checked = false;
+      updateComposerModeHint();
       el.task.value = "Apply the plan you proposed above, executing its steps now.";
       el.form.requestSubmit();
     });
@@ -1969,7 +1970,6 @@ el.form.addEventListener("submit", function (e) {
     // matched, and the count line then contradicted the screen.
     if (el.turnFilter.value.trim()) applyTurnFilter();
     stopElapsed();
-    el.hint.textContent = "";
     controller = null;
     // Stop is about to be hidden; take focus back to the composer rather
     // than letting it drop to <body>.

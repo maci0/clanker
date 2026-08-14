@@ -135,6 +135,28 @@ fn parseModeToggle(args: []const u8) ?bool {
     return null;
 }
 
+const ModeToggleResult = enum { ok, bad_usage };
+
+fn toggleSessionMode(
+    self: *Model,
+    args: []const u8,
+    mode: *bool,
+    comptime usage: []const u8,
+    comptime notice_fmt: []const u8,
+) ModeToggleResult {
+    if (parseModeToggle(args)) |want| {
+        mode.* = want;
+    } else if (args.len > 0) {
+        self.lines.append(self.arena, .{ .text = usage, .dim = true }) catch {};
+        return .bad_usage;
+    } else {
+        mode.* = !mode.*;
+    }
+    const state: []const u8 = if (mode.*) "on" else "off";
+    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, notice_fmt, .{state}) catch "notice: mode toggled", .dim = true }) catch {};
+    return .ok;
+}
+
 fn idlePhaseLabel(self: *const Model, buf: []u8) []const u8 {
     if (!self.plan_mode and !self.research_mode) return "ready";
     if (self.plan_mode and self.research_mode)
@@ -1264,6 +1286,8 @@ test "parseModeToggle accepts on/off and rejects unknown tokens" {
     try std.testing.expectEqual(@as(?bool, true), parseModeToggle("on"));
     try std.testing.expectEqual(@as(?bool, false), parseModeToggle("off"));
     try std.testing.expectEqual(@as(?bool, true), parseModeToggle(" ON "));
+    try std.testing.expectEqual(@as(?bool, true), parseModeToggle("enable"));
+    try std.testing.expectEqual(@as(?bool, false), parseModeToggle("disable"));
     try std.testing.expectEqual(@as(?bool, null), parseModeToggle(""));
     try std.testing.expectEqual(@as(?bool, null), parseModeToggle("maybe"));
 }
@@ -2361,28 +2385,22 @@ const Model = struct {
                 self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "notice: theme switched to {s}", .{pc.args}) catch "notice: theme switched", .dim = true }) catch {};
             },
             .plan => {
-                if (parseModeToggle(pc.args)) |want| {
-                    self.plan_mode = want;
-                } else if (pc.args.len > 0) {
-                    self.lines.append(self.arena, .{ .text = "usage: /plan [on|off] (bare /plan toggles)", .dim = true }) catch {};
-                    return;
-                } else {
-                    self.plan_mode = !self.plan_mode;
-                }
-                const state: []const u8 = if (self.plan_mode) "on" else "off";
-                self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "notice: plan mode {s} (write-capable tools refused while on)", .{state}) catch "notice: plan mode toggled", .dim = true }) catch {};
+                if (toggleSessionMode(
+                    self,
+                    pc.args,
+                    &self.plan_mode,
+                    "usage: /plan [on|off] (bare /plan toggles)",
+                    "notice: plan mode {s} (write-capable tools refused while on)",
+                ) == .bad_usage) return;
             },
             .research => {
-                if (parseModeToggle(pc.args)) |want| {
-                    self.research_mode = want;
-                } else if (pc.args.len > 0) {
-                    self.lines.append(self.arena, .{ .text = "usage: /research [on|off] (bare /research toggles)", .dim = true }) catch {};
-                    return;
-                } else {
-                    self.research_mode = !self.research_mode;
-                }
-                const state: []const u8 = if (self.research_mode) "on" else "off";
-                self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "notice: research mode {s} (web_search/fetch_web preferred for current facts)", .{state}) catch "notice: research mode toggled", .dim = true }) catch {};
+                if (toggleSessionMode(
+                    self,
+                    pc.args,
+                    &self.research_mode,
+                    "usage: /research [on|off] (bare /research toggles)",
+                    "notice: research mode {s} (web_search/fetch_web preferred for current facts)",
+                ) == .bad_usage) return;
             },
             .workflows => {
                 _ = self.runWorkflowsTool("");

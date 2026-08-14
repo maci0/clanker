@@ -6,6 +6,10 @@
     "build": "asc calc_ts.ts -o ../dist/calc_ts.wasm --optimize --bindings raw --noExportMemory",
     "build:all": "bash -ec 'for f in $(ls *.ts | sort); do case \"$f\" in env.d.ts|lib.ts|json.ts) continue;; esac; asc \"$f\" -o \"../dist/${f%.ts}.wasm\" --optimize --bindings raw --noExportMemory; done'"
   },
+  "engines": {
+    "node": ">=20",
+    "npm": ">=10"
+  },
   "devDependencies": {
     "assemblyscript": "0.28.20"
   }

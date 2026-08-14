@@ -97,8 +97,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   a `--worktree` symlink; `createDirPath` reports NotDir), and the one UTF-8
   byte-cap (`util/utf8.zig` `cap`, exposed to Zig guests as `@import("utf8")`). Peer notify/phonebook, patch application,
   knowledge store, and prompts store moved to sandboxed WASM tools (`tools/zig/`).
-- `ui/vendor/` — vendored JS dependencies for the web UI (preact,
-  d3-dag, mermaid, highlight.js). Committed, not generated.
+- `ui/vendor/` — vendored JS dependencies for the web UI (preact, htm,
+  @preact/signals-core, d3-dag, highlight.js, mermaid, three.js). Committed,
+  not generated; inventory in `ui/vendor/README.md`.
 - `src/serve/` — the OpenAI/Anthropic compatibility proxy (`clanker serve --proxy`).
   Native because it attaches provider credentials. It forwards `/v1/*` 1:1 and
   must not go through `client.chat` / `buildRequest`.

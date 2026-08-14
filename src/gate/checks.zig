@@ -266,6 +266,10 @@ fn fileExistsIn(io: std.Io, dir: std.Io.Dir, rel: []const u8) bool {
     return true;
 }
 
+fn isLoadedConfigToml(path: []const u8) bool {
+    return std.mem.eql(u8, path, "config.toml") or std.mem.eql(u8, path, "config.local.toml");
+}
+
 test "toolDescriptorGate rejects duplicate names and missing wasm" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
@@ -780,7 +784,7 @@ pub fn gitDenyGuardGate(
         // has to inspect exactly what the loader would read, or a proposal
         // widening exec_pattern_allow through config.toml walks straight
         // past a guard still watching the retired .json names.
-        if (!std.mem.eql(u8, f, "config.toml") and !std.mem.eql(u8, f, "config.local.toml")) continue;
+        if (!isLoadedConfigToml(f)) continue;
         var arena_state = std.heap.ArenaAllocator.init(gpa);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
@@ -1067,7 +1071,7 @@ pub fn configWeakeningGate(
                 return .{ .ok = false, .label = "config-weakening", .detail = detail };
             continue;
         }
-        if (!std.mem.eql(u8, f, "config.toml") and !std.mem.eql(u8, f, "config.local.toml")) continue;
+        if (!isLoadedConfigToml(f)) continue;
         var arena_state = std.heap.ArenaAllocator.init(gpa);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
