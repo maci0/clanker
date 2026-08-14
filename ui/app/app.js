@@ -360,14 +360,10 @@ el.newChat.addEventListener("click", function () {
 var knownSessionsHolder = { list: [] };
 var knownSessions = knownSessionsHolder.list;
 
-/* fmtBytes, clip, sessionLabel live in core/utils.js. */
-
 /* The live session is always selectable even when the server has never seen
    it — a brand new chat has no saved file until its first turn completes,
    and dropping it from the list would make the picker disagree with what the
    composer is actually continuing. */
-/* recencyGroup lives in core/utils.js. */
-
 
 /* Pinning lives in this browser rather than on the server: which few
    conversations you keep to hand is a property of how you are working right
@@ -3053,8 +3049,6 @@ var chat_poll_base_ms = 5000;
 var chat_poll_max_ms = 60000;
 var chatBackoff = chat_poll_base_ms;
 var chatFailing = false;
-
-/* chatRoomLabel lives in core/labels.js (bridged above). */
 
 /* Rooms the server knows about, plus a DM entry per configured peer even
    when that conversation has no messages yet — otherwise the only way to

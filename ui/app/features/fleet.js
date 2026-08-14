@@ -1,6 +1,6 @@
 // Fleet / cross-agent view — ES module, no bundler.
 // Owns #view-fleet: roster + DM channels + grouped runs. Works without app.js.
-import { clip } from "../core/utils.js";
+import { clip, peerColor } from "../core/utils.js";
 import { readJson } from "../core/vendor.js";
 
 var _navShowView = null;
@@ -459,8 +459,6 @@ export function refreshFleet() {
 
 var _floorRAF = null;
 var _floorState = { runs: [], names: ["self"], t: 0, phase: {}, idle: {} };
-function _hash(s){ var h=0; for(var i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i))|0; return h>>>0; }
-function _colorFor(name){ var v=_hash(name); return "hsl(" + (v%360) + " 35% 62%)"; }
 function _toolBucket(label){
   var l=(label||"").toLowerCase();
   if(l.indexOf("read")!==-1||l.indexOf("grep")!==-1||l.indexOf("glob")!==-1) return "read";
@@ -540,7 +538,7 @@ function _floorFrame(ts){
     ctx.fillStyle=pal.border; ctx.fillRect(x+10, 96, Math.floor(cw)-20, 14);
     // agent body (simple pill)
     var bob = reduced||dozing ? 0 : Math.sin(t/420 + i*1.1)*2;
-    ctx.fillStyle=_colorFor(name);
+    ctx.fillStyle=peerColor(name);
     var bx=x+Math.floor(cw/2)-10, by=62+bob;
     // head
     ctx.fillRect(bx+6, by-8, 8, 8);

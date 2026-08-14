@@ -1,6 +1,5 @@
 // Vanilla, no bundler. Execution-graph layout via d3-dag Sugiyama.
-// Additive module — app.js still ships its own copy until cutover; this is the
-// canonical source for future imports. Imports only loadD3.
+// Imported by app.js. Imports only loadD3.
 import { loadD3 } from "../core/vendor.js";
 import { fmtInt, searchFold } from "../core/utils.js";
 

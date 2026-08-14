@@ -1,6 +1,5 @@
 // Vanilla, no bundler. Pure markdown + code rendering; depends on vendor loadHljs/copyText.
-// Imported by app.js during incremental ES-module split; app.js still ships its own
-// copy until the switch is flipped, so keep exports side-effect free.
+// Imported by app.js; keep exports side-effect free.
 import { loadHljs, loadMermaid, copyText } from "../core/vendor.js";
 import { isSafeLinkUrl, splitRow, prettyJsonIfPossible } from "../core/utils.js";
 

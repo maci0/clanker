@@ -9,19 +9,13 @@
 //
 // Reference: docs/prds/0008-arena.md, "Web UI: the arena view".
 
-import { readJson } from "../core/utils.js";
+import { readJson, peerColor } from "../core/utils.js";
+import { reducedMotion } from "../core/vendor.js";
 
 function byId(id) { return document.getElementById(id); }
 
-function reducedMotion() {
-  return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-}
-
 // Same hash-to-hue as the Fleet roster, so the same peer is the same colour in
 // both views.
-function _hash(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h >>> 0; }
-function colorFor(name) { var v = _hash(name || ""); return "hsl(" + (v % 360) + " 35% 62%)"; }
-
 // The canvas palette is seeded from the active theme's computed tokens, not a
 // fixed dark ramp: Fleet's bucket hues map onto the theme's ok/warn/danger and
 // the stage neutrals onto surface/border, so a light data-theme draws a light
@@ -348,7 +342,7 @@ function lastMove(m) {
 
 /* Queue one bulldozer pass per eliminated combatant, in elimination order. */
 function queueCompactor() {
-  if (reducedMotion()) return;
+  if (reducedMotion.matches) return;
   var m = state.match;
   if (!m) return;
   var order = [];
@@ -374,7 +368,7 @@ function renderMatch() {
   var status = byId("arena-status");
   if (status) {
     var line = statusLine(m);
-    if (reducedMotion()) line = "Still frame, respecting reduced motion. " + line;
+    if (reducedMotion.matches) line = "Still frame, respecting reduced motion. " + line;
     if (status.textContent !== line) status.textContent = line;
   }
 
@@ -401,7 +395,7 @@ function renderMatch() {
     });
     return;
   }
-  if (reducedMotion()) {
+  if (reducedMotion.matches) {
     // One static frame of the current state, no loop scheduled at all.
     if (state.raf) { window.cancelAnimationFrame(state.raf); state.raf = null; }
     drawFrame(performance.now());
@@ -475,7 +469,7 @@ function drawFrame(ts) {
   if (!ctx) return;
   var m = state.match;
   if (!m) return;
-  var reduced = reducedMotion();
+  var reduced = reducedMotion.matches;
   var t = reduced ? 0 : (ts || 0);
   var cs = m.combatants || [];
   var n = cs.length || 1;
@@ -525,7 +519,7 @@ function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, redu
   var by = ground - 34 + bob + kneel;
 
   ctx.globalAlpha = gone ? 0.45 : 1;
-  ctx.fillStyle = colorFor(c.label || String(i));
+  ctx.fillStyle = peerColor(c.label || String(i));
   // head, torso
   ctx.fillRect(bx + 5, by - 8, 8, 8);
   ctx.fillRect(bx + 2, by, 14, 18 - kneel);
@@ -614,7 +608,7 @@ function drawCompactor(ctx, cv, m, t, ground, cw, pal) {
     var lx = Math.round(cx + (hole - cx) * p);
     var scale = 1 - 0.7 * p;
     ctx.globalAlpha = 1 - 0.8 * p;
-    ctx.fillStyle = colorFor((cs[idx] && cs[idx].label) || String(idx));
+    ctx.fillStyle = peerColor((cs[idx] && cs[idx].label) || String(idx));
     var h = Math.round(20 * scale);
     ctx.fillRect(lx, ground - h, Math.round(12 * scale), h);
     ctx.globalAlpha = 1;
@@ -643,7 +637,7 @@ function drawCompactor(ctx, cv, m, t, ground, cw, pal) {
     ctx.fillStyle = pal ? pal.border : "#3a4146";
     ctx.fillRect(0, 0, travel, cv.height);
     ctx.fillRect(cv.width - travel, 0, travel, cv.height);
-    ctx.fillStyle = colorFor((cs[idx] && cs[idx].label) || String(idx));
+    ctx.fillStyle = peerColor((cs[idx] && cs[idx].label) || String(idx));
     ctx.fillRect(cv.width / 2 - 5, cv.height / 2 - 6, 10, 14);
     ctx.globalAlpha = 1;
     return;
@@ -670,7 +664,7 @@ function renderCombatants(m) {
     if (m.verdict && m.verdict.winner === i) chip.dataset.winner = "true";
     var dot = document.createElement("span");
     dot.className = "arena-swatch";
-    dot.style.background = colorFor(c.label || String(i));
+    dot.style.background = peerColor(c.label || String(i));
     dot.setAttribute("aria-hidden", "true");
     var name = document.createElement("span");
     name.className = "arena-combatant-name";
@@ -761,7 +755,7 @@ function renderHpGraph(m) {
   });
   // The lines themselves, stepped: HP only changes ON a move.
   series.forEach(function (pts, i) {
-    ctx.strokeStyle = colorFor(cs[i].label || String(i));
+    ctx.strokeStyle = peerColor(cs[i].label || String(i));
     ctx.lineWidth = 2;
     ctx.beginPath();
     pts.forEach(function (hp, k) {

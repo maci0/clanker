@@ -17,15 +17,13 @@
 // avatar, and an elimination shatters it into particles that drain into the
 // centre — the compactor's job, done as a vortex.
 
+import { reducedMotion } from "../core/vendor.js";
+import { hashName } from "../core/utils.js";
+
 var THREE = null;
 var S = null; // live scene state, null when unmounted
 
-function reducedMotion() {
-  return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-}
-
-function _hash(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h >>> 0; }
-function hueFor(name) { return (_hash(name || "") % 360) / 360; }
+function hueFor(name) { return (hashName(name || "") % 360) / 360; }
 
 function themeVar(name) {
   var root = document.documentElement;
@@ -402,7 +400,7 @@ export function updateArena3D(m) {
     var gone = c.eliminated || c.conceded;
     if (gone && !a.out) {
       a.out = true;
-      if (c.eliminated && !reducedMotion()) addShatter(i);
+      if (c.eliminated && !reducedMotion.matches) addShatter(i);
     }
     a.body.material.opacity = 1;
     if (m.verdict && m.verdict.winner === i) addCrown(i);
@@ -414,7 +412,7 @@ export function updateArena3D(m) {
   var key = last ? (last.round + ":" + last.combatant + ":" + last.move) : "";
   if (last && key !== S.lastMoveKey) {
     S.lastMoveKey = key;
-    if (!reducedMotion()) {
+    if (!reducedMotion.matches) {
       var actor = last.combatant;
       var target = typeof last.target === "number" ? last.target : (actor === 0 ? 1 : 0);
       var hue = S.avatars[actor] ? S.avatars[actor].hue : 0;
@@ -425,7 +423,7 @@ export function updateArena3D(m) {
     }
   }
 
-  if (reducedMotion()) {
+  if (reducedMotion.matches) {
     stopLoop();
     stepScene(0);
     S.renderer.render(S.scene, S.camera);
@@ -505,7 +503,7 @@ function bindPointer() {
     if (!d) return;
     S.orbit.az = d.az + (e.clientX - d.x) * 0.008;
     S.orbit.el = Math.max(0.12, Math.min(1.2, d.el + (e.clientY - d.y) * 0.006));
-    if (reducedMotion()) { stepScene(0); S.renderer.render(S.scene, S.camera); }
+    if (reducedMotion.matches) { stepScene(0); S.renderer.render(S.scene, S.camera); }
   });
   el.addEventListener("pointerup", function () {
     if (S) { S.orbit.drag = null; S.orbit.auto = true; }
@@ -513,7 +511,7 @@ function bindPointer() {
   el.addEventListener("wheel", function (e) {
     e.preventDefault();
     S.orbit.r = Math.max(5, Math.min(16, S.orbit.r + e.deltaY * 0.01));
-    if (reducedMotion()) { stepScene(0); S.renderer.render(S.scene, S.camera); }
+    if (reducedMotion.matches) { stepScene(0); S.renderer.render(S.scene, S.camera); }
   }, { passive: false });
 }
 
@@ -524,7 +522,7 @@ export function retheme() {
   applyTheme();
   var p = pal();
   S.avatars.forEach(function (a) { a.hp.material.color.set(hpColorOf(a.hpFrac, p)); });
-  if (reducedMotion()) { stepScene(0); S.renderer.render(S.scene, S.camera); }
+  if (reducedMotion.matches) { stepScene(0); S.renderer.render(S.scene, S.camera); }
 }
 
 /* ---------------------------------------------------------------- unmount */

@@ -214,4 +214,14 @@ export function prettyJsonIfPossible(text) {
   }
 }
 
+export function hashName(s) {
+  var h = 0;
+  for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return h >>> 0;
+}
+
+export function peerColor(name) {
+  return "hsl(" + (hashName(name || "") % 360) + " 35% 62%)";
+}
+
 
