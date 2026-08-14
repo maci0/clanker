@@ -72,6 +72,8 @@ const webui_vendor_hljs = ui_vendor.hljs;
 const webui_vendor_mermaid = ui_vendor.mermaid;
 const webui_vendor_three = ui_vendor.three;
 const webui_vendor_three_core = ui_vendor.three_core;
+const webui_vendor_patternfly = ui_vendor.patternfly;
+const webui_vendor_patternfly_addons = ui_vendor.patternfly_addons;
 const edit_distance = @import("util/edit_distance.zig");
 
 /// Sourced from build.zig.zon's `.version` field via the `build_options`
@@ -5385,7 +5387,9 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js") or
             std.mem.eql(u8, path, "/webui/vendor/mermaid.min.js") or
             std.mem.eql(u8, path, "/webui/vendor/three.module.min.js") or
-            std.mem.eql(u8, path, "/webui/vendor/three.core.min.js");
+            std.mem.eql(u8, path, "/webui/vendor/three.core.min.js") or
+            std.mem.eql(u8, path, "/webui/vendor/patternfly.min.css") or
+            std.mem.eql(u8, path, "/webui/vendor/patternfly-addons.css");
         const is_a2a = std.mem.eql(u8, path, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message"));
         const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify");
         const is_peers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/peers");
@@ -5463,6 +5467,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respondJs(gpa, stream, webui_vendor_three, &gzip_three, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/three.core.min.js")) {
             respondJs(gpa, stream, webui_vendor_three_core, &gzip_three_core, acceptsGzip(headers_raw), headers_raw);
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/patternfly.min.css")) {
+            respondCss(gpa, stream, webui_vendor_patternfly, &gzip_patternfly, acceptsGzip(headers_raw), headers_raw);
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/patternfly-addons.css")) {
+            respondCss(gpa, stream, webui_vendor_patternfly_addons, &gzip_patternfly_addons, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/.well-known/agent.json")) {
             handleAgentCard(gpa, cfg, port, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/status")) {
@@ -7523,6 +7531,8 @@ const webui_vendor_files = [_][]const u8{
     "mermaid.min.js",
     "three.module.min.js",
     "three.core.min.js",
+    "patternfly.min.css",
+    "patternfly-addons.css",
 };
 
 fn isWebuiVendorFile(name: []const u8) bool {
@@ -11651,6 +11661,8 @@ var gzip_hljs: GzipCache = .{};
 var gzip_mermaid: GzipCache = .{};
 var gzip_three: GzipCache = .{};
 var gzip_three_core: GzipCache = .{};
+var gzip_patternfly: GzipCache = .{};
+var gzip_patternfly_addons: GzipCache = .{};
 
 /// A JSON body, gzipped when the client takes it and the saving is worth the
 /// work. Uncached on purpose: these bodies are per-request (a session list, a
@@ -11731,6 +11743,14 @@ fn gzipAlloc(gpa: std.mem.Allocator, raw: []const u8, level: std.compress.flate.
 /// hashed, so a vendored library upgrade would have left a returning browser
 /// serving the old file, unvalidated, for up to a year.
 fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, cache: *GzipCache, accepts_gzip: bool, headers_raw: []const u8) void {
+    respondStatic(gpa, stream, body, cache, "text/javascript; charset=utf-8", accepts_gzip, headers_raw);
+}
+
+fn respondCss(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, cache: *GzipCache, accepts_gzip: bool, headers_raw: []const u8) void {
+    respondStatic(gpa, stream, body, cache, "text/css; charset=utf-8", accepts_gzip, headers_raw);
+}
+
+fn respondStatic(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, cache: *GzipCache, content_type: []const u8, accepts_gzip: bool, headers_raw: []const u8) void {
     var etag_buf: [16]u8 = undefined;
     const etag = etagFor(&etag_buf, body);
     if (ifNoneMatchHits(headers_raw, etag)) {
@@ -11745,7 +11765,7 @@ fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
     const out = gzipped orelse body;
     request_status = 200;
     const encoding = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/javascript; charset=utf-8\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: public, max-age=3600, must-revalidate\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ out.len, encoding, etag, connHeader() }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: public, max-age=3600, must-revalidate\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, etag, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
     raw_http.writeAllFd(stream.socket.handle, out);
 }
@@ -14002,8 +14022,8 @@ test "no vendored JS file exists that the vendor routes have never heard of" {
     while (it.next(io) catch null) |entry| {
         if (entry.kind != .file) continue;
         if (std.mem.eql(u8, entry.name, "README.md")) continue;
-        if (!std.mem.endsWith(u8, entry.name, ".js")) {
-            std.debug.print("ui/vendor/{s} is not a vendored .js file\n", .{entry.name});
+        if (!std.mem.endsWith(u8, entry.name, ".js") and !std.mem.endsWith(u8, entry.name, ".css")) {
+            std.debug.print("ui/vendor/{s} is not a vendored .js or .css file\n", .{entry.name});
             return error.UnlistedVendorFile;
         }
         if (!isWebuiVendorFile(entry.name)) {

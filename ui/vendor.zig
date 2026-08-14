@@ -6,3 +6,5 @@ pub const hljs = @embedFile("vendor/hljs.min.js");
 pub const mermaid = @embedFile("vendor/mermaid.min.js");
 pub const three = @embedFile("vendor/three.module.min.js");
 pub const three_core = @embedFile("vendor/three.core.min.js");
+pub const patternfly = @embedFile("vendor/patternfly.min.css");
+pub const patternfly_addons = @embedFile("vendor/patternfly-addons.css");

@@ -14,6 +14,8 @@ files; replace from upstream releases and update this table.
 | `mermaid.min.js` | [mermaid](https://www.npmjs.com/package/mermaid) UMD `dist/mermaid.min.js` | 11.16.1 | MIT |
 | `three.module.min.js` | [three](https://www.npmjs.com/package/three) | r180 module | MIT |
 | `three.core.min.js` | [three](https://www.npmjs.com/package/three) | r180 core split | MIT |
+| `patternfly.min.css` | [@patternfly/patternfly](https://www.npmjs.com/package/@patternfly/patternfly) `patternfly.min.css` | 6.6.1 | MIT |
+| `patternfly-addons.css` | [@patternfly/patternfly](https://www.npmjs.com/package/@patternfly/patternfly) `patternfly-addons.css` | 6.6.1 | MIT |
 
 `three.module.min.js` imports `./three.core.min.js`; both must be updated
 together from the same Three.js release.
