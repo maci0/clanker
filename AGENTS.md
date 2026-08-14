@@ -97,6 +97,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   Fleet's lamp map is `GET /api/mesh/map` (`mesh.buildMap`): self + `[[peers]]`
   + chat wires. Served even when `modules.mesh` is off so HTTP peers still
   draw; chat `last_ts` is unix seconds, so the pulse clock must be too.
+  The page watches `GET /api/events` (SSE in `src/serve/live.zig`); HTTP
+  `POST /api/*` stays the command path. `chatrooms.fanOut` prefers a live
+  mesh `CHAT` frame (`src/peers/mesh_runtime.zig`) and falls back to HTTP.
   logging, dotenv, `ensureDir` (the one way to create `state/` when it may be
   a `--worktree` symlink; `createDirPath` reports NotDir), and the one UTF-8
   byte-cap (`util/utf8.zig` `cap`, exposed to Zig guests as `@import("utf8")`). Peer notify/phonebook, patch application,

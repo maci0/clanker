@@ -512,7 +512,9 @@ Soft:
    Edit `src/sandbox/host.zig` + `runtime.zig` (`ck_mesh` + name gate).
    Edit `tools/zig/lib.zig`, create `tools/zig/mesh.zig` + manifests
    `mesh_join` / `mesh_leave` / `mesh_status` / `mesh_pending`.
-   Edit `src/peers/chatrooms.zig` (`fanOut` prefers `/api/mesh/relay`).
+   Edit `src/peers/chatrooms.zig` (`fanOut` prefers a live mesh `CHAT`
+   frame via `mesh_runtime.trySendChat`, else HTTP). `GET /api/events`
+   pushes talk onto Fleet so the map does not poll.
    Edit `tools/zig/peers.zig` / `src/peers/phonebook.zig` (path label).
    Edit `src/doctor.zig` (the three warnings).
    Edit `src/main.zig` (comptime import).

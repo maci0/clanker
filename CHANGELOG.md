@@ -20,6 +20,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Fleet Mesh map: each clanker is a lamp on `/#fleet`. Wires appear
   after a talk; a live talk sends a directed glow along the wire.
   `GET /api/mesh/map` feeds it (even when `modules.mesh` is off).
+- Web UI live bus: `GET /api/events` (SSE). Chat, mesh talk, and run
+  working push to the page. HTTP `/api/*` stays the command API; polls
+  are the fallback when the stream is down.
+- Mesh chat pipe: `fanOut` writes a `CHAT` frame on a live mesh link
+  when `modules.mesh` is on and the peer is connected, else HTTP. Serve
+  listens when the module is on. `POST /api/mesh/join` dials.
 
 ## [0.1.0] - 2026-08-14
 

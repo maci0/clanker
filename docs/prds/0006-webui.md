@@ -39,9 +39,10 @@ iteration cap the parent couldn't see how far it got).
 
 ## Non-goals
 
-- A server-push/socket transport. The server closes every connection after
-  one response; the `/api/run` `\x01`-event stream is the one long-lived
-  channel, everything else is polling.
+- Replacing the HTTP command API with a socket. `POST /api/*` stays how
+  the page (and the CLI, A2A, curl) acts. The page *watches* over
+  `GET /api/events` (SSE) so chat / mesh / run do not poll. `/api/run`
+  is still its own stream.
 - A framework rewrite (see Design → Framework choice).
 - The pixel floor (Phase 4) becoming a primary surface — it must stay
   optional, decorative, and fully redundant with data shown elsewhere.
@@ -58,9 +59,11 @@ the product:
    on first use), the way `d3-dag` and `highlight.js` already are.
 2. **Strict CSP, offline-capable.** `default-src 'none'; script-src 'self'`;
    no third-party origin, ever; assets vendored into the repo, not linked.
-3. **No sockets.** Live updating is polling except the one `/api/run`
-   stream, which already carries `\x01`-prefixed control events
-   (`tool_call`, `tool_result`, `ask`, `confirm`, `error`, `done`).
+3. **HTTP commands, one watch channel.** `POST /api/*` is how the page
+   acts. `GET /api/events` (SSE, same origin) is how it watches chat,
+   mesh talk, and run working. `/api/run` keeps its `\x01` control
+   events. Polling remains only as a fallback when the stream is down.
+   No WebSocket: the browser does not need to send a high-rate stream.
 4. **Guest WASM buffers are 64 KiB** for scratch and host arena — anything
    larger is handled natively, not through a sandboxed tool.
 5. **The improve loop rewrites this tree while you work.** Smaller, dumber,
