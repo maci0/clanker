@@ -691,10 +691,12 @@ pub const Tui = struct {
     /// `mascot = "input"` with no size gets `mini`, which is the size that
     /// fits the composer. Same raw-string reasoning as above.
     mascot_size: []const u8 = "",
-    /// `left` or `right`. Empty means "not set", which matters more here than
-    /// elsewhere: the default depends on the mode, so an empty value is not
-    /// the same as writing "right".
+    /// `default` or `inverted`. Empty means "not set", which is the same as
+    /// `default`: the mode's natural pose. `inverted` mirrors it in every mode.
     mascot_facing: []const u8 = "",
+    /// `0..10`. Empty means "not set", which is the same as `5` (the regular
+    /// pace). `0` never moves, `10` is the fastest.
+    mascot_speed: []const u8 = "",
 };
 
 pub const TtsrRule = struct {
@@ -1463,10 +1465,11 @@ pub const Config = struct {
             else => return error.TuiNotObject,
         };
         var t = Tui{};
-        warnUnknownKeys(obj, &.{ "mascot", "mascot_size", "mascot_facing" }, "tui");
+        warnUnknownKeys(obj, &.{ "mascot", "mascot_size", "mascot_facing", "mascot_speed" }, "tui");
         if (obj.get("mascot")) |k| t.mascot = try jsonStr(k, "mascot");
         if (obj.get("mascot_size")) |k| t.mascot_size = try jsonStr(k, "mascot_size");
         if (obj.get("mascot_facing")) |k| t.mascot_facing = try jsonStr(k, "mascot_facing");
+        if (obj.get("mascot_speed")) |k| t.mascot_speed = try jsonStr(k, "mascot_speed");
         return t;
     }
 
