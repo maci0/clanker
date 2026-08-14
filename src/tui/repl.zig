@@ -5826,12 +5826,21 @@ fn resolveMascot(
     facing_flag: ?[]const u8,
     facing_cfg: []const u8,
     speed_flag: ?[]const u8,
-    speed_cfg: []const u8,
+    speed_cfg: ?u8,
 ) MascotChoice {
     const mode = pickSetting(mascot.Mode, mascot.Mode.parse, mode_flag, mode_cfg, .off);
     const size = pickSetting(mascot.Size, mascot.Size.parse, size_flag, size_cfg, mode.value.defaultSize());
     const facing = pickSetting(mascot.Facing, mascot.Facing.parse, facing_flag, facing_cfg, .default);
-    const speed = pickSetting(u8, mascot.parseSpeed, speed_flag, speed_cfg, 5);
+    // Config is parsed as an integer before the REPL starts. The flag remains
+    // text because command-line arguments are text, so only it can be invalid
+    // at this point.
+    const speed: Picked(u8) = if (speed_flag) |text|
+        if (mascot.parseSpeed(text)) |value|
+            .{ .value = value, .bad = null }
+        else
+            .{ .value = speed_cfg orelse 5, .bad = text }
+    else
+        .{ .value = speed_cfg orelse 5, .bad = null };
     return .{
         .mode = mode.value,
         .size = size.value,
@@ -5845,7 +5854,7 @@ fn resolveMascot(
 }
 
 fn resolveMode(flag: ?[]const u8, configured: []const u8) MascotChoice {
-    return resolveMascot(flag, configured, null, "", null, "", null, "");
+    return resolveMascot(flag, configured, null, "", null, "", null, null);
 }
 
 test "resolveMascot prefers the flag and tolerates junk from either side" {
@@ -5875,19 +5884,19 @@ test "resolveMascot prefers the flag and tolerates junk from either side" {
 
 test "resolveMascot takes size from the flag, the config, then the mode" {
     try std.testing.expectEqual(mascot.Size.medium, resolveMode("loop", "").size);
-    const small = resolveMascot("loop", "", "small", "", null, "", null, "");
+    const small = resolveMascot("loop", "", "small", "", null, "", null, null);
     try std.testing.expectEqual(mascot.Size.small, small.size);
     // Config supplies it when the flag does not, and the flag wins when both do.
     try std.testing.expectEqual(
         mascot.Size.large,
-        resolveMascot("loop", "", null, "large", null, "", null, "").size,
+        resolveMascot("loop", "", null, "large", null, "", null, null).size,
     );
     try std.testing.expectEqual(
         mascot.Size.small,
-        resolveMascot("loop", "", "small", "large", null, "", null, "").size,
+        resolveMascot("loop", "", "small", "large", null, "", null, null).size,
     );
     // Junk keeps the default and is reported.
-    const bad = resolveMascot("loop", "", "gigantic", "", null, "", null, "");
+    const bad = resolveMascot("loop", "", "gigantic", "", null, "", null, null);
     try std.testing.expectEqual(mascot.Size.medium, bad.size);
     try std.testing.expectEqualStrings("gigantic", bad.bad_size.?);
     // A bad size must not take the mode down with it.
@@ -5906,12 +5915,12 @@ test "input mode defaults to the size that fits the composer" {
 
     // Asking for a bigger one still gets it, from either side, and that is
     // when the box is allowed to grow.
-    const asked = resolveMascot("input", "", "small", "", null, "", null, "");
+    const asked = resolveMascot("input", "", "small", "", null, "", null, null);
     try std.testing.expectEqual(mascot.Size.small, asked.size);
     try std.testing.expect(mascot.inputBoxHeight(asked.size.variant()) > 3);
     try std.testing.expectEqual(
         mascot.Size.xsmall,
-        resolveMascot("input", "", null, "xsmall", null, "", null, "").size,
+        resolveMascot("input", "", null, "xsmall", null, "", null, null).size,
     );
 
     // The default is per mode, not global: nothing else shrinks.
@@ -5919,7 +5928,7 @@ test "input mode defaults to the size that fits the composer" {
     try std.testing.expectEqual(mascot.Size.medium, resolveMode("on", "").size);
     // A junk size under `input` falls back to mini, not to medium: falling
     // back must not be the thing that resizes the box either.
-    const junk = resolveMascot("input", "", "gigantic", "", null, "", null, "");
+    const junk = resolveMascot("input", "", "gigantic", "", null, "", null, null);
     try std.testing.expectEqual(mascot.Size.mini, junk.size);
     try std.testing.expectEqualStrings("gigantic", junk.bad_size.?);
 }
@@ -5931,18 +5940,18 @@ test "facing defaults to the mode's natural pose and is invertible" {
     try std.testing.expectEqual(mascot.Facing.default, resolveMode("loop", "").facing);
     try std.testing.expectEqual(
         mascot.Facing.inverted,
-        resolveMascot("place", "", null, "", "inverted", "", null, "").facing,
+        resolveMascot("place", "", null, "", "inverted", "", null, null).facing,
     );
     try std.testing.expectEqual(
         mascot.Facing.inverted,
-        resolveMascot("loop", "", null, "", null, "inverted", null, "").facing,
+        resolveMascot("loop", "", null, "", null, "inverted", null, null).facing,
     );
     try std.testing.expectEqual(
         mascot.Facing.default,
-        resolveMascot("loop", "", null, "", "default", "inverted", null, "").facing,
+        resolveMascot("loop", "", null, "", "default", "inverted", null, null).facing,
     );
     // Junk falls back to `.default` and is reported.
-    const bad = resolveMascot("place", "", null, "", "sideways", "", null, "");
+    const bad = resolveMascot("place", "", null, "", "sideways", "", null, null);
     try std.testing.expectEqual(mascot.Facing.default, bad.facing);
     try std.testing.expectEqualStrings("sideways", bad.bad_facing.?);
 }
@@ -5950,22 +5959,22 @@ test "facing defaults to the mode's natural pose and is invertible" {
 test "resolveMascot takes speed from the flag, the config, then 5" {
     // 5 is the regular pace; 0 and 10 are the bounds.
     try std.testing.expectEqual(@as(u8, 5), resolveMode("loop", "").speed);
-    const fast = resolveMascot("loop", "", null, "", null, "", "10", "");
+    const fast = resolveMascot("loop", "", null, "", null, "", "10", null);
     try std.testing.expectEqual(@as(u8, 10), fast.speed);
     // Config supplies it when the flag does not, and the flag wins when both do.
     try std.testing.expectEqual(
         @as(u8, 2),
-        resolveMascot("loop", "", null, "", null, "", null, "2").speed,
+        resolveMascot("loop", "", null, "", null, "", null, 2).speed,
     );
     try std.testing.expectEqual(
         @as(u8, 8),
-        resolveMascot("loop", "", null, "", null, "", "8", "2").speed,
+        resolveMascot("loop", "", null, "", null, "", "8", 2).speed,
     );
     // Out of range or junk keeps the default and is reported.
-    const high = resolveMascot("loop", "", null, "", null, "", "11", "");
+    const high = resolveMascot("loop", "", null, "", null, "", "11", null);
     try std.testing.expectEqual(@as(u8, 5), high.speed);
     try std.testing.expectEqualStrings("11", high.bad_speed.?);
-    const junk = resolveMascot("loop", "", null, "", null, "", "zoom", "");
+    const junk = resolveMascot("loop", "", null, "", null, "", "zoom", null);
     try std.testing.expectEqual(@as(u8, 5), junk.speed);
     try std.testing.expectEqualStrings("zoom", junk.bad_speed.?);
 }
@@ -6124,6 +6133,18 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     const io = init.io;
     const gpa = init.gpa;
     const arena = init.arena.allocator();
+    // `vxfw.App` owns the terminal through `init.io`, including its alternate
+    // screen writer. Agent requests can in turn use `Io.concurrent` for HTTP
+    // timeouts (and a goal may make many of those). Sharing that cancellable
+    // dispatcher with the terminal writer lets its SIGIO cancellation path
+    // interrupt a frame write; Zig then panics trying to print that panic via
+    // the same writer, producing the recursive File.Writer trace and leaving
+    // the terminal in the alternate screen. Give the worker its own threaded
+    // dispatcher. The bridge still uses `io`: it only coordinates in-memory
+    // transcript state and the render thread remains the sole terminal owner.
+    var agent_threaded = std.Io.Threaded.init(gpa, .{});
+    defer agent_threaded.deinit();
+    const agent_io = agent_threaded.io();
     bridge_gpa = gpa;
     bridge_io = io;
     var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
@@ -6165,7 +6186,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // <provider>/<model>` picks both at once, resolved by the same
     // Config.resolveProvider rule `clanker run` uses.
     const provider = try cfg.resolveProvider(opts.provider, opts.model);
-    const ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
+    const ctx = client.Ctx{ .io = agent_io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
     // Which conversation this is: `--session <id>` names one, `--continue`
     // picks up the most recently touched one, and otherwise (sessions module

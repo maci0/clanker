@@ -694,9 +694,9 @@ pub const Tui = struct {
     /// `default` or `inverted`. Empty means "not set", which is the same as
     /// `default`: the mode's natural pose. `inverted` mirrors it in every mode.
     mascot_facing: []const u8 = "",
-    /// `0..10`. Empty means "not set", which is the same as `5` (the regular
+    /// `0..10`. Null means "not set", which is the same as `5` (the regular
     /// pace). `0` never moves, `10` is the fastest.
-    mascot_speed: []const u8 = "",
+    mascot_speed: ?u8 = null,
 };
 
 pub const TtsrRule = struct {
@@ -1469,7 +1469,11 @@ pub const Config = struct {
         if (obj.get("mascot")) |k| t.mascot = try jsonStr(k, "mascot");
         if (obj.get("mascot_size")) |k| t.mascot_size = try jsonStr(k, "mascot_size");
         if (obj.get("mascot_facing")) |k| t.mascot_facing = try jsonStr(k, "mascot_facing");
-        if (obj.get("mascot_speed")) |k| t.mascot_speed = try jsonStr(k, "mascot_speed");
+        if (obj.get("mascot_speed")) |k| {
+            const speed = try jsonUnsigned(u8, k, "mascot_speed");
+            if (speed > 10) return error.MascotSpeedOutOfRange;
+            t.mascot_speed = speed;
+        }
         return t;
     }
 
@@ -2305,6 +2309,28 @@ test "repeat tool thresholds reject empty low duplicate and non-integer values" 
     const arena = arena_state.allocator();
     const value = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"repeat_tool_thresholds\":[3,5.5]}", .{});
     try std.testing.expectError(error.RepeatToolThresholdNotInteger, Config.parseAgent(arena, value));
+}
+
+test "tui mascot speed is an integer from zero through ten" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const valid = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"tui":{"mascot_speed":3}}
+    , .{});
+    const cfg = try Config.parseConfig(arena, valid);
+    try std.testing.expectEqual(@as(?u8, 3), cfg.tui.mascot_speed);
+
+    const quoted = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"tui":{"mascot_speed":"3"}}
+    , .{});
+    try std.testing.expectError(error.FieldNotUint, Config.parseConfig(arena, quoted));
+
+    const out_of_range = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"tui":{"mascot_speed":11}}
+    , .{});
+    try std.testing.expectError(error.MascotSpeedOutOfRange, Config.parseConfig(arena, out_of_range));
 }
 
 test "hooks default off and parse explicit lifecycle settings" {
