@@ -227,6 +227,7 @@ pub const Agent = struct {
     /// empty, so every disabled/fail-open path is a zero-length iteration.
     lifecycle_hooks: hooks_config.Config = .{},
     pending_hook_contexts: std.ArrayList([]const u8) = .empty,
+    session_start_context: []const u8 = "",
 
     /// Frees session-scoped resources (gpa-owned wasm_cache). Call when the
     /// Agent is no longer needed (end of a REPL session / single-shot run).
@@ -319,6 +320,7 @@ pub const Agent = struct {
             if (hook_result.context.len > 0) {
                 prompt_text = try std.fmt.allocPrint(arena, "{s}\n\n[SessionStart hook context]\n{s}", .{ prompt_text, hook_result.context });
                 result.system_prompt_text = prompt_text;
+                result.session_start_context = hook_result.context;
             }
         }
         return result;
@@ -417,7 +419,8 @@ pub const Agent = struct {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;
         };
-        const prompt_text = std.fmt.allocPrint(self.arena, "{s}{s}{s}{s}", .{ base_prompt, exact_format_suffix, if (self.plan_mode) plan_mode_suffix else "", if (self.research_mode) research_mode_suffix else "" }) catch |err| {
+        const session_hook_suffix = if (self.session_start_context.len > 0) std.fmt.allocPrint(self.arena, "\n\n[SessionStart hook context]\n{s}", .{self.session_start_context}) catch "" else "";
+        const prompt_text = std.fmt.allocPrint(self.arena, "{s}{s}{s}{s}{s}", .{ base_prompt, exact_format_suffix, if (self.plan_mode) plan_mode_suffix else "", if (self.research_mode) research_mode_suffix else "", session_hook_suffix }) catch |err| {
             log.log(.warn, "refreshSystemPrompt: allocPrint failed: {s}", .{@errorName(err)});
             return;
         };
@@ -907,6 +910,11 @@ pub const Agent = struct {
             }
             for (calls, results) |tc, maybe_content| {
                 const content = maybe_content orelse "{\"ok\":true,\"result\":\"\"}";
+                const post_hook = try self.runLifecycleHook(.PostToolUse, tc.name, try self.hookPayload(.PostToolUse, tc.name, tc.arguments, content));
+                if (post_hook.context.len > 0) try self.pending_hook_contexts.append(self.arena, post_hook.context);
+                if (post_hook.decision != .allow) {
+                    try self.pending_hook_contexts.append(self.arena, if (post_hook.reason.len > 0) post_hook.reason else "A PostToolUse hook requested that this tool result be reviewed before continuing.");
+                }
                 // Tool results must follow the assistant tool_calls message
                 // immediately (OpenAI ordering rule; strict providers like
                 // kimi-k3 reject anything interleaved), so the image
@@ -2342,6 +2350,20 @@ pub const Agent = struct {
                         results[i] = try toolErrorJson(self.arena, "plan mode: the {s} tool can change state and was not executed. Describe this action as a step in your plan instead.", .{tc.name});
                         continue;
                     }
+                }
+            }
+            const pre_hook = try self.runLifecycleHook(.PreToolUse, tc.name, try self.hookPayload(.PreToolUse, tc.name, tc.arguments, ""));
+            if (pre_hook.context.len > 0) try self.pending_hook_contexts.append(self.arena, pre_hook.context);
+            if (pre_hook.decision == .deny) {
+                log.log(.info, "PreToolUse hook denied tool '{s}': {s}", .{ tc.name, pre_hook.reason });
+                results[i] = try toolErrorJson(self.arena, "PreToolUse hook denied {s}: {s}", .{ tc.name, if (pre_hook.reason.len > 0) pre_hook.reason else "blocked by policy" });
+                continue;
+            }
+            if (pre_hook.decision == .ask) {
+                const allowed = if (self.confirm_fn) |confirm| confirm(tc.name, if (pre_hook.reason.len > 0) pre_hook.reason else argsPreview(tc.arguments)) else false;
+                if (!allowed) {
+                    results[i] = try toolErrorJson(self.arena, "PreToolUse hook requires approval for {s}, but approval was not granted", .{tc.name});
+                    continue;
                 }
             }
             // Confirm-before-write: with a human channel installed, a call
