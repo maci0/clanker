@@ -292,7 +292,7 @@ pub const State = struct {
     /// whatever the mode's natural orientation is, so it flips every mode.
     pub fn flip(self: State) Flip {
         // The mode's natural mirror, before the user-facing inversion.
-        const base = switch (self.mode) {
+        const base: Flip = switch (self.mode) {
             .off, .input => .none,
             // Mirrored horizontally rather than upside down: backspacing is
             // the robot walking backwards while the text shrinks, and running
