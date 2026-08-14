@@ -20,6 +20,25 @@ TOML is the only supported format (there is no JSON config). A missing key
 takes its default; an unknown key logs a warning and is ignored (so a typo like
 `mx_iterations` does not silently misbehave, it warns and uses the default).
 
+## Configuration errors
+
+Configuration validation stops at the first bad setting. Its error names the
+file and one-based TOML line, the fully qualified setting, what that setting
+accepts, the TOML value type (and a non-sensitive value), and a corrected TOML
+example. For example, a quoted integer in a local override reports
+`config.local.toml:4`, `agent.max_iterations`, `expected an unsigned integer`,
+`got string "50"`, and `correct it with max_iterations = 50`.
+
+Use the line as the source of truth: `config.local.toml` is parsed separately
+before it overrides `config.toml`, so a valid base setting cannot hide an
+invalid local value. Values that could expose credentials, such as a key or
+token setting, show their TOML type but redact the value.
+
+Common corrections are to remove quotes from numeric and boolean values
+(`max_tokens = 2048`, `enabled = true`), use a TOML array rather than a
+comma-separated string (`serve_as = ["clanker.lan"]`), and move model settings
+into `[models."<provider>/<model>"]` rather than `[providers.<name>]`.
+
 ## The two-part provider/model model
 
 A provider is *an endpoint plus how to talk to it*. A model is *a set of

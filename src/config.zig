@@ -17,6 +17,20 @@ const json = std.json;
 const log = @import("util/log.zig");
 const toml_bridge = @import("util/toml_bridge.zig");
 
+/// A schema failure is reported before it reaches the command dispatcher.
+/// Keeping the original TOML source here is intentional: the intermediate
+/// JSON value tree has no spans, while the operator needs the line they wrote.
+threadlocal var diagnostic_source: ?DiagnosticSource = null;
+threadlocal var diagnostic_scope: []const u8 = "";
+threadlocal var diagnostic_emitted: bool = false;
+threadlocal var diagnostics_suppressed: bool = false;
+threadlocal var last_load_diagnostic: bool = false;
+
+const DiagnosticSource = struct {
+    file_name: []const u8,
+    raw: []const u8,
+};
+
 /// The wire format a provider speaks. One tag per entry in the
 /// `src/llm/registry.zig` registry; the tag *is* the `kind = "..."` spelling,
 /// so adding a provider means adding a tag here and a row there, and nothing
@@ -816,6 +830,7 @@ pub const Config = struct {
     /// Loads `file_name` (TOML) plus `local_file_name` (if present) from
     /// `dir`. All returned strings are allocated in `arena`.
     pub fn load(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8) !Config {
+        if (!diagnostics_suppressed) last_load_diagnostic = false;
         const base = (try loadFile(io, arena, dir, file_name, .required)).?;
         var cfg = base.cfg;
         if (cfg.default_provider_present) cfg.default_provider_from = base.path;
@@ -843,6 +858,26 @@ pub const Config = struct {
         try validateToolResultPrune(cfg.agent);
         try validateRepeatToolThresholds(cfg.agent.repeat_tool_thresholds);
         return cfg;
+    }
+
+    /// The startup dotenv probe needs to know whether `[modules] dotenv` is
+    /// enabled, but the command that follows owns the operator-facing error.
+    /// Suppressing this speculative read prevents printing every diagnostic
+    /// twice when configuration is invalid.
+    pub fn loadQuiet(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8) !Config {
+        const prior = diagnostics_suppressed;
+        diagnostics_suppressed = true;
+        defer diagnostics_suppressed = prior;
+        return load(io, arena, dir, file_name, local_file_name);
+    }
+
+    /// Returns and clears the operator-facing diagnostic emitted by the most
+    /// recent load on this thread. The CLI uses this to avoid appending a bare
+    /// implementation error name after an actionable configuration report.
+    pub fn takeLoadDiagnostic() bool {
+        const had_diagnostic = last_load_diagnostic;
+        last_load_diagnostic = false;
+        return had_diagnostic;
     }
 
     fn validateToolResultPrune(agent: Agent) !void {
@@ -896,15 +931,33 @@ pub const Config = struct {
             },
             else => return err,
         };
-        const root = toml_bridge.parseToJsonValue(arena, raw) catch |err| {
-            log.log(.error_, "config {s}: invalid TOML: {s}", .{ file_name, @errorName(err) });
+        var parse_line: ?usize = null;
+        const root = toml_bridge.parseToJsonValueAtLine(arena, raw, &parse_line) catch |err| {
+            logTomlSyntaxError(file_name, parse_line, err);
             return err;
         };
         const obj = switch (root) {
             .object => |o| o,
             else => return error.ConfigNotObject,
         };
-        var cfg = try parseConfig(arena, root);
+        const prior_source = diagnostic_source;
+        const prior_scope = diagnostic_scope;
+        const prior_emitted = diagnostic_emitted;
+        diagnostic_source = .{ .file_name = file_name, .raw = raw };
+        diagnostic_scope = "";
+        diagnostic_emitted = false;
+        defer {
+            diagnostic_source = prior_source;
+            diagnostic_scope = prior_scope;
+            diagnostic_emitted = prior_emitted;
+        }
+        var cfg = parseConfig(arena, root) catch |err| {
+            // Every helper below emits a detailed error at the field that
+            // rejected the value. This fallback protects a new validation
+            // path from regressing to an opaque error while it is being added.
+            if (!diagnostic_emitted) logUndiagnosedError(err);
+            return err;
+        };
         const models_table = obj.get("models");
         if (mode == .required) {
             if (models_table) |models| try distributeModels(arena, &cfg, models);
@@ -1025,13 +1078,16 @@ pub const Config = struct {
     }
 
     fn parseProvider(name: []const u8, v: json.Value) !Provider {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "providers";
+        defer diagnostic_scope = prior_scope;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.ProviderNotObject,
         };
         var p = Provider{
             .name = name,
-            .base_url = try jsonStr(try required(obj, "base_url"), "base_url"),
+            .base_url = try jsonStr(try required(obj, "base_url", "providers.<name>.base_url", "base_url = \"https://api.example.com\""), "providers.<name>.base_url"),
         };
         warnUnknownKeys(obj, &.{
             "base_url",
@@ -1154,7 +1210,7 @@ pub const Config = struct {
                 .object => |o| o,
                 else => return error.ModelNotObject,
             };
-            const provider_name = try jsonStr(try required(entry_obj, "provider"), "provider");
+            const provider_name = try jsonStr(try required(entry_obj, "provider", "models.<name>.provider", "provider = \"provider-name\""), "models.<name>.provider");
             const p = cfg.providers.getPtr(provider_name) orelse {
                 log.log(.error_, "models[\"{s}\"]: provider '{s}' is not declared under \"providers\"", .{ key, provider_name });
                 return error.ModelUnknownProvider;
@@ -1225,6 +1281,9 @@ pub const Config = struct {
     }
 
     fn parseModel(arena: std.mem.Allocator, name: []const u8, v: json.Value) !Model {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "models";
+        defer diagnostic_scope = prior_scope;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.ModelNotObject,
@@ -1274,6 +1333,9 @@ pub const Config = struct {
     }
 
     fn parseInstance(arena: std.mem.Allocator, v: json.Value) !Instance {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "instance";
+        defer diagnostic_scope = prior_scope;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.InstanceNotObject,
@@ -1292,6 +1354,9 @@ pub const Config = struct {
     }
 
     fn parseServe(arena: std.mem.Allocator, v: json.Value) !struct { serve: Serve, fields: ServeFields } {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "serve";
+        defer diagnostic_scope = prior_scope;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.ServeNotObject,
@@ -1335,10 +1400,7 @@ pub const Config = struct {
             f.serve_as = true;
         }
         if (obj.get("proxy")) |k| {
-            s.proxy = switch (k) {
-                .bool => |b| b,
-                else => return error.FieldNotBool,
-            };
+            s.proxy = try jsonBool(k, "proxy");
             f.proxy = true;
         }
         if (obj.get("proxy_port")) |k| {
@@ -1388,6 +1450,9 @@ pub const Config = struct {
     }
 
     fn parsePeers(arena: std.mem.Allocator, v: json.Value) ![]const Peer {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "peers[]";
+        defer diagnostic_scope = prior_scope;
         const arr = switch (v) {
             .array => |a| a,
             else => return error.PeersNotArray,
@@ -1400,14 +1465,17 @@ pub const Config = struct {
             };
             warnUnknownKeys(obj, &.{ "name", "url" }, "peers[]");
             try out.append(arena, .{
-                .name = try jsonStr(try required(obj, "name"), "name"),
-                .url = try jsonStr(try required(obj, "url"), "url"),
+                .name = try jsonStr(try required(obj, "name", "peers[].name", "name = \"peer-name\""), "peers[].name"),
+                .url = try jsonStr(try required(obj, "url", "peers[].url", "url = \"https://peer.example.com\""), "peers[].url"),
             });
         }
         return out.toOwnedSlice(arena);
     }
 
     fn parseWeb(arena: std.mem.Allocator, v: json.Value) !Web {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "web";
+        defer diagnostic_scope = prior_scope;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.WebNotObject,
@@ -1443,6 +1511,9 @@ pub const Config = struct {
     }
 
     fn parseNotify(arena: std.mem.Allocator, v: json.Value) !Notify {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "notify";
+        defer diagnostic_scope = prior_scope;
         _ = arena;
         const obj = switch (v) {
             .object => |o| o,
@@ -1450,15 +1521,15 @@ pub const Config = struct {
         };
         var n = Notify{};
         warnUnknownKeys(obj, &.{ "on", "topic" }, "notify");
-        if (obj.get("on")) |k| n.on = switch (k) {
-            .bool => |b| b,
-            else => return error.FieldNotBool,
-        };
+        if (obj.get("on")) |k| n.on = try jsonBool(k, "on");
         if (obj.get("topic")) |k| n.topic = try jsonStr(k, "topic");
         return n;
     }
 
     fn parseTui(arena: std.mem.Allocator, v: json.Value) !Tui {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "tui";
+        defer diagnostic_scope = prior_scope;
         _ = arena;
         const obj = switch (v) {
             .object => |o| o,
@@ -1478,16 +1549,16 @@ pub const Config = struct {
     }
 
     fn parseChatrooms(arena: std.mem.Allocator, v: json.Value) !Chatrooms {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "chatrooms";
+        defer diagnostic_scope = prior_scope;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.ChatroomsNotObject,
         };
         var c = Chatrooms{};
         warnUnknownKeys(obj, &.{ "on", "rooms", "max_history" }, "chatrooms");
-        if (obj.get("on")) |k| c.on = switch (k) {
-            .bool => |b| b,
-            else => return error.FieldNotBool,
-        };
+        if (obj.get("on")) |k| c.on = try jsonBool(k, "on");
         if (obj.get("rooms")) |k| {
             const arr = switch (k) {
                 .array => |a| a,
@@ -1526,6 +1597,9 @@ pub const Config = struct {
     };
 
     fn parseAgent(arena: std.mem.Allocator, v: json.Value) !ParsedAgent {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "agent";
+        defer diagnostic_scope = prior_scope;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.AgentNotObject,
@@ -1639,17 +1713,11 @@ pub const Config = struct {
             f.chains_dir = true;
         }
         if (obj.get("git_commit")) |k| {
-            a.git_commit = switch (k) {
-                .bool => |b| b,
-                else => return error.FieldNotBool,
-            };
+            a.git_commit = try jsonBool(k, "git_commit");
             f.git_commit = true;
         }
         if (obj.get("git_remote_ops")) |k| {
-            a.git_remote_ops = switch (k) {
-                .bool => |b| b,
-                else => return error.FieldNotBool,
-            };
+            a.git_remote_ops = try jsonBool(k, "git_remote_ops");
             f.git_remote_ops = true;
         }
         if (obj.get("exec_pattern_allow")) |k| {
@@ -1692,10 +1760,7 @@ pub const Config = struct {
             f.repl_exec_allow = true;
         }
         if (obj.get("tool_catalog")) |k| {
-            a.tool_catalog = switch (k) {
-                .bool => |b| b,
-                else => return error.FieldNotBool,
-            };
+            a.tool_catalog = try jsonBool(k, "tool_catalog");
             f.tool_catalog = true;
         }
         if (obj.get("hot_tools")) |k| {
@@ -1730,10 +1795,7 @@ pub const Config = struct {
             f.fallback_provider = true;
         }
         if (obj.get("auto_thinking")) |k| {
-            a.auto_thinking = switch (k) {
-                .bool => |b| b,
-                else => return error.FieldNotBool,
-            };
+            a.auto_thinking = try jsonBool(k, "auto_thinking");
             f.auto_thinking = true;
         }
         if (obj.get("thinking_classifier_model")) |k| {
@@ -1767,24 +1829,15 @@ pub const Config = struct {
             f.git_worktree_on = true;
         }
         if (obj.get("isolated_cli")) |k| {
-            a.isolated_cli = switch (k) {
-                .bool => |b| b,
-                else => return error.FieldNotBool,
-            };
+            a.isolated_cli = try jsonBool(k, "isolated_cli");
             f.isolated_cli = true;
         }
         if (obj.get("isolated_tui")) |k| {
-            a.isolated_tui = switch (k) {
-                .bool => |b| b,
-                else => return error.FieldNotBool,
-            };
+            a.isolated_tui = try jsonBool(k, "isolated_tui");
             f.isolated_tui = true;
         }
         if (obj.get("isolated_webui")) |k| {
-            a.isolated_webui = switch (k) {
-                .bool => |b| b,
-                else => return error.FieldNotBool,
-            };
+            a.isolated_webui = try jsonBool(k, "isolated_webui");
             f.isolated_webui = true;
         }
         return .{ .agent = a, .fields = f };
@@ -1855,6 +1908,9 @@ pub const Config = struct {
     }
 
     fn parseKernel(v: json.Value) !Kernel {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "kernel";
+        defer diagnostic_scope = prior_scope;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.KernelNotObject,
@@ -1865,10 +1921,7 @@ pub const Config = struct {
             "python_wasi_binary",     "python_wasi_stdlib",           "python_wasi_fuel",
             "python_wasi_timeout_ms", "python_wasi_max_memory_bytes",
         }, "kernel");
-        if (obj.get("enabled")) |e| k.enabled = switch (e) {
-            .bool => |b| b,
-            else => return error.FieldNotBool,
-        };
+        if (obj.get("enabled")) |e| k.enabled = try jsonBool(e, "enabled");
         if (obj.get("max_output_bytes")) |n| k.max_output_bytes = try jsonUnsigned(u32, n, "kernel.max_output_bytes");
         if (obj.get("cleanup_delay_ms")) |n| k.cleanup_delay_ms = try jsonUnsigned(u32, n, "kernel.cleanup_delay_ms");
         if (obj.get("python_wasi_binary")) |s| k.python_wasi_binary = try jsonStr(s, "kernel.python_wasi_binary");
@@ -1880,6 +1933,9 @@ pub const Config = struct {
     }
 
     fn parseDebug(arena: std.mem.Allocator, v: json.Value) !Debug {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "debug";
+        defer diagnostic_scope = prior_scope;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.DebugNotObject,
@@ -1888,10 +1944,7 @@ pub const Config = struct {
         warnUnknownKeys(obj, &.{
             "enabled", "disconnect_timeout_ms", "launch_timeout_ms", "adapters",
         }, "debug");
-        if (obj.get("enabled")) |e| d.enabled = switch (e) {
-            .bool => |b| b,
-            else => return error.FieldNotBool,
-        };
+        if (obj.get("enabled")) |e| d.enabled = try jsonBool(e, "enabled");
         if (obj.get("disconnect_timeout_ms")) |n| d.disconnect_timeout_ms = try jsonUnsigned(u32, n, "debug.disconnect_timeout_ms");
         if (obj.get("launch_timeout_ms")) |n| d.launch_timeout_ms = try jsonUnsigned(u32, n, "debug.launch_timeout_ms");
         if (obj.get("adapters")) |av| {
@@ -1918,6 +1971,9 @@ pub const Config = struct {
     }
 
     fn parseTtsr(arena: std.mem.Allocator, v: json.Value) !Ttsr {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "ttsr";
+        defer diagnostic_scope = prior_scope;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.TtsrNotObject,
@@ -1943,11 +1999,11 @@ pub const Config = struct {
                     else => return error.TtsrRuleNotObject,
                 };
                 var rule = TtsrRule{};
-                if (ro.get("name")) |n| rule.name = try jsonStr(n, "ttsr.rule.name");
-                if (ro.get("pattern")) |p| rule.pattern = try jsonStr(p, "ttsr.rule.pattern");
-                if (ro.get("inject")) |inj| rule.inject = try jsonStr(inj, "ttsr.rule.inject");
+                if (ro.get("name")) |n| rule.name = try jsonStr(n, "rules[].name");
+                if (ro.get("pattern")) |p| rule.pattern = try jsonStr(p, "rules[].pattern");
+                if (ro.get("inject")) |inj| rule.inject = try jsonStr(inj, "rules[].inject");
                 if (ro.get("max_fires")) |mf| {
-                    const n = try jsonInt(mf, "ttsr.rule.max_fires");
+                    const n = try jsonInt(mf, "rules[].max_fires");
                     if (n <= 0) return error.TtsrMaxFiresZero;
                     rule.max_fires = @intCast(n);
                 }
@@ -1961,16 +2017,16 @@ pub const Config = struct {
     }
 
     fn parseAdvisor(v: json.Value) !Advisor {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "advisor";
+        defer diagnostic_scope = prior_scope;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.AdvisorNotObject,
         };
         var a = Advisor{};
         warnUnknownKeys(obj, &.{ "enabled", "provider", "model", "scope", "context_turns", "timeout_ms" }, "advisor");
-        if (obj.get("enabled")) |k| a.enabled = switch (k) {
-            .bool => |b| b,
-            else => return error.FieldNotBool,
-        };
+        if (obj.get("enabled")) |k| a.enabled = try jsonBool(k, "enabled");
         if (obj.get("provider")) |k| a.provider = try jsonStr(k, "advisor.provider");
         if (obj.get("model")) |k| a.model = try jsonStr(k, "advisor.model");
         if (obj.get("scope")) |k| a.scope = try jsonStr(k, "advisor.scope");
@@ -1986,22 +2042,25 @@ pub const Config = struct {
     }
 
     fn parseHooks(v: json.Value) !Hooks {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "hooks";
+        defer diagnostic_scope = prior_scope;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.HooksNotObject,
         };
         var hooks = Hooks{};
         warnUnknownKeys(obj, &.{ "enabled", "config_path", "default_timeout_ms" }, "hooks");
-        if (obj.get("enabled")) |value| hooks.enabled = switch (value) {
-            .bool => |b| b,
-            else => return error.FieldNotBool,
-        };
+        if (obj.get("enabled")) |value| hooks.enabled = try jsonBool(value, "enabled");
         if (obj.get("config_path")) |value| hooks.config_path = try jsonStr(value, "hooks.config_path");
         if (obj.get("default_timeout_ms")) |value| hooks.default_timeout_ms = try jsonUnsigned(u32, value, "hooks.default_timeout_ms");
         return hooks;
     }
 
     fn parseImprove(arena: std.mem.Allocator, v: json.Value) !Improve {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "improve";
+        defer diagnostic_scope = prior_scope;
         _ = arena;
         const obj = switch (v) {
             .object => |o| o,
@@ -2013,32 +2072,20 @@ pub const Config = struct {
             const n = try jsonInt(k, "max_context_bytes");
             im.max_context_bytes = if (n <= 0) null else @intCast(n);
         }
-        if (obj.get("capability_gate")) |k| im.capability_gate = switch (k) {
-            .bool => |b| b,
-            else => return error.FieldNotBool,
-        };
-        if (obj.get("arena_advisory")) |k| im.arena_advisory = switch (k) {
-            .bool => |b| b,
-            else => return error.FieldNotBool,
-        };
+        if (obj.get("capability_gate")) |k| im.capability_gate = try jsonBool(k, "capability_gate");
+        if (obj.get("arena_advisory")) |k| im.arena_advisory = try jsonBool(k, "arena_advisory");
         if (obj.get("max_cache_bytes")) |k| im.max_cache_bytes = try jsonUnsigned(u64, k, "max_cache_bytes");
         if (obj.get("max_context_requests")) |k| {
             const n = try jsonInt(k, "max_context_requests");
             im.max_context_requests = if (n <= 0) 0 else @intCast(n);
         }
-        if (obj.get("inert_gate")) |k| im.inert_gate = switch (k) {
-            .bool => |b| b,
-            else => return error.FieldNotBool,
-        };
+        if (obj.get("inert_gate")) |k| im.inert_gate = try jsonBool(k, "inert_gate");
         if (obj.get("max_consecutive_test_only")) |k| {
             const n = try jsonInt(k, "max_consecutive_test_only");
             im.max_consecutive_test_only = if (n <= 0) 0 else @intCast(n);
         }
         if (obj.get("eval_provider")) |k| im.eval_provider = try jsonStr(k, "eval_provider");
-        if (obj.get("plan_phase")) |k| im.plan_phase = switch (k) {
-            .bool => |b| b,
-            else => return error.FieldNotBool,
-        };
+        if (obj.get("plan_phase")) |k| im.plan_phase = try jsonBool(k, "plan_phase");
         return im;
     }
 
@@ -2081,6 +2128,9 @@ pub const Config = struct {
     }
 
     fn parseModules(arena: std.mem.Allocator, v: json.Value) !struct { modules: Modules, fields: ModulesFields } {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "modules";
+        defer diagnostic_scope = prior_scope;
         _ = arena;
         const obj = switch (v) {
             .object => |o| o,
@@ -2117,8 +2167,7 @@ pub const Config = struct {
         }, "modules");
         for (fields) |f| {
             if (obj.get(f.key)) |val| {
-                if (val != .bool) return error.FieldNotBool;
-                f.ptr.* = val.bool;
+                f.ptr.* = try jsonBool(val, f.key);
                 f.present.* = true;
             }
         }
@@ -2126,6 +2175,9 @@ pub const Config = struct {
     }
 
     fn parseMemory(arena: std.mem.Allocator, v: json.Value) !Memory {
+        const prior_scope = diagnostic_scope;
+        diagnostic_scope = "memory";
+        defer diagnostic_scope = prior_scope;
         _ = arena;
         const obj = switch (v) {
             .object => |o| o,
@@ -2168,8 +2220,86 @@ pub const Config = struct {
 
     // --- helpers -----------------------------------------------------------
 
-    fn required(obj: json.ObjectMap, key: []const u8) !json.Value {
-        return obj.get(key) orelse error.MissingField;
+    fn logTomlSyntaxError(file_name: []const u8, line: ?usize, err: anyerror) void {
+        if (diagnostics_suppressed) return;
+        last_load_diagnostic = true;
+        if (line) |n| {
+            log.log(.error_, "{s}:{d}: invalid TOML syntax ({s}); correct the statement on this line", .{ file_name, n, @errorName(err) });
+        } else {
+            log.log(.error_, "{s}: invalid TOML syntax ({s}); correct the TOML statement", .{ file_name, @errorName(err) });
+        }
+    }
+
+    fn lineForSetting(raw: []const u8, path: []const u8) usize {
+        const leaf_start = if (std.mem.lastIndexOfScalar(u8, path, '.')) |index| index + 1 else 0;
+        var leaf = path[leaf_start..];
+        if (std.mem.indexOfScalar(u8, leaf, '[')) |index| leaf = leaf[0..index];
+        var lines = std.mem.splitScalar(u8, raw, '\n');
+        var line: usize = 1;
+        while (lines.next()) |source_line| : (line += 1) {
+            const trimmed = std.mem.trimStart(u8, source_line, " \t");
+            if (!std.mem.startsWith(u8, trimmed, leaf)) continue;
+            const rest = trimmed[leaf.len..];
+            if (rest.len > 0 and (rest[0] == ' ' or rest[0] == '\t' or rest[0] == '=')) return line;
+        }
+        return 1;
+    }
+
+    fn logDiagnostic(path: []const u8, expected: []const u8, actual: ?json.Value, example: []const u8) void {
+        if (diagnostics_suppressed) return;
+        const source = diagnostic_source orelse return;
+        last_load_diagnostic = true;
+        var full_path_buf: [512]u8 = undefined;
+        const full_path = if (diagnostic_scope.len > 0 and !std.mem.startsWith(u8, path, diagnostic_scope))
+            std.fmt.bufPrint(&full_path_buf, "{s}.{s}", .{ diagnostic_scope, path }) catch path
+        else
+            path;
+        diagnostic_emitted = true;
+        const line = lineForSetting(source.raw, full_path);
+        var corrected_example_buf: [512]u8 = undefined;
+        const corrected_example = if (std.mem.startsWith(u8, example, "setting =")) blk: {
+            const leaf_start: usize = if (std.mem.lastIndexOfScalar(u8, full_path, '.')) |index| index + 1 else 0;
+            var leaf = full_path[leaf_start..];
+            if (std.mem.indexOfScalar(u8, leaf, '[')) |index| leaf = leaf[0..index];
+            break :blk std.fmt.bufPrint(&corrected_example_buf, "{s}{s}", .{ leaf, example["setting".len..] }) catch example;
+        } else example;
+        if (actual) |value| switch (value) {
+            .string => |text| {
+                const sensitive = std.mem.indexOf(u8, full_path, "key") != null or std.mem.indexOf(u8, full_path, "token") != null or std.mem.indexOf(u8, full_path, "secret") != null;
+                if (sensitive) {
+                    log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got string (value redacted); correct it with {s}", .{ source.file_name, line, full_path, expected, corrected_example });
+                } else {
+                    log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got string \"{s}\"; correct it with {s}", .{ source.file_name, line, full_path, expected, text, corrected_example });
+                }
+            },
+            .integer => |n| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got integer {d}; correct it with {s}", .{ source.file_name, line, full_path, expected, n, corrected_example }),
+            .float => |n| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got float {d}; correct it with {s}", .{ source.file_name, line, full_path, expected, n, corrected_example }),
+            .bool => |b| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got boolean {}; correct it with {s}", .{ source.file_name, line, full_path, expected, b, corrected_example }),
+            .array => |items| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got array with {d} items; correct it with {s}", .{ source.file_name, line, full_path, expected, items.items.len, corrected_example }),
+            .object => log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got table; correct it with {s}", .{ source.file_name, line, full_path, expected, corrected_example }),
+            .number_string => |text| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got number string \"{s}\"; correct it with {s}", .{ source.file_name, line, full_path, expected, text, corrected_example }),
+            .null => log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got null; correct it with {s}", .{ source.file_name, line, full_path, expected, corrected_example }),
+        };
+    }
+
+    fn invalid(path: []const u8, expected: []const u8, actual: ?json.Value, example: []const u8, err: anyerror) anyerror {
+        logDiagnostic(path, expected, actual, example);
+        return err;
+    }
+
+    fn logUndiagnosedError(err: anyerror) void {
+        if (diagnostics_suppressed) return;
+        // `invalid` has already printed an actionable report.  This catches
+        // future direct returns so they cannot silently reintroduce bare
+        // errors such as FieldNotString.
+        if (diagnostic_source) |source| {
+            last_load_diagnostic = true;
+            log.log(.error_, "{s}: configuration validation failed ({s}); inspect the setting named by the preceding diagnostic", .{ source.file_name, @errorName(err) });
+        }
+    }
+
+    fn required(obj: json.ObjectMap, key: []const u8, path: []const u8, example: []const u8) !json.Value {
+        return obj.get(key) orelse invalid(path, "a required value", null, example, error.MissingField);
     }
 
     /// Warns (never fails the load) about a key in `obj` that isn't in
@@ -2189,10 +2319,30 @@ pub const Config = struct {
     }
 
     fn jsonStr(v: json.Value, key: []const u8) ![]const u8 {
-        _ = key;
         return switch (v) {
             .string => |s| s,
-            else => error.FieldNotString,
+            else => invalid(key, "a string", v, "setting = \"value\"", error.FieldNotString),
+        };
+    }
+
+    fn jsonBool(v: json.Value, key: []const u8) !bool {
+        return switch (v) {
+            .bool => |b| b,
+            else => invalid(key, "a boolean", v, "setting = true", error.FieldNotBool),
+        };
+    }
+
+    fn jsonArray(v: json.Value, key: []const u8, example: []const u8) !json.Array {
+        return switch (v) {
+            .array => |items| items,
+            else => invalid(key, "an array", v, example, error.NameListInvalid),
+        };
+    }
+
+    fn jsonObject(v: json.Value, key: []const u8, example: []const u8) !json.ObjectMap {
+        return switch (v) {
+            .object => |object| object,
+            else => invalid(key, "a table", v, example, error.ConfigNotObject),
         };
     }
 
@@ -2215,7 +2365,7 @@ pub const Config = struct {
                 }
                 return try out.toOwnedSlice(arena);
             },
-            else => return error.NameListInvalid,
+            else => return invalid(key, "a string or array of strings", v, "setting = [\"value\"]", error.NameListInvalid),
         }
     }
 
@@ -2229,12 +2379,11 @@ pub const Config = struct {
     }
 
     fn jsonInt(v: json.Value, key: []const u8) !i64 {
-        _ = key;
         return switch (v) {
             .integer => |i| i,
             .float => |f| @trunc(f),
-            .number_string => |s| std.fmt.parseInt(i64, s, 10) catch error.FieldNotInt,
-            else => error.FieldNotInt,
+            .number_string => |s| std.fmt.parseInt(i64, s, 10) catch return invalid(key, "an integer", v, "setting = 1", error.FieldNotInt),
+            else => invalid(key, "an integer", v, "setting = 1", error.FieldNotInt),
         };
     }
 
@@ -2244,19 +2393,17 @@ pub const Config = struct {
     fn jsonUnsigned(comptime T: type, v: json.Value, key: []const u8) !T {
         const n = try jsonInt(v, key);
         if (n < 0 or n > std.math.maxInt(T)) {
-            log.log(.error_, "config: \"{s}\" must be an integer in 0..{d}", .{ key, std.math.maxInt(T) });
-            return error.FieldNotUint;
+            return invalid(key, "an unsigned integer in 0..", v, "setting = 1", error.FieldNotUint);
         }
         return @intCast(n);
     }
 
     fn jsonFloat(v: json.Value, key: []const u8) !f64 {
-        _ = key;
         return switch (v) {
             .integer => |i| @floatFromInt(i),
             .float => |f| f,
-            .number_string => |s| std.fmt.parseFloat(f64, s) catch error.FieldNotNumber,
-            else => error.FieldNotNumber,
+            .number_string => |s| std.fmt.parseFloat(f64, s) catch return invalid(key, "a number", v, "setting = 0.5", error.FieldNotNumber),
+            else => invalid(key, "a number", v, "setting = 0.5", error.FieldNotNumber),
         };
     }
 };
@@ -2331,6 +2478,62 @@ test "tui mascot speed is an integer from zero through ten" {
         \\{"tui":{"mascot_speed":11}}
     , .{});
     try std.testing.expectError(error.MascotSpeedOutOfRange, Config.parseConfig(arena, out_of_range));
+}
+
+test "config errors retain base and local TOML source paths" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // A nested base-table setting is rejected at its exact TOML line rather
+    // than becoming the old context-free FieldNotString startup error.
+    const base_bad =
+        \\default_provider = "test"
+        \\
+        \\[providers.test]
+        \\base_url = "http://127.0.0.1:1"
+        \\
+        \\[models."test/model"]
+        \\provider = "test"
+        \\
+        \\[agent]
+        \\max_iterations = "many"
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = base_bad });
+    try std.testing.expectEqual(@as(usize, 10), Config.lineForSetting(base_bad, "agent.max_iterations"));
+    try std.testing.expectError(error.FieldNotInt, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+    try std.testing.expect(Config.takeLoadDiagnostic());
+
+    // The local layer is parsed independently. An invalid array item there
+    // must identify config.local.toml instead of attributing it to the base.
+    const base_ok =
+        \\default_provider = "test"
+        \\
+        \\[providers.test]
+        \\base_url = "http://127.0.0.1:1"
+        \\
+        \\[models."test/model"]
+        \\provider = "test"
+        \\
+    ;
+    const local_bad =
+        \\[[ttsr.rules]]
+        \\name = "retry"
+        \\pattern = 7
+        \\inject = "retry"
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = base_ok });
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data = local_bad });
+    try std.testing.expectEqual(@as(usize, 3), Config.lineForSetting(local_bad, "ttsr.rules[].pattern"));
+    try std.testing.expectError(error.FieldNotString, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+    try std.testing.expect(Config.takeLoadDiagnostic());
 }
 
 test "hooks default off and parse explicit lifecycle settings" {

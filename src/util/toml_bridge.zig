@@ -8,9 +8,24 @@ const toml = @import("toml");
 /// existing json.Value-based config parsing unchanged. Allocates from
 /// `arena` only (leaky, matching parseFromSliceLeaky elsewhere in config.zig).
 pub fn parseToJsonValue(arena: std.mem.Allocator, raw: []const u8) !json.Value {
+    var line: ?usize = null;
+    return parseToJsonValueAtLine(arena, raw, &line);
+}
+
+/// Like `parseToJsonValue`, but returns the TOML parser's one-based source
+/// line when syntax parsing fails.  The JSON tree deliberately has no source
+/// spans, so callers that turn it into a schema need this boundary to retain
+/// useful syntax diagnostics.
+pub fn parseToJsonValueAtLine(arena: std.mem.Allocator, raw: []const u8, error_line: *?usize) !json.Value {
     var parser = toml.Parser(toml.Table).init(arena);
     defer parser.deinit();
-    const result = try parser.parseString(raw);
+    const result = parser.parseString(raw) catch |err| {
+        if (parser.error_info) |info| switch (info) {
+            .parse => |position| error_line.* = position.line,
+            else => {},
+        };
+        return err;
+    };
     return tableToJson(arena, result.value);
 }
 

@@ -263,7 +263,7 @@ pub fn main(init: std.process.Init) !void {
     // a key, so there is no reason for either to read config.toml/.env off
     // disk or print the "loaded N key(s)" line ahead of its own output.
     if (opts.command != .help and opts.command != .version) {
-        const early_cfg = config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch null;
+        const early_cfg = config.Config.loadQuiet(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch null;
         if (early_cfg) |c| {
             if (c.modules.dotenv) dotenv.load(init.io, gpa, init.environ_map);
         } else {
@@ -278,7 +278,9 @@ pub fn main(init: std.process.Init) !void {
         // Common failures get a human line with a recovery hint, not a
         // timestamped log record: this is an interactive moment, not a log
         // collector ingest path.
-        const hint: ?[]const u8 = switch (err) {
+        const hint: ?[]const u8 = if (config.Config.takeLoadDiagnostic())
+            "configuration is invalid; correct the setting reported above"
+        else switch (err) {
             error.MissingConfig => "config.toml not found; run `clanker setup` to create one",
             error.DefaultProviderUnknown => "default_provider names a provider not in config; run `clanker doctor`",
             error.ToolWasmMissing => "a tool's .wasm module is missing; run `zig build tools`",

@@ -788,6 +788,13 @@ The shell scripts `scripts/clanker-improve.sh` and `scripts/clanker-review.sh` a
 
 `config.toml` is the global config; `config.local.toml` overrides it, provider by provider. Other sections, including `web`, are replaced as whole sections when the local file names them. The exceptions are `[modules]` and `[serve]`, which are field-merged like `[agent]`: a local file that flips one flag or moves one port leaves the rest of that section as the base file had it. TOML is the only supported config format; a leftover pre-migration `.json` file is ignored entirely (and `clanker doctor` warns about it) rather than half-supported.
 
+If startup rejects a setting, it prints a configuration diagnostic instead of
+an implementation error name: the filename and line, fully qualified setting,
+expected shape, actual TOML type/value where safe, and a corrected example.
+`config.local.toml` is a separate source, so fix the file and line it names; it
+may be overriding an otherwise valid `config.toml`. The full format and common
+TOML corrections are in [Configuration errors](configuration.md#configuration-errors).
+
 A provider declares its backend once (`[providers.<name>]`); its models live in a separate, top-level `[models."<provider>/<model>"]` table, keyed by that composite id, each entry naming its own `provider` — inspired by Kimi Code's config.toml shape. Per-model settings (`context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`, `capabilities`) belong to the model rather than the provider, because they differ between models sharing one endpoint:
 
 ```toml
