@@ -4189,6 +4189,108 @@ pub fn execUnderPolicy(
     } };
 }
 
+/// `execUnderPolicy` for deterministic lifecycle integrations that need a
+/// bounded JSON payload on stdin. It deliberately repeats no policy logic:
+/// command resolution, allowlisting and argv denial call the same helpers as
+/// the interactive escape above. Output collection and the child lifetime
+/// share one monotonic deadline through `MultiReader.fill`.
+pub fn execUnderPolicyInput(
+    sb: *const Sandbox,
+    argv_in: []const []const u8,
+    input: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    timeout_ms: u32,
+    project_dir: []const u8,
+) ExecAttempt {
+    if (argv_in.len == 0 or argv_in[0].len == 0) return .not_allowed;
+    const cmd = argv_in[0];
+    if (!execAllowed(sb.exec_allow, cmd)) return .not_allowed;
+
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(sb.gpa);
+    const resolved = resolveExecPath(sb.gpa, sb.io, sb.environ_map, cmd);
+    defer if (resolved) |r| sb.gpa.free(r);
+    argv.append(sb.gpa, resolved orelse cmd) catch return .{ .failed = error.OutOfMemory };
+    argv.appendSlice(sb.gpa, argv_in[1..]) catch return .{ .failed = error.OutOfMemory };
+    if (execDenial(sb, cmd, argv.items)) |denial| {
+        const outlives = struct {
+            fn arg(x: DeniedArg, argv0: []const u8, named: []const u8) DeniedArg {
+                return .{ .token = x.token, .arg = if (x.arg.ptr == argv0.ptr) named else x.arg };
+            }
+        };
+        return .{ .denied = switch (denial) {
+            .deny_token => |x| .{ .deny_token = outlives.arg(x, argv.items[0], cmd) },
+            .shell_operator => |x| .{ .shell_operator = outlives.arg(x, argv.items[0], cmd) },
+            .foreign_worktree => |a| .{ .foreign_worktree = if (a.ptr == argv.items[0].ptr) cmd else a },
+            .host_path => |a| .{ .host_path = if (a.ptr == argv.items[0].ptr) cmd else a },
+            else => denial,
+        } };
+    }
+
+    var child_env = execEnvironment(sb.gpa, sb) catch |err| return .{ .failed = err };
+    defer child_env.deinit();
+    child_env.put("CLAUDE_PROJECT_DIR", project_dir) catch |err| return .{ .failed = err };
+
+    var root_dir: std.Io.Dir = std.Io.Dir.cwd();
+    var root_opened = false;
+    if (!rootIsProcessCwd(sb.root_dir)) {
+        root_dir = std.Io.Dir.cwd().openDir(sb.io, sb.root_dir, .{}) catch |err| return .{ .failed = err };
+        root_opened = true;
+    }
+    defer if (root_opened) root_dir.close(sb.io);
+
+    var child = std.process.spawn(sb.io, .{
+        .argv = argv.items,
+        .cwd = .{ .dir = root_dir },
+        .environ_map = &child_env,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    }) catch |err| return .{ .failed = err };
+    defer child.kill(sb.io);
+
+    if (child.stdin) |stdin_file| {
+        var buffer: [4096]u8 = undefined;
+        var writer = stdin_file.writer(sb.io, &buffer);
+        writer.interface.writeAll(input) catch |err| return .{ .failed = err };
+        writer.interface.flush() catch |err| return .{ .failed = err };
+        stdin_file.close(sb.io);
+        child.stdin = null;
+    }
+
+    var multi_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var multi: std.Io.File.MultiReader = undefined;
+    multi.init(sb.gpa, sb.io, multi_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi.deinit();
+    const stdout_reader = multi.reader(0);
+    const stderr_reader = multi.reader(1);
+    const timeout: std.Io.Timeout = if (timeout_ms == 0) .none else .{ .deadline = .fromNow(sb.io, .{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
+    }) };
+    while (multi.fill(64, timeout)) |_| {
+        if (stdout_reader.buffered().len > stdout_limit or stderr_reader.buffered().len > stderr_limit)
+            return .{ .failed = error.StreamTooLong };
+    } else |err| switch (err) {
+        error.EndOfStream => {},
+        else => |e| return .{ .failed = e },
+    }
+    multi.checkAnyError() catch |err| return .{ .failed = err };
+    const term = child.wait(sb.io) catch |err| return .{ .failed = err };
+    const stdout = multi.toOwnedSlice(0) catch |err| return .{ .failed = err };
+    errdefer sb.gpa.free(stdout);
+    const stderr = multi.toOwnedSlice(1) catch |err| return .{ .failed = err };
+    return .{ .ran = .{
+        .code = switch (term) {
+            .exited => |code| code,
+            else => 1,
+        },
+        .stdout = stdout,
+        .stderr = stderr,
+    } };
+}
+
 /// Keeps the head of `text`, ending on a line boundary so the last line is
 /// whole rather than a fragment that reads as corrupted output.
 fn clipOutput(text: []const u8, keep: usize) []const u8 {
@@ -4758,6 +4860,40 @@ test "execDenial: the argv-level gate ckExec and the REPL escape share" {
     try std.testing.expect(execDenial(&sb, "uv", &.{ "/usr/bin/uv", "pip", "install", "pwn" }).? == .uv_verb);
     try std.testing.expect(execDenial(&sb, "uv", &.{ "/usr/bin/uv", "run", "python3", "-c", "print(1)" }).? == .uv_verb);
     try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "--exec-path=/tmp/evil", "status" }).? == .host_path);
+}
+
+test "execUnderPolicyInput carries stdin and enforces one wall-clock deadline" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    // Resolution uses the process environment; the filtered child map only
+    // needs a PATH for programs that inspect it themselves.
+    try env.put("PATH", "/usr/bin:/bin");
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{},
+        .environ_map = &env,
+        .exec_allow = &.{ "tee", "sleep" },
+    };
+    const echoed = execUnderPolicyInput(&sb, &.{"tee"}, "hook payload", 1024, 1024, 1000, ".");
+    switch (echoed) {
+        .ran => |out| {
+            defer out.deinit(std.testing.allocator);
+            try std.testing.expectEqual(@as(u32, 0), out.code);
+            try std.testing.expectEqualStrings("hook payload", out.stdout);
+        },
+        else => return error.TestExpectedExec,
+    }
+    const timed = execUnderPolicyInput(&sb, &.{ "sleep", "1" }, "", 1024, 1024, 10, ".");
+    switch (timed) {
+        .failed => |err| try std.testing.expectEqual(error.Timeout, err),
+        else => return error.TestExpectedTimeout,
+    }
 }
 
 test "execUnderPolicy refuses a command that is not on the allowlist" {
