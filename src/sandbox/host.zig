@@ -4614,6 +4614,7 @@ pub const shared_prefixes = [_][]const u8{
     "state",
     ".local",
     ".agents",
+    ".claude",
     ".env",
     "config.local.toml",
     "config.local.json",
@@ -5181,6 +5182,7 @@ test "an isolated run resolves tracked paths in its worktree and untracked ones 
         "state/staging/imp-1/src/x.zig",
         ".local/board.json",
         ".agents/AGENTS.md",
+        ".claude/settings.json",
         "config.local.toml",
     }) |p| {
         const got = try safeJoin(&sb, p);

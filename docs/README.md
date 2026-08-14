@@ -252,7 +252,7 @@ snapshot:
 |---|---|
 | `src/`, `docs/`, `tools/`, `build.zig`, `AGENTS.md`, … (tracked) | the worktree |
 | `state/` — sessions, goals, learnings, stats, run graphs | the checkout |
-| `.local/`, `.agents/` | the checkout |
+| `.local/`, `.agents/`, `.claude/` | the checkout |
 | `.env`, `config.local.toml`, `config.local.json` | the checkout |
 | `zig-out/`, `.zig-cache/` | the worktree (see below) |
 
@@ -270,8 +270,10 @@ needed:
   escapes), so a linked `state/` would *deny* every tool that touched it.
 - **The harness itself** reads roughly 44 hardcoded relative `state/...` paths
   against the process cwd, so `linkCheckoutState` symlinks these entries into the
-  worktree and native I/O follows them. The sandbox never traverses those links,
-  because its half routes around them.
+  worktree and native I/O follows them. It creates the checkout's shared runtime
+  directories before linking, so a fresh checkout cannot split one run between a
+  sandbox-created checkout `state/` and a native-created worktree `state/`. The
+  sandbox never traverses those links, because its half routes around them.
 
 `zig-out/` and `.zig-cache/` are untracked but stay per-worktree: builds *write*
 there, and a shared `zig-out` lets a worktree's build clobber the binaries the
