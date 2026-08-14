@@ -37,27 +37,38 @@ lamps carry further). The seven named palettes ride the same tokens.
      keyboard user and the task box. This jumps straight there instead. Only
      the focused link is ever on screen, so the two never overlap. -->
 <a class="skip-link" href="#task">Skip to composer</a>
-<header>
-  <!-- Same artwork as the favicon, so the tab and the panel wear one badge. -->
-  <h1><svg class="logo" width="18" height="18" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-    <rect width="32" height="32" rx="3" fill="#1d2225"/>
-    <rect x="3" y="3" width="26" height="26" rx="2" fill="none" stroke="#77827b" stroke-width="1.5"/>
-    <circle cx="16" cy="13" r="5.5" fill="#2fae4d"/>
-    <circle cx="14" cy="11" r="2" fill="#c9f2d3"/>
-    <rect x="9" y="22" width="14" height="3" rx="1" fill="#77827b"/>
-  </svg>clanker</h1>
-  <button type="button" class="chip header-model" id="header-model" aria-live="polite" title="Active model (click to change)">…</button>
-  <span id="instance-chip" hidden aria-hidden="true">connecting…</span>
-  <span id="peers-chip" hidden aria-hidden="true"></span>
-  <span id="session-chip" hidden aria-hidden="true">session …</span>
-  <button type="button" class="chip-btn" id="rail-collapse" title="Collapse sidebar" aria-expanded="true" aria-controls="rail" aria-label="Collapse sidebar"></button>
-  <button type="button" class="chip-btn" id="rail-toggle" aria-expanded="false" aria-controls="rail">Menu</button>
-  <button type="button" class="chip-btn" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
-  <button type="button" class="chip-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"></button>
-  <button type="button" class="chip-btn" id="theme-toggle" title="Cycle theme: system / light / dark / mocha / latte / frappe / macchiato / tokyonight / tokyonight-storm / tokyonight-day">theme: system</button>
+
+<div class="pf-v6-c-page" id="app-page">
+<header class="pf-v6-c-masthead" id="app-masthead">
+  <div class="pf-v6-c-masthead__main">
+    <span class="pf-v6-c-masthead__toggle">
+      <button type="button" class="chip-btn" id="rail-toggle" aria-expanded="false" aria-controls="rail">Menu</button>
+    </span>
+    <div class="pf-v6-c-masthead__brand">
+      <!-- Same artwork as the favicon, so the tab and the panel wear one badge. -->
+      <div class="pf-v6-c-masthead__logo">
+        <h1><svg class="logo" width="18" height="18" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+          <rect width="32" height="32" rx="3" fill="#1d2225"/>
+          <rect x="3" y="3" width="26" height="26" rx="2" fill="none" stroke="#77827b" stroke-width="1.5"/>
+          <circle cx="16" cy="13" r="5.5" fill="#2fae4d"/>
+          <circle cx="14" cy="11" r="2" fill="#c9f2d3"/>
+          <rect x="9" y="22" width="14" height="3" rx="1" fill="#77827b"/>
+        </svg>clanker</h1>
+      </div>
+    </div>
+  </div>
+  <div class="pf-v6-c-masthead__content">
+    <button type="button" class="chip header-model" id="header-model" aria-live="polite" title="Active model (click to change)">…</button>
+    <span id="instance-chip" hidden aria-hidden="true">connecting…</span>
+    <span id="peers-chip" hidden aria-hidden="true"></span>
+    <span id="session-chip" hidden aria-hidden="true">session …</span>
+    <button type="button" class="chip-btn" id="rail-collapse" title="Collapse sidebar" aria-expanded="true" aria-controls="rail" aria-label="Collapse sidebar"></button>
+    <button type="button" class="chip-btn" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
+    <button type="button" class="chip-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"></button>
+    <button type="button" class="chip-btn" id="theme-toggle" title="Cycle theme: system / light / dark / mocha / latte / frappe / macchiato / tokyonight / tokyonight-storm / tokyonight-day">theme: system</button>
+  </div>
 </header>
 
-<div class="shell">
 <!-- The conversation list is a place, not a dropdown: every conversation is
      visible at once, grouped by when it was last touched, the way an editor
      shows a file tree. The picker it replaces could only show one row. -->
@@ -66,7 +77,9 @@ lamps carry further). The seven named palettes ride the same tokens.
      them, so a sighted user gets the same message a screen reader is read. -->
 <div class="toasts" id="toasts"></div>
 <div class="rail-scrim" id="rail-scrim" data-open="false"></div>
-<aside class="rail" id="rail" aria-label="Navigation">
+<aside class="pf-v6-c-page__sidebar pf-m-expanded rail" id="rail" aria-label="Navigation">
+  <div class="pf-v6-c-page__sidebar-main">
+    <div class="pf-v6-c-page__sidebar-body">
   <!-- Grouped by what you came to do: work on something, watch what happened,
        or set the place up. Seven flat tabs said these were all one kind of
        thing. -->
@@ -105,9 +118,12 @@ lamps carry further). The seven named palettes ride the same tokens.
     </div>
     <ul class="rail-list" id="rail-list" aria-label="Conversations"></ul>
   </div>
+    </div>
+  </div>
 </aside>
 
-<main id="main" tabindex="-1">
+<div class="pf-v6-c-page__main-container shell" tabindex="-1">
+<main class="pf-v6-c-page__main" id="main" tabindex="-1">
   <div class="view" id="view-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="-1">
     <!-- No aria-live here: each turn's answer is its own live region (see
          createTurn). Nesting one inside the other made a screen reader announce
@@ -822,6 +838,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
   </div>
 </main>
+</div>
 </div>
 
 <!-- Overlays live outside main so the tab order reaches them last and a screen

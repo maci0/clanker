@@ -485,15 +485,49 @@ body {
 }
 @media (prefers-reduced-motion: reduce) { .skip-link { transition: none; } }
 
-header {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem;
-  padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--rule);
+/* PatternFly page shell (step 2): PF grid + cabinet bridge until each surface migrates. */
+#app-page.pf-v6-c-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+#app-masthead.pf-v6-c-masthead {
+  border-bottom: 1px solid var(--rule);
   background: var(--surface);
-  position: sticky; top: 0; z-index: 5;
+  position: sticky;
+  top: 0;
+  z-index: 5;
   flex: none;
 }
+#app-masthead .pf-v6-c-masthead__content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+#app-masthead .pf-v6-c-masthead__logo h1 {
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  margin: 0;
+  color: var(--fg);
+  padding: 0.15rem 0.4rem;
+  border: 0;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.pf-v6-c-page__main-container.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 @media (max-width: 34rem) {
-  header { padding: 0.7rem 1rem; gap: 0.4rem 0.5rem; }
+  #app-masthead.pf-v6-c-masthead { padding: 0.7rem 1rem; }
+  #app-masthead .pf-v6-c-masthead__content { gap: 0.4rem 0.5rem; }
   /* Keep chips legible on narrow: dot + truncated single line instead of hidden.
      8ch leaves room for "peers 2" / "sess ab12…" without pushing the actuator off. */
   #instance-chip, #peers-chip, #session-chip {
@@ -2456,7 +2490,8 @@ mark {
 
 .shell { display: flex; align-items: stretch; gap: 0; flex: 1 1 auto; min-height: 0; }
 
-main {
+main,
+main.pf-v6-c-page__main {
   background: var(--bg);
   border: 0;
   box-shadow: none;
@@ -2464,7 +2499,8 @@ main {
   flex: 1 1 auto;
   overflow-y: auto;
 }
-.rail {
+.rail,
+.pf-v6-c-page__sidebar.rail {
   flex: none; width: 15rem;
   height: 100%;
   display: flex; flex-direction: column; overflow: hidden;
@@ -2474,7 +2510,16 @@ main {
   padding: var(--space-3) var(--space-3);
   border-right: 1px solid var(--rule);
 }
-.rail:hover { scrollbar-color: var(--border) transparent; }
+.rail:hover,
+.pf-v6-c-page__sidebar.rail:hover { scrollbar-color: var(--border) transparent; }
+.pf-v6-c-page__sidebar.rail .pf-v6-c-page__sidebar-main,
+.pf-v6-c-page__sidebar.rail .pf-v6-c-page__sidebar-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
 .rail-head { display: flex; flex-direction: column; gap: var(--space-3); flex: none; }
 /* The rail is pinned: only the conversation list scrolls, not the whole
    sidebar, so the tabs and the chat controls stay put while the history
@@ -2559,33 +2604,46 @@ h2#session-title {
   text-transform: none; letter-spacing: 0;
 }
 #rail-toggle { display: none; }
+#app-masthead .pf-v6-c-masthead__toggle #rail-toggle { display: none; }
 
 /* Under 60rem the rail would take a third of the screen, so it becomes a
    panel you open, and the header button that opens it appears. */
 @media (max-width: 60rem) {
-  .rail {
+  .rail,
+  .pf-v6-c-page__sidebar.rail {
     position: fixed; inset: 0 auto 0 0; z-index: 15; width: min(20rem, 85vw);
     transform: translateX(-100%); transition: transform 160ms ease;
     background: var(--bg);
     box-shadow: 0 0 3rem color-mix(in srgb, var(--bg) 70%, transparent);
     max-height: none; height: auto;
   }
-  .rail[data-open="true"] { transform: none; }
+  .rail[data-open="true"],
+  .pf-v6-c-page__sidebar.rail[data-open="true"] { transform: none; }
   /* Closed means gone: without this, tabbing from the header walked ten
      controls that were translated off screen, with no visible focus anywhere. */
-  .rail:not([data-open="true"]) { visibility: hidden; }
-  .rail:not([data-open="true"]) * { visibility: hidden; }
-  #rail-toggle { display: inline-flex; }
+  .rail:not([data-open="true"]),
+  .pf-v6-c-page__sidebar.rail:not([data-open="true"]) { visibility: hidden; }
+  .rail:not([data-open="true"]) *,
+  .pf-v6-c-page__sidebar.rail:not([data-open="true"]) * { visibility: hidden; }
+  #rail-toggle,
+  #app-masthead .pf-v6-c-masthead__toggle #rail-toggle { display: inline-flex; }
   /* Collapse is a desktop affordance: under 60rem the rail is a drawer you
      open and close as a whole, so the collapse toggle would describe a state
      the drawer does not have. */
   #rail-collapse { display: none; }
 }
 @media (min-width: 60.01rem) and (max-width: 72rem) {
-  .rail[data-collapsed="true"] { width: 3.5rem; padding-inline: var(--space-2); }
-  .rail[data-collapsed="true"] .rail-item, .rail[data-collapsed="true"] .rail-tab { font-size: 0; letter-spacing: 0; }
-  .rail[data-collapsed="true"] .rail-item::after, .rail[data-collapsed="true"] .rail-tab::after { content: attr(data-short); font-size: var(--step-0); }
-  .rail[data-collapsed="true"] .rail-context, .rail[data-collapsed="true"] .rail-group { display: none; }
+  .rail[data-collapsed="true"],
+  .pf-v6-c-page__sidebar.pf-m-collapsed.rail { width: 3.5rem; padding-inline: var(--space-2); }
+  .rail[data-collapsed="true"] .rail-item, .rail[data-collapsed="true"] .rail-tab,
+  .pf-v6-c-page__sidebar.pf-m-collapsed.rail .rail-item,
+  .pf-v6-c-page__sidebar.pf-m-collapsed.rail .rail-tab { font-size: 0; letter-spacing: 0; }
+  .rail[data-collapsed="true"] .rail-item::after, .rail[data-collapsed="true"] .rail-tab::after,
+  .pf-v6-c-page__sidebar.pf-m-collapsed.rail .rail-item::after,
+  .pf-v6-c-page__sidebar.pf-m-collapsed.rail .rail-tab::after { content: attr(data-short); font-size: var(--step-0); }
+  .rail[data-collapsed="true"] .rail-context, .rail[data-collapsed="true"] .rail-group,
+  .pf-v6-c-page__sidebar.pf-m-collapsed.rail .rail-context,
+  .pf-v6-c-page__sidebar.pf-m-collapsed.rail .rail-group { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .rail { transition: none; } }
 

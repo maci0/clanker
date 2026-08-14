@@ -16,8 +16,8 @@ to [PatternFly 6](https://www.patternfly.org/) HTML/CSS. The app stays vanilla J
 | Step | Scope | Status |
 |------|-------|--------|
 | 1 | Vendored `patternfly.min.css` + `patternfly-addons.css`, served from `/webui/vendor/*` | done |
-| 2 | Page shell: `pf-v6-c-page`, Masthead, sidebar, `main` (`#main` unchanged) | next |
-| 3 | Rail navigation → PF Nav (vertical tabs, groups) | |
+| 2 | Page shell: `pf-v6-c-page`, Masthead, sidebar, `main` (`#main` unchanged) | done |
+| 3 | Rail navigation → PF Nav (vertical tabs, groups) | next |
 | 4 | Buttons (`primary`, `secondary`, `danger`, icon buttons) | |
 | 5 | Forms (composer, filters, goal form, settings) | |
 | 6 | Overlays (palette, help, dialogs, card detail) | |

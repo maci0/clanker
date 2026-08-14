@@ -553,6 +553,8 @@ function setRailOpen(open) {
 
 function applyRailCollapsed(collapsed) {
   el.rail.setAttribute("data-collapsed", String(collapsed));
+  el.rail.classList.toggle("pf-m-collapsed", collapsed);
+  el.rail.classList.toggle("pf-m-expanded", !collapsed);
   var btn = document.getElementById("rail-collapse");
   if (btn) {
     btn.textContent = "";
