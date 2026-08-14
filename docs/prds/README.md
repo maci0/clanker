@@ -63,9 +63,9 @@ optional subsystems:
 1. **0016** supervisors / **0017** DAP
 2. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
 3. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
-5. **0028** — hooks bridge (needs a new subprocess wait-with-timeout primitive)
-6. **0030** — ACP server (mirrors the already-shipped `clanker mcp` shape)
-7. **0033** — agent presets (filter-only v1; independent of 0032)
+4. **0028** — hooks bridge (needs a new subprocess wait-with-timeout primitive)
+5. **0030** — ACP server (mirrors the already-shipped `clanker mcp` shape)
+6. **0033** — agent presets (filter-only v1; independent of 0032)
 8. **0032** — MCP client bridge (largest: needs a new registry dispatch kind; soft-depends on 0016 for a long-lived subprocess handle)
 
 ## Editing rules (short)
