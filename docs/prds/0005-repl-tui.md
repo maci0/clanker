@@ -155,7 +155,7 @@ specific `vxfw` shape, not an open-ended "figure it out":
 | Multi-line markdown constructs | **Gap** | Tables, block quotes, nested/ordered lists, setext headings still unstyled; `clanker run`'s `MdStream` stays richer |
 | Inline `ask_user`/confirm-before-write | **Shipped** | Dedicated ask modal (`ask_open` / `handleAskKey` / `drawAskModal`) on a pthread bridge; `ask_fn` always, `confirm_fn` when `confirm_writes=always` |
 | Multi-line input | **Gap** | `vxfw.TextField` has no multi-line mode; Shift+Enter has no vaxis primitive to hook |
-| Plan mode | **Gap** | `Agent.plan_mode` + `needsConfirm` exist (web UI); needs a REPL toggle |
+| Plan / research modes | **Shipped** | `/plan [on|off]` and `/research [on|off]`; bare commands toggle, status bar shows active modes |
 | Visible stats/compaction | **Shipped** | `src/tui/turn_stats.zig`; status-bar context meter + per-turn line + compaction notices |
 
 ## Failure modes
@@ -314,8 +314,8 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
       is single-line; Enter always submits.
 - [ ] **Image / multimodal input.** The web UI has an attachment path (webui
       1.3); this REPL has no route for a task that needs one.
-- [ ] **Plan mode toggle.** `Agent.plan_mode` exists and the web UI toggles it
-      (webui 2.2); nothing here sets it, so no propose-then-apply flow.
+- [x] **Plan mode toggle.** `/plan [on|off]` updates `Agent.plan_mode`; bare
+      `/plan` toggles it, matching the web UI's propose-then-apply control.
 - [ ] **Truecolor autodetection.** `/theme` shipped (registered in
       `command_registry`, a `PickerKind` in the same modal `/model` uses), so
       the RGB palettes are reachable without setting `CLANKER_THEME`. What

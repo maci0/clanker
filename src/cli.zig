@@ -69,6 +69,7 @@ const webui_vendor_hljs = ui_vendor.hljs;
 const webui_vendor_mermaid = ui_vendor.mermaid;
 const webui_vendor_three = ui_vendor.three;
 const webui_vendor_three_core = ui_vendor.three_core;
+const edit_distance = @import("util/edit_distance.zig");
 
 /// Sourced from build.zig.zon's `.version` field via the `build_options`
 /// module (see build.zig), so the two can no longer drift apart.
@@ -1214,7 +1215,7 @@ pub fn suggestCommand(input: []const u8) ?[]const u8 {
     for (&specs) |*s| {
         const end = std.mem.findAny(u8, s.usage, " [") orelse s.usage.len;
         const spelling = s.usage[0..end];
-        const distance = editDistance(input, spelling);
+        const distance = edit_distance.typoDistance(input, spelling);
         if (distance < best_distance) {
             best = spelling;
             best_distance = distance;
@@ -1233,7 +1234,7 @@ pub fn suggestFlag(input: []const u8) ?[]const u8 {
     for (std.enums.values(Flag)) |f| {
         const spelling = primaryFlagName(f);
         if (spelling.len < 6) continue;
-        const distance = if (isAdjacentTransposition(input, spelling)) @as(usize, 1) else editDistance(input, spelling);
+        const distance = edit_distance.typoDistance(input, spelling);
         if (distance < best_distance) {
             best = spelling;
             best_distance = distance;
@@ -1241,7 +1242,7 @@ pub fn suggestFlag(input: []const u8) ?[]const u8 {
     }
     for (extra_flag_spellings) |spelling| {
         if (spelling.len < 6) continue;
-        const distance = if (isAdjacentTransposition(input, spelling)) @as(usize, 1) else editDistance(input, spelling);
+        const distance = edit_distance.typoDistance(input, spelling);
         if (distance < best_distance) {
             best = spelling;
             best_distance = distance;
@@ -1256,41 +1257,6 @@ fn primaryFlagName(f: Flag) []const u8 {
     const n = f.name();
     const end = std.mem.findAny(u8, n, ",[ ") orelse n.len;
     return n[0..end];
-}
-
-fn editDistance(a: []const u8, b: []const u8) usize {
-    var previous: [33]usize = undefined;
-    var current: [33]usize = undefined;
-    for (0..b.len + 1) |i| previous[i] = i;
-    for (a, 0..) |ac, ai| {
-        current[0] = ai + 1;
-        for (b, 0..) |bc, bi| {
-            const substitution = previous[bi] + @intFromBool(ac != bc);
-            current[bi + 1] = @min(@min(previous[bi + 1] + 1, current[bi] + 1), substitution);
-        }
-        @memcpy(previous[0 .. b.len + 1], current[0 .. b.len + 1]);
-    }
-    return previous[b.len];
-}
-
-/// True when `a` is `b` with one adjacent pair swapped (`--modle` / `--model`).
-fn isAdjacentTransposition(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len or a.len < 2) return false;
-    var i: usize = 0;
-    var swaps: usize = 0;
-    while (i < a.len) {
-        if (a[i] == b[i]) {
-            i += 1;
-            continue;
-        }
-        if (i + 1 < a.len and a[i] == b[i + 1] and a[i + 1] == b[i]) {
-            swaps += 1;
-            i += 2;
-            continue;
-        }
-        return false;
-    }
-    return swaps == 1;
 }
 
 fn renderUsage(buf: []u8) []const u8 {

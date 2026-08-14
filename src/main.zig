@@ -64,6 +64,7 @@ comptime {
     _ = @import("util/atomic_write.zig");
     _ = @import("util/file_lock.zig");
     _ = @import("util/disk_cap.zig");
+    _ = @import("util/edit_distance.zig");
     _ = @import("util/ensure_dir.zig");
     _ = @import("util/json.zig");
     _ = @import("util/raw_http.zig");

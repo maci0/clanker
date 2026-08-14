@@ -36,6 +36,7 @@
 //! nothing to navigate, just a line to finish or list.
 
 const std = @import("std");
+const edit_distance = @import("../util/edit_distance.zig");
 const vaxis = @import("vaxis");
 const vxfw = vaxis.vxfw;
 
@@ -1293,35 +1294,19 @@ fn looksLikeSlashCommand(task: []const u8) bool {
     return input.len > 0 and input[0] == '/';
 }
 
-fn editDistance(a: []const u8, b: []const u8) usize {
-    if (a.len > 32 or b.len > 32) return 99;
-    var previous: [33]usize = undefined;
-    var current: [33]usize = undefined;
-    for (0..b.len + 1) |i| previous[i] = i;
-    for (a, 0..) |ac, ai| {
-        current[0] = ai + 1;
-        for (b, 0..) |bc, bi| {
-            const substitution = previous[bi] + @intFromBool(ac != bc);
-            current[bi + 1] = @min(@min(previous[bi + 1] + 1, current[bi] + 1), substitution);
-        }
-        @memcpy(previous[0 .. b.len + 1], current[0 .. b.len + 1]);
-    }
-    return previous[b.len];
-}
-
 fn suggestSlashCommand(input: []const u8) ?[]const u8 {
     const trimmed = std.mem.trim(u8, input, " \t");
     if (trimmed.len == 0) return null;
     var best: ?[]const u8 = null;
     var best_distance: usize = 3;
     for (&command_registry) |*spec| {
-        const d = editDistance(trimmed, spec.name);
+        const d = edit_distance.typoDistance(trimmed, spec.name);
         if (d < best_distance) {
             best = spec.name;
             best_distance = d;
         }
         for (spec.aliases) |alias| {
-            const da = editDistance(trimmed, alias);
+            const da = edit_distance.typoDistance(trimmed, alias);
             if (da < best_distance) {
                 best = alias;
                 best_distance = da;
