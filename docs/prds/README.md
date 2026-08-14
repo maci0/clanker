@@ -49,7 +49,7 @@ and Implementation lists checkable file-level phases.
 | [0026](0026-llm-proxy.md) | LLM compatibility proxy | Draft | Independent of agent-loop drafts; four-PR plan |
 | [0027](0027-write-goal.md) | write-goal drafting | Shipped | Field list settled (shipped five); proof/stop_rule read |
 | [0028](0028-hooks-bridge.md) | Lifecycle hooks (Claude Code bridge) | Draft | deepseek-code.com audit; reuses `execUnderPolicy`/`execDenial` |
-| [0029](0029-loop-hygiene-guard.md) | Loop-hygiene guard | Draft | deepseek-code.com audit; zero-cost, self-contained |
+| [0029](0029-loop-hygiene-guard.md) | Loop-hygiene guard | Shipped | Consecutive canonical-call reminders; configurable thresholds/exclusions |
 | [0030](0030-acp-server.md) | ACP server (`clanker acp`) | Draft | deepseek-code.com audit; mirrors `clanker mcp`'s shape |
 | [0031](0031-tool-result-pruning.md) | Deterministic tool-result pruning | Shipped | Request-only head/tail pruning; saved transcripts stay exact |
 | [0032](0032-mcp-client-bridge.md) | MCP client bridge | Draft | deepseek-code.com audit; needs a new registry dispatch kind |
@@ -63,7 +63,6 @@ optional subsystems:
 1. **0016** supervisors / **0017** DAP
 2. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
 3. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
-4. **0029** — loop-hygiene guard (smallest, self-contained, no dependencies)
 5. **0028** — hooks bridge (needs a new subprocess wait-with-timeout primitive)
 6. **0030** — ACP server (mirrors the already-shipped `clanker mcp` shape)
 7. **0033** — agent presets (filter-only v1; independent of 0032)
