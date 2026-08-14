@@ -6,6 +6,7 @@ const cli = @import("cli.zig");
 const log = @import("util/log.zig");
 const dotenv = @import("util/dotenv.zig");
 const auto_learn = @import("agent/auto_learn.zig");
+const subprocess = @import("agent/subprocess.zig");
 const host = @import("sandbox/host.zig");
 const vertex_token = @import("llm/vertex_token.zig");
 const config = @import("config.zig");
@@ -147,6 +148,7 @@ pub fn main(init: std.process.Init) !void {
     // Both live for the whole process, but freeing them keeps the debug
     // allocator's leak report meaningful: a real leak should not hide behind a
     // known one.
+    defer subprocess.deinitProcessRegistry();
     defer if (host.zig_lib_dir.len > 0) gpa.free(host.zig_lib_dir);
     defer vertex_token.deinit(init.io, gpa);
     std.posix.setrlimit(.STACK, .{ .cur = std.math.maxInt(u64), .max = std.math.maxInt(u64) }) catch {};

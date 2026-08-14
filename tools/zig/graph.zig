@@ -17,6 +17,12 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 
+/// Graphs collect a bounded preview for every LLM and tool step. A long run
+/// therefore legitimately exceeds the normal 64 KiB tool-request buffer when
+/// the agent hands the complete graph here at shutdown. Keep that extra linear
+/// memory local to graph rather than charging every WASM guest for it.
+pub const input_scratch_cap = 2 * 1024 * 1024;
+
 const GraphNode = struct {
     kind: []const u8 = "",
     repeats: u32 = 1,

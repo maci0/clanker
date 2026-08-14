@@ -6366,7 +6366,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     model.saveConversation();
     {
         const sid = model.session_id orelse "default";
-        subprocess.endSession(gpa, io, sid);
+        subprocess.endSession(sid);
         dap.dropLive(sid);
     }
     // Worker is joined (either was idle or we joined above), safe to free.

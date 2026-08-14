@@ -48,7 +48,11 @@ extern fn ck_ask(json_ptr: u32, json_len: u32) u32;
 extern fn ck_random() u64;
 extern fn ck_fs_write_range(path_ptr: u32, path_len: u32, offset: u32, data_ptr: u32, data_len: u32) u32;
 
-const scratch_cap = 64 * 1024;
+const root = @import("root");
+/// Most tools only need a small request buffer. A tool that transports one
+/// complete artifact (the run graph is the current example) can opt into a
+/// larger buffer in its root source without making every guest reserve it.
+const scratch_cap = if (@hasDecl(root, "input_scratch_cap")) root.input_scratch_cap else 64 * 1024;
 /// Every host result lands here, and the host bump-allocates through it for
 /// the whole tool call without resetting, so this is the total a tool can pull
 /// in from the host per invocation. 64 KiB made this project's own source files

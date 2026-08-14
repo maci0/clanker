@@ -64,6 +64,8 @@ const max_args_preview_bytes: usize = 400;
 /// tool results. Compaction walks further back from this window so a
 /// tool_call/result pair is never split.
 const recent_tail_messages: usize = 6;
+const original_request_prefix = "[original user request; preserve this task]\n";
+const original_request_anchor_cap: usize = 4096;
 
 /// Appended to the system prompt so a model asked for an exact-format answer
 /// (a string, a number, JSON) does not wrap it in prose or markdown fences.
@@ -1333,7 +1335,12 @@ pub const Agent = struct {
             log.log(.warn, "compaction summary failed ({s}), trying local extractive summary", .{@errorName(err)});
             break :blk self.localSummary(messages.items[1..keep_start]);
         };
-        const placeholder = summary_text orelse "[earlier conversation compacted; the context is summarized above in learnings and skills]";
+        const summary = summary_text orelse "[earlier conversation compacted; the context is summarized above in learnings and skills]";
+        // A summarizer can return a fluent but incomplete account (and the
+        // local fallback deliberately clips each message). Keep the request
+        // that started the run as a deterministic, plainly labeled anchor so
+        // repeated compaction cannot turn an active task into guesswork.
+        const placeholder = try compactionSummaryWithOriginalRequest(self.arena, messages.items[1..keep_start], summary);
         try compactMiddle(messages, self.arena, keep_start, placeholder);
         return estimateMessageTokens(messages.items);
     }
@@ -1371,6 +1378,35 @@ pub const Agent = struct {
     fn compactMiddle(messages: *std.ArrayList(types.Message), arena: std.mem.Allocator, keep_start: usize, placeholder: []const u8) !void {
         const new_mid = [_]types.Message{.{ .role = .user, .content = placeholder }};
         try messages.replaceRange(arena, 1, keep_start - 1, &new_mid);
+    }
+
+    /// Prefixes a compaction summary with the request that began this run.
+    /// On later compactions the first user message is an earlier summary, so
+    /// extract its existing anchor instead of nesting summaries inside it.
+    fn compactionSummaryWithOriginalRequest(arena: std.mem.Allocator, dropped: []const types.Message, summary: []const u8) ![]const u8 {
+        const request = originalRequest(dropped) orelse return summary;
+        const capped = utf8.cap(request, original_request_anchor_cap);
+        var out: std.Io.Writer.Allocating = .init(arena);
+        try out.writer.writeAll(original_request_prefix);
+        try out.writer.writeAll(capped);
+        if (capped.len < request.len) try out.writer.writeAll("\n[original request clipped for context safety]");
+        try out.writer.writeAll("\n\n");
+        try out.writer.writeAll(summary);
+        return out.written();
+    }
+
+    fn originalRequest(messages: []const types.Message) ?[]const u8 {
+        for (messages) |m| {
+            if (m.role != .user) continue;
+            const content = m.content orelse continue;
+            if (std.mem.startsWith(u8, content, original_request_prefix)) {
+                const anchored = content[original_request_prefix.len..];
+                const end = std.mem.indexOf(u8, anchored, "\n\n[conversation summary") orelse anchored.len;
+                return anchored[0..end];
+            }
+            return content;
+        }
+        return null;
     }
 
     /// Builds a best-effort extractive summary from the messages themselves,
@@ -1829,7 +1865,10 @@ pub const Agent = struct {
         sb.parent_run_id = self.current_run_id;
         sb.state_dir = self.cfg.agent.state_dir;
         sb.session_id = if (self.session_id.len > 0) self.session_id else "default";
-        sb.subprocs = self.subprocs orelse @import("subprocess.zig").processRegistry(self.ctx.gpa, self.ctx.io) catch null;
+        // Do not instantiate the process-global registry for every ordinary
+        // WASM tool. ck_kernel/ck_dap resolve it on demand; most runs never
+        // touch either privileged channel.
+        sb.subprocs = self.subprocs;
         // ck_tool support: let chain (tool_call:true) resolve names against the live registry.
         if (sb.tool_call) {
             sb.tool_registry = self.reg;
@@ -3307,6 +3346,29 @@ test "maybeCompactMessages drops the middle, keeps the system prompt and the rec
     try std.testing.expectEqualStrings(filler, messages.items[messages.items.len - 1].content.?);
     try std.testing.expect(messages.items[messages.items.len - 2].role == .user);
     try std.testing.expectEqualStrings(filler, messages.items[messages.items.len - 2].content.?);
+}
+
+test "compaction summaries retain the original request across repeated compaction" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const first = [_]types.Message{
+        .{ .role = .user, .content = "Fix the crash in the session runner and document the root cause." },
+        .{ .role = .assistant, .content = "I will investigate." },
+    };
+    const compacted = try Agent.compactionSummaryWithOriginalRequest(arena, &first, "[conversation summary] first pass");
+    try std.testing.expect(std.mem.startsWith(u8, compacted, original_request_prefix));
+    try std.testing.expect(std.mem.indexOf(u8, compacted, "Fix the crash in the session runner") != null);
+
+    const second = [_]types.Message{
+        .{ .role = .user, .content = compacted },
+        .{ .role = .assistant, .content = "more work" },
+    };
+    const compacted_again = try Agent.compactionSummaryWithOriginalRequest(arena, &second, "[conversation summary] second pass");
+    try std.testing.expect(std.mem.startsWith(u8, compacted_again, original_request_prefix));
+    try std.testing.expect(std.mem.indexOf(u8, compacted_again, "Fix the crash in the session runner") != null);
+    try std.testing.expect(std.mem.indexOf(u8, compacted_again, "[conversation summary] first pass") == null);
 }
 
 test "capToolResult leaves small results untouched and truncates large ones" {
