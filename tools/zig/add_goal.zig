@@ -1,5 +1,5 @@
-//! goal: design and persist a structured goal to state/goals.json
-//! Input:  {"objective":"...","completion_criterion":"...","proof":"...","boundaries":"...","stop_rule":"...","worktree":"..."}
+//! add_goal: persist a structured goal to state/goals.json without running it.
+//! Input:  {"objective":"...","completion_criterion":"...","proof":"...","boundaries":"...","stop_rule":"...","max_iterations":1..1000,"worktree":"..."}
 //! Output: {"ok":true,"goal":{...}}
 
 const std = @import("std");
@@ -33,13 +33,17 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const stop_rule = fieldString(obj, "stop_rule") orelse "";
     // The git worktree this goal belongs to (branch/path), for worktree runs.
     const worktree = fieldString(obj, "worktree") orelse "";
+    const max_iterations: ?u32 = if (lib.optNum(parsed, "max_iterations")) |n| blk: {
+        if (n < 1 or n > 1000 or @floor(n) != n) return lib.fail(out, "max_iterations must be an integer from 1 to 1000");
+        break :blk @intFromFloat(n);
+    } else null;
 
     const now = ck_now();
     const id = std.fmt.allocPrint(lib.alloc, "{d}", .{now}) catch return lib.fail(out, "alloc");
 
     var obj_buf: std.ArrayList(u8) = .empty;
     defer obj_buf.deinit(lib.alloc);
-    try writeGoalObject(&obj_buf, id, objective, completion, proof, boundaries, stop_rule, worktree, now);
+    try writeGoalObject(&obj_buf, id, objective, completion, proof, boundaries, stop_rule, max_iterations, worktree, now);
 
     var existing: []const u8 = "";
     if (lib.fsRead("state/goals.json")) |cur| {
@@ -91,6 +95,7 @@ fn writeGoalObject(
     proof: []const u8,
     boundaries: []const u8,
     stop_rule: []const u8,
+    max_iterations: ?u32,
     worktree: []const u8,
     now: u64,
 ) !void {
@@ -111,6 +116,10 @@ fn writeGoalObject(
     try s.write(boundaries);
     try s.objectField("stop_rule");
     try s.write(stop_rule);
+    if (max_iterations) |n| {
+        try s.objectField("max_iterations");
+        try s.print("{d}", .{n});
+    }
     if (worktree.len > 0) {
         try s.objectField("worktree");
         try s.write(worktree);

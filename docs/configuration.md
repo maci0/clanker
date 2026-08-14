@@ -329,7 +329,8 @@ one off removes its tools, endpoints, and prompt surface: `mcp`, `peers`,
 `rlm`, `multimodal`, `chatrooms`, `token_stats`.
 
 `goal_auto_steer` is the one that is not a whole subsystem: off, the goal module
-stays on — explicit `--goal`, `/goal` and tracking all still work — but a run
+stays on — explicit `--goal`, `goal`, `/goal`, `write-goal`, `add-goal`, and
+tracking all still work — but a run
 with no goal named stops attaching itself to whatever goal is newest.
 
 ```toml

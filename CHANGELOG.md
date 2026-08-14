@@ -14,6 +14,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker add-goal` and `/add-goal` save a structured goal without starting
+  work. The Goals board uses the same `add_goal` writer and tells the operator
+  that a saved goal has not started.
 - Persistent Python eval kernel (PRD 0016): a session-scoped `python3`
   supervisor keeps `__main__` across cells. `reset: true` restarts it;
   session end SIGTERMs via the shared subprocess registry. Still off
@@ -99,6 +102,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `clanker goal`, `/goal`, and `clanker run "/goal …"` now execute the supplied
+  prompt directly. They no longer require or synthesize a `write_goal` draft
+  or persisted record; use `run --goal <id>` to execute a saved goal.
 - `serve --webui-port` is the documented spelling for the web UI listen port.
   A second surface (`--proxy-port`) now has a peer name instead of overloading
   a generic `--port`.

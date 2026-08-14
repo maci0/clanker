@@ -790,6 +790,8 @@ const CommandAction = union(enum) {
     goal,
     /// Invokes the draft-only write_goal tool directly (see `runWriteGoal`).
     write_goal,
+    /// Persists a structured goal without starting a run (see `runAddGoal`).
+    add_goal,
     /// Prints usage, or runs the measurement loop as a normal agent task.
     autoresearch,
     /// Prints usage, or runs one judged debate as a normal agent task.
@@ -841,8 +843,9 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/status", .help = "show instance identity and configured peers", .action = .{ .tool = .{ .name = "status", .args = "" } } },
     .{ .name = "/tools", .help = "list registered tools (same as clanker tools)", .action = .{ .tool = .{ .name = "tools", .args = "" } } },
     .{ .name = "/plugins", .aliases = &.{"/plugin"}, .takes_args = true, .arg_hint = "[on|off <name>]", .help = "list plugins or switch an optional one on or off", .action = .{ .tool = .{ .name = "plugins", .args = "", .forward_args = true } } },
-    .{ .name = "/goal", .takes_args = true, .arg_hint = "<intent>", .help = "design and persist a structured goal", .action = .goal },
+    .{ .name = "/goal", .takes_args = true, .arg_hint = "<prompt>", .help = "execute a goal directly", .action = .goal },
     .{ .name = "/write-goal", .takes_args = true, .arg_hint = "<intent>", .help = "draft a structured goal without saving it", .action = .write_goal },
+    .{ .name = "/add-goal", .takes_args = true, .arg_hint = "<objective> :: <completion criterion>", .help = "persist a structured goal without running it", .action = .add_goal },
     .{ .name = "/autoresearch", .takes_args = true, .arg_hint = "...", .help = "measurement loop (see /autoresearch --help)", .action = .autoresearch },
     .{ .name = "/arena", .takes_args = true, .arg_hint = "...", .help = "judged debate between two positions (see /arena --help)", .action = .arena },
     .{ .name = "/compare", .takes_args = true, .arg_hint = "...", .help = "one prompt to several models at once, answers unlabeled (see /compare --help)", .action = .compare },
@@ -1026,6 +1029,23 @@ fn parseCommand(task: []const u8) ?ParsedCommand {
         }
     }
     return null;
+}
+
+const AddGoalArgs = struct {
+    objective: []const u8,
+    completion_criterion: []const u8,
+};
+
+/// Splits `/add-goal`'s two required fields without pretending the rest of the
+/// TUI input is a shell command. The spaced delimiter makes an objective that
+/// contains `::` unambiguous unless the user deliberately types the delimiter.
+fn splitAddGoalArgs(args: []const u8) ?AddGoalArgs {
+    const delimiter = " :: ";
+    const at = std.mem.indexOf(u8, args, delimiter) orelse return null;
+    const objective = std.mem.trim(u8, args[0..at], " \t");
+    const completion_criterion = std.mem.trim(u8, args[at + delimiter.len ..], " \t");
+    if (objective.len == 0 or completion_criterion.len == 0) return null;
+    return .{ .objective = objective, .completion_criterion = completion_criterion };
 }
 
 // ---------------------------------------------------------------------
@@ -1561,6 +1581,13 @@ test "parseCommand matches names, aliases, and arguments" {
     const write_goal = parseCommand("/write-goal fix the failing eval") orelse return error.TestExpectedCommand;
     try std.testing.expect(write_goal.spec.action == .write_goal);
     try std.testing.expectEqualStrings("fix the failing eval", write_goal.args);
+
+    const add_goal = parseCommand("/add-goal fix the failing eval :: zig build test passes") orelse return error.TestExpectedCommand;
+    try std.testing.expect(add_goal.spec.action == .add_goal);
+    const pair = splitAddGoalArgs(add_goal.args) orelse return error.TestExpectedCommand;
+    try std.testing.expectEqualStrings("fix the failing eval", pair.objective);
+    try std.testing.expectEqualStrings("zig build test passes", pair.completion_criterion);
+    try std.testing.expect(splitAddGoalArgs("only an objective") == null);
 
     const sessions = parseCommand("/sessions") orelse return error.TestExpectedCommand;
     try std.testing.expectEqualStrings("sessions", sessions.spec.action.tool.name);
@@ -2310,10 +2337,9 @@ const Model = struct {
             // seeds it with a starting query, so a remembered partial name is
             // one Enter away instead of a blank list to type into again.
             .model => try self.openModelPicker(ctx, pc.args),
-            // /goal <intent> designs a goal through the agent (which calls
-            // the goal tool to persist it), matching `clanker goal
-            // "<intent>"`. Runs as a normal task so it streams like any
-            // other turn.
+            // /goal <prompt> executes the supplied goal directly, matching
+            // `clanker goal "<prompt>"`. Drafting and persistence are
+            // optional separate capabilities, never a prerequisite here.
             .goal => {
                 if (pc.args.len == 0) {
                     self.lines.append(self.arena, .{ .text = "usage: /goal <intent> (e.g. /goal fix the failing eval)", .dim = true }) catch {};
@@ -2327,6 +2353,13 @@ const Model = struct {
                     return;
                 }
                 _ = self.runWriteGoal(pc.args);
+            },
+            .add_goal => {
+                if (pc.args.len == 0) {
+                    self.lines.append(self.arena, .{ .text = "usage: /add-goal <objective> :: <completion criterion>", .dim = true }) catch {};
+                    return;
+                }
+                _ = self.runAddGoal(pc.args);
             },
             .autoresearch => {
                 if (pc.args.len == 0 or std.mem.eql(u8, pc.args, "--help") or std.mem.eql(u8, pc.args, "-h")) {
@@ -2774,8 +2807,8 @@ const Model = struct {
         return try self.gpa.dupe(u8, expanded);
     }
 
-    /// Submits a goal-design task through the agent, exactly like
-    /// `clanker goal "<intent>"`. Runs as a normal turn so it streams, is
+    /// Submits a direct goal-execution task through the agent, exactly like
+    /// `clanker goal "<prompt>"`. Runs as a normal turn so it streams, is
     /// saved to the session, and can be stopped like any other task.
     fn runGoalTask(self: *Model, ctx: *vxfw.EventContext, intent: []const u8) bool {
         const task = goal_prompt.task(self.arena, intent) catch return true;
@@ -2798,6 +2831,25 @@ const Model = struct {
             return true;
         };
         return self.runToolJson("write_goal", input, false);
+    }
+
+    /// `/add-goal` persists an explicitly structured goal and deliberately
+    /// does not submit an agent task. ` :: ` keeps the two required strings
+    /// unambiguous in a single TUI command line.
+    fn runAddGoal(self: *Model, args: []const u8) bool {
+        const pair = splitAddGoalArgs(args) orelse {
+            self.lines.append(self.arena, .{ .text = "usage: /add-goal <objective> :: <completion criterion>", .dim = true }) catch {};
+            return true;
+        };
+        const input = std.fmt.allocPrint(
+            self.arena,
+            "{{\"objective\":{f},\"completion_criterion\":{f}}}",
+            .{ std.json.fmt(pair.objective, .{}), std.json.fmt(pair.completion_criterion, .{}) },
+        ) catch {
+            self.lines.append(self.arena, .{ .text = "error: could not prepare add-goal input", .dim = true }) catch {};
+            return true;
+        };
+        return self.runToolJson("add_goal", input, false);
     }
 
     /// The tail of `submit` that runs a task: echoes it, records it in

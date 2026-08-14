@@ -541,7 +541,8 @@ changes as tools are added.
 | `learnings` | `state/learnings.md` | Read the persisted learnings |
 | `write_note` | `state/` | Append a learning to `state/learnings.md`, included in later system prompts |
 | `edit_skill` | `skills/` | Write or replace a markdown skill file, changing the agent's own instructions |
-| `goal "<intent>"` | `state/` | Design and persist a structured goal that steers later runs |
+| `write_goal` | `state/` | Draft a structured goal without writing or running it |
+| `add_goal` | `state/` | Save a structured goal without running it |
 | `subagent` | none | Delegate a task to a nested sub-agent run (own context, bounded iterations, dedicated thread) |
 | `rlm` | none | Recursive Language Model: recursively call a sub-LM over input chunks with bounded depth |
 | `arena` | `state/arena/` | Run a bounded, judged debate between two positions, or a 3-8 way Battle Royale, and return a verdict traceable to the move transcript. Rules live in `tools/zig/arena_match.zig` (host-tested); turns go through `ck_llm`, one bounded completion per move |
@@ -659,7 +660,9 @@ Composer editing follows readline conventions: Ctrl-U kills to the start, Ctrl-K
 | `/plugins [on\|off <name>]`, `/plugin [on\|off <name>]` | `plugins` | List plugins or switch an optional one on or off; the REPL reloads its tool catalog after a change |
 | `/theme [name]` | in-process | List or switch the color theme (`mocha`, `latte`, `tokyonight`, …) |
 | `/autoresearch ...` | in-process | Measurement loop (see `/autoresearch --help`) |
-| `/goal <intent>` | in-process | Design and persist a goal (runs the agent) |
+| `/write-goal <intent>` | direct tool | Draft a structured goal; never saves or runs |
+| `/add-goal <objective> :: <completion criterion>` | direct tool | Save a structured goal; never runs it |
+| `/goal <prompt>` | in-process | Execute the supplied goal directly; no draft or saved goal required |
 | `/arena "<question>" --for X --against Y` | in-process | Run a judged debate (runs the agent, which calls the `arena` tool). `--position` x3-8 for a Battle Royale |
 | `/compare "<prompt>" [--with <p[@model]>]...` | in-process | Put one prompt to 2-8 models at once and show the answers unlabeled (runs the agent, which calls the `compare` tool) |
 | `/compare --list`, `/compare --show <id> [--pick <letter>]` | `compare` | Read stored comparisons back, and record a pick. Calls the tool directly, with no model in the loop |
@@ -721,7 +724,7 @@ iter 2
 | `autolearn` | Aggregate usage from `state/autolearn.jsonl` + `state/runs/` and update the ROADMAP's Autolearn section |
 | `git` | Git passthrough (everything after `git` is passed through) |
 | `mcp` | Serve tools over MCP (stdio) |
-| `goal` | Design and persist a structured goal |
+| `add_goal` | Save a structured goal without running it |
 | `arena "<question>" --for X --against Y` | Run a judged debate between two positions; repeated `--position` (3-8) runs a Battle Royale instead. `--judge third` pays a provider that is not fighting to score every move; `--defend <text|file> --alternative <text|file>` runs a design review instead, seeding both sides with a real artifact and returning a review finding; `--match <id>` prints a stored match |
 | `compare "<prompt>" --with a --with b@model` | Ask 2-8 models the same prompt concurrently and show the answers unlabeled. Repeated `--with <provider>` or `--with <provider@model>`, or none at all to use every configured provider. `--judge <provider>` names the scorer (default: the configured default provider, with a caveat on the verdict when it is itself an entrant), `--judge none` leaves the pick to you; `--synthesize` merges the answers, `--reveal` prints the label-to-model key with no verdict, `--show <id>` prints a stored comparison and `--show <id> --pick <letter>` records your pick. The web UI's Compare tab is the same thing in a browser: the answers side by side and a pick button per column, reading blind and recording through the same tool op |
 | `autoresearch [--target F] [--harness C]` | Measurement-driven research loop: the agent edits targets, the harness scores, the best result wins. `--metric`, `--direction min\|max`, `--pattern`, `--budget`, `--iters`, `--dry-run` |
@@ -1042,7 +1045,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/ask` | POST | Answer an `ask` or `confirm` event a streaming run raised |
 | `/api/stats` | GET | Aggregated token usage per provider/model, including `ok_calls`/`error_calls`/`error_rate` (JSON) |
 | `/api/providers` | GET | Configured providers and models (JSON) |
-| `/api/goals` | GET, POST | Read or write the persisted structured goal |
+| `/api/goals` | GET, POST | Read saved goals; create through `add_goal`, or update an existing goal's status/settings |
 | `/api/plugins` | GET, POST | List plugins, or toggle one on/off |
 | `/api/plugins/config` | POST | Update a plugin's `config` object |
 | `/api/board` | GET, POST | Read or mutate the shared Kanban board |

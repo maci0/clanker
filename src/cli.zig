@@ -102,6 +102,7 @@ pub const Command = enum {
     acp,
     goal,
     write_goal,
+    add_goal,
     notify,
     chat,
     stats,
@@ -137,6 +138,10 @@ pub const Options = struct {
     provider: ?[]const u8 = null,
     model: ?[]const u8 = null,
     task: ?[]const u8 = null,
+    /// The required completion criterion for `add-goal`. A persisted goal is
+    /// a reviewable contract, not a raw prompt, so the CLI receives its two
+    /// required fields separately rather than inventing one from the objective.
+    goal_completion_criterion: ?[]const u8 = null,
     session: ?[]const u8 = null,
     goal: ?[]const u8 = null,
     peer: ?[]const u8 = null,
@@ -734,6 +739,8 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.command = .goal;
             } else if (std.mem.eql(u8, a, "write-goal")) {
                 opts.command = .write_goal;
+            } else if (std.mem.eql(u8, a, "add-goal")) {
+                opts.command = .add_goal;
             } else if (std.mem.eql(u8, a, "notify")) {
                 opts.command = .notify;
             } else if (std.mem.eql(u8, a, "chat")) {
@@ -828,6 +835,10 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             opts.task = a;
         } else if (opts.command == .write_goal and opts.task == null) {
             opts.task = a;
+        } else if (opts.command == .add_goal and opts.task == null) {
+            opts.task = a;
+        } else if (opts.command == .add_goal and opts.goal_completion_criterion == null) {
+            opts.goal_completion_criterion = a;
         } else if (opts.command == .revert and opts.task == null) {
             opts.task = a;
         } else if (opts.command == .improve_self and opts.task == null) {
@@ -956,6 +967,14 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
     }
     if (opts.command == .write_goal and opts.task == null) {
         setDiag(diag, "<write-goal intent>");
+        return error.MissingArg;
+    }
+    if (opts.command == .add_goal and opts.task == null) {
+        setDiag(diag, "<objective> <completion criterion>");
+        return error.MissingArg;
+    }
+    if (opts.command == .add_goal and opts.goal_completion_criterion == null) {
+        setDiag(diag, "<completion criterion>");
         return error.MissingArg;
     }
     if (opts.command == .improve_self and opts.task == null) {
@@ -1640,8 +1659,9 @@ const Spec = struct {
 const specs = [_]Spec{
     .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal, .worktree }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        run against a persisted goal\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
     .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
-    .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
-    .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the write_goal tool directly and prints a reviewable draft. It never writes state/goals.json or starts an agent run; use `clanker goal \"<intent>\"` when you want the reviewed goal persisted." },
+    .{ .command = .goal, .usage = "goal \"<prompt>\"", .blurb = "execute a goal directly", .group = .work, .flags = &.{ .provider, .model }, .detail = "Runs the goal loop directly from the supplied prompt. It does not require a write-goal draft or an added goal. Use `add-goal` when you want to persist a goal for a later `run --goal <id>`, and `write-goal` when you only want a structured draft." },
+    .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the write_goal tool directly and prints a reviewable draft. It never writes state/goals.json or starts an agent run." },
+    .{ .command = .add_goal, .usage = "add-goal \"<objective>\" \"<completion criterion>\"", .blurb = "persist a goal without running it", .group = .work, .detail = "Calls the add_goal tool directly. It writes the supplied structured goal to state/goals.json and prints its id, but never starts work. Run it later with `clanker run --goal <id>` or from the goal board. Use `write-goal` first if you need help drafting the two fields." },
     .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--iters <n>        cap the number of attempts (default 3)\n--dry-run          propose changes without applying them" },
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
@@ -1730,6 +1750,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .acp => try cmdAcp(init, opts),
         .goal => try cmdGoal(init, opts),
         .write_goal => try cmdWriteGoal(init, opts),
+        .add_goal => try cmdAddGoal(init, opts),
         .notify => try cmdNotify(init, opts),
         .chat => try cmdChat(init, opts),
         .stats => try cmdStats(init),
@@ -3387,7 +3408,30 @@ test shouldIsolate {
     try std.testing.expect(!shouldIsolate(.{ .no_worktree = true }, .run, &isolated_cli));
 }
 
-fn cmdRun(init: std.process.Init, opts: Options) !void {
+/// The one slash command accepted by `clanker run`: unlike a normal task,
+/// `/goal` has an explicit lifecycle meaning shared with the TUI and the
+/// `clanker goal` command. Match at a word boundary so `/goalkeeper` remains
+/// ordinary task text.
+fn goalSlashIntent(task: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trim(u8, task, " \t\r\n");
+    const command = "/goal";
+    if (!std.mem.startsWith(u8, trimmed, command)) return null;
+    if (trimmed.len == command.len) return "";
+    if (trimmed[command.len] != ' ' and trimmed[command.len] != '\t') return null;
+    return std.mem.trim(u8, trimmed[command.len..], " \t");
+}
+
+// `cmdGoal` deliberately delegates to the normal run lifecycle, while this
+// entry point recognizes the `/goal` execution alias. Name the error set to
+// keep that intentional routing cycle out of Zig's inferred-error analysis.
+fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
+    if (opts.task) |task| {
+        if (goalSlashIntent(task)) |intent| {
+            var goal_opts = opts;
+            goal_opts.task = intent;
+            return cmdGoal(init, goal_opts);
+        }
+    }
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
@@ -4782,6 +4826,46 @@ fn cmdWriteGoal(init: std.process.Init, opts: Options) !void {
     if (!std.mem.endsWith(u8, markdown.string, "\n")) try writeStdOut(io, "\n");
 }
 
+/// `clanker add-goal <objective> <completion criterion>` persists a goal
+/// through the sandboxed add_goal tool and stops there. Execution is a
+/// separate explicit choice: `clanker run --goal <id>` or the goal board.
+fn cmdAddGoal(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    if (!cfg.modules.goal) return error.ModuleDisabled;
+    const objective = opts.task orelse return error.MissingTask;
+    const completion = opts.goal_completion_criterion orelse return error.MissingArg;
+
+    var input: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("objective");
+    try s.write(objective);
+    try s.objectField("completion_criterion");
+    try s.write(completion);
+    try s.endObject();
+
+    const raw = try toolJson(io, init.gpa, arena, &cfg, init.environ_map, "add_goal", input.written());
+    const result = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return error.ToolFailed;
+    if (result != .object) return error.ToolFailed;
+    const ok = result.object.get("ok") orelse return error.ToolFailed;
+    if (ok != .bool or !ok.bool) {
+        const detail = if (result.object.get("error")) |e| if (e == .string) e.string else "tool failed" else "tool failed";
+        log.log(.error_, "add-goal: {s}", .{detail});
+        return error.ToolFailed;
+    }
+    const goal = result.object.get("goal") orelse return error.ToolFailed;
+    if (goal != .object) return error.ToolFailed;
+    const id = goal.object.get("id") orelse return error.ToolFailed;
+    if (id != .string) return error.ToolFailed;
+    try writeStdOut(io, "added goal ");
+    try writeStdOut(io, id.string);
+    try writeStdOut(io, "\nrun it with: clanker run --goal ");
+    try writeStdOut(io, id.string);
+    try writeStdOut(io, "\n");
+}
+
 /// `clanker notify <peer> <message>` sends through the same sandboxed
 /// `peers` WASM tool the model uses, rather than a second hand-rolled HTTP
 /// client: one code path for "POST a notify to a peer", gated by that
@@ -5621,7 +5705,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_workflows) {
             handleWorkflows(io, gpa, cfg, acceptsGzip(headers_raw), stream);
         } else if (is_goals) {
-            handleGoals(io, gpa, cfg, method, body, stream);
+            handleGoals(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_provider_models) {
             handleProviderModels(io, gpa, cfg, environ_map, target, stream);
         } else if (is_catalog) {
@@ -8942,16 +9026,45 @@ fn handleBoard(
 
 const goals_path = "state/goals.json";
 
-/// Adding a goal and changing one's status, the two things the `goal` tool and
-/// `clanker run --goal` already assume someone can do. One POST shape covers
-/// both: an objective creates, an id updates.
-fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+/// Creating a goal goes through the same sandboxed add_goal tool as the CLI
+/// and TUI. Status changes remain native because they update an existing
+/// record rather than adding one. The outer lock keeps the guest's append and
+/// a simultaneous web status update from overwriting each other.
+fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, body: []const u8, stream: std.Io.net.Stream) void {
     var guard = file_lock.acquire(io, std.Io.Dir.cwd(), "state", "goals", gpa);
     defer guard.release();
     const req = std.json.parseFromSliceLeaky(GoalPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
     };
+    if (req.objective != null) {
+        var input: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
+        s.beginObject() catch return;
+        s.objectField("objective") catch return;
+        s.write(req.objective.?) catch return;
+        s.objectField("completion_criterion") catch return;
+        s.write(req.completion_criterion orelse "") catch return;
+        if (req.max_iterations) |n| {
+            s.objectField("max_iterations") catch return;
+            s.print("{d}", .{clampIterationBudget(n)}) catch return;
+        }
+        if (req.worktree orelse false) {
+            s.objectField("worktree") catch return;
+            s.write("true") catch return;
+        }
+        s.endObject() catch return;
+        const out = toolJson(io, gpa, arena, cfg, environ_map, "add_goal", input.written()) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"add_goal tool unavailable\"}");
+            return;
+        };
+        if (toolResultFailed(out)) {
+            respond(stream, 400, "Bad Request", out);
+            return;
+        }
+        respondStoredGoals(io, arena, stream);
+        return;
+    }
     const raw = std.Io.Dir.cwd().readFileAlloc(io, goals_path, arena, .limited(1 << 20)) catch "[]";
     var list: std.ArrayList(StoredGoal) = .empty;
     if (std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true }) catch null) |existing| {
@@ -8962,36 +9075,7 @@ fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     }
 
     const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    if (req.objective) |objective| {
-        const obj = std.mem.trim(u8, objective, " \t\r\n");
-        const crit = std.mem.trim(u8, req.completion_criterion orelse "", " \t\r\n");
-        if (obj.len == 0 or obj.len > 2000) {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"objective must be 1-2000 characters\"}");
-            return;
-        }
-        if (crit.len == 0) {
-            // A goal with no way to tell it is met is a wish; the tool that
-            // writes this file requires one too.
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"a completion criterion is required\"}");
-            return;
-        }
-        const id = std.fmt.allocPrint(arena, "{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds}) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
-            return;
-        };
-        list.append(arena, .{
-            .id = id,
-            .objective = obj,
-            .completion_criterion = crit,
-            .max_iterations = if (req.max_iterations) |n| clampIterationBudget(n) else null,
-            .worktree = if (req.worktree orelse false) "true" else null,
-            .created = now,
-            .updated = now,
-        }) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
-            return;
-        };
-    } else if (req.id) |id| {
+    if (req.id) |id| {
         var kept: std.ArrayList(StoredGoal) = .empty;
         var hit = false;
         for (list.items) |g| {
@@ -9059,6 +9143,15 @@ fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     var out: std.Io.Writer.Allocating = .init(arena);
     out.writer.writeAll("{\"ok\":true,\"goals\":") catch return;
     std.json.Stringify.value(list.items, .{ .emit_null_optional_fields = false }, &out.writer) catch return;
+    out.writer.writeAll("}") catch return;
+    respond(stream, 200, "OK", out.written());
+}
+
+fn respondStoredGoals(io: std.Io, arena: std.mem.Allocator, stream: std.Io.net.Stream) void {
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, goals_path, arena, .limited(1 << 20)) catch "[]";
+    var out: std.Io.Writer.Allocating = .init(arena);
+    out.writer.writeAll("{\"ok\":true,\"goals\":") catch return;
+    out.writer.writeAll(std.mem.trim(u8, raw, " \t\r\n")) catch return;
     out.writer.writeAll("}") catch return;
     respond(stream, 200, "OK", out.written());
 }
@@ -11008,7 +11101,7 @@ fn promptsRouteToToolInput(arena: std.mem.Allocator, method: []const u8, body: [
     return null;
 }
 
-fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, method: []const u8, body: []const u8, stream: std.Io.net.Stream) void {
+fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, method: []const u8, body: []const u8, stream: std.Io.net.Stream) void {
     if (!cfg.modules.goal) {
         respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"goal module disabled\"}");
         return;
@@ -11018,7 +11111,7 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, me
     const arena = arena_state.allocator();
 
     if (std.mem.eql(u8, method, "POST")) {
-        handleGoalWrite(io, gpa, arena, body, stream);
+        handleGoalWrite(io, gpa, arena, cfg, environ_map, body, stream);
         return;
     }
 
@@ -13135,6 +13228,20 @@ test "write-goal accepts one intent and is listed as a command" {
     var diag: []const u8 = "";
     try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "write-goal" }, &diag));
     try std.testing.expectEqualStrings("<write-goal intent>", diag);
+}
+
+test "add-goal accepts two fields and goal slash tasks route deliberately" {
+    const opts = try parse(&.{ "clanker", "add-goal", "fix the web UI", "zig build test passes" }, null);
+    try std.testing.expectEqual(Command.add_goal, opts.command);
+    try std.testing.expectEqualStrings("fix the web UI", opts.task.?);
+    try std.testing.expectEqualStrings("zig build test passes", opts.goal_completion_criterion.?);
+    try std.testing.expectEqual(Command.add_goal, commandForHelp("add-goal").?);
+
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "add-goal", "only objective" }, &diag));
+    try std.testing.expectEqualStrings("<completion criterion>", diag);
+    try std.testing.expectEqualStrings("fix the web UI", goalSlashIntent(" /goal fix the web UI ").?);
+    try std.testing.expect(goalSlashIntent("/goalkeeper fixes") == null);
 }
 
 test "plugin switches have the same command shape as the REPL" {

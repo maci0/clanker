@@ -549,7 +549,7 @@ export function workCardAsGoal(c, opts) {
   }
   var criterion = (c.body || "").trim() ||
     "Complete the work described on the board card \"" + objective + "\".";
-  postGoal({ objective: objective, completion_criterion: criterion }, "Goal added from the board.")
+  postGoal({ objective: objective, completion_criterion: criterion }, "Goal saved from the board; starting it now.")
     .then(function (d) {
       if (!d) return;
       // The card's objective is the newest goal carrying that text: matching
@@ -713,7 +713,7 @@ export function bindGoals(deps) {
        into the stored string. */
     if (el.goalWorktree && el.goalWorktree.checked) payload.worktree = true;
     el.goalAdd.disabled = true;
-    postGoal(payload, "Goal added.").then(function (d) {
+    postGoal(payload, "Goal saved. It has not started.").then(function (d) {
       el.goalAdd.disabled = false;
       // A refused goal keeps what was typed: the criterion is the field most
       // likely to be refused, and retyping the objective to fix it is a tax.
@@ -722,7 +722,7 @@ export function bindGoals(deps) {
       el.goalCriterion.value = "";
       el.goalMaxIterations.value = "";
       if (el.goalWorktree) el.goalWorktree.checked = !!window.clankerWorktreeDefault;
-      el.goalsStatus.textContent = "Goal card created in Backlog.";
+      el.goalsStatus.textContent = "Goal saved in Backlog. Start it when ready.";
     });
   });
 }

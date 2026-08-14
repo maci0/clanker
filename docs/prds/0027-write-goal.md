@@ -1,403 +1,65 @@
-# PRD — `write-goal` (goal drafting)
+# PRD — `write-goal` drafting
 
 ## Status
 
-Shipped. The five-field list is the shipped one (`objective,
-completion_criterion, proof, boundaries, stop_rule`). `write_goal` drafts
-without persisting; `proof`/`stop_rule` now reach the run preamble;
-`goal_prompt` + the skill drive `write_goal` then `goal`. Sources of
-truth: `tools/zig/write_goal.zig`, `src/agent/goal_prompt.zig`,
-`src/cli.zig` (`GoalContext`, `cmdGoal`), `src/tui/repl.zig` (`/goal`).
-
-**`write-goal` and `goal` are different things and this PRD does not
-conflate them.** `goal` (`tools/zig/goal.zig`,
-`tools/manifests/goal.tool.json`) persists and steers execution; that is its
-job and this PRD does not change it. `write-goal` produces the draft that
-`goal` later persists. The pipeline `write-goal → draft → goal → clanker run
---goal <id>` is not aspirational: everything downstream of the draft already
-ships (`src/cli.zig:3018-3024`, `:2680`).
-
-Two resolutions a reader should not walk away misinformed about:
-
-1. **`proof` and `stop_rule` are read, not just written.** `goal.zig` and
-   `goalFromObject` persist them; `GoalContext` carries them and
-   `formatGoalSection` emits them into the `## Active goal` preamble, so a
-   run's executing agent sees them. The earlier write-only gap is closed
-   (see Implementation).
-2. **The five-field list is settled.** The repo keeps the shipped five
-   (`objective, completion_criterion, proof, boundaries, stop_rule`); the
-   source framing's sixth `execution_loop` was not adopted as a persisted
-   field. There is exactly one field list (see §Design).
+Shipped. `write_goal` is the draft-only half of the goal workflow. Its source
+of truth is `tools/zig/write_goal.zig`; `clanker write-goal` and TUI
+`/write-goal` call it directly. The three related but independent operations
+are specified in [0035-goal-lifecycle.md](0035-goal-lifecycle.md).
 
 ## Problem
 
-Users hand agents requests like "clean up the auth code", "make this service
-production ready", "fix the flaky tests". A colleague can act on those. A
-long-running agent cannot, because none of them say what state must exist at
-the end, how that state is proven, what is out of scope, how to iterate, or
-when to stop instead of grinding.
-
-What follows is not one failure but five, pulling in opposite directions —
-which is why "write a better prompt" does not fix it: the agent stops to ask
-mid-run having burned setup context first; scope creeps, because nothing said
-where the work ends; it declares victory early, because nothing said what
-done means; it polishes forever, because nothing said when to stop; and it
-reports success it never verified, because nothing named the proof.
-Premature completion and endless polishing are the same missing field seen
-from two sides — fix one without the other and the failure just moves.
-
-Before this shipped, `clanker goal "<intent>"` and `/goal <intent>` both
-synthesized the same literal prompt — *"Define all five fields (objective,
-completion_criterion, proof, boundaries, stop_rule) and call the goal tool
-to persist it"* — and then handed the whole job to a normal turn. The
-quality bar for a goal lived in a duplicated string plus a skill file, with
-no structured intermediate anyone could inspect, reuse, or refuse. Whatever
-the model produced was appended to `state/goals.json` and immediately
-became what steers runs, because the newest active goal auto-steers.
-
-Before this shipped, there was no point in the flow where a draft existed
-and had not yet been committed to. That was the gap.
+A rough request may need a reviewable completion contract before it is saved
+or executed. Drafting must not create a durable record or start work merely
+because somebody asked for help wording that contract.
 
 ## Goals
 
-1. A rough natural-language intent becomes a goal that names an objective, a
-   completion criterion, proof, boundaries, and a stop rule (the shipped
-   five).
-2. The draft is produced without asking anything the workspace already
-   answers — test command, language, CI config, conventions.
-3. Questions that *are* asked are few (1–4), concrete, offer options, and
-   are material: they change scope or the completion condition, or they are
-   not asked.
-4. The draft is emitted as a structured record another component can consume
-   without parsing prose, alongside a readable Markdown rendering.
-5. Drafting neither persists nor executes. Handing the draft to `goal` is a
-   separate, user-visible step.
-6. No budget appears in a goal unless the user supplied one, and no budget
-   is ever written into objective text.
-7. An existing goal can be refined without discarding requirements the user
-   already stated explicitly.
-8. When interaction is unavailable, the draft is emitted best-effort with
-   its unresolved assumptions named, never silently invented.
+1. Turn a rough intent into a structured, readable draft.
+2. Ask only material questions, or record assumptions when interaction is not
+   possible.
+3. Never write `state/goals.json`, create a card, or execute an agent run.
 
 ## Non-goals
 
-- **Persisting or executing.** `goal` owns persistence
-  (`tools/zig/goal.zig`) and `--goal <id>` / auto-steer owns execution
-  (`src/cli.zig:3018-3024`). `write-goal` stops at the draft. The split is
-  the point: it creates the review moment that the old one-shot flow had
-  nowhere to put, and it means a bad draft costs nothing but the draft.
-- **Changing the `goal` tool's append-only contract.** That it cannot update
-  an existing entry is a real constraint this PRD works within (see
-  Refinement in Design), not one it fixes.
-- **Implementation planning.** A goal names the destination. Prescribing the
-  route is a different job — clanker already has one in `improve.plan_phase`
-  — and it actively harms an autonomous run: an agent handed a step list
-  cannot discover that the assumed fix was wrong.
-- **Inventing requirements.** Not budgets, not constraints, not acceptance
-  bars the user never mentioned. A goal that looks more detailed than the
-  user's actual intent is a worse goal, not a better one.
-- **Turning ordinary prompts into goals.** Most requests are not goals. The
-  harness may surface the option once; it must not silently substitute.
-- **Coupling drafting to permission mode.** Drafting a goal is not consent
-  to run it, however permissive the ambient policy is.
+- Persisting a goal. `add_goal` (`tools/zig/add_goal.zig`) owns that explicit operation.
+- Executing a goal. `goal` owns direct execution; `run --goal <id>` executes a
+  selected persisted record.
+- Making drafting mandatory before either operation.
 
 ## Design
 
-**The shape: a compiler, not an executor.** Rough intent → context
-inspection → material clarification → completion contract → a draft another
-component can act on. Every stage narrows ambiguity; none acts on the
-workspace.
+`write_goal` inspects existing open goals, asks at most four material questions
+through `ask_user`, and returns both a structured record and Markdown. Its
+record can include objective, completion criteria, verification, boundaries,
+an execution approach, stop rules, assumptions, and unresolved questions.
+It is a review artifact, not a persistence format: `state/goals.json` stores
+the smaller executable record selected by `add_goal`.
 
-**The required fields.** Each answers one question and has a specific,
-predictable failure mode when omitted — which is why the list is closed
-rather than a style guide:
+The same tool is exposed on both direct surfaces:
 
-| Field | Answers | Failure if omitted |
+| Surface | Invocation | Result |
 |---|---|---|
-| Objective | What must be true when this is finished? | Agent optimizes effort, never terminates |
-| Completion criteria | Which concrete conditions must hold? | "Done" becomes the model's opinion, unreviewable |
-| Proof / verification | What observable evidence shows they hold? | Success is claimed, not demonstrated |
-| Boundaries | What may and may not be touched? | Scope creep, collateral edits |
-| Execution loop | How should it iterate toward the criteria? | Agent stops at the first failed attempt |
-| Stop rule | When must it stop and report? | Agent forces past a real blocker, or grinds |
-
-**Which five is decided: keep the shipped five.** The table above is six
-rows because an earlier draft framed a sixth `execution_loop`. That is
-not a persisted field. The closed list is `objective,
-completion_criterion, proof, boundaries, stop_rule`. (The source framing
-that grouped them as *end state, proof, boundaries, loop, stop rule* and
-the repo's five were reconciled here; the two lists are recorded verbatim
-in Known issues.)
-
-The objective states an outcome, not a command sequence. Criteria should be
-observable and binary where possible — "the identified flaky tests no longer
-fail under repeated execution", not "code quality is improved". **A
-completion criterion with no plausible proof mechanism is a defect in the
-goal, not a soft spot**; that pairing is the whole artifact.
-
-Proof can be tests, builds, lint, type checks, benchmarks, runtime
-observation, API responses, generated artifacts, or diff inspection. What
-matters is that someone who did not watch the run can inspect it afterwards.
-
-The stop rule is about **honesty, not spending** — it lets an agent end by
-reporting a blocker instead of faking a pass. It is deliberately not a
-budget; clanker already has a budget surface in the per-goal
-`max_iterations` (`src/cli.zig:8957`, clamped 1..1000 on write). Conflating
-them produces goals that stop for the wrong reason.
-
-**Inspect before asking.** Resolve what the workspace answers — repo
-structure, existing tests, CI config, build files, conventions, docs —
-before putting anything to the user. Asking "what test command should be
-used?" with `build.zig` sitting right there is the fastest way to train
-users to skip the feature.
-
-**Clarification uses `ask_user`.** The mechanism already exists
-(`tools/zig/ask_user.zig`, `sequential: true`, two-or-more concrete options,
-answer returned verbatim). Reserve it for answers that would materially
-change the goal. Four kinds of ambiguity, three of which are not questions:
-
-| Kind | Example | Action |
-|---|---|---|
-| Harmless implementation | "Map or set internally?" | Do not ask; the executor decides |
-| Discoverable | "What command runs the tests?" | Inspect the workspace |
-| Material product | "Must the API stay backward compatible?" | Ask |
-| Unresolvable | "Make it fast enough." | Ask for the observable target, unless a benchmark or requirement already fixes it |
-
-**Output is dual.** A readable Markdown render (`## Goal`, then
-`### Completion criteria`, `### Verification`, `### Boundaries`,
-`### Execution approach`, `### Stop and report if`) over a structured record
-(`objective`, `completion_criteria[]`, `verification[]`, `boundaries[]`,
-`execution_loop`, `stop_rules[]`, `assumptions[]`, `unresolved_questions[]`).
-The Markdown is a rendering of the record, not the source of truth.
-
-The record's arrays do not match `StoredGoal`'s flat strings
-(`src/cli.zig:8960-8971`). Reconciling them is a lossy join in one direction
-only: the draft's arrays flatten to strings when handed to `goal`, and
-nothing flattens back. That is acceptable because `goal` is the terminal
-consumer, but it means **the draft, not the stored goal, is the reviewable
-artifact** — a point worth keeping if a later PRD widens `StoredGoal`.
-
-**Budgets are opt-in, and a turn cap is not a stop rule.** Limits appear only
-when the user supplies them. A well-specified goal already terminates — the
-proof passes or the stop rule fires — so an invented cap adds nothing but
-the risk of severing work mid-change. A budget belongs to the *run*, not the
-objective text: writing "stop after 20 turns" into a goal body makes it
-non-portable, unreviewable against its own criteria, and silently different
-whenever the executor's turn granularity changes. Clanker's existing
-`max_iterations` field is where such a value goes.
-
-**Refinement preserves.** Given an existing draft, flag unverifiable
-completion, missing stop rule, over-prescription, unclear scope,
-contradictory criteria, requirements disguised as assumptions, missing
-proof, and ambiguous terminology — then repair those and leave explicit
-requirements intact. Rewriting an already-specific goal is a regression.
-
-Refining a goal that has *already been persisted* is constrained by
-`goal`'s append-only contract: `write-goal` can emit a corrected draft, but
-committing it means either a duplicate entry or a `POST /api/goals` update
-(`src/cli.zig:8949`, the only path that can modify an entry). The skill's
-existing duplicate-avoidance rule — read `state/goals.json` first, return the
-existing id rather than appending a near-copy — carries over unchanged.
-
-**Do not over-specify.** "Open `src/auth.ts`, add a mutex on line 82, change
-`retryCount` to 3, then add two tests" is worse than "eliminate the
-authentication race condition while preserving current external behavior;
-add regression coverage reproducing the race; verify the normal suite
-passes" — because the first forecloses the discovery that the assumed
-diagnosis was wrong, which is exactly what a long-running agent is there to
-find.
-
-**Drafting is decoupled from permission mode.** Explicit invocation opens an
-interactive drafting session regardless of the policy that would later govern
-execution. This is not hypothetical: Kimi Code hit exactly this edge, filed
-as [MoonshotAI/kimi-code#1329](https://github.com/MoonshotAI/kimi-code/issues/1329)
-(open as of 2026-08-14). Their `write-goal` drafts via `AskUserQuestion`
-while `auto` mode denies `AskUserQuestion` by policy, so returning to draft
-the next goal after one finishes fails with *"AskUserQuestion is disabled
-while auto permission mode is active"*; the reporter's workaround is to leave
-`auto` manually first. Clanker avoids inheriting this by not coupling the two.
-
-When interaction genuinely cannot be obtained — headless runs, the improve
-loop, sub-agents — emit a best-effort draft and name the unresolved
-assumptions explicitly. `skills/write-goal.md` already specifies this
-(record the assumption in `boundaries`) and that behavior carries over.
-Silently inventing the answer is the one thing that is never acceptable,
-because it is indistinguishable from a confident correct draft.
-
-**Relationship to Kimi Code.** The framing is borrowed and the divergence is
-deliberate. Kimi's built-in skill
-(`packages/agent-core-v2/src/app/skillCatalog/builtin/write-goal.md`)
-describes itself as turning rough intent into "a completion contract with a
-clear finish line, proof, boundaries, and stop rule", and their `GOAL.md`
-§"辅助写 goal" lists end state / proof / boundaries / loop / stop rule. Two
-rules are taken directly and are **not** divergences: budgets are opt-in, and
-a turn cap never goes in objective text.
-
-The divergence is the ending. Kimi's skill starts the goal itself — *"only
-once the user has approved it do you start the goal by calling `CreateGoal`…
-Do not just print the text for the user to paste."* Clanker's does not,
-because clanker already has that half: `goal` persists and `--goal` steers.
-Folding starting into `write-goal` would duplicate a shipped tool and destroy
-the review moment the split exists to create.
-
-**Dependencies.**
-
-- Hard: `ask_user` (`tools/zig/ask_user.zig`) for clarification; the
-  skill-injection path (`src/agent/system_prompt.zig:338-376`, 24 KB cap at
-  `:29`) for any prompt-side component; the five-field decision above.
-- Hard, downstream: `goal` (`tools/zig/goal.zig`,
-  `tools/manifests/goal.tool.json`) as the only persistence consumer of a
-  draft, and its append-only limit.
-- Soft: `modules.goal` (`src/config.zig:465`) gates the goal surface;
-  `write-goal` should sit behind the same flag rather than a second one.
-- Related: `modules.goal` (`src/config.zig`) gates the goal surface; the
-  drafting surface sits behind the same flag. The proof/stop_rule read gap
-  listed in earlier revisions is closed — it was fixed as its own change
-  (see Implementation).
-
-**Implementation (shipped).**
-
-1. **Field list decided.** Keep the repo's five; the sixth `execution_loop`
-   from the source framing was not adopted (see §Design and the resolved
-   record in Known issues).
-2. **Write-only fields fixed, as its own change.** `GoalContext`
-   (`src/cli.zig:2736`) carries `proof` and `stop_rule`; `goalFromObject`
-   (`:2799`) reads them; `formatGoalSection` (`:2753`) emits them into the
-   `## Active goal` preamble, so a run's executing agent sees them.
-3. **Tool.** `tools/zig/write_goal.zig` + `tools/manifests/write_goal.tool.json`
-   (no `build.zig` edit — `build.zig` auto-discovers; no registry edit —
-   `src/toolhost/registry.zig` scans the manifest dir). Input
-   `{intent, context?, existing_goal?}`; output the structured record under
-   the `{"ok":true,…}` envelope. No `fs_prefixes` — drafting writes nothing.
-4. **Skill.** `skills/write-goal.md` drives the tool and stops at the draft:
-   "interview, draft, present, and only then hand to `goal` on approval".
-5. **Prompts deduplicated.** The goal-design prompt lives once in
-   `src/agent/goal_prompt.zig`; both `clanker goal <intent>`
-   (`src/cli.zig:4342` → `goal_prompt.task`) and the TUI's `/goal`
-   (`src/tui/repl.zig:2559` → `goal_prompt.task`) call it, so the field list
-   cannot drift between surfaces again.
-6. **Host side.** `StoredGoal` (`src/cli.zig`) holds the five strings plus
-   `max_iterations`; the record round-trips through `state/goals.json`.
-7. **Tests.** Cover the drafting invariants — a discoverable fact raises no
-   question; a material fork does; question count ≤ 4; drafting leaves the
-   tree clean (no `state/goals.json` write); headless mode emits assumptions
-   rather than inventing; refinement preserves an explicit requirement; no
-   budget without user input; round-trip of the structured record.
-
-## Known issues
-
-- **Resolved — `proof`/`stop_rule` were write-only.** `GoalContext`
-  (`src/cli.zig:2736`) now carries both, `goalFromObject` (`:2799`) reads
-  them, and `formatGoalSection` (`:2753`) emits them into the `## Active
-  goal` preamble, so all five fields reach the executing agent. Fixed as its
-  own change (Implementation §2); no longer a gap.
-- **The two incompatible "five fields" lists — resolved.** Recorded verbatim
-  so the choice is on the facts:
-
-  | | Shipped | This PRD's source framing |
-  |---|---|---|
-  | 1 | `objective` | end state |
-  | 2 | `completion_criterion` | proof |
-  | 3 | `proof` | boundaries |
-  | 4 | `boundaries` | loop |
-  | 5 | `stop_rule` | stop rule |
-
-  Shipped splits end-state into objective + criterion and has no
-  execution-loop field anywhere. **Resolved: keep the shipped five.** The
-  `execution_loop`-as-sixth option was not adopted, so there is no schema
-  growth and no migration of existing `state/goals.json` entries; `retire.zig`
-  reads only `id` and `status` under `ignore_unknown_fields`
-  (`src/improve/retire.zig:60-75`, `:164`) and tolerates schema growth by
-  design regardless. See §Design.
-- **Resolved — the goal-designing prompt was duplicated verbatim.** Both
-  `clanker goal <intent>` (`src/cli.zig:4342`) and the TUI's `/goal`
-  (`src/tui/repl.zig:2559`) now build the prompt from the single source of
-  truth `src/agent/goal_prompt.zig` (`goal_prompt.task`), so the field list
-  cannot drift between surfaces again (Implementation §5).
-- **Resolved — PRD 0027 was absent from the inventory.** It is now listed in
-  `docs/prds/README.md` with status Shipped and removed from the build order.
+| CLI | `clanker write-goal "<intent>"` | Prints a draft only |
+| TUI | `/write-goal <intent>` | Prints a draft only |
+| Agent tool | `write_goal` | Returns the structured record and Markdown |
 
 ## Failure modes
 
-| Condition | Behavior |
+| Condition | Behaviour |
 |---|---|
-| Intent is already fully specified | Emit the draft with no questions; do not manufacture clarification to look thorough |
-| Intent too vague to ground ("make it better") | Ask for the observable target; do not emit a goal whose criteria are unfalsifiable |
-| A completion criterion has no available proof mechanism | Flag it weak in the draft and propose the check that would make it provable, rather than emitting it silently |
-| Workspace unreadable / not a repo | Draft from conversation context only; list the workspace facts left unresolved |
-| `ask_user` unavailable (headless, improve loop, sub-agent) | Best-effort draft, assumptions recorded in `boundaries` as `skills/write-goal.md` already specifies; never invent silently |
-| User supplies no budget | No budget. Not a default, not a suggestion appended to objective text |
-| User supplies a budget | Goes to `max_iterations` on the persisted goal (`src/cli.zig:8957`), never into objective text |
-| Intent restates an already-open goal | Return that goal's id and explain the overlap; do not draft a near-duplicate for `goal` to append |
-| Refining an already-specific goal | Preserve stated requirements; report "no material weaknesses" rather than rewriting to show effort |
-| Refining a goal already in `state/goals.json` | Emit the corrected draft, but note that committing needs `POST /api/goals`; `goal` cannot update |
-| `modules.goal` is off | Same refusal as `cmdGoal` (`src/cli.zig:4138`); do not offer a drafting flow whose output has nowhere to go |
-| Draft fails its own self-check | Incomplete — do not present it as finished |
+| Intent is already covered by an open goal | Returns the existing goal id instead of drafting a duplicate |
+| A material choice needs a person but no one is reachable | Returns a best-effort draft with explicit assumptions/unresolved questions |
+| `ask_user` refuses or fails | Returns the draft with the unresolved fork recorded; it does not persist or run |
 
 ## Acceptance criteria
 
-All verified as shipped; each corresponds to a test in the drafting
-invariant set (Implementation §7).
-
-- [x] The field-list blocker is decided and recorded in Design; the repo has
-      exactly one "five fields" list.
-- [x] `proof` and `stop_rule` reach the executing agent — verified by a test
-      asserting both appear in the `## Active goal` preamble for a goal that
-      defines them.
-- [x] `write-goal` is invocable explicitly and accepts an incomplete
-      natural-language intent.
-- [x] A vague request ("fix the flaky tests") yields a draft containing every
-      required field.
-- [x] Completion criteria are evaluable by a reader who did not run the
-      drafting session — verified by handing a generated draft to a fresh
-      agent and confirming it states the finish line without follow-ups.
-- [x] Every completion criterion is paired with a named proof mechanism or
-      flagged weak.
-- [x] A workspace-discoverable fact (the project's test command) is
-      discovered, not asked — verified by asserting no `ask_user` call is
-      raised for it when the file naming it is present.
-- [x] A material scope question *is* asked when nothing in the workspace
-      settles it.
-- [x] A drafting interaction asks no more than four questions.
-- [x] Invoking `write-goal` writes nothing — verified by asserting
-      `state/goals.json` is unchanged and the tree is clean afterwards.
-- [x] Handing a draft to `goal` is a separate step the user can decline.
-- [x] No budget field appears unless the user supplied one; no turn cap
-      appears in objective text under any circumstances, including when the
-      user supplies one.
-- [x] Refinement preserves already-explicit requirements and repairs only
-      the named weaknesses.
-- [x] With `ask_user` unavailable, the draft names its unresolved
-      assumptions rather than resolving them silently.
-- [x] An intent restating an open goal returns that goal's id instead of a
-      near-duplicate draft.
-- [x] The structured record round-trips: `goal` can be called from it
-      without re-parsing the Markdown.
-- [x] The goal-designing prompt exists in exactly one place.
+- [x] CLI and TUI invoke the same direct draft-only tool.
+- [x] A draft is never persisted or executed as a side effect.
+- [x] Direct execution and persistence work without a prior draft.
 
 ## Open questions / future work
 
-- **Should `StoredGoal` widen to arrays?** The draft carries
-  `completion_criteria[]`, `verification[]`, `boundaries[]`, `stop_rules[]`;
-  `StoredGoal` holds flat strings, so the hand-off flattens and cannot
-  reverse. Widening it would make the persisted goal as reviewable as the
-  draft, at the cost of migrating existing `state/goals.json` entries and
-  every reader. Not required for this PRD, which treats the draft as the
-  reviewable artifact.
-- **A `validate-goal` capability** — scoring an existing goal for
-  verifiability, ambiguity, scope completeness, evidence quality, autonomy
-  suitability, and stop-rule quality. Overlaps the refinement path but is a
-  scoring surface rather than a rewriting one; whether they share an
-  implementation is open.
-- **Should the harness proactively suggest `write-goal`** for obviously
-  underspecified long-running work? Design permits it and forbids silent
-  substitution, but the trigger heuristic is unspecified, and a bad one is
-  worse than none — a false positive on an ordinary request is the most
-  irritating possible failure for this feature.
-- **Metrics need a surface that does not exist.** The signals worth having —
-  share of drafts accepted unedited, mean clarification count, share of runs
-  terminating with inspectable evidence, mid-run clarification rate, edits by
-  field, post-start scope corrections — presume instrumentation nothing
-  currently emits. The target is not "more detailed prompts"; it is fewer
-  ambiguous execution loops, because the agent knows what success means
-  before it starts. Which of these is worth wiring is open.
+The current persisted goal record deliberately flattens parts of the richer
+draft. If preserving every draft field becomes necessary, design a versioned
+stored record rather than silently widening `add_goal`.

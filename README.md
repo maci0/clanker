@@ -71,7 +71,7 @@ Provider `kind` is `openai_compat`, `anthropic`, or `vertex_anthropic` (Anthropi
 - **MCP server** – stdio JSON-RPC server exposing tools to MCP clients
 - **Peer notifications + phonebook** – send messages to other clanker instances and list agent cards
 - **A2A agent cards** – `.well-known/agent.json` discovery (`modules.a2a`)
-- **`/goal`** – persistent structured goals steering agent runs
+- **Goal lifecycle** – `/write-goal` drafts without side effects, `/add-goal` saves without running, and `/goal` executes a supplied goal directly
 - **REPL with streaming** – interactive session with live token output, plus slash commands (`/help`, `/model`, `/workflows`, `/workflow`, `/sessions`, `/graph`, `/status`, `/plugins`, `/theme`, `/goal`, `/autoresearch`, `/arena`, `/compare`) with Tab-complete; some run in-process, the rest dispatch to an internal WASM tool
 - **Visible cost and context** – every turn closes with `[turn: 1234 in / 567 out · 4.2s · 135.1 tok/s · cache 82% · $0.0031 · ctx 12.3k/128k (10%)]` in the REPL and on `clanker run`'s stderr, the status bar carries a running context meter and session cost, and compaction announces itself instead of quietly dropping the exchange you were about to ask about
 - **Inline shell escape** – `!git log --oneline -5` in the REPL runs there and then, printing into the transcript instead of going to the model. Not a shell: one fixed argv through the same `ck_exec` gate the tools go through, so no pipes, globs or `$VAR`, and the child never sees your API keys. Bare `!` lists what it may run
@@ -212,7 +212,9 @@ command, while `clanker <option> -h` explains that option (for example,
 | `revert <id>` | Revert a promoted improvement |
 | `git <args...>` | Git passthrough |
 | `mcp` | Serve tools over MCP (stdio) |
-| `goal "<intent>"` | Design and persist a structured goal |
+| `write-goal "<intent>"` | Draft a structured goal without saving or running it |
+| `add-goal "<objective>" "<completion criterion>"` | Save a structured goal without running it |
+| `goal "<prompt>"` | Execute a supplied goal directly |
 | `arena "<question>" --for X --against Y` | Judged debate between two positions, or a battle royale |
 | `compare "<prompt>" [--with <provider[@model]>]...` | One prompt to several models at once, answers shown unlabeled |
 | `autoresearch [--target F] [--harness C]` | Measurement-driven research loop |

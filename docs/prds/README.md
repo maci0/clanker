@@ -47,7 +47,7 @@ and Implementation lists checkable file-level phases.
 | [0024](0024-sampling-profiles.md) | Sampling profiles | Shipped | Use-case table fills empty knobs |
 | [0025](0025-fallback-provider-chain.md) | Fallback provider chain | Shipped | Reactive list; vision path unchanged |
 | [0026](0026-llm-proxy.md) | LLM compatibility proxy | Draft | Independent of agent-loop drafts; four-PR plan |
-| [0027](0027-write-goal.md) | write-goal drafting | Shipped | Field list settled (shipped five); proof/stop_rule read |
+| [0027](0027-write-goal.md) | write-goal drafting | Shipped | Draft-only; persistence and execution live in 0035 |
 | [0028](0028-hooks-bridge.md) | Lifecycle hooks (Claude Code bridge) | Shipped | Five events, bounded policy runner, black-box fixture |
 | [0029](0029-loop-hygiene-guard.md) | Loop-hygiene guard | Shipped | Consecutive canonical-call reminders; configurable thresholds/exclusions |
 | [0030](0030-acp-server.md) | ACP server (`clanker acp`) | In progress | stdio stub + initialize live; session methods open |
@@ -55,6 +55,7 @@ and Implementation lists checkable file-level phases.
 | [0032](0032-mcp-client-bridge.md) | MCP client bridge | Draft | deepseek-code.com audit; needs a new registry dispatch kind |
 | [0033](0033-agent-presets.md) | Agent presets | Draft | deepseek-code.com audit; supersedes the Feynman "role prompt files" note |
 | [0034](0034-session-subprocs.md) | Session subprocess inspector | Draft | Lists/kills 0016 registry rows from doctor + a guest |
+| [0035](0035-goal-lifecycle.md) | Goal lifecycle capabilities | Shipped | Draft, persist, and execute are independent |
 
 ## Recommended build order (Drafts)
 
