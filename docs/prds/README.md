@@ -36,8 +36,8 @@ and Implementation lists checkable file-level phases.
 | [0013](0013-ttsr.md) | TTSR | Shipped | Substring/`*` abort-and-retry |
 | [0014](0014-hashline.md) | Hashline edit format | Shipped | `hashes:true` + `op:hashline` |
 | [0015](0015-advisor.md) | Advisor | Shipped | Off by default; fail-open |
-| [0016](0016-eval-kernel.md) | Eval kernel | Partial | Registry + disabled guest; supervisors open |
-| [0017](0017-dap.md) | DAP | Draft | Needs 0016 subprocess registry |
+| [0016](0016-eval-kernel.md) | Eval kernel | In progress | Persist/reset/SIGTERM shipped; JS, bridge, venv open |
+| [0017](0017-dap.md) | DAP | In progress | Framing + debug tool + fake-adapter tests; live lldb optional |
 | [0018](0018-snapcompact.md) | Snapcompact | Draft | Opt-in; default stays LLM compact |
 | [0019](0019-github-fs.md) | GitHub filesystem | Shipped | `gh_read` + file cache; sqlite still open |
 | [0020](0020-auto-thinking.md) | Auto thinking | Shipped | Opt-in classifier; selects a 0024 row |

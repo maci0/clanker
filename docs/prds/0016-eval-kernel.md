@@ -2,17 +2,19 @@
 
 ## Status
 
-Partial. Registry, disabled-by-default guest, magic prefixes, ADR 0010
-carve-out, and `ck_kernel` (one-shot Python eval, ADR 0011) are in. The
-Python path now runs under a real WASI sandbox
-(`src/sandbox/python_wasi.zig`) when `scripts/setup-python-wasi.sh` has
-fetched the interpreter; without it, `runPythonCell` falls back to the
-original unsandboxed host `python3` subprocess and logs a deprecation
-warning. Persistent supervisors, JS/Bun (still unsandboxed if it lands
-before an equivalent WASI runtime exists for it), the loopback bridge, the
-venv/`%pip` flow described below, and session-end SIGTERM wiring are still
-open — the shipped `ck_kernel` path is a single cell in, one JSON result
-out, no process state kept between calls.
+In progress. Persistent Python supervisor, session subprocess registry,
+disabled-by-default guest, magic prefixes, and ADR 0010/0011 are in.
+Sources of truth: `src/agent/subprocess.zig`, `src/agent/kernel.zig`,
+`src/config.zig` (`Kernel`), `tools/zig/kernel.zig`,
+`tools/zig/kernel_magic.zig`,
+[ADR 0010](../adrs/0010-kernels-are-an-opt-in-unsandboxed-class.md).
+
+Two successive cells in one session share `__main__`; `reset: true` kills
+the process and starts fresh; session end SIGTERMs via the registry.
+`kernel.enabled = false` (default) still refuses. JS/Bun, the loopback
+bridge, a dedicated venv for `%pip`, and WASI-sandboxed persistence are
+still open. The leftover WASI one-shot in `src/sandbox/python_wasi.zig` is
+not the persist path.
 Sources of truth: `src/sandbox/host.zig` (`runPythonCell`),
 `src/sandbox/python_wasi.zig`, `src/agent/subprocess.zig`, `src/config.zig`
 (`Kernel`), `tools/zig/kernel.zig`, `tools/zig/kernel_magic.zig`,
@@ -219,38 +221,52 @@ the feature default-on without quotas is not.
 | `state/kernels/` directory not writable | Tool returns a setup error; kernel does not start |
 | `kernel.enabled = false` | Tool returns a disabled error; no process started |
 
+## Known issues
+
+- **JS/Bun supervisor is not started.** The guest returns a clear error.
+- **No loopback bridge.** Cells cannot call host WASM tools mid-eval.
+- **`%pip` runs in the supervisor's interpreter, not a created venv.**
+  Design still wants `state/kernels/<session>/python/venv/`.
+- **`%%bash` / `!cmd` run inside the supervisor (`bash -c`), not `ck_exec`.**
+  The exec_allow table is not applied.
+- **Session end SIGTERMs processes but does not delete `state/kernels/`
+  after `cleanup_delay_ms`.** Directories stay for inspection.
+- **WASI one-shot (`python_wasi.zig`) is unused by the persist path.**
+  Persist is a host `python3` supervisor so `__main__` can live across cells.
+
 ## Acceptance criteria
 
 - [x] `kernel.enabled = false` (default): the tool is present in the registry
       but returns a "disabled" error when called; no kernel is started.
 - [x] Manifest sets `"confirm": true`; tool is documented as a named opt-in
       unsandboxed class ([ADR 0010](../adrs/0010-kernels-are-an-opt-in-unsandboxed-class.md)).
-- [ ] With `kernel.enabled = true` and Python installed: `{"kernel": "python",
+- [x] With `kernel.enabled = true` and Python installed: `{"kernel": "python",
       "cell": "1 + 1"}` returns `{"result": "2", "ok": true}`.
-- [ ] Python state persists across calls in the same session: define `x = 10` in
+- [x] Python state persists across calls in the same session: define `x = 10` in
       one call, read `x` in the next, get `10`.
 - [ ] JS state is process-ephemeral: survives cells in one process life, lost on
       crash/restart (no disk serialize of the Map).
-- [ ] Kernel process cwd is `state/kernels/<session-id>/<type>/`.
+- [x] Kernel process cwd is `state/kernels/<session-id>/<type>/`.
 - [ ] `%pip install requests` installs into the kernel's venv (not the system
       Python); verify `import requests` works in the next call.
-- [ ] `reset: true` clears kernel state; a variable defined before reset is not
+- [x] `reset: true` clears kernel state; a variable defined before reset is not
       visible after.
 - [ ] The loopback bridge dispatches a `read_file` call from inside a Python cell
       and returns the file content.
 - [ ] Bridge requests without the auth token return 401 and do not invoke the
       tool.
 - [ ] `%%bash` runs via `ck_exec`; the exec policy (exec_allow) is enforced.
-- [ ] Cell execution exceeding `timeout_ms` kills the kernel and returns a
+- [x] Cell execution exceeding `timeout_ms` kills the kernel and returns a
       timeout error; the next call starts a fresh kernel.
 - [ ] Session cleanup removes `state/kernels/<session-id>/` within
       `kernel.cleanup_delay_ms` and SIGTERMs registered subprocesses via the
-      shared registry.
+      shared registry. SIGTERM is shipped; delayed directory delete is not.
 - [x] Session subprocess registry is usable by PRD 0017 without a second
       lifecycle implementation.
 - [x] Quota requirement is documented as a blocker for default-on, not for
       opt-in v1.
-- [x] Unit tests cover: magic prefix parsing, kernel registry lifecycle.
+- [x] Unit tests cover: magic prefix parsing, kernel registry lifecycle,
+      persist / reset / disabled gate against the shipped supervisor.
       Bridge auth token check is still open with the loopback server.
 
 ## Open questions / future work
