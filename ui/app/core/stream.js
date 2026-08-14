@@ -25,9 +25,13 @@ export function makeLineSplitter(onLine) {
 }
 
 // Same-origin SSE watch of GET /api/events. Commands stay on fetch POST.
+// Absent endpoint (404) is soft-fail: probe once, never leave EventSource
+// reconnecting into console noise.
 var _liveEs = null;
 var _liveOk = false;
 var _liveFns = [];
+var _liveProbe = null;
+var _liveDisabled = false;
 
 export function liveOk() { return _liveOk; }
 
@@ -39,9 +43,20 @@ export function onLive(fn) {
   };
 }
 
-function ensureLive() {
-  if (_liveEs || typeof EventSource === "undefined") return;
-  try { _liveEs = new EventSource("/api/events"); } catch (_) { return; }
+function killLive() {
+  _liveOk = false;
+  if (_liveEs) {
+    try { _liveEs.close(); } catch (_) {}
+    _liveEs = null;
+  }
+}
+
+function attachLive() {
+  if (_liveEs || _liveDisabled || typeof EventSource === "undefined") return;
+  try { _liveEs = new EventSource("/api/events"); } catch (_) {
+    _liveDisabled = true;
+    return;
+  }
   _liveEs.addEventListener("live", function (ev) {
     _liveOk = true;
     var data;
@@ -51,6 +66,38 @@ function ensureLive() {
     }
   });
   _liveEs.onopen = function () { _liveOk = true; };
-  _liveEs.onerror = function () { _liveOk = false; };
+  _liveEs.onerror = function () {
+    _liveOk = false;
+    // First failure with CONNECTING/CLOSED after open attempt: stop retrying
+    // when the server has no live bus (404) or dropped the stream permanently.
+    if (!_liveEs) return;
+    if (_liveEs.readyState === EventSource.CLOSED) {
+      _liveDisabled = true;
+      killLive();
+    }
+  };
+}
+
+function ensureLive() {
+  if (_liveEs || _liveDisabled || typeof EventSource === "undefined") return;
+  if (_liveProbe) return;
+  _liveProbe = fetch("/api/events", {
+    method: "GET",
+    headers: { Accept: "text/event-stream" },
+    cache: "no-store",
+  }).then(function (res) {
+    _liveProbe = null;
+    if (!res.ok) {
+      _liveDisabled = true;
+      try { res.body && res.body.cancel && res.body.cancel(); } catch (_) {}
+      return;
+    }
+    // Abort the probe body; EventSource owns the real stream.
+    try { res.body && res.body.cancel && res.body.cancel(); } catch (_) {}
+    attachLive();
+  }).catch(function () {
+    _liveProbe = null;
+    _liveDisabled = true;
+  });
 }
 

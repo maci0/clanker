@@ -7772,7 +7772,9 @@ fn renderWebui(
         respond(stream, 500, "Internal Server Error", body);
         return null;
     };
-    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch |err| {
+    // Embedded page assets (HTML/CSS/JS) push the guest past 1 MiB; keep headroom
+    // aligned with the sandbox self-test in runtime.zig (8 MiB).
+    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(8 << 20)) catch |err| {
         log.log(.error_, "renderWebui path={s}: wasm read failed: {s}", .{ path, @errorName(err) });
         respond(stream, 500, "Internal Server Error", webuiMissingWasmError());
         return null;
@@ -8004,7 +8006,7 @@ fn webuiAssetTag(
         _ = webui_asset_tag_state.cmpxchgStrong(.idle, .failed, .acq_rel, .acquire);
         return null;
     };
-    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch {
+    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(8 << 20)) catch {
         _ = webui_asset_tag_state.cmpxchgStrong(.idle, .failed, .acq_rel, .acquire);
         return null;
     };

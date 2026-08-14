@@ -41,6 +41,27 @@ colors:
   tokyonight-surface-2: "#292e42"
   tokyonight-fg: "#c0caf5"
   tokyonight-accent: "#9d7cd8"
+  # Board card covers / labels (Kanban color chips)
+  cover-orange: "#c45a0a"
+  cover-red: "#c41212"
+  cover-purple: "#6b2fb8"
+  cover-blue: "#0b5ab8"
+  cover-sky: "#2a8ecc"
+  cover-pink: "#c23a7a"
+  label-green: "#22a24a"
+  label-yellow: "#c9a50a"
+  label-orange: "#e07a1a"
+  label-red: "#c62828"
+  label-purple: "#6a3db8"
+  label-blue: "#3d8af0"
+  label-sky: "#5ab5e8"
+  label-pink: "#e85a9a"
+  label-lime: "#6ab82f"
+  # Arena / fleet / schedule CSS+canvas fallbacks when tokens unset
+  lamp-ok: "#2fae4d"
+  lamp-running: "#e5b54a"
+  danger-short: "#d33"
+  canvas-border: "#343b3f"
 typography:
   micro:
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
@@ -208,6 +229,12 @@ is rare and actionable.
 ### Semantic
 - **Held / OK** (#117a3a), **Warn** (#b45309), **Fault** (#dc2626), **Violet** (#7c3aed) for special states
 - Deep lamp fills (`ok-deep`, `warn-deep`) for denser status chips
+- Arena/schedule lamp fallbacks: `lamp-ok` #2fae4d, `lamp-running` #e5b54a, `danger-short` #d33
+- Canvas theme fallback border: `canvas-border` #343b3f (arena/fleet when `--border` unset)
+
+### Board chips
+Kanban cover and label swatches are fixed brand chips (not theme tokens):
+covers `cover-orange`…`cover-pink`; labels `label-green`…`label-lime` (see frontmatter).
 
 ### Named themes
 Catppuccin / Tokyo Night / hackerman / frappe / etc. live as full
@@ -273,6 +300,9 @@ surfaces. Surfaces stack by token (bg → surface → surface-2), not by blur gl
 - **Rail tab**: engraved row + lamp when selected (`appearance: none`)
 - **Rail new**: accent CTA; 44px tall under 40rem / coarse pointer
 - **Composer**: sticky capsule with focus-within lift
+- **Model picker**: combobox + listbox popover (not a modal dialog). Arrow keys
+  move `aria-activedescendant`; Tab dismisses and moves to the next control;
+  Escape returns focus to the trigger pill
 - **Overlay**: PF backdrop + modal box; focus trapped
 
 ## Do's and Don'ts
@@ -282,9 +312,11 @@ surfaces. Surfaces stack by token (bg → surface → surface-2), not by blur gl
 - Keep blue for operator action only
 - Test contrast in dark and named themes after PF upgrades
 - Prefer documented radius/type steps over new literals
+- Document new board/arena hex in frontmatter when you add chip colours
 
 **Don't**
 - Paint masthead chips with `pf-m-primary`
 - Use side-tab accent borders on cards (blockquote/thread indents are content structure, not card chrome)
 - Restore rail collapsed state from localStorage on load (icon-rail flash)
 - Hand-carve `patternfly.min.css` in a polish pass; subsetting is a measured optimize task
+- Give model-picker options a tab stop; arrows own that list

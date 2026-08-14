@@ -62,9 +62,9 @@ function ensurePickerDom() {
   _picker.className = "model-picker";
   _picker.hidden = true;
   _picker.innerHTML =
-    '<div class="model-picker__panel" role="dialog" aria-label="Choose model">' +
+    '<div class="model-picker__panel">' +
       '<input type="search" class="model-picker__search" placeholder="Search models…" autocomplete="off" role="combobox" aria-expanded="true" aria-label="Search models" aria-controls="model-picker-list" aria-owns="model-picker-list" aria-autocomplete="list">' +
-      '<div class="model-picker__list" id="model-picker-list" role="listbox"></div>' +
+      '<div class="model-picker__list" id="model-picker-list" role="listbox" tabindex="-1"></div>' +
     "</div>";
   document.body.appendChild(_picker);
   _search = _picker.querySelector(".model-picker__search");
@@ -87,18 +87,53 @@ function ensurePickerDom() {
     if (!_open) return;
     if (_picker.contains(e.target)) return;
     if (_anchor && _anchor.contains(e.target)) return;
-    closeModelPicker();
+    dismissModelPicker();
   });
   document.addEventListener("keydown", function (e) {
     if (!_open) return;
     if (e.key === "Escape") {
       e.preventDefault();
+      dismissModelPicker();
+      return;
+    }
+    // Combobox: Tab dismisses. Options are tabindex=-1 (arrows only).
+    if (e.key === "Tab") {
+      e.preventDefault();
+      var from = _anchor;
       closeModelPicker();
+      focusAdjacent(from, e.shiftKey);
     }
   });
   window.addEventListener("resize", function () {
     if (_open && _anchor) positionPicker(_anchor);
   });
+}
+
+function focusAdjacent(from, backwards) {
+  if (!from || !from.focus) return;
+  var nodes = document.querySelectorAll(
+    'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  );
+  var list = [];
+  for (var i = 0; i < nodes.length; i++) {
+    var n = nodes[i];
+    if (n.closest && n.closest(".model-picker")) continue;
+    if (n.offsetParent === null && n !== document.activeElement) continue;
+    list.push(n);
+  }
+  var idx = list.indexOf(from);
+  if (idx < 0) {
+    from.focus();
+    return;
+  }
+  var next = backwards ? list[idx - 1] : list[idx + 1];
+  if (next && next.focus) next.focus();
+  else from.focus();
+}
+
+function dismissModelPicker() {
+  var back = closeModelPicker();
+  if (back && back.focus) back.focus();
 }
 
 function onSearchKey(e) {
@@ -113,7 +148,7 @@ function onSearchKey(e) {
     if (_active >= 0 && _flat[_active]) selectValue(_flat[_active].value);
   } else if (e.key === "Escape") {
     e.preventDefault();
-    closeModelPicker();
+    dismissModelPicker();
   }
 }
 
@@ -182,6 +217,7 @@ function renderList(query) {
       row.id = "model-picker-option-" + idx;
       row.className = "model-picker__option";
       row.setAttribute("role", "option");
+      row.tabIndex = -1;
       row.setAttribute("data-value", m.value);
       row.setAttribute("data-index", String(idx));
       row.setAttribute("aria-selected", m.value === current ? "true" : "false");
@@ -259,11 +295,11 @@ export function closeModelPicker() {
   setExpanded(false);
   var back = _anchor;
   _anchor = null;
-  if (back && back.focus) back.focus();
+  return back;
 }
 
 export function toggleModelPicker(anchor) {
-  if (_open && _anchor === anchor) closeModelPicker();
+  if (_open && _anchor === anchor) dismissModelPicker();
   else openModelPicker(anchor);
 }
 
@@ -274,7 +310,7 @@ function selectValue(value) {
   _el.modelSelect.dispatchEvent(new Event("change", { bubbles: true }));
   if (_renderContextMeter) _renderContextMeter();
   if (_onModelChange) _onModelChange();
-  closeModelPicker();
+  dismissModelPicker();
 }
 
 export function loadProviders() {

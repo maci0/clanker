@@ -130,6 +130,8 @@ through a gated loop. Follow these conventions when changing this codebase.
   needs `zig build tools` and a serve restart; rebuilding the host binary does not pick it up.
   Served HTML rewrites assets to `/webui/~<8hex>/...` (content tag from the wasm +
   vendor embeds) so browsers cannot keep a stale module graph across rebuilds.
+  `renderWebui` reads `zig-out/ui/app.wasm` with an 8 MiB cap (the guest embeds the
+  whole `ui/app` tree and has already crossed 1 MiB).
 
 ## WASM by default
 
