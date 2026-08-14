@@ -709,6 +709,34 @@ pub const Registry = struct {
         return out.items;
     }
 
+    /// Union of subprocess commands granted by enabled tool descriptors plus
+    /// an explicit surface-local extension. Shared by the TUI escape and
+    /// lifecycle hooks so the two policy callers cannot drift.
+    pub fn execAllowUnion(self: *const Registry, arena: std.mem.Allocator, extra: []const []const u8) ![]const []const u8 {
+        var out: std.ArrayList([]const u8) = .empty;
+        var seen: std.StringHashMapUnmanaged(void) = .empty;
+        var it = self.tools.iterator();
+        while (it.next()) |entry| {
+            if (!entry.value_ptr.enabled) continue;
+            for (entry.value_ptr.exec_allow) |command| {
+                if (seen.contains(command)) continue;
+                try seen.put(arena, command, {});
+                try out.append(arena, command);
+            }
+        }
+        for (extra) |command| {
+            if (seen.contains(command)) continue;
+            try seen.put(arena, command, {});
+            try out.append(arena, command);
+        }
+        std.mem.sort([]const u8, out.items, {}, struct {
+            fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.order(u8, a, b) == .lt;
+            }
+        }.lessThan);
+        return out.toOwnedSlice(arena);
+    }
+
     fn strArray(arena: std.mem.Allocator, arr: json.Array) ![]const []const u8 {
         var out: std.ArrayList([]const u8) = .empty;
         for (arr.items) |item| {

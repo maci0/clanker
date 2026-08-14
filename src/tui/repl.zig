@@ -1216,13 +1216,6 @@ test "internal slash-command output is bounded and names the full CLI escape hat
     try std.testing.expectEqualStrings("notice: command returned no output", empty.items[0].text);
 }
 
-fn appendUniqueCmd(arena: std.mem.Allocator, list: *std.ArrayList([]const u8), cmd: []const u8) void {
-    for (list.items) |existing| {
-        if (std.mem.eql(u8, existing, cmd)) return;
-    }
-    list.append(arena, cmd) catch {};
-}
-
 fn lessThanCmd(_: void, a: []const u8, b: []const u8) bool {
     return std.mem.order(u8, a, b) == .lt;
 }
@@ -2604,14 +2597,7 @@ const Model = struct {
     /// default. Sorted so `!` on its own lists it readably, and rebuilt per
     /// call because `/plugins` can reload the registry mid-session.
     fn escapeExecAllow(self: *Model) []const []const u8 {
-        var out: std.ArrayList([]const u8) = .empty;
-        var it = self.reg.tools.iterator();
-        while (it.next()) |entry| {
-            for (entry.value_ptr.exec_allow) |cmd| appendUniqueCmd(self.arena, &out, cmd);
-        }
-        for (self.cfg.agent.repl_exec_allow) |cmd| appendUniqueCmd(self.arena, &out, cmd);
-        std.mem.sort([]const u8, out.items, {}, lessThanCmd);
-        return out.items;
+        return self.reg.execAllowUnion(self.arena, self.cfg.agent.repl_exec_allow) catch &.{};
     }
 
     /// Runs one `!` line and folds the result into the transcript. Never
