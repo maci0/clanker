@@ -30,7 +30,7 @@ import { loadPromptsView as promptsLoadView, bindPrompts as promptsBind } from "
 import { loadModelsView as modelsLoadView, bindModels as modelsBind } from "./features/models.js";
 import { loadScheduleView as scheduleLoadView, bindSchedule as scheduleBind } from "./features/schedule.js";
 import { loadSearchView as searchLoadView, bindSearch as searchBind, bindSearchDeps as searchDeps } from "./features/search.js";
-import { bindAiDisclosure, createAiAnswerHead, AI_ANSWER_LABEL } from "./core/ai-disclosure.js";
+import { createAnswerHead, ANSWER_LABEL } from "./core/ai-disclosure.js";
 
 /* CSP blocks inline onload handlers, so PatternFly stays media=print until
    this module runs. Flip to all as soon as the sheet is ready so first paint
@@ -1094,7 +1094,7 @@ function createTurn(task) {
   var events = document.createElement("div");
   events.className = "turn-events";
 
-  var assistantHead = createAiAnswerHead();
+  var assistantHead = createAnswerHead();
 
   var answer = document.createElement("div");
   answer.className = "turn-answer";
@@ -1590,7 +1590,7 @@ function renderStats(turn, stats, task) {
       var promptText = you ? you.textContent : task || "";
       var answerText = turn.root.markdownSource || (turn.answer ? turn.answer.textContent : "");
       var md = (promptText ? ("## " + String(promptText).trim() + "\n\n") : "") +
-        "### " + AI_ANSWER_LABEL + "\n\n" +
+        "### " + ANSWER_LABEL + "\n\n" +
         String(answerText || "").replace(/\s+$/, "");
       copyText(md || String(promptText||""), copyTurnBtn, "Copy turn", turn.root);
     });
@@ -2567,7 +2567,7 @@ function drawRun(g) {
       updateMinimapViewport();
     });
   }
-  canvas.addEventListener("scroll", scheduleMinimap);
+  canvas.addEventListener("scroll", scheduleMinimap, { passive: true });
   minimap.addEventListener("click", function(e){
     if (e.target === mmViewport) return;
     var rect = minimap.getBoundingClientRect();
@@ -5242,8 +5242,6 @@ function mountIcon(node, name, size) {
   node.appendChild(wrap);
 }
 upgradePfUi(document);
-bindAiDisclosure();
-upgradePfButton(document.getElementById("ai-transparency-dismiss"));
 mountIcon(el.helpOpen, "help", 15);
 mountIcon(document.getElementById("rail-collapse"), "panel", 15);
 mountIcon(document.getElementById("voice-btn"), "mic", 16);

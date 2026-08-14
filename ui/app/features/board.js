@@ -619,7 +619,7 @@ function cardNode(c) {
       var pill = document.createElement("span");
       pill.className = "card-label";
       pill.setAttribute("data-color", lbl.color || "blue");
-      pill.textContent = lbl.text || "";
+      pill.textContent = lbl.text || lbl.color || "";
       pill.title = lbl.text || lbl.color || "";
       labelsEl.appendChild(pill);
     });

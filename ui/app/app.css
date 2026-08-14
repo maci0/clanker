@@ -852,56 +852,13 @@ button.pf-v6-c-nav__link.rail-tab.pf-m-current:hover {
    where the match is, and that is not animated. */
 @media (prefers-reduced-motion: reduce) { .turn[data-found="true"] { animation: none; } }
 .turn-depth { display: none; }
-/* Red Hat AI design language: transparency, labels, chatbot avatar. */
-.ai-masthead-indicator {
-  display: inline-flex; align-items: center; gap: 0.35rem;
-  margin-left: 0.35rem; color: var(--fg-muted);
-}
-.ai-tag {
-  display: inline-flex; align-items: center;
-  font-family: var(--mono); font-size: 10px; font-weight: 700;
-  letter-spacing: 0.08em; text-transform: uppercase;
-  padding: 0.1rem 0.45rem; border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--violet) 14%, var(--surface-2));
-  color: var(--violet-text);
-  border: 1px solid color-mix(in srgb, var(--violet) 28%, var(--rule));
-}
-.ai-transparency-banner {
-  display: flex; align-items: flex-start; gap: var(--space-3);
-  margin: 0 0 var(--space-3); padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius); border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--rule));
-  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
-  color: var(--fg);
-}
-.ai-transparency-banner[hidden] { display: none; }
-.ai-transparency-banner__icon { flex: none; color: var(--warn); margin-top: 0.1rem; }
-.ai-transparency-banner__text { flex: 1 1 auto; font-size: 13px; line-height: 1.5; }
-.ai-transparency-banner__text strong { display: block; margin-bottom: 0.2rem; font-weight: 700; }
-.ai-transparency-dismiss {
-  flex: none; min-height: 32px; min-width: 32px;
-  padding: 0.25rem 0.55rem; box-sizing: border-box;
-}
-.ai-review-notice {
-  margin: var(--space-2) 0 0; padding: 0 0.15rem;
-  font-size: 12px; line-height: 1.45; color: var(--fg-muted);
-}
-.ai-review-notice__row { display: inline-flex; align-items: center; gap: 0.35rem; }
 .turn-assistant-head {
   display: flex; align-items: center; gap: var(--space-3);
   margin: 0 0 var(--space-2); max-width: min(42rem, 92%);
 }
-.ai-robot-avatar {
-  flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 2rem; height: 2rem; border-radius: var(--radius-sm);
-  color: color-mix(in srgb, var(--chat-hue-2) 82%, var(--fg));
-  background: color-mix(in srgb, var(--chat-hue-2) 12%, var(--surface-2));
-  border: 1px solid color-mix(in srgb, var(--chat-hue-2) 24%, var(--rule));
+.turn-answer-label {
+  font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--fg-muted);
 }
-.ai-answer-label {
-  display: inline-flex; align-items: center; flex-wrap: wrap; gap: 0.35rem 0.5rem;
-  font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--fg);
-}
-.ai-answer-label .icon { color: var(--violet-text); }
 .turn-body .turn-assistant-head + .turn-events { margin-top: 0; }
 /* What was asked, set as the entry's heading: the text face, not mono,
    because it is prose and not a measurement. */
@@ -2118,6 +2075,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
   40% { transform: scale(1); opacity: 1; }
 }
+@media (prefers-reduced-motion: reduce) { .slack-typing-dot { animation: none; opacity: 0.6; } }
 
 /* ── New messages divider ── */
 .slack-new-divider {
@@ -2532,8 +2490,7 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   button, summary, input[type="text"], input[type="search"], input[type="number"],
   input[type="date"], select { min-height: 44px; }
   button.chip-btn,
-  button.pf-v6-c-button.pf-m-plain.chip-btn,
-  .ai-transparency-dismiss {
+  button.pf-v6-c-button.pf-m-plain.chip-btn {
     min-height: 44px; min-width: 44px;
   }
   .rail-tab,
@@ -2563,8 +2520,7 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   .composer .toolbar #submit,
   .composer .toolbar #cancel { min-height: 44px; }
   button.chip-btn,
-  button.pf-v6-c-button.pf-m-plain.chip-btn,
-  .ai-transparency-dismiss { min-height: 44px; min-width: 44px; }
+  button.pf-v6-c-button.pf-m-plain.chip-btn { min-height: 44px; min-width: 44px; }
   .rail-tab,
   .pf-v6-c-nav__link.rail-tab,
   button.pf-v6-c-nav__link.rail-tab {
@@ -2596,6 +2552,22 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   .composer .toolbar #voice-btn,
   .composer .toolbar button.secondary {
     min-height: 44px;
+  }
+  button.chip.header-model,
+  button.chip.model-pill,
+  #header-model,
+  #composer-model {
+    min-height: 44px;
+  }
+  button.rail-group {
+    min-height: 44px;
+  }
+  .composer details > summary,
+  .composer details.more > summary,
+  #params > summary {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
   }
 }
 
@@ -3400,6 +3372,7 @@ h2#session-title {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+@media (prefers-reduced-motion: reduce) { .card { animation: none; } }
 .card:hover {
   border-color: var(--border);
   box-shadow: 0 4px 12px rgba(9,30,66,0.15), 0 0 1px rgba(9,30,66,0.2);
@@ -3584,6 +3557,7 @@ h2#session-title {
   from { opacity: 0; transform: translateY(32px) scale(0.96); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
+@media (prefers-reduced-motion: reduce) { #card-detail { animation: none; } }
 /* Cover image/color at the top of card detail */
 .card-detail-cover {
   width: 100%; min-height: 80px; max-height: 160px; border-radius: 12px 12px 0 0;
