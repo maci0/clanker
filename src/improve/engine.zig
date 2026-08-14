@@ -56,9 +56,9 @@ pub const Options = struct {
 
 /// Directories/files copied into staging for the compile gate. Must be enough
 /// for `zig build` + `zig build test` + `zig build tools` to succeed. `vendor`
-/// is required because `build.zig` imports vendor/toml/src/root.zig as a
-/// local path module; without it the staged build can't find that module.
-const staging_roots = [_][]const u8{ "src", "tools", "tests", "docs", "evals", "vendor", "README.md", "build.zig", "build.zig.zon", "config.toml" };
+/// and `ui` are required because `build.zig` imports local modules rooted at
+/// vendor/toml/src/root.zig and ui/vendor.zig.
+const staging_roots = [_][]const u8{ "src", "tools", "tests", "docs", "evals", "vendor", "ui", "README.md", "build.zig", "build.zig.zon", "config.toml" };
 
 /// Text that has to survive in a staged file for the patch to be considered.
 ///
@@ -3703,6 +3703,14 @@ test "the live gate sweep is measured once and reused until the tree changes" {
     // And a change to the tree drops it, so the next read has to re-measure.
     engine.invalidateLiveGate();
     try std.testing.expect(engine.live_gate == null);
+}
+
+test "staging roots retain the UI build module" {
+    var found = false;
+    for (staging_roots) |root| {
+        if (std.mem.eql(u8, root, "ui")) found = true;
+    }
+    try std.testing.expect(found);
 }
 
 test "the cached gate sweep is dropped by everything that changes the live tree" {
