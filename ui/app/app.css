@@ -487,11 +487,10 @@ body {
 
 header {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem;
-  padding: 0.55rem 0.9rem; border-bottom: 1px solid color-mix(in srgb, var(--rule) 70%, transparent);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--rule);
+  background: var(--surface);
   position: sticky; top: 0; z-index: 5;
   flex: none;
-  backdrop-filter: saturate(1.15) blur(10px);
 }
 @media (max-width: 34rem) {
   header { padding: 0.7rem 1rem; gap: 0.4rem 0.5rem; }
@@ -1249,12 +1248,15 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 }
 .knowledge-empty {
   max-width: 34rem;
-  margin: var(--space-6) auto 0;
-  padding: var(--space-6);
-  text-align: center;
+  margin: var(--space-6) 0 0;
+  padding: var(--space-4) 0;
+  text-align: left;
   border-top: 1px solid var(--rule);
 }
-.knowledge-empty h3 { margin: 0 0 var(--space-2); font-size: var(--step-2); }
+.knowledge-empty h3 {
+  margin: 0 0 var(--space-2); font-family: var(--mono); font-size: var(--step--1);
+  font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted);
+}
 .knowledge-empty p { margin: 0 auto var(--space-4); max-width: 52ch; color: var(--fg-muted); line-height: 1.6; }
 
 /* ---- run canvas: llm -> tool(s) -> llm -> ... -> final, drawn as nodes and edges ---- */
@@ -2277,24 +2279,25 @@ mark {
 .scroll-bottom:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .scroll-bottom:active:not(:disabled) { transform: none; } }
 
-/* Transcript empty — centered greeting */
+/* Transcript empty — idle legend plate, not a chat-product hero */
 #transcript-empty {
-  padding: 6vh 0 var(--space-4);
-  border: 0; background: transparent; text-align: center;
-  display: flex; flex-direction: column; align-items: center; gap: var(--space-1);
+  padding: var(--space-5) 0 var(--space-4);
+  border: 0; background: transparent; text-align: left;
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2);
+  max-width: var(--measure);
 }
 #transcript-empty[hidden] { display: none !important; }
 #transcript-empty p:first-child {
-  font-family: var(--sans);
-  font-size: clamp(20px, 2.4vw, 26px); font-weight: 600; letter-spacing: -0.02em;
-  color: var(--fg); margin: 0; max-width: none;
+  font-family: var(--mono); font-size: var(--step--1); font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--fg-muted); margin: 0;
 }
 #transcript-empty p:first-child + p {
   font-size: var(--step-0);
   color: var(--fg-muted);
   margin: 0 0 var(--space-2);
 }
-.suggestions { display: grid; grid-template-columns: repeat(2, minmax(0, 18rem)); gap: var(--space-3); margin-top: var(--space-4); justify-content: center; }
+.suggestions { display: grid; grid-template-columns: repeat(2, minmax(0, 18rem)); gap: var(--space-3); margin-top: var(--space-3); }
 @media (max-width: 520px) { .suggestions { grid-template-columns: 1fr; } }
 .suggestion {
   min-height: 44px; padding: 0.6rem 0.9rem; text-align: left;
@@ -2305,16 +2308,6 @@ mark {
 }
 .suggestion:hover { border-color: var(--border); background: var(--surface-2); }
 .suggestion:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* Staggered entrance for suggestion pills — motion gated */
-.suggestion { animation: suggestion-in 240ms ease-out both; }
-.suggestion:nth-child(1) { animation-delay: 0ms; }
-.suggestion:nth-child(2) { animation-delay: 150ms; }
-.suggestion:nth-child(3) { animation-delay: 300ms; }
-.suggestion:nth-child(4) { animation-delay: 450ms; }
-.suggestion:nth-child(5) { animation-delay: 600ms; }
-.suggestion:nth-child(n+6) { animation-delay: 750ms; }
-@keyframes suggestion-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .suggestion { animation: none; } }
 
 .toasts {
   position: fixed; left: 50%; transform: translateX(-50%);
@@ -2654,12 +2647,9 @@ h2#session-title {
   /* Trello board scroll feel */
   scroll-behavior: smooth; -webkit-overflow-scrolling: touch;
   scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--fg) 18%, transparent) transparent;
-  /* Board background — subtle gradient like Trello's workspace */
-  background: linear-gradient(135deg,
-    color-mix(in srgb, var(--accent) 6%, var(--bg)) 0%,
-    var(--bg) 50%,
-    color-mix(in srgb, var(--violet) 4%, var(--bg)) 100%);
-  border-radius: 12px; padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius); padding: var(--space-3);
   margin-left: calc(var(--space-3) * -1); margin-right: calc(var(--space-3) * -1);
   padding-left: var(--space-3); padding-right: var(--space-3);
 }
