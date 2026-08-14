@@ -785,6 +785,9 @@ pub const Config = struct {
         if (cfg.default_provider_present) cfg.default_provider_from = base.path;
         if (try loadFile(io, arena, dir, local_file_name, .optional)) |local| {
             try merge(&cfg, local.cfg, arena);
+            // Applied after merge so a local `[models."..."]` entry can override
+            // or add models even when `[providers.<name>]` replaced the base entry.
+            if (local.models_table) |models| try distributeModels(arena, &cfg, models);
             // merge() only takes default_provider when the local file named
             // one, so the provenance has to move on exactly the same condition.
             if (local.cfg.default_provider_present) cfg.default_provider_from = local.path;
@@ -792,6 +795,7 @@ pub const Config = struct {
         // Checked on the merged result rather than per file. A local override
         // that only sets, say, `default_provider` has no "providers" section by
         // design, and warning about it points at a config that is in fact fine.
+        if (cfg.providers.count() > 0) try validateProviderModels(&cfg);
         if (cfg.providers.count() == 0) {
             log.log(.warn, "config {s}: no providers defined", .{base.path});
         } else if (cfg.providers.get(cfg.default_provider) == null) {
@@ -833,8 +837,15 @@ pub const Config = struct {
     const LoadMode = enum { required, optional };
 
     /// A parsed config file plus the path it came from, kept so
-    /// default_provider provenance can name its source file.
-    const Loaded = struct { cfg: Config, path: []const u8 };
+    /// default_provider provenance can name its source file. For the optional
+    /// local file, `models_table` is deferred: entries are applied onto the
+    /// merged base config in `load()` so a checkout-private file can add models
+    /// without repeating every `[providers.<name>]` stanza.
+    const Loaded = struct {
+        cfg: Config,
+        path: []const u8,
+        models_table: ?json.Value = null,
+    };
 
     /// TOML only: the requested file is read and parsed as TOML, full stop.
     /// A `.json` sibling fallback existed briefly during the JSON->TOML
@@ -853,7 +864,20 @@ pub const Config = struct {
             log.log(.error_, "config {s}: invalid TOML: {s}", .{ file_name, @errorName(err) });
             return err;
         };
-        return .{ .cfg = try parseConfig(arena, root), .path = file_name };
+        const obj = switch (root) {
+            .object => |o| o,
+            else => return error.ConfigNotObject,
+        };
+        var cfg = try parseConfig(arena, root);
+        const models_table = obj.get("models");
+        if (mode == .required) {
+            if (models_table) |models| try distributeModels(arena, &cfg, models);
+        }
+        return .{
+            .cfg = cfg,
+            .path = file_name,
+            .models_table = if (mode == .optional) models_table else null,
+        };
     }
 
     fn parseConfig(arena: std.mem.Allocator, root: json.Value) !Config {
@@ -911,10 +935,6 @@ pub const Config = struct {
                 try cfg.providers.put(arena, kv.key_ptr.*, p);
             }
         }
-        if (obj.get("models")) |v| {
-            try distributeModels(arena, &cfg, v);
-        }
-        if (cfg.providers.count() > 0) try validateProviderModels(&cfg);
         if (obj.get("instance")) |v| {
             cfg.instance = try parseInstance(arena, v);
             cfg.instance_present = true;
@@ -1023,7 +1043,12 @@ pub const Config = struct {
             p.service_account_file = try jsonStr(k, "service_account_file");
         }
         if (obj.get("api_key_env")) |k| {
-            p.api_key_env = try jsonStr(k, "api_key_env");
+            const env_name = try jsonStr(k, "api_key_env");
+            if (env_name.len == 0) {
+                log.log(.error_, "provider '{s}': \"api_key_env\" must name a non-empty environment variable", .{name});
+                return error.ApiKeyEnvEmpty;
+            }
+            p.api_key_env = env_name;
         }
         if (obj.get("auth")) |k| {
             const s = try jsonStr(k, "auth");
@@ -1124,6 +1149,37 @@ pub const Config = struct {
             if (p.models.get(p.default_model) == null) {
                 log.log(.error_, "provider '{s}': default_model '{s}' is not in its models", .{ name, p.default_model });
                 return error.ProviderDefaultModelUnknown;
+            }
+            var model_it = p.models.iterator();
+            while (model_it.next()) |mkv| {
+                try validateModelParams(name, mkv.key_ptr.*, mkv.value_ptr.*);
+            }
+        }
+    }
+
+    fn validateModelParams(provider_name: []const u8, model_name: []const u8, m: Model) !void {
+        if (m.temperature) |t| {
+            if (t < 0 or t > 2) {
+                log.log(.error_, "models[\"{s}/{s}\"]: temperature {d} is outside 0..2", .{ provider_name, model_name, t });
+                return error.ModelTemperatureOutOfRange;
+            }
+        }
+        if (m.top_p) |p| {
+            if (p < 0 or p > 1) {
+                log.log(.error_, "models[\"{s}/{s}\"]: top_p {d} is outside 0..1", .{ provider_name, model_name, p });
+                return error.ModelTopPOutOfRange;
+            }
+        }
+        if (m.cost_per_1m_input) |c| {
+            if (c < 0) {
+                log.log(.error_, "models[\"{s}/{s}\"]: cost_per_1m_input must be >= 0", .{ provider_name, model_name });
+                return error.ModelCostOutOfRange;
+            }
+        }
+        if (m.cost_per_1m_output) |c| {
+            if (c < 0) {
+                log.log(.error_, "models[\"{s}/{s}\"]: cost_per_1m_output must be >= 0", .{ provider_name, model_name });
+                return error.ModelCostOutOfRange;
             }
         }
     }
@@ -1326,7 +1382,10 @@ pub const Config = struct {
             var allow: std.ArrayList([]const u8) = .empty;
             for (arr.items) |item| {
                 const host = try jsonStr(item, "web.allow[]");
-                if (!isBareHost(host)) return error.WebAllowHostInvalid;
+                if (!isBareHost(host)) {
+                    log.log(.error_, "web.allow entry \"{s}\" must be a bare hostname or glob (no scheme, path, port, or spaces)", .{host});
+                    return error.WebAllowHostInvalid;
+                }
                 try allow.append(arena, host);
             }
             web.allow = try allow.toOwnedSlice(arena);
@@ -2225,6 +2284,81 @@ test "config load and merge" {
     // provider lookup
     const found = try cfg.provider(null);
     try std.testing.expectEqualStrings("deepseek", found.name);
+}
+
+test "config.local.toml can add a model without repeating providers" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "deepseek"
+        \\
+        \\[providers.deepseek]
+        \\base_url = "https://api.deepseek.com"
+        \\api_key_env = "DEEPSEEK_API_KEY"
+        \\
+        \\[models."deepseek/deepseek-v4-flash"]
+        \\provider = "deepseek"
+        \\
+        ,
+    });
+    try dir.writeFile(io, .{
+        .sub_path = "config.local.toml",
+        .data =
+        \\[models."deepseek/deepseek-chat"]
+        \\provider = "deepseek"
+        \\max_tokens = 2048
+        \\
+        ,
+    });
+    const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
+    const ds = cfg.providers.getPtr("deepseek").?;
+    try std.testing.expectEqual(@as(usize, 2), ds.models.count());
+    try std.testing.expect(ds.models.get("deepseek-chat") != null);
+    try std.testing.expect(ds.models.get("deepseek-v4-flash") != null);
+    try std.testing.expectEqual(@as(u32, 2048), ds.models.get("deepseek-chat").?.max_tokens);
+}
+
+test "model temperature outside 0..2 fails at load" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "deepseek"
+        \\
+        \\[providers.deepseek]
+        \\base_url = "https://api.deepseek.com"
+        \\api_key_env = "DEEPSEEK_API_KEY"
+        \\
+        \\[models."deepseek/deepseek-chat"]
+        \\provider = "deepseek"
+        \\temperature = 3.0
+        \\
+        ,
+    });
+    try std.testing.expectError(error.ModelTemperatureOutOfRange, Config.load(io, arena, dir, "config.toml", "config.local.toml"));
 }
 
 test "web.allow parses hostname entries onto Config" {

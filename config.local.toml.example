@@ -1,0 +1,21 @@
+# Checkout-private overrides: copy to config.local.toml (gitignored) and edit.
+# Merged on top of config.toml key by key. Machine-specific endpoints, a
+# different default_provider, or extra models belong here rather than in the
+# committed config.toml.
+
+# default_provider = "deepseek"
+
+# [providers.vllm-local]
+# base_url = "http://192.168.0.211:8000/v1"
+
+# Add a model without repeating the whole provider stanza:
+# [models."deepseek/deepseek-chat"]
+# provider = "deepseek"
+# max_tokens = 2048
+
+# [agent]
+# max_iterations = 24
+
+# [instance]
+# name = "clanker-my-machine"
+# id = "my-machine"

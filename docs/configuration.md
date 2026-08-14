@@ -11,7 +11,7 @@ code wins.
   toggles, agent settings.
 - **`config.local.toml`** — checkout-private overrides (gitignored), merged on
   top of `config.toml` key by key. Put machine-specific endpoints, a different
-  `default_provider`, or a local vLLM URL here.
+  `default_provider`, or a local vLLM URL here. See `config.local.toml.example`.
 - **`.env`** — API keys. clanker loads it at startup (the `dotenv` module) into
   the process environment; a provider names the variable to read with
   `api_key_env`. Keys never go in the TOML.

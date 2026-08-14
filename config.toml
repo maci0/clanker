@@ -53,7 +53,8 @@ api_key_env = "OPENAI_API_KEY"
 
 [providers.vllm-local]
 kind = "openai_compat"
-base_url = "http://192.168.0.211:8000/v1"
+# Local vLLM / OpenAI-compatible server. Put your LAN URL in config.local.toml.
+base_url = "http://127.0.0.1:8000/v1"
 
 [providers.ollama]
 kind = "openai_compat"
@@ -193,6 +194,8 @@ workflows_dir = "workflows"
 chains_dir = "chains"
 sandbox_root = "."
 seed = 0
+# 0 = compact when history reaches half the model context window; a positive
+# value is a byte cap converted to tokens (see docs/configuration.md).
 compact_threshold_bytes = 0
 # Large tool results are shortened only in the next provider request; saved
 # session transcripts retain the exact original. Set threshold to 0 to disable.

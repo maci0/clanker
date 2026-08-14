@@ -1976,9 +1976,9 @@ const local_template =
     \\kind = "openai_compat"
     \\base_url = "https://api.deepseek.com"
     \\api_key_env = "DEEPSEEK_API_KEY"
-    \\default_model = "deepseek-chat"
+    \\default_model = "deepseek-v4-flash"
     \\
-    \\[models."deepseek/deepseek-chat"]
+    \\[models."deepseek/deepseek-v4-flash"]
     \\provider = "deepseek"
     \\max_tokens = 2048
     \\
