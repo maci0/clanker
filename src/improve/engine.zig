@@ -143,6 +143,8 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/config.zig", .needle = "plan_phase: bool = true" },
     .{ .file = "src/config.zig", .needle = "git_commit: bool = true" },
     .{ .file = "src/config.zig", .needle = "if (obj.get(\"capability_gate\")) |k| im.capability_gate = switch (k)" },
+    .{ .file = "src/config.zig", .needle = "if (obj.get(\"inert_gate\")) |k| im.inert_gate = switch (k)" },
+    .{ .file = "src/config.zig", .needle = "if (obj.get(\"plan_phase\")) |k| im.plan_phase = switch (k)" },
     .{ .file = "src/gate/checks.zig", .needle = "configSourceWeakeningGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "stagedConfigWeakened(" },
     // cmdEval is writable. An early `return` before runAll, or `--tasks`
@@ -178,7 +180,7 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     // `zig build test` / `zig build tools` exit 0 without running anything,
     // and the host's testGate/toolsGate would pass this promotion.
     .{ .file = "build.zig", .needle = "test_step.dependOn(&run_tests.step);" },
-    .{ .file = "build.zig", .needle = "const exe_tests = b.addTest(.{ .root_module = test_mod });" },
+    .{ .file = "build.zig", .needle = "const exe_tests = b.addTest(.{ .root_module = test_mod, .use_llvm = true });" },
     .{ .file = "build.zig", .needle = "run_tests.step.dependOn(tools_step);" },
     .{ .file = "build.zig", .needle = "tools_step.dependOn(&install.step);" },
     .{ .file = "build.zig", .needle = ".root_source_file = b.path(\"src/main.zig\")," },
@@ -599,6 +601,12 @@ pub const Engine = struct {
             // contain user PII echoed back from the conversation context.
             if (resp.raw) |raw| log.log(.debug, "raw response length: {d} chars", .{raw.len});
             self.feedback = "Your previous response had an empty content field. Output the JSON object in the content field.";
+            const empty_id = self.newId() catch null;
+            if (empty_id) |owned_id| {
+                defer self.ctx.gpa.free(owned_id);
+                self.hist.append(owned_id, .failed, opts.instructions, "empty model response", &.{}, 0, 0, "no proposal content", &.{}, null) catch |herr|
+                    log.log(.warn, "history append failed: {s}", .{@errorName(herr)});
+            }
             return .failed;
         }
 
@@ -620,6 +628,12 @@ pub const Engine = struct {
             if (self.requests_left == 0) {
                 log.log(.warn, "model asked for {d} file(s) but this run's request budget is spent", .{want.len});
                 self.feedback = "Your file-request budget for this run is used up. Propose a patch with whatever is already in context above, or answer that no changes are needed.";
+                const budget_id = self.newId() catch null;
+                if (budget_id) |owned_id| {
+                    defer self.ctx.gpa.free(owned_id);
+                    self.hist.append(owned_id, .failed, opts.instructions, "file request budget spent", &.{}, 0, 0, "no file requests left", &.{}, null) catch |herr|
+                        log.log(.warn, "history append failed: {s}", .{@errorName(herr)});
+                }
                 return .failed;
             }
             self.requests_left -= 1;
@@ -644,6 +658,12 @@ pub const Engine = struct {
                     if (missing.items.len > 0) "Some of those paths do not exist in this repository. " else "",
                 },
             );
+            const stale_id = self.newId() catch null;
+            if (stale_id) |owned_id| {
+                defer self.ctx.gpa.free(owned_id);
+                self.hist.append(owned_id, .failed, opts.instructions, "file request added nothing", &.{}, 0, 0, "already in context", &.{}, null) catch |herr|
+                    log.log(.warn, "history append failed: {s}", .{@errorName(herr)});
+            }
             return .failed;
         }
 
@@ -2593,6 +2613,8 @@ fn stagedConfigWeakened(src: []const u8) ?[]const u8 {
         "plan_phase: bool = true",
         "git_commit: bool = true",
         "if (obj.get(\"capability_gate\")) |k| im.capability_gate = switch (k)",
+        "if (obj.get(\"inert_gate\")) |k| im.inert_gate = switch (k)",
+        "if (obj.get(\"plan_phase\")) |k| im.plan_phase = switch (k)",
     };
     for (required) |need| {
         if (std.mem.find(u8, src, need) == null) return need;
@@ -3106,6 +3128,9 @@ test "the live src/config.zig keeps improve-gate defaults enabled" {
     const src = @embedFile("../config.zig");
     try std.testing.expect(stagedConfigWeakened(src) == null);
     try std.testing.expect(stagedConfigWeakened("capability_gate: bool = false") != null);
+    const missing_inert = try std.mem.replaceOwned(u8, std.testing.allocator, src, "if (obj.get(\"inert_gate\")) |k| im.inert_gate = switch (k)", "");
+    defer std.testing.allocator.free(missing_inert);
+    try std.testing.expect(stagedConfigWeakened(missing_inert) != null);
 }
 
 test "the live config.toml does not disable improve gates" {
@@ -3165,6 +3190,23 @@ test "the live build.zig still wires test and tools steps" {
     const emptied = try std.mem.replaceOwned(u8, gpa, src, "test_step.dependOn(&run_tests.step);", "if (false) test_step.dependOn(&run_tests.step);");
     defer gpa.free(emptied);
     try std.testing.expectEqualStrings("test_step.dependOn(&run_tests.step);", buildZigShapeBroken(emptied).?);
+}
+
+test "gate_invariants needles still match the live tree" {
+    // A needle that drifted from the file it pins (build.zig's exe_tests
+    // line picked up `.use_llvm = true`, for example) makes every proposal
+    // that touches that file fail brokenInvariant before it compiles, which
+    // looks like the gate machinery rejecting a legitimate patch.
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    for (gate_invariants) |inv| {
+        const data = std.Io.Dir.cwd().readFileAlloc(io, inv.file, gpa, .limited(4 << 20)) catch continue;
+        defer gpa.free(data);
+        try std.testing.expect(std.mem.find(u8, data, inv.needle) != null);
+    }
 }
 
 test "the live checks.zig gate functions still reach their load-bearing calls" {
