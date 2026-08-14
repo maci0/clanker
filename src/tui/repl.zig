@@ -46,6 +46,8 @@ const types = @import("../llm/types.zig");
 const providers = @import("../llm/registry.zig");
 const registry = @import("../toolhost/registry.zig");
 const session_mod = @import("../agent/session.zig");
+const subprocess = @import("../agent/subprocess.zig");
+const dap = @import("../debug/dap.zig");
 const goal_prompt = @import("../agent/goal_prompt.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const sandbox_host = @import("../sandbox/host.zig");
@@ -398,6 +400,7 @@ fn runThreadMain(args: RunThreadArgs) void {
         return;
     };
     defer a.deinit();
+    a.session_id = self.session_id orelse "default";
     a.on_token = onToken;
     a.on_tool_call = onToolCall;
     a.on_tool_result = onToolResult;
@@ -6280,6 +6283,11 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         model.thread = null;
     }
     model.saveConversation();
+    {
+        const sid = model.session_id orelse "default";
+        subprocess.endSession(gpa, io, sid);
+        dap.dropLive(sid);
+    }
     // Worker is joined (either was idle or we joined above), safe to free.
     {
         for (bridge_tool_lines.items) |l| bridge_gpa.free(l);

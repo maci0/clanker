@@ -45,6 +45,7 @@ comptime {
     _ = @import("sandbox/protocol.zig");
     _ = @import("sandbox/host.zig");
     _ = @import("sandbox/runtime.zig");
+    _ = @import("sandbox/python_wasi.zig");
     _ = @import("toolhost/registry.zig");
     _ = @import("toolhost/manifest.zig");
     _ = @import("toolhost/usage.zig");
@@ -54,6 +55,8 @@ comptime {
     _ = @import("agent/thinking.zig");
     _ = @import("agent/ttsr.zig");
     _ = @import("agent/subprocess.zig");
+    _ = @import("agent/kernel.zig");
+    _ = @import("debug/dap.zig");
     _ = @import("agent/session.zig");
     _ = @import("agent/prune.zig");
     _ = @import("agent/graph.zig");
@@ -84,6 +87,7 @@ comptime {
     _ = @import("improve/retire.zig");
     _ = @import("gate/checks.zig");
     _ = @import("mcp/server.zig");
+    _ = @import("acp/server.zig");
     _ = @import("llm/gcp_jwt.zig");
     _ = @import("llm/vertex_token.zig");
     _ = @import("peers/chatrooms.zig");

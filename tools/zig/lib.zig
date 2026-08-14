@@ -32,6 +32,7 @@ extern fn ck_getenv(name_ptr: u32, name_len: u32) u32;
 extern fn ck_exec(argv_ptr: u32, argv_len: u32) u32;
 extern fn ck_docker(req_ptr: u32, req_len: u32) u32;
 extern fn ck_kernel(req_ptr: u32, req_len: u32) u32;
+extern fn ck_debug(req_ptr: u32, req_len: u32) u32;
 extern fn ck_llm(prompt_ptr: u32, prompt_len: u32) u32;
 extern fn ck_llm_many(req_ptr: u32, req_len: u32) u32;
 extern fn ck_chat(op_ptr: u32, op_len: u32) u32;
@@ -853,6 +854,11 @@ pub fn kernelEval(req: []const u8) FsError![]const u8 {
     return fsPathQuery(ck_kernel(d.ptr, d.len));
 }
 
+pub fn debugEval(req: []const u8) FsError![]const u8 {
+    const d = sliceToMem(req);
+    return fsPathQuery(ck_debug(d.ptr, d.len));
+}
+
 pub fn dockerRequest(method: []const u8, path: []const u8) DockerError![]const u8 {
     const wbuf = std.heap.wasm_allocator.alloc(u8, 8 * 1024) catch return error.OutOfMemory;
     defer std.heap.wasm_allocator.free(wbuf);
@@ -959,11 +965,13 @@ pub const HarnessAgent = struct {
     tools_dirs: []const []const u8 = &.{},
 };
 pub const HarnessKernel = struct { enabled: bool = false, max_output_bytes: u32 = 65536 };
+pub const HarnessDebug = struct { enabled: bool = false };
 pub const HarnessConfig = struct {
     default_provider: []const u8 = "",
     providers: std.json.ArrayHashMap(HarnessProvider) = .{},
     agent: HarnessAgent = .{},
     kernel: HarnessKernel = .{},
+    debug: HarnessDebug = .{},
 };
 
 /// The first configured manifest directory (scaffold destination), or the

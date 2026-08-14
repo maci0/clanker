@@ -228,6 +228,11 @@ pub const Agent = struct {
     lifecycle_hooks: hooks_config.Config = .{},
     pending_hook_contexts: std.ArrayList([]const u8) = .empty,
     session_start_context: []const u8 = "",
+    /// Conversation id for session-scoped subprocesses (kernel, DAP). Empty
+    /// becomes `"default"` in the sandbox.
+    session_id: []const u8 = "",
+    /// Optional injected registry (tests). Null uses the process-global one.
+    subprocs: ?*@import("subprocess.zig").Registry = null,
 
     /// Frees session-scoped resources (gpa-owned wasm_cache). Call when the
     /// Agent is no longer needed (end of a REPL session / single-shot run).
@@ -1791,6 +1796,8 @@ pub const Agent = struct {
         sb.parent_task = self.current_task;
         sb.parent_run_id = self.current_run_id;
         sb.state_dir = self.cfg.agent.state_dir;
+        sb.session_id = if (self.session_id.len > 0) self.session_id else "default";
+        sb.subprocs = self.subprocs orelse @import("subprocess.zig").processRegistry(self.ctx.gpa, self.ctx.io) catch null;
         // ck_tool support: let chain (tool_call:true) resolve names against the live registry.
         if (sb.tool_call) {
             sb.tool_registry = self.reg;

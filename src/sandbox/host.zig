@@ -23,6 +23,11 @@ const utf8 = @import("../util/utf8.zig");
 const token_stats = @import("../stats/tokens.zig");
 const build_options = @import("build_options");
 const zwasm = @import("zwasm");
+const python_wasi = @import("python_wasi.zig");
+const subprocess = @import("../agent/subprocess.zig");
+const kernel_mod = @import("../agent/kernel.zig");
+const dap = @import("../debug/dap.zig");
+const ensure_dir = @import("../util/ensure_dir.zig");
 
 /// Model access for tools whose descriptor sets `"llm": true` (a translate or
 /// summarize transform needs one). The harness hands over the same provider
@@ -246,6 +251,10 @@ pub const Sandbox = struct {
     /// Base directory for harness state; null = the process cwd. Tests point
     /// this at a temp dir so chatroom logs never touch the real checkout.
     state_base_dir: ?std.Io.Dir = null,
+    /// Conversation id this sandbox belongs to. Empty means `"default"`.
+    session_id: []const u8 = "",
+    /// Shared kernel/DAP process table. Null uses the process-global registry.
+    subprocs: ?*subprocess.Registry = null,
 };
 
 /// A plugin may aim ck_llm at its own backend with
@@ -1014,7 +1023,7 @@ pub fn ckHarnessConfig(caller: *zwasm.Caller) u32 {
     return h.writeResult(bytes, json_out);
 }
 
-const HarnessConfigAccess = enum { full, providers, peers, workflows, chains, tools_dir, kernel };
+const HarnessConfigAccess = enum { full, providers, peers, workflows, chains, tools_dir, kernel, debug };
 
 /// ck_harness_config is a privileged structured view, independent of
 /// fs_prefixes. Grant each shipped caller only the section it consumes and
@@ -1035,6 +1044,7 @@ fn harnessConfigAccess(tool_name: []const u8) ?HarnessConfigAccess {
     if (std.mem.eql(u8, tool_name, "chain")) return .chains;
     if (std.mem.eql(u8, tool_name, "plugins") or std.mem.eql(u8, tool_name, "tools")) return .tools_dir;
     if (std.mem.eql(u8, tool_name, "kernel")) return .kernel;
+    if (std.mem.eql(u8, tool_name, "debug")) return .debug;
     return null;
 }
 
@@ -1172,10 +1182,16 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
         try s.write(cfg.tui);
         try s.objectField("kernel");
         try s.write(cfg.kernel);
+        try s.objectField("debug");
+        try s.write(cfg.debug);
     }
     if (access == .kernel) {
         try s.objectField("kernel");
         try s.write(cfg.kernel);
+    }
+    if (access == .debug) {
+        try s.objectField("debug");
+        try s.write(cfg.debug);
     }
 
     try s.endObject();
@@ -1384,8 +1400,8 @@ fn dockerAccessAllowed(sb: *const Sandbox) bool {
     return std.mem.eql(u8, sb.tool_self_name, "docker");
 }
 
-/// Privileged one-shot kernel eval. Import existing is not a grant: only the
-/// `kernel` guest may call this, and only when `kernel.enabled` is true.
+/// Privileged persistent kernel eval. Import existing is not a grant: only
+/// the `kernel` guest may call this, and only when `kernel.enabled` is true.
 pub fn ckKernel(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     const h = getHost(caller);
     if (!std.mem.eql(u8, h.sandbox.tool_self_name, "kernel")) {
@@ -1409,48 +1425,190 @@ pub fn ckKernel(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         .string => |s| s,
         else => "python",
     };
-    const cell = switch (obj.get("cell") orelse return Err.invalid) {
-        .string => |s| s,
-        else => return Err.invalid,
-    };
-    if (!std.mem.eql(u8, kind, "python")) {
-        const msg = "{\"ok\":false,\"error\":\"js kernel not started: bun worker is still landing\"}";
-        return h.writeResult(bytes, msg);
+    if (std.mem.eql(u8, kind, "js")) {
+        return h.writeResult(bytes, "{\"ok\":false,\"error\":\"js kernel not started: bun worker is still landing\"}");
     }
-    const out = runPythonCell(h.sandbox, arena, cell) catch |err| {
-        const msg = std.fmt.allocPrint(arena, "{{\"ok\":false,\"error\":\"{s}\"}}", .{@errorName(err)}) catch
-            "{\"ok\":false,\"error\":\"kernel failed\"}";
-        return h.writeResult(bytes, msg);
+    if (!std.mem.eql(u8, kind, "python")) {
+        return h.writeResult(bytes, "{\"ok\":false,\"error\":\"kernel must be \\\"python\\\" or \\\"js\\\"\"}");
+    }
+    const cell = switch (obj.get("cell") orelse std.json.Value{ .string = "" }) {
+        .string => |s| s,
+        else => "",
+    };
+    const reset = switch (obj.get("reset") orelse std.json.Value{ .bool = false }) {
+        .bool => |b| b,
+        else => false,
+    };
+    const pip: ?[]const u8 = switch (obj.get("pip") orelse std.json.Value{ .null = {} }) {
+        .string => |s| s,
+        else => null,
+    };
+    const bash: ?[]const u8 = switch (obj.get("bash") orelse std.json.Value{ .null = {} }) {
+        .string => |s| s,
+        else => null,
+    };
+    const timeout_ms: u32 = switch (obj.get("timeout_ms") orelse std.json.Value{ .integer = 10000 }) {
+        .integer => |n| if (n <= 0) 10000 else @intCast(@min(n, std.math.maxInt(u32))),
+        else => 10000,
+    };
+    const sid = if (h.sandbox.session_id.len > 0) h.sandbox.session_id else "default";
+    const cwd_rel = std.fmt.allocPrint(arena, "{s}/kernels/{s}/{s}", .{ h.sandbox.state_dir, sid, kind }) catch
+        return h.writeResult(bytes, kernel_mod.errorJson(arena, "out of memory"));
+    const base = h.sandbox.state_base_dir orelse std.Io.Dir.cwd();
+    ensure_dir.ensureDir(base, h.sandbox.io, cwd_rel) catch
+        return h.writeResult(bytes, kernel_mod.errorJson(arena, "state/kernels/ directory not writable"));
+    var kdir = base.openDir(h.sandbox.io, cwd_rel, .{}) catch
+        return h.writeResult(bytes, kernel_mod.errorJson(arena, "state/kernels/ directory not writable"));
+    defer kdir.close(h.sandbox.io);
+
+    const reg = h.sandbox.subprocs orelse subprocess.processRegistry(h.sandbox.gpa, h.sandbox.io) catch
+        return h.writeResult(bytes, kernel_mod.errorJson(arena, "subprocess registry unavailable"));
+
+    const out = kernel_mod.eval(.{
+        .io = h.sandbox.io,
+        .gpa = h.sandbox.gpa,
+        .arena = arena,
+        .reg = reg,
+        .session_id = sid,
+        .kind = kind,
+        .cwd = .{ .dir = kdir },
+        .cell = cell,
+        .reset = reset,
+        .pip = pip,
+        .bash = bash,
+        .timeout_ms = timeout_ms,
+        .max_output_bytes = cfg.kernel.max_output_bytes,
+        .enabled = true,
+    }) catch |err| {
+        const msg = switch (err) {
+            error.Python3NotFound => "python3 not found; install Python 3.10+",
+            error.Timeout => "cell execution timed out; kernel restarted",
+            error.KernelDisabled => "kernel is disabled (kernel.enabled = false)",
+            else => @errorName(err),
+        };
+        return h.writeResult(bytes, kernel_mod.errorJson(arena, msg));
     };
     return h.writeResult(bytes, out);
 }
 
+/// Privileged DAP adapter channel. Import existing is not a grant: only the
+/// `debug` guest may call this, and only when `debug.enabled` is true.
+pub fn ckDebug(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
+    const h = getHost(caller);
+    if (!std.mem.eql(u8, h.sandbox.tool_self_name, "debug")) {
+        log.log(.warn, "[sandbox] ck_debug denied for tool '{s}'", .{h.sandbox.tool_self_name});
+        return Err.denied;
+    }
+    const cfg = h.sandbox.cfg orelse return Err.denied;
+    if (!cfg.debug.enabled) return Err.denied;
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const json_input = sliceOf(bytes, ptr, len) orelse return Err.invalid;
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const sid = if (h.sandbox.session_id.len > 0) h.sandbox.session_id else "default";
+    const reg = h.sandbox.subprocs orelse subprocess.processRegistry(h.sandbox.gpa, h.sandbox.io) catch
+        return h.writeResult(bytes, dap.errorJson(arena, "subprocess registry unavailable"));
+
+    const sess = dap.liveSession(h.sandbox.gpa, h.sandbox.io, reg, sid) catch
+        return h.writeResult(bytes, dap.errorJson(arena, "debug session unavailable"));
+    sess.launch_timeout_ms = cfg.debug.launch_timeout_ms;
+    sess.disconnect_timeout_ms = cfg.debug.disconnect_timeout_ms;
+
+    const out = dap.handle(sess, .{
+        .io = h.sandbox.io,
+        .gpa = h.sandbox.gpa,
+        .arena = arena,
+        .reg = reg,
+        .session_id = sid,
+        .enabled = true,
+        .adapters = cfg.debug.adapters,
+        .launch_timeout_ms = cfg.debug.launch_timeout_ms,
+        .disconnect_timeout_ms = cfg.debug.disconnect_timeout_ms,
+    }, json_input) catch |err| {
+        const msg = switch (err) {
+            error.DebugDisabled => "debug is disabled (debug.enabled = false)",
+            error.MissingAdapter => "launch requires adapter matching debug.adapters",
+            error.UnknownAdapter => "unknown adapter; check debug.adapters",
+            error.AdapterNotFound => "adapter binary not found on PATH",
+            else => @errorName(err),
+        };
+        return h.writeResult(bytes, dap.errorJson(arena, msg));
+    };
+    return h.writeResult(bytes, out);
+}
+
+const python_cell_harness =
+    \\import ast, io, json, sys, traceback
+    \\src = sys.stdin.read()
+    \\stdout = io.StringIO()
+    \\stderr = io.StringIO()
+    \\result = None
+    \\ok = True
+    \\try:
+    \\    tree = ast.parse(src, mode="exec")
+    \\    body, last = (tree.body[:-1], tree.body[-1]) if tree.body else ([], None)
+    \\    g = {"__name__": "__main__"}
+    \\    if body:
+    \\        exec(compile(ast.Module(body=body, type_ignores=[]), "<cell>", "exec"), g, g)
+    \\    if last is not None:
+    \\        if isinstance(last, ast.Expr):
+    \\            result = eval(compile(ast.Expression(last.value), "<cell>", "eval"), g, g)
+    \\        else:
+    \\            exec(compile(ast.Module(body=[last], type_ignores=[]), "<cell>", "exec"), g, g)
+    \\except Exception:
+    \\    ok = False
+    \\    traceback.print_exc(file=stderr)
+    \\print(json.dumps({"ok": ok, "stdout": stdout.getvalue(), "stderr": stderr.getvalue(), "result": None if result is None else repr(result)}))
+;
+
 fn runPythonCell(sb: *const Sandbox, arena: std.mem.Allocator, cell: []const u8) ![]const u8 {
-    const script =
-        \\import ast, io, json, sys, traceback
-        \\src = sys.stdin.read()
-        \\stdout = io.StringIO()
-        \\stderr = io.StringIO()
-        \\result = None
-        \\ok = True
-        \\try:
-        \\    tree = ast.parse(src, mode="exec")
-        \\    body, last = (tree.body[:-1], tree.body[-1]) if tree.body else ([], None)
-        \\    g = {"__name__": "__main__"}
-        \\    if body:
-        \\        exec(compile(ast.Module(body=body, type_ignores=[]), "<cell>", "exec"), g, g)
-        \\    if last is not None:
-        \\        if isinstance(last, ast.Expr):
-        \\            result = eval(compile(ast.Expression(last.value), "<cell>", "eval"), g, g)
-        \\        else:
-        \\            exec(compile(ast.Module(body=[last], type_ignores=[]), "<cell>", "exec"), g, g)
-        \\except Exception:
-        \\    ok = False
-        \\    traceback.print_exc(file=stderr)
-        \\print(json.dumps({"ok": ok, "stdout": stdout.getvalue(), "stderr": stderr.getvalue(), "result": None if result is None else repr(result)}))
-    ;
+    if (sb.cfg) |cfg| {
+        if (statExists(sb.io, cfg.kernel.python_wasi_binary)) {
+            return runPythonCellSandboxed(sb, arena, cfg, cell) catch |err| {
+                log.log(.warn, "kernel: WASI python run failed ({s}); check {s} and {s}", .{ @errorName(err), cfg.kernel.python_wasi_binary, cfg.kernel.python_wasi_stdlib });
+                return err;
+            };
+        }
+        log.log(.warn, "kernel: '{s}' not found; falling back to an UNSANDBOXED host python3 subprocess. " ++
+            "This fallback is deprecated and will be removed. Run ./scripts/setup-python-wasi.sh to sandbox it.", .{cfg.kernel.python_wasi_binary});
+    }
+    return runPythonCellUnsandboxed(sb, arena, cell);
+}
+
+fn statExists(io: std.Io, path: []const u8) bool {
+    _ = std.Io.Dir.cwd().statFile(io, path, .{}) catch return false;
+    return true;
+}
+
+fn runPythonCellSandboxed(sb: *const Sandbox, arena: std.mem.Allocator, cfg: *const config_mod.Config, cell: []const u8) ![]const u8 {
+    const out = try python_wasi.run(
+        sb.io,
+        sb.gpa,
+        cfg.kernel.python_wasi_binary,
+        cfg.kernel.python_wasi_stdlib,
+        &.{ "python", "-c", python_cell_harness },
+        cell,
+        .{
+            .fuel = cfg.kernel.python_wasi_fuel,
+            .timeout_ms = cfg.kernel.python_wasi_timeout_ms,
+            .max_memory_bytes = cfg.kernel.python_wasi_max_memory_bytes,
+            .max_output_bytes = cfg.kernel.max_output_bytes,
+        },
+    );
+    defer sb.gpa.free(out.stdout);
+    defer sb.gpa.free(out.stderr);
+    if (out.stdout.len == 0) {
+        const msg = if (out.stderr.len > 0) out.stderr else "no output";
+        return std.fmt.allocPrint(arena, "{{\"ok\":false,\"error\":{f}}}", .{std.json.fmt(msg, .{})});
+    }
+    return arena.dupe(u8, out.stdout);
+}
+
+fn runPythonCellUnsandboxed(sb: *const Sandbox, arena: std.mem.Allocator, cell: []const u8) ![]const u8 {
     var child = std.process.spawn(sb.io, .{
-        .argv = &.{ "python3", "-c", script },
+        .argv = &.{ "python3", "-c", python_cell_harness },
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .pipe,
@@ -1481,6 +1639,32 @@ fn runPythonCell(sb: *const Sandbox, arena: std.mem.Allocator, cell: []const u8)
     _ = try child.wait(sb.io);
     if (out.items.len == 0) return error.Python3NotFound;
     return out.items;
+}
+
+test "runPythonCell runs the WASI-sandboxed path when the vendored interpreter is present" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    if (!statExists(io, "vendor/python-wasi/bin/python-3.12.0.wasm")) return error.SkipZigTest;
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    const cfg = config_mod.Config{ .kernel = .{ .enabled = true } };
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{},
+        .environ_map = &env,
+        .cfg = &cfg,
+    };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const out = try runPythonCell(&sb, arena_state.allocator(), "1 + 1");
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena_state.allocator(), out, .{});
+    try std.testing.expect(parsed.object.get("ok").?.bool);
+    try std.testing.expectEqualStrings("2", parsed.object.get("result").?.string);
 }
 
 fn methodFromDockerInput(obj: std.json.ObjectMap) []const u8 {
@@ -3455,6 +3639,7 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     linker.defineFuncCtx("env", "ck_ask", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckAsk) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_docker", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckDocker) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_kernel", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckKernel) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_debug", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckDebug) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_llm", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckLlm) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_llm_many", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckLlmMany) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_chat", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckChat) catch return Err.invalid;

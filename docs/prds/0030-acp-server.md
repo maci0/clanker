@@ -2,10 +2,13 @@
 
 ## Status
 
-Draft. No source files yet. Proposed: `clanker acp` subcommand
-(`cmdAcp` in `src/cli.zig`, mirroring `cmdMcp`'s shape) delegating to a new
-`src/acp/server.zig`. Gated by `modules.acp = true` in `config.toml`,
-mirroring the existing `modules.mcp`. Modeled on
+In progress. `clanker acp` (`cmdAcp` in `src/cli.zig`) and
+`src/acp/server.zig` exist: stdio JSON-RPC framing, `initialize`
+(protocol v1, baseline-only prompt capabilities), `authenticate` (empty
+success), and `session/cancel` as a silent notification. Gated by
+`modules.acp` (default true, same as `modules.mcp`). `session/new`,
+`session/prompt`, `session/update`, and `session/request_permission` are
+not wired; unknown methods return `-32601`. Modeled on
 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)'s
 `packages/acp/acp/`, a minimal, automation-only reference implementation of
 the [Agent Client Protocol](https://agentclientprotocol.com).
@@ -142,17 +145,29 @@ structural template (shipped). No other Draft PRD blocks starting.
 | Client disconnects mid-turn | Session cancelled, `stop_flag` set, thread joined before process exit |
 | `session/new` names a non-existent or relative `cwd` | Rejected at session creation, absolute `cwd` required |
 
+## Known issues
+
+- **Status used to say "No source files yet".** `src/acp/server.zig` and
+  `cmdAcp` shipped as a stdio stub (initialize / authenticate / cancel
+  no-op). This section is the remaining session-method gap, not an
+  empty tree.
+- **`modules.acp` defaults true**, matching `modules.mcp`. Acceptance
+  originally asked for default-off; flipping it now would break anyone
+  already launching `clanker acp`. Keep the mcp-sibling default; refuse
+  only when the operator sets `modules.acp = false`.
+
 ## Acceptance criteria
 
-- [ ] `modules.acp = false` by default; `clanker acp` refuses to start.
-- [ ] `initialize` negotiates a version and advertises baseline-only prompt
+- [x] `modules.acp = false` refuses to start (`cmdAcp` returns
+      `ModuleDisabled`). Default is true, same as `modules.mcp`.
+- [x] `initialize` negotiates a version and advertises baseline-only prompt
       capability.
 - [ ] `session/new` creates an `Agent` bound to the given `cwd`; a relative
       or missing `cwd` is rejected.
 - [ ] `session/prompt` runs a turn to quiescence and reports `end_turn` on
       normal completion.
 - [ ] `session/cancel` on an in-flight prompt reports `cancelled` for that
-      prompt and stops the turn.
+      prompt and stops the turn. Unknown ids are already a silent no-op.
 - [ ] `session/update` emits one `agent_message_chunk` notification per
       committed assistant text chunk.
 - [ ] `session/request_permission` round-trips through the same

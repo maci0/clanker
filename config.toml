@@ -303,6 +303,7 @@ url = "http://127.0.0.1:9"
 
 [modules]
 mcp = true
+acp = false
 peers = true
 a2a = true
 webui = true
@@ -413,6 +414,22 @@ max_history = 500
 # max_output_bytes = 65536
 # cleanup_delay_ms = 5000
 
+# Debug Adapter Protocol client. Off by default -- an adapter is an
+# unsandboxed subprocess (lldb-dap, debugpy, dlv). Same gate as [kernel].
+# [debug]
+# enabled = false
+# disconnect_timeout_ms = 3000
+# launch_timeout_ms = 15000
+#
+# [debug.adapters.lldb]
+# command = ["lldb-dap"]
+#
+# [debug.adapters.python]
+# command = ["python3", "-m", "debugpy.adapter"]
+#
+# [debug.adapters.go]
+# command = ["dlv", "dap"]
+
 # Retrieval memory. `hybrid` combines the keyword index with vector search;
 # an empty embedding provider falls back to keyword-only, so vector search is
 # opt-in by naming one.
@@ -438,6 +455,21 @@ max_history = 500
 enabled = false
 config_path = "hooks.json"
 default_timeout_ms = 60000
+
+[kernel]
+# Python cell execution for the `kernel` tool. Off by default. When on, cells
+# run under a WASI sandbox via the interpreter scripts/setup-python-wasi.sh
+# fetches; if that binary is missing, cells fall back to an UNSANDBOXED host
+# python3 subprocess and log a deprecation warning (this fallback will be
+# removed).
+enabled = false
+max_output_bytes = 65536
+cleanup_delay_ms = 5000
+python_wasi_binary = "vendor/python-wasi/bin/python-3.12.0.wasm"
+python_wasi_stdlib = "vendor/python-wasi/usr/local/lib"
+python_wasi_fuel = 5000000000
+python_wasi_timeout_ms = 30000
+python_wasi_max_memory_bytes = 268435456
 
 [tui]
 # The REPL mascot: a small robot that runs around the input box. Purely

@@ -50,7 +50,7 @@ and Implementation lists checkable file-level phases.
 | [0027](0027-write-goal.md) | write-goal drafting | Shipped | Field list settled (shipped five); proof/stop_rule read |
 | [0028](0028-hooks-bridge.md) | Lifecycle hooks (Claude Code bridge) | Shipped | Five events, bounded policy runner, black-box fixture |
 | [0029](0029-loop-hygiene-guard.md) | Loop-hygiene guard | Shipped | Consecutive canonical-call reminders; configurable thresholds/exclusions |
-| [0030](0030-acp-server.md) | ACP server (`clanker acp`) | Draft | deepseek-code.com audit; mirrors `clanker mcp`'s shape |
+| [0030](0030-acp-server.md) | ACP server (`clanker acp`) | In progress | stdio stub + initialize live; session methods open |
 | [0031](0031-tool-result-pruning.md) | Deterministic tool-result pruning | Shipped | Request-only head/tail pruning; saved transcripts stay exact |
 | [0032](0032-mcp-client-bridge.md) | MCP client bridge | Draft | deepseek-code.com audit; needs a new registry dispatch kind |
 | [0033](0033-agent-presets.md) | Agent presets | Draft | deepseek-code.com audit; supersedes the Feynman "role prompt files" note |

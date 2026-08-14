@@ -9,6 +9,11 @@ zig-pkg/
 tools/ts/node_modules/
 tools/ts/build/
 
+# The kernel tool's WASI-sandboxed CPython interpreter (~25 MB), fetched by
+# scripts/setup-python-wasi.sh. Not committed: most checkouts never enable
+# agent.kernel, and the release tarball is sha256-pinned in that script.
+/vendor/python-wasi/
+
 # Runtime state (logs, history, sessions, improvements) — never commit.
 # No trailing slash: isolated runs use a state symlink, which Git otherwise
 # treats as a file and can accidentally stage.

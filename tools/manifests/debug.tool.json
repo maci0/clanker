@@ -1,0 +1,76 @@
+{
+  "name": "debug",
+  "description": "Drive a Debug Adapter Protocol adapter for the current session. Off by default (debug.enabled = false): this is an unsandboxed subprocess. Input {op, adapter?, program?, args?, source?, lines?, condition?, hitCondition?, variables_reference?, expression?, frame_id?}. Ops: launch, attach, set_breakpoints, continue, step_in, step_out, next, pause, stack_trace, scopes, variables, evaluate, disconnect, terminate.",
+  "llm_description": "Session-scoped DAP debugger. Disabled unless debug.enabled=true. {op, adapter, program?, source?, lines?, condition?, hitCondition?, variables_reference?, expression?, frame_id?}. Ops: launch/attach/set_breakpoints/continue/step_in/step_out/next/pause/stack_trace/scopes/variables/evaluate/disconnect/terminate.",
+  "wasm": "zig-out/tools/debug.wasm",
+  "confirm": true,
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "op": {
+        "type": "string",
+        "enum": [
+          "launch",
+          "attach",
+          "set_breakpoints",
+          "continue",
+          "step_in",
+          "step_out",
+          "next",
+          "pause",
+          "stack_trace",
+          "scopes",
+          "variables",
+          "evaluate",
+          "disconnect",
+          "terminate"
+        ],
+        "description": "DAP operation."
+      },
+      "adapter": {
+        "type": "string",
+        "description": "Configured adapter name (required on launch/attach)."
+      },
+      "program": {
+        "type": "string",
+        "description": "Program to launch."
+      },
+      "args": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Program arguments."
+      },
+      "source": {
+        "type": "string",
+        "description": "Source path for set_breakpoints."
+      },
+      "lines": {
+        "type": "array",
+        "items": { "type": "integer" },
+        "description": "Breakpoint lines."
+      },
+      "condition": {
+        "type": "string",
+        "description": "DAP breakpoint condition, forwarded unchanged."
+      },
+      "hitCondition": {
+        "type": "string",
+        "description": "DAP breakpoint hitCondition, forwarded unchanged."
+      },
+      "variables_reference": {
+        "type": "integer",
+        "description": "DAP variablesReference for a variables call."
+      },
+      "expression": {
+        "type": "string",
+        "description": "Expression for evaluate (repl context)."
+      },
+      "frame_id": {
+        "type": "integer",
+        "description": "Stack frame id for evaluate/scopes."
+      }
+    },
+    "required": ["op"]
+  },
+  "category": "compute"
+}

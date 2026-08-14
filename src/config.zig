@@ -328,6 +328,34 @@ pub const Kernel = struct {
     enabled: bool = false,
     max_output_bytes: u32 = 65536,
     cleanup_delay_ms: u32 = 5000,
+    /// WASI-sandboxed CPython, from `scripts/setup-python-wasi.sh`. Absent at
+    /// this path (the default; the script is opt-in), `runPythonCell` falls
+    /// back to an unsandboxed host `python3` subprocess and logs a
+    /// deprecation warning rather than refusing the call outright.
+    python_wasi_binary: []const u8 = "vendor/python-wasi/bin/python-3.12.0.wasm",
+    python_wasi_stdlib: []const u8 = "vendor/python-wasi/usr/local/lib",
+    /// Instruction budget for the WASI engine, not wall-clock. Engine-specific
+    /// units (interp: instructions; JIT: poll-site crossings); the default is
+    /// generous enough for real stdlib imports (see the JIT smoke test).
+    python_wasi_fuel: u64 = 5_000_000_000,
+    python_wasi_timeout_ms: u32 = 30_000,
+    python_wasi_max_memory_bytes: u64 = 256 * 1024 * 1024,
+};
+
+/// One DAP adapter command line (PRD 0017). The name is the table key
+/// (`[debug.adapters.lldb]`).
+pub const DebugAdapter = struct {
+    name: []const u8 = "",
+    command: []const []const u8 = &.{},
+};
+
+/// Debug Adapter Protocol client (PRD 0017). Off by default: an adapter is
+/// an unsandboxed subprocess, same carve-out as `[kernel]`.
+pub const Debug = struct {
+    enabled: bool = false,
+    disconnect_timeout_ms: u32 = 3000,
+    launch_timeout_ms: u32 = 15_000,
+    adapters: []const DebugAdapter = &.{},
 };
 
 /// First configured fallback, used by the pre-emptive vision router. Empty
@@ -568,6 +596,9 @@ pub const Memory = struct {
 
 pub const Modules = struct {
     mcp: bool = true,
+    /// Agent Client Protocol stdio server (`clanker acp`). Opt-in because it
+    /// exposes a full agent, unlike MCP's tool-only surface.
+    acp: bool = false,
     peers: bool = true,
     a2a: bool = true,
     webui: bool = true,
@@ -607,6 +638,7 @@ pub const Modules = struct {
 /// modules struct (and reset all flags to struct defaults).
 pub const ModulesFields = struct {
     mcp: bool = false,
+    acp: bool = false,
     peers: bool = false,
     a2a: bool = false,
     webui: bool = false,
@@ -716,6 +748,7 @@ pub const Config = struct {
     hooks: Hooks = .{},
     ttsr: Ttsr = .{},
     kernel: Kernel = .{},
+    debug: Debug = .{},
     chatrooms: Chatrooms = .{},
     memory: Memory = .{},
     modules: Modules = .{},
@@ -735,6 +768,7 @@ pub const Config = struct {
     hooks_present: bool = false,
     ttsr_present: bool = false,
     kernel_present: bool = false,
+    debug_present: bool = false,
     /// Path of the file that set `default_provider`, as actually read. Null
     /// means no config named one and the struct fallback above is in force.
     /// Reported by `providers check`: "the default is X" is not much use
@@ -891,7 +925,7 @@ pub const Config = struct {
             "models",           "instance", "peers",   "notify",
             "chatrooms",        "modules",  "web",     "memory",
             "serve",            "tui",      "advisor", "hooks",
-            "ttsr",             "kernel",
+            "ttsr",             "kernel",   "debug",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -923,6 +957,10 @@ pub const Config = struct {
         if (obj.get("kernel")) |v| {
             cfg.kernel = try parseKernel(v);
             cfg.kernel_present = true;
+        }
+        if (obj.get("debug")) |v| {
+            cfg.debug = try parseDebug(arena, v);
+            cfg.debug_present = true;
         }
         if (obj.get("providers")) |v| {
             const pobj = switch (v) {
@@ -1789,6 +1827,7 @@ pub const Config = struct {
 
     fn applyModulesFields(dst: *Modules, src: Modules, fields: ModulesFields) void {
         if (fields.mcp) dst.mcp = src.mcp;
+        if (fields.acp) dst.acp = src.acp;
         if (fields.peers) dst.peers = src.peers;
         if (fields.a2a) dst.a2a = src.a2a;
         if (fields.webui) dst.webui = src.webui;
@@ -1814,14 +1853,61 @@ pub const Config = struct {
             else => return error.KernelNotObject,
         };
         var k = Kernel{};
-        warnUnknownKeys(obj, &.{ "enabled", "max_output_bytes", "cleanup_delay_ms" }, "kernel");
+        warnUnknownKeys(obj, &.{
+            "enabled",                "max_output_bytes",             "cleanup_delay_ms",
+            "python_wasi_binary",     "python_wasi_stdlib",           "python_wasi_fuel",
+            "python_wasi_timeout_ms", "python_wasi_max_memory_bytes",
+        }, "kernel");
         if (obj.get("enabled")) |e| k.enabled = switch (e) {
             .bool => |b| b,
             else => return error.FieldNotBool,
         };
         if (obj.get("max_output_bytes")) |n| k.max_output_bytes = try jsonUnsigned(u32, n, "kernel.max_output_bytes");
         if (obj.get("cleanup_delay_ms")) |n| k.cleanup_delay_ms = try jsonUnsigned(u32, n, "kernel.cleanup_delay_ms");
+        if (obj.get("python_wasi_binary")) |s| k.python_wasi_binary = try jsonStr(s, "kernel.python_wasi_binary");
+        if (obj.get("python_wasi_stdlib")) |s| k.python_wasi_stdlib = try jsonStr(s, "kernel.python_wasi_stdlib");
+        if (obj.get("python_wasi_fuel")) |n| k.python_wasi_fuel = try jsonUnsigned(u64, n, "kernel.python_wasi_fuel");
+        if (obj.get("python_wasi_timeout_ms")) |n| k.python_wasi_timeout_ms = try jsonUnsigned(u32, n, "kernel.python_wasi_timeout_ms");
+        if (obj.get("python_wasi_max_memory_bytes")) |n| k.python_wasi_max_memory_bytes = try jsonUnsigned(u64, n, "kernel.python_wasi_max_memory_bytes");
         return k;
+    }
+
+    fn parseDebug(arena: std.mem.Allocator, v: json.Value) !Debug {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.DebugNotObject,
+        };
+        var d = Debug{};
+        warnUnknownKeys(obj, &.{
+            "enabled", "disconnect_timeout_ms", "launch_timeout_ms", "adapters",
+        }, "debug");
+        if (obj.get("enabled")) |e| d.enabled = switch (e) {
+            .bool => |b| b,
+            else => return error.FieldNotBool,
+        };
+        if (obj.get("disconnect_timeout_ms")) |n| d.disconnect_timeout_ms = try jsonUnsigned(u32, n, "debug.disconnect_timeout_ms");
+        if (obj.get("launch_timeout_ms")) |n| d.launch_timeout_ms = try jsonUnsigned(u32, n, "debug.launch_timeout_ms");
+        if (obj.get("adapters")) |av| {
+            const aobj = switch (av) {
+                .object => |o| o,
+                else => return error.DebugAdaptersNotObject,
+            };
+            var list: std.ArrayList(DebugAdapter) = .empty;
+            var it = aobj.iterator();
+            while (it.next()) |kv| {
+                const entry = switch (kv.value_ptr.*) {
+                    .object => |o| o,
+                    else => return error.DebugAdapterNotObject,
+                };
+                warnUnknownKeys(entry, &.{"command"}, "debug.adapters");
+                var adapter = DebugAdapter{ .name = kv.key_ptr.* };
+                if (entry.get("command")) |c| adapter.command = try jsonNameList(arena, c, "debug.adapters.command");
+                if (adapter.command.len == 0) return error.DebugAdapterEmptyCommand;
+                try list.append(arena, adapter);
+            }
+            d.adapters = try list.toOwnedSlice(arena);
+        }
+        return d;
     }
 
     fn parseTtsr(arena: std.mem.Allocator, v: json.Value) !Ttsr {
@@ -1983,6 +2069,7 @@ pub const Config = struct {
         if (src.hooks_present) dst.hooks = src.hooks;
         if (src.ttsr_present) dst.ttsr = src.ttsr;
         if (src.kernel_present) dst.kernel = src.kernel;
+        if (src.debug_present) dst.debug = src.debug;
         if (src.modules_present) applyModulesFields(&dst.modules, src.modules, src.modules_fields);
     }
 
@@ -1996,6 +2083,7 @@ pub const Config = struct {
         var mf = ModulesFields{};
         const fields = [_]struct { key: []const u8, ptr: *bool, present: *bool }{
             .{ .key = "mcp", .ptr = &m.mcp, .present = &mf.mcp },
+            .{ .key = "acp", .ptr = &m.acp, .present = &mf.acp },
             .{ .key = "peers", .ptr = &m.peers, .present = &mf.peers },
             .{ .key = "a2a", .ptr = &m.a2a, .present = &mf.a2a },
             .{ .key = "webui", .ptr = &m.webui, .present = &mf.webui },
@@ -2015,10 +2103,10 @@ pub const Config = struct {
             .{ .key = "token_stats", .ptr = &m.token_stats, .present = &mf.token_stats },
         };
         warnUnknownKeys(obj, &.{
-            "mcp",        "peers",      "a2a",             "webui",        "graphs",
-            "sessions",   "goal",       "goal_auto_steer", "token_budget", "streaming",
-            "dotenv",     "hot_reload", "autolearn",       "subagents",    "rlm",
-            "multimodal", "chatrooms",  "token_stats",
+            "mcp",         "acp",       "peers",           "a2a",          "webui",      "graphs",
+            "sessions",    "goal",      "goal_auto_steer", "token_budget", "streaming",  "dotenv",
+            "hot_reload",  "autolearn", "subagents",       "rlm",          "multimodal", "chatrooms",
+            "token_stats",
         }, "modules");
         for (fields) |f| {
             if (obj.get(f.key)) |val| {
@@ -3046,6 +3134,40 @@ test "config.local.toml replaces advisor, ttsr, and kernel wholesale" {
     try std.testing.expect(cfg.kernel.enabled);
 }
 
+test "debug adapters parse from nested tables" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[debug]
+        \\enabled = true
+        \\disconnect_timeout_ms = 1000
+        \\[debug.adapters.lldb]
+        \\command = ["lldb-dap"]
+        \\[debug.adapters.python]
+        \\command = ["python3", "-m", "debugpy.adapter"]
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expect(cfg.debug.enabled);
+    try std.testing.expectEqual(@as(u32, 1000), cfg.debug.disconnect_timeout_ms);
+    try std.testing.expectEqual(@as(usize, 2), cfg.debug.adapters.len);
+    try std.testing.expectEqualStrings("lldb", cfg.debug.adapters[0].name);
+    try std.testing.expectEqualStrings("lldb-dap", cfg.debug.adapters[0].command[0]);
+    try std.testing.expect(!(Debug{}).enabled);
+}
+
 test "partial local agent keeps base tools_dir" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -3778,7 +3900,7 @@ test "config.toml documents every key the loader accepts" {
     // --worktree` at runtime and deliberately unreadable from a file; the
     // rest are the parsed *results* of keys rather than keys themselves.
     const not_keys = [_][]const u8{ "shared_root", "name", "models" };
-    inline for (.{ Agent, Improve, Modules, Web, Notify, Chatrooms, Kernel, Ttsr, TtsrRule, Advisor, Instance, Tui, Serve, Model, Provider }) |T| {
+    inline for (.{ Agent, Improve, Modules, Web, Notify, Chatrooms, Kernel, Debug, Ttsr, TtsrRule, Advisor, Instance, Tui, Serve, Model, Provider }) |T| {
         inline for (@typeInfo(T).@"struct".fields) |f| {
             comptime var skip = false;
             inline for (not_keys) |n| {

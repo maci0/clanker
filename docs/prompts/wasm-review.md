@@ -120,6 +120,7 @@ rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
 | `ck_harness_config` | Structured harness config (providers, peers, workflows, etc.) | Privileged: only named tools (`providers`, `peers`, `workflows`, `chain`, `plugins`, `tools`) |
 | `ck_tool` | Call another WASM tool by name | Available when the registry allows the target |
 | `ck_kernel` | Kernel-mode operations | `kernel.enabled` plus tool allowlist |
+| `ck_debug` | DAP adapter operations | `debug.enabled` plus tool allowlist |
 | `ck_swarm` | Parallel sub-agent fan-out | Parent agent run plus `modules.subagents` |
 | `ck_llm_many` | Batched model completions | `"llm": true` on the descriptor |
 | `ck_fs_write_if` | CAS write by SHA-256 | `fs_prefixes` |

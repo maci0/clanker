@@ -3,10 +3,18 @@
 ## Status
 
 Partial. Registry, disabled-by-default guest, magic prefixes, ADR 0010
-carve-out, and `ck_kernel` (one-shot Python eval, ADR 0011) are in.
-Persistent supervisors, JS/Bun, the loopback bridge, and session-end
-SIGTERM wiring are still open.
-Sources of truth: `src/agent/subprocess.zig`, `src/config.zig`
+carve-out, and `ck_kernel` (one-shot Python eval, ADR 0011) are in. The
+Python path now runs under a real WASI sandbox
+(`src/sandbox/python_wasi.zig`) when `scripts/setup-python-wasi.sh` has
+fetched the interpreter; without it, `runPythonCell` falls back to the
+original unsandboxed host `python3` subprocess and logs a deprecation
+warning. Persistent supervisors, JS/Bun (still unsandboxed if it lands
+before an equivalent WASI runtime exists for it), the loopback bridge, the
+venv/`%pip` flow described below, and session-end SIGTERM wiring are still
+open — the shipped `ck_kernel` path is a single cell in, one JSON result
+out, no process state kept between calls.
+Sources of truth: `src/sandbox/host.zig` (`runPythonCell`),
+`src/sandbox/python_wasi.zig`, `src/agent/subprocess.zig`, `src/config.zig`
 (`Kernel`), `tools/zig/kernel.zig`, `tools/zig/kernel_magic.zig`,
 [ADR 0010](../adrs/0010-kernels-are-an-opt-in-unsandboxed-class.md).
 
@@ -55,11 +63,15 @@ kernel can read a file or call another tool mid-execution.
 - Not a Jupyter server. There is no `.ipynb` format, no cell IDs, no checkpoint
   files. The kernel is a stateful process; clanker manages it, not a notebook
   server.
-- Not sandboxed by the WASM runtime. The kernel is a named, opt-in unsandboxed
-  tool class: a real Python or Bun process with ambient filesystem permissions.
-  The `kernel` tool manifest sets `"confirm": true` and the feature stays off by
-  default (`kernel.enabled = false`). That pair is the gate; once running, the
-  process is not bounded by `fs_prefixes`.
+- Python cells run under zwasm's own WASI sandbox (fuel, wall-clock timeout,
+  memory cap, one filesystem preopen, no network syscalls at all) when
+  `scripts/setup-python-wasi.sh` has fetched the interpreter; see
+  [ADR 0010](../adrs/0010-kernels-are-an-opt-in-unsandboxed-class.md). Absent
+  that, and for the still-unimplemented Bun/JS kernel, the tool class stays
+  what ADR 0010 originally specced: a real host process with ambient
+  filesystem permissions, gated only by `"confirm": true` on the manifest and
+  `kernel.enabled = false` by default — not bounded by `fs_prefixes` once
+  running.
 - Not persistent across clanker restarts. Kernel state is in-memory plus the
   kernel directory; a clanker restart kills the process. The directory survives
   for inspection but re-running the session starts a fresh kernel. JS kernel

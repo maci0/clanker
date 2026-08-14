@@ -5,6 +5,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Added
+
+- The `kernel` tool's Python path runs under a real WASM/WASI sandbox
+  (fuel budget, wall-clock timeout, memory cap, one filesystem preopen, no
+  network) when `./scripts/setup-python-wasi.sh` has fetched the vendored
+  interpreter. Without it, `runPythonCell` falls back to an unsandboxed host
+  `python3` subprocess and logs a deprecation warning; that fallback will be
+  removed in a future release.
+
 ## [0.1.0] - 2026-08-14
 
 ### Added

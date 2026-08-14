@@ -17,7 +17,10 @@ const worktree_mod = @import("improve/worktree.zig");
 const retire = @import("improve/retire.zig");
 const history = @import("improve/history.zig");
 const mcp = @import("mcp/server.zig");
+const acp = @import("acp/server.zig");
 const session = @import("agent/session.zig");
+const subprocess = @import("agent/subprocess.zig");
+const dap = @import("debug/dap.zig");
 const autolearn = @import("agent/auto_learn.zig");
 const subagent = @import("agent/subagent.zig");
 const private_todos = @import("agent/private_todos.zig");
@@ -91,6 +94,7 @@ pub const Command = enum {
     git,
     commit,
     mcp,
+    acp,
     goal,
     notify,
     chat,
@@ -710,6 +714,8 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.command = .commit;
             } else if (std.mem.eql(u8, a, "mcp")) {
                 opts.command = .mcp;
+            } else if (std.mem.eql(u8, a, "acp")) {
+                opts.command = .acp;
             } else if (std.mem.eql(u8, a, "goal")) {
                 opts.command = .goal;
             } else if (std.mem.eql(u8, a, "notify")) {
@@ -1616,6 +1622,7 @@ const specs = [_]Spec{
     .{ .command = .compare, .usage = "compare \"<prompt>\" [--with <provider[@model]>]...", .blurb = "one prompt to several models at once, answers shown unlabeled", .group = .work, .flags = &.{ .compare_with, .compare_judge, .compare_show, .compare_pick, .compare_synthesize, .compare_reveal }, .detail = "Every model gets the same prompt, the calls run side by side, and the answers\ncome back as A, B, C with nothing saying which model wrote which. Use it to\ndecide where to route a class of work; use `providers check` for connectivity\nand latency, which says nothing about answer quality, and `arena` when you want\nthe models to argue with each other rather than answer independently.\n\n--with <provider>          add a model on its provider's configured model\n--with <provider@model>    add a specific model, so two models of one provider\n                           is expressible. Repeat 2-8 times; with no --with at\n                           all, every configured provider enters\n--judge <provider>         who scores the answers. Default \"auto\": the\n                           configured default provider, with a caveat on the\n                           verdict when it is itself an entrant, since it may\n                           recognise its own answer. \"none\" leaves the pick to\n                           you\n--synthesize               also merge the answers into one, as an extra call\n--reveal                   print the label-to-model key even with no verdict\n--show <id>                print a stored comparison instead of running one\n--pick <letter>            with --show, record that answer as your pick\n\nThe display order comes from the comparison id, not the order you typed the\nmodels in, and each model's own names are struck out of its own answer, so\nnothing before the reveal says who wrote what. Comparisons land in\nstate/compare/<id>.json; `compare --show` with no id is not a listing, use the\ncompare tool from a run or read state/compare/log.jsonl." },
     .{ .command = .serve, .usage = "serve [options]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .webui_port, .host, .serve_as, .proxy, .proxy_port }, .detail = "Binds 127.0.0.1 (loopback) by default.\n\n--host <addr>          interface to bind. Default 127.0.0.1; use 0.0.0.0 (or\n                       ::) to reach the web UI and HTTP API from the LAN.\n                       Binding broadly exposes whatever the server can do\n                       (tool calls, write confirmations) to anyone who can\n                       reach the port, so pair it with a firewall.\n--serve-as <name>      a hostname this server may present itself as, so a\n                       reverse proxy or tailnet name is served. Repeatable.\n--webui-port <port>    port the web UI and its API answer on (default 17921).\n                       Also accepted as --port, the original spelling.\n--proxy                mount an OpenAI/Anthropic compatibility proxy at\n                       /proxy/v1 on this socket. Off by default. --no-proxy\n                       forces it off even if the file enabled it.\n--proxy-port <port>    optional dedicated proxy listener. When it differs\n                       from --webui-port, /v1 lives at the root on that port\n                       and /api/* is not mounted there.\n\nOne interface, named ports: --host is the address the process binds, and\neach surface gets its own port under its own name. The optional second\nlistener is --proxy-port, not a rename of --webui-port.\n\nWhatever it binds to, a request is served only when its Host header names\nthis listener. An IP literal at this port always passes, so --host 0.0.0.0\nis reachable from the LAN by IP with nothing else set. A hostname is not:\nDNS rebinding needs a name whose resolution an attacker controls, and an IP\nliteral cannot be rebound. Only localhost and the names listed by\n--serve-as pass, so a reverse proxy or a tailnet name has to be named:\n--serve-as clanker.lan.\n\nThe listener can also be set without flags, for a service file or a\ncontainer that cannot pass them. Three layers, weakest first:\n\n  [serve] in config.toml       host, webui_port, serve_as, proxy, proxy_port\n  CLANKER_HOST, CLANKER_WEBUI_PORT, CLANKER_PROXY_PORT\n  --host, --webui-port, --serve-as, --proxy, --no-proxy, --proxy-port\n\nEach overrides the one above it, so a flag always wins over the env, which\nalways wins over the file. Without --proxy the process still opens exactly\none socket. --proxy keeps that true and mounts /proxy/v1 on it. A distinct\n--proxy-port is the only way a second socket is opened. Configured\n[[peers]] are outbound URLs this process connects to, never anything it\nlistens on." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
+    .{ .command = .acp, .usage = "acp", .blurb = "serve clanker as an ACP coding agent (stdio)", .group = .work },
 
     .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect, .detail = "Also reachable as `clanker history`.\n\nLists every conversation in state/sessions, newest last. To resume one:\n  clanker run --session <id> \"continue where we left off\"\n  clanker repl --session <id>\nTo export one as a standalone HTML file:\n  clanker session export <id>" },
     .{ .command = .session_export, .usage = "session export <id> [path]", .blurb = "write one conversation as a self-contained HTML file", .group = .inspect, .detail = "Writes state/exports/<id>.html unless a path is given. One file, no scripts and\nno external stylesheet, font or image, so it opens straight from file:// with no\nnetwork. Session text is model and tool output, so every field is HTML-escaped\non the way in; markup in a transcript renders as the characters that were typed.\n\nThere is deliberately no upload and no public URL. Sharing is copying the file." },
@@ -1694,6 +1701,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .git => try cmdGit(init, opts),
         .commit => try cmdCommit(init, opts),
         .mcp => try cmdMcp(init, opts),
+        .acp => try cmdAcp(init, opts),
         .goal => try cmdGoal(init, opts),
         .notify => try cmdNotify(init, opts),
         .chat => try cmdChat(init, opts),
@@ -3487,6 +3495,11 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         opts_session = latestSessionId(io, arena);
         if (opts_session) |sid| log.log(.info, "continuing session {s}", .{sid});
     }
+    a.session_id = opts_session orelse "default";
+    defer {
+        subprocess.endSession(init.gpa, io, a.session_id);
+        dap.dropLive(a.session_id);
+    }
     if (opts_session) |sid| {
         const maybe_s = session.loadSession(io, init.gpa, arena, std.Io.Dir.cwd(), sid) catch |err| switch (err) {
             error.FileNotFound => null,
@@ -4760,6 +4773,14 @@ fn cmdMcp(init: std.process.Init, opts: Options) !void {
         return error.ModuleDisabled;
     }
     try mcp.serve(io, gpa, arena, &cfg, init.environ_map);
+}
+
+fn cmdAcp(init: std.process.Init, opts: Options) !void {
+    _ = opts;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    if (!cfg.modules.acp) return error.ModuleDisabled;
+    try acp.serve(init.io, init.gpa);
 }
 
 /// Closed spellings of "turn subscription on". Anything else is off.

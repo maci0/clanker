@@ -269,15 +269,37 @@ Post-turn second-model critique. Off by default. Distinct from
 
 ## `[kernel]`
 
-Persistent Python/JS eval kernels. Off by default — an unsandboxed
-subprocess (ADR 0010). Do not flip `enabled` on in a recommended config
-until cgroups quotas exist.
+Python/JS eval kernels. Off by default. The Python path runs under a real
+WASI sandbox when `./scripts/setup-python-wasi.sh` has fetched the
+interpreter; without it, calls fall back to an unsandboxed `python3`
+subprocess and log a deprecation warning (ADR 0010). Do not flip `enabled`
+on in a recommended config while relying on that fallback, until cgroups
+quotas exist for it — the WASI path needs no such quotas, it has its own
+fuel/memory/timeout limits.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `false` | Start kernels. Off = the tool returns a disabled error. |
 | `max_output_bytes` | 65536 | Cap on returned stdout/stderr/result. |
 | `cleanup_delay_ms` | 5000 | Delay before deleting `state/kernels/<session>/` after SIGTERM. |
+
+## `[debug]`
+
+Debug Adapter Protocol client. Off by default — an adapter is an
+unsandboxed subprocess (ADR 0010 / 0011 carve-out). Do not flip
+`enabled` on in a recommended config.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Start adapters. Off = the tool returns a disabled error. |
+| `disconnect_timeout_ms` | 3000 | How long to wait after `disconnect`/`terminate` before SIGTERM. |
+| `launch_timeout_ms` | 15000 | How long to wait for the adapter's `initialized` event. |
+| `adapters.<name>.command` | (unset) | argv to spawn. v1 requires an explicit `adapter` on `launch`. |
+| `python_wasi_binary` | `vendor/python-wasi/bin/python-3.12.0.wasm` | Vendored WASI interpreter path; absent means the unsandboxed fallback. |
+| `python_wasi_stdlib` | `vendor/python-wasi/usr/local/lib` | Stdlib directory, preopened read-only into the guest at `/usr/local/lib`. |
+| `python_wasi_fuel` | 5000000000 | Instruction budget (engine-specific units, not wall-clock). |
+| `python_wasi_timeout_ms` | 30000 | Wall-clock deadline; a timeout traps the sandboxed cell. |
+| `python_wasi_max_memory_bytes` | 268435456 | Guest linear-memory cap. |
 
 ## `[modules]`
 

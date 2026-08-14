@@ -32,16 +32,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         .bool => |b| b,
         else => false,
     };
-    _ = reset;
+    const timeout: i64 = switch (obj.get("timeout_ms") orelse std.json.Value{ .integer = 10000 }) {
+        .integer => |n| n,
+        else => 10000,
+    };
+    const timeout_ms: u32 = if (timeout <= 0) 10000 else @intCast(@min(timeout, std.math.maxInt(u32)));
 
     const parsed_cell = magic.parse(cell);
-    switch (parsed_cell.kind) {
-        .bash, .bang => {
-            return lib.fail(out, "%%bash / !cmd require ck_exec wiring; not started because kernel.enabled is a host-side spawn");
-        },
-        .pip, .time, .cell => {},
-    }
-
     if (std.mem.eql(u8, kind, "js")) {
         return lib.fail(out, "js kernel not started: bun worker is still landing");
     }
@@ -54,11 +51,32 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.beginObject();
     try s.objectField("kernel");
     try s.write("python");
-    try s.objectField("cell");
-    try s.write(parsed_cell.rest);
+    try s.objectField("reset");
+    try s.write(reset);
+    try s.objectField("timeout_ms");
+    try s.write(timeout_ms);
+    switch (parsed_cell.kind) {
+        .pip => {
+            try s.objectField("pip");
+            try s.write(parsed_cell.rest);
+        },
+        .bash, .bang => {
+            try s.objectField("bash");
+            try s.write(parsed_cell.rest);
+        },
+        .time, .cell => {
+            try s.objectField("cell");
+            try s.write(parsed_cell.rest);
+        },
+    }
     try s.endObject();
     const raw = lib.kernelEval(req.written()) catch |err| {
         return lib.failErr(out, err, "ck_kernel");
     };
+    if (parsed_cell.kind == .time) {
+        try out.writeAll(raw);
+        try out.writeAll("\nWall time: see duration_ms");
+        return;
+    }
     try out.writeAll(raw);
 }
