@@ -23,7 +23,7 @@ to [PatternFly 6](https://www.patternfly.org/) HTML/CSS. The app stays vanilla J
 | 6 | Overlays (palette, help, dialogs, card detail) | done |
 | 7 | Toasts, chips, status indicators | done |
 | 8 | Theme bridge (PF dark + clanker palette themes) | done |
-| 9 | Remove dead CSS from `app.css`; drop cabinet tokens | partial |
+| 9 | Remove dead CSS from `app.css`; drop cabinet tokens | done |
 
 ## Runtime upgrades
 
@@ -37,21 +37,16 @@ to [PatternFly 6](https://www.patternfly.org/) HTML/CSS. The app stays vanilla J
 Dynamic UI (`toast`, `uiConfirm`, `uiPrompt`, `UI.field`, `renderStatusInto`) applies
 the same helpers when creating nodes.
 
-Cabinet classes (`secondary`, `composer`, `overlay`, `chip`, etc.) remain until step 9
-finishes; bridge CSS in `app.css` keeps the cabinet look while PF classes are present.
+## CSS layering (step 9)
 
-## Step 9 (remaining)
+Generic controls use PF classes via `upgradePfUi`. Legacy cabinet rules are scoped to
+elements that skip the upgrade (`button:not(.pf-v6-c-button)`,
+`input:not(.pf-v6-c-form-control)`, etc.). Bridge blocks own the upgraded look.
 
-Domain-specific surfaces still use cabinet CSS and are intentionally not PF-wrapped:
+Domain-specific surfaces keep cabinet CSS only (no PF wrapper):
 
 - Transcript turns, run graph nodes, code blocks, board cards, arena lamps
 - Chat bubbles, markdown prose, syntax-highlighted output
-
-Safe to delete once each surface has PF markup and bridge rules are no longer needed:
-
-- Duplicate `button` / `button.secondary` rules superseded by `button.pf-v6-c-button` bridge
-- Raw `input` / `textarea` / `select` rules superseded by `.pf-v6-c-form-control` bridge
-- `.overlay` / `.overlay-box` rules superseded by modal bridge (after visual QA)
 
 ## Updating vendored PatternFly
 
