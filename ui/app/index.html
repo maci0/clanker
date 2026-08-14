@@ -661,12 +661,13 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
   </div>
   <div class="view" id="view-prompts" role="tabpanel" aria-labelledby="tab-prompts" tabindex="-1" hidden>
+    <!-- Saved snippets: user-created, synced via /api/prompts, accessible via / in composer -->
     <section>
       <div class="section-head">
         <h2>Prompts</h2>
         <button type="button" class="secondary" id="prompts-refresh">Refresh</button>
       </div>
-      <p class="meta">Saved prompt templates. Use <code>/</code> in the composer or click Use here to insert.</p>
+      <p class="meta">Saved snippets. Insert with <code>/</code> in the composer, or click Use.</p>
       <form class="goal-form" id="prompts-create-form">
         <label for="prompts-title">Title</label>
         <input type="text" id="prompts-title" placeholder="e.g. Explain like I'm 5" maxlength="200">
@@ -680,6 +681,24 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <div id="prompts-list" class="section-list"></div>
       <p class="sr-only" id="prompts-status" role="status" aria-live="polite"></p>
+    </section>
+    <!-- Templates: workflows/*.md — structured prompt files, run via /workflow <name>, can embed a chain pipeline -->
+    <section>
+      <div class="section-head">
+        <h2>Templates</h2>
+      </div>
+      <p class="meta">Structured prompt files from <code>workflows/</code>. Run with <code>/workflow &lt;name&gt;</code> in the REPL or composer. A template can embed a tool pipeline via frontmatter <code>chain:</code> — that's where automation lives.</p>
+      <div id="workflows" class="skills"></div>
+      <p class="sr-only" id="workflows-status" role="status" aria-live="polite"></p>
+    </section>
+    <!-- Skills: skills/*.md embedded in the system prompt — like Cursor's Rules, persistent agent behavior -->
+    <section>
+      <div class="section-head">
+        <h2>Skills</h2>
+      </div>
+      <p class="meta">Persistent agent instructions from <code>skills/</code>, embedded in the system prompt on every run. Define what the agent knows how to do. Authored via <code>edit_skill</code>.</p>
+      <div id="skills" class="skills"></div>
+      <p class="sr-only" id="skills-status" role="status" aria-live="polite"></p>
     </section>
   </div>
   <div class="view" id="view-tools" role="tabpanel" aria-labelledby="tab-tools" tabindex="-1" hidden>
@@ -695,19 +714,6 @@ lamps carry further). The seven named palettes ride the same tokens.
         </div>
         <div id="tools"></div>
         <div id="tool-detail" class="run-detail" role="region" aria-label="Selected tool detail" hidden></div>
-        <h3 class="detail-head subsection-head">Skills</h3>
-        <!-- Skills are the markdown files in skills/ the system prompt embeds
-             wholesale; this list mirrors that discovery (same dir, same
-             filters) so what the page shows is what the agent actually sees.
-             Read-only: skills are authored by the agent itself via edit_skill. -->
-        <div id="skills" class="skills"></div>
-        <p class="sr-only" id="skills-status" role="status" aria-live="polite"></p>
-        <h3 class="detail-head subsection-head">Workflows</h3>
-        <!-- Workflows are reusable prompt templates in workflows/
-             and .cursor/workflows. Listed here so the page mirrors what the agent
-             sees and what `clanker workflow list` reports. -->
-        <div id="workflows" class="skills"></div>
-        <p class="sr-only" id="workflows-status" role="status" aria-live="polite"></p>
         <p class="sr-only" id="tools-status" role="status" aria-live="polite"></p>
       </div>
     </section>

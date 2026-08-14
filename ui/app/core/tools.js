@@ -294,9 +294,7 @@ export function loadTools() {
     .then(function (data) {
       _allToolsHolder.list.length = 0; Array.prototype.push.apply(_allToolsHolder.list, data.plugins || []);
       renderTools(_el.toolFilter.value);
-      return loadSkills();
     })
-    .then(function () { return loadWorkflows(); })
     .catch(function (err) {
       _el.tools.textContent = "";
       var p = document.createElement("p");
@@ -306,6 +304,9 @@ export function loadTools() {
       _el.toolsStatus.textContent = p.textContent;
     });
 }
+
+// Exported so the Prompts view can load templates and skills independently.
+export { loadWorkflows, loadSkills };
 
 /* Workflows live next to skills: GET /api/workflows mirrors the same
    discovery (workflows/ plus .cursor/workflows as fallback, missing → []). */

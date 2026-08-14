@@ -21,7 +21,7 @@ import { loadLog as logsLoadLog, loadLogList as logsLoadLogList } from "./core/l
 import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugins as pluginsLoadWebuiPlugins, loadPluginAssets as pluginsLoadPluginAssets, renderWebuiPlugins as pluginsRenderWebuiPlugins } from "./core/plugins.js";
 import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle } from "./core/palette.js";
 import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind } from "./core/modelpicker.js";
-import { renderTools as toolsRenderTools, showToolDetail as toolsShowDetail, toggleTool as toolsToggle, loadTools as toolsLoadTools, bindTools as toolsBind } from "./core/tools.js";
+import { renderTools as toolsRenderTools, showToolDetail as toolsShowDetail, toggleTool as toolsToggle, loadTools as toolsLoadTools, loadWorkflows as toolsLoadWorkflows, loadSkills as toolsLoadSkills, bindTools as toolsBind } from "./core/tools.js";
 import { board, loadBoardRooms, renderBoard, setOpenCardId, cardById, cardModalKeyHandler, bindBoard } from "./features/board.js";
 import { goalState, loadGoals, bindGoals } from "./features/goals.js";
 import { goalStatusLabel } from "./core/goals.js";
@@ -4284,7 +4284,7 @@ var viewLoaders = {
     return searchLoadView();
   },
   knowledge: function(){ return kbLoad(); },
-  prompts: promptsLoadView,
+  prompts: function () { return Promise.all([promptsLoadView(), toolsLoadWorkflows(), toolsLoadSkills()]); },
   tools: loadTools,
   system: function () { return Promise.all([loadUsage(), loadStatus(), loadLogList(), loadWebuiPlugins()]); }
 };
