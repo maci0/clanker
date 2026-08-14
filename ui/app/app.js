@@ -5221,6 +5221,7 @@ function mountIcon(node, name, size) {
 }
 upgradePfUi(document);
 bindAiDisclosure();
+upgradePfButton(document.getElementById("ai-transparency-dismiss"));
 mountIcon(el.helpOpen, "help", 15);
 mountIcon(document.getElementById("rail-collapse"), "panel", 15);
 mountIcon(document.getElementById("voice-btn"), "mic", 16);
