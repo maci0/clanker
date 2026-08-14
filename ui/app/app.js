@@ -32,6 +32,17 @@ import { loadScheduleView as scheduleLoadView, bindSchedule as scheduleBind } fr
 import { loadSearchView as searchLoadView, bindSearch as searchBind, bindSearchDeps as searchDeps } from "./features/search.js";
 import { bindAiDisclosure, createAiAnswerHead, AI_ANSWER_LABEL } from "./core/ai-disclosure.js";
 
+/* CSP blocks inline onload handlers, so PatternFly stays media=print until
+   this module runs. Flip to all as soon as the sheet is ready so first paint
+   skipped the 1.8MB decode but structure styles still arrive. */
+(function activatePatternFly() {
+  var link = document.querySelector('link[data-pf]');
+  if (!link) return;
+  function arm() { link.media = "all"; }
+  if (link.sheet) arm();
+  else link.addEventListener("load", arm);
+})();
+
 document.addEventListener("DOMContentLoaded", function () {
 "use strict";
 

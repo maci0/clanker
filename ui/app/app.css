@@ -84,7 +84,9 @@
   --lift: 0 1px 2px rgba(24, 29, 26, 0.12), 0 6px 18px -8px rgba(24, 29, 26, 0.35);
   --lift-high: 0 2px 4px rgba(24, 29, 26, 0.15), 0 20px 44px -16px rgba(24, 29, 26, 0.45);
 
-  /* PatternFly theme bridge (step 8): clanker palette tokens drive PF globals. */
+  /* PatternFly theme bridge (step 8): clanker palette tokens drive PF globals.
+     Brand/icon/on-brand must remap too: plain buttons read icon-color, primary
+     reads brand + on-brand text, and those defaults stay light-theme greys. */
   --pf-t--global--background--color--100: var(--bg);
   --pf-t--global--background--color--200: var(--surface);
   --pf-t--global--background--color--300: var(--surface-2);
@@ -92,8 +94,29 @@
   --pf-t--global--background--color--primary--default: var(--accent);
   --pf-t--global--background--color--primary--hover: color-mix(in srgb, var(--accent) 88%, black);
   --pf-t--global--background--color--backdrop--default: var(--scrim);
+  --pf-t--global--background--color--action--plain--default: transparent;
+  --pf-t--global--background--color--action--plain--hover: var(--surface-2);
+  --pf-t--global--background--color--action--plain--clicked: var(--surface-2);
   --pf-t--global--text--color--regular: var(--fg);
   --pf-t--global--text--color--subtle: var(--fg-muted);
+  --pf-t--global--text--color--100: var(--fg);
+  --pf-t--global--text--color--200: var(--fg-muted);
+  --pf-t--global--text--color--on-brand--default: var(--on-accent);
+  --pf-t--global--text--color--on-brand--hover: var(--on-accent);
+  --pf-t--global--text--color--on-brand--clicked: var(--on-accent);
+  --pf-t--global--text--color--inverse: var(--on-accent);
+  --pf-t--global--icon--color--regular: var(--fg-muted);
+  --pf-t--global--icon--color--subtle: var(--fg-muted);
+  --pf-t--global--icon--color--100: var(--fg);
+  --pf-t--global--icon--color--200: var(--fg-muted);
+  --pf-t--global--icon--color--on-brand--default: var(--on-accent);
+  --pf-t--global--icon--color--on-brand--hover: var(--on-accent);
+  --pf-t--global--icon--color--on-brand--clicked: var(--on-accent);
+  --pf-t--global--color--brand--default: var(--accent);
+  --pf-t--global--color--brand--hover: color-mix(in srgb, var(--accent) 88%, black);
+  --pf-t--global--color--brand--clicked: color-mix(in srgb, var(--accent) 80%, black);
+  --pf-t--global--color--brand--200: var(--accent);
+  --pf-t--global--color--brand--300: color-mix(in srgb, var(--accent) 88%, black);
   --pf-t--global--border--color--default: var(--border);
   --pf-t--global--color--status--success--default: var(--ok-fill);
   --pf-t--global--color--status--danger--default: var(--danger);
@@ -670,6 +693,13 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
    channel that is engaged. */
 .rail-tab,
 .pf-v6-c-nav__link.rail-tab {
+  /* Own the PF nav link tokens so theme flips do not leave light greys. */
+  --pf-v6-c-nav__link--Color: var(--fg-muted);
+  --pf-v6-c-nav__link--hover--Color: var(--fg);
+  --pf-v6-c-nav__link--m-current--Color: var(--fg);
+  --pf-v6-c-nav__link--BackgroundColor: transparent;
+  --pf-v6-c-nav__link--hover--BackgroundColor: var(--surface-2);
+  --pf-v6-c-nav__link--m-current--BackgroundColor: var(--surface-2);
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
   width: 100%; text-align: left; cursor: pointer;
   min-height: 32px; padding: 0.35rem 0.6rem;
@@ -1290,22 +1320,51 @@ button.secondary.danger:where(:not(.pf-v6-c-button)):focus-visible {
   background: var(--danger); color: var(--on-danger); border-color: var(--danger);
 }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
-/* PatternFly buttons (step 4): cabinet actuator look on upgraded controls. */
+/* PatternFly buttons (step 4): cabinet actuator look on upgraded controls.
+   Set the PF component custom properties: .pf-m-primary (0,2,0) beats
+   button.pf-v6-c-button alone, and plain Color reads icon greys that stay
+   light-theme unless remapped here. */
 button.pf-v6-c-button {
   min-height: 40px; padding: 0.5rem 1.05rem;
   font-family: var(--sans); font-size: 14px; font-weight: 600;
-  color: var(--on-accent); background: var(--accent);
   border: 0; border-radius: 999px; cursor: pointer;
   box-shadow: 0 1px 2px rgba(0,0,0,0.08);
 }
+button.pf-v6-c-button.pf-m-primary,
+button.pf-v6-c-button:not(.pf-m-secondary):not(.pf-m-plain):not(.pf-m-danger):not(.pf-m-link) {
+  --pf-v6-c-button--Color: var(--on-accent);
+  --pf-v6-c-button--BackgroundColor: var(--accent);
+  --pf-v6-c-button--hover--Color: var(--on-accent);
+  --pf-v6-c-button--hover--BackgroundColor: color-mix(in srgb, var(--accent) 88%, black);
+  --pf-v6-c-button--m-clicked--Color: var(--on-accent);
+  --pf-v6-c-button--m-clicked--BackgroundColor: color-mix(in srgb, var(--accent) 80%, black);
+  --pf-v6-c-button__icon--Color: var(--on-accent);
+  /* Longhand + !important: PF sets background-color via component vars, and
+     some UA/color-scheme paths ignore the winning custom property. */
+  color: var(--on-accent) !important;
+  background-color: var(--accent) !important;
+  background-image: none !important;
+}
 button.pf-v6-c-button.pf-m-secondary {
+  --pf-v6-c-button--Color: var(--fg);
+  --pf-v6-c-button--BackgroundColor: var(--surface);
+  --pf-v6-c-button--BorderColor: var(--border);
+  --pf-v6-c-button--hover--Color: var(--fg);
+  --pf-v6-c-button--hover--BackgroundColor: color-mix(in srgb, var(--fg) 5%, var(--surface));
   font-size: 13px; padding: 0.4rem 0.8rem;
   background: var(--surface); color: var(--fg);
   border: 1px solid var(--border); border-radius: 999px;
+  box-shadow: none;
 }
 button.pf-v6-c-button.pf-m-secondary:hover { border-color: var(--fg-muted); background: color-mix(in srgb, var(--fg) 5%, var(--surface)); }
-button.pf-v6-c-button.pf-m-danger { background: var(--danger); color: var(--on-danger); }
+button.pf-v6-c-button.pf-m-danger {
+  --pf-v6-c-button--Color: var(--on-danger);
+  --pf-v6-c-button--BackgroundColor: var(--danger);
+  background: var(--danger); color: var(--on-danger);
+}
 button.pf-v6-c-button.pf-m-secondary.pf-m-danger {
+  --pf-v6-c-button--Color: var(--danger);
+  --pf-v6-c-button--BackgroundColor: var(--surface);
   background: var(--surface); color: var(--danger); border-color: var(--border);
 }
 button.pf-v6-c-button.pf-m-secondary.pf-m-danger:hover,
@@ -1315,18 +1374,35 @@ button.pf-v6-c-button.pf-m-secondary.pf-m-danger:focus-visible {
 /* Plain PF buttons: icon/chrome controls, not solid actuators. Without this,
    button.pf-v6-c-button above paints every pf-m-plain control accent blue. */
 button.pf-v6-c-button.pf-m-plain {
+  --pf-v6-c-button--Color: var(--fg-muted);
+  --pf-v6-c-button--BackgroundColor: transparent;
+  --pf-v6-c-button--hover--Color: var(--fg);
+  --pf-v6-c-button--hover--BackgroundColor: var(--surface-2);
+  --pf-v6-c-button__icon--Color: var(--fg-muted);
   min-height: 32px; min-width: 32px; box-sizing: border-box;
   padding: 0.25rem 0.55rem; font-weight: 500;
-  color: var(--fg-muted); background: transparent; border: 0; box-shadow: none;
+  color: var(--fg-muted) !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  border: 0; box-shadow: none;
 }
 button.pf-v6-c-button.pf-m-plain:hover {
-  color: var(--fg); background: var(--surface-2);
+  color: var(--fg) !important;
+  background-color: var(--surface-2) !important;
 }
 /* Keep hit area even when PF plain zeros padding; never drop below 32/44. */
 button.pf-v6-c-button.pf-m-plain.chip-btn {
+  --pf-v6-c-button--Color: var(--fg-muted);
+  --pf-v6-c-button--BackgroundColor: transparent;
   min-height: 32px; min-width: 32px; box-sizing: border-box;
   padding: 0.25rem 0.55rem; font-weight: 500;
-  color: var(--fg-muted); background: transparent; border: 0; box-shadow: none;
+  color: var(--fg-muted) !important;
+  background-color: transparent !important;
+  border: 0; box-shadow: none;
+}
+button.pf-v6-c-button.pf-m-plain .pf-v6-c-button__text,
+button.pf-v6-c-button.pf-m-plain.chip-btn .pf-v6-c-button__text {
+  color: inherit !important;
 }
 /* Chips that still carry pf-v6-c-button (legacy upgrade) keep the lamp look. */
 button.chip.pf-v6-c-button,
@@ -2422,14 +2498,20 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   .board-empty-slot button, .board-quick-add .board-add-actions button,
   .card-quick-actions button, .slack-btn-icon, .label-picker-item { min-width: 44px; min-height: 44px; height: 44px; }
 }
-/* Narrow viewports: primary composer actions stay hittable even when the
-   UA reports a fine pointer (many tablets). */
+/* Narrow viewports: primary composer actions and rail channels stay hittable
+   even when the UA reports a fine pointer (phones + many tablets). */
 @media (max-width: 40rem) {
   .composer .toolbar #submit,
   .composer .toolbar #cancel { min-height: 44px; }
   button.chip-btn,
   button.pf-v6-c-button.pf-m-plain.chip-btn,
-  .ai-transparency-dismiss { min-height: 40px; min-width: 40px; }
+  .ai-transparency-dismiss { min-height: 44px; min-width: 44px; }
+  .rail-tab,
+  .pf-v6-c-nav__link.rail-tab {
+    min-height: 44px;
+    padding-block: 0.55rem;
+  }
+  .rail-item, .rail-new { min-height: 44px; }
 }
 
 /* A pressed actuator travels; scale reads as shrinking, travel reads as a
