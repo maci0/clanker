@@ -505,6 +505,13 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   height: auto;
+  /* PF page chrome paints a glass frame on main-container; cabinet shell owns the look. */
+  --pf-v6-c-page__main-container--BorderColor: transparent;
+  --pf-v6-c-page__main-container--BorderBlockStartWidth: 0;
+  --pf-v6-c-page__main-container--BorderBlockEndWidth: 0;
+  --pf-v6-c-page__main-container--BorderInlineStartWidth: 0;
+  --pf-v6-c-page__main-container--BorderInlineEndWidth: 0;
+  --pf-v6-c-page__main-container--BackgroundColor: transparent;
 }
 #app-masthead.pf-v6-c-masthead {
   border-bottom: 1px solid var(--rule);
@@ -539,9 +546,16 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  --pf-v6-c-page__main-container--BorderColor: transparent;
+  --pf-v6-c-page__main-container--BorderBlockStartWidth: 0;
+  --pf-v6-c-page__main-container--BorderBlockEndWidth: 0;
+  --pf-v6-c-page__main-container--BorderInlineStartWidth: 0;
+  --pf-v6-c-page__main-container--BorderInlineEndWidth: 0;
+  --pf-v6-c-page__main-container--BackgroundColor: transparent;
   border: 0;
   background: transparent;
   backdrop-filter: none;
+  box-shadow: none;
 }
 @media (max-width: 34rem) {
   #app-masthead.pf-v6-c-masthead { padding: 0.7rem 1rem; }
