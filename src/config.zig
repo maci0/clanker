@@ -2116,6 +2116,18 @@ test "agent.global_instructions_file parses and defaults empty" {
     try std.testing.expectEqualStrings("", (Agent{}).global_instructions_file);
 }
 
+test "repeat tool thresholds reject empty low duplicate and non-integer values" {
+    try std.testing.expectError(error.InvalidRepeatToolThresholds, Config.validateRepeatToolThresholds(&.{}));
+    try std.testing.expectError(error.InvalidRepeatToolThresholds, Config.validateRepeatToolThresholds(&.{ 1, 3 }));
+    try std.testing.expectError(error.InvalidRepeatToolThresholds, Config.validateRepeatToolThresholds(&.{ 3, 3 }));
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const value = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"repeat_tool_thresholds\":[3,5.5]}", .{});
+    try std.testing.expectError(error.RepeatToolThresholdNotInteger, Config.parseAgent(arena, value));
+}
+
 test "config load and merge" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

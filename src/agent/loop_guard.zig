@@ -108,3 +108,16 @@ test "excluded calls are transparent and different calls reset" {
     try std.testing.expect((try guard.observe(arena, "write", "{}", &thresholds, &.{})) == null);
     try std.testing.expect((try guard.observe(arena, "read", "{\"a\":1,\"b\":2}", &thresholds, &.{})) == null);
 }
+
+test "configured thresholds fire once and stop after the maximum" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var guard: LoopGuard = .{};
+    const thresholds = [_]u32{ 3, 5 };
+    var fired: std.ArrayList(u32) = .empty;
+    for (0..7) |_| {
+        if (try guard.observe(arena, "read", "{}", &thresholds, &.{})) |event| try fired.append(arena, event.count);
+    }
+    try std.testing.expectEqualSlices(u32, &thresholds, fired.items);
+}

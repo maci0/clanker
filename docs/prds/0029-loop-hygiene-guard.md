@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft. No source files yet. Proposed: a pure module `src/agent/loop_guard.zig`
+Shipped. Implemented as a pure module `src/agent/loop_guard.zig`
 (canonicalization + chain tracking, no I/O, unit-tested directly) plus a small
 call into `Agent.executeCalls`'s existing per-call loop in
 `src/agent/loop.zig`. Inspired by
@@ -122,18 +122,18 @@ stuck).
 
 ## Acceptance criteria
 
-- [ ] Canonicalization is pure, unit-tested, and treats property-order
+- [x] Canonicalization is pure, unit-tested, and treats property-order
       permutations as identical.
-- [ ] Three identical consecutive calls (default thresholds) inject the
+- [x] Three identical consecutive calls (default thresholds) inject the
       short reminder before the next request; five inject the detailed one.
-- [ ] A different call in between resets the counter to 1.
-- [ ] An excluded tool call interleaved between two matching calls does not
+- [x] A different call in between resets the counter to 1.
+- [x] An excluded tool call interleaved between two matching calls does not
       reset the counter.
-- [ ] No reminder is injected, and no extra tokens spent, for a run that
+- [x] No reminder is injected, and no extra tokens spent, for a run that
       never repeats a call past the first threshold.
-- [ ] `repeat_tool_thresholds` validation rejects an empty list, a
+- [x] `repeat_tool_thresholds` validation rejects an empty list, a
       non-integer, a value below 2, and a duplicate at config load.
-- [ ] A denied call (plan mode or confirm decline) still advances the chain.
+- [x] A denied call (plan mode or confirm decline) still advances the chain.
 
 ## Open questions / future work
 
