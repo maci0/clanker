@@ -129,7 +129,8 @@
 /* Dark: #212121 / #171717. Slightly lighter than
    the old graphite so chat bubbles have room to breathe. */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root:not([data-theme="light"]):not([data-theme="latte"]):not([data-theme="tokyonight-day"]) {
+    color-scheme: dark;
     --paper: #212121;
     --bg: #171717;
     --surface: #212121;
@@ -166,6 +167,7 @@
   }
 }
 :root[data-theme="light"] {
+  color-scheme: light;
   --paper: #ffffff;
   --bg: #f7f7f8;
   --surface: #ffffff;
@@ -195,6 +197,7 @@
   --lift-high: 0 2px 8px rgba(0,0,0,0.08), 0 16px 40px -16px rgba(0,0,0,0.12);
 }
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --paper: #212121;
   --bg: #171717;
   --surface: #212121;
@@ -239,6 +242,7 @@
    for raised panels, overlay0 for borders, text and subtext0 for prose, mauve
    as the accent, green/yellow/red for held/limit/failed. */
 :root[data-theme="mocha"] {
+  color-scheme: dark;
   --paper: #1e1e2e;
   --bg: #181825;
   --surface: var(--paper);
@@ -270,6 +274,7 @@
    (mauve accent, green/yellow/red for held/limit/failed) over the light
    base/mantle/surface0 ramp instead of the dark one. */
 :root[data-theme="latte"] {
+  color-scheme: light;
   --paper: #eff1f5;
   --bg: #e6e9ef;
   --surface: var(--paper);
@@ -301,6 +306,7 @@
 
 /* Catppuccin Frappé, the softer-contrast dark member. */
 :root[data-theme="frappe"] {
+  color-scheme: dark;
   --paper: #303446;
   --bg: #292c3c;
   --surface: var(--paper);
@@ -330,6 +336,7 @@
 
 /* Catppuccin Macchiato, between Frappé and Mocha in contrast. */
 :root[data-theme="macchiato"] {
+  color-scheme: dark;
   --paper: #24273a;
   --bg: #1e2030;
   --surface: var(--paper);
@@ -360,6 +367,7 @@
 /* Tokyo Night (folke/tokyonight.nvim), roles from its own bg/bg_highlight/
    fg/fg_dark/comment/purple/green/magenta/red/yellow. */
 :root[data-theme="tokyonight"] {
+  color-scheme: dark;
   --paper: #1a1b26;
   --bg: #16161e;
   --surface: var(--paper);
@@ -391,6 +399,7 @@
    only diverge on --paper/--bg, matching tokyonight.nvim upstream where
    Storm and Night share every foreground colour. */
 :root[data-theme="tokyonight-storm"] {
+  color-scheme: dark;
   --paper: #24283b;
   --bg: #1f2335;
   --surface: var(--paper);
@@ -422,6 +431,7 @@
    Night upstream, not just lightened, so this does not just reuse Night's
    values with a swapped background. */
 :root[data-theme="tokyonight-day"] {
+  color-scheme: light;
   --paper: #e1e2e7;
   --bg: #d0d5e3;
   --surface: var(--paper);
@@ -455,6 +465,7 @@
    warnings and a legible red for danger so a failure still reads through the
    monochrome-green aesthetic. Matches the TUI theme.zig `hackerman`. */
 :root[data-theme="hackerman"] {
+  color-scheme: dark;
   --paper: #020a02;
   --bg: #000000;
   --surface: var(--paper);
@@ -1325,6 +1336,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
    button.pf-v6-c-button alone, and plain Color reads icon greys that stay
    light-theme unless remapped here. */
 button.pf-v6-c-button {
+  appearance: none;
+  -webkit-appearance: none;
   min-height: 40px; padding: 0.5rem 1.05rem;
   font-family: var(--sans); font-size: 14px; font-weight: 600;
   border: 0; border-radius: 999px; cursor: pointer;
