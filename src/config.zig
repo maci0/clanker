@@ -690,6 +690,12 @@ pub const Advisor = struct {
     timeout_ms: u32 = 5000,
 };
 
+pub const Hooks = struct {
+    enabled: bool = false,
+    config_path: []const u8 = "hooks.json",
+    default_timeout_ms: u32 = 60_000,
+};
+
 pub const Config = struct {
     agent_present: bool = false,
     /// Which keys inside `"agent"` were set when this Config was parsed.
@@ -707,6 +713,7 @@ pub const Config = struct {
     notify: Notify = .{},
     tui: Tui = .{},
     advisor: Advisor = .{},
+    hooks: Hooks = .{},
     ttsr: Ttsr = .{},
     kernel: Kernel = .{},
     chatrooms: Chatrooms = .{},
@@ -725,6 +732,7 @@ pub const Config = struct {
     notify_present: bool = false,
     tui_present: bool = false,
     advisor_present: bool = false,
+    hooks_present: bool = false,
     ttsr_present: bool = false,
     kernel_present: bool = false,
     /// Path of the file that set `default_provider`, as actually read. Null
@@ -858,8 +866,8 @@ pub const Config = struct {
             "default_provider", "agent",    "improve", "providers",
             "models",           "instance", "peers",   "notify",
             "chatrooms",        "modules",  "web",     "memory",
-            "serve",            "tui",      "advisor", "ttsr",
-            "kernel",
+            "serve",            "tui",      "advisor", "hooks",
+            "ttsr",             "kernel",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -879,6 +887,10 @@ pub const Config = struct {
         if (obj.get("advisor")) |v| {
             cfg.advisor = try parseAdvisor(v);
             cfg.advisor_present = true;
+        }
+        if (obj.get("hooks")) |v| {
+            cfg.hooks = try parseHooks(v);
+            cfg.hooks_present = true;
         }
         if (obj.get("ttsr")) |v| {
             cfg.ttsr = try parseTtsr(arena, v);
@@ -1821,6 +1833,22 @@ pub const Config = struct {
         return a;
     }
 
+    fn parseHooks(v: json.Value) !Hooks {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.HooksNotObject,
+        };
+        var hooks = Hooks{};
+        warnUnknownKeys(obj, &.{ "enabled", "config_path", "default_timeout_ms" }, "hooks");
+        if (obj.get("enabled")) |value| hooks.enabled = switch (value) {
+            .bool => |b| b,
+            else => return error.FieldNotBool,
+        };
+        if (obj.get("config_path")) |value| hooks.config_path = try jsonStr(value, "hooks.config_path");
+        if (obj.get("default_timeout_ms")) |value| hooks.default_timeout_ms = try jsonUnsigned(u32, value, "hooks.default_timeout_ms");
+        return hooks;
+    }
+
     fn parseImprove(arena: std.mem.Allocator, v: json.Value) !Improve {
         _ = arena;
         const obj = switch (v) {
@@ -1893,6 +1921,7 @@ pub const Config = struct {
         if (src.chatrooms_present) dst.chatrooms = src.chatrooms;
         if (src.memory_present) dst.memory = src.memory;
         if (src.advisor_present) dst.advisor = src.advisor;
+        if (src.hooks_present) dst.hooks = src.hooks;
         if (src.ttsr_present) dst.ttsr = src.ttsr;
         if (src.kernel_present) dst.kernel = src.kernel;
         if (src.modules_present) applyModulesFields(&dst.modules, src.modules, src.modules_fields);

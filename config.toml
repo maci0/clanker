@@ -430,6 +430,12 @@ max_history = 500
 # top_k = 5
 # threshold = 0.35
 
+[hooks]
+# Claude Code-compatible lifecycle hooks. Off means hooks.json is not read.
+enabled = false
+config_path = "hooks.json"
+default_timeout_ms = 60000
+
 [tui]
 # The REPL mascot: a small robot that runs around the input box. Purely
 # decorative and off by default, so every key here is commented out -- the
