@@ -98,6 +98,9 @@
   --pf-t--global--color--status--success--default: var(--ok-fill);
   --pf-t--global--color--status--danger--default: var(--danger);
   --pf-t--global--color--status--warning--default: var(--warn);
+  --pf-t--global--font--family--body: var(--sans);
+  --pf-t--global--font--family--heading: var(--sans);
+  --pf-t--global--font--family--mono: var(--mono);
 }
 
 /* Dark: #212121 / #171717. Slightly lighter than
@@ -643,7 +646,8 @@ button.model-pill:focus-visible {
 }
 button.chip-btn {
   font-family: var(--sans); font-size: 12px; font-weight: 500;
-  min-height: 32px; display: inline-flex; align-items: center;
+  min-height: 32px; min-width: 32px; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
   padding: 0.25rem 0.65rem; border-radius: 999px; cursor: pointer;
   background: transparent; color: var(--fg-muted); border: 1px solid transparent;
 }
@@ -785,9 +789,9 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
   font-family: var(--mono); font-size: 10px; font-weight: 700;
   letter-spacing: 0.08em; text-transform: uppercase;
   padding: 0.1rem 0.45rem; border-radius: var(--radius-sm);
-  background: color-mix(in srgb, #7965e3 14%, var(--surface-2));
-  color: color-mix(in srgb, #7965e3 88%, var(--fg));
-  border: 1px solid color-mix(in srgb, #7965e3 28%, var(--rule));
+  background: color-mix(in srgb, var(--violet) 14%, var(--surface-2));
+  color: var(--violet-text);
+  border: 1px solid color-mix(in srgb, var(--violet) 28%, var(--rule));
 }
 .ai-transparency-banner {
   display: flex; align-items: flex-start; gap: var(--space-3);
@@ -800,7 +804,10 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 .ai-transparency-banner__icon { flex: none; color: var(--warn); margin-top: 0.1rem; }
 .ai-transparency-banner__text { flex: 1 1 auto; font-size: 13px; line-height: 1.5; }
 .ai-transparency-banner__text strong { display: block; margin-bottom: 0.2rem; font-weight: 700; }
-.ai-transparency-dismiss { flex: none; min-height: 32px; padding: 0.25rem 0.55rem; }
+.ai-transparency-dismiss {
+  flex: none; min-height: 32px; min-width: 32px;
+  padding: 0.25rem 0.55rem; box-sizing: border-box;
+}
 .ai-review-notice {
   margin: var(--space-2) 0 0; padding: 0 0.15rem;
   font-size: 12px; line-height: 1.45; color: var(--fg-muted);
@@ -813,15 +820,15 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 .ai-robot-avatar {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   width: 2rem; height: 2rem; border-radius: var(--radius-sm);
-  color: color-mix(in srgb, #3d9b8f 82%, var(--fg));
-  background: color-mix(in srgb, #3d9b8f 12%, var(--surface-2));
-  border: 1px solid color-mix(in srgb, #3d9b8f 24%, var(--rule));
+  color: color-mix(in srgb, var(--chat-hue-2) 82%, var(--fg));
+  background: color-mix(in srgb, var(--chat-hue-2) 12%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--chat-hue-2) 24%, var(--rule));
 }
 .ai-answer-label {
   display: inline-flex; align-items: center; flex-wrap: wrap; gap: 0.35rem 0.5rem;
   font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--fg);
 }
-.ai-answer-label .icon { color: color-mix(in srgb, #7965e3 88%, var(--fg)); }
+.ai-answer-label .icon { color: var(--violet-text); }
 .turn-body .turn-assistant-head + .turn-events { margin-top: 0; }
 /* What was asked, set as the entry's heading: the text face, not mono,
    because it is prose and not a measurement. */
@@ -1305,8 +1312,10 @@ button.pf-v6-c-button.pf-m-secondary.pf-m-danger:hover,
 button.pf-v6-c-button.pf-m-secondary.pf-m-danger:focus-visible {
   background: var(--danger); color: var(--on-danger); border-color: var(--danger);
 }
+/* Keep hit area even when PF plain zeros padding; never drop below 32/44. */
 button.pf-v6-c-button.pf-m-plain.chip-btn {
-  min-height: auto; padding: 0; font-weight: 500;
+  min-height: 32px; min-width: 32px; box-sizing: border-box;
+  padding: 0.25rem 0.55rem; font-weight: 500;
   color: var(--fg-muted); background: transparent; border: 0; box-shadow: none;
 }
 
@@ -1660,20 +1669,28 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   background: var(--surface);
 }
 
-/* ── Sidebar ── */
+/* ── Sidebar ──
+   Collapse slides with transform (no width tween / layout thrash). Desktop
+   snaps the flex slot closed; mobile keeps a fixed drawer width and slides it. */
 .slack-sidebar {
-  width: 260px; min-width: 200px; max-width: 320px;
+  width: 260px; min-width: 200px; max-width: 320px; flex: 0 0 260px;
   background: var(--bg); border-right: 1px solid var(--rule);
   display: flex; flex-direction: column; overflow: hidden;
-  transition: width 0.2s ease;
+  transform: translateX(0);
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
-/* Children keep the sidebar's own floor width, so most of the collapse tween
-   clips them (cheap) instead of reflowing text every frame; at rest nothing
-   changes, since the sidebar never sits below its 200px min-width anyway.
-   The 1px margin-left snaps rather than tweening — invisible either way. */
 .slack-sidebar > * { min-width: 200px; }
 .slack-sidebar.is-collapsed {
-  width: 0; min-width: 0; margin-left: -1px; overflow: hidden;
+  transform: translateX(calc(-100% - 1px));
+  pointer-events: none;
+  border-right-color: transparent;
+}
+@media (min-width: 48.01rem) {
+  .slack-sidebar.is-collapsed {
+    flex-basis: 0; width: 0; min-width: 0; max-width: 0;
+    transform: none; overflow: hidden; margin: 0; padding: 0;
+    transition: none;
+  }
 }
 @media (prefers-reduced-motion: reduce) { .slack-sidebar { transition: none; } }
 .slack-sidebar-head {
@@ -1979,13 +1996,17 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
 /* 48rem, not 768px: every other breakpoint here is rem so zoomed-text users
    get consistent trigger points. */
 @media (max-width: 48rem) {
-  .slack-layout { height: calc(100vh - 48px); height: calc(100dvh - 48px); }
+  .slack-layout { height: calc(100vh - 48px); height: calc(100dvh - 48px); position: relative; }
   .slack-sidebar {
-    position: absolute; z-index: 30; height: 100%;
+    position: absolute; z-index: 30; height: 100%; left: 0; top: 0;
+    width: 260px; min-width: 260px; max-width: 260px; flex: none;
     box-shadow: 4px 0 16px rgba(0,0,0,.2);
   }
-  .slack-sidebar.is-collapsed { width: 0; box-shadow: none; }
-  .slack-sidebar:not(.is-collapsed) { width: 260px; }
+  .slack-sidebar.is-collapsed {
+    transform: translateX(-100%);
+    box-shadow: none;
+    width: 260px; min-width: 260px; max-width: 260px;
+  }
   .slack-sidebar-toggle { display: inline-flex; }
   .slack-channel-header { padding: 0.4rem 0.75rem; }
   .chat-composer { padding: 0.4rem 0.75rem 0.5rem; }
@@ -2350,9 +2371,26 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
 @media (pointer: coarse) {
   button, summary, input[type="text"], input[type="search"], input[type="number"],
   input[type="date"], select { min-height: 44px; }
+  button.chip-btn,
+  button.pf-v6-c-button.pf-m-plain.chip-btn,
+  .ai-transparency-dismiss {
+    min-height: 44px; min-width: 44px;
+  }
+  .rail-tab, .pf-v6-c-nav__link.rail-tab { min-height: 44px; }
+  .composer .toolbar #submit,
+  .composer .toolbar #cancel { min-height: 44px; }
   .rail-item, .rail-new, .chat-actions button, .chat-thread-bar button,
   .board-empty-slot button, .board-quick-add .board-add-actions button,
   .card-quick-actions button, .slack-btn-icon, .label-picker-item { min-width: 44px; min-height: 44px; height: 44px; }
+}
+/* Narrow viewports: primary composer actions stay hittable even when the
+   UA reports a fine pointer (many tablets). */
+@media (max-width: 40rem) {
+  .composer .toolbar #submit,
+  .composer .toolbar #cancel { min-height: 44px; }
+  button.chip-btn,
+  button.pf-v6-c-button.pf-m-plain.chip-btn,
+  .ai-transparency-dismiss { min-height: 40px; min-width: 40px; }
 }
 
 /* A pressed actuator travels; scale reads as shrinking, travel reads as a

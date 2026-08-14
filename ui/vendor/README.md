@@ -17,6 +17,14 @@ files; replace from upstream releases and update this table.
 | `patternfly.min.css` | [@patternfly/patternfly](https://www.npmjs.com/package/@patternfly/patternfly) `patternfly.min.css` | 6.6.1 | MIT |
 | `patternfly-addons.css` | [@patternfly/patternfly](https://www.npmjs.com/package/@patternfly/patternfly) `patternfly-addons.css` | 6.6.1 | MIT |
 
+`patternfly.min.css` is served without its upstream `@font-face` blocks: the
+cabinet UI uses system stacks (`--sans` / `--mono`), and the Red Hat webfont
+files are not vendored. Re-copying from npm must strip `@font-face` again (or
+vendor the fonts under `ui/vendor/assets/fonts/` and keep CSP `font-src 'self'`).
+
+`patternfly-addons.css` stays in the tree for optional utility classes but is
+not linked from `index.html` (unused `pf-v6-u-*` would add ~180KB for no gain).
+
 `three.module.min.js` imports `./three.core.min.js`; both must be updated
 together from the same Three.js release.
 

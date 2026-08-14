@@ -11515,7 +11515,7 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
 // Video input (Kimi Code parity) decodes a dropped recording through a blob:
 // URL <video> element and samples frames client-side, so media-src allows
 // blob:, the frames themselves ride the image path, which needs nothing.
-const webui_csp = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; media-src blob:; frame-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const webui_csp = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data:; media-src blob:; frame-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// The page, compressed when the client will take it. This is the response
 /// that blocks the first draw, so the 21 KB it used to send uncompressed was
