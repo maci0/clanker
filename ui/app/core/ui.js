@@ -290,7 +290,7 @@ export function upgradePfChip(el) {
 
 export function upgradePfChips(root) {
   var scope = root || document;
-  scope.querySelectorAll(".chip, .header-model").forEach(upgradePfChip);
+  scope.querySelectorAll("#instance-chip, #peers-chip, #session-chip, .chip, .header-model").forEach(upgradePfChip);
   return scope;
 }
 

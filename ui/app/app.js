@@ -286,7 +286,10 @@ function restoreDraft() {
 }
 
 function renderSessionChip() {
-  if (el.sessionChip) el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
+  if (el.sessionChip) {
+    el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
+    upgradePfChip(el.sessionChip);
+  }
   var sel = el.modelSelect ? el.modelSelect.value : "";
   var label = "";
   if (sel && sel.indexOf(" ") !== -1) label = sel.slice(sel.indexOf(" ") + 1).trim();

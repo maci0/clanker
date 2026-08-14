@@ -83,6 +83,21 @@
   /* A panel has depth on the backplane: offset and blur, never a halo. */
   --lift: 0 1px 2px rgba(24, 29, 26, 0.12), 0 6px 18px -8px rgba(24, 29, 26, 0.35);
   --lift-high: 0 2px 4px rgba(24, 29, 26, 0.15), 0 20px 44px -16px rgba(24, 29, 26, 0.45);
+
+  /* PatternFly theme bridge (step 8): clanker palette tokens drive PF globals. */
+  --pf-t--global--background--color--100: var(--bg);
+  --pf-t--global--background--color--200: var(--surface);
+  --pf-t--global--background--color--300: var(--surface-2);
+  --pf-t--global--background--color--control--default: var(--surface-2);
+  --pf-t--global--background--color--primary--default: var(--accent);
+  --pf-t--global--background--color--primary--hover: color-mix(in srgb, var(--accent) 88%, black);
+  --pf-t--global--background--color--backdrop--default: var(--scrim);
+  --pf-t--global--text--color--regular: var(--fg);
+  --pf-t--global--text--color--subtle: var(--fg-muted);
+  --pf-t--global--border--color--default: var(--border);
+  --pf-t--global--color--status--success--default: var(--ok-fill);
+  --pf-t--global--color--status--danger--default: var(--danger);
+  --pf-t--global--color--status--warning--default: var(--warn);
 }
 
 /* Dark: #212121 / #171717. Slightly lighter than
@@ -1232,6 +1247,100 @@ button.pf-v6-c-button.pf-m-plain.chip-btn {
   min-height: auto; padding: 0; font-weight: 500;
   color: var(--fg-muted); background: transparent; border: 0; box-shadow: none;
 }
+
+/* PatternFly forms (step 5): cabinet field look wins over PF base until step 9. */
+.pf-v6-c-form-control,
+input.pf-v6-c-form-control,
+textarea.pf-v6-c-form-control,
+select.pf-v6-c-form-control {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.pf-v6-c-form-control:focus-visible,
+input.pf-v6-c-form-control:focus-visible,
+textarea.pf-v6-c-form-control:focus-visible,
+select.pf-v6-c-form-control:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.pf-v6-c-form__label,
+label.pf-v6-c-form__label {
+  font-family: var(--sans);
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+.pf-v6-c-check.checkbox-row,
+label.pf-v6-c-check.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--fg);
+}
+
+/* PatternFly modals (step 6): overlay scrim + dialog box. */
+.overlay.pf-v6-c-backdrop {
+  background: var(--scrim);
+  padding: 10vh var(--space-5) var(--space-5);
+}
+.pf-v6-c-modal-box.overlay-box,
+dialog.slack-dialog.pf-v6-c-modal-box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--lift-high);
+}
+.pf-v6-c-modal__header.run-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.pf-v6-c-modal__title.run-detail-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+/* PatternFly alerts (step 7): toast notifications. */
+.toast.pf-v6-c-alert {
+  pointer-events: auto;
+  max-width: min(40rem, 90vw);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: var(--step-0);
+  box-shadow: var(--lift);
+}
+.toast.pf-v6-c-alert.pf-m-danger,
+.toast.pf-v6-c-alert[data-kind="bad"] {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.pf-v6-c-alert__title { display: block; }
+
+/* PatternFly labels (step 7): masthead status chips. */
+.chip.pf-v6-c-label,
+.header-model.pf-v6-c-label {
+  font-family: var(--mono);
+  font-size: var(--step--1);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.chip.pf-v6-c-label[data-state="live"],
+.chip.pf-v6-c-label.pf-m-success { color: var(--ok); }
+.chip.pf-v6-c-label[data-state="down"],
+.chip.pf-v6-c-label.pf-m-danger { color: var(--danger); }
+
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 ::selection { background: var(--accent); color: var(--on-accent); }

@@ -19,33 +19,39 @@ to [PatternFly 6](https://www.patternfly.org/) HTML/CSS. The app stays vanilla J
 | 2 | Page shell: `pf-v6-c-page`, Masthead, sidebar, `main` (`#main` unchanged) | done |
 | 3 | Rail navigation → PF Nav (vertical tabs, groups) | done |
 | 4 | Buttons (`primary`, `secondary`, `danger`, icon buttons) | done |
-| 5 | Forms (composer, filters, goal form, settings) | next |
-| 6 | Overlays (palette, help, dialogs, card detail) | |
-| 7 | Toasts, chips, status indicators | |
-| 8 | Theme bridge (PF dark + clanker palette themes) | |
-| 9 | Remove dead CSS from `app.css`; drop cabinet tokens | |
+| 5 | Forms (composer, filters, goal form, settings) | done |
+| 6 | Overlays (palette, help, dialogs, card detail) | done |
+| 7 | Toasts, chips, status indicators | done |
+| 8 | Theme bridge (PF dark + clanker palette themes) | done |
+| 9 | Remove dead CSS from `app.css`; drop cabinet tokens | partial |
 
-## Step 2 notes (page shell)
+## Runtime upgrades
 
-Target structure (IDs preserved on inner nodes):
+`upgradePfUi(document)` in `app.js` runs at init. It calls, in order:
 
-```html
-<div class="pf-v6-c-page" id="app-page">
-  <header class="pf-v6-c-masthead" id="app-masthead">…existing header children…</header>
-  <div class="pf-v6-c-page__sidebar pf-m-expanded" id="rail">…</div>
-  <main class="pf-v6-c-page__main" id="main" tabindex="-1">…</main>
-</div>
-```
+- `upgradePfButtons` — `pf-v6-c-button` + variant modifiers
+- `upgradePfForms` — `pf-v6-c-form`, `pf-v6-c-form-control`, `pf-v6-c-check`
+- `upgradePfOverlays` — `pf-v6-c-backdrop` / `pf-v6-c-modal` / `pf-v6-c-modal-box`
+- `upgradePfChips` — `pf-v6-c-label` on masthead status chips
 
-Bridge CSS will map `.shell` flex layout to PF page grid until rail collapse logic
-is rewritten for `pf-m-collapsed` on the sidebar.
+Dynamic UI (`toast`, `uiConfirm`, `uiPrompt`, `UI.field`, `renderStatusInto`) applies
+the same helpers when creating nodes.
 
-## Step 4 notes (buttons)
+Cabinet classes (`secondary`, `composer`, `overlay`, `chip`, etc.) remain until step 9
+finishes; bridge CSS in `app.css` keeps the cabinet look while PF classes are present.
 
-`upgradePfButtons(document)` runs at init for static markup in `index.html`.
-Dynamic buttons call `upgradePfButton` after label/icon content is set. Cabinet
-classes (`secondary`, `danger`, `chip-btn`) stay until step 9; PF adds
-`pf-v6-c-button` + `pf-m-*` modifiers and wraps labels in `pf-v6-c-button__text`.
+## Step 9 (remaining)
+
+Domain-specific surfaces still use cabinet CSS and are intentionally not PF-wrapped:
+
+- Transcript turns, run graph nodes, code blocks, board cards, arena lamps
+- Chat bubbles, markdown prose, syntax-highlighted output
+
+Safe to delete once each surface has PF markup and bridge rules are no longer needed:
+
+- Duplicate `button` / `button.secondary` rules superseded by `button.pf-v6-c-button` bridge
+- Raw `input` / `textarea` / `select` rules superseded by `.pf-v6-c-form-control` bridge
+- `.overlay` / `.overlay-box` rules superseded by modal bridge (after visual QA)
 
 ## Updating vendored PatternFly
 
