@@ -2,6 +2,7 @@
 // Imported by app.js during incremental ES-module split; app.js still ships its own
 // copy until the switch is flipped, so keep exports side-effect free.
 import { loadHljs, loadMermaid, copyText } from "../core/vendor.js";
+import { isSafeLinkUrl, splitRow, prettyJsonIfPossible } from "../core/utils.js";
 
 export var INLINE_RE = /(`[^`]+`)|(!\[[^\]\n]*\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
 export var CITATION_RE = /[a-zA-Z0-9_.\-\/]+\.(?:zig|ts|js|py|rs|go|md|json|toml|css|html|sh|yaml|yml):\d+(?::\d+)?/g;
@@ -81,10 +82,6 @@ export function appendCitedText(parent, text) {
   if (last < text.length) appendRunRefs(parent, text.slice(last));
 }
 
-export function isSafeLinkUrl(url) {
-  return /^(https?:|mailto:)/i.test(url);
-}
-
 export function inlineInto(parent, text) {
   while (text.length) {
     var m = INLINE_RE.exec(text);
@@ -155,11 +152,6 @@ export function tableRow(tr, cells, cellTag) {
     inlineInto(cell, c.trim());
     tr.appendChild(cell);
   });
-}
-
-export function splitRow(line) {
-  var t = line.trim().replace(/^\|/, "").replace(/\|$/, "");
-  return t.split("|");
 }
 
 /* Which lines open a block, asked once so the block dispatcher and the
@@ -307,10 +299,6 @@ export function renderMarkdown(text) {
     frag.appendChild(p2);
   }
   return frag;
-}
-
-export function prettyJsonIfPossible(text) {
-  try { return JSON.stringify(JSON.parse(text), null, 2); } catch (e) { return null; }
 }
 
 export function highlightInto(codeEl, lang, rawText) {
