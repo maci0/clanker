@@ -45,6 +45,7 @@ const theme = @embedFile("app/core/theme.js");
 const overlay = @embedFile("app/core/overlay.js");
 const search = @embedFile("app/core/search.js");
 const composer = @embedFile("app/core/composer.js");
+const ai_disclosure = @embedFile("app/core/ai-disclosure.js");
 const scroll = @embedFile("app/core/scroll.js");
 const dialog = @embedFile("app/core/dialog.js");
 const usage = @embedFile("app/core/usage.js");
@@ -81,7 +82,7 @@ fn encodedLen(comptime asset: []const u8) usize {
 // checked on its own, because each is sent in its own response.
 comptime {
     const overhead = "{\"ok\":true,\"content_type\":\"text/javascript; charset=utf-8\",\"body\":}".len;
-    for ([_][]const u8{ page, styles, script, preact_boot, fleet, arena_view, arena3d_view, board_view, compare_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, schedule_view, search_view, icons, ui, utils, vendor, chat, labels, goals, stream, theme, overlay, search, composer, scroll, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board }, [_][]const u8{ "index.html", "app.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/arena3d.js", "features/board.js", "features/compare.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/schedule.js", "features/search.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/scroll.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js" }) |asset, name| {
+    for ([_][]const u8{ page, styles, script, preact_boot, fleet, arena_view, arena3d_view, board_view, compare_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, schedule_view, search_view, icons, ui, utils, vendor, chat, labels, goals, stream, theme, overlay, search, composer, ai_disclosure, scroll, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board }, [_][]const u8{ "index.html", "app.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/arena3d.js", "features/board.js", "features/compare.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/schedule.js", "features/search.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/ai-disclosure.js", "core/scroll.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js" }) |asset, name| {
         const envelope = overhead + encodedLen(asset);
         if (envelope > lib.out_cap) @compileError(std.fmt.comptimePrint(
             "webui/{s} JSON-encodes to {d} bytes, over lib.zig's out_cap of {d}. Shrink it or raise out_cap.",
@@ -114,6 +115,7 @@ fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/core/overlay.js")) return .{ .body = overlay, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/search.js")) return .{ .body = search, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/composer.js")) return .{ .body = composer, .content_type = "text/javascript; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/core/ai-disclosure.js")) return .{ .body = ai_disclosure, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/scroll.js")) return .{ .body = scroll, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/dialog.js")) return .{ .body = dialog, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/usage.js")) return .{ .body = usage, .content_type = "text/javascript; charset=utf-8" };

@@ -132,7 +132,7 @@ export function transcriptMarkdown(transcriptEl, currentSessionMeta, sessionId) 
       lines.push("## " + said.trim(), "");
     }
     var body = turn.markdownSource || (answer ? answer.textContent : "");
-    if (body) lines.push(body.replace(/\s+$/, ""), "");
+    if (body) lines.push("### AI-assisted response", "", body.replace(/\s+$/, ""), "");
   });
   return lines.join("\n");
 }

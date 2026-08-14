@@ -775,6 +775,54 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
    where the match is, and that is not animated. */
 @media (prefers-reduced-motion: reduce) { .turn[data-found="true"] { animation: none; } }
 .turn-depth { display: none; }
+/* Red Hat AI design language: transparency, labels, chatbot avatar. */
+.ai-masthead-indicator {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  margin-left: 0.35rem; color: var(--fg-muted);
+}
+.ai-tag {
+  display: inline-flex; align-items: center;
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 0.1rem 0.45rem; border-radius: var(--radius-sm);
+  background: color-mix(in srgb, #7965e3 14%, var(--surface-2));
+  color: color-mix(in srgb, #7965e3 88%, var(--fg));
+  border: 1px solid color-mix(in srgb, #7965e3 28%, var(--rule));
+}
+.ai-transparency-banner {
+  display: flex; align-items: flex-start; gap: var(--space-3);
+  margin: 0 0 var(--space-3); padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius); border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--rule));
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+  color: var(--fg);
+}
+.ai-transparency-banner[hidden] { display: none; }
+.ai-transparency-banner__icon { flex: none; color: var(--warn); margin-top: 0.1rem; }
+.ai-transparency-banner__text { flex: 1 1 auto; font-size: 13px; line-height: 1.5; }
+.ai-transparency-banner__text strong { display: block; margin-bottom: 0.2rem; font-weight: 700; }
+.ai-transparency-dismiss { flex: none; min-height: 32px; padding: 0.25rem 0.55rem; }
+.ai-review-notice {
+  margin: var(--space-2) 0 0; padding: 0 0.15rem;
+  font-size: 12px; line-height: 1.45; color: var(--fg-muted);
+}
+.ai-review-notice__row { display: inline-flex; align-items: center; gap: 0.35rem; }
+.turn-assistant-head {
+  display: flex; align-items: center; gap: var(--space-3);
+  margin: 0 0 var(--space-2); max-width: min(42rem, 92%);
+}
+.ai-robot-avatar {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 2rem; height: 2rem; border-radius: var(--radius-sm);
+  color: color-mix(in srgb, #3d9b8f 82%, var(--fg));
+  background: color-mix(in srgb, #3d9b8f 12%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, #3d9b8f 24%, var(--rule));
+}
+.ai-answer-label {
+  display: inline-flex; align-items: center; flex-wrap: wrap; gap: 0.35rem 0.5rem;
+  font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--fg);
+}
+.ai-answer-label .icon { color: color-mix(in srgb, #7965e3 88%, var(--fg)); }
+.turn-body .turn-assistant-head + .turn-events { margin-top: 0; }
 /* What was asked, set as the entry's heading: the text face, not mono,
    because it is prose and not a measurement. */
 .turn-you {

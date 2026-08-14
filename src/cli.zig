@@ -7496,6 +7496,7 @@ const webui_asset_paths = [_][]const u8{
     "/webui/app.js",
     "/webui/preact-boot.js",
     "/webui/core/attachments.js",
+    "/webui/core/ai-disclosure.js",
     "/webui/core/chat.js",
     "/webui/core/composer.js",
     "/webui/core/dialog.js",

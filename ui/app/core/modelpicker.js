@@ -112,7 +112,7 @@ export function fallbackProviderValue() {
 }
 
 export function syncSubmitLabel() {
-  _el.submit.textContent = _el.enterSends.checked ? "Run (Enter)" : "Run (Ctrl+Enter)";
+  _el.submit.textContent = _el.enterSends.checked ? "Run with AI (Enter)" : "Run with AI (Ctrl+Enter)";
 }
 
 export function bindModelPicker(ctx) {

@@ -74,6 +74,13 @@ export var ICON_PATHS = {
     "M7 3.5a2 2 0 110 4 2 2 0 010-4z",
     "M7 16.5a2 2 0 110 4 2 2 0 010-4z",
     "M17 9.5a2 2 0 110 4 2 2 0 010-4z"],
+  // rh-ui-icon-ai-experience sparkle cluster (upper-left, square-ended rays).
+  aiSparkle: [
+    "M6 4l.9 2.4-2.1-1.4 2.4.2-1.3 2.1 2.1-1.3.2 2.4-1.4-2.1.9 2.4-.9-2.4-1.4 2.1.2-2.4-2.1-1.3 2.1 1.3-2.1.2-2.4-1.4 2.1z",
+    "M14 9h6v6h-6z",
+  ],
+  // Circle-i for persistent review notices.
+  aiInfo: ["M12 5.5a6.5 6.5 0 110 13 6.5 6.5 0 010-13z", "M12 11v5", "M12 8h.01"],
 };
 
 export function icon(name, size) {
