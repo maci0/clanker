@@ -11053,13 +11053,13 @@ fn handleMeshMap(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, 
     }
 
     const self_id = if (cfg.instance.id.len > 0) cfg.instance.id else if (cfg.instance.name.len > 0) cfg.instance.name else "self";
-    const now_ms: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000));
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     const built = mesh.buildMap(arena, .{
         .self_id = self_id,
         .self_name = cfg.instance.name,
         .self_working = anyRunLive(),
         .mesh_enabled = cfg.modules.mesh,
-        .now_ms = now_ms,
+        .now = now,
         .peers = peers.items,
         .rooms = rooms,
     }) catch {

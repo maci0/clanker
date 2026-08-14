@@ -588,6 +588,7 @@ function renderFloor(runs, roster){
 }
 
 var _meshTimer = null;
+var _meshTopo = "";
 
 function meshPos(nodes, i, w, h) {
   if (i === 0) return { x: w / 2, y: h / 2 };
@@ -596,13 +597,59 @@ function meshPos(nodes, i, w, h) {
   return { x: w / 2 + Math.cos(a) * w * 0.32, y: h / 2 + Math.sin(a) * h * 0.34 };
 }
 
+function meshTopoKey(data) {
+  var nodes = (data.nodes || []).map(function (n) { return n.id + "|" + (n.name || "") + "|" + (n.state || ""); }).join(";");
+  var links = (data.links || []).map(function (l) { return l.from + ">" + l.to; }).join(";");
+  var pulses = (data.pulses || []).map(function (p) { return p.from + ">" + p.to; }).sort().join(";");
+  return nodes + "#" + links + "#" + pulses;
+}
+
+function meshStatusText(data) {
+  var nodes = data.nodes || [];
+  var links = data.links || [];
+  var pulses = data.pulses || [];
+  var working = nodes.filter(function (n) { return n.working; }).length;
+  if (nodes.length <= 1 && !links.length) {
+    return "This clanker only. Add a [[peers]] entry to see others on the map.";
+  }
+  return nodes.length + " node" + (nodes.length === 1 ? "" : "s") +
+    (links.length ? ", " + links.length + " link" + (links.length === 1 ? "" : "s") : "") +
+    (working ? ", " + working + " working" : "") +
+    (pulses.length ? ", " + pulses.length + " talking" : "") +
+    (data.mesh ? "" : ". Mesh module off; showing configured peers.");
+}
+
+function patchMeshWorking(el, data, statusEl) {
+  var byId = Object.create(null);
+  (data.nodes || []).forEach(function (n) { byId[n.id] = n; });
+  var groups = el.querySelectorAll("[data-node]");
+  for (var i = 0; i < groups.length; i++) {
+    var g = groups[i];
+    var n = byId[g.getAttribute("data-node")];
+    var working = !!(n && n.working);
+    g.classList.toggle("mesh-node--working", working);
+    var meta = g.querySelector(".mesh-node-meta");
+    if (meta && n) {
+      meta.textContent = working ? "working" : (n.state === "self" ? "home" : (n.path || n.state));
+    }
+  }
+  if (statusEl) statusEl.textContent = meshStatusText(data);
+}
+
 function renderMeshMap(el, data, statusEl) {
   if (!el) return;
   if (!data || data.ok === false) {
+    _meshTopo = "";
     el.innerHTML = "";
     if (statusEl) statusEl.textContent = (data && data.error) || "Mesh map unavailable.";
     return;
   }
+  var topo = meshTopoKey(data);
+  if (topo === _meshTopo && el.querySelector("svg")) {
+    patchMeshWorking(el, data, statusEl);
+    return;
+  }
+  _meshTopo = topo;
   var nodes = data.nodes || [];
   var links = data.links || [];
   var pulses = data.pulses || [];
@@ -621,25 +668,26 @@ function renderMeshMap(el, data, statusEl) {
     var a = pos[l.from];
     var b = pos[l.to];
     if (!a || !b) return;
-    var live = pulses.some(function (p) {
-      return (p.from === l.from && p.to === l.to) || (p.from === l.to && p.to === l.from);
-    });
-    var id = "mesh-wire-" + i;
-    parts.push('<path id="' + id + '" class="mesh-wire' + (live ? " mesh-wire--live" : "") +
-      '" d="M' + a.x.toFixed(1) + " " + a.y.toFixed(1) + " L" + b.x.toFixed(1) + " " + b.y.toFixed(1) + '"/>');
+    var pulse = null;
     pulses.forEach(function (p) {
-      if (!((p.from === l.from && p.to === l.to) || (p.from === l.to && p.to === l.from))) return;
-      var reverse = p.from === l.to;
-      parts.push('<circle class="mesh-pulse" r="4.5"><animateMotion dur="1.6s" repeatCount="indefinite" rotate="auto" keyPoints="' +
-        (reverse ? "1;0" : "0;1") + '" keyTimes="0;1" calcMode="linear"><mpath href="#' + id + '"/></animateMotion></circle>');
+      if ((p.from === l.from && p.to === l.to) || (p.from === l.to && p.to === l.from)) pulse = p;
     });
+    var reverse = pulse && pulse.from === l.to;
+    var id = "mesh-wire-" + i;
+    parts.push('<path id="' + id + '" class="mesh-wire' + (pulse ? " mesh-wire--live" : "") +
+      (reverse ? " mesh-wire--rev" : "") +
+      '" d="M' + a.x.toFixed(1) + " " + a.y.toFixed(1) + " L" + b.x.toFixed(1) + " " + b.y.toFixed(1) + '"/>');
+    if (!pulse) return;
+    parts.push('<circle class="mesh-pulse" r="4.5"><animateMotion dur="1.6s" repeatCount="indefinite" rotate="auto" keyPoints="' +
+      (reverse ? "1;0" : "0;1") + '" keyTimes="0;1" calcMode="linear"><mpath href="#' + id + '"/></animateMotion></circle>');
   });
   nodes.forEach(function (n) {
     var p = pos[n.id];
     if (!p) return;
     var r = n.state === "self" ? 22 : 16;
     var cls = "mesh-node" + (n.state === "self" ? " mesh-node--self" : "") + (n.working ? " mesh-node--working" : "");
-    parts.push('<g class="' + cls + '">');
+    parts.push('<g class="' + cls + '" data-node="' + escapeHtml(n.id) + '">');
+    parts.push('<circle class="mesh-node-halo" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="' + (r * 1.75).toFixed(1) + '"/>');
     parts.push('<circle class="mesh-node-lamp" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="' + r + '"/>');
     parts.push('<text class="mesh-node-label" x="' + p.x.toFixed(1) + '" y="' + (p.y + r + 16).toFixed(1) + '">' + escapeHtml(n.name || n.id) + "</text>");
     parts.push('<text class="mesh-node-meta" x="' + p.x.toFixed(1) + '" y="' + (p.y + r + 28).toFixed(1) + '">' +
@@ -648,15 +696,7 @@ function renderMeshMap(el, data, statusEl) {
   });
   parts.push("</svg>");
   el.innerHTML = parts.join("");
-  var live = pulses.length;
-  var working = nodes.filter(function (n) { return n.working; }).length;
-  if (statusEl) {
-    statusEl.textContent = nodes.length + " node" + (nodes.length === 1 ? "" : "s") +
-      (links.length ? ", " + links.length + " link" + (links.length === 1 ? "" : "s") : "") +
-      (working ? ", " + working + " working" : "") +
-      (live ? ", " + live + " talking" : "") +
-      (data.mesh ? "" : ". Mesh module off; showing configured peers.");
-  }
+  if (statusEl) statusEl.textContent = meshStatusText(data);
 }
 
 function observeFloorTheme() {

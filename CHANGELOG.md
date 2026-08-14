@@ -17,6 +17,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   variables, evaluate, disconnect).
 - The `kernel` tool's Python path also has a WASI one-shot sandbox
   (`./scripts/setup-python-wasi.sh`) that is not the persist path.
+- Fleet Mesh map: each clanker is a lamp on `/#fleet`. Wires appear
+  after a talk; a live talk sends a directed glow along the wire.
+  `GET /api/mesh/map` feeds it (even when `modules.mesh` is off).
 
 ## [0.1.0] - 2026-08-14
 

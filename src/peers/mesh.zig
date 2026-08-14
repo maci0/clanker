@@ -214,8 +214,10 @@ pub const MapInput = struct {
     self_name: []const u8,
     self_working: bool,
     mesh_enabled: bool,
-    now_ms: i64,
-    pulse_window_ms: i64 = 15_000,
+    /// Unix seconds. Chat `last_ts` is seconds (`chatrooms.sendMessageOpts`),
+    /// not milliseconds: a ms clock here would make every pulse look stale.
+    now: i64,
+    pulse_window: i64 = 15,
     peers: []const MapPeer,
     rooms: []const MapRoom,
 };
@@ -300,7 +302,8 @@ pub fn buildMap(arena: std.mem.Allocator, in: MapInput) !Map {
         const listener = if (std.mem.eql(u8, speaker, a)) b else a;
         const n: u32 = if (room.messages == 0) 1 else @intCast(@min(room.messages, std.math.maxInt(u32)));
         try addLink(arena, &links, speaker, listener, n, room.last_ts);
-        if (room.last_ts > 0 and in.now_ms - room.last_ts <= in.pulse_window_ms) {
+        const age = if (in.now >= room.last_ts) in.now - room.last_ts else 0;
+        if (room.last_ts > 0 and age <= in.pulse_window) {
             try pulses.append(arena, .{ .from = speaker, .to = listener, .ts = room.last_ts });
             for (nodes.items) |*node| {
                 if (std.mem.eql(u8, node.id, speaker) and !std.mem.eql(u8, node.id, in.self_id))
@@ -450,16 +453,16 @@ test "mesh map is self plus peers, wires from dm rooms, pulse when recent" {
         .{ .name = "bob" },
     };
     const rooms = [_]MapRoom{
-        .{ .room = "dm:me|alice", .messages = 4, .last_from = "alice", .last_ts = 1000 },
-        .{ .room = "ops", .messages = 2, .last_from = "bob", .last_ts = 50 },
+        .{ .room = "dm:me|alice", .messages = 4, .last_from = "alice", .last_ts = 1_700_000_010 },
+        .{ .room = "ops", .messages = 2, .last_from = "bob", .last_ts = 1_699_999_000 },
     };
     const map = try buildMap(arena, .{
         .self_id = "self-1",
         .self_name = "me",
         .self_working = true,
         .mesh_enabled = false,
-        .now_ms = 1000,
-        .pulse_window_ms = 200,
+        .now = 1_700_000_015,
+        .pulse_window = 15,
         .peers = &peers,
         .rooms = &rooms,
     });

@@ -3,9 +3,9 @@
 ## Status
 
 In progress. Design is locked. Phase 1 codec, admission, leave-vs-unreachable,
-simultaneous-open, and CHAT id-dedup live in `src/peers/mesh.zig` (host
-tests, no NIC). Serve listener, `ck_mesh`, CLI, and chat fan-out are still
-open.
+simultaneous-open, CHAT id-dedup, and the Fleet lamp map (`GET /api/mesh/map`)
+live in `src/peers/mesh.zig` (host tests, no NIC). Serve listener, `ck_mesh`,
+CLI, and chat fan-out are still open.
 
 Single source of truth once built: `src/peers/mesh.zig` (host-side, the
 same "thin guest, honest host" shape as `src/peers/chatrooms.zig`) plus
@@ -373,10 +373,11 @@ Anyone who has seen the `FILE_OFFER` may `FILE_REQUEST`. Offers are
 mesh-visible, not directed, unless a later revision adds `to`.
 
 **Local HTTP control plane** (serve, `modules.mesh` on; 404 naming
-the flag when off):
+the flag when off, except `/api/mesh/map`):
 
 | Method | Path | Role |
 |---|---|---|
+| `GET` | `/api/mesh/map` | Fleet lamp map: self + `[[peers]]` + chat wires + recent talk pulses. Served even when `modules.mesh` is off so HTTP peers still show. Chat `last_ts` is unix seconds. |
 | `GET` | `/api/mesh/status` | members + listen + admission + bind warnings |
 | `POST` | `/api/mesh/join` | `{"address":"host:port"}` (operator; no guest host restriction) |
 | `POST` | `/api/mesh/leave` | `{"peer_id":"…"}` or `{}` for self-leave |
@@ -602,7 +603,7 @@ for each other cannot join. That is the default working. `open` or
 | Incoming file would exceed `max_file_bytes` or disk | `FILE_NAK`. Partial file under the mesh root is deleted. |
 | Incoming file name collides with a local path | Written under `state/mesh/<peer-id>/files/…`, never over the local file. |
 | Continue a shared session whose home is unreachable | Refused `home_unreachable`. Replica stays read-only. |
-| Mesh module off | `/api/mesh/*` 404s naming `modules.mesh`. Tools / `ck_mesh` refuse with the same key and "restart serve". Board-style actionable text, not a bare `SandboxDenied`. |
+| Mesh module off | Join/leave/status/relay 404 naming `modules.mesh`. `GET /api/mesh/map` still answers so Fleet can draw HTTP peers. Tools / `ck_mesh` refuse with the same key and "restart serve". Board-style actionable text, not a bare `SandboxDenied`. |
 | Bind address is public and TLS is off (v1) | Allowed. Doctor and `mesh status` warn. |
 | Serve hot-reload | Sockets drop. Members go `unreachable` and are redialed from `members.json`. |
 

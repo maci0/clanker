@@ -3864,7 +3864,8 @@ h2#session-title {
 .fleet-skeleton { height: 2.4rem; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--rule); margin: var(--space-2) 0; }
 .fleet-skeleton--sm { height: 1.2rem; max-width: 18rem; }
 
-/* Mesh map: each clanker is a lamp. Wires light in the talk direction. */
+/* Mesh map: each clanker is a cabinet lamp. Wires are traces; a live
+   talk sends a bead from the speaker toward the listener. */
 .mesh-map-section { min-width: 0; }
 .mesh-map-section h3 {
   font-family: var(--sans);
@@ -3881,7 +3882,7 @@ h2#session-title {
   border: 1px solid var(--rule);
   border-radius: var(--radius-lg);
   background:
-    radial-gradient(ellipse at 50% 48%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 58%),
+    radial-gradient(ellipse at 50% 48%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 58%),
     var(--surface);
   overflow: hidden;
 }
@@ -3892,10 +3893,26 @@ h2#session-title {
   stroke-width: 1.6;
   stroke-linecap: round;
 }
-.mesh-wire--live { stroke: color-mix(in srgb, var(--accent) 55%, var(--rule)); stroke-width: 2.2; }
+.mesh-wire--live {
+  stroke: color-mix(in srgb, var(--accent) 70%, var(--rule));
+  stroke-width: 2.4;
+  stroke-dasharray: 5 9;
+  animation: mesh-wire-flow 1.1s linear infinite;
+}
+.mesh-wire--rev { animation-direction: reverse; }
+@keyframes mesh-wire-flow {
+  to { stroke-dashoffset: -14; }
+}
 .mesh-pulse {
   fill: var(--accent);
-  filter: drop-shadow(0 0 6px var(--accent));
+  filter: drop-shadow(1px 2px 5px color-mix(in srgb, var(--accent) 75%, transparent));
+}
+.mesh-node-halo {
+  fill: var(--ok-fill);
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  pointer-events: none;
 }
 .mesh-node-lamp {
   fill: url(#mesh-lamp-idle);
@@ -3903,9 +3920,13 @@ h2#session-title {
   stroke-width: 1.2;
 }
 .mesh-node--self .mesh-node-lamp { fill: url(#mesh-lamp-self); }
-.mesh-node--working .mesh-node-lamp {
-  fill: url(#mesh-lamp-live);
-  filter: drop-shadow(0 0 10px var(--ok-fill));
+.mesh-node--working .mesh-node-lamp { fill: url(#mesh-lamp-live); }
+.mesh-node--working .mesh-node-halo {
+  animation: mesh-lamp-glow 1.8s ease-in-out infinite;
+}
+@keyframes mesh-lamp-glow {
+  0%, 100% { opacity: 0.2; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.32); }
 }
 .mesh-node-label {
   font-family: var(--mono);
@@ -3925,7 +3946,8 @@ h2#session-title {
 }
 @media (prefers-reduced-motion: reduce) {
   .mesh-pulse { display: none; }
-  .mesh-node--working .mesh-node-lamp { filter: none; }
+  .mesh-wire--live { animation: none; stroke-dasharray: none; }
+  .mesh-node--working .mesh-node-halo { animation: none; opacity: 0.35; }
 }
 @media (max-width: 720px) {
   .mesh-map, .mesh-map svg { min-height: 16rem; height: 16rem; }
