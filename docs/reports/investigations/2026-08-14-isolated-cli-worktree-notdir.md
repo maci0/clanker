@@ -4,11 +4,12 @@
 
 - **Question:** A plain clank run unexpectedly entered a worktree and emitted NotDir while linking shared paths.
 - **Finding:** `isolated_cli` enabled the worktree; a symlinked `state` exposed a provisioning defect.
-- **Resolution:** Configuration workaround confirmed; code fix tracked separately.
+- **Resolution:** The configured isolation behavior was retained; the
+  symlink-safe provisioning defect was fixed and tested.
 
 ## Status
 
-Confirmed.
+Resolved.
 
 ## Trigger and scope
 
@@ -28,7 +29,9 @@ Two independent causes were confirmed. `isolated_cli = true` deliberately turns 
 ## Resolution or handoff
 
 - To run in the checkout now, pass `--no-worktree` or set `isolated_cli = false`.
-- The code defect is tracked in `docs/reports/bugs/2026-08-14-worktree-state-symlink-notdir.md`; change `linkCheckoutState` to use `ensure_dir.ensureDir`.
+- `linkCheckoutState` now uses `ensure_dir.ensureDir` for shared runtime
+  directories and has a regression test that provisions a symlinked checkout
+  `state/` and verifies its worktree links.
 
 ## References
 

@@ -4,11 +4,12 @@
 
 - **What failed:** `linkCheckoutState` uses `createDirPath` on `state` even when it is a symlink to a directory, yielding `NotDir` and aborting all shared-path links.
 - **Impact:** Isolated runs can split host-side state from the checkout.
-- **Resolution:** Open.
+- **Resolution:** Resolved in the worktree provisioning path and covered by a
+  regression test.
 
 ## Status
 
-Confirmed; fix pending.
+Resolved and verified.
 
 
 ## Symptom and impact
@@ -27,11 +28,17 @@ An isolated plain run warns `could not link the checkout's shared paths into the
 
 ## Resolution
 
-Open. Replace the direct `createDirPath` call in `linkCheckoutState` with `ensure_dir.ensureDir`, and add a test that exercises a symlinked checkout `state` while provisioning a run worktree.
+`linkCheckoutState` now delegates directory creation to
+`ensure_dir.ensureDir`, which follows a final symlink when it resolves to a
+directory. The `linkCheckoutStateAt` regression test provisions a temporary
+checkout whose `state/` is a symlink, then verifies that its worktree links
+the shared directories and an optional local file.
 
 ## Verification
 
-After the fix, an isolated run with symlinked `state` should emit no `NotDir` warning and should link all existing checkout shared entries before it starts.
+The regression test and the full unit suite pass with `zig build test`.
+`zig build`, `zig build tools`, `zig build e2e`, and repository-wide
+`zig fmt --check` also pass.
 
 ## Follow-up
 

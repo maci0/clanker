@@ -19,6 +19,7 @@
 
 const std = @import("std");
 const log = @import("../util/log.zig");
+const ensure_dir = @import("../util/ensure_dir.zig");
 /// For `shared_prefixes`: the list of untracked, checkout-wide paths is one
 /// list, shared with the sandbox that routes them, so the links here and the
 /// routing there cannot drift into disagreeing about what is shared.
@@ -313,6 +314,17 @@ fn linkCheckoutState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const 
     const root = try currentPath(gpa, io);
     defer gpa.free(root);
 
+    try linkCheckoutStateAt(gpa, io, std.Io.Dir.cwd(), root, worktree_path);
+}
+
+fn linkCheckoutStateAt(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    checkout: std.Io.Dir,
+    root: []const u8,
+    worktree_path: []const u8,
+) !void {
+    try provisionSharedDirectories(checkout, io);
     for (host.shared_prefixes) |name| {
         // `state/`, `.local/`, `.agents/`, and `.claude/` are directories the harness
         // creates into. They must be real in the checkout before the link is
@@ -320,21 +332,29 @@ fn linkCheckoutState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const 
         // write is routed to the checkout by Sandbox.shared_root, and native
         // session/run writes later create a private state/ in the worktree.
         // The two readers then disagree about the same run.
-        if (sharedDirectory(name)) try std.Io.Dir.cwd().createDirPath(io, name);
         // Optional files (.env and config.local.*) are not created merely to
         // make a worktree. Link them only when the checkout already has one.
-        std.Io.Dir.cwd().access(io, name, .{}) catch continue;
+        checkout.access(io, name, .{}) catch continue;
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
         const link_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
         defer gpa.free(link_path);
-        const is_dir = sharedDirectory(name) or isDir(io, name);
-        std.Io.Dir.cwd().symLink(io, target, link_path, .{ .is_directory = is_dir }) catch |err| switch (err) {
+        const is_dir = sharedDirectory(name) or isDir(checkout, io, name);
+        checkout.symLink(io, target, link_path, .{ .is_directory = is_dir }) catch |err| switch (err) {
             // Tracked, so `git worktree add` already checked it out and the
             // worktree's own copy is the right one to use.
             error.PathAlreadyExists => {},
             else => log.log(.warn, "isolated run: could not link {s} into the worktree: {s}", .{ name, @errorName(err) }),
         };
+    }
+}
+
+/// Creates the checkout-wide directories before a run worktree points at them.
+/// `state/` can itself be a symlink to durable shared storage, so this must
+/// follow the final component rather than treating the link as `NotDir`.
+fn provisionSharedDirectories(base: std.Io.Dir, io: std.Io) !void {
+    for (host.shared_prefixes) |name| {
+        if (sharedDirectory(name)) try ensure_dir.ensureDir(base, io, name);
     }
 }
 
@@ -376,8 +396,49 @@ test "every shared directory is provisioned for native worktree I/O" {
     }
 }
 
-fn isDir(io: std.Io, path: []const u8) bool {
-    const st = std.Io.Dir.cwd().statFile(io, path, .{}) catch return false;
+test "shared worktree provisioning links a symlinked state directory" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDir(io, "durable-state", .default_dir);
+    try tmp.dir.symLink(io, "durable-state", "state", .{ .is_directory = true });
+    try std.testing.expectError(error.NotDir, tmp.dir.createDirPath(io, "state"));
+    try tmp.dir.createDir(io, "worktree", .default_dir);
+    try tmp.dir.writeFile(io, .{ .sub_path = ".env", .data = "KEY=value\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data = "[agent]\n" });
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+    const worktree_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/worktree", .{root_buf[0..root_len]});
+    defer std.testing.allocator.free(worktree_path);
+
+    try linkCheckoutStateAt(
+        std.testing.allocator,
+        io,
+        tmp.dir,
+        root_buf[0..root_len],
+        worktree_path,
+    );
+
+    for ([_][]const u8{ "state", ".local", ".agents", ".claude" }) |name| {
+        const path = try std.fmt.allocPrint(std.testing.allocator, "worktree/{s}", .{name});
+        defer std.testing.allocator.free(path);
+        const st = try tmp.dir.statFile(io, path, .{});
+        try std.testing.expectEqual(std.Io.File.Kind.directory, st.kind);
+    }
+
+    const env = try tmp.dir.readFileAlloc(io, "worktree/.env", std.testing.allocator, .limited(64));
+    defer std.testing.allocator.free(env);
+    try std.testing.expectEqualStrings("KEY=value\n", env);
+
+    const local_config = try tmp.dir.readFileAlloc(io, "worktree/config.local.toml", std.testing.allocator, .limited(64));
+    defer std.testing.allocator.free(local_config);
+    try std.testing.expectEqualStrings("[agent]\n", local_config);
+}
+
+fn isDir(base: std.Io.Dir, io: std.Io, path: []const u8) bool {
+    const st = base.statFile(io, path, .{}) catch return false;
     return st.kind == .directory;
 }
 

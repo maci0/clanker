@@ -5,6 +5,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- Isolated `clanker run` now provisions a checkout `state/` path that is a
+  symlink to shared durable storage. Previously Zig reported `NotDir` before
+  any shared paths were linked, leaving host-side state private to the
+  worktree while sandboxed tools used the checkout state.
+
 ### Added
 
 - Persistent Python eval kernel (PRD 0016): a session-scoped `python3`

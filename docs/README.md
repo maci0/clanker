@@ -271,9 +271,10 @@ needed:
 - **The harness itself** reads roughly 44 hardcoded relative `state/...` paths
   against the process cwd, so `linkCheckoutState` symlinks these entries into the
   worktree and native I/O follows them. It creates the checkout's shared runtime
-  directories before linking, so a fresh checkout cannot split one run between a
-  sandbox-created checkout `state/` and a native-created worktree `state/`. The
-  sandbox never traverses those links, because its half routes around them.
+  directories before linking, following a final symlink such as a durable
+  checkout `state/`, so a fresh checkout cannot split one run between a
+  sandbox-created checkout `state/` and a native-created worktree `state/`.
+  The sandbox never traverses those links, because its half routes around them.
 
 `zig-out/` and `.zig-cache/` are untracked but stay per-worktree: builds *write*
 there, and a shared `zig-out` lets a worktree's build clobber the binaries the
