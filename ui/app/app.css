@@ -97,6 +97,9 @@
   --pf-t--global--background--color--action--plain--default: transparent;
   --pf-t--global--background--color--action--plain--hover: var(--surface-2);
   --pf-t--global--background--color--action--plain--clicked: var(--surface-2);
+  --pf-t--global--background--color--action--plain--alt--hover: var(--surface-2);
+  --pf-t--global--background--color--action--plain--alt--clicked: var(--surface-2);
+  --pf-t--global--background--color--600: color-mix(in srgb, var(--fg) 12%, transparent);
   --pf-t--global--text--color--regular: var(--fg);
   --pf-t--global--text--color--subtle: var(--fg-muted);
   --pf-t--global--text--color--100: var(--fg);
@@ -703,7 +706,8 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 /* Legend plates down the rail: engraved caps in mono, a lamp beside the
    channel that is engaged. */
 .rail-tab,
-.pf-v6-c-nav__link.rail-tab {
+.pf-v6-c-nav__link.rail-tab,
+button.pf-v6-c-nav__link.rail-tab {
   /* Own the PF nav link tokens so theme flips do not leave light greys. */
   --pf-v6-c-nav__link--Color: var(--fg-muted);
   --pf-v6-c-nav__link--hover--Color: var(--fg);
@@ -715,25 +719,44 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
   width: 100%; text-align: left; cursor: pointer;
   min-height: 32px; padding: 0.35rem 0.6rem;
   border: 1px solid transparent; border-radius: var(--radius);
-  background: transparent; color: var(--fg-muted);
+  background-color: transparent;
+  background-image: none;
+  color: var(--fg-muted);
   font-family: var(--sans); font-size: 13px; font-weight: 500;
   /* Engraved into the backplane, not mounted on it: the base button's bevel
      would turn eight quiet channel names into eight raised plates. */
   box-shadow: none;
 }
 .rail-tab:hover,
-.pf-v6-c-nav__link.rail-tab:hover { background: var(--surface-2); color: var(--fg); }
+.pf-v6-c-nav__link.rail-tab:hover,
+button.pf-v6-c-nav__link.rail-tab:hover {
+  background-color: var(--surface-2);
+  color: var(--fg);
+}
 .rail-tab:focus-visible,
 .pf-v6-c-nav__link.rail-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+/* Selected channel: longhand + !important so PF .pf-m-current cannot leave
+   light greys on dark rails (same class of leak as plain/primary buttons). */
 .rail-tab[aria-selected="true"],
-.pf-v6-c-nav__link.rail-tab.pf-m-current {
-  color: var(--fg);
+.pf-v6-c-nav__link.rail-tab.pf-m-current,
+button.pf-v6-c-nav__link.rail-tab.pf-m-current,
+.rail-tab[aria-selected="true"]:hover,
+.pf-v6-c-nav__link.rail-tab.pf-m-current:hover,
+button.pf-v6-c-nav__link.rail-tab.pf-m-current:hover {
+  --pf-v6-c-nav__link--Color: var(--fg);
+  --pf-v6-c-nav__link--m-current--Color: var(--fg);
+  --pf-v6-c-nav__link--BackgroundColor: var(--surface-2);
+  --pf-v6-c-nav__link--m-current--BackgroundColor: var(--surface-2);
+  color: var(--fg) !important;
+  background-color: var(--surface-2) !important;
+  background-image: none !important;
   font-weight: 600;
-  background: var(--surface-2);
   border-color: var(--rule);
 }
-.rail-tab[aria-selected="true"]:hover,
-.pf-v6-c-nav__link.rail-tab.pf-m-current:hover { background: var(--surface-2); }
+.rail-tab .pf-v6-c-nav__link-text,
+.pf-v6-c-nav__link.rail-tab .pf-v6-c-nav__link-text {
+  color: inherit;
+}
 .rail-tab:active:not(:disabled),
 .pf-v6-c-nav__link.rail-tab:active:not(:disabled) { transform: translateY(1px); }
 @media (prefers-reduced-motion: reduce) {

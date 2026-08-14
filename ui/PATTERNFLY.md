@@ -65,6 +65,11 @@ stays after PF in document order so token remaps win.
 
 Masthead `chip-btn` controls and `#submit`/`#cancel` stay off `pf-v6-c-button`:
 PF brand/plain colours were beating `--accent` / `--fg-muted` across themes.
+Selected rail tabs force `--fg` / `--surface-2` over PF `.pf-m-current` (which
+reads `action--plain--alt--clicked`).
+
+Full PatternFly subsetting is deferred: `media=print` → `all` already clears
+first-paint cost; carving the min CSS is a separate change.
 
 ## Updating vendored PatternFly
 

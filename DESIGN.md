@@ -16,20 +16,27 @@ colors:
   warn: "#b45309"
   danger: "#dc2626"
   violet: "#7c3aed"
+  code-bg: "#0d1117"
+  code-fg: "#e6edf3"
+  lamp-highlight: "#ffffff"
+  shadow: "rgba(0,0,0,0.08)"
+  shadow-soft: "rgba(0,0,0,0.06)"
+  shadow-deep: "rgba(0,0,0,0.12)"
   dark-bg: "#171717"
   dark-surface: "#212121"
+  dark-surface-2: "#2f2f2f"
   dark-fg: "#ececec"
   dark-fg-muted: "#9ca3af"
   dark-accent: "#7aa7ff"
 typography:
-  body:
-    fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
-    fontSize: "0.9375rem"
-    fontWeight: 400
-    lineHeight: 1.55
-  step0: "0.8125rem"
-  step1: "0.9375rem"
-  step2: "1.0625rem"
+  micro:
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+    fontSize: "9px"
+    fontWeight: 600
+  caption:
+    fontFamily: "ui-sans-serif, system-ui, sans-serif"
+    fontSize: "10px"
+    fontWeight: 500
   label:
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
     fontSize: "0.6875rem"
@@ -47,15 +54,24 @@ typography:
     fontFamily: "ui-sans-serif, system-ui, sans-serif"
     fontSize: "14px"
     fontWeight: 600
+  body:
+    fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
+    fontSize: "0.9375rem"
+    fontWeight: 400
+    lineHeight: 1.55
   title:
     fontFamily: "ui-sans-serif, system-ui, sans-serif"
     fontSize: "1.0625rem"
     fontWeight: 600
     lineHeight: 1.3
 rounded:
+  xs: "3px"
   sm: "6px"
+  control: "8px"
   md: "10px"
   lg: "14px"
+  bubble: "18px"
+  composer: "24px"
   pill: "999px"
 spacing:
   1: "0.25rem"
@@ -86,9 +102,18 @@ components:
     textColor: "{colors.fg-muted}"
     rounded: "{rounded.sm}"
     padding: "0.15rem 0.55rem"
+  rail-tab:
+    backgroundColor: "transparent"
+    textColor: "{colors.fg-muted}"
+    rounded: "{rounded.md}"
+    height: "32px"
+  rail-tab-selected:
+    backgroundColor: "{colors.surface-2}"
+    textColor: "{colors.fg}"
+    rounded: "{rounded.md}"
   composer:
     backgroundColor: "{colors.surface}"
-    rounded: "24px"
+    rounded: "{rounded.composer}"
     padding: "0.55rem 0.7rem 0.45rem"
 ---
 
