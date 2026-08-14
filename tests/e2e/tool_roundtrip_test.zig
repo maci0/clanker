@@ -53,3 +53,63 @@ test "clanker run: a tool call round-trips through the real sandbox" {
     try std.testing.expect(std.mem.find(u8, third_request, "\"tool_call_id\":\"call_2\"") != null);
     try std.testing.expect(std.mem.find(u8, third_request, "hello.txt") != null);
 }
+
+test "clanker run --worktree: goal and session state stay in the checkout" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const turn0 = try mock_llm.toolCallTurn(gpa, "call_1", "load_tools", "{\"names\":[\"goal\"]}");
+    defer gpa.free(turn0);
+    const turn1 = try mock_llm.toolCallTurn(gpa, "call_2", "goal", "{\"objective\":\"exercise shared worktree state\",\"completion_criterion\":\"the checkout retains the goal\"}");
+    defer gpa.free(turn1);
+    const final_text = "goal saved from the isolated worktree";
+    const turn2 = try mock_llm.textTurn(gpa, final_text);
+    defer gpa.free(turn2);
+    const mock = try mock_llm.Server.start(io, gpa, &.{ turn0, turn1, turn2 });
+    defer mock.stop();
+
+    try harness.writeMockConfig(io, tmp.dir, gpa, mock.port);
+    try harness.linkZigOut(io, tmp.dir);
+    const config_before_hooks = try tmp.dir.readFileAlloc(io, "config.toml", gpa, .limited(1 << 20));
+    defer gpa.free(config_before_hooks);
+    const config_with_hooks = try std.fmt.allocPrint(gpa,
+        \\{s}
+        \\repl_exec_allow = ["printf"]
+        \\ 
+        \\ [hooks]
+        \\ enabled = true
+        \\ config_path = ".claude/settings.json"
+        \\ default_timeout_ms = 2000
+        \\ 
+    , .{config_before_hooks});
+    defer gpa.free(config_with_hooks);
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = config_with_hooks });
+    try tmp.dir.createDirPath(io, ".claude");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".claude/settings.json", .data =
+        \\{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"printf '{\\\"additionalContext\\\":\\\"shared-claude-marker\\\"}'"}]}]}}
+    });
+    try harness.initGitRepo(gpa, io, tmp.dir);
+
+    var result = try harness.run(gpa, io, tmp.dir, &.{ "run", "--worktree", "--session", "worktree-state", "persist a goal" });
+    defer result.deinit(gpa);
+    if (!result.ok()) std.debug.print("worktree goal e2e failed.\nstdout: {s}\nstderr: {s}\n", .{ result.stdout, result.stderr });
+    try std.testing.expect(result.ok());
+    try std.testing.expect(std.mem.find(u8, result.stdout, final_text) != null);
+    const first_request = mock.request(0) orelse return error.MissingFirstRequest;
+    try std.testing.expect(std.mem.find(u8, first_request, "shared-claude-marker") != null);
+
+    // The goal guest and the native session writer use different path
+    // mechanisms. Both must land in the checkout, even when state/ did not
+    // exist before the worktree was created.
+    const goals = try tmp.dir.readFileAlloc(io, "state/goals.json", gpa, .limited(1 << 20));
+    defer gpa.free(goals);
+    try std.testing.expect(std.mem.find(u8, goals, "exercise shared worktree state") != null);
+    const session = try tmp.dir.readFileAlloc(io, "state/sessions/worktree-state.json", gpa, .limited(1 << 20));
+    defer gpa.free(session);
+    try std.testing.expect(std.mem.find(u8, session, "persist a goal") != null);
+}

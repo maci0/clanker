@@ -67,6 +67,31 @@ pub fn linkZigOut(io: std.Io, dir: std.Io.Dir) !void {
     try dir.symLink(io, zig_out_dir, "zig-out", .{});
 }
 
+/// Makes `dir` a minimal Git checkout with one commit. `run --worktree` cuts
+/// its branch from that commit, so an e2e test must create a real repository
+/// rather than merely using a temporary directory as its cwd.
+pub fn initGitRepo(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !void {
+    const commands = [_][]const []const u8{
+        &.{ "git", "init", "-b", "main" },
+        &.{ "git", "add", "config.toml" },
+        &.{ "git", "-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "commit", "-m", "initial e2e fixture" },
+    };
+    for (commands) |argv| {
+        const result = try std.process.run(gpa, io, .{
+            .argv = argv,
+            .cwd = .{ .dir = dir },
+            .stdout_limit = .limited(1 << 20),
+            .stderr_limit = .limited(1 << 20),
+        });
+        defer gpa.free(result.stdout);
+        defer gpa.free(result.stderr);
+        switch (result.term) {
+            .exited => |code| if (code == 0) {},
+            else => return error.GitFixtureSetupFailed,
+        }
+    }
+}
+
 /// Runs `clanker <args>` with `cwd` as its working directory (the built
 /// binary's absolute path is baked in at build time via `e2e_options`, since
 /// the child's cwd changes before exec and a relative argv[0] would then
