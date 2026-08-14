@@ -268,9 +268,10 @@ checklist item at every depth is complete. Those predicates live in
 `tools/zig/cards.zig` so `zig build test` runs them; `board.zig` only enforces
 them.
 
-## Local operator rules (optional)
+## Local agent rules
 
-Checkout-private additions (gitignored). Missing file is a soft skip for tools
-that expand `@path` imports (clanker, Claude Code, etc.).
+When `.agents/AGENTS.md` exists, agents must read it and every rule module it
+imports before beginning any task work. The directory is checkout-private and
+gitignored, so only its absence is a soft skip.
 
 @.agents/AGENTS.md
