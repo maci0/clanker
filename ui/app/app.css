@@ -626,10 +626,14 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 /* ---- tabs: one view at a time ----
    Everything used to be stacked in one column, so reaching Tools meant
    scrolling past the whole transcript, the run graph and every room. */
-.rail-nav { display: flex; flex-direction: column; gap: 1px; flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.rail-nav,
+.pf-v6-c-nav.rail-nav { display: flex; flex-direction: column; gap: 1px; flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.pf-v6-c-nav.rail-nav .pf-v6-c-nav__list { list-style: none; margin: 0; padding: 0; }
+.pf-v6-c-nav.rail-nav .pf-v6-c-nav__item { margin: 0; }
 /* Legend plates down the rail: engraved caps in mono, a lamp beside the
    channel that is engaged. */
-.rail-tab {
+.rail-tab,
+.pf-v6-c-nav__link.rail-tab {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
   width: 100%; text-align: left; cursor: pointer;
   min-height: 32px; padding: 0.35rem 0.6rem;
@@ -640,19 +644,28 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
      would turn eight quiet channel names into eight raised plates. */
   box-shadow: none;
 }
-.rail-tab:hover { background: var(--surface-2); color: var(--fg); }
-.rail-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
-.rail-tab[aria-selected="true"] {
+.rail-tab:hover,
+.pf-v6-c-nav__link.rail-tab:hover { background: var(--surface-2); color: var(--fg); }
+.rail-tab:focus-visible,
+.pf-v6-c-nav__link.rail-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.rail-tab[aria-selected="true"],
+.pf-v6-c-nav__link.rail-tab.pf-m-current {
   color: var(--fg);
   font-weight: 600;
   background: var(--surface-2);
   border-color: var(--rule);
 }
-.rail-tab[aria-selected="true"]:hover { background: var(--surface-2); }
-.rail-tab:active:not(:disabled) { transform: translateY(1px); }
-@media (prefers-reduced-motion: reduce) { .rail-tab:active:not(:disabled) { transform: none; } }
+.rail-tab[aria-selected="true"]:hover,
+.pf-v6-c-nav__link.rail-tab.pf-m-current:hover { background: var(--surface-2); }
+.rail-tab:active:not(:disabled),
+.pf-v6-c-nav__link.rail-tab:active:not(:disabled) { transform: translateY(1px); }
+@media (prefers-reduced-motion: reduce) {
+  .rail-tab:active:not(:disabled),
+  .pf-v6-c-nav__link.rail-tab:active:not(:disabled) { transform: none; }
+}
 /* The engaged channel's lamp: lit blue, because blue is operator action. */
-.rail-tab[aria-selected="true"]::before {
+.rail-tab[aria-selected="true"]::before,
+.pf-v6-c-nav__link.rail-tab.pf-m-current::before {
   content: "";
   position: absolute;
   left: var(--space-2);
@@ -670,7 +683,8 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
     0 0 0 1px color-mix(in srgb, currentColor 35%, transparent),
     0 0 7px 1px color-mix(in srgb, currentColor 50%, transparent);
 }
-.rail-tab { position: relative; padding-left: var(--space-5); }
+.rail-tab,
+.pf-v6-c-nav__link.rail-tab { position: relative; padding-left: var(--space-5); }
 .rail-context {
   margin-top: var(--space-3); border-top: 1px solid var(--rule); padding-top: var(--space-3);
   flex: 1; min-height: 0; display: flex; flex-direction: column;
@@ -679,7 +693,8 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 /* A count of what is behind the tab, so the numbers are not hidden by the
    thing that hides everything else. */
 .tab-count { color: var(--fg-muted); font-weight: 400; margin-left: 0.4rem; }
-.rail-tab[aria-selected="true"] .tab-count { color: var(--accent-text); }
+.rail-tab[aria-selected="true"] .tab-count,
+.pf-v6-c-nav__link.rail-tab.pf-m-current .tab-count { color: var(--accent-text); }
 .view[hidden] { display: none; }
 .view:focus { outline: none; }
 .view:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -2151,6 +2166,7 @@ button:active:not(:disabled) {
      entirely — worst in the palette, where the highlighted row is the only
      clue what Enter will do. */
   .rail-tab[aria-selected="true"],
+  .pf-v6-c-nav__link.rail-tab.pf-m-current,
   .rail-item[aria-current="true"],
   .palette-item[aria-selected="true"],
   .card[aria-current="true"] {
@@ -2560,15 +2576,18 @@ main.pf-v6-c-page__main {
 .rail-workspace-count { color: var(--fg-muted); font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .rail-folder { padding-left: var(--space-3); border-left: 1px solid var(--rule); margin-left: var(--space-2); }
 
-.rail-group {
+.rail-group,
+.pf-v6-c-nav__section-title.rail-group {
   display: flex; align-items: center; gap: var(--space-2); width: 100%;
   margin: var(--space-3) 0 var(--space-1); padding: 0.2rem 0;
-  border: none; background: transparent; cursor: pointer; text-align: left;
+  border: none; background: transparent; text-align: left;
   font-family: var(--sans); font-size: 11px; color: var(--fg-muted);
   text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
 }
-.rail-group:first-child { margin-top: 0; }
-.rail-group:hover { color: var(--fg); }
+button.rail-group { cursor: pointer; }
+.rail-group:first-child,
+.pf-v6-c-nav__section:first-child .pf-v6-c-nav__section-title.rail-group { margin-top: 0; }
+button.rail-group:hover { color: var(--fg); }
 .rail-group-caret { width: 1em; flex: none; }
 .rail-group-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-group-count { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -2643,7 +2662,8 @@ h2#session-title {
   .pf-v6-c-page__sidebar.pf-m-collapsed.rail .rail-tab::after { content: attr(data-short); font-size: var(--step-0); }
   .rail[data-collapsed="true"] .rail-context, .rail[data-collapsed="true"] .rail-group,
   .pf-v6-c-page__sidebar.pf-m-collapsed.rail .rail-context,
-  .pf-v6-c-page__sidebar.pf-m-collapsed.rail .rail-group { display: none; }
+  .pf-v6-c-page__sidebar.pf-m-collapsed.rail .rail-group,
+  .pf-v6-c-page__sidebar.pf-m-collapsed.rail .pf-v6-c-nav__section { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .rail { transition: none; } }
 

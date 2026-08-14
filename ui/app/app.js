@@ -4379,6 +4379,7 @@ function showView(name, focusPanel) {
     var on = v === name;
     panel.hidden = !on;
     tab.setAttribute("aria-selected", String(on));
+    tab.classList.toggle("pf-m-current", on);
     // Roving tabindex: the tablist is one stop, arrows move within it.
     tab.tabIndex = on ? 0 : -1;
   });
