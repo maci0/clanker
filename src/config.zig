@@ -2131,20 +2131,29 @@ pub const Config = struct {
             const n = try jsonInt(k, "max_context_bytes");
             im.max_context_bytes = if (n <= 0) null else @intCast(n);
         }
-        if (obj.get("capability_gate")) |k| im.capability_gate = try jsonBool(k, "capability_gate");
+        if (obj.get("capability_gate")) |k| im.capability_gate = switch (k) {
+            .bool => |b| b,
+            else => return error.FieldNotBool,
+        };
         if (obj.get("arena_advisory")) |k| im.arena_advisory = try jsonBool(k, "arena_advisory");
         if (obj.get("max_cache_bytes")) |k| im.max_cache_bytes = try jsonUnsigned(u64, k, "max_cache_bytes");
         if (obj.get("max_context_requests")) |k| {
             const n = try jsonInt(k, "max_context_requests");
             im.max_context_requests = if (n <= 0) 0 else @intCast(n);
         }
-        if (obj.get("inert_gate")) |k| im.inert_gate = try jsonBool(k, "inert_gate");
+        if (obj.get("inert_gate")) |k| im.inert_gate = switch (k) {
+            .bool => |b| b,
+            else => return error.FieldNotBool,
+        };
         if (obj.get("max_consecutive_test_only")) |k| {
             const n = try jsonInt(k, "max_consecutive_test_only");
             im.max_consecutive_test_only = if (n <= 0) 0 else @intCast(n);
         }
         if (obj.get("eval_provider")) |k| im.eval_provider = try jsonStr(k, "eval_provider");
-        if (obj.get("plan_phase")) |k| im.plan_phase = try jsonBool(k, "plan_phase");
+        if (obj.get("plan_phase")) |k| im.plan_phase = switch (k) {
+            .bool => |b| b,
+            else => return error.FieldNotBool,
+        };
         return im;
     }
 
@@ -2533,7 +2542,7 @@ test "tui mascot speed is an integer from zero through ten" {
     const quoted = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\{"tui":{"mascot_speed":"3"}}
     , .{});
-    try std.testing.expectError(error.FieldNotUint, Config.parseConfig(arena, quoted));
+    try std.testing.expectError(error.FieldNotInt, Config.parseConfig(arena, quoted));
 
     const out_of_range = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\{"tui":{"mascot_speed":11}}
@@ -3465,6 +3474,42 @@ test "debug adapters parse from nested tables" {
     }
     try std.testing.expect(saw_lldb);
     try std.testing.expect(!(Debug{}).enabled);
+}
+
+test "mesh section and peer id parse" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[[peers]]
+        \\name = "alice"
+        \\url = "http://127.0.0.1:1"
+        \\id = "aaa"
+        \\[modules]
+        \\mesh = true
+        \\[mesh]
+        \\listen_port = 7421
+        \\admission = "open"
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expect(cfg.modules.mesh);
+    try std.testing.expectEqual(@as(u16, 7421), cfg.mesh.listen_port);
+    try std.testing.expectEqualStrings("open", cfg.mesh.admission);
+    try std.testing.expectEqual(@as(usize, 1), cfg.peers.len);
+    try std.testing.expectEqualStrings("aaa", cfg.peers[0].id);
+    try std.testing.expect(!(Modules{}).mesh);
 }
 
 test "partial local agent keeps base tools_dir" {

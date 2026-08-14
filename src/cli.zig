@@ -42,6 +42,7 @@ const tui_stats = @import("tui/turn_stats.zig");
 const repl = @import("tui/repl.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const phonebook = @import("peers/phonebook.zig");
+const mesh = @import("peers/mesh.zig");
 const doctor_mod = @import("doctor.zig");
 const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
@@ -5418,6 +5419,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_a2a = std.mem.eql(u8, path, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message"));
         const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify");
         const is_peers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/peers");
+        const is_mesh_map = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/mesh/map");
         const is_chat_message = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/message");
         const is_chat_messages = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/chat/messages");
         const is_chat_rooms = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/chat/rooms");
@@ -5506,6 +5508,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleStatus(cfg, stream);
         } else if (is_peers) {
             handlePeers(io, gpa, cfg, environ_map, stream);
+        } else if (is_mesh_map) {
+            handleMeshMap(io, gpa, cfg, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/runs")) {
             handleRuns(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, path, "/api/sessions") and
@@ -11003,6 +11007,73 @@ fn handlePeers(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
         return;
     };
     respond(stream, 200, "OK", body);
+}
+
+fn anyRunLive() bool {
+    _ = std.c.pthread_mutex_lock(&steer_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&steer_mutex);
+    for (steer_slots) |s| {
+        if (s.occupied()) return true;
+    }
+    return false;
+}
+
+/// GET /api/mesh/map: self + configured peers, chat wires, recent pulses.
+/// Served even when `modules.mesh` is off so the Fleet map can show HTTP
+/// peers; join/leave control stays gated separately.
+fn handleMeshMap(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var rooms: []const mesh.MapRoom = &.{};
+    if (cfg.modules.chatrooms) {
+        const listed = chatrooms.listRooms(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir) catch &.{};
+        var mapped: std.ArrayList(mesh.MapRoom) = .empty;
+        for (listed) |r| {
+            mapped.append(arena, .{
+                .room = r.room,
+                .messages = r.messages,
+                .last_from = r.last_from,
+                .last_ts = r.last_ts,
+            }) catch {};
+        }
+        rooms = mapped.items;
+    }
+
+    var peers: std.ArrayList(mesh.MapPeer) = .empty;
+    for (cfg.peers) |p| {
+        peers.append(arena, .{
+            .name = p.name,
+            .id = p.id,
+            .url = p.url,
+            .path = if (cfg.modules.mesh) "mesh" else "http",
+            .state = "configured",
+        }) catch {};
+    }
+
+    const self_id = if (cfg.instance.id.len > 0) cfg.instance.id else if (cfg.instance.name.len > 0) cfg.instance.name else "self";
+    const now_ms: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000));
+    const built = mesh.buildMap(arena, .{
+        .self_id = self_id,
+        .self_name = cfg.instance.name,
+        .self_working = anyRunLive(),
+        .mesh_enabled = cfg.modules.mesh,
+        .now_ms = now_ms,
+        .peers = peers.items,
+        .rooms = rooms,
+    }) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"mesh map failed\"}");
+        return;
+    };
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    mesh.writeMap(&s, built) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"mesh map failed\"}");
+        return;
+    };
+    respond(stream, 200, "OK", out.written());
 }
 
 /// Instance + configured peers, consumed by the web UI status panel.

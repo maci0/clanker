@@ -3864,6 +3864,73 @@ h2#session-title {
 .fleet-skeleton { height: 2.4rem; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--rule); margin: var(--space-2) 0; }
 .fleet-skeleton--sm { height: 1.2rem; max-width: 18rem; }
 
+/* Mesh map: each clanker is a lamp. Wires light in the talk direction. */
+.mesh-map-section { min-width: 0; }
+.mesh-map-section h3 {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  margin: 0 0 var(--space-2);
+}
+.mesh-map {
+  position: relative;
+  min-height: 22rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(ellipse at 50% 48%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 58%),
+    var(--surface);
+  overflow: hidden;
+}
+.mesh-map svg { display: block; width: 100%; height: 22rem; }
+.mesh-wire {
+  fill: none;
+  stroke: color-mix(in srgb, var(--fg) 22%, var(--rule));
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.mesh-wire--live { stroke: color-mix(in srgb, var(--accent) 55%, var(--rule)); stroke-width: 2.2; }
+.mesh-pulse {
+  fill: var(--accent);
+  filter: drop-shadow(0 0 6px var(--accent));
+}
+.mesh-node-lamp {
+  fill: url(#mesh-lamp-idle);
+  stroke: color-mix(in srgb, var(--fg) 18%, var(--surface));
+  stroke-width: 1.2;
+}
+.mesh-node--self .mesh-node-lamp { fill: url(#mesh-lamp-self); }
+.mesh-node--working .mesh-node-lamp {
+  fill: url(#mesh-lamp-live);
+  filter: drop-shadow(0 0 10px var(--ok-fill));
+}
+.mesh-node-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  fill: var(--fg);
+  text-anchor: middle;
+  pointer-events: none;
+}
+.mesh-node-meta {
+  font-family: var(--mono);
+  font-size: 9px;
+  fill: var(--fg-muted);
+  text-anchor: middle;
+  pointer-events: none;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mesh-pulse { display: none; }
+  .mesh-node--working .mesh-node-lamp { filter: none; }
+}
+@media (max-width: 720px) {
+  .mesh-map, .mesh-map svg { min-height: 16rem; height: 16rem; }
+}
+
 .skeleton {
   height: 2.4rem;
   border-radius: var(--radius);

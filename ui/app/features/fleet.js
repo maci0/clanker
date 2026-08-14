@@ -1,6 +1,6 @@
 // Fleet / cross-agent view — ES module, no bundler.
 // Owns #view-fleet: roster + DM channels + grouped runs. Works without app.js.
-import { clip, peerColor } from "../core/utils.js";
+import { clip, peerColor, escapeHtml } from "../core/utils.js";
 import { readJson } from "../core/vendor.js";
 
 var _navShowView = null;
@@ -587,6 +587,78 @@ function renderFloor(runs, roster){
   // live tick from /api/run stream is attached by fleet live listener below
 }
 
+var _meshTimer = null;
+
+function meshPos(nodes, i, w, h) {
+  if (i === 0) return { x: w / 2, y: h / 2 };
+  var n = Math.max(nodes.length - 1, 1);
+  var a = (-Math.PI / 2) + ((i - 1) * 2 * Math.PI / n);
+  return { x: w / 2 + Math.cos(a) * w * 0.32, y: h / 2 + Math.sin(a) * h * 0.34 };
+}
+
+function renderMeshMap(el, data, statusEl) {
+  if (!el) return;
+  if (!data || data.ok === false) {
+    el.innerHTML = "";
+    if (statusEl) statusEl.textContent = (data && data.error) || "Mesh map unavailable.";
+    return;
+  }
+  var nodes = data.nodes || [];
+  var links = data.links || [];
+  var pulses = data.pulses || [];
+  var w = 800;
+  var h = 420;
+  var pos = {};
+  nodes.forEach(function (n, i) { pos[n.id] = meshPos(nodes, i, w, h); });
+  var parts = [];
+  parts.push('<svg viewBox="0 0 ' + w + " " + h + '" role="presentation">');
+  parts.push("<defs>");
+  parts.push('<radialGradient id="mesh-lamp-idle" cx="35%" cy="30%"><stop offset="0%" stop-color="#d8dde6"/><stop offset="70%" stop-color="#8b93a1"/><stop offset="100%" stop-color="#5c6470"/></radialGradient>');
+  parts.push('<radialGradient id="mesh-lamp-self" cx="35%" cy="30%"><stop offset="0%" stop-color="#cfe0ff"/><stop offset="65%" stop-color="#0b57d0"/><stop offset="100%" stop-color="#083a8c"/></radialGradient>');
+  parts.push('<radialGradient id="mesh-lamp-live" cx="35%" cy="30%"><stop offset="0%" stop-color="#d8ffe4"/><stop offset="60%" stop-color="#16a34a"/><stop offset="100%" stop-color="#0d5c2a"/></radialGradient>');
+  parts.push("</defs>");
+  links.forEach(function (l, i) {
+    var a = pos[l.from];
+    var b = pos[l.to];
+    if (!a || !b) return;
+    var live = pulses.some(function (p) {
+      return (p.from === l.from && p.to === l.to) || (p.from === l.to && p.to === l.from);
+    });
+    var id = "mesh-wire-" + i;
+    parts.push('<path id="' + id + '" class="mesh-wire' + (live ? " mesh-wire--live" : "") +
+      '" d="M' + a.x.toFixed(1) + " " + a.y.toFixed(1) + " L" + b.x.toFixed(1) + " " + b.y.toFixed(1) + '"/>');
+    pulses.forEach(function (p) {
+      if (!((p.from === l.from && p.to === l.to) || (p.from === l.to && p.to === l.from))) return;
+      var reverse = p.from === l.to;
+      parts.push('<circle class="mesh-pulse" r="4.5"><animateMotion dur="1.6s" repeatCount="indefinite" rotate="auto" keyPoints="' +
+        (reverse ? "1;0" : "0;1") + '" keyTimes="0;1" calcMode="linear"><mpath href="#' + id + '"/></animateMotion></circle>');
+    });
+  });
+  nodes.forEach(function (n) {
+    var p = pos[n.id];
+    if (!p) return;
+    var r = n.state === "self" ? 22 : 16;
+    var cls = "mesh-node" + (n.state === "self" ? " mesh-node--self" : "") + (n.working ? " mesh-node--working" : "");
+    parts.push('<g class="' + cls + '">');
+    parts.push('<circle class="mesh-node-lamp" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="' + r + '"/>');
+    parts.push('<text class="mesh-node-label" x="' + p.x.toFixed(1) + '" y="' + (p.y + r + 16).toFixed(1) + '">' + escapeHtml(n.name || n.id) + "</text>");
+    parts.push('<text class="mesh-node-meta" x="' + p.x.toFixed(1) + '" y="' + (p.y + r + 28).toFixed(1) + '">' +
+      escapeHtml(n.working ? "working" : (n.state === "self" ? "home" : (n.path || n.state))) + "</text>");
+    parts.push("</g>");
+  });
+  parts.push("</svg>");
+  el.innerHTML = parts.join("");
+  var live = pulses.length;
+  var working = nodes.filter(function (n) { return n.working; }).length;
+  if (statusEl) {
+    statusEl.textContent = nodes.length + " node" + (nodes.length === 1 ? "" : "s") +
+      (links.length ? ", " + links.length + " link" + (links.length === 1 ? "" : "s") : "") +
+      (working ? ", " + working + " working" : "") +
+      (live ? ", " + live + " talking" : "") +
+      (data.mesh ? "" : ". Mesh module off; showing configured peers.");
+  }
+}
+
 function observeFloorTheme() {
   var root = document.documentElement;
   if (!root || typeof MutationObserver === "undefined") return;
@@ -609,7 +681,20 @@ export function initFleet() {
   var detail = byId("fleet-detail");
   var statusEl = byId("fleet-status");
   var refresh = byId("fleet-refresh");
+  var mapEl = byId("mesh-map");
+  var mapStatus = byId("mesh-map-status");
   if (!roster || !runsEl) return;
+
+  function refreshMap() {
+    if (!mapEl) return Promise.resolve();
+    var view = byId("view-fleet");
+    if (view && view.hidden) return Promise.resolve();
+    return fetch("/api/mesh/map").then(readJson).then(function (d) {
+      renderMeshMap(mapEl, d, mapStatus);
+    }).catch(function (e) {
+      renderMeshMap(mapEl, { ok: false, error: e.message || "map failed" }, mapStatus);
+    });
+  }
 
   function doRefresh() {
     if (refresh) refresh.disabled = true;
@@ -631,6 +716,7 @@ export function initFleet() {
     // Peer agent cards; null (module disabled, scan failed) degrades the
     // roster to bare name+url lines rather than blocking it.
     var peersP = fetch("/api/peers").then(readJson).catch(function () { return null; });
+    refreshMap();
     return Promise.all([statusP, a2aP, runsP, roomsP, peersP]).then(function (vals) {
       var s = vals[0];
       var a2a = vals[1];
@@ -659,6 +745,8 @@ export function initFleet() {
     refresh.addEventListener("click", doRefresh);
   }
   doRefresh();
+  if (_meshTimer) clearInterval(_meshTimer);
+  _meshTimer = setInterval(refreshMap, 2000);
   window.clankerFleet = window.clankerFleet || {};
   window.clankerFleet.refresh = function () { return doRefresh(); };
 }
