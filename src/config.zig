@@ -2157,6 +2157,20 @@ test "repeat tool thresholds reject empty low duplicate and non-integer values" 
     try std.testing.expectError(error.RepeatToolThresholdNotInteger, Config.parseAgent(arena, value));
 }
 
+test "hooks default off and parse explicit lifecycle settings" {
+    try std.testing.expect(!(Hooks{}).enabled);
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const root = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"hooks":{"enabled":true,"config_path":".claude/settings.json","default_timeout_ms":2500}}
+    , .{});
+    const cfg = try Config.parseConfig(arena, root);
+    try std.testing.expect(cfg.hooks.enabled);
+    try std.testing.expectEqualStrings(".claude/settings.json", cfg.hooks.config_path);
+    try std.testing.expectEqual(@as(u32, 2500), cfg.hooks.default_timeout_ms);
+}
+
 test "config load and merge" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

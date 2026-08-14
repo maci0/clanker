@@ -236,6 +236,23 @@ Run-loop and path settings. The commonly-touched keys:
 | `isolated_webui` | `false` | Web UI chat runs use a private worktree and do not implicitly attach the newest active goal. |
 | `seed` | 0 | RNG seed for reproducibility (`0` = time-seeded). |
 
+## `[hooks]`
+
+Claude Code-compatible lifecycle hooks. Disabled by default; when disabled,
+the hook file is not read. Commands receive the event payload as JSON on
+stdin and run under the same scrubbed environment, command allowlist, argv
+denials, and worktree root as the TUI's `!` escape.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Load and run lifecycle hooks for newly constructed agents. |
+| `config_path` | `hooks.json` | Claude Code `hooks.json`, or a settings JSON object containing a `hooks` key. |
+| `default_timeout_ms` | 60000 | One wall-clock deadline per command; a hook entry's `timeout` seconds overrides it. |
+
+Supported events are `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
+`PostToolUse`, and `Stop`. Exit code 2 blocks with stderr as its reason;
+Claude-style JSON decisions and `additionalContext` are also honored.
+
 ## `[advisor]`
 
 Post-turn second-model critique. Off by default. Distinct from
@@ -248,7 +265,7 @@ Post-turn second-model critique. Off by default. Distinct from
 | `model` | (unset) | Model name on that provider. |
 | `scope` | `turn` | `turn` = last user turn; `session` = last `context_turns` user turns. |
 | `context_turns` | 3 | How many user turns `scope = "session"` sends. |
-| `timeout_ms` | 5000 | Parsed now; deadline abort is still open. |
+| `timeout_ms` | 5000 | Wall-clock review deadline; timeout aborts the request and fails open. |
 
 ## `[kernel]`
 

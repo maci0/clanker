@@ -2,8 +2,9 @@
 
 ## Status
 
-Draft. No source files yet. Proposed: `src/hooks/` (config loading, matcher
-engine, hook execution) and a wait-with-timeout primitive added to
+Implemented. `src/hooks/` owns config loading, matching and hook execution;
+the agent loop wires all five lifecycle points, and a bounded stdin process
+primitive now lives in
 `src/sandbox/host.zig` beside `execUnderPolicy`. Gated by `[hooks]` in
 `config.toml`, `enabled = false` by default. Surfaced by researching
 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)'s
@@ -176,22 +177,22 @@ principle the plugin manifest validator already applies to a malformed
 
 ## Acceptance criteria
 
-- [ ] `hooks.enabled = false` by default; no behavior change with it off.
-- [ ] A `PreToolUse` hook exiting 2 denies the matched tool call before
+- [x] `hooks.enabled = false` by default; no behavior change with it off.
+- [x] A `PreToolUse` hook exiting 2 denies the matched tool call before
       dispatch, with the hook's stderr as the model-visible reason.
-- [ ] A `PostToolUse` hook's `additionalContext` appears as injected context
+- [x] A `PostToolUse` hook's `additionalContext` appears as injected context
       in the next request.
-- [ ] A blocking `UserPromptSubmit` hook rejects a turn before any model
+- [x] A blocking `UserPromptSubmit` hook rejects a turn before any model
       request is sent for it.
-- [ ] A blocking `Stop` hook forces at least one more step, and stops firing
+- [x] A blocking `Stop` hook forces at least one more step, and stops firing
       once `max_iterations` is reached.
-- [ ] `SessionStart` context is injected exactly once per agent construction.
-- [ ] Matcher literal/pipe/regex modes are unit-tested against real Claude
+- [x] `SessionStart` context is injected exactly once per agent construction.
+- [x] Matcher literal/pipe/regex modes are unit-tested against real Claude
       Code hook config examples.
-- [ ] Hook commands are refused by the same `execDenial` gate `!cmd` uses;
+- [x] Hook commands are refused by the same `execDenial` gate `!cmd` uses;
       a unit test pins that a hook cannot run a command outside the derived
       allowlist.
-- [ ] A malformed `hooks.json` disables hooks for the run and logs a warning
+- [x] A malformed `hooks.json` disables hooks for the run and logs a warning
       naming the file; the agent still runs.
 
 ## Open questions / future work
