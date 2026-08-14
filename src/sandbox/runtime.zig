@@ -1062,6 +1062,100 @@ test "roadmap wasm tool lists planned items from the real bullet format" {
     try std.testing.expect(std.mem.find(u8, all, "## Done") != null);
 }
 
+test "reports wasm tool searches report history and current runbooks" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "docs/reports/investigations");
+    try tmp.dir.createDirPath(io, "docs/runbooks");
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/reports/README.md", .data =
+        \\# Reports
+        \\
+        \\<!-- inventory:bug:start -->
+        \\No reports yet.
+        \\<!-- inventory:bug:end -->
+        \\
+        \\<!-- inventory:investigation:start -->
+        \\<!-- inventory:investigation:end -->
+        \\
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/reports/investigations/staging.md", .data =
+        \\# Investigation — staging build
+        \\
+        \\## TL;DR
+        \\
+        \\The staging build failed with file_hash FileNotFound.
+        \\
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/runbooks/README.md", .data =
+        \\# Runbooks
+        \\
+        \\<!-- inventory:runbook:start -->
+        \\No runbooks yet.
+        \\<!-- inventory:runbook:end -->
+        \\
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/runbooks/improve-staging-build.md", .data =
+        \\# Runbook — improve staging build
+        \\
+        \\Copy the missing build input, then run the focused gate.
+        \\
+    });
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        .fs_prefixes = &.{ "docs/reports/", "docs/runbooks/" },
+        .environ_map = &env_map,
+    };
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/reports.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    const found = try mod.executeTool("{\"action\":\"search\",\"query\":\"file_hash\"}");
+    defer std.testing.allocator.free(found);
+    try std.testing.expect(std.mem.find(u8, found, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, found, "docs/reports/investigations/staging.md") != null);
+    try std.testing.expect(std.mem.find(u8, found, "docs/runbooks/improve-staging-build.md") == null);
+
+    const mod2 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod2.deinit();
+    const opened = try mod2.executeTool("{\"action\":\"open\",\"path\":\"docs/runbooks/improve-staging-build.md\"}");
+    defer std.testing.allocator.free(opened);
+    try std.testing.expect(std.mem.find(u8, opened, "Copy the missing build input") != null);
+
+    const mod3 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod3.deinit();
+    const denied = try mod3.executeTool("{\"action\":\"open\",\"path\":\"docs/reports/../secrets.md\"}");
+    defer std.testing.allocator.free(denied);
+    try std.testing.expect(std.mem.find(u8, denied, "\"ok\":false") != null);
+
+    const mod4 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod4.deinit();
+    const created = try mod4.executeTool("{\"action\":\"create\",\"kind\":\"investigation\",\"slug\":\"2026-08-14-new-issue\",\"title\":\"New issue\",\"summary\":\"A recurring failure needs investigation.\"}");
+    defer std.testing.allocator.free(created);
+    try std.testing.expect(std.mem.find(u8, created, "\"created\":true") != null);
+    try std.testing.expect(std.mem.find(u8, created, "\"indexed\":true") != null);
+    const new_report = try tmp.dir.readFileAlloc(io, "docs/reports/investigations/2026-08-14-new-issue.md", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(new_report);
+    try std.testing.expect(std.mem.find(u8, new_report, "## TL;DR") != null);
+    const index = try tmp.dir.readFileAlloc(io, "docs/reports/README.md", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(index);
+    try std.testing.expect(std.mem.find(u8, index, "investigations/2026-08-14-new-issue.md") != null);
+}
+
 test "autolearn wasm tool reports the newest tool_error detail as 'last:'" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
