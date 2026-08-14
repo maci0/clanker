@@ -222,9 +222,14 @@ pub const Options = struct {
     /// `--mascot-size=<small|medium|large>`. Null means unset, so `tui
     /// .mascot_size` decides; parsed in the REPL alongside the mode.
     mascot_size: ?[]const u8 = null,
-    /// `--mascot-facing=<left|right>`. Null means unset, which is not the same
-    /// as "right": the default depends on the mascot mode.
+    /// `--mascot-facing=<default|inverted>`. Null means unset, which is not the
+    /// same as "default": `.default` is the mode's natural pose, and this flag
+    /// lets `inverted` mirror it in every mascot mode.
     mascot_facing: ?[]const u8 = null,
+    /// `--mascot-speed=<0..10>`. 0 never moves, 5 is the regular pace, 10 the
+    /// fastest. Null means unset, so `tui.mascot_speed` decides; parsed in the
+    /// REPL alongside the mode.
+    mascot_speed: ?[]const u8 = null,
     /// `repl --theme <name>`: initial TUI palette. Kept as text so the theme
     /// module remains the single source of truth for names and aliases.
     theme: ?[]const u8 = null,
@@ -476,6 +481,9 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             } else if (std.mem.eql(u8, a, "--mascot-facing")) {
                 opts.mascot_facing = try takeValue(args, &idx, inline_value, a, diag);
                 used = .mascot_facing;
+            } else if (std.mem.eql(u8, a, "--mascot-speed")) {
+                opts.mascot_speed = try takeValue(args, &idx, inline_value, a, diag);
+                used = .mascot_speed;
             } else if (std.mem.eql(u8, a, "--theme")) {
                 opts.theme = try takeValue(args, &idx, inline_value, a, diag);
                 used = .theme;
@@ -1440,6 +1448,7 @@ const Flag = enum {
     mascot,
     mascot_size,
     mascot_facing,
+    mascot_speed,
     theme,
     goal,
     iters,
@@ -1487,6 +1496,7 @@ const Flag = enum {
             .mascot => "--mascot[=<mode>]",
             .mascot_size => "--mascot-size <size>",
             .mascot_facing => "--mascot-facing <dir>",
+            .mascot_speed => "--mascot-speed <0..10>",
             .theme => "--theme",
             .goal => "--goal",
             .iters => "--iters",
@@ -1539,7 +1549,8 @@ const Flag = enum {
             .continue_last => "pick up the most recently touched session",
             .mascot => "run the mascot: off, type, loop, place, or input",
             .mascot_size => "mascot size: mini, xsmall, small, medium (default), or large",
-            .mascot_facing => "which way the mascot faces: left or right",
+            .mascot_facing => "which way the mascot faces: default or inverted",
+            .mascot_speed => "how fast the mascot moves: 0..10, 5 is regular",
             .theme => "set the initial TUI color theme (use /theme to list names)",
             .goal => "run against a persisted goal by id",
             .iters => "cap the number of attempts (default 3)",
@@ -1642,7 +1653,7 @@ const Spec = struct {
 /// so are not listed per command.
 const specs = [_]Spec{
     .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal, .worktree }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        run against a persisted goal\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
-    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .theme, .mascot, .mascot_size, .mascot_facing }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
+    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
     .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
     .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--iters <n>        cap the number of attempts (default 3)\n--dry-run          propose changes without applying them" },
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
@@ -1742,6 +1753,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
             .mascot = opts.mascot,
             .mascot_size = opts.mascot_size,
             .mascot_facing = opts.mascot_facing,
+            .mascot_speed = opts.mascot_speed,
             .theme = opts.theme,
         }),
         .graph => try cmdGraph(init, opts),

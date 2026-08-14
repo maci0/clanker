@@ -30,28 +30,41 @@ pub const Variant = frames.Variant;
 /// the source-pixel rectangle kitty's `x`/`w` placement keys expect.
 const png_px = 192;
 
-/// Which way the robot faces. A mirrored copy of the same artwork, not a
-/// second drawing.
+/// Whether to invert the mode's natural facing. A mirrored copy of the same
+/// artwork, not a second drawing. `default` leaves each mode the way it is;
+/// `inverted` mirrors it, and applies in every mode.
 pub const Facing = enum {
-    right,
-    left,
+    default,
+    inverted,
 
     pub fn parse(text: []const u8) ?Facing {
-        if (std.ascii.eqlIgnoreCase(text, "right")) return .right;
-        if (std.ascii.eqlIgnoreCase(text, "left")) return .left;
+        if (std.ascii.eqlIgnoreCase(text, "default")) return .default;
+        if (std.ascii.eqlIgnoreCase(text, "inverted")) return .inverted;
         return null;
     }
 };
 
+/// The mascot's movement speed, 0..10. 5 is the regular pace (one cell per
+/// tick); 0 never moves at all; 10 is the fastest.
+pub fn parseSpeed(text: []const u8) ?u8 {
+    if (text.len == 0) return null;
+    for (text) |c| {
+        if (c < '0' or c > '9') return null;
+    }
+    const n = std.fmt.parseInt(u8, text, 10) catch return null;
+    return if (n <= 10) n else null;
+}
+
 /// How the artwork is mirrored for one particular frame.
 ///
-/// Not a bitfield of two independent flags, because the two never combine:
-/// `facing` only applies to the modes that travel or run on the spot, and the
-/// upside-down flip only happens in `typing` mode, whose facing is fixed. That
-/// matters beyond tidiness -- a kitty placement cannot mirror what it draws, so
-/// every orientation here costs its own set of transmitted pngs, and a fourth
-/// (mirrored both ways) would be transmitted for a combination nothing asks
-/// for.
+/// Not a bitfield of two independent flags, because within one frame only a
+/// single mirror ever applies: facing mirrors the traveling and corner modes,
+/// and the backspace mirror in `typing` mode applies only there. Both happen
+/// to be the horizontal mirror (a backspacing robot is walking backwards, not
+/// on its head). That matters beyond tidiness -- a kitty placement cannot
+/// mirror what it draws, so every orientation here costs its own set of
+/// transmitted pngs, and a fourth (mirrored both ways) would be transmitted
+/// for a combination nothing asks for.
 pub const Flip = enum {
     none,
     horizontal,
@@ -183,16 +196,6 @@ pub const Mode = enum {
         };
     }
 
-    /// Which way the robot faces when the user did not say. Only `place`
-    /// differs: running on the spot facing right, directly above a left-to-
-    /// right input box, reads as walking into a wall.
-    pub fn defaultFacing(self: Mode) Facing {
-        return switch (self) {
-            .place => .left,
-            else => .right,
-        };
-    }
-
     /// How big the robot is when the user did not say.
     ///
     /// `input` draws inside the composer, and any size above `mini` makes the
@@ -256,7 +259,12 @@ const png_frames = [3][frame_count][]const u8{
 pub const State = struct {
     mode: Mode = .off,
     size: Size = .medium,
-    facing: Facing = .right,
+    facing: Facing = .default,
+    /// Movement speed, 0..10; see `parseSpeed`. 5 is the regular pace.
+    speed: u8 = 5,
+    /// Fractional-cell carryover so a speed that is not a multiple of 5 still
+    /// builds up to whole steps across ticks.
+    move_acc: u32 = 0,
     /// Index into the animation. Advances with movement, so a robot standing
     /// still does not run in place -- except in the modes whose whole point is
     /// running in place, which advance every tick.
@@ -267,7 +275,7 @@ pub const State = struct {
     /// a redraw that changes nothing does not advance the legs.
     last_len: usize = 0,
     /// `typing` mode: whether the last input change removed text. Drives the
-    /// upside-down flip while backspacing.
+    /// backward (horizontal) mirror while backspacing.
     deleting: bool = false,
     graphics: Graphics = .unknown,
 
@@ -280,20 +288,22 @@ pub const State = struct {
     }
 
     /// How the current frame is mirrored. See `Flip` for why these cannot
-    /// combine.
+    /// combine: a single mirror ever applies. `facing == .inverted` mirrors
+    /// whatever the mode's natural orientation is, so it flips every mode.
     pub fn flip(self: State) Flip {
-        return switch (self.mode) {
+        // The mode's natural mirror, before the user-facing inversion.
+        const base = switch (self.mode) {
             .off, .input => .none,
-            // Deliberately the upside-down mirror rather than the left-facing
-            // one: backspacing is the robot being *undone*, not the robot
-            // walking backwards, and the left-facing mirror is already what
-            // `facing` means everywhere else.
-            .typing => if (self.deleting) .vertical else .none,
-            .loop, .place => switch (self.facing) {
-                .right => .none,
-                .left => .horizontal,
-            },
+            // Mirrored horizontally rather than upside down: backspacing is
+            // the robot walking backwards while the text shrinks, and running
+            // on its head would be a different and wrong read.
+            .typing => if (self.deleting) .horizontal else .none,
+            .loop, .place => .none,
         };
+        return if (self.facing == .inverted)
+            (if (base == .horizontal) .none else .horizontal)
+        else
+            base;
     }
 
     /// Advance one animation tick. `typed_len` is the current input length,
@@ -303,25 +313,43 @@ pub const State = struct {
     /// input length actually changed, which is what makes the robot look like
     /// it is running *because* you are typing rather than merely while you
     /// are.
+    ///
+    /// How far it gets each tick comes from `speed`: 0 never moves, 5 is one
+    /// cell per tick (the regular pace), 10 is two.
     pub fn advance(self: *State, typed_len: usize) void {
         switch (self.mode) {
             .off => {},
             .loop => {
-                self.travel +%= 1;
-                self.step();
+                const n = self.moveSteps();
+                self.travel +%= n;
+                self.stepN(n);
             },
-            .place, .input => self.step(),
+            .place, .input => self.stepN(self.moveSteps()),
             .typing => {
                 if (typed_len == self.last_len) return;
                 self.deleting = typed_len < self.last_len;
                 self.last_len = typed_len;
-                self.step();
+                self.stepN(self.moveSteps());
             },
         }
     }
 
+    /// Steps (cells travelled, or frames advanced for a spot mode) this tick
+    /// earns from `speed`. Speed 5 is one cell per tick; fractional cells
+    /// accumulate so in-between speeds still build up to whole steps.
+    fn moveSteps(self: *State) u32 {
+        self.move_acc +%= @as(u32, self.speed);
+        const n = self.move_acc / 5;
+        self.move_acc %= 5;
+        return n;
+    }
+
     fn step(self: *State) void {
-        self.frame = @intCast((self.frame + 1) % frame_count);
+        self.stepN(1);
+    }
+
+    fn stepN(self: *State, n: u32) void {
+        self.frame = @intCast((@as(u32, self.frame) + n) % frame_count);
     }
 
     /// Leftmost column of the mascot, which may be negative (part-way in from
@@ -626,9 +654,9 @@ test "Size and Facing parse their spellings" {
     try testing.expectEqual(Size.xsmall, Size.parse("XS").?);
     try testing.expectEqual(Size.xsmall, Size.parse("extra-small").?);
     try testing.expectEqual(Size.xsmall, Size.parse("extrasmall").?);
-    try testing.expectEqual(Facing.left, Facing.parse("left").?);
-    try testing.expectEqual(Facing.right, Facing.parse("Right").?);
-    try testing.expectEqual(@as(?Facing, null), Facing.parse("up"));
+    try testing.expectEqual(Facing.default, Facing.parse("default").?);
+    try testing.expectEqual(Facing.inverted, Facing.parse("Inverted").?);
+    try testing.expectEqual(@as(?Facing, null), Facing.parse("left"));
 }
 
 test "every baked size is well formed and distinct" {
@@ -750,19 +778,19 @@ test "advance only moves the legs in typing mode when the input changed" {
     try testing.expectEqual(@as(u8, 2), st.frame);
 }
 
-test "typing mode flips upside down while deleting and rights itself on input" {
+test "typing mode mirrors horizontally while deleting and rights itself on input" {
     var st: State = .{ .mode = .typing };
     try testing.expectEqual(Flip.none, st.flip());
     // Adding text: upright.
     st.advance(4);
     try testing.expectEqual(Flip.none, st.flip());
-    // Backspacing: upside down.
+    // Backspacing: walking backwards.
     st.advance(3);
     try testing.expect(st.deleting);
-    try testing.expectEqual(Flip.vertical, st.flip());
+    try testing.expectEqual(Flip.horizontal, st.flip());
     // Still deleting.
     st.advance(1);
-    try testing.expectEqual(Flip.vertical, st.flip());
+    try testing.expectEqual(Flip.horizontal, st.flip());
     // Typing again rights it immediately.
     st.advance(2);
     try testing.expect(!st.deleting);
@@ -770,7 +798,7 @@ test "typing mode flips upside down while deleting and rights itself on input" {
     // A redraw that changes nothing must not right it either way.
     st.advance(1);
     st.advance(1);
-    try testing.expectEqual(Flip.vertical, st.flip());
+    try testing.expectEqual(Flip.horizontal, st.flip());
 }
 
 test "advance runs every tick in the on-the-spot modes" {
@@ -807,19 +835,22 @@ test "advance is inert when off" {
 
 test "facing decides the mirror for the travelling and on-the-spot modes" {
     for ([_]Mode{ .loop, .place }) |m| {
-        var st: State = .{ .mode = m, .facing = .right };
+        var st: State = .{ .mode = m, .facing = .default };
         try testing.expectEqual(Flip.none, st.flip());
-        st.facing = .left;
+        st.facing = .inverted;
         try testing.expectEqual(Flip.horizontal, st.flip());
     }
-    // `input` is never mirrored, whatever facing says.
-    var boxed: State = .{ .mode = .input, .facing = .left };
+    // `input` honours facing too: inversion applies in every mode.
+    var boxed: State = .{ .mode = .input, .facing = .inverted };
+    try testing.expectEqual(Flip.horizontal, boxed.flip());
+    boxed.facing = .default;
     try testing.expectEqual(Flip.none, boxed.flip());
-    // `place` faces left unless told otherwise; nothing else does.
-    try testing.expectEqual(Facing.left, Mode.place.defaultFacing());
-    try testing.expectEqual(Facing.right, Mode.loop.defaultFacing());
-    try testing.expectEqual(Facing.right, Mode.typing.defaultFacing());
-    try testing.expectEqual(Facing.right, Mode.input.defaultFacing());
+    // `typing` mirrors while deleting; inversion flips that back.
+    var del: State = .{ .mode = .typing, .facing = .default };
+    del.deleting = true;
+    try testing.expectEqual(Flip.horizontal, del.flip());
+    del.facing = .inverted;
+    try testing.expectEqual(Flip.none, del.flip());
 }
 
 test "horizontal flip mirrors columns and leaves each cell's halves alone" {
@@ -1127,29 +1158,29 @@ test "draw picks the kitty id set matching the current flip" {
     for (&ids, 0..) |*set, o| {
         for (set) |*id| id.* = @intCast(10 * (o + 1));
     }
-    // Right-facing loop uses the unmirrored set...
+    // Default-facing loop uses the unmirrored set...
     {
         const surface = try testSurface(gpa, .{ .width = 40, .height = 14 });
         defer gpa.free(surface.buffer);
-        const st: State = .{ .mode = .loop, .facing = .right, .graphics = .{ .kitty = ids } };
+        const st: State = .{ .mode = .loop, .facing = .default, .graphics = .{ .kitty = ids } };
         st.draw(surface, 4, 1);
         try testing.expectEqual(@as(u32, 10), surface.readCell(4, 1).image.?.img_id);
     }
-    // ...left-facing uses the horizontally mirrored one...
+    // ...inverted-facing uses the horizontally mirrored one...
     {
         const surface = try testSurface(gpa, .{ .width = 40, .height = 14 });
         defer gpa.free(surface.buffer);
-        const st: State = .{ .mode = .loop, .facing = .left, .graphics = .{ .kitty = ids } };
+        const st: State = .{ .mode = .loop, .facing = .inverted, .graphics = .{ .kitty = ids } };
         st.draw(surface, 4, 1);
         try testing.expectEqual(@as(u32, 20), surface.readCell(4, 1).image.?.img_id);
     }
-    // ...and a backspacing typist uses the upside-down one.
+    // ...and a backspacing typist walks backwards, using the horizontal one.
     {
         const surface = try testSurface(gpa, .{ .width = 40, .height = 14 });
         defer gpa.free(surface.buffer);
         const st: State = .{ .mode = .typing, .deleting = true, .graphics = .{ .kitty = ids } };
         st.draw(surface, 4, 1);
-        try testing.expectEqual(@as(u32, 30), surface.readCell(4, 1).image.?.img_id);
+        try testing.expectEqual(@as(u32, 20), surface.readCell(4, 1).image.?.img_id);
     }
 }
 
