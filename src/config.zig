@@ -3163,8 +3163,14 @@ test "debug adapters parse from nested tables" {
     try std.testing.expect(cfg.debug.enabled);
     try std.testing.expectEqual(@as(u32, 1000), cfg.debug.disconnect_timeout_ms);
     try std.testing.expectEqual(@as(usize, 2), cfg.debug.adapters.len);
-    try std.testing.expectEqualStrings("lldb", cfg.debug.adapters[0].name);
-    try std.testing.expectEqualStrings("lldb-dap", cfg.debug.adapters[0].command[0]);
+    var saw_lldb = false;
+    for (cfg.debug.adapters) |a| {
+        if (std.mem.eql(u8, a.name, "lldb")) {
+            saw_lldb = true;
+            try std.testing.expectEqualStrings("lldb-dap", a.command[0]);
+        }
+    }
+    try std.testing.expect(saw_lldb);
     try std.testing.expect(!(Debug{}).enabled);
 }
 

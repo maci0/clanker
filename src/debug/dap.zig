@@ -94,8 +94,11 @@ pub const Session = struct {
 
     pub fn takeEvents(self: *Session, arena: std.mem.Allocator) ![][]const u8 {
         self.drainAvailable(arena) catch {};
-        const out = try arena.dupe([]const u8, self.events.items);
-        for (self.events.items) |e| self.gpa.free(e);
+        const out = try arena.alloc([]const u8, self.events.items.len);
+        for (self.events.items, 0..) |e, i| {
+            out[i] = try arena.dupe(u8, e);
+            self.gpa.free(e);
+        }
         self.events.clearRetainingCapacity();
         return out;
     }
@@ -182,7 +185,9 @@ pub const Session = struct {
 
     pub fn spawnAdapter(self: *Session, argv: []const []const u8, cwd: std.process.Child.Cwd) !void {
         if (self.reg.get(self.session_id, self.kind) != null) {
-            _ = self.disconnect(std.heap.page_allocator) catch {};
+            var tmp_arena = std.heap.ArenaAllocator.init(self.gpa);
+            defer tmp_arena.deinit();
+            _ = self.disconnect(tmp_arena.allocator()) catch {};
         }
         var child = std.process.spawn(self.io, .{
             .argv = argv,
@@ -767,7 +772,7 @@ test "DAP decode waits until the full body is present" {
     const full = "Content-Length: 7\r\n\r\n{\"a\":1}extra";
     const dec = decodeFrame(full).?;
     try std.testing.expectEqualStrings("{\"a\":1}", dec.payload);
-    try std.testing.expectEqual(@as(usize, 26), dec.consumed);
+    try std.testing.expectEqual(@as(usize, 28), dec.consumed);
 }
 
 test "debug.enabled = false refuses without spawning" {
@@ -867,7 +872,10 @@ test "fake adapter: launch, breakpoint, continue, stack, variables, evaluate" {
 
     const launched = handle(&sess, opts, "{\"op\":\"launch\",\"adapter\":\"fake\",\"program\":\"./myapp\"}") catch |err| switch (err) {
         error.AdapterNotFound, error.FileNotFound => return error.SkipZigTest,
-        else => return err,
+        else => {
+            std.debug.print("fake adapter launch failed: {s}\n", .{@errorName(err)});
+            return err;
+        },
     };
     try std.testing.expect(std.mem.indexOf(u8, launched, "\"ok\":true") != null);
 

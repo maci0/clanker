@@ -421,6 +421,7 @@ max_history = 500
 # disconnect_timeout_ms = 3000
 # launch_timeout_ms = 15000
 #
+# [debug.adapters]
 # [debug.adapters.lldb]
 # command = ["lldb-dap"]
 #
