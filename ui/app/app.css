@@ -1312,11 +1312,50 @@ button.pf-v6-c-button.pf-m-secondary.pf-m-danger:hover,
 button.pf-v6-c-button.pf-m-secondary.pf-m-danger:focus-visible {
   background: var(--danger); color: var(--on-danger); border-color: var(--danger);
 }
+/* Plain PF buttons: icon/chrome controls, not solid actuators. Without this,
+   button.pf-v6-c-button above paints every pf-m-plain control accent blue. */
+button.pf-v6-c-button.pf-m-plain {
+  min-height: 32px; min-width: 32px; box-sizing: border-box;
+  padding: 0.25rem 0.55rem; font-weight: 500;
+  color: var(--fg-muted); background: transparent; border: 0; box-shadow: none;
+}
+button.pf-v6-c-button.pf-m-plain:hover {
+  color: var(--fg); background: var(--surface-2);
+}
 /* Keep hit area even when PF plain zeros padding; never drop below 32/44. */
 button.pf-v6-c-button.pf-m-plain.chip-btn {
   min-height: 32px; min-width: 32px; box-sizing: border-box;
   padding: 0.25rem 0.55rem; font-weight: 500;
   color: var(--fg-muted); background: transparent; border: 0; box-shadow: none;
+}
+/* Chips that still carry pf-v6-c-button (legacy upgrade) keep the lamp look. */
+button.chip.pf-v6-c-button,
+button.header-model.pf-v6-c-button,
+button.model-pill.pf-v6-c-button {
+  font-family: var(--mono); font-size: var(--step--1); font-weight: 600;
+  min-height: 0; padding: 0.15rem 0.55rem;
+  color: var(--fg-muted); background: var(--surface-2);
+  border: 1px solid var(--rule); border-radius: var(--radius-sm);
+  box-shadow: none;
+}
+button.header-model.pf-v6-c-button,
+button.model-pill.pf-v6-c-button {
+  font-size: 11px; font-weight: 500; border-radius: 999px;
+  color: color-mix(in srgb, var(--fg-muted) 55%, var(--fg));
+}
+button.model-pill.pf-v6-c-button:hover,
+button.model-pill.pf-v6-c-button:focus-visible,
+button.header-model.pf-v6-c-button:hover {
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--rule));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+}
+/* Jump-to-latest is a surface control, not a primary CTA. */
+button.scroll-bottom.pf-v6-c-button {
+  min-height: 32px; padding: 0 var(--space-4);
+  background: var(--surface); color: var(--fg);
+  border: 1px solid var(--border); box-shadow: var(--lift);
+  font-weight: 500;
 }
 
 /* PatternFly forms (step 5): cabinet field look on upgraded controls. */

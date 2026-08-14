@@ -10,7 +10,7 @@ export function loadVendor(file, ready) {
   if (vendorLoads[file]) return vendorLoads[file];
   vendorLoads[file] = ready() ? Promise.resolve() : new Promise(function (resolve, reject) {
     var s = document.createElement("script");
-    s.src = "/webui/vendor/" + file;
+    s.src = new URL("../vendor/" + file, import.meta.url).href;
     s.onload = function () {
       if (ready()) resolve();
       else reject(new Error(file + " loaded but exported nothing"));

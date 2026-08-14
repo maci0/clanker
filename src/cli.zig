@@ -5188,6 +5188,9 @@ var connection_threads = std.atomic.Value(u32).init(0);
 var request_sequence = std.atomic.Value(u64).init(1);
 threadlocal var request_status: u16 = 0;
 threadlocal var request_keep_alive: bool = false;
+/// True when this request's path carried a `/webui/~<tag>/` cache-bust prefix.
+/// Tagged asset responses may be cached immutably; the HTML always stays no-cache.
+threadlocal var request_webui_tagged: bool = false;
 var http_requests_total = std.atomic.Value(u64).init(0);
 var http_errors_total = std.atomic.Value(u64).init(0);
 var http_latency_le_10ms = std.atomic.Value(u64).init(0);
@@ -5265,6 +5268,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     defer log.clearContext();
     const started_at = std.Io.Timestamp.now(io, .awake);
     request_status = 0;
+    request_webui_tagged = false;
     var request_method: []const u8 = "unknown";
     var request_path: []const u8 = "unknown";
     // `total` must outlive the log defer below, because request_path is a
@@ -5317,7 +5321,15 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // meant any URL carrying a query string missed its route and 404'd:
         // "/" was fine but "/?v=3" was not, and the board could not name its
         // room until this was special-cased for one endpoint.
-        const path = target[0..(std.mem.findScalar(u8, target, '?') orelse target.len)];
+        //
+        // `/webui/~<8-hex>/...` is a content-addressed cache bust: strip it so
+        // every asset route still matches, and remember the tag so responses
+        // can be served immutable.
+        const raw_path = target[0..(std.mem.findScalar(u8, target, '?') orelse target.len)];
+        var webui_path_buf: [1024]u8 = undefined;
+        const norm = normalizeWebuiPath(raw_path, &webui_path_buf);
+        const path = norm.path;
+        request_webui_tagged = norm.tagged;
         request_method = method;
         request_path = path;
         // Preserve a caller's correlation id across proxies and peer agents.
@@ -5468,7 +5480,9 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respondJs(gpa, stream, webui_vendor_signals, &gzip_signals, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and isWebuiAssetPath(path)) {
             // Same tool, same comptime size guard, one file per language.
-            handleWebuiAsset(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), headers_raw, stream);
+            // Use the stripped path: a `/webui/~<tag>/` prefix is only for the
+            // browser cache key and must not reach the webui tool's asset table.
+            handleWebuiAsset(io, gpa, cfg, environ_map, path, acceptsGzip(headers_raw), headers_raw, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js")) {
             respondJs(gpa, stream, webui_vendor_d3dag, &gzip_d3dag, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/hljs.min.js")) {
@@ -7565,6 +7579,138 @@ fn isWebuiAssetPath(path: []const u8) bool {
     return false;
 }
 
+const WebuiPathNorm = struct {
+    path: []const u8,
+    tagged: bool,
+};
+
+/// Strip a `/webui/~<8-hex>/` cache-bust prefix. The tag itself is not verified
+/// against the current build: any well-formed prefix maps to the live asset so
+/// a mid-session rebuild does not 404 open tabs still holding the old URL.
+fn normalizeWebuiPath(raw: []const u8, buf: []u8) WebuiPathNorm {
+    const pfx = "/webui/~";
+    if (!std.mem.startsWith(u8, raw, pfx)) return .{ .path = raw, .tagged = false };
+    if (raw.len < pfx.len + 9 or raw[pfx.len + 8] != '/') return .{ .path = raw, .tagged = false };
+    const tag = raw[pfx.len .. pfx.len + 8];
+    for (tag) |c| {
+        const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
+        if (!ok) return .{ .path = raw, .tagged = false };
+    }
+    const rest = raw[pfx.len + 9 ..];
+    if (buf.len < "/webui/".len + rest.len) return .{ .path = raw, .tagged = false };
+    @memcpy(buf[0.."/webui/".len], "/webui/");
+    @memcpy(buf["/webui/".len..][0..rest.len], rest);
+    return .{ .path = buf[0 .. "/webui/".len + rest.len], .tagged = true };
+}
+
+/// Process-wide 8-hex tag derived from the webui wasm + key vendor embeds.
+/// Changes whenever `zig build tools` (or a host rebuild that embeds new
+/// vendor bytes) produces different content, so HTML can point browsers at a
+/// fresh `/webui/~tag/...` module graph.
+var webui_asset_tag_buf: [8]u8 = undefined;
+var webui_asset_tag_state: std.atomic.Value(enum(u8) { idle, ready, failed }) = .init(.idle);
+
+fn webuiAssetTag(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+) ?[]const u8 {
+    switch (webui_asset_tag_state.load(.acquire)) {
+        .ready => return webui_asset_tag_buf[0..],
+        .failed => return null,
+        .idle => {},
+    }
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch {
+        _ = webui_asset_tag_state.cmpxchgStrong(.idle, .failed, .acq_rel, .acquire);
+        return null;
+    };
+    const tool = reg.get("webui") orelse {
+        _ = webui_asset_tag_state.cmpxchgStrong(.idle, .failed, .acq_rel, .acquire);
+        return null;
+    };
+    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch {
+        _ = webui_asset_tag_state.cmpxchgStrong(.idle, .failed, .acq_rel, .acquire);
+        return null;
+    };
+    defer gpa.free(wasm_bytes);
+    const mixed = std.hash.Crc32.hash(wasm_bytes) ^
+        std.hash.Crc32.hash(webui_vendor_patternfly) ^
+        std.hash.Crc32.hash(webui_vendor_preact);
+    const printed = std.fmt.bufPrint(&webui_asset_tag_buf, "{x:0>8}", .{mixed}) catch {
+        _ = webui_asset_tag_state.cmpxchgStrong(.idle, .failed, .acq_rel, .acquire);
+        return null;
+    };
+    _ = printed;
+    webui_asset_tag_state.store(.ready, .release);
+    return webui_asset_tag_buf[0..];
+}
+
+/// Rewrite absolute `/webui/` asset URLs to `/webui/~<tag>/` and inject an
+/// import map so ES module absolute imports resolve under the same tag.
+fn withWebuiCacheUrls(arena: std.mem.Allocator, html: []const u8, tag: []const u8) ![]const u8 {
+    const needle = "/webui/";
+    const already = "/webui/~";
+    const replacement = try std.fmt.allocPrint(arena, "/webui/~{s}/", .{tag});
+    const map = try std.fmt.allocPrint(
+        arena,
+        \\<script type="importmap">{{"imports":{{"/webui/":"/webui/~{s}/"}}}}</script>
+    ,
+        .{tag},
+    );
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(arena);
+    try out.ensureTotalCapacity(arena, html.len + html.len / 8 + map.len + 8);
+
+    // Inject the import map immediately after <head...>.
+    var i: usize = 0;
+    if (std.mem.indexOf(u8, html, "<head>")) |h| {
+        if (std.mem.indexOfScalar(u8, html[h..], '>')) |rel| {
+            const at = h + rel + 1;
+            try out.appendSlice(arena, html[0..at]);
+            try out.append(arena, '\n');
+            try out.appendSlice(arena, map);
+            i = at;
+        }
+    } else if (std.mem.indexOf(u8, html, "<head ")) |h| {
+        if (std.mem.indexOfScalar(u8, html[h..], '>')) |rel| {
+            const at = h + rel + 1;
+            try out.appendSlice(arena, html[0..at]);
+            try out.append(arena, '\n');
+            try out.appendSlice(arena, map);
+            i = at;
+        }
+    }
+    if (i == 0) {
+        try out.appendSlice(arena, map);
+        try out.append(arena, '\n');
+    }
+
+    while (i < html.len) {
+        if (std.mem.startsWith(u8, html[i..], already)) {
+            try out.appendSlice(arena, already);
+            i += already.len;
+            continue;
+        }
+        if (std.mem.startsWith(u8, html[i..], needle)) {
+            try out.appendSlice(arena, replacement);
+            i += needle.len;
+            continue;
+        }
+        try out.append(arena, html[i]);
+        i += 1;
+    }
+    return try out.toOwnedSlice(arena);
+}
+
+fn webuiAssetCacheControl(untagged: []const u8) []const u8 {
+    if (request_webui_tagged) return "public, max-age=31536000, immutable";
+    return untagged;
+}
+
 /// The page's stylesheet and script. Same tool, same sandbox, same size guard
 /// as the markup; only the content type and the caching differ.
 fn handleWebuiAsset(
@@ -7653,7 +7799,7 @@ fn handleWebuiAsset(
     if (ifNoneMatchHits(headers_raw, etag)) {
         request_status = 304;
         var hbuf: [256]u8 = undefined;
-        const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\n{s}\r\n", .{ etag, connHeader() }) catch return;
+        const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: {s}\r\n{s}\r\n", .{ etag, webuiAssetCacheControl("no-cache"), connHeader() }) catch return;
         raw_http.writeAllFd(stream.socket.handle, hdr);
         return;
     }
@@ -7664,7 +7810,7 @@ fn handleWebuiAsset(
     request_status = 200;
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [512]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, etag, connHeader() }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: {s}\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, etag, webuiAssetCacheControl("no-cache"), connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
     raw_http.writeAllFd(stream.socket.handle, out);
 }
@@ -7675,7 +7821,11 @@ fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
     const arena = arena_state.allocator();
 
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, "/", &render_page, stream) orelse return;
-    respondHtmlGz(gpa, stream, body, accepts_gzip, headers_raw);
+    const tagged = if (webuiAssetTag(io, gpa, cfg)) |tag|
+        withWebuiCacheUrls(arena, body, tag) catch body
+    else
+        body;
+    respondHtmlGz(gpa, stream, tagged, accepts_gzip, headers_raw);
 }
 
 /// `GET /api/runs` lists recorded runs; `GET /api/runs/<id>` returns one whole
@@ -11772,10 +11922,11 @@ fn respondCss(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u
 fn respondStatic(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, cache: *GzipCache, content_type: []const u8, accepts_gzip: bool, headers_raw: []const u8) void {
     var etag_buf: [16]u8 = undefined;
     const etag = etagFor(&etag_buf, body);
+    const cache_control = webuiAssetCacheControl("public, max-age=3600, must-revalidate");
     if (ifNoneMatchHits(headers_raw, etag)) {
         request_status = 304;
         var hbuf: [256]u8 = undefined;
-        const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: public, max-age=3600, must-revalidate\r\n{s}\r\n", .{ etag, connHeader() }) catch return;
+        const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: {s}\r\n{s}\r\n", .{ etag, cache_control, connHeader() }) catch return;
         raw_http.writeAllFd(stream.socket.handle, hdr);
         return;
     }
@@ -11784,7 +11935,7 @@ fn respondStatic(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     const out = gzipped orelse body;
     request_status = 200;
     const encoding = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: public, max-age=3600, must-revalidate\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, etag, connHeader() }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: {s}\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, etag, cache_control, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
     raw_http.writeAllFd(stream.socket.handle, out);
 }
@@ -14060,6 +14211,42 @@ test "no vendored JS file exists that the vendor routes have never heard of" {
         };
         f.close(io);
     }
+}
+
+test "normalizeWebuiPath strips a well-formed cache-bust prefix" {
+    var buf: [128]u8 = undefined;
+    const a = normalizeWebuiPath("/webui/~abcdef12/app.css", &buf);
+    try std.testing.expect(a.tagged);
+    try std.testing.expectEqualStrings("/webui/app.css", a.path);
+
+    const b = normalizeWebuiPath("/webui/app.css", &buf);
+    try std.testing.expect(!b.tagged);
+    try std.testing.expectEqualStrings("/webui/app.css", b.path);
+
+    const c = normalizeWebuiPath("/webui/~nothex!!/app.css", &buf);
+    try std.testing.expect(!c.tagged);
+    try std.testing.expectEqualStrings("/webui/~nothex!!/app.css", c.path);
+
+    const d = normalizeWebuiPath("/webui/~ABCDEF00/core/ui.js", &buf);
+    try std.testing.expect(d.tagged);
+    try std.testing.expectEqualStrings("/webui/core/ui.js", d.path);
+}
+
+test "withWebuiCacheUrls rewrites assets and injects an import map" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const html =
+        \\<!doctype html><head><title>x</title></head>
+        \\<link href="/webui/app.css">
+        \\<script type="module" src="/webui/app.js"></script>
+    ;
+    const out = try withWebuiCacheUrls(arena, html, "deadbeef");
+    try std.testing.expect(std.mem.indexOf(u8, out, "/webui/~deadbeef/app.css") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "/webui/~deadbeef/app.js") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "type=\"importmap\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"/webui/\":\"/webui/~deadbeef/\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "href=\"/webui/app.css\"") == null);
 }
 
 test "no webui module file exists that the asset route has never heard of" {

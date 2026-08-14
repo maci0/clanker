@@ -89,15 +89,20 @@ export function bind(node, st, render) {
 var pfButtonSkip = {
   "rail-tab": 1, "rail-item": 1, "tool-name": 1, "suggestion": 1,
   "palette-item": 1, "board-header-btn": 1, "rail-pin": 1, "label-picker-item": 1,
+  /* Status lamps and model pills are labels, not actuators. Upgrading them to
+     pf-m-primary painted the masthead solid PatternFly blue. */
+  "chip": 1, "header-model": 1, "model-pill": 1,
 };
 
 function pfButtonVariant(el) {
-  if (el.classList.contains("chip-btn") || el.classList.contains("slack-btn-icon")) return "plain";
+  if (el.classList.contains("chip-btn") || el.classList.contains("slack-btn-icon") ||
+      el.classList.contains("slack-sidebar-toggle")) return "plain";
   if (el.classList.contains("secondary") && el.classList.contains("danger")) return "secondary-danger";
-  if (el.classList.contains("secondary")) return "secondary";
+  if (el.classList.contains("secondary") || el.classList.contains("scroll-bottom")) return "secondary";
   if (el.classList.contains("danger")) return "danger";
-  if (el.classList.contains("primary") || el.id === "submit" || el.type === "submit") return "primary";
-  if (!el.classList.contains("secondary") && !el.classList.contains("chip-btn")) return "primary";
+  /* Explicit primary only: submit, .primary, and the rail's New chat CTA. */
+  if (el.classList.contains("primary") || el.classList.contains("rail-new") ||
+      el.id === "submit" || el.type === "submit") return "primary";
   return "secondary";
 }
 
