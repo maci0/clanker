@@ -273,23 +273,14 @@ fn roundTrip(opts: EvalOpts, line: []const u8) EvalError![]u8 {
         if (thread) |t| t.join();
     }
 
-    opts.reg.writeStdin(opts.session_id, opts.kind, line) catch |err| {
+    opts.reg.writeStdin(opts.session_id, opts.kind, line) catch {
         opts.reg.terminate(opts.session_id, opts.kind);
-        return switch (err) {
-            error.NotRegistered => error.NotRegistered,
-            error.NoPipes => error.NoPipes,
-            error.NoStdin => error.NoStdin,
-            else => error.KernelExited,
-        };
+        return error.KernelExited;
     };
     const raw = opts.reg.readStdoutLine(opts.arena, opts.session_id, opts.kind) catch |err| {
         opts.reg.terminate(opts.session_id, opts.kind);
-        return switch (err) {
-            error.KernelExited => if (opts.timeout_ms > 0 and !cancel.load(.monotonic)) error.KernelExited else error.Timeout,
-            error.StreamTooLong => error.StreamTooLong,
-            error.ReadFailed => error.Timeout,
-            else => error.KernelExited,
-        };
+        if (err == error.KernelExited and cancel.load(.monotonic)) return error.Timeout;
+        return error.KernelExited;
     };
     const parsed = try parseResponse(opts.arena, raw);
     return render(opts, parsed);
