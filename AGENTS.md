@@ -122,6 +122,8 @@ through a gated loop. Follow these conventions when changing this codebase.
   apps), `ui/vendor/` (vendored JS), `ui/webui.zig` (internal WASM guest). The web UI
   is that guest: `clanker serve` loads `webui.wasm` at start, so a `.js`/`.css` edit
   needs `zig build tools` and a serve restart; rebuilding the host binary does not pick it up.
+  Served HTML rewrites assets to `/webui/~<8hex>/...` (content tag from the wasm +
+  vendor embeds) so browsers cannot keep a stale module graph across rebuilds.
 
 ## WASM by default
 

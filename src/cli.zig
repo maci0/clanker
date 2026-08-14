@@ -5570,7 +5570,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_webui_plugins) {
             handleWebuiPlugins(io, gpa, method, body, stream);
         } else if (is_webui_plugin_asset) {
-            handleWebuiPluginAsset(io, gpa, target, acceptsGzip(headers_raw), stream);
+            handleWebuiPluginAsset(io, gpa, path, acceptsGzip(headers_raw), stream);
         } else if (is_files) {
             handleFiles(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (is_logs) {
