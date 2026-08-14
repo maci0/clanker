@@ -65,8 +65,10 @@ stays after PF in document order so token remaps win.
 
 Masthead `chip-btn` controls and `#submit`/`#cancel` stay off `pf-v6-c-button`:
 PF brand/plain colours were beating `--accent` / `--fg-muted` across themes.
-Selected rail tabs force `--fg` / `--surface-2` over PF `.pf-m-current` (which
-reads `action--plain--alt--clicked`).
+Rail tabs stay cabinet-native (`class="rail-tab"` only, no `pf-v6-c-nav__link` /
+`pf-m-current`): PF nav link + `color-scheme: dark` UA button greys ignored
+author colours even with `!important`. Tabs keep `appearance: none`, and narrow
+hit targets use `button.rail-tab` so base `min-height: 32px` cannot beat 44px.
 
 Full PatternFly subsetting is deferred: `media=print` → `all` already clears
 first-paint cost; carving the min CSS is a separate change.

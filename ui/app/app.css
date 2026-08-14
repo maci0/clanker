@@ -130,9 +130,12 @@
 }
 
 /* Dark: #212121 / #171717. Slightly lighter than
-   the old graphite so chat bubbles have room to breathe. */
+   the old graphite so chat bubbles have room to breathe.
+   Only when theme is system (no data-theme): a :not(light/latte/...)
+   list is more specific than :root[data-theme="mocha"] and was painting
+   named dark themes with the default dark ramp. */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]):not([data-theme="latte"]):not([data-theme="tokyonight-day"]) {
+  :root:not([data-theme]) {
     color-scheme: dark;
     --paper: #212121;
     --bg: #171717;
@@ -715,6 +718,10 @@ button.pf-v6-c-nav__link.rail-tab {
   --pf-v6-c-nav__link--BackgroundColor: transparent;
   --pf-v6-c-nav__link--hover--BackgroundColor: var(--surface-2);
   --pf-v6-c-nav__link--m-current--BackgroundColor: var(--surface-2);
+  /* Drop UA button chrome under color-scheme:dark; otherwise selected tabs
+     keep system greys even when color/background use !important. */
+  appearance: none;
+  -webkit-appearance: none;
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
   width: 100%; text-align: left; cursor: pointer;
   min-height: 32px; padding: 0.35rem 0.6rem;
@@ -750,6 +757,8 @@ button.pf-v6-c-nav__link.rail-tab.pf-m-current:hover {
   color: var(--fg) !important;
   background-color: var(--surface-2) !important;
   background-image: none !important;
+  appearance: none;
+  -webkit-appearance: none;
   font-weight: 600;
   border-color: var(--rule);
 }
@@ -2527,7 +2536,9 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   .ai-transparency-dismiss {
     min-height: 44px; min-width: 44px;
   }
-  .rail-tab, .pf-v6-c-nav__link.rail-tab { min-height: 44px; }
+  .rail-tab,
+  .pf-v6-c-nav__link.rail-tab,
+  button.pf-v6-c-nav__link.rail-tab { min-height: 44px; }
   .composer .toolbar #submit,
   .composer .toolbar #cancel { min-height: 44px; }
   .rail-item, .rail-new, .chat-actions button, .chat-thread-bar button,
@@ -2543,7 +2554,8 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   button.pf-v6-c-button.pf-m-plain.chip-btn,
   .ai-transparency-dismiss { min-height: 44px; min-width: 44px; }
   .rail-tab,
-  .pf-v6-c-nav__link.rail-tab {
+  .pf-v6-c-nav__link.rail-tab,
+  button.pf-v6-c-nav__link.rail-tab {
     min-height: 44px;
     padding-block: 0.55rem;
   }

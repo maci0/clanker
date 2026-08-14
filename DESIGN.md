@@ -193,8 +193,10 @@ Surfaces stack by token (bg → surface → surface-2), not by blur glass.
 
 ## Shapes
 
-- Panels: 6–14px radius
-- Actuators and composer: pill / 24px soft capsule
+- Panels: 6–14px radius (`sm` / `md` / `lg`)
+- Dense controls: 3px / 8px (`xs` / `control`) where engraved chips need a tighter edge
+- Actuators and composer: pill / 24px soft capsule (`composer`)
+- Chat bubbles: 18px (`bubble`)
 - Lamps: full circle
 
 ## Components
