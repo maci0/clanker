@@ -509,6 +509,23 @@ pub const Improve = struct {
 pub const Peer = struct {
     name: []const u8,
     url: []const u8,
+    /// Optional mesh allowlist key (PRD 0011). Empty = match JOIN by name.
+    id: []const u8 = "",
+};
+
+/// Clanker mesh (PRD 0011). Off via `modules.mesh = false`. Listen lives
+/// only in `clanker serve`.
+pub const Mesh = struct {
+    listen_host: []const u8 = "127.0.0.1",
+    listen_port: u16 = 7420,
+    ping_interval_seconds: u32 = 15,
+    admission: []const u8 = "allowlist",
+    max_members: u16 = 32,
+    max_pending_joins: u16 = 8,
+    prompt_timeout_seconds: u32 = 120,
+    max_frame_bytes: u32 = 1 << 20,
+    max_file_bytes: u32 = 32 << 20,
+    file_chunk_bytes: u32 = 32 << 10,
 };
 
 /// Identity of this clanker instance.
@@ -645,6 +662,8 @@ pub const Modules = struct {
     /// state/token_stats.jsonl and aggregated per provider/model
     /// (model_stats tool, `clanker stats`, GET /api/stats).
     token_stats: bool = true,
+    /// TCP peer mesh (PRD 0011). Off by default: serve binds a socket.
+    mesh: bool = false,
 };
 
 /// Which keys inside `"modules"` were set when this Config was parsed. Used so
@@ -670,6 +689,7 @@ pub const ModulesFields = struct {
     multimodal: bool = false,
     chatrooms: bool = false,
     token_stats: bool = false,
+    mesh: bool = false,
 };
 
 /// Online-research web access. The sandbox denies network to a tool by
@@ -765,6 +785,7 @@ pub const Config = struct {
     ttsr: Ttsr = .{},
     kernel: Kernel = .{},
     debug: Debug = .{},
+    mesh: Mesh = .{},
     chatrooms: Chatrooms = .{},
     memory: Memory = .{},
     modules: Modules = .{},
@@ -785,6 +806,7 @@ pub const Config = struct {
     ttsr_present: bool = false,
     kernel_present: bool = false,
     debug_present: bool = false,
+    mesh_present: bool = false,
     /// Path of the file that set `default_provider`, as actually read. Null
     /// means no config named one and the struct fallback above is in force.
     /// Reported by `providers check`: "the default is X" is not much use
@@ -980,7 +1002,7 @@ pub const Config = struct {
             "models",           "instance", "peers",   "notify",
             "chatrooms",        "modules",  "web",     "memory",
             "serve",            "tui",      "advisor", "hooks",
-            "ttsr",             "kernel",   "debug",
+            "ttsr",             "kernel",   "debug",   "mesh",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -1016,6 +1038,10 @@ pub const Config = struct {
         if (obj.get("debug")) |v| {
             cfg.debug = try parseDebug(arena, v);
             cfg.debug_present = true;
+        }
+        if (obj.get("mesh")) |v| {
+            cfg.mesh = try parseMesh(v);
+            cfg.mesh_present = true;
         }
         if (obj.get("providers")) |v| {
             const pobj = switch (v) {
@@ -1463,10 +1489,11 @@ pub const Config = struct {
                 .object => |o| o,
                 else => return error.PeerNotObject,
             };
-            warnUnknownKeys(obj, &.{ "name", "url" }, "peers[]");
+            warnUnknownKeys(obj, &.{ "name", "url", "id" }, "peers[]");
             try out.append(arena, .{
                 .name = try jsonStr(try required(obj, "name", "peers[].name", "name = \"peer-name\""), "peers[].name"),
                 .url = try jsonStr(try required(obj, "url", "peers[].url", "url = \"https://peer.example.com\""), "peers[].url"),
+                .id = if (obj.get("id")) |iv| try jsonStr(iv, "peers[].id") else "",
             });
         }
         return out.toOwnedSlice(arena);
@@ -1905,6 +1932,7 @@ pub const Config = struct {
         if (fields.multimodal) dst.multimodal = src.multimodal;
         if (fields.chatrooms) dst.chatrooms = src.chatrooms;
         if (fields.token_stats) dst.token_stats = src.token_stats;
+        if (fields.mesh) dst.mesh = src.mesh;
     }
 
     fn parseKernel(v: json.Value) !Kernel {
@@ -1968,6 +1996,37 @@ pub const Config = struct {
             d.adapters = try list.toOwnedSlice(arena);
         }
         return d;
+    }
+
+    fn parseMesh(v: json.Value) !Mesh {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.MeshNotObject,
+        };
+        var m = Mesh{};
+        warnUnknownKeys(obj, &.{
+            "listen_host",            "listen_port",     "ping_interval_seconds",
+            "admission",              "max_members",     "max_pending_joins",
+            "prompt_timeout_seconds", "max_frame_bytes", "max_file_bytes",
+            "file_chunk_bytes",
+        }, "mesh");
+        if (obj.get("listen_host")) |s| m.listen_host = try jsonStr(s, "mesh.listen_host");
+        if (obj.get("listen_port")) |n| m.listen_port = try jsonUnsigned(u16, n, "mesh.listen_port");
+        if (obj.get("ping_interval_seconds")) |n| m.ping_interval_seconds = try jsonUnsigned(u32, n, "mesh.ping_interval_seconds");
+        if (obj.get("admission")) |s| {
+            m.admission = try jsonStr(s, "mesh.admission");
+            if (!std.mem.eql(u8, m.admission, "allowlist") and
+                !std.mem.eql(u8, m.admission, "prompt") and
+                !std.mem.eql(u8, m.admission, "open"))
+                return error.MeshAdmissionInvalid;
+        }
+        if (obj.get("max_members")) |n| m.max_members = try jsonUnsigned(u16, n, "mesh.max_members");
+        if (obj.get("max_pending_joins")) |n| m.max_pending_joins = try jsonUnsigned(u16, n, "mesh.max_pending_joins");
+        if (obj.get("prompt_timeout_seconds")) |n| m.prompt_timeout_seconds = try jsonUnsigned(u32, n, "mesh.prompt_timeout_seconds");
+        if (obj.get("max_frame_bytes")) |n| m.max_frame_bytes = try jsonUnsigned(u32, n, "mesh.max_frame_bytes");
+        if (obj.get("max_file_bytes")) |n| m.max_file_bytes = try jsonUnsigned(u32, n, "mesh.max_file_bytes");
+        if (obj.get("file_chunk_bytes")) |n| m.file_chunk_bytes = try jsonUnsigned(u32, n, "mesh.file_chunk_bytes");
+        return m;
     }
 
     fn parseTtsr(arena: std.mem.Allocator, v: json.Value) !Ttsr {
@@ -2124,6 +2183,7 @@ pub const Config = struct {
         if (src.ttsr_present) dst.ttsr = src.ttsr;
         if (src.kernel_present) dst.kernel = src.kernel;
         if (src.debug_present) dst.debug = src.debug;
+        if (src.mesh_present) dst.mesh = src.mesh;
         if (src.modules_present) applyModulesFields(&dst.modules, src.modules, src.modules_fields);
     }
 
@@ -2158,12 +2218,13 @@ pub const Config = struct {
             .{ .key = "multimodal", .ptr = &m.multimodal, .present = &mf.multimodal },
             .{ .key = "chatrooms", .ptr = &m.chatrooms, .present = &mf.chatrooms },
             .{ .key = "token_stats", .ptr = &m.token_stats, .present = &mf.token_stats },
+            .{ .key = "mesh", .ptr = &m.mesh, .present = &mf.mesh },
         };
         warnUnknownKeys(obj, &.{
             "mcp",         "acp",       "peers",           "a2a",          "webui",      "graphs",
             "sessions",    "goal",      "goal_auto_steer", "token_budget", "streaming",  "dotenv",
             "hot_reload",  "autolearn", "subagents",       "rlm",          "multimodal", "chatrooms",
-            "token_stats",
+            "token_stats", "mesh",
         }, "modules");
         for (fields) |f| {
             if (obj.get(f.key)) |val| {
@@ -4138,7 +4199,7 @@ test "config.toml documents every key the loader accepts" {
     // --worktree` at runtime and deliberately unreadable from a file; the
     // rest are the parsed *results* of keys rather than keys themselves.
     const not_keys = [_][]const u8{ "shared_root", "name", "models" };
-    inline for (.{ Agent, Improve, Modules, Web, Notify, Chatrooms, Kernel, Debug, Ttsr, TtsrRule, Advisor, Instance, Tui, Serve, Model, Provider }) |T| {
+    inline for (.{ Agent, Improve, Modules, Web, Notify, Chatrooms, Kernel, Debug, Mesh, Ttsr, TtsrRule, Advisor, Instance, Tui, Serve, Model, Provider }) |T| {
         inline for (@typeInfo(T).@"struct".fields) |f| {
             comptime var skip = false;
             inline for (not_keys) |n| {

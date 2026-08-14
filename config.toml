@@ -431,6 +431,22 @@ max_history = 500
 # [debug.adapters.go]
 # command = ["dlv", "dap"]
 
+# TCP peer mesh (PRD 0011). Off by default. Only `clanker serve` binds.
+# [modules]
+# mesh = false
+#
+# [mesh]
+# listen_host = "127.0.0.1"
+# listen_port = 7420
+# ping_interval_seconds = 15
+# admission = "allowlist"
+# max_members = 32
+# max_pending_joins = 8
+# prompt_timeout_seconds = 120
+# max_frame_bytes = 1048576
+# max_file_bytes = 33554432
+# file_chunk_bytes = 32768
+
 # Retrieval memory. `hybrid` combines the keyword index with vector search;
 # an empty embedding provider falls back to keyword-only, so vector search is
 # opt-in by naming one.
