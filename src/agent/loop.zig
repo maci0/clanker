@@ -3726,3 +3726,16 @@ test "answerAsParent answers through the parent's provider" {
     defer gpa.free(@constCast(answer));
     try std.testing.expectEqualStrings("Hello from Anthropic-mock", answer);
 }
+
+test "tool metrics count invocations and error JSON" {
+    const start_req = tool_requests_total.load(.monotonic);
+    const start_err = tool_errors_total.load(.monotonic);
+    noteToolRequest();
+    noteToolRequest();
+    noteToolError();
+    try std.testing.expectEqual(start_req + 2, tool_requests_total.load(.monotonic));
+    try std.testing.expectEqual(start_err + 1, tool_errors_total.load(.monotonic));
+    const snap = snapshotToolMetrics();
+    try std.testing.expect(snap.requests_total >= start_req + 2);
+    try std.testing.expect(snap.errors_total >= start_err + 1);
+}
