@@ -24,6 +24,7 @@ const utf8 = @import("../util/utf8.zig");
 const mock_server = @import("../llm/mock_server.zig");
 const advisor = @import("advisor.zig");
 const prune = @import("prune.zig");
+const loop_guard = @import("loop_guard.zig");
 const thinking = @import("thinking.zig");
 const ttsr = @import("ttsr.zig");
 
@@ -522,23 +523,7 @@ pub const Agent = struct {
 
         var iteration: u32 = 0;
         var budget_hit = false;
-        // Cross-turn duplicate tool-call detection: the intra-batch dedup in
-        // executeCalls only serializes repeats within one batch, so a model
-        // retrying the exact same call (same name + same arguments) on
-        // consecutive iterations would spin until max_iterations with no
-        // answer. Fingerprint counts are per-run; the third identical call
-        // gets a synthetic error result instead of another execution.
-        var call_counts: std.ArrayHashMapUnmanaged(u64, u32, struct {
-            pub fn hash(_: @This(), key: u64) u32 {
-                // ArrayHashMap's hash is u32; the key is already a mixed
-                // 64-bit fingerprint, so dropping the high half is intended.
-                return @truncate(key);
-            }
-            pub fn eql(_: @This(), a: u64, b: u64, _: usize) bool {
-                return a == b;
-            }
-        }, true) = .empty;
-        defer call_counts.deinit(self.ctx.gpa);
+        var repeat_guard: loop_guard.LoopGuard = .{};
         // Last private-todo revision already reported to `on_todos`. Starts at
         // the list's current revision rather than 0 so a nested run that
         // inherits a populated list does not re-announce items the viewer
@@ -788,52 +773,18 @@ pub const Agent = struct {
             if (self.on_tool_call) |cb| cb(calls);
             const tool_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
 
-            // Cross-turn dedup: a call already executed twice with identical
-            // arguments gets a synthetic error result instead of a third
-            // execution, deterministically breaking a verbatim retry spin and
-            // telling the model to answer with what it already has.
-            const skipped = try self.arena.alloc(bool, calls.len);
-            @memset(skipped, false);
-            var to_run: std.ArrayList(types.ToolCall) = .empty;
-            defer to_run.deinit(self.ctx.gpa);
-            for (calls, 0..) |tc, i| {
-                const fp = blk: {
-                    var h = std.hash.Wyhash.init(0);
-                    h.update(tc.name);
-                    h.update("\x00");
-                    h.update(tc.arguments);
-                    break :blk h.final();
-                };
-                const gop = try call_counts.getOrPut(self.ctx.gpa, fp);
-                if (!gop.found_existing) gop.value_ptr.* = 0;
-                gop.value_ptr.* += 1;
-                if (gop.value_ptr.* >= 3) {
-                    skipped[i] = true;
-                    log.log(.warn, "tool '{s}' repeated identically {d} times; refusing to re-execute", .{ tc.name, gop.value_ptr.* });
-                    continue;
+            var repeat_events: std.ArrayList(loop_guard.Event) = .empty;
+            for (calls) |tc| {
+                if (try repeat_guard.observe(self.arena, tc.name, tc.arguments, self.cfg.agent.repeat_tool_thresholds, self.cfg.agent.repeat_tool_exclude)) |event| {
+                    try repeat_events.append(self.arena, event);
+                    log.log(.info, "loop guard reminder: tool '{s}' repeated {d} times", .{ event.tool_name, event.count });
                 }
-                try to_run.append(self.ctx.gpa, tc);
             }
             // Execute tool calls in parallel for distinct tool names (each on
             // a worker thread with a large stack); a tool name repeated in the
             // same batch falls back to sequential execution because the zwasm
             // module is stateful and the cached instance is reused.
-            const run_results = try self.executeCalls(to_run.items);
-            // Re-align results with the original batch: skipped calls keep
-            // their synthetic error, executed calls take the next result, so
-            // the results loop below is unchanged.
-            const results = try self.arena.alloc(?[]const u8, calls.len);
-            {
-                var ri: usize = 0;
-                for (skipped, 0..) |skip, i| {
-                    if (skip) {
-                        results[i] = "{\"ok\":false,\"error\":\"identical tool call already executed twice with the same arguments; do not repeat it; answer with the information you already have\"}";
-                    } else {
-                        results[i] = run_results[ri];
-                        ri += 1;
-                    }
-                }
-            }
+            const results = try self.executeCalls(calls);
             if (self.on_tool_result) |cb| {
                 const tool_ms: u64 = @intCast(@divTrunc(tool_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
                 cb(tool_ms);
@@ -947,6 +898,13 @@ pub const Agent = struct {
                     const last = &messages.items[messages.items.len - 1];
                     last.images.?[0] = .{ .mime = iv.mime, .b64 = iv.b64 };
                 }
+            }
+            for (repeat_events.items) |event| {
+                const reminder = if (event.detailed)
+                    try std.fmt.allocPrint(self.arena, "[loop guard] You have called tool `{s}` with the same canonical arguments {d} consecutive times. Reassess the approach before repeating it. Arguments: {s}", .{ event.tool_name, event.count, loop_guard.argsPreview(event.canonical_args) })
+                else
+                    "[loop guard] You have repeated the same tool call several times. Reassess the approach before calling it again.";
+                try messages.append(self.arena, .{ .role = .system, .content = reminder });
             }
         }
         if (budget_hit) return error.SessionTokenBudgetExceeded;

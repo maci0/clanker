@@ -181,6 +181,8 @@ pub const Agent = struct {
     tool_result_prune_bytes: usize = 8192,
     tool_result_prune_head_bytes: usize = 4096,
     tool_result_prune_tail_bytes: usize = 1024,
+    repeat_tool_thresholds: []const u32 = &.{ 3, 5, 8 },
+    repeat_tool_exclude: []const []const u8 = &.{ "todo_add", "todo_close", "todo_list" },
     max_total_tokens: ?u32 = null,
     /// Per-turn cap on input tokens; conversation is compacted before a turn
     /// whose content would exceed it.
@@ -358,6 +360,8 @@ pub const AgentFields = struct {
     tool_result_prune_bytes: bool = false,
     tool_result_prune_head_bytes: bool = false,
     tool_result_prune_tail_bytes: bool = false,
+    repeat_tool_thresholds: bool = false,
+    repeat_tool_exclude: bool = false,
     max_total_tokens: bool = false,
     max_tokens_per_turn: bool = false,
     max_history_tokens: bool = false,
@@ -789,6 +793,7 @@ pub const Config = struct {
             return error.DefaultProviderUnknown;
         }
         try validateToolResultPrune(cfg.agent);
+        try validateRepeatToolThresholds(cfg.agent.repeat_tool_thresholds);
         return cfg;
     }
 
@@ -798,6 +803,23 @@ pub const Config = struct {
         if (kept < agent.tool_result_prune_bytes) return;
         log.log(.error_, "agent tool-result pruning keeps {d} bytes but threshold is {d}", .{ kept, agent.tool_result_prune_bytes });
         return error.InvalidToolResultPruneConfig;
+    }
+
+    fn validateRepeatToolThresholds(thresholds: []const u32) !void {
+        if (thresholds.len == 0) {
+            log.log(.error_, "agent.repeat_tool_thresholds must not be empty", .{});
+            return error.InvalidRepeatToolThresholds;
+        }
+        for (thresholds, 0..) |threshold, i| {
+            if (threshold < 2) {
+                log.log(.error_, "agent.repeat_tool_thresholds value {d} must be at least 2", .{threshold});
+                return error.InvalidRepeatToolThresholds;
+            }
+            for (thresholds[0..i]) |previous| if (previous == threshold) {
+                log.log(.error_, "agent.repeat_tool_thresholds contains duplicate value {d}", .{threshold});
+                return error.InvalidRepeatToolThresholds;
+            };
+        }
     }
 
     const LoadMode = enum { required, optional };
@@ -1395,19 +1417,20 @@ pub const Config = struct {
         var a = Agent{};
         var f = AgentFields{};
         warnUnknownKeys(obj, &.{
-            "max_iterations",               "compact_threshold_bytes",        "tool_result_prune_bytes",
-            "tool_result_prune_head_bytes", "tool_result_prune_tail_bytes",   "max_total_tokens",
-            "max_tokens_per_turn",          "max_history_tokens",             "tool_catalog",
-            "hot_tools",                    "tools_dir",                      "skills_dir",
-            "system_prompt_file",           "learnings_file",                 "global_instructions_file",
-            "state_dir",                    "sandbox_root",                   "workflows_dir",
-            "chains_dir",                   "git_commit",                     "git_remote_ops",
-            "exec_pattern_allow",           "repl_exec_allow",                "seed",
-            "ask_timeout_seconds",          "confirm_writes",                 "provider_check_timeout_seconds",
-            "fallback_provider",            "fallback_providers",             "auto_thinking",
-            "thinking_classifier_model",    "thinking_classifier_timeout_ms", "worktree",
-            "goal_worktree",                "git_worktree_on",                "isolated_cli",
-            "isolated_tui",                 "isolated_webui",
+            "max_iterations",                 "compact_threshold_bytes",        "tool_result_prune_bytes",
+            "tool_result_prune_head_bytes",   "tool_result_prune_tail_bytes",   "repeat_tool_thresholds",
+            "repeat_tool_exclude",            "max_total_tokens",               "max_tokens_per_turn",
+            "max_history_tokens",             "tool_catalog",                   "hot_tools",
+            "tools_dir",                      "skills_dir",                     "system_prompt_file",
+            "learnings_file",                 "global_instructions_file",       "state_dir",
+            "sandbox_root",                   "workflows_dir",                  "chains_dir",
+            "git_commit",                     "git_remote_ops",                 "exec_pattern_allow",
+            "repl_exec_allow",                "seed",                           "ask_timeout_seconds",
+            "confirm_writes",                 "provider_check_timeout_seconds", "fallback_provider",
+            "fallback_providers",             "auto_thinking",                  "thinking_classifier_model",
+            "thinking_classifier_timeout_ms", "worktree",                       "goal_worktree",
+            "git_worktree_on",                "isolated_cli",                   "isolated_tui",
+            "isolated_webui",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -1428,6 +1451,28 @@ pub const Config = struct {
         if (obj.get("tool_result_prune_tail_bytes")) |k| {
             a.tool_result_prune_tail_bytes = try jsonUnsigned(usize, k, "tool_result_prune_tail_bytes");
             f.tool_result_prune_tail_bytes = true;
+        }
+        if (obj.get("repeat_tool_thresholds")) |k| {
+            const values = switch (k) {
+                .array => |items| items,
+                else => return error.RepeatToolThresholdsNotArray,
+            };
+            var thresholds: std.ArrayList(u32) = .empty;
+            for (values.items) |item| {
+                const n = switch (item) {
+                    .integer => |value| value,
+                    .number_string => |value| std.fmt.parseInt(i64, value, 10) catch return error.RepeatToolThresholdNotInteger,
+                    else => return error.RepeatToolThresholdNotInteger,
+                };
+                if (n < 0 or n > std.math.maxInt(u32)) return error.RepeatToolThresholdNotInteger;
+                try thresholds.append(arena, @intCast(n));
+            }
+            a.repeat_tool_thresholds = try thresholds.toOwnedSlice(arena);
+            f.repeat_tool_thresholds = true;
+        }
+        if (obj.get("repeat_tool_exclude")) |k| {
+            a.repeat_tool_exclude = try jsonNameList(arena, k, "repeat_tool_exclude");
+            f.repeat_tool_exclude = true;
         }
         if (obj.get("max_total_tokens")) |k| {
             a.max_total_tokens = try jsonUnsigned(u32, k, "max_total_tokens");
@@ -1635,6 +1680,8 @@ pub const Config = struct {
         if (fields.tool_result_prune_bytes) dst.tool_result_prune_bytes = src.tool_result_prune_bytes;
         if (fields.tool_result_prune_head_bytes) dst.tool_result_prune_head_bytes = src.tool_result_prune_head_bytes;
         if (fields.tool_result_prune_tail_bytes) dst.tool_result_prune_tail_bytes = src.tool_result_prune_tail_bytes;
+        if (fields.repeat_tool_thresholds) dst.repeat_tool_thresholds = src.repeat_tool_thresholds;
+        if (fields.repeat_tool_exclude) dst.repeat_tool_exclude = src.repeat_tool_exclude;
         if (fields.max_total_tokens) dst.max_total_tokens = src.max_total_tokens;
         if (fields.max_tokens_per_turn) dst.max_tokens_per_turn = src.max_tokens_per_turn;
         if (fields.max_history_tokens) dst.max_history_tokens = src.max_history_tokens;

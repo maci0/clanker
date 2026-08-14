@@ -28,6 +28,7 @@ fn handlePanic(msg: []const u8, ret_addr: ?usize) noreturn {
 // Zig 0.16 only runs test blocks in the root file; reference every module
 // containing tests so `zig build test` picks them all up.
 comptime {
+    _ = @import("agent/loop_guard.zig");
     _ = @import("config.zig");
     _ = @import("llm/types.zig");
     _ = @import("llm/registry.zig");

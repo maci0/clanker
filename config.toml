@@ -199,6 +199,10 @@ compact_threshold_bytes = 0
 tool_result_prune_bytes = 8192
 tool_result_prune_head_bytes = 4096
 tool_result_prune_tail_bytes = 1024
+# Consecutive canonical-equivalent tool calls receive advisory reminders at
+# these counts. Excluded patterns are transparent: they do not reset a chain.
+repeat_tool_thresholds = [3, 5, 8]
+repeat_tool_exclude = ["todo_add", "todo_close", "todo_list"]
 git_remote_ops = false
 # Session kinds that isolate in a git worktree by default, as if that mode's
 # worktree/goal_worktree were "yes": any of "run", "goal", "tui", "schedule".

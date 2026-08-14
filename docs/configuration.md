@@ -217,6 +217,7 @@ Run-loop and path settings. The commonly-touched keys:
 | `thinking_classifier_timeout_ms` | 3000 | Wall-clock classifier deadline; timeout aborts its HTTP connection and fails open. |
 | `compact_threshold_bytes` | 24000 | Compact conversation history past this size (`0` uses the model window). |
 | `tool_result_prune_bytes`, `tool_result_prune_head_bytes`, `tool_result_prune_tail_bytes` | 8192, 4096, 1024 | Request-only head/tail pruning for oversized tool results. Threshold `0` disables it; saved transcripts remain exact. |
+| `repeat_tool_thresholds`, `repeat_tool_exclude` | `[3, 5, 8]`, todo tools | Advisory reminders for consecutive canonical-equivalent tool calls. Excluded name patterns (with optional `*`) neither increment nor reset a chain. |
 | `max_total_tokens`, `max_tokens_per_turn`, `max_history_tokens` | -, 4096, 16000 | Token budgets that drive compaction. |
 | `tool_catalog` | true | Send full schemas only for hot tools; let the model request the rest by name (saves thousands of tokens/request with many tools). |
 | `hot_tools` | 10 | How many most-used tools keep their schemas loaded unasked. |
