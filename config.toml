@@ -529,4 +529,4 @@ python_wasi_max_memory_bytes = 268435456
 
 # Movement pace from 0 (still) through 10 (fastest). Unset means the regular
 # pace, 5. Overridden by `--mascot-speed`.
-# mascot_speed = "5"
+# mascot_speed = 5

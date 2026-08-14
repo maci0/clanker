@@ -314,23 +314,65 @@ fn linkCheckoutState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const 
     defer gpa.free(root);
 
     for (host.shared_prefixes) |name| {
-        // Absent in the checkout means there is nothing to share: a dangling
-        // symlink would be worse than no entry, because a tool creating the
-        // path would write through it to a location the checkout never agreed
-        // to. The sandbox routes to the checkout either way, so a path created
-        // later still lands in the right place.
+        // `state/`, `.local/`, `.agents/`, and `.claude/` are directories the harness
+        // creates into. They must be real in the checkout before the link is
+        // made: otherwise a fresh checkout skips the link, a guest's first
+        // write is routed to the checkout by Sandbox.shared_root, and native
+        // session/run writes later create a private state/ in the worktree.
+        // The two readers then disagree about the same run.
+        if (sharedDirectory(name)) try std.Io.Dir.cwd().createDirPath(io, name);
+        // Optional files (.env and config.local.*) are not created merely to
+        // make a worktree. Link them only when the checkout already has one.
         std.Io.Dir.cwd().access(io, name, .{}) catch continue;
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
         const link_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
         defer gpa.free(link_path);
-        const is_dir = isDir(io, name);
+        const is_dir = sharedDirectory(name) or isDir(io, name);
         std.Io.Dir.cwd().symLink(io, target, link_path, .{ .is_directory = is_dir }) catch |err| switch (err) {
             // Tracked, so `git worktree add` already checked it out and the
             // worktree's own copy is the right one to use.
             error.PathAlreadyExists => {},
             else => log.log(.warn, "isolated run: could not link {s} into the worktree: {s}", .{ name, @errorName(err) }),
         };
+    }
+}
+
+fn sharedDirectory(name: []const u8) bool {
+    return std.mem.eql(u8, name, "state") or
+        std.mem.eql(u8, name, ".local") or
+        std.mem.eql(u8, name, ".agents") or
+        std.mem.eql(u8, name, ".claude");
+}
+
+test "every shared directory is provisioned for native worktree I/O" {
+    // `linkCheckoutState` creates these before linking them into a worktree.
+    // Keep this list in lockstep with host.shared_prefixes: a directory routed
+    // only by the sandbox recreates the fresh-checkout split this protects.
+    const expected = [_][]const u8{ "state", ".local", ".agents", ".claude" };
+    for (expected) |name| {
+        try std.testing.expect(sharedDirectory(name));
+        var found = false;
+        for (host.shared_prefixes) |prefix| {
+            if (std.mem.eql(u8, prefix, name)) {
+                found = true;
+                break;
+            }
+        }
+        try std.testing.expect(found);
+    }
+
+    for (host.shared_prefixes) |prefix| {
+        if (sharedDirectory(prefix)) {
+            var expected_here = false;
+            for (expected) |name| {
+                if (std.mem.eql(u8, name, prefix)) {
+                    expected_here = true;
+                    break;
+                }
+            }
+            try std.testing.expect(expected_here);
+        }
     }
 }
 
