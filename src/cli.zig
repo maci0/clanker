@@ -1874,7 +1874,7 @@ fn reportGate(io: std.Io, name: []const u8, result: gate_checks.GateResult) !voi
 }
 
 /// Runs all deterministic gates (build, test, tools, fmt, lint,
-/// release-contract) against the current checkout. Throws error.GateFailed on
+/// tools-ts-toolchain, release-contract) against the current checkout. Throws error.GateFailed on
 /// the first failure.
 fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !void {
     var build = try gate_checks.buildGate(gpa, io, std.Io.Dir.cwd(), &.{});
@@ -1897,6 +1897,10 @@ fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !vo
     var lint = try gate_checks.lintGate(gpa, io, std.Io.Dir.cwd(), files);
     defer lint.deinit(gpa);
     try reportGate(io, "lint", lint);
+
+    var tools_ts = try gate_checks.toolsTsToolchainGate(gpa, io, std.Io.Dir.cwd());
+    defer tools_ts.deinit(gpa);
+    try reportGate(io, "tools-ts-toolchain", tools_ts);
 
     var release_contract = try gate_checks.releaseContractGate(gpa, io, std.Io.Dir.cwd());
     defer release_contract.deinit(gpa);
@@ -7516,6 +7520,27 @@ const webui_asset_paths = [_][]const u8{
     "/webui/features/schedule.js",
     "/webui/features/search.js",
 };
+
+/// Vendored third-party JS under `ui/vendor/`, embedded in `ui/vendor.zig` and
+/// served from `/webui/vendor/*`. One list: a file added here without a route
+/// (or the reverse) ships bytes the browser cannot fetch.
+const webui_vendor_files = [_][]const u8{
+    "preact.module.js",
+    "htm.module.js",
+    "signals-core.module.js",
+    "d3-dag.min.js",
+    "hljs.min.js",
+    "mermaid.min.js",
+    "three.module.min.js",
+    "three.core.min.js",
+};
+
+fn isWebuiVendorFile(name: []const u8) bool {
+    for (webui_vendor_files) |p| {
+        if (std.mem.eql(u8, p, name)) return true;
+    }
+    return false;
+}
 
 fn isWebuiAssetPath(path: []const u8) bool {
     for (webui_asset_paths) |p| {
@@ -13972,6 +13997,39 @@ test "the webui asset route covers every embedded module, arena.js included" {
     for (webui_asset_paths, 0..) |p, i| {
         try std.testing.expect(std.mem.startsWith(u8, p, "/webui/"));
         for (webui_asset_paths[i + 1 ..]) |q| try std.testing.expect(!std.mem.eql(u8, p, q));
+    }
+}
+
+test "no vendored JS file exists that the vendor routes have never heard of" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var root = std.Io.Dir.cwd().openDir(io, "ui/vendor", .{ .iterate = true }) catch return error.SkipZigTest;
+    defer root.close(io);
+
+    var it = root.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (std.mem.eql(u8, entry.name, "README.md")) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".js")) {
+            std.debug.print("ui/vendor/{s} is not a vendored .js file\n", .{entry.name});
+            return error.UnlistedVendorFile;
+        }
+        if (!isWebuiVendorFile(entry.name)) {
+            std.debug.print("ui/vendor/{s} is not in webui_vendor_files; add embed + route\n", .{entry.name});
+            return error.UnlistedVendorFile;
+        }
+    }
+
+    for (webui_vendor_files) |name| {
+        var path_buf: [64]u8 = undefined;
+        const rel = try std.fmt.bufPrint(&path_buf, "ui/vendor/{s}", .{name});
+        var f = std.Io.Dir.cwd().openFile(io, rel, .{}) catch {
+            std.debug.print("ui/vendor/{s} is listed but missing on disk\n", .{name});
+            return error.MissingVendorFile;
+        };
+        f.close(io);
     }
 }
 

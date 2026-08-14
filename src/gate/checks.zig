@@ -1353,6 +1353,71 @@ test "configSourceWeakeningGate requires the enabled defaults and rejects a flip
     try std.testing.expect(!configSourceWeakeningGate(zeroed).ok);
 }
 
+/// Verifies the AssemblyScript toolchain manifest under `tools/ts/`: one
+/// dev-only compiler dependency, npm lifecycle scripts disabled at install,
+/// and lockfile integrity fields for supply-chain verification.
+pub fn toolsTsToolchainGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
+    const npmrc = dir.readFileAlloc(io, "tools/ts/.npmrc", gpa, .limited(4096)) catch |err| {
+        const detail = try std.fmt.allocPrint(gpa, "cannot read tools/ts/.npmrc: {s}", .{@errorName(err)});
+        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = detail };
+    };
+    defer gpa.free(npmrc);
+    if (std.mem.indexOf(u8, npmrc, "ignore-scripts=true") == null) {
+        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/.npmrc must set ignore-scripts=true" };
+    }
+
+    const pkg_raw = dir.readFileAlloc(io, "tools/ts/package.json", gpa, .limited(1 << 20)) catch |err| {
+        const detail = try std.fmt.allocPrint(gpa, "cannot read tools/ts/package.json: {s}", .{@errorName(err)});
+        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = detail };
+    };
+    defer gpa.free(pkg_raw);
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const pkg = std.json.parseFromSliceLeaky(std.json.Value, arena, pkg_raw, .{ .ignore_unknown_fields = true }) catch {
+        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/package.json is not valid JSON" };
+    };
+    const root = switch (pkg) {
+        .object => |o| o,
+        else => return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/package.json is not a JSON object" },
+    };
+    if (root.get("dependencies")) |_| {
+        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/package.json must not declare production dependencies" };
+    }
+    const dev = root.get("devDependencies") orelse {
+        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/package.json has no devDependencies" };
+    };
+    const dev_obj = switch (dev) {
+        .object => |o| o,
+        else => return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/package.json devDependencies is not an object" },
+    };
+    if (dev_obj.count() != 1 or dev_obj.get("assemblyscript") == null) {
+        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/package.json must declare only assemblyscript as a devDependency" };
+    }
+
+    const lock = dir.readFileAlloc(io, "tools/ts/package-lock.json", gpa, .limited(1 << 20)) catch |err| {
+        const detail = try std.fmt.allocPrint(gpa, "cannot read tools/ts/package-lock.json: {s}", .{@errorName(err)});
+        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = detail };
+    };
+    defer gpa.free(lock);
+    if (std.mem.indexOf(u8, lock, "\"integrity\":") == null) {
+        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/package-lock.json is missing npm integrity hashes" };
+    }
+
+    return .{ .ok = true, .label = "tools-ts-toolchain" };
+}
+
+test "toolsTsToolchainGate accepts the live tools/ts manifest" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const result = try toolsTsToolchainGate(gpa, io, std.Io.Dir.cwd());
+    try std.testing.expect(result.ok);
+}
+
 /// Validates the consumer-facing release contract files that must stay aligned
 /// with `build.zig.zon` and the policy in RELEASES.md.
 pub fn releaseContractGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
