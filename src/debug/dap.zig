@@ -14,6 +14,35 @@ pub const Decoded = struct {
     consumed: usize,
 };
 
+/// Match a DAP string field regardless of the spaces `json.dumps` inserts.
+fn frameIs(payload: []const u8, key: []const u8, want: []const u8) bool {
+    const parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, payload, .{}) catch return false;
+    defer parsed.deinit();
+    const obj = switch (parsed.value) {
+        .object => |o| o,
+        else => return false,
+    };
+    const v = obj.get(key) orelse return false;
+    return switch (v) {
+        .string => |s| std.mem.eql(u8, s, want),
+        else => false,
+    };
+}
+
+fn frameRequestSeq(payload: []const u8) ?u32 {
+    const parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, payload, .{}) catch return null;
+    defer parsed.deinit();
+    const obj = switch (parsed.value) {
+        .object => |o| o,
+        else => return null,
+    };
+    const v = obj.get("request_seq") orelse return null;
+    return switch (v) {
+        .integer => |n| if (n < 0) null else @intCast(@min(n, std.math.maxInt(u32))),
+        else => null,
+    };
+}
+
 pub fn decodeFrame(buf: []const u8) ?Decoded {
     const sep = std.mem.indexOf(u8, buf, "\r\n\r\n") orelse return null;
     const headers = buf[0..sep];
@@ -109,7 +138,7 @@ pub const Session = struct {
     }
 
     fn noteFrame(self: *Session, payload: []const u8) !void {
-        if (std.mem.indexOf(u8, payload, "\"type\":\"event\"") != null) {
+        if (frameIs(payload, "type", "event")) {
             try self.events.append(self.gpa, try self.gpa.dupe(u8, payload));
         }
     }
@@ -129,29 +158,24 @@ pub const Session = struct {
         var spins: usize = 0;
         while (spins < 256) : (spins += 1) {
             const frame = self.readFrame(arena) catch |err| return err;
-            if (std.mem.indexOf(u8, frame, "\"type\":\"event\"") != null) {
+            if (frameIs(frame, "type", "event")) {
                 try self.events.append(self.gpa, try self.gpa.dupe(u8, frame));
                 continue;
             }
-            var needle_buf: [32]u8 = undefined;
-            const needle = std.fmt.bufPrint(&needle_buf, "\"request_seq\":{d}", .{id}) catch "";
-            if (std.mem.indexOf(u8, frame, needle) != null) return frame;
-            // Unrelated response: keep looking.
+            if (frameRequestSeq(frame) == id) return frame;
         }
         return error.Timeout;
     }
 
     fn waitEvent(self: *Session, arena: std.mem.Allocator, event: []const u8) !void {
-        var needle_buf: [64]u8 = undefined;
-        const needle = std.fmt.bufPrint(&needle_buf, "\"event\":\"{s}\"", .{event}) catch event;
         for (self.events.items) |e| {
-            if (std.mem.indexOf(u8, e, needle) != null) return;
+            if (frameIs(e, "event", event)) return;
         }
         var spins: usize = 0;
         while (spins < 256) : (spins += 1) {
             const frame = self.readFrame(arena) catch |err| return err;
             try self.events.append(self.gpa, try self.gpa.dupe(u8, frame));
-            if (std.mem.indexOf(u8, frame, needle) != null) return;
+            if (frameIs(frame, "event", event)) return;
         }
         return error.Timeout;
     }
@@ -190,20 +214,14 @@ pub const Session = struct {
         var saw_init = false;
         var resp: ?[]const u8 = null;
         var spins: usize = 0;
-        var needle_buf: [32]u8 = undefined;
-        const needle = std.fmt.bufPrint(&needle_buf, "\"request_seq\":{d}", .{id}) catch "";
         while (spins < 64 and (resp == null or !saw_init)) : (spins += 1) {
             const frame = self.readFrame(arena) catch break;
-            if (std.mem.indexOf(u8, frame, "\"event\":\"initialized\"") != null) {
+            if (frameIs(frame, "event", "initialized") or frameIs(frame, "type", "event")) {
                 try self.events.append(self.gpa, try self.gpa.dupe(u8, frame));
-                saw_init = true;
+                if (frameIs(frame, "event", "initialized")) saw_init = true;
                 continue;
             }
-            if (std.mem.indexOf(u8, frame, "\"type\":\"event\"") != null) {
-                try self.events.append(self.gpa, try self.gpa.dupe(u8, frame));
-                continue;
-            }
-            if (std.mem.indexOf(u8, frame, needle) != null) resp = frame;
+            if (frameRequestSeq(frame) == id) resp = frame;
         }
         if (self.pending_bps) |bp| {
             _ = self.setBreakpoints(arena, bp.source, bp.lines, bp.condition, bp.hit_condition) catch {};
