@@ -572,6 +572,9 @@ function applyRailCollapsed(collapsed) {
 }
 
 (function initRail() {
+  /* Always clear PatternFly's "gone" modifier; icon-rail uses data-collapsed. */
+  el.rail.classList.remove("pf-m-collapsed");
+  el.rail.classList.add("pf-m-expanded");
   try {
     if (window.localStorage.getItem("clanker.railCollapsed") === "1") applyRailCollapsed(true);
   } catch (e) {}
@@ -588,7 +591,7 @@ function applyRailCollapsed(collapsed) {
 })();
 
 function closeRailOnNarrow() {
-  if (window.matchMedia && window.matchMedia("(max-width: 60rem)").matches) setRailOpen(false);
+  if (window.matchMedia && window.matchMedia("(max-width: 40rem)").matches) setRailOpen(false);
 }
 
 el.railToggle.addEventListener("click", function () {

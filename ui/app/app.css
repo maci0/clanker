@@ -2758,7 +2758,7 @@ mark {
 /* A scrim only exists on narrow screens, where the rail floats over the page
    and there is otherwise nothing to click to dismiss it. */
 .rail-scrim { display: none; }
-@media (max-width: 60rem) {
+@media (max-width: 40rem) {
   .rail-scrim[data-open="true"] {
     display: block; position: fixed; inset: 0; z-index: 14;
     background: color-mix(in srgb, var(--bg) 60%, transparent);
@@ -2786,6 +2786,13 @@ main.pf-v6-c-page__main {
   background: var(--surface);
   padding: var(--space-3) var(--space-3);
   border-right: 1px solid var(--rule);
+  /* PatternFly's page sidebar defaults to TranslateX:-100%/opacity:0 below
+     75rem until pf-m-expanded wins. Pin our rail open on every non-phone
+     width so zoomed laptops do not watch it slide away after first paint. */
+  --pf-v6-c-page__sidebar--TranslateX: 0;
+  --pf-v6-c-page__sidebar--Opacity: 1;
+  transform: none;
+  opacity: 1;
 }
 .rail:hover,
 .pf-v6-c-page__sidebar.rail:hover { scrollbar-color: var(--border) transparent; }
@@ -2886,9 +2893,9 @@ h2#session-title {
 #rail-toggle { display: none; }
 #app-masthead .pf-v6-c-masthead__toggle #rail-toggle { display: none; }
 
-/* Under 60rem the rail would take a third of the screen, so it becomes a
-   panel you open, and the header button that opens it appears. */
-@media (max-width: 60rem) {
+/* Under 40rem the rail would eat half the screen, so it becomes a drawer
+   you open. Tablets and zoomed laptops keep a persistent column instead. */
+@media (max-width: 40rem) {
   .rail,
   .pf-v6-c-page__sidebar.rail {
     position: fixed; inset: 0 auto 0 0; z-index: 15; width: min(20rem, 85vw);
@@ -2896,9 +2903,15 @@ h2#session-title {
     background: var(--bg);
     box-shadow: 0 0 3rem color-mix(in srgb, var(--bg) 70%, transparent);
     max-height: none; height: auto;
+    /* Drawer closed: undo the desktop pin above. */
+    --pf-v6-c-page__sidebar--TranslateX: -100%;
+    opacity: 1;
   }
   .rail[data-open="true"],
-  .pf-v6-c-page__sidebar.rail[data-open="true"] { transform: none; }
+  .pf-v6-c-page__sidebar.rail[data-open="true"] {
+    transform: none;
+    --pf-v6-c-page__sidebar--TranslateX: 0;
+  }
   /* Closed means gone: without this, tabbing from the header walked ten
      controls that were translated off screen, with no visible focus anywhere. */
   .rail:not([data-open="true"]),
@@ -2907,12 +2920,12 @@ h2#session-title {
   .pf-v6-c-page__sidebar.rail:not([data-open="true"]) * { visibility: hidden; }
   #rail-toggle,
   #app-masthead .pf-v6-c-masthead__toggle #rail-toggle { display: inline-flex; }
-  /* Collapse is a desktop affordance: under 60rem the rail is a drawer you
+  /* Collapse is a desktop affordance: under 40rem the rail is a drawer you
      open and close as a whole, so the collapse toggle would describe a state
      the drawer does not have. */
   #rail-collapse { display: none; }
 }
-@media (min-width: 60.01rem) {
+@media (min-width: 40.01rem) {
   .rail[data-collapsed="true"],
   .pf-v6-c-page__sidebar.rail[data-collapsed="true"] {
     width: 3.5rem; max-width: 3.5rem; padding-inline: var(--space-2);
