@@ -277,6 +277,8 @@ export function upgradePfOverlays(root) {
 /* PatternFly label bridge (step 7): status chips in the masthead and elsewhere. */
 export function upgradePfChip(el) {
   if (!el) return el;
+  /* Model controls are actuators with a chevron, not status lamps. */
+  if (el.classList.contains("model-pill") || el.id === "header-model" || el.id === "composer-model") return el;
   if (!el.classList.contains("chip") && !el.classList.contains("header-model")) return el;
   if (!el.classList.contains("pf-v6-c-label")) el.classList.add("pf-v6-c-label");
   if (!el.querySelector(":scope > .pf-v6-c-label__content")) {
@@ -299,7 +301,7 @@ export function upgradePfChip(el) {
 
 export function upgradePfChips(root) {
   var scope = root || document;
-  scope.querySelectorAll("#instance-chip, #peers-chip, #session-chip, .chip, .header-model").forEach(upgradePfChip);
+  scope.querySelectorAll("#instance-chip, #peers-chip, #session-chip, .chip:not(.model-pill):not(.header-model)").forEach(upgradePfChip);
   return scope;
 }
 

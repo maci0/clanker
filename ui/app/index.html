@@ -78,7 +78,9 @@ lamps carry further). The seven named palettes ride the same tokens.
     </div>
   </div>
   <div class="pf-v6-c-masthead__content">
-    <button type="button" class="chip header-model" id="header-model" aria-live="polite" title="Active model (click to change)">…</button>
+    <button type="button" class="chip header-model" id="header-model" aria-live="polite" title="Active model (click to change)" aria-haspopup="dialog" aria-expanded="false">
+      <span class="model-chip__name">…</span>
+    </button>
     <span class="chip" id="instance-chip" hidden aria-hidden="true">connecting…</span>
     <span class="chip" id="peers-chip" hidden aria-hidden="true"></span>
     <span class="chip" id="session-chip" hidden aria-hidden="true">session …</span>
@@ -260,17 +262,16 @@ lamps carry further). The seven named palettes ride the same tokens.
                 role="combobox" aria-controls="prompt-list" aria-autocomplete="list" aria-expanded="false"></textarea>
       <ul class="palette-list prompt-list" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
       <div class="run-options">
-        <label for="model-select">Model</label>
-        <select id="model-select" class="model-select"
-                title="Which provider and model runs this task (grouped by configured provider)"></select>
-        <label for="fallback-provider">Fallback provider</label>
-        <select id="fallback-provider" class="model-select"
-                title="If a run's API request to the selected provider fails (for example an image upload is rejected on the provider side), retry it automatically with this provider. None disables auto-retry.">
-          <option value="">None (no auto-retry)</option>
-        </select>
+        <select id="model-select" class="sr-only" aria-hidden="true" tabindex="-1"
+                title="Active model (driven by the model picker)"></select>
         <details class="more" id="params">
           <summary>Advanced</summary>
           <div class="more-actions params-grid">
+            <label for="fallback-provider">Fallback provider</label>
+            <select id="fallback-provider" class="model-select"
+                    title="If a run's API request to the selected provider fails, retry it automatically with this provider. None disables auto-retry.">
+              <option value="">None (no auto-retry)</option>
+            </select>
             <label for="param-temp">Temperature</label>
             <input type="number" id="param-temp" min="0" max="2" step="0.05" placeholder="config">
             <label for="param-topp">Top-p</label>
@@ -287,7 +288,9 @@ lamps carry further). The seven named palettes ride the same tokens.
         <span class="meta" id="context-meter" title="How much of the model's context this conversation is using"></span>
         <button type="button" class="scroll-bottom" id="scroll-bottom" hidden>Jump to latest</button>
         <div class="toolbar-actions">
-          <button type="button" class="chip model-pill" id="composer-model" title="Model (click to change)">…</button>
+          <button type="button" class="chip model-pill" id="composer-model" title="Model (click to change)" aria-haspopup="dialog" aria-expanded="false">
+            <span class="model-chip__name">…</span>
+          </button>
           <label for="plan-mode" class="checkbox-row plan-toggle" title="The run proposes a plan instead of executing: write-capable tools are refused until you apply it">
             <input type="checkbox" id="plan-mode">
             <span>Plan</span>

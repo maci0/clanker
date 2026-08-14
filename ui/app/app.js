@@ -20,7 +20,7 @@ import { pendingImages as attachImages, max_image_bytes as attachMaxBytes, rende
 import { loadLog as logsLoadLog, loadLogList as logsLoadLogList } from "./core/logs.js";
 import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugins as pluginsLoadWebuiPlugins, loadPluginAssets as pluginsLoadPluginAssets, renderWebuiPlugins as pluginsRenderWebuiPlugins } from "./core/plugins.js";
 import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle } from "./core/palette.js";
-import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind } from "./core/modelpicker.js";
+import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind, openModelPicker as mpOpen, toggleModelPicker as mpToggle, setModelChipLabel as mpSetChip } from "./core/modelpicker.js";
 import { renderTools as toolsRenderTools, showToolDetail as toolsShowDetail, toggleTool as toolsToggle, loadTools as toolsLoadTools, loadWorkflows as toolsLoadWorkflows, loadSkills as toolsLoadSkills, bindTools as toolsBind } from "./core/tools.js";
 import { board, loadBoardRooms, renderBoard, setOpenCardId, cardById, cardModalKeyHandler, bindBoard } from "./features/board.js";
 import { goalState, loadGoals, bindGoals } from "./features/goals.js";
@@ -305,31 +305,24 @@ function renderSessionChip() {
   var label = "";
   if (sel && sel.indexOf(" ") !== -1) label = sel.slice(sel.indexOf(" ") + 1).trim();
   else if (sel) label = sel;
-  if (el.headerModel) {
-    el.headerModel.textContent = label || "default model";
-    el.headerModel.title = sel ? ("Model: " + sel + " (click to change)") : "Model: default (from config) (click to change)";
-  }
-  // The composer's model pill is the same value in a place the eye already
-  // is when composing, and clicking it opens the same picker the header
-  // chip opens.
-  if (el.composerModel) {
-    el.composerModel.textContent = label || "default model";
-    el.composerModel.title = sel ? ("Model: " + sel + " (click to change)") : "Model: default (from config) (click to change)";
-  }
+  var title = sel ? ("Model: " + sel + " (click to change)") : "Model: default (from config) (click to change)";
+  var shown = label || "default model";
+  mpSetChip(el.headerModel, shown, title);
+  mpSetChip(el.composerModel, shown, title);
 }
 /* Wired directly: this whole file already runs inside DOMContentLoaded, and a
    listener for the same event added during its dispatch never fires. */
 (function(){
   var hm = document.getElementById("header-model");
   var cm = document.getElementById("composer-model");
-  function openModelPicker() {
-    var dest = document.getElementById("task");
-    if (dest) { dest.focus(); dest.scrollIntoView({ behavior: scrollPrefersReducedMotion() ? "auto" : "smooth", block: "center" }); }
-    var ms = document.getElementById("model-select");
-    if (ms) { try { ms.focus(); } catch(_){} }
+  function openFrom(btn) {
+    return function (e) {
+      e.preventDefault();
+      mpToggle(btn);
+    };
   }
-  if (hm) hm.addEventListener("click", openModelPicker);
-  if (cm) cm.addEventListener("click", openModelPicker);
+  if (hm) hm.addEventListener("click", openFrom(hm));
+  if (cm) cm.addEventListener("click", openFrom(cm));
 })();
 
 var THEMES = THEMESMod;
@@ -4844,7 +4837,21 @@ var SLASH_CMDS = [
   { cmd: "/fork", desc: "Fork this conversation", run: function(){ document.getElementById("session-fork").click(); } },
   { cmd: "/branch", desc: "Branch from last turn", run: function(){ var b=document.querySelector(".turn:last-child .turn-foot-actions button"); if(b) b.click(); } },
   { cmd: "/clear", desc: "Start a new conversation", run: function(){ document.getElementById("new-chat").click(); } },
-  { cmd: "/model", desc: "Switch model — e.g. /model gpt-4o", run: function(arg){ var s=document.getElementById("model-select"); if(!s) return; if(arg){ var matched=false; for(var i=0;i<s.options.length;i++){ if(s.options[i].value===arg || s.options[i].textContent.indexOf(arg)>=0){ s.value=s.options[i].value; matched=true; break; } } if(matched) s.dispatchEvent(new Event("change",{bubbles:true})); } s.focus(); } },
+  { cmd: "/model", desc: "Switch model — e.g. /model gpt-4o", run: function(arg){
+    var s = document.getElementById("model-select");
+    if (!s) return;
+    if (arg) {
+      var matched = false;
+      for (var i = 0; i < s.options.length; i++) {
+        if (s.options[i].value === arg || s.options[i].textContent.indexOf(arg) >= 0) {
+          s.value = s.options[i].value; matched = true; break;
+        }
+      }
+      if (matched) s.dispatchEvent(new Event("change", { bubbles: true }));
+      return;
+    }
+    mpOpen(document.getElementById("composer-model") || document.getElementById("header-model"));
+  } },
   { cmd: "/knowledge", desc: "Open Knowledge collections", run: function(){ showView("knowledge", true); } },
   { cmd: "/prompts", desc: "Open Prompts library", run: function(){ showView("prompts", true); } },
   { cmd: "/compare", desc: "Open blind model comparisons", run: function(){ showView("compare", true); } },
@@ -5289,9 +5296,8 @@ el.helpOpen.addEventListener("click", function () { openOverlay(el.help, el.help
 el.helpClose.addEventListener("click", function () { closeOverlay(el.help); });
 
 var providerCacheHolder = { list: providerCache };
-mpBind({ el: el, readJson: readJson, fmtInt: fmtInt, allUsage: allUsage, renderUsage: renderUsage, renderContextMeter: renderContextMeter, providerCacheHolder: providerCacheHolder });
-// The picker module refreshes its own label on model change; the header chip
-// and composer pill mirror the same select, so they refresh here.
+mpBind({ el: el, readJson: readJson, fmtInt: fmtInt, allUsage: allUsage, renderUsage: renderUsage, renderContextMeter: renderContextMeter, providerCacheHolder: providerCacheHolder, onModelChange: renderSessionChip });
+// Header chip and composer pill mirror the hidden select.
 if (el.modelSelect) el.modelSelect.addEventListener("change", renderSessionChip);
 
 paletteBind({

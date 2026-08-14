@@ -1,0 +1,29 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "border-left: 3px solid var(--accent)",
+        "createdAt": "2026-08-14T12:59:06.351Z",
+        "reason": "markdown blockquote indent, not card chrome"
+      },
+      {
+        "rule": "side-tab",
+        "value": "border-left: 2px solid var(--rule)",
+        "createdAt": "2026-08-14T12:59:06.398Z",
+        "reason": "chat thread reply indent, not card chrome"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "ui/app/app.css"
+        ],
+        "createdAt": "2026-08-14T13:02:17.664Z",
+        "reason": "blockquote/thread indents only; card side-tabs still flagged in other UI files"
+      }
+    ]
+  }
+}

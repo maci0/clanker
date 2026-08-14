@@ -21,6 +21,8 @@ export var ICON_PATHS = {
   deposit: ["M12 4v12", "M7.5 11.5L12 16l4.5-4.5", "M5 20h14"],
   // Disclosure, pointing at what it opens.
   chevron: ["M9 6l6 6-6 6"],
+  // Disclosure pointing down: model pill and similar menus.
+  chevronDown: ["M6 9l6 6 6-6"],
   // A question, drawn rather than typed.
   help: ["M9 9a3 3 0 114 2.8c-.8.4-1 1-1 1.7v.5", "M12 17.5v.01"],
   // A pencil: the card quick-edit / open controls.
