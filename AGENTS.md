@@ -15,6 +15,9 @@ through a gated loop. Follow these conventions when changing this codebase.
 - `zig build e2e` — black-box end-to-end tests, driving the built binary
   against a mock LLM server. Not part of `zig build test`; run it separately.
 - `zig build run` — build and run the harness in one step.
+- `clanker gate` — run build, test, tools, fmt, lint, and release-contract
+  gates. Release policy and version source of truth: [RELEASES.md](RELEASES.md);
+  consumer-visible changes: [CHANGELOG.md](CHANGELOG.md).
 
 ## Zig style
 

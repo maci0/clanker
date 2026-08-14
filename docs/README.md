@@ -351,7 +351,9 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
 - `selfhost_build`: `zig build`
 - `selfhost_tests`: `zig build test`
 - `selfhost_tools`: `zig build tools`
-- plus `zig fmt`, a lint check, and — in the improve loop — the capability
+- plus `zig fmt`, a lint check, a release-contract check (CHANGELOG,
+  RELEASES.md, and README links stay aligned with `build.zig.zon`), and — in
+  the improve loop — the capability
   evals (`evals/*.task.json` run against the staged binary) and a
   git-deny-guard that parses staged `config.toml`/`config.local.toml` changes
   and rejects any that would let `exec_pattern_allow` name a git command.
@@ -705,7 +707,7 @@ iter 2
 | `eval [name] [--tasks]` | Run evals |
 | `improve-self [--provider P] [--model M] [--iters N] [--dry-run] "<instructions>"` | Run the self-improvement loop |
 | `revert <id>` | Revert a promoted improvement |
-| `gate` | Run the full deterministic gate (build/test/tools/fmt/lint) on the current checkout |
+| `gate` | Run the full deterministic gate (build/test/tools/fmt/lint/release-contract) on the current checkout |
 | `autolearn` | Aggregate usage from `state/autolearn.jsonl` + `state/runs/` and update the ROADMAP's Autolearn section |
 | `git` | Git passthrough (everything after `git` is passed through) |
 | `mcp` | Serve tools over MCP (stdio) |

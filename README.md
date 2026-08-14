@@ -227,7 +227,7 @@ command, while `clanker <option> -h` explains that option (for example,
 | `phonebook` | List peer agent cards |
 | `serve [--host <addr>] [--serve-as <name>]... [--webui-port <port>]` | HTTP API + web UI (loopback, port 17921 by default) |
 | `graph [run-id]` | List runs, or render one as an ASCII timeline |
-| `gate` | Run the full deterministic gate (build/test/tools/fmt/lint) |
+| `gate` | Run the full deterministic gate (build/test/tools/fmt/lint/release-contract) |
 | `autolearn` | Aggregate usage into roadmap items |
 | `setup` | Guided first run: check config, keys and tools |
 | `doctor` | Diagnose config, credentials and build outputs |
