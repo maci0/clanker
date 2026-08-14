@@ -974,10 +974,20 @@ function syncControls() {
   if (!busy) {
     el.steerInput.value = "";
     el.steerHint.textContent = "";
+    updateComposerModeHint();
   }
   if (busy) el.submit.textContent = "Running…";
   else syncSubmitLabel();
   document.title = busy ? "Running… · clanker" : "clanker";
+}
+
+/** Idle composer hint for plan/research toggles (matches TUI status bar labels). */
+function updateComposerModeHint() {
+  if (busy) return;
+  var parts = [];
+  if (el.planMode && el.planMode.checked) parts.push("Plan mode · write tools refused");
+  if (el.researchMode && el.researchMode.checked) parts.push("Research mode · web search preferred");
+  el.hint.textContent = parts.join(" · ");
 }
 
 function setBusy(next) {
@@ -1630,6 +1640,8 @@ el.form.addEventListener("drop", function (e) {
 
 el.task.addEventListener("input", syncControls);
 el.task.addEventListener("input", rememberDraft);
+if (el.planMode) el.planMode.addEventListener("change", updateComposerModeHint);
+if (el.researchMode) el.researchMode.addEventListener("change", updateComposerModeHint);
 // A tab closed or reloaded mid-sentence has no other chance to write.
 window.addEventListener("beforeunload", flushDraft);
 
@@ -5398,6 +5410,7 @@ afterFirstDraw(function () {
   if (!needsPluginsNow) loadWebuiPlugins();
 });
 syncSubmitLabel();
+updateComposerModeHint();
 // Only the opening view's data is fetched now; the rest load when opened.
 showView(openingView, false);
 /* Reopening the page used to show an empty transcript even when the picker
