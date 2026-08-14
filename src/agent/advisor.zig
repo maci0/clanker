@@ -124,24 +124,22 @@ pub fn review(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var abort = client.Abort{};
     var ctx = client.Ctx{
         .io = io,
         .gpa = gpa,
         .environ_map = environ_map,
         .cfg = cfg,
-        .abort = &abort,
     };
     const msgs = [_]types.Message{
         .{ .role = .system, .content = system_prompt },
         .{ .role = .user, .content = summary },
     };
     var err_detail: ?[]const u8 = null;
-    const resp = client.chat(&ctx, arena, .{
+    const resp = client.chatWithTimeout(&ctx, arena, .{
         .provider = provider,
         .messages = &msgs,
         .max_tokens = 256,
-    }, &err_detail) catch |err| {
+    }, &err_detail, cfg.advisor.timeout_ms) catch |err| {
         log.log(.debug, "advisor failed: {s}", .{@errorName(err)});
         return null;
     };

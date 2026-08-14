@@ -108,17 +108,12 @@ Reply with JSON only: {"severity": "note"|"concern"|"blocker", "text": "..."}
 Keep text under 150 words. Do not repeat what the agent said; say what it missed.
 ```
 
-**Concurrency.** The advisor call starts immediately after `on_tool_result`
-fires, before the agent loop's next think phase. In the existing loop structure
-(`src/agent/loop.zig`), this is a `std.Thread.spawn` on the advisor call, joined
-at the start of the next think phase. If the join takes longer than
-`advisor.timeout_ms` (default 5000), the advisor result is dropped and the turn
-proceeds without it.
-
-Prefer the shared fail-open side-channel wrapper from PRD 0020 (auto-thinking)
-once it exists: same timeout/budget pattern for a secondary model call. Until
-then, implement the join/timeout locally and extract when 0020 lands (or land
-the wrapper here if advisor ships first).
+**Concurrency.** The advisor call starts after `on_tool_result`, before the
+next think phase. `client.chatWithTimeout` owns a concurrent chat task while
+the loop waits on a monotonic deadline. If `advisor.timeout_ms` (default 5000)
+expires, it shuts down the task's armed HTTP sockets before cancellation and
+drops the result. Auto-thinking uses the same wrapper; neither side channel
+can inherit an unbounded provider read.
 
 **Severity handling.**
 
@@ -211,9 +206,8 @@ The main agent loop never sees an exception from the advisor path.
       options in an interactive session.
 - [x] A `blocker` in a headless run is logged and treated as a `concern` (loop
       does not hang).
-- [ ] Advisor timeout (`advisor.timeout_ms`) aborts the call and the loop
-      continues without injection. (`timeout_ms` is parsed; the call still
-      uses `client.Abort` but is not yet deadline-driven.)
+- [x] Advisor timeout (`advisor.timeout_ms`) aborts the armed HTTP connection
+      through `client.chatWithTimeout`; the loop continues without injection.
 - [x] Tool arguments for tools with `fs_prefixes` or `exec_allow` are redacted
       in the advisor input; tool names and result prefixes are not.
 - [x] Advisor errors (provider down, malformed JSON) do not propagate to the

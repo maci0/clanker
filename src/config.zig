@@ -178,6 +178,9 @@ pub const Agent = struct {
     /// 50 matches what agentic coding CLIs (grok, kimi) allow per turn.
     max_iterations: u32 = 50,
     compact_threshold_bytes: usize = 24000,
+    tool_result_prune_bytes: usize = 8192,
+    tool_result_prune_head_bytes: usize = 4096,
+    tool_result_prune_tail_bytes: usize = 1024,
     max_total_tokens: ?u32 = null,
     /// Per-turn cap on input tokens; conversation is compacted before a turn
     /// whose content would exceed it.
@@ -352,6 +355,9 @@ pub fn toolsDirDisplay(arena: std.mem.Allocator, dirs: []const []const u8) ![]co
 pub const AgentFields = struct {
     max_iterations: bool = false,
     compact_threshold_bytes: bool = false,
+    tool_result_prune_bytes: bool = false,
+    tool_result_prune_head_bytes: bool = false,
+    tool_result_prune_tail_bytes: bool = false,
     max_total_tokens: bool = false,
     max_tokens_per_turn: bool = false,
     max_history_tokens: bool = false,
@@ -782,7 +788,16 @@ pub const Config = struct {
             log.log(.error_, "default_provider '{s}' is not in \"providers\"", .{cfg.default_provider});
             return error.DefaultProviderUnknown;
         }
+        try validateToolResultPrune(cfg.agent);
         return cfg;
+    }
+
+    fn validateToolResultPrune(agent: Agent) !void {
+        if (agent.tool_result_prune_bytes == 0) return;
+        const kept = agent.tool_result_prune_head_bytes + @import("agent/prune.zig").marker.len + agent.tool_result_prune_tail_bytes;
+        if (kept < agent.tool_result_prune_bytes) return;
+        log.log(.error_, "agent tool-result pruning keeps {d} bytes but threshold is {d}", .{ kept, agent.tool_result_prune_bytes });
+        return error.InvalidToolResultPruneConfig;
     }
 
     const LoadMode = enum { required, optional };
@@ -1380,18 +1395,19 @@ pub const Config = struct {
         var a = Agent{};
         var f = AgentFields{};
         warnUnknownKeys(obj, &.{
-            "max_iterations",            "compact_threshold_bytes",        "max_total_tokens",
-            "max_tokens_per_turn",       "max_history_tokens",             "tool_catalog",
-            "hot_tools",                 "tools_dir",                      "skills_dir",
-            "system_prompt_file",        "learnings_file",                 "global_instructions_file",
-            "state_dir",                 "sandbox_root",                   "workflows_dir",
-            "chains_dir",                "git_commit",                     "git_remote_ops",
-            "exec_pattern_allow",        "repl_exec_allow",                "seed",
-            "ask_timeout_seconds",       "confirm_writes",                 "provider_check_timeout_seconds",
-            "fallback_provider",         "fallback_providers",             "auto_thinking",
-            "thinking_classifier_model", "thinking_classifier_timeout_ms", "worktree",
-            "goal_worktree",             "git_worktree_on",                "isolated_cli",
-            "isolated_tui",              "isolated_webui",
+            "max_iterations",               "compact_threshold_bytes",        "tool_result_prune_bytes",
+            "tool_result_prune_head_bytes", "tool_result_prune_tail_bytes",   "max_total_tokens",
+            "max_tokens_per_turn",          "max_history_tokens",             "tool_catalog",
+            "hot_tools",                    "tools_dir",                      "skills_dir",
+            "system_prompt_file",           "learnings_file",                 "global_instructions_file",
+            "state_dir",                    "sandbox_root",                   "workflows_dir",
+            "chains_dir",                   "git_commit",                     "git_remote_ops",
+            "exec_pattern_allow",           "repl_exec_allow",                "seed",
+            "ask_timeout_seconds",          "confirm_writes",                 "provider_check_timeout_seconds",
+            "fallback_provider",            "fallback_providers",             "auto_thinking",
+            "thinking_classifier_model",    "thinking_classifier_timeout_ms", "worktree",
+            "goal_worktree",                "git_worktree_on",                "isolated_cli",
+            "isolated_tui",                 "isolated_webui",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -1400,6 +1416,18 @@ pub const Config = struct {
         if (obj.get("compact_threshold_bytes")) |k| {
             a.compact_threshold_bytes = try jsonUnsigned(usize, k, "compact_threshold_bytes");
             f.compact_threshold_bytes = true;
+        }
+        if (obj.get("tool_result_prune_bytes")) |k| {
+            a.tool_result_prune_bytes = try jsonUnsigned(usize, k, "tool_result_prune_bytes");
+            f.tool_result_prune_bytes = true;
+        }
+        if (obj.get("tool_result_prune_head_bytes")) |k| {
+            a.tool_result_prune_head_bytes = try jsonUnsigned(usize, k, "tool_result_prune_head_bytes");
+            f.tool_result_prune_head_bytes = true;
+        }
+        if (obj.get("tool_result_prune_tail_bytes")) |k| {
+            a.tool_result_prune_tail_bytes = try jsonUnsigned(usize, k, "tool_result_prune_tail_bytes");
+            f.tool_result_prune_tail_bytes = true;
         }
         if (obj.get("max_total_tokens")) |k| {
             a.max_total_tokens = try jsonUnsigned(u32, k, "max_total_tokens");
@@ -1604,6 +1632,9 @@ pub const Config = struct {
     fn applyAgentFields(dst: *Agent, src: Agent, fields: AgentFields) void {
         if (fields.max_iterations) dst.max_iterations = src.max_iterations;
         if (fields.compact_threshold_bytes) dst.compact_threshold_bytes = src.compact_threshold_bytes;
+        if (fields.tool_result_prune_bytes) dst.tool_result_prune_bytes = src.tool_result_prune_bytes;
+        if (fields.tool_result_prune_head_bytes) dst.tool_result_prune_head_bytes = src.tool_result_prune_head_bytes;
+        if (fields.tool_result_prune_tail_bytes) dst.tool_result_prune_tail_bytes = src.tool_result_prune_tail_bytes;
         if (fields.max_total_tokens) dst.max_total_tokens = src.max_total_tokens;
         if (fields.max_tokens_per_turn) dst.max_tokens_per_turn = src.max_tokens_per_turn;
         if (fields.max_history_tokens) dst.max_history_tokens = src.max_history_tokens;
@@ -2691,6 +2722,16 @@ test "a local override with only default_provider keeps the base providers" {
     try std.testing.expectEqual(@as(usize, 2), cfg.providers.count());
     try std.testing.expectEqualStrings("b", cfg.default_provider);
     try std.testing.expectEqualStrings("https://b.test", (try cfg.provider(null)).base_url);
+}
+
+test "tool-result pruning config rejects retained bytes at the threshold" {
+    try Config.validateToolResultPrune(.{});
+    try Config.validateToolResultPrune(.{ .tool_result_prune_bytes = 0, .tool_result_prune_head_bytes = 999999 });
+    try std.testing.expectError(error.InvalidToolResultPruneConfig, Config.validateToolResultPrune(.{
+        .tool_result_prune_bytes = 100,
+        .tool_result_prune_head_bytes = 60,
+        .tool_result_prune_tail_bytes = 10,
+    }));
 }
 
 test "advisor section parses and stays off by default" {

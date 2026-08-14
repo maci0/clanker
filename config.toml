@@ -194,6 +194,11 @@ chains_dir = "chains"
 sandbox_root = "."
 seed = 0
 compact_threshold_bytes = 0
+# Large tool results are shortened only in the next provider request; saved
+# session transcripts retain the exact original. Set threshold to 0 to disable.
+tool_result_prune_bytes = 8192
+tool_result_prune_head_bytes = 4096
+tool_result_prune_tail_bytes = 1024
 git_remote_ops = false
 # Session kinds that isolate in a git worktree by default, as if that mode's
 # worktree/goal_worktree were "yes": any of "run", "goal", "tui", "schedule".

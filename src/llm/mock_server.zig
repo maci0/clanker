@@ -15,6 +15,9 @@ pub const Mode = enum {
     /// Always 503. Used to exhaust `client.chat`'s same-provider retries so
     /// a fallback-chain test can assert the next provider is reached.
     http_503,
+    /// Reads the request and deliberately never sends a response. Timeout
+    /// tests stop the server after the client has aborted its socket.
+    stall,
 };
 
 pub const Captured = struct {
@@ -140,6 +143,12 @@ pub const MockServer = struct {
     }
 
     fn respond(self: *MockServer, stream: std.Io.net.Stream) void {
+        if (self.mode == .stall) {
+            while (!self.stop_flag.load(.acquire)) {
+                std.Io.sleep(self.io, .fromNanoseconds(5 * std.time.ns_per_ms), .awake) catch return;
+            }
+            return;
+        }
         const pair = switch (self.mode) {
             .openai_stream => .{
                 \\data: {"id":"chatcmpl-mock2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello "},"finish_reason":null}]}
@@ -186,6 +195,7 @@ pub const MockServer = struct {
                 @as([]const u8, "Service Unavailable"),
                 @as([]const u8, "application/json"),
             },
+            .stall => unreachable,
         };
         const body = pair[0];
         const status = pair[1];

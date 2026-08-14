@@ -4,61 +4,13 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const memory_embed = @import("memory_embed.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
 
 const default_dim: usize = 384;
-
-fn hashIndex(hash: u64, len: usize) usize {
-    // Wyhash distributes entropy across all bits, so intentionally retain the
-    // low 32 bits before reducing to the embedding dimension.
-    const low_bits: u32 = @truncate(hash);
-    return @as(usize, low_bits) % len;
-}
-
-fn hashEmbedInto(text: []const u8, vec: []f32) void {
-    @memset(vec, 0);
-    var token_buf: [128]u8 = undefined;
-    var tlen: usize = 0;
-    var prev_buf: [128]u8 = undefined;
-    var prev_len: usize = 0;
-    var i: usize = 0;
-    while (i <= text.len) : (i += 1) {
-        const c: u8 = if (i < text.len) text[i] else 0;
-        const is_alnum = i < text.len and std.ascii.isAlphanumeric(c);
-        if (is_alnum) {
-            if (tlen < token_buf.len) {
-                token_buf[tlen] = std.ascii.toLower(c);
-                tlen += 1;
-            }
-        } else {
-            if (tlen > 0) {
-                const tok = token_buf[0..tlen];
-                const h = std.hash.Wyhash.hash(0, tok);
-                vec[hashIndex(h, vec.len)] += 1.0;
-                if (prev_len > 0) {
-                    var bigram: [256]u8 = undefined;
-                    const a = prev_buf[0..prev_len];
-                    @memcpy(bigram[0..a.len], a);
-                    bigram[a.len] = ' ';
-                    @memcpy(bigram[a.len + 1 .. a.len + 1 + tok.len], tok);
-                    const hb = std.hash.Wyhash.hash(0, bigram[0 .. a.len + 1 + tok.len]);
-                    vec[hashIndex(hb, vec.len)] += 0.5;
-                }
-                @memcpy(prev_buf[0..tlen], tok);
-                prev_len = tlen;
-                tlen = 0;
-            }
-        }
-    }
-    var sum: f64 = 0;
-    for (vec) |v| sum += @as(f64, v) * @as(f64, v);
-    if (sum == 0) return;
-    const inv = 1.0 / @sqrt(sum);
-    for (vec) |*v| v.* = @floatCast(@as(f64, v.*) * inv);
-}
 
 fn cosine(a: []const f32, b: []const f32) f32 {
     if (a.len != b.len or a.len == 0) return 0;
@@ -183,7 +135,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                     if (item != .string) continue;
                     const vec = try lib.alloc.alloc(f32, d);
                     defer lib.alloc.free(vec);
-                    hashEmbedInto(item.string, vec);
+                    memory_embed.hashEmbedInto(item.string, vec);
                     try s.beginArray();
                     for (vec) |f| try s.write(f);
                     try s.endArray();
@@ -196,7 +148,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 if (v == .string) {
                     const vec = try lib.alloc.alloc(f32, d);
                     defer lib.alloc.free(vec);
-                    hashEmbedInto(v.string, vec);
+                    memory_embed.hashEmbedInto(v.string, vec);
                     try s.beginArray();
                     for (vec) |f| try s.write(f);
                     try s.endArray();
@@ -232,7 +184,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         var qvec: ?[]f32 = null;
         if (!use_keyword) {
             qvec = try lib.alloc.alloc(f32, d);
-            hashEmbedInto(query, qvec.?);
+            memory_embed.hashEmbedInto(query, qvec.?);
         }
         defer if (qvec) |v| lib.alloc.free(v);
         var filter_ids: std.ArrayList([]const u8) = .empty;
@@ -291,7 +243,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 else blk: {
                     const vec = lib.alloc.alloc(f32, d) catch continue;
                     defer lib.alloc.free(vec);
-                    hashEmbedInto(text_v.string, vec);
+                    memory_embed.hashEmbedInto(text_v.string, vec);
                     break :blk cosine(qvec.?, vec);
                 };
                 if (sc < threshold) continue;

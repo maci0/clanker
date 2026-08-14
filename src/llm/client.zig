@@ -115,6 +115,10 @@ pub const Ctx = struct {
     /// a wedged read (see `Abort`). Null everywhere else, which leaves the
     /// behaviour of every other call site exactly as it was.
     abort: ?*Abort = null,
+    /// Optional metadata attached by auto-thinking to the next main-model
+    /// completion record. Side-channel clients leave both null.
+    thinking_level: ?[]const u8 = null,
+    thinking_classifier_ms: ?u64 = null,
 
     /// The slice of this context credential resolution needs.
     fn authEnv(self: *Ctx) auth.Env {
@@ -288,6 +292,61 @@ pub fn chat(
     return resp;
 }
 
+fn boundedChatTask(
+    ctx: *Ctx,
+    arena: std.mem.Allocator,
+    params: providers.RequestParams,
+    err_detail: *?[]const u8,
+    done: *std.Io.Event,
+) anyerror!types.ChatResponse {
+    defer done.set(ctx.io);
+    return chat(ctx, arena, params, err_detail);
+}
+
+/// `chat` under a wall-clock ceiling. A timeout shuts down the worker's
+/// armed HTTP connections before cancellation so a stalled socket cannot
+/// wedge the caller while it waits for the concurrent task to unwind.
+/// A zero timeout preserves the unbounded `chat` behaviour.
+pub fn chatWithTimeout(
+    ctx: *Ctx,
+    arena: std.mem.Allocator,
+    params: providers.RequestParams,
+    err_detail: *?[]const u8,
+    timeout_ms: u32,
+) anyerror!types.ChatResponse {
+    if (timeout_ms == 0) return chat(ctx, arena, params, err_detail);
+
+    var done: std.Io.Event = .unset;
+    var abort: Abort = .{};
+    const previous_abort = ctx.abort;
+    ctx.abort = &abort;
+    defer ctx.abort = previous_abort;
+
+    var future = ctx.io.concurrent(boundedChatTask, .{ ctx, arena, params, err_detail, &done }) catch
+        return error.SystemResources;
+    const deadline: std.Io.Clock.Timestamp = .fromNow(ctx.io, .{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
+    });
+    while (!done.isSet()) {
+        done.waitTimeout(ctx.io, .{ .deadline = deadline }) catch |err| switch (err) {
+            error.Timeout => {
+                if (done.isSet()) break;
+                if (deadline.durationFromNow(ctx.io).raw.nanoseconds > 0) continue;
+                abort.trigger(ctx.io);
+                _ = future.cancel(ctx.io) catch {};
+                return error.Timeout;
+            },
+            error.Canceled => {
+                abort.trigger(ctx.io);
+                _ = future.cancel(ctx.io) catch {};
+                return error.Canceled;
+            },
+        };
+    }
+    return future.await(ctx.io);
+}
+
 /// Input-token cost, discounting the prefix served from the prompt cache: a
 /// cache read bills at about a tenth of the input rate, so charging every
 /// prompt token at full price overstates a cached run's cost by ~10x on the
@@ -372,6 +431,8 @@ fn recordUsage(ctx: *Ctx, arena: std.mem.Allocator, provider: *const config.Prov
         .duration_ms = duration_ms,
         .ok = true,
         .request_id = log.getContext(),
+        .thinking_level = ctx.thinking_level,
+        .thinking_classifier_ms = ctx.thinking_classifier_ms,
     });
 }
 
@@ -406,6 +467,8 @@ fn recordFailure(
         .http_status = http_status,
         .err = err_name,
         .request_id = log.getContext(),
+        .thinking_level = ctx.thinking_level,
+        .thinking_classifier_ms = ctx.thinking_classifier_ms,
     });
 }
 
@@ -1049,6 +1112,38 @@ test "streaming chat assembles SSE deltas" {
     }
     try std.testing.expectEqualStrings("Hello from the mock stream", resp.message.content orelse "");
     try std.testing.expectEqualStrings("Hello from the mock stream", Sink.collected.items);
+}
+
+test "bounded chat aborts a provider that never sends a response" {
+    const mock_server = @import("mock_server.zig");
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, std.testing.allocator, .stall);
+    defer mock.stop();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("MOCK_API_KEY", "test-key");
+
+    const base_url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}", .{mock.port});
+    defer std.testing.allocator.free(base_url);
+    var provider_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer provider_arena.deinit();
+    var provider = try config.Provider.single(provider_arena.allocator(), "mock-stall", base_url, .openai_compat, "mock", .{});
+    provider.api_key_env = "MOCK_API_KEY";
+
+    var ctx = Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var response_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer response_arena.deinit();
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    var err_detail: ?[]const u8 = null;
+    try std.testing.expectError(error.Timeout, chatWithTimeout(&ctx, response_arena.allocator(), .{
+        .provider = &provider,
+        .messages = &messages,
+        .max_tokens = 1,
+    }, &err_detail, 30));
+    try std.testing.expect(ctx.abort == null);
 }
 
 test "vertex stream: no-arg tool call and a frame with no trailing blank line" {

@@ -64,6 +64,14 @@ pub const Stat = struct {
     duration_ms: u64 = 0,
     ok_calls: u64 = 0,
     error_calls: u64 = 0,
+    thinking_low: u64 = 0,
+    thinking_medium: u64 = 0,
+    thinking_high: u64 = 0,
+    thinking_xhigh: u64 = 0,
+
+    pub fn thinkingTotal(self: *const Stat) u64 {
+        return self.thinking_low + self.thinking_medium + self.thinking_high + self.thinking_xhigh;
+    }
 
     pub fn errorRate(self: *const Stat) f64 {
         if (self.calls == 0) return 0;
@@ -224,6 +232,12 @@ pub fn aggregate(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
         gop.value_ptr.cost += r.cost;
         gop.value_ptr.duration_ms += r.duration_ms;
         if (r.ok) gop.value_ptr.ok_calls += 1 else gop.value_ptr.error_calls += 1;
+        if (r.ok) if (r.thinking_level) |level| {
+            if (std.mem.eql(u8, level, "low")) gop.value_ptr.thinking_low += 1;
+            if (std.mem.eql(u8, level, "medium")) gop.value_ptr.thinking_medium += 1;
+            if (std.mem.eql(u8, level, "high")) gop.value_ptr.thinking_high += 1;
+            if (std.mem.eql(u8, level, "xhigh")) gop.value_ptr.thinking_xhigh += 1;
+        };
     }
     const out = try arena.alloc(Stat, by_key.count());
     var idx: usize = 0;
@@ -254,6 +268,10 @@ pub fn totals(stats: []const Stat) Stat {
         t.duration_ms += s.duration_ms;
         t.ok_calls += s.ok_calls;
         t.error_calls += s.error_calls;
+        t.thinking_low += s.thinking_low;
+        t.thinking_medium += s.thinking_medium;
+        t.thinking_high += s.thinking_high;
+        t.thinking_xhigh += s.thinking_xhigh;
     }
     return t;
 }
@@ -268,6 +286,14 @@ pub fn renderTable(arena: std.mem.Allocator, stats: []const Stat, totals_row: St
     try text.appendSlice(arena, "provider        model                          calls  prompt  output   total  cache%  tok/s     cost$  fail\n");
     for (stats) |stat| try appendTableRow(arena, &text, stat.provider, stat.model, stat);
     try appendTableRow(arena, &text, "totals", "", totals_row);
+    if (totals_row.thinkingTotal() > 0) {
+        try text.print(arena, "thinking        low {d}  medium {d}  high {d}  xhigh {d}\n", .{
+            totals_row.thinking_low,
+            totals_row.thinking_medium,
+            totals_row.thinking_high,
+            totals_row.thinking_xhigh,
+        });
+    }
     return text.toOwnedSlice(arena);
 }
 
@@ -364,6 +390,17 @@ pub fn statsJSON(arena: std.mem.Allocator, stats: []const Stat, total: Stat) ![]
     try s.print("{d}", .{total.error_calls});
     try s.objectField("error_rate");
     try s.print("{d:.1}", .{total.errorRate()});
+    try s.objectField("thinking_distribution");
+    try s.beginObject();
+    try s.objectField("low");
+    try s.print("{d}", .{total.thinking_low});
+    try s.objectField("medium");
+    try s.print("{d}", .{total.thinking_medium});
+    try s.objectField("high");
+    try s.print("{d}", .{total.thinking_high});
+    try s.objectField("xhigh");
+    try s.print("{d}", .{total.thinking_xhigh});
+    try s.endObject();
     try s.endObject();
     try s.endObject();
     return arena.dupe(u8, buf[0..w.end]);
@@ -515,6 +552,65 @@ test "statsJSON serializes stats + totals" {
     try std.testing.expectEqual(@as(i64, 2), totals_obj.get("calls").?.integer);
     try std.testing.expectEqual(@as(i64, 350), totals_obj.get("total_tokens").?.integer);
     try std.testing.expect(totals_obj.get("cost") != null);
+}
+
+test "thinking metadata aggregates into CLI and API distributions" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    for ([_][]const u8{ "low", "high", "high", "xhigh" }) |level| {
+        append(tmp.dir, io, std.testing.allocator, arena, "", .{
+            .ts = 1,
+            .provider = "p",
+            .model = "m",
+            .prompt_tokens = 1,
+            .completion_tokens = 1,
+            .total_tokens = 2,
+            .cache_hit = 0,
+            .cache_miss = 1,
+            .cost = 0,
+            .duration_ms = 1,
+            .thinking_level = level,
+            .thinking_classifier_ms = 12,
+        });
+    }
+    // Failed main calls do not skew the distribution of selected effort on
+    // completed calls, even though their metadata remains useful in JSONL.
+    append(tmp.dir, io, std.testing.allocator, arena, "", .{
+        .ts = 2,
+        .provider = "p",
+        .model = "m",
+        .prompt_tokens = 0,
+        .completion_tokens = 0,
+        .total_tokens = 0,
+        .cache_hit = 0,
+        .cache_miss = 0,
+        .cost = 0,
+        .duration_ms = 1,
+        .ok = false,
+        .thinking_level = "medium",
+    });
+
+    const stats = try aggregate(tmp.dir, io, std.testing.allocator, arena, "");
+    const total = totals(stats);
+    try std.testing.expectEqual(@as(u64, 1), total.thinking_low);
+    try std.testing.expectEqual(@as(u64, 0), total.thinking_medium);
+    try std.testing.expectEqual(@as(u64, 2), total.thinking_high);
+    try std.testing.expectEqual(@as(u64, 1), total.thinking_xhigh);
+
+    const table = try renderTable(arena, stats, total);
+    try std.testing.expect(std.mem.find(u8, table, "thinking        low 1  medium 0  high 2  xhigh 1") != null);
+    const json_out = try statsJSON(arena, stats, total);
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, json_out, .{});
+    const dist = parsed.object.get("totals").?.object.get("thinking_distribution").?.object;
+    try std.testing.expectEqual(@as(i64, 2), dist.get("high").?.integer);
+    try std.testing.expectEqual(@as(i64, 1), dist.get("xhigh").?.integer);
 }
 
 test "concurrent appends all survive" {

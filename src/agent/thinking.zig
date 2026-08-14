@@ -21,6 +21,11 @@ pub const system_prompt =
 
 pub const Level = enum { low, medium, high, xhigh };
 
+pub const Classification = struct {
+    level: Level,
+    duration_ms: u64,
+};
+
 pub fn parseLevel(raw: []const u8) Level {
     var it = std.mem.tokenizeAny(u8, raw, " \t\r\n`\"'.");
     const word = it.next() orelse return .medium;
@@ -73,7 +78,7 @@ pub fn classify(
     environ_map: *std.process.Environ.Map,
     cfg: *const config.Config,
     user_text: []const u8,
-) ?Level {
+) ?Classification {
     if (!cfg.agent.auto_thinking) return null;
     const provider = resolveClassifier(cfg) orelse {
         log.log(.debug, "auto-thinking skipped: no classifier provider", .{});
@@ -83,26 +88,29 @@ pub fn classify(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const prompt = std.fmt.allocPrint(arena, "{s}{s}", .{ system_prompt, user_text }) catch return null;
-    var abort = client.Abort{};
     var ctx = client.Ctx{
         .io = io,
         .gpa = gpa,
         .environ_map = environ_map,
         .cfg = cfg,
-        .abort = &abort,
     };
     const msgs = [_]types.Message{.{ .role = .user, .content = prompt }};
     var err_detail: ?[]const u8 = null;
-    const resp = client.chat(&ctx, arena, .{
+    const started = std.Io.Timestamp.now(io, .awake);
+    const resp = client.chatWithTimeout(&ctx, arena, .{
         .provider = provider,
         .messages = &msgs,
         .max_tokens = 5,
         .temperature = 0,
-    }, &err_detail) catch |err| {
+    }, &err_detail, cfg.agent.thinking_classifier_timeout_ms) catch |err| {
         log.log(.debug, "auto-thinking failed: {s}", .{@errorName(err)});
         return null;
     };
-    return parseLevel(resp.message.content orelse "");
+    const elapsed = started.durationTo(std.Io.Timestamp.now(io, .awake));
+    return .{
+        .level = parseLevel(resp.message.content orelse ""),
+        .duration_ms = @intCast(@max(0, @divTrunc(elapsed.nanoseconds, std.time.ns_per_ms))),
+    };
 }
 
 test "parseLevel accepts the four words and falls back to medium" {

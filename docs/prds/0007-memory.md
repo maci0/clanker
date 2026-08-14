@@ -156,13 +156,9 @@ Knowledge document injection (itself capped at 100,000 bytes).
 
 ## Known issues
 
-1. **Bigram buffer overflow — still live, unfixed.** One copy remains after
-   the migration: `tools/zig/memory.zig`'s `hashEmbedInto` copies up to 257
-   bytes (`prev_buf` up to 128, one separator byte, `token_buf` up to 128)
-   into a `bigram: [256]u8` buffer. Two consecutive 128+ character
-   alphanumeric runs (reachable single-user input) trigger it. This is a
-   real memory-safety bug awaiting a code fix; deleting `hash_embed.zig`'s
-   duplicate removed the second copy, not the bug.
+1. **Embedding token truncation.** The builtin embedder intentionally hashes
+   at most 128 bytes per alphanumeric run. Its bigram buffer is derived from
+   that cap (`2 * 128 + 1`) and the maximum-length pair is host-tested.
 2. **`embedding.provider`/`embedding.model` are dead config.** Parsed, and
    nothing reads either any more: the `embedOpenAICompat` implementation was
    deleted with `src/memory/`, so there is no provider embedding path in the
@@ -192,7 +188,7 @@ Knowledge document injection (itself capped at 100,000 bytes).
 |---|---|
 | `embedding.provider` set to anything but `""`/`"builtin"` | Ignored: nothing reads the key; no error or log (Known issues 2) |
 | `vector.backend` set to `"muninndb"`/`"sqlite-vec"` | Ignored the same way; neither backend is implemented and nothing reads the key (Known issues 4) |
-| Two consecutive 128+ char alphanumeric tokens in embedded text | Bigram buffer overflow (Known issues 1) |
+| Two consecutive 128+ char alphanumeric tokens in embedded text | Each token truncates to 128 bytes and the 257-byte bigram embeds safely |
 | `state/knowledge/<id>.chunks.json` missing or unreadable | That collection is skipped for vector and keyword injection alike; read/parse errors are swallowed, no partial-collection warning |
 | Injected content (Knowledge docs + memory hits) exceeds the 100,000 / 80,000-byte caps | Truncated at the byte boundary, not aligned to a document or chunk edge |
 | `memory` tool `search` when the `state/knowledge` listing fails | Returns `ok:true`, empty `hits`, and a `note` naming the error, rather than failing the call |
@@ -219,8 +215,8 @@ Knowledge document injection (itself capped at 100,000 bytes).
       `.chunks.json` (Known issues 3)
 - [ ] A real `muninndb` or `sqlite-vec` vector backend — deferred; currently
       nothing reads `vector.backend` at all (Known issues 4)
-- [ ] Bigram buffer overflow fixed in `tools/zig/memory.zig`'s
-      `hashEmbedInto`, the one remaining copy; still unfixed (Known issues 1)
+- [x] Bigram overflow fixed in host-tested `tools/zig/memory_embed.zig`; the
+      buffer derives from the token cap and covers two maximum-length tokens
 - [ ] The two remaining chunkers consolidated to one, or a documented reason
       each must stay separate (Known issues 5)
 

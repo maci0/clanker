@@ -222,15 +222,15 @@ a `thinking_distribution` field in the session summary.
 - [x] A message classified as `low` selects the low-effort profile row; a
       message classified as `high` selects `"high"`.
 - [x] `xhigh` selects `"high"` unless `max_reasoning_effort` is set higher.
-- [ ] A classifier timeout (inject a fake 10s delay in tests) causes the turn to
-      proceed with the default `reasoning_effort`, not hang.
-      (`thinking_classifier_timeout_ms` is parsed; the call is fail-open but
-      not yet deadline-driven.)
+- [x] A classifier timeout aborts the armed HTTP connection through
+      `client.chatWithTimeout`; the turn proceeds with the default
+      `reasoning_effort` and no error surfaced to the user.
 - [x] A classifier response that is not one of the four words results in `medium`.
 - [x] Classifier input is the current user message only (no history).
 - [x] `token_stats.jsonl` `Record` has optional `thinking_level` /
       `thinking_classifier_ms` fields (omitted when unset).
-- [ ] `clanker stats` shows a `thinking_distribution` breakdown.
+- [x] `clanker stats` shows a `thinking` breakdown and `GET /api/stats`
+      exposes `totals.thinking_distribution` for low/medium/high/xhigh.
 - [x] The classifier system prompt is not modifiable via config or tool calls
       (verify by checking no config key changes it).
 - [x] Unit tests cover: effort level mapping, unexpected-response fallback,

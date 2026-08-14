@@ -52,6 +52,7 @@ comptime {
     _ = @import("agent/ttsr.zig");
     _ = @import("agent/subprocess.zig");
     _ = @import("agent/session.zig");
+    _ = @import("agent/prune.zig");
     _ = @import("agent/graph.zig");
     _ = @import("agent/subagent.zig");
     _ = @import("util/dotenv.zig");
