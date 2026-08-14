@@ -556,8 +556,11 @@ function setRailOpen(open) {
 
 function applyRailCollapsed(collapsed) {
   el.rail.setAttribute("data-collapsed", String(collapsed));
-  el.rail.classList.toggle("pf-m-collapsed", collapsed);
-  el.rail.classList.toggle("pf-m-expanded", !collapsed);
+  /* PatternFly's pf-m-collapsed means "gone" (max-width: 0), not icon rail.
+     Keep pf-m-expanded so the page grid still reserves the sidebar; our own
+     data-collapsed styles shrink it to the icon strip. */
+  el.rail.classList.remove("pf-m-collapsed");
+  el.rail.classList.add("pf-m-expanded");
   var btn = document.getElementById("rail-collapse");
   if (btn) {
     btn.textContent = "";
