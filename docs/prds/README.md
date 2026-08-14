@@ -51,7 +51,7 @@ and Implementation lists checkable file-level phases.
 | [0028](0028-hooks-bridge.md) | Lifecycle hooks (Claude Code bridge) | Draft | deepseek-code.com audit; reuses `execUnderPolicy`/`execDenial` |
 | [0029](0029-loop-hygiene-guard.md) | Loop-hygiene guard | Draft | deepseek-code.com audit; zero-cost, self-contained |
 | [0030](0030-acp-server.md) | ACP server (`clanker acp`) | Draft | deepseek-code.com audit; mirrors `clanker mcp`'s shape |
-| [0031](0031-tool-result-pruning.md) | Deterministic tool-result pruning | Draft | deepseek-code.com audit; complements 0007 compaction |
+| [0031](0031-tool-result-pruning.md) | Deterministic tool-result pruning | Shipped | Request-only head/tail pruning; saved transcripts stay exact |
 | [0032](0032-mcp-client-bridge.md) | MCP client bridge | Draft | deepseek-code.com audit; needs a new registry dispatch kind |
 | [0033](0033-agent-presets.md) | Agent presets | Draft | deepseek-code.com audit; supersedes the Feynman "role prompt files" note |
 
@@ -66,9 +66,8 @@ optional subsystems:
 4. **0029** — loop-hygiene guard (smallest, self-contained, no dependencies)
 5. **0028** — hooks bridge (needs a new subprocess wait-with-timeout primitive)
 6. **0030** — ACP server (mirrors the already-shipped `clanker mcp` shape)
-7. **0031** — deterministic tool-result pruning (small, sits beside existing compaction)
-8. **0033** — agent presets (filter-only v1; independent of 0032)
-9. **0032** — MCP client bridge (largest: needs a new registry dispatch kind; soft-depends on 0016 for a long-lived subprocess handle)
+7. **0033** — agent presets (filter-only v1; independent of 0032)
+8. **0032** — MCP client bridge (largest: needs a new registry dispatch kind; soft-depends on 0016 for a long-lived subprocess handle)
 
 ## Editing rules (short)
 
