@@ -578,10 +578,6 @@ pub const Agent = struct {
                     });
                 }
             }
-            // Prune stale tool outputs before compaction: large results the
-            // model already processed are shortened in place so the estimated
-            // token count that drives compaction reflects the reduced payload,
-            // and subsequent LLM calls carry less redundant context.
             // Log estimated prompt tokens before each LLM call for visibility
             // into context usage and to aid compaction tuning. maybeCompactMessages
             // already computes this while deciding whether to compact, so reuse

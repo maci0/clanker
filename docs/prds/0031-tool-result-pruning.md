@@ -72,21 +72,19 @@ build blocker this PRD has to settle rather than leave open, because getting
 it backwards would make the on-disk session transcript lossy in a way it is
 not today. `session.compactMessages`'s existing save-time trim
 (`src/agent/session.zig`) drops whole messages from what gets written to
-`state/sessions/*.json`; that mechanism is untouched. `pruneToolResults`
-runs only on the message slice `Agent.maybeCompactMessages` is about to turn
-into the next LLM request — never on the slice that gets persisted. The
-model pays for less; the saved transcript stays exact. A reader of a saved
-session sees the tool result clanker actually got, not a pruned stand-in.
+`state/sessions/*.json`; that mechanism is untouched. `Agent.requestMessages`
+first makes a shallow copy of the message structs, then `pruneToolResults`
+rewrites content only in that request copy. The model pays for less; the
+canonical and saved transcript stay exact. A reader of a saved session sees
+the tool result clanker actually got, not a pruned stand-in.
 
 **Where it plugs into the pressure check.** `Agent.maybeCompactMessages`
 already decides, per turn, whether the estimated size exceeds
 `compact_threshold_bytes` and, if so, calls the LLM summarizer. This PRD
-inserts `pruneToolResults` immediately before that decision, over the same
-messages, and re-measures: if the pruned size is now under budget, the
-summarizer branch is skipped for this turn. The existing `estimatedTokens`
-heuristic (`session.zig`, bytes/4 on `message.content.len`) already treats
-content length as the cost unit, so pruning's effect is visible to the
-existing threshold math with no change to that math itself.
+subtracts `reclaimableBytes / 4` from that decision without mutating the
+canonical messages. If the request-only rewrite brings the estimate under
+budget, the summarizer branch is skipped. Immediately before the provider
+call, `requestMessages` makes and prunes the shallow copy described above.
 
 **Byte-boundary safety.** The head cut searches backward from
 `head_bytes` for a valid UTF-8 lead-byte boundary; the tail cut searches
