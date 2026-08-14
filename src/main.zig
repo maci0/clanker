@@ -294,6 +294,7 @@ pub fn main(init: std.process.Init) !void {
             error.InvalidSessionId => "invalid session id; use 1-64 letters, numbers, dashes, or underscores",
             error.TerminalSizeUnavailable => "terminal size is unavailable; resize the terminal and try again",
             error.SessionNotFound => "no saved conversation by that id; run `clanker sessions` for the list",
+            error.GoalNotFound => "the requested saved goal does not exist; add it with `clanker add-goal` or choose an id from the goal board",
             error.ImprovementNotFound => "no improvement by that id; they look like imp-... in state/improvements.jsonl",
             error.ToolFailed => "the internal tool returned an error; run `clanker doctor` to check the build",
             error.ToolBadOutput => "the internal tool returned unreadable output; run `clanker doctor` to check the build",

@@ -3257,8 +3257,8 @@ fn resolveRunTask(
         if (try loadGoalById(arena, io, dir, id)) |g| {
             return .{ .task = try taskWithGoal(arena, task, g), .goal_id = id };
         }
-        log.log(.warn, "goal '{s}' not found in state/goals.json, running without goal context", .{id});
-        return .{ .task = task, .goal_id = null };
+        log.log(.warn, "goal '{s}' not found in state/goals.json", .{id});
+        return error.GoalNotFound;
     }
     if (!auto) return .{ .task = task, .goal_id = null };
     if (try findNewestActiveGoalIn(arena, io, dir)) |g| {
@@ -11473,7 +11473,11 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         req.task,
         explicit_goal_id,
         cfg.modules.goal and cfg.modules.goal_auto_steer and explicit_goal_id == null and !cfg.agent.isolated_webui,
-    ) catch {
+    ) catch |err| {
+        if (err == error.GoalNotFound) {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"goal not found\"}");
+            return;
+        }
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"goal resolve failed\"}");
         return;
     };
@@ -13691,10 +13695,9 @@ test "resolveRunTask attaches explicit and newest-active goals from real goals.j
     try std.testing.expect(std.mem.find(u8, goal_only.task, "Work on this goal until the completion criterion is met.") != null);
     try std.testing.expect(std.mem.find(u8, goal_only.task, "ship the feature") != null);
 
-    // Missing id leaves the task alone (warns on stderr via log) and resolves no goal.
-    const missing = try resolveRunTask(arena, io, tmp.dir, "plain", "no-such", false);
-    try std.testing.expectEqualStrings("plain", missing.task);
-    try std.testing.expect(missing.goal_id == null);
+    // A requested saved goal must exist; falling back to an unscoped task
+    // would silently run the wrong thing.
+    try std.testing.expectError(error.GoalNotFound, resolveRunTask(arena, io, tmp.dir, "plain", "no-such", false));
 
     // Auto with no active goals leaves the task alone.
     try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "[]" });
