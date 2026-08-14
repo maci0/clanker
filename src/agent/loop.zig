@@ -30,6 +30,31 @@ const hooks_runner = @import("../hooks/runner.zig");
 const thinking = @import("thinking.zig");
 const ttsr = @import("ttsr.zig");
 
+/// Process-local RED counters for tool invocations. No per-tool labels: the
+/// tally in state/tool_usage.json and the correlated logs carry that detail.
+var tool_requests_total = std.atomic.Value(u64).init(0);
+var tool_errors_total = std.atomic.Value(u64).init(0);
+
+pub const ToolMetrics = struct {
+    requests_total: u64,
+    errors_total: u64,
+};
+
+pub fn snapshotToolMetrics() ToolMetrics {
+    return .{
+        .requests_total = tool_requests_total.load(.monotonic),
+        .errors_total = tool_errors_total.load(.monotonic),
+    };
+}
+
+fn noteToolRequest() void {
+    _ = tool_requests_total.fetchAdd(1, .monotonic);
+}
+
+fn noteToolError() void {
+    _ = tool_errors_total.fetchAdd(1, .monotonic);
+}
+
 /// Each chatroom inbox line injected into a run. Long enough to see what a
 /// peer said, short enough that a burst of rooms cannot fill the context.
 const max_chat_inbox_preview_bytes: usize = 300;
@@ -522,6 +547,13 @@ pub const Agent = struct {
         }
         self.current_task = task;
         self.current_run_id = g.run_id;
+        // HTTP workers already set a request id; CLI, REPL, schedule, and MCP
+        // paths have none, so attach run_id so LLM, sandbox, and token_stats
+        // lines can be tied back to state/runs/<run-id>.json.
+        const inherited_context = log.getContext();
+        const owns_log_context = inherited_context.len == 0;
+        if (owns_log_context) log.setContext(g.run_id);
+        defer if (owns_log_context) log.clearContext();
         self.current_messages = messages;
         // A decision the user made before this turn started (they picked one
         // of the options the last answer offered): first node, so the graph
@@ -2320,6 +2352,7 @@ pub const Agent = struct {
             // model keeps reaching for should get its schema loaded whether or
             // not the call succeeds.
             self.usage.record(self.arena, tc.name);
+            noteToolRequest();
             // load_tools is answered by this process rather than the sandbox:
             // it decides what the next request carries, which no wasm module
             // can see. It has no registry entry, so filling its slot here also
@@ -2541,6 +2574,10 @@ pub const Agent = struct {
         // conversation must never be null or zero-length.
         for (results) |*r| {
             if (r.* == null or r.*.?.len == 0) r.* = "{\"ok\":true,\"result\":\"\"}";
+        }
+        for (results) |maybe_content| {
+            const content = maybe_content orelse continue;
+            if (std.mem.startsWith(u8, content, "{\"ok\":false")) noteToolError();
         }
         return results;
     }

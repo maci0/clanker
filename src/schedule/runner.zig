@@ -221,6 +221,11 @@ fn fireOne(
     fire: Fire,
 ) Outcome {
     const started = std.Io.Timestamp.now(io, .awake);
+    const prev_context = log.getContext();
+    var sched_ctx_buf: [48]u8 = undefined;
+    const sched_ctx = std.fmt.bufPrint(&sched_ctx_buf, "schedule-{s}", .{entry.id}) catch entry.id;
+    log.setContext(sched_ctx);
+    defer if (prev_context.len > 0) log.setContext(prev_context) else log.clearContext();
     var err_name: []const u8 = "";
     var ok = true;
     fire.call(fire.ctx, &entry) catch |err| {
