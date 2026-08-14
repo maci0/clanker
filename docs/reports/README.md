@@ -42,6 +42,7 @@ workflow through [`AGENTS.md`](../../AGENTS.md).
 
 <!-- inventory:bug:start -->
 - [Improve staging misses UI build inputs](bugs/2026-08-14-improve-staging-misses-ui-build-inputs.md) — Resolved
+- [Improve staging omits release-contract files](bugs/2026-08-14-improve-staging-omits-release-contract-files.md) — Resolved
 <!-- inventory:bug:end -->
 
 ### Investigations

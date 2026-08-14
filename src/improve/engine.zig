@@ -54,11 +54,11 @@ pub const Options = struct {
     max_request_files: usize = 6,
 };
 
-/// Directories/files copied into staging for the compile gate. Must be enough
-/// for `zig build` + `zig build test` + `zig build tools` to succeed. `vendor`
-/// and `ui` are required because `build.zig` imports local modules rooted at
-/// vendor/toml/src/root.zig and ui/vendor.zig.
-const staging_roots = [_][]const u8{ "src", "tools", "tests", "docs", "evals", "vendor", "ui", "README.md", "build.zig", "build.zig.zon", "config.toml" };
+/// Directories/files copied into staging for the compile gate. The full
+/// improve-readable surface is staged so a legal proposal and every gate see
+/// identical source inputs. `vendor` is a build-only local dependency, so it
+/// is added separately without becoming improve-readable.
+const staging_roots = proposal_mod.readable_roots ++ [_][]const u8{"vendor"};
 
 /// Text that has to survive in a staged file for the patch to be considered.
 ///
@@ -3705,12 +3705,20 @@ test "the live gate sweep is measured once and reused until the tree changes" {
     try std.testing.expect(engine.live_gate == null);
 }
 
-test "staging roots retain the UI build module" {
-    var found = false;
-    for (staging_roots) |root| {
-        if (std.mem.eql(u8, root, "ui")) found = true;
+test "staging roots cover every improve-readable root and build dependency" {
+    for (proposal_mod.readable_roots) |required| {
+        var found = false;
+        for (staging_roots) |root| {
+            if (std.mem.eql(u8, root, required)) found = true;
+        }
+        try std.testing.expect(found);
     }
-    try std.testing.expect(found);
+
+    var has_vendor = false;
+    for (staging_roots) |root| {
+        if (std.mem.eql(u8, root, "vendor")) has_vendor = true;
+    }
+    try std.testing.expect(has_vendor);
 }
 
 test "the cached gate sweep is dropped by everything that changes the live tree" {
