@@ -3511,7 +3511,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     }
     a.session_id = opts_session orelse "default";
     defer {
-        subprocess.endSession(init.gpa, io, a.session_id);
+        subprocess.endSession(a.session_id);
         dap.dropLive(a.session_id);
     }
     if (opts_session) |sid| {

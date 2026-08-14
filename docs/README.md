@@ -34,7 +34,7 @@ The REPL also has an opt-in mascot (`--mascot`, or `[tui] mascot` in config; off
 
 The vaxis REPL adds two things `clanker run` has no use for, since a one-shot run has no history to lose:
 - a running `ctx <used>/<window> (<pct>%)` meter, the tokens the session has spent, and its cost so far, in the status bar next to the provider/model,
-- a line whenever history is actually dropped. `[history compacted: dropped 12 messages, freed 48 KB]` is the save-time trim against `max_session_tokens`; `[context compacted: N earlier messages replaced by a summary to fit the model window]` is the mid-turn compaction `agent.compact_threshold_bytes` triggers inside the agent loop. Both used to happen silently, which meant a long session could lose the exchange it was about to be asked to remember with nothing on screen.
+- a line whenever history is actually dropped. `[history compacted: dropped 12 messages, freed 48 KB]` is the save-time trim against `max_session_tokens`; `[context compacted: N earlier messages replaced by a summary to fit the model window]` is the mid-turn compaction `agent.compact_threshold_bytes` triggers inside the agent loop. Mid-turn compaction keeps the run's original request as a labeled anchor ahead of the generated summary, so a failed or incomplete summary cannot leave the model without the task it is meant to finish. Both used to happen silently, which meant a long session could lose the exchange it was about to be asked to remember with nothing on screen.
 
 `clanker run` keeps stdout content-only (safe to pipe: identical bytes whether or not it's a terminal, markdown rendering included — a redirected run gets plain, unstyled text) and puts the spinner/tool status and the per-turn stats footer on stderr, both gated on `stderr` being a real TTY; the gutter and markdown styling on stdout are gated on `stdout` being a real TTY. So `clanker run "…" > out.txt` stays byte-clean while an interactive shell gets the full live view.
 
@@ -438,7 +438,10 @@ Each tool is a WebAssembly module compiled to `wasm32-freestanding` with these
 exports:
 
 - `scratch(need) -> u32`: reserve guest memory for the JSON input and return
-  its address.
+  its address. `tools/zig/lib.zig` reserves 64 KiB by default; a guest that
+  legitimately receives one complete large artifact can declare
+  `pub const input_scratch_cap` in its root source to reserve more without
+  increasing every tool's linear-memory footprint.
 - `host_arena() -> u32`: return the address of the guest's host-result arena.
 - `run(ptr, len) -> u64`: process the input bytes and return the output address
   and length packed as `(out_ptr << 32) | out_len`.
@@ -672,7 +675,7 @@ The commands it may run are the union of every registered tool's `exec_allow` (`
 
 ### `/graph`
 
-Every agent run records an execution graph and writes it to `state/runs/run-<timestamp>.json` on exit (`src/agent/graph.zig`), unless `modules.graphs` is `false`.
+Every agent run records an execution graph and writes it to `state/runs/run-<timestamp>.json` on exit (`src/agent/graph.zig`), unless `modules.graphs` is `false`. The graph guest reserves a larger input buffer than ordinary tools, so a long run's accumulated node previews persist instead of failing at the normal 64 KiB tool-request boundary.
 
 Bare `/graph` dispatches `graph` with the `list` argument, so it prints one line per recorded run. `/graph <run-id>` and `clanker graph <run-id>` both render that run as an ASCII timeline. With nothing recorded yet the listing prints `(no runs yet; clanker run creates one)`.
 

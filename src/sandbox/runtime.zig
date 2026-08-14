@@ -903,15 +903,26 @@ test "graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_read 
     const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/graph.wasm", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(wasm);
 
+    // The checkout may keep state/ as a symlink to shared runtime state. The
+    // sandbox correctly refuses symlink components, so this graph filesystem
+    // test needs its own real root rather than depending on the developer's
+    // local state layout.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state/runs");
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
     const run_id = "test-run-cmd-graph-roundtrip";
-    const path = "state/runs/" ++ run_id ++ ".json";
+    const path = try std.fmt.allocPrint(std.testing.allocator, "{s}/state/runs/{s}.json", .{ root, run_id });
+    defer std.testing.allocator.free(path);
     std.Io.Dir.cwd().deleteFile(io, path) catch {};
     defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
 
     var sb = host.Sandbox{
         .gpa = std.testing.allocator,
         .io = io,
-        .root_dir = ".",
+        .root_dir = root,
         .network_allow = &.{},
         .fs_prefixes = &.{"state/runs/"},
         .environ_map = &env_map,
@@ -927,6 +938,27 @@ test "graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_read 
     const write_out = try mod.executeTool(write_in);
     defer std.testing.allocator.free(write_out);
     try std.testing.expect(std.mem.find(u8, write_out, "\"ok\":true") != null);
+
+    // Long runs can carry many bounded previews, so the complete graph sent
+    // to this guest may exceed the default 64 KiB tool input buffer. Graph
+    // opts into its own larger buffer; a write just past that old limit must
+    // persist rather than returning ToolScratchTooSmall at run shutdown.
+    const large_run_id = "test-run-graph-large-input";
+    const large_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/state/runs/{s}.json", .{ root, large_run_id });
+    defer std.testing.allocator.free(large_path);
+    std.Io.Dir.cwd().deleteFile(io, large_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, large_path) catch {};
+    const large_task = try std.testing.allocator.alloc(u8, 70 * 1024);
+    defer std.testing.allocator.free(large_task);
+    @memset(large_task, 'x');
+    const large_write_in = try std.fmt.allocPrint(std.testing.allocator, "{{\"write\":{{\"run_id\":\"{s}\",\"task\":\"{s}\"}}}}", .{ large_run_id, large_task });
+    defer std.testing.allocator.free(large_write_in);
+    const large_write_out = try mod.executeTool(large_write_in);
+    defer std.testing.allocator.free(large_write_out);
+    try std.testing.expect(std.mem.find(u8, large_write_out, "\"ok\":true") != null);
+    const large_graph = try std.Io.Dir.cwd().readFileAlloc(io, large_path, std.testing.allocator, .limited(128 * 1024));
+    defer std.testing.allocator.free(large_graph);
+    try std.testing.expectEqual(large_task.len, std.mem.count(u8, large_graph, "x"));
 
     // A run_id crossing a path boundary must be rejected, not silently escape
     // state/runs/.
