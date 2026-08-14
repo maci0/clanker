@@ -2543,7 +2543,19 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   .composer .toolbar #cancel { min-height: 44px; }
   .rail-item, .rail-new, .chat-actions button, .chat-thread-bar button,
   .board-empty-slot button, .board-quick-add .board-add-actions button,
-  .card-quick-actions button, .slack-btn-icon, .label-picker-item { min-width: 44px; min-height: 44px; height: 44px; }
+  .card-quick-actions button, .slack-btn-icon, .label-picker-item,
+  .rail-pin, button.rail-pin,
+  .session-actions .secondary, .session-actions .more > summary,
+  .session-actions button,
+  .composer .toolbar #voice-btn {
+    min-width: 44px; min-height: 44px; height: 44px;
+  }
+  .rail-new,
+  button.rail-new,
+  button.pf-v6-c-button.rail-new {
+    min-height: 44px;
+    height: 44px;
+  }
 }
 /* Narrow viewports: primary composer actions and rail channels stay hittable
    even when the UA reports a fine pointer (phones + many tablets). */
@@ -2559,7 +2571,32 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
     min-height: 44px;
     padding-block: 0.55rem;
   }
-  .rail-item, .rail-new { min-height: 44px; }
+  .rail-item,
+  .rail-new,
+  button.rail-new,
+  button.pf-v6-c-button.rail-new {
+    min-height: 44px;
+    height: 44px;
+  }
+  .rail-pin,
+  button.rail-pin {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .session-actions .secondary,
+  .session-actions .more > summary,
+  .session-actions button {
+    min-height: 44px;
+  }
+  .chat-actions button,
+  .chat-thread-bar button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .composer .toolbar #voice-btn,
+  .composer .toolbar button.secondary {
+    min-height: 44px;
+  }
 }
 
 /* A pressed actuator travels; scale reads as shrinking, travel reads as a

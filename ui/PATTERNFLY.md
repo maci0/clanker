@@ -70,8 +70,18 @@ Rail tabs stay cabinet-native (`class="rail-tab"` only, no `pf-v6-c-nav__link` /
 author colours even with `!important`. Tabs keep `appearance: none`, and narrow
 hit targets use `button.rail-tab` so base `min-height: 32px` cannot beat 44px.
 
-Full PatternFly subsetting is deferred: `media=print` → `all` already clears
-first-paint cost; carving the min CSS is a separate change.
+## Shipping decision: PatternFly CSS weight
+
+`ui/vendor/patternfly.min.css` is ~1.8MB uncompressed. We ship it whole on
+purpose for now:
+
+1. First paint: load with `media="print"`, flip to `all` in `app.js` (CSP blocks
+   inline `onload`). That removes PF from the critical path without a subset build.
+2. Subsetting (purge unused component rules) is deferred until a dedicated change
+   with a measurable before/after on parse time. Do not hand-carve the min file
+   in a polish pass; a bad subset silently breaks masthead/nav/modal.
+
+Track subsetting as a separate optimize task, not as unfinished cabinet work.
 
 ## Updating vendored PatternFly
 

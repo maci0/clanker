@@ -13,7 +13,9 @@ colors:
   accent: "#0b57d0"
   on-accent: "#ffffff"
   ok: "#117a3a"
+  ok-deep: "#0a7a2e"
   warn: "#b45309"
+  warn-deep: "#9a7a0a"
   danger: "#dc2626"
   violet: "#7c3aed"
   code-bg: "#0d1117"
@@ -22,12 +24,23 @@ colors:
   shadow: "rgba(0,0,0,0.08)"
   shadow-soft: "rgba(0,0,0,0.06)"
   shadow-deep: "rgba(0,0,0,0.12)"
+  shadow-blue: "rgba(9,30,66,0.25)"
+  shadow-blue-soft: "rgba(9,30,66,0.15)"
   dark-bg: "#171717"
   dark-surface: "#212121"
   dark-surface-2: "#2f2f2f"
   dark-fg: "#ececec"
   dark-fg-muted: "#9ca3af"
   dark-accent: "#7aa7ff"
+  mocha-bg: "#181825"
+  mocha-surface: "#1e1e2e"
+  mocha-surface-2: "#313244"
+  mocha-fg: "#cdd6f4"
+  mocha-accent: "#cba6f7"
+  tokyonight-bg: "#1a1b26"
+  tokyonight-surface-2: "#292e42"
+  tokyonight-fg: "#c0caf5"
+  tokyonight-accent: "#9d7cd8"
 typography:
   micro:
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
@@ -37,11 +50,19 @@ typography:
     fontFamily: "ui-sans-serif, system-ui, sans-serif"
     fontSize: "10px"
     fontWeight: 500
+  dense:
+    fontFamily: "ui-sans-serif, system-ui, sans-serif"
+    fontSize: "11px"
+    fontWeight: 500
   label:
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
     fontSize: "0.6875rem"
     fontWeight: 600
     letterSpacing: "0.06em"
+  step0:
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+    fontSize: "0.8125rem"
+    fontWeight: 400
   chip:
     fontFamily: "ui-sans-serif, system-ui, sans-serif"
     fontSize: "12px"
@@ -59,16 +80,36 @@ typography:
     fontSize: "0.9375rem"
     fontWeight: 400
     lineHeight: 1.55
+  ui:
+    fontFamily: "ui-sans-serif, system-ui, sans-serif"
+    fontSize: "16px"
+    fontWeight: 400
   title:
     fontFamily: "ui-sans-serif, system-ui, sans-serif"
     fontSize: "1.0625rem"
     fontWeight: 600
     lineHeight: 1.3
+  lead:
+    fontFamily: "ui-sans-serif, system-ui, sans-serif"
+    fontSize: "18px"
+    fontWeight: 600
+  display-sm:
+    fontFamily: "ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.15rem"
+    fontWeight: 600
+  display:
+    fontFamily: "ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.3rem"
+    fontWeight: 600
 rounded:
+  hairline: "2px"
+  tight: "4px"
   xs: "3px"
   sm: "6px"
   control: "8px"
+  soft: "9px"
   md: "10px"
+  panel: "12px"
   lg: "14px"
   bubble: "18px"
   composer: "24px"
@@ -111,6 +152,11 @@ components:
     backgroundColor: "{colors.surface-2}"
     textColor: "{colors.fg}"
     rounded: "{rounded.md}"
+  rail-new:
+    backgroundColor: "{colors.accent}"
+    textColor: "{colors.on-accent}"
+    rounded: "{rounded.pill}"
+    height: "36px"
   composer:
     backgroundColor: "{colors.surface}"
     rounded: "{rounded.composer}"
@@ -157,6 +203,14 @@ is rare and actionable.
 
 ### Semantic
 - **Held / OK** (#117a3a), **Warn** (#b45309), **Fault** (#dc2626), **Violet** (#7c3aed) for AI-answer / special states
+- Deep lamp fills (`ok-deep`, `warn-deep`) for denser status chips
+
+### Named themes
+Catppuccin / Tokyo Night / hackerman / frappe / etc. live as full
+`:root[data-theme="…"]` blocks in `ui/app/app.css`. Frontmatter lists the
+mocha and tokyonight anchors used most often; other named ramps stay in CSS.
+System dark applies only when `data-theme` is absent
+(`:root:not([data-theme])` under `prefers-color-scheme: dark`).
 
 ### Named Rules
 **The Lamp Rule.** Status colour lives in lamps and chips, not in large washes.
@@ -164,7 +218,8 @@ is rare and actionable.
 component vars must remap to cabinet tokens so theme flips never leave light
 greys on dark panels. Masthead `chip-btn` controls and the composer Run/Cancel
 buttons stay off `pf-v6-c-button` so PF brand colours cannot override `--accent`.
-Each `data-theme` sets `color-scheme: light|dark` to match.
+Rail tabs stay off `pf-v6-c-nav__link` for the same reason. Each `data-theme`
+sets `color-scheme: light|dark` to match.
 
 ## Typography
 
@@ -173,10 +228,15 @@ Each `data-theme` sets `color-scheme: light|dark` to match.
 
 **Character:** Engraved mono for the panel; readable sans for conversation.
 
+CSS steps: `--step--1` 0.6875rem, `--step-0` 0.8125rem, `--step-1` 0.9375rem,
+`--step-2` 1.0625rem, `--step-3` 1.25rem.
+
 ### Hierarchy
 - **Title** (600, ~1.06rem): view headings
 - **Body** (400, ~0.94rem, 1.55): transcript and forms; measure ~70ch
+- **UI / lead** (16px / 18px): denser app chrome and empty-state titles
 - **Label** (600, ~0.69rem, tracked caps where engraved): rail groups, chips
+- **Dense** (11px): meta rows and compact toolbars
 
 ## Layout
 
@@ -184,17 +244,19 @@ Each `data-theme` sets `color-scheme: light|dark` to match.
 - Rail fixed ~15rem; drawer below 40rem
 - Main content centered; chat measure capped (~46rem)
 - Breakpoints in rem (40rem phone drawer, 48rem rooms sidebar)
-- Coarse pointer and narrow viewports: 44px minimum targets for rail, chips, submit
+- Coarse pointer and narrow viewports: 44px minimum for rail tabs, New chat,
+  pins, session actions, chat message actions, chips, and composer submit/voice
 
 ## Elevation & Depth
 
 `--lift` / `--lift-high`: soft offset shadows on raised actuators and overlays.
-Surfaces stack by token (bg → surface → surface-2), not by blur glass.
+Blue-tinted soft shadows (`shadow-blue*`) appear on a few raised PF-adjacent
+surfaces. Surfaces stack by token (bg → surface → surface-2), not by blur glass.
 
 ## Shapes
 
-- Panels: 6–14px radius (`sm` / `md` / `lg`)
-- Dense controls: 3px / 8px (`xs` / `control`) where engraved chips need a tighter edge
+- Panels: 6–14px (`sm` / `md` / `lg`) plus `panel` 12px where a mid step is needed
+- Dense controls: `hairline` 2px, `tight` 4px, `xs` 3px, `control` 8px, `soft` 9px
 - Actuators and composer: pill / 24px soft capsule (`composer`)
 - Chat bubbles: 18px (`bubble`)
 - Lamps: full circle
@@ -204,7 +266,8 @@ Surfaces stack by token (bg → surface → surface-2), not by blur glass.
 - **Primary button**: accent fill, on-accent text, pill
 - **Secondary**: surface + border
 - **Plain / chip-btn**: muted text, transparent; masthead chrome
-- **Rail tab**: engraved row + lamp when selected
+- **Rail tab**: engraved row + lamp when selected (`appearance: none`)
+- **Rail new**: accent CTA; 44px tall under 40rem / coarse pointer
 - **Composer**: sticky capsule with focus-within lift
 - **Overlay**: PF backdrop + modal box; focus trapped
 
@@ -214,8 +277,10 @@ Surfaces stack by token (bg → surface → surface-2), not by blur glass.
 - Remap PF brand/icon/on-brand tokens when adding themes
 - Keep blue for operator action only
 - Test contrast in dark and named themes after PF upgrades
+- Prefer documented radius/type steps over new literals
 
 **Don't**
 - Paint masthead chips with `pf-m-primary`
-- Use side-tab accent borders on cards (blockquotes/thread indents are content structure, not card chrome)
+- Use side-tab accent borders on cards (blockquote/thread indents are content structure, not card chrome)
 - Restore rail collapsed state from localStorage on load (icon-rail flash)
+- Hand-carve `patternfly.min.css` in a polish pass; subsetting is a measured optimize task
