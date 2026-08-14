@@ -133,3 +133,30 @@ test "Claude output decoding uses most restrictive vocabulary" {
     try std.testing.expectEqualStrings("policy", result.reason);
     try std.testing.expectEqualStrings("remember this", result.context);
 }
+
+test "matching hooks run serially and fold deny over context" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("PATH", "/usr/bin:/bin");
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .environ_map = &env,
+        .exec_allow = &.{"printf"},
+    };
+    const cfg = hook_config.Config{ .hooks = &.{
+        .{ .event = .PreToolUse, .matcher = "Write", .command = "printf '{\"additionalContext\":\"checked\"}'", .timeout_ms = 1000 },
+        .{ .event = .PreToolUse, .matcher = "Write", .command = "printf '{\"decision\":\"deny\",\"reason\":\"policy\"}'", .timeout_ms = 1000 },
+    } };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const result = try run(arena_state.allocator(), cfg, &sb, .PreToolUse, "Write", "{}");
+    try std.testing.expectEqual(Decision.deny, result.decision);
+    try std.testing.expectEqualStrings("policy", result.reason);
+    try std.testing.expectEqualStrings("checked", result.context);
+}
