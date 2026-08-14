@@ -16,11 +16,14 @@
       },
       "mode": {
         "type": "string",
-        "enum": ["to_json", "to_csv"],
+        "enum": [
+          "to_json",
+          "to_csv"
+        ],
         "description": "to_json or to_csv. Inferred from which of csv/json is set if omitted."
       }
     }
   },
   "network_allow": [],
-  "category": "code"
+  "category": "transform"
 }

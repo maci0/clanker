@@ -4,19 +4,54 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "action": { "type": "string", "enum": ["list", "get", "create", "delete", "add_doc", "delete_doc", "search"] },
-      "id": { "type": "string" },
-      "title": { "type": "string" },
-      "description": { "type": "string" },
-      "collection_id": { "type": "string" },
-      "name": { "type": "string" },
-      "content": { "type": "string" },
-      "doc_id": { "type": "string" },
-      "query": { "type": "string" },
-      "collections": { "type": "array", "items": { "type": "string" } }
+      "action": {
+        "type": "string",
+        "enum": [
+          "list",
+          "get",
+          "create",
+          "delete",
+          "add_doc",
+          "delete_doc",
+          "search"
+        ]
+      },
+      "id": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      },
+      "description": {
+        "type": "string"
+      },
+      "collection_id": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "content": {
+        "type": "string"
+      },
+      "doc_id": {
+        "type": "string"
+      },
+      "query": {
+        "type": "string"
+      },
+      "collections": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
     }
   },
-  "fs_prefixes": ["state/knowledge"],
+  "fs_prefixes": [
+    "state/knowledge"
+  ],
   "wasm": "zig-out/tools/knowledge.wasm",
-  "internal": true
+  "internal": true,
+  "category": "agent"
 }

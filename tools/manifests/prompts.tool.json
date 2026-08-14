@@ -4,13 +4,30 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "action": { "type": "string", "enum": ["list", "create", "update", "delete"] },
-      "id": { "type": "string" },
-      "title": { "type": "string" },
-      "content": { "type": "string" }
+      "action": {
+        "type": "string",
+        "enum": [
+          "list",
+          "create",
+          "update",
+          "delete"
+        ]
+      },
+      "id": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      },
+      "content": {
+        "type": "string"
+      }
     }
   },
-  "fs_prefixes": ["state/prompts.json"],
+  "fs_prefixes": [
+    "state/prompts.json"
+  ],
   "wasm": "zig-out/tools/prompts.wasm",
-  "internal": true
+  "internal": true,
+  "category": "agent"
 }

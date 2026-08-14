@@ -11,31 +11,64 @@
         "items": {
           "type": "object",
           "properties": {
-            "tool": { "type": "string", "description": "Tool to invoke. Mutually exclusive with mutate." },
-            "args": { "type": "object", "description": "Args for the tool. String values may contain {{prev}} / {{prev.path}} / {{vars.key}}." },
+            "tool": {
+              "type": "string",
+              "description": "Tool to invoke. Mutually exclusive with mutate."
+            },
+            "args": {
+              "type": "object",
+              "description": "Args for the tool. String values may contain {{prev}} / {{prev.path}} / {{vars.key}}."
+            },
             "mutate": {
               "type": "object",
               "properties": {
-                "instruction": { "type": "string" },
-                "mode": { "type": "string", "description": "json (default) or text" }
+                "instruction": {
+                  "type": "string"
+                },
+                "mode": {
+                  "type": "string",
+                  "description": "json (default) or text"
+                }
               },
-              "required": ["instruction"]
+              "required": [
+                "instruction"
+              ]
             },
-            "stop_on_error": { "type": "boolean" }
+            "stop_on_error": {
+              "type": "boolean"
+            }
           }
         }
       },
-      "chain": { "type": "string", "description": "Named chain from chains/<name>.json" },
-      "vars": { "type": "object" },
-      "list": { "type": "boolean" },
-      "show": { "type": "string" }
+      "chain": {
+        "type": "string",
+        "description": "Named chain from chains/<name>.json"
+      },
+      "vars": {
+        "type": "object"
+      },
+      "list": {
+        "type": "boolean"
+      },
+      "show": {
+        "type": "string"
+      }
     }
   },
   "llm": true,
   "sequential": true,
   "tool_call": true,
-  "fs_prefixes": ["chains"],
-  "category": "chain",
-  "config": { "chains_dir": "chains", "max_steps": 16, "max_tokens": 2048 },
-  "config_editable": ["max_steps", "max_tokens"]
+  "fs_prefixes": [
+    "chains"
+  ],
+  "category": "agent",
+  "config": {
+    "chains_dir": "chains",
+    "max_steps": 16,
+    "max_tokens": 2048
+  },
+  "config_editable": [
+    "max_steps",
+    "max_tokens"
+  ]
 }

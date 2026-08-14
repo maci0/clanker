@@ -8,7 +8,11 @@
     "properties": {
       "kind": {
         "type": "string",
-        "enum": ["uuid4", "ulid", "short"],
+        "enum": [
+          "uuid4",
+          "ulid",
+          "short"
+        ],
         "description": "uuid4, ulid, or short. Defaults to uuid4."
       },
       "count": {
@@ -22,5 +26,5 @@
     }
   },
   "network_allow": [],
-  "category": "code"
+  "category": "compute"
 }

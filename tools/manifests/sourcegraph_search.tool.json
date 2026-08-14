@@ -3,7 +3,26 @@
   "description": "Search public open-source code on the internet via Sourcegraph (grep.app's API is Vercel-blocked for non-browser clients). Not this repository: for local project source use repo_search. Returns repo/path/line snippets. E.g. query=readSliceShort lang=zig to see real-world Zig usage.",
   "llm_description": "Search public open-source code on the internet via Sourcegraph (not this repo; use repo_search for local source). Returns repo/path/line snippets. {query, lang?, max?}.",
   "wasm": "zig-out/tools/sourcegraph_search.wasm",
-  "input_schema": { "type": "object", "properties": { "query": { "type": "string" }, "lang": { "type": "string" }, "max": { "type": "integer" } }, "required": ["query"] },
-  "network_allow": ["sourcegraph.com"],
-  "fs_prefixes": []
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string"
+      },
+      "lang": {
+        "type": "string"
+      },
+      "max": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "network_allow": [
+    "sourcegraph.com"
+  ],
+  "fs_prefixes": [],
+  "category": "code"
 }

@@ -12,7 +12,11 @@
       },
       "mode": {
         "type": "string",
-        "enum": ["validate", "pretty", "minify"],
+        "enum": [
+          "validate",
+          "pretty",
+          "minify"
+        ],
         "description": "validate, pretty, or minify. Defaults to pretty."
       }
     },
@@ -21,5 +25,5 @@
     ]
   },
   "network_allow": [],
-  "category": "code"
+  "category": "transform"
 }

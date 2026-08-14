@@ -22,5 +22,6 @@
   "exec_allow": [
     "rg"
   ],
-  "confirm": false
+  "confirm": false,
+  "category": "code"
 }

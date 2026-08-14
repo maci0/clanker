@@ -28,7 +28,14 @@
       },
       "severity": {
         "type": "string",
-        "enum": ["critical", "high", "normal", "medium", "low", "minor"],
+        "enum": [
+          "critical",
+          "high",
+          "normal",
+          "medium",
+          "low",
+          "minor"
+        ],
         "description": "critical, high, normal (default), medium (alias for normal), low, or minor (alias for low)"
       },
       "component": {
@@ -44,11 +51,13 @@
         "description": "Board room name; omit for the default 'board' room"
       }
     },
-    "required": ["title"]
+    "required": [
+      "title"
+    ]
   },
   "tool_call": true,
   "sequential": true,
   "fs_prefixes": [],
   "network_allow": [],
-  "category": "board"
+  "category": "kanban"
 }

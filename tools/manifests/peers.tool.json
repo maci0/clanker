@@ -33,5 +33,5 @@
   },
   "fs_prefixes": [],
   "network_from_config": "peers",
-  "category": "peers"
+  "category": "chat"
 }

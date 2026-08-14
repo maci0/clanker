@@ -16,5 +16,5 @@
   },
   "network_allow": [],
   "fs_prefixes": [],
-  "category": "infra"
+  "category": "compute"
 }

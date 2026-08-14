@@ -6,15 +6,34 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "intent": { "type": "string", "description": "The rough natural-language goal intent. Required." },
-      "max_questions": { "type": "integer", "minimum": 1, "maximum": 4, "default": 4, "description": "Interview budget: how many material questions to ask (1-4)." },
-      "parent": { "type": "boolean", "default": false, "description": "Route questions to the parent agent (sub-agent runs) instead of the human." }
+      "intent": {
+        "type": "string",
+        "description": "The rough natural-language goal intent. Required."
+      },
+      "max_questions": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 4,
+        "default": 4,
+        "description": "Interview budget: how many material questions to ask (1-4)."
+      },
+      "parent": {
+        "type": "boolean",
+        "default": false,
+        "description": "Route questions to the parent agent (sub-agent runs) instead of the human."
+      }
     },
-    "required": ["intent"]
+    "required": [
+      "intent"
+    ]
   },
   "sequential": true,
   "tool_call": true,
-  "tool_allow": ["ask_user"],
-  "fs_prefixes": ["state/goals.json"],
-  "category": "goal"
+  "tool_allow": [
+    "ask_user"
+  ],
+  "fs_prefixes": [
+    "state/goals.json"
+  ],
+  "category": "agent"
 }
