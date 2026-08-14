@@ -189,7 +189,7 @@ clanker.registerView({
       return box;
     }
 
-    function drawTiles(http, llm, at) {
+    function drawTiles(http, llm, tools, schedule, at) {
       var total = num(http.requests_total);
       var errors = num(http.errors_total);
       var inFlight = num(http.in_flight);
@@ -197,14 +197,24 @@ clanker.registerView({
       var llmTotal = num(llm && llm.requests_total);
       var llmErrors = num(llm && llm.errors_total);
       var llmRetries = num(llm && llm.retries_total);
+      var toolsTotal = num(tools && tools.requests_total);
+      var toolsErrors = num(tools && tools.errors_total);
+      var schedTotal = num(schedule && schedule.fires_total);
+      var schedErrors = num(schedule && schedule.errors_total);
 
       var reqRate = rateOf(prev ? num(prev.http.requests_total) : null, total, prev ? prev.at : null, at);
       var errRate = rateOf(prev ? num(prev.http.errors_total) : null, errors, prev ? prev.at : null, at);
       var llmRate = rateOf(prev && prev.llm ? num(prev.llm.requests_total) : null, llmTotal, prev ? prev.at : null, at);
       var llmErrRate = rateOf(prev && prev.llm ? num(prev.llm.errors_total) : null, llmErrors, prev ? prev.at : null, at);
+      var toolsRate = rateOf(prev && prev.tools ? num(prev.tools.requests_total) : null, toolsTotal, prev ? prev.at : null, at);
+      var toolsErrRate = rateOf(prev && prev.tools ? num(prev.tools.errors_total) : null, toolsErrors, prev ? prev.at : null, at);
+      var schedRate = rateOf(prev && prev.schedule ? num(prev.schedule.fires_total) : null, schedTotal, prev ? prev.at : null, at);
+      var schedErrRate = rateOf(prev && prev.schedule ? num(prev.schedule.errors_total) : null, schedErrors, prev ? prev.at : null, at);
       var mean = total > 0 ? num(http.latency_ms_sum) / total : null;
       var errShare = pct(errors, total);
       var llmErrShare = pct(llmErrors, llmTotal);
+      var toolsErrShare = pct(toolsErrors, toolsTotal);
+      var schedErrShare = pct(schedErrors, schedTotal);
       var st = loadState(inFlight, limit);
 
       tiles.textContent = "";
@@ -232,6 +242,20 @@ clanker.registerView({
         "LLM errors", fmtRate(llmErrRate.rate),
         llmErrors + " of " + llmTotal + " (" + fmtPct(llmErrShare) + ")",
         errorState(llmErrors, llmErrShare)));
+      tiles.appendChild(tile(
+        "Tool calls", fmtRate(toolsRate.rate),
+        rateNote(toolsRate, toolsTotal), null));
+      tiles.appendChild(tile(
+        "Tool errors", fmtRate(toolsErrRate.rate),
+        toolsErrors + " of " + toolsTotal + " (" + fmtPct(toolsErrShare) + ")",
+        errorState(toolsErrors, toolsErrShare)));
+      tiles.appendChild(tile(
+        "Scheduled runs", fmtRate(schedRate.rate),
+        rateNote(schedRate, schedTotal), null));
+      tiles.appendChild(tile(
+        "Schedule errors", fmtRate(schedErrRate.rate),
+        schedErrors + " of " + schedTotal + " (" + fmtPct(schedErrShare) + ")",
+        errorState(schedErrors, schedErrShare)));
 
       state.textContent = st.word === "unknown"
         ? "connection limit unknown"
@@ -320,14 +344,18 @@ clanker.registerView({
           var http = (d && d.http) || null;
           if (!http) throw new Error("no http metrics in the response");
           var llm = (d && d.llm) || {};
+          var tools = (d && d.tools) || {};
+          var schedule = (d && d.schedule) || {};
           var at = Date.now();
-          drawTiles(http, llm, at);
+          drawTiles(http, llm, tools, schedule, at);
           drawBands(http);
-          prev = { at: at, http: http, llm: llm };
+          prev = { at: at, http: http, llm: llm, tools: tools, schedule: schedule };
           api.status("Health: " + num(http.requests_total) + " requests served, " +
             num(http.errors_total) + " errors, " +
             num(llm.requests_total) + " LLM calls, " +
-            num(llm.errors_total) + " LLM errors.");
+            num(llm.errors_total) + " LLM errors, " +
+            num(tools.requests_total) + " tool calls, " +
+            num(schedule.fires_total) + " scheduled runs.");
           return http;
         })
         .catch(function (err) {
