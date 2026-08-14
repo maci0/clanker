@@ -632,7 +632,7 @@ Phase 1 (Goals 1, 2, 5, 6, 7):
       shapes are unchanged. (G1, G5)
 - [ ] No guest tool holds a mesh socket. `ck_mesh` is name-gated.
       `mesh_join` from a guest to a never-seen address is refused. (G6)
-- [ ] Frame codec, admission, leave-vs-unreachable, simultaneous-open,
+- [x] Frame codec, admission, leave-vs-unreachable, simultaneous-open,
       and id-dedup backfill have host unit tests in `src/peers/mesh.zig`,
       wired from `src/main.zig`. (G1, G2)
 
