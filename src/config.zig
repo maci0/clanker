@@ -714,11 +714,14 @@ pub const Config = struct {
     web_present: bool = false,
     notify_present: bool = false,
     tui_present: bool = false,
-    /// Path of the file that set `default_provider`, as actually read, the
-    /// `.json` sibling when that is what answered. Null means no config named
-    /// one and the struct fallback above is in force. Reported by `providers
-    /// check`: "the default is X" is not much use without "because Y says so",
-    /// since the base file and the local override disagree by design.
+    advisor_present: bool = false,
+    ttsr_present: bool = false,
+    kernel_present: bool = false,
+    /// Path of the file that set `default_provider`, as actually read. Null
+    /// means no config named one and the struct fallback above is in force.
+    /// Reported by `providers check`: "the default is X" is not much use
+    /// without "because Y says so", since the base file and the local override
+    /// disagree by design.
     default_provider_from: ?[]const u8 = null,
 
     pub fn provider(self: *const Config, name: ?[]const u8) !*const Provider {
@@ -838,12 +841,15 @@ pub const Config = struct {
         }
         if (obj.get("advisor")) |v| {
             cfg.advisor = try parseAdvisor(v);
+            cfg.advisor_present = true;
         }
         if (obj.get("ttsr")) |v| {
             cfg.ttsr = try parseTtsr(arena, v);
+            cfg.ttsr_present = true;
         }
         if (obj.get("kernel")) |v| {
             cfg.kernel = try parseKernel(v);
+            cfg.kernel_present = true;
         }
         if (obj.get("providers")) |v| {
             const pobj = switch (v) {
@@ -1808,6 +1814,9 @@ pub const Config = struct {
         if (src.tui_present) dst.tui = src.tui;
         if (src.chatrooms_present) dst.chatrooms = src.chatrooms;
         if (src.memory_present) dst.memory = src.memory;
+        if (src.advisor_present) dst.advisor = src.advisor;
+        if (src.ttsr_present) dst.ttsr = src.ttsr;
+        if (src.kernel_present) dst.kernel = src.kernel;
         if (src.modules_present) applyModulesFields(&dst.modules, src.modules, src.modules_fields);
     }
 
@@ -2714,6 +2723,50 @@ test "advisor section parses and stays off by default" {
     try std.testing.expectEqualStrings("session", cfg.advisor.scope);
     try std.testing.expectEqual(@as(u32, 2500), cfg.advisor.timeout_ms);
     try std.testing.expect(!(Advisor{}).enabled);
+}
+
+test "config.local.toml replaces advisor, ttsr, and kernel wholesale" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[advisor]
+        \\enabled = false
+        \\[ttsr]
+        \\max_retries_per_turn = 1
+        \\[kernel]
+        \\enabled = false
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.local.toml",
+        .data =
+        \\[advisor]
+        \\enabled = true
+        \\provider = "a"
+        \\model = "m"
+        \\[ttsr]
+        \\max_retries_per_turn = 5
+        \\[kernel]
+        \\enabled = true
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expect(cfg.advisor.enabled);
+    try std.testing.expectEqualStrings("a", cfg.advisor.provider);
+    try std.testing.expectEqual(@as(u32, 5), cfg.ttsr.max_retries_per_turn);
+    try std.testing.expect(cfg.kernel.enabled);
 }
 
 test "partial local agent keeps base tools_dir" {
