@@ -26,8 +26,8 @@ for f in *.ts; do
   case "$f" in env.d.ts|lib.ts|json.ts) continue;; esac
   stem="${f%.ts}"
   npx --no-install asc "$f" -o "$scratch/$stem.wasm" --optimize --bindings raw --noExportMemory
-  if ! cmp -s "$scratch/$stem.wasm" "../dist/$stem.wasm"; then
-    printf 'drift: ../dist/%s.wasm does not match a clean rebuild of %s\n' "$stem" "$f" >&2
+  if ! cmp -s "$scratch/$stem.wasm" "dist/$stem.wasm"; then
+    printf 'drift: dist/%s.wasm does not match a clean rebuild of %s\n' "$stem" "$f" >&2
     status=1
   fi
 done
