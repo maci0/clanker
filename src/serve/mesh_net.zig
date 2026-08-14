@@ -36,7 +36,17 @@ const Runtime = struct {
     seeds: []const mesh.PeerSeed,
     max_frame: u32,
     on_chat: ?OnChat,
-    mu: std.Thread.Mutex = .{},
+    mu: struct {
+        raw: std.atomic.Mutex = .unlocked,
+        fn lock(self: *@This()) void {
+            while (!self.raw.tryLock()) {
+                std.Thread.yield() catch {};
+            }
+        }
+        fn unlock(self: *@This()) void {
+            self.raw.unlock();
+        }
+    } = .{},
     members: [mesh.max_members]Member = @splat(.{}),
     stop: std.atomic.Value(bool) = .init(false),
     server: ?std.Io.net.Server = null,
@@ -76,7 +86,7 @@ fn findMember(rt: *Runtime, key: []const u8) ?*Member {
 
 fn remember(rt: *Runtime, id: []const u8, name: []const u8, fd: std.posix.fd_t) void {
     if (findMember(rt, id) orelse findMember(rt, name)) |m| {
-        if (m.fd >= 0 and m.fd != fd) std.posix.close(m.fd);
+        if (m.fd >= 0 and m.fd != fd) _ = std.c.close(m.fd);
         m.fd = fd;
         return;
     }
@@ -280,7 +290,7 @@ fn acceptOne(arg: *Conn) void {
 }
 
 fn acceptLoop(rt: *Runtime) void {
-    const server = rt.server orelse return;
+    const server = if (rt.server) |*s| s else return;
     while (!rt.stop.load(.monotonic)) {
         const stream = server.accept(rt.io) catch {
             if (rt.stop.load(.monotonic)) break;

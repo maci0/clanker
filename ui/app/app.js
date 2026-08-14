@@ -5,7 +5,7 @@ import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as l
 import { THEMES as THEMESMod, loadTheme as loadThemeMod, applyTheme as applyThemeMod } from "./core/theme.js";
 import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod, messageKey as chatMessageKey, hasServerId as chatHasServerId } from "./core/chat.js";
 import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
-import { makeLineSplitter as makeLineSplitterMod } from "./core/stream.js";
+import { makeLineSplitter as makeLineSplitterMod, onLive as liveOn, liveOk as liveIsUp } from "./core/stream.js";
 import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as mdParagraphInto, tableRow as mdTableRow, renderMarkdown as mdRenderMarkdown, highlightInto as mdHighlightInto, buildCodeBlock as mdBuildCodeBlock, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
 import { metricsFor as graphMetricsFor, buildStages as graphBuildStages, graphSummaryText as graphSummaryTextMod, toDagInput as graphToDagInput, buildIncompleteNode as graphBuildIncompleteNode, buildNodeBox as graphBuildNodeBox, layoutGraph as graphLayoutGraph } from "./lib/graph.js";
 import { boardActionLine as boardActionLineMod } from "./lib/board.js";
@@ -3324,6 +3324,32 @@ function joinIfNeeded(room) {
    one-second resolution, and `after` is inclusive of neither side reliably
    once that happens. */
 var lastSeenAt = {};
+function ingestChatMessages(messages) {
+  var fresh = (messages || []).filter(function (m) { return m && !chatSeen[chatMessageKey(m)]; }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
+  if (!el.chatLog) return;
+  var following = el.chatLog.scrollHeight - el.chatLog.scrollTop - el.chatLog.clientHeight < 40;
+  if (fresh.length) { _lastChatFrom = null; _lastChatTs = 0; }
+  var placed = false;
+  fresh.forEach(function (m) {
+    rememberChatId(chatMessageKey(m));
+    if (m.ts > chatLastTs) chatLastTs = m.ts;
+    lastSeenAt[m.from] = m.ts;
+    if (!placed && _chatUnreadCutoff > 0 && m.ts > _chatUnreadCutoff) {
+      placed = true;
+      var divider = document.createElement("div");
+      divider.className = "chat-unread-divider";
+      divider.setAttribute("role", "separator");
+      divider.setAttribute("aria-label", "New messages");
+      divider.innerHTML = "<span>New messages</span>";
+      el.chatLog.appendChild(divider);
+    }
+    var node = buildChatMessage(m);
+    if (node._daySep) el.chatLog.appendChild(node._daySep);
+    el.chatLog.appendChild(node);
+  });
+  _chatUnreadCutoff = 0;
+  if (fresh.length && following) el.chatLog.scrollTop = el.chatLog.scrollHeight;
+}
 function pollChat(room) {
   return fetch("/api/chat/messages?room=" + encodeURIComponent(room) + "&after=" + chatLastTs)
     .then(readJson)
@@ -3808,14 +3834,12 @@ var formatChatTime = utilFormatChatTime;
 function startChatPoll(room) {
   stopChatPoll();
   if (document.hidden) return;
+  var delay = liveIsUp() ? chat_poll_max_ms : chatBackoff;
   chatPoll = window.setTimeout(function () {
     pollChat(room).finally(function () {
-      // Only reschedule if this poll is still the current one — switching
-      // rooms mid-flight clears it, and reviving it here would leave two
-      // chains running against different rooms.
       if (chatPoll !== null) startChatPoll(room);
     });
-  }, chatBackoff);
+  }, delay);
 }
 
 function stopChatPoll() {
@@ -3849,6 +3873,11 @@ document.addEventListener("visibilitychange", function () {
   }
 });
 
+liveOn(function (ev) {
+  if (!ev || ev.t !== "chat") return;
+  if (!el.chatRoom || ev.room !== el.chatRoom.value) return;
+  ingestChatMessages([ev]);
+});
 el.chatRoom.addEventListener("change", function () {
   openChatRoom(el.chatRoom.value);
 });

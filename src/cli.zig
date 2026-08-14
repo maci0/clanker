@@ -43,6 +43,8 @@ const repl = @import("tui/repl.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const phonebook = @import("peers/phonebook.zig");
 const mesh = @import("peers/mesh.zig");
+const mesh_net = @import("serve/mesh_net.zig");
+const live = @import("serve/live.zig");
 const doctor_mod = @import("doctor.zig");
 const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
@@ -5121,6 +5123,12 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
         hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, listen));
     }
 
+    if (cfg.modules.mesh) {
+        mesh_net.start(io, gpa, &cfg, &mesh_net.publishLive) catch |err| {
+            log.log(.error_, "mesh listener: {s}", .{@errorName(err)});
+        };
+    }
+
     const surface: proxy.Surface = if (listen.proxy_enabled and !dedicated) .both else .webui;
     while (true) {
         const stream = server.accept(io) catch |err| {
@@ -5420,6 +5428,9 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify");
         const is_peers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/peers");
         const is_mesh_map = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/mesh/map");
+        const is_events = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/events");
+        const is_mesh_join = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/mesh/join");
+        const is_mesh_status = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/mesh/status");
         const is_chat_message = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/message");
         const is_chat_messages = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/chat/messages");
         const is_chat_rooms = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/chat/rooms");
@@ -5508,8 +5519,19 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleStatus(cfg, stream);
         } else if (is_peers) {
             handlePeers(io, gpa, cfg, environ_map, stream);
+        } else if (is_events) {
+            if (crossOriginRequest(headers_raw, port, serve_as_hosts)) {
+                respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"cross-origin request refused\"}");
+                return;
+            }
+            request_keep_alive = false;
+            live.serveSse(stream.socket.handle, live.topicsFromTarget(target));
         } else if (is_mesh_map) {
             handleMeshMap(io, gpa, cfg, stream);
+        } else if (is_mesh_status) {
+            handleMeshStatus(gpa, cfg, stream);
+        } else if (is_mesh_join) {
+            handleMeshJoin(gpa, cfg, body, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/runs")) {
             handleRuns(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, path, "/api/sessions") and
@@ -5768,6 +5790,7 @@ fn handleChatMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Conf
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"message storage failed\"}");
         return;
     };
+    if (accepted) live.noteChat(msg.room, msg.id, msg.from, msg.text, msg.ts);
     var buf: [64]u8 = undefined;
     const body_out = std.fmt.bufPrint(&buf, "{{\"ok\":true,\"subscribed\":{}}}", .{accepted}) catch return;
     respond(stream, 200, "OK", body_out);
@@ -5984,6 +6007,7 @@ fn handleChatSend(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"send failed\"}");
         return;
     };
+    live.noteChat(msg.room, msg.id, msg.from, msg.text, msg.ts);
     var buf: [8 * 1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -11022,6 +11046,59 @@ fn anyRunLive() bool {
     return false;
 }
 
+fn handleMeshStatus(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+    if (!cfg.modules.mesh) {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"modules.mesh is off; set it and restart serve\"}");
+        return;
+    }
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const members = mesh_net.memberSnapshot(arena_state.allocator()) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"mesh status failed\"}");
+        return;
+    };
+    var out: std.Io.Writer.Allocating = .init(arena_state.allocator());
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("listening") catch return;
+    s.write(mesh_net.active()) catch return;
+    s.objectField("members") catch return;
+    s.beginArray() catch return;
+    for (members) |m| {
+        s.write(.{ .id = m.id, .name = m.name, .up = m.up }) catch continue;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
+}
+
+const MeshJoinBody = struct { address: []const u8 = "" };
+
+fn handleMeshJoin(gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    if (!cfg.modules.mesh) {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"modules.mesh is off; set it and restart serve\"}");
+        return;
+    }
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const parsed = std.json.parseFromSliceLeaky(MeshJoinBody, arena_state.allocator(), body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    if (parsed.address.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing address\"}");
+        return;
+    }
+    mesh_net.join(gpa, parsed.address) catch |err| {
+        log.log(.error_, "POST /api/mesh/join: {s}", .{@errorName(err)});
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"join failed\"}");
+        return;
+    };
+    respond(stream, 200, "OK", "{\"ok\":true}");
+}
+
 /// GET /api/mesh/map: self + configured peers, chat wires, recent pulses.
 /// Served even when `modules.mesh` is off so the Fleet map can show HTTP
 /// peers; join/leave control stays gated separately.
@@ -11554,7 +11631,11 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     }
 
     _ = live_runs.fetchAdd(1, .monotonic);
-    defer _ = live_runs.fetchSub(1, .monotonic);
+    live.noteRun(true);
+    defer {
+        _ = live_runs.fetchSub(1, .monotonic);
+        live.noteRun(anyRunLive());
+    }
 
     if (req.stream) {
         // Streaming mode: send headers up front, then the agent's tokens as

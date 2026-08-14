@@ -28,7 +28,19 @@ const Event = struct {
     bytes: [event_cap]u8 = undefined,
 };
 
-var mutex: std.Thread.Mutex = .{};
+const Spin = struct {
+    raw: std.atomic.Mutex = .unlocked,
+    fn lock(self: *Spin) void {
+        while (!self.raw.tryLock()) {
+            std.Thread.yield() catch {};
+        }
+    }
+    fn unlock(self: *Spin) void {
+        self.raw.unlock();
+    }
+};
+
+var mutex: Spin = .{};
 var slots: [max_subs]Slot = @splat(.{});
 
 pub fn topicBit(t: Topic) u8 {
@@ -169,7 +181,8 @@ pub fn serveSse(fd: std.posix.fd_t, topics: []const u8) void {
             idle = 0;
             continue;
         }
-        std.Thread.sleep(50 * std.time.ns_per_ms);
+        const ts: std.posix.timespec = .{ .sec = 0, .nsec = 50 * std.time.ns_per_ms };
+        _ = std.c.nanosleep(&ts, null);
         idle += 1;
         if (idle >= 300) {
             writeAllOrErr(fd, ": ping\n\n") catch return;

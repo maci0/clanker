@@ -2,6 +2,7 @@
 // Owns #view-fleet: roster + DM channels + grouped runs. Works without app.js.
 import { clip, peerColor, escapeHtml } from "../core/utils.js";
 import { readJson } from "../core/vendor.js";
+import { onLive, liveOk } from "../core/stream.js";
 
 var _navShowView = null;
 export function setNavShowView(fn) { _navShowView = typeof fn === "function" ? fn : null; }
@@ -786,7 +787,17 @@ export function initFleet() {
   }
   doRefresh();
   if (_meshTimer) clearInterval(_meshTimer);
-  _meshTimer = setInterval(refreshMap, 2000);
+  if (!initFleet._liveBound) {
+    initFleet._liveBound = true;
+    onLive(function (ev) {
+      if (!ev) return;
+      if (ev.t === "talk" || ev.t === "run" || ev.t === "mesh") refreshMap();
+    });
+  }
+  _meshTimer = setInterval(function () {
+    if (liveOk()) return;
+    refreshMap();
+  }, 2000);
   window.clankerFleet = window.clankerFleet || {};
   window.clankerFleet.refresh = function () { return doRefresh(); };
 }

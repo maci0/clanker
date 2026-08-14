@@ -11,6 +11,7 @@
 
 import { readJson, peerColor } from "../core/utils.js";
 import { reducedMotion } from "../core/vendor.js";
+import { onLive, liveOk } from "../core/stream.js";
 
 function byId(id) { return document.getElementById(id); }
 
@@ -90,8 +91,15 @@ var POLL_GIVE_UP = 5;
 function startPolling() {
   stopPolling();
   state.pollFails = 0;
-  state.timer = window.setInterval(function () { fetchMatch(state.id, true); }, 1100);
+  state.timer = window.setInterval(function () {
+    if (liveOk()) return;
+    fetchMatch(state.id, true);
+  }, 1100);
 }
+onLive(function (ev) {
+  if (!ev || ev.t !== "arena" || !state.id) return;
+  fetchMatch(state.id, true);
+});
 
 function stopPolling() {
   if (state.timer) { window.clearInterval(state.timer); state.timer = null; }

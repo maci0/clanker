@@ -24,4 +24,33 @@ export function makeLineSplitter(onLine) {
   };
 }
 
+// Same-origin SSE watch of GET /api/events. Commands stay on fetch POST.
+var _liveEs = null;
+var _liveOk = false;
+var _liveFns = [];
+
+export function liveOk() { return _liveOk; }
+
+export function onLive(fn) {
+  if (typeof fn === "function") _liveFns.push(fn);
+  ensureLive();
+  return function () {
+    _liveFns = _liveFns.filter(function (f) { return f !== fn; });
+  };
+}
+
+function ensureLive() {
+  if (_liveEs || typeof EventSource === "undefined") return;
+  try { _liveEs = new EventSource("/api/events"); } catch (_) { return; }
+  _liveEs.addEventListener("live", function (ev) {
+    _liveOk = true;
+    var data;
+    try { data = JSON.parse(ev.data); } catch (_) { return; }
+    for (var i = 0; i < _liveFns.length; i++) {
+      try { _liveFns[i](data); } catch (_) {}
+    }
+  });
+  _liveEs.onopen = function () { _liveOk = true; };
+  _liveEs.onerror = function () { _liveOk = false; };
+}
 
