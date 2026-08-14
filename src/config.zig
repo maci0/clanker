@@ -23,6 +23,8 @@ const toml_bridge = @import("util/toml_bridge.zig");
 threadlocal var diagnostic_source: ?DiagnosticSource = null;
 threadlocal var diagnostic_scope: []const u8 = "";
 threadlocal var diagnostic_emitted: bool = false;
+threadlocal var diagnostics_suppressed: bool = false;
+threadlocal var last_load_diagnostic: bool = false;
 
 const DiagnosticSource = struct {
     file_name: []const u8,
@@ -828,6 +830,7 @@ pub const Config = struct {
     /// Loads `file_name` (TOML) plus `local_file_name` (if present) from
     /// `dir`. All returned strings are allocated in `arena`.
     pub fn load(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8) !Config {
+        if (!diagnostics_suppressed) last_load_diagnostic = false;
         const base = (try loadFile(io, arena, dir, file_name, .required)).?;
         var cfg = base.cfg;
         if (cfg.default_provider_present) cfg.default_provider_from = base.path;
@@ -855,6 +858,26 @@ pub const Config = struct {
         try validateToolResultPrune(cfg.agent);
         try validateRepeatToolThresholds(cfg.agent.repeat_tool_thresholds);
         return cfg;
+    }
+
+    /// The startup dotenv probe needs to know whether `[modules] dotenv` is
+    /// enabled, but the command that follows owns the operator-facing error.
+    /// Suppressing this speculative read prevents printing every diagnostic
+    /// twice when configuration is invalid.
+    pub fn loadQuiet(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8) !Config {
+        const prior = diagnostics_suppressed;
+        diagnostics_suppressed = true;
+        defer diagnostics_suppressed = prior;
+        return load(io, arena, dir, file_name, local_file_name);
+    }
+
+    /// Returns and clears the operator-facing diagnostic emitted by the most
+    /// recent load on this thread. The CLI uses this to avoid appending a bare
+    /// implementation error name after an actionable configuration report.
+    pub fn takeLoadDiagnostic() bool {
+        const had_diagnostic = last_load_diagnostic;
+        last_load_diagnostic = false;
+        return had_diagnostic;
     }
 
     fn validateToolResultPrune(agent: Agent) !void {
@@ -1976,11 +1999,11 @@ pub const Config = struct {
                     else => return error.TtsrRuleNotObject,
                 };
                 var rule = TtsrRule{};
-                if (ro.get("name")) |n| rule.name = try jsonStr(n, "ttsr.rule.name");
-                if (ro.get("pattern")) |p| rule.pattern = try jsonStr(p, "ttsr.rule.pattern");
-                if (ro.get("inject")) |inj| rule.inject = try jsonStr(inj, "ttsr.rule.inject");
+                if (ro.get("name")) |n| rule.name = try jsonStr(n, "rules[].name");
+                if (ro.get("pattern")) |p| rule.pattern = try jsonStr(p, "rules[].pattern");
+                if (ro.get("inject")) |inj| rule.inject = try jsonStr(inj, "rules[].inject");
                 if (ro.get("max_fires")) |mf| {
-                    const n = try jsonInt(mf, "ttsr.rule.max_fires");
+                    const n = try jsonInt(mf, "rules[].max_fires");
                     if (n <= 0) return error.TtsrMaxFiresZero;
                     rule.max_fires = @intCast(n);
                 }
@@ -2198,6 +2221,8 @@ pub const Config = struct {
     // --- helpers -----------------------------------------------------------
 
     fn logTomlSyntaxError(file_name: []const u8, line: ?usize, err: anyerror) void {
+        if (diagnostics_suppressed) return;
+        last_load_diagnostic = true;
         if (line) |n| {
             log.log(.error_, "{s}:{d}: invalid TOML syntax ({s}); correct the statement on this line", .{ file_name, n, @errorName(err) });
         } else {
@@ -2221,30 +2246,39 @@ pub const Config = struct {
     }
 
     fn logDiagnostic(path: []const u8, expected: []const u8, actual: ?json.Value, example: []const u8) void {
+        if (diagnostics_suppressed) return;
         const source = diagnostic_source orelse return;
+        last_load_diagnostic = true;
         var full_path_buf: [512]u8 = undefined;
-        const full_path = if (diagnostic_scope.len > 0 and std.mem.indexOfScalar(u8, path, '.') == null)
+        const full_path = if (diagnostic_scope.len > 0 and !std.mem.startsWith(u8, path, diagnostic_scope))
             std.fmt.bufPrint(&full_path_buf, "{s}.{s}", .{ diagnostic_scope, path }) catch path
         else
             path;
         diagnostic_emitted = true;
         const line = lineForSetting(source.raw, full_path);
+        var corrected_example_buf: [512]u8 = undefined;
+        const corrected_example = if (std.mem.startsWith(u8, example, "setting =")) blk: {
+            const leaf_start: usize = if (std.mem.lastIndexOfScalar(u8, full_path, '.')) |index| index + 1 else 0;
+            var leaf = full_path[leaf_start..];
+            if (std.mem.indexOfScalar(u8, leaf, '[')) |index| leaf = leaf[0..index];
+            break :blk std.fmt.bufPrint(&corrected_example_buf, "{s}{s}", .{ leaf, example["setting".len..] }) catch example;
+        } else example;
         if (actual) |value| switch (value) {
             .string => |text| {
                 const sensitive = std.mem.indexOf(u8, full_path, "key") != null or std.mem.indexOf(u8, full_path, "token") != null or std.mem.indexOf(u8, full_path, "secret") != null;
                 if (sensitive) {
-                    log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got string (value redacted); correct it with {s}", .{ source.file_name, line, full_path, expected, example });
+                    log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got string (value redacted); correct it with {s}", .{ source.file_name, line, full_path, expected, corrected_example });
                 } else {
-                    log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got string \"{s}\"; correct it with {s}", .{ source.file_name, line, full_path, expected, text, example });
+                    log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got string \"{s}\"; correct it with {s}", .{ source.file_name, line, full_path, expected, text, corrected_example });
                 }
             },
-            .integer => |n| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got integer {d}; correct it with {s}", .{ source.file_name, line, full_path, expected, n, example }),
-            .float => |n| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got float {d}; correct it with {s}", .{ source.file_name, line, full_path, expected, n, example }),
-            .bool => |b| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got boolean {}; correct it with {s}", .{ source.file_name, line, full_path, expected, b, example }),
-            .array => |items| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got array with {d} items; correct it with {s}", .{ source.file_name, line, full_path, expected, items.items.len, example }),
-            .object => log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got table; correct it with {s}", .{ source.file_name, line, full_path, expected, example }),
-            .number_string => |text| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got number string \"{s}\"; correct it with {s}", .{ source.file_name, line, full_path, expected, text, example }),
-            .null => log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got null; correct it with {s}", .{ source.file_name, line, full_path, expected, example }),
+            .integer => |n| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got integer {d}; correct it with {s}", .{ source.file_name, line, full_path, expected, n, corrected_example }),
+            .float => |n| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got float {d}; correct it with {s}", .{ source.file_name, line, full_path, expected, n, corrected_example }),
+            .bool => |b| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got boolean {}; correct it with {s}", .{ source.file_name, line, full_path, expected, b, corrected_example }),
+            .array => |items| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got array with {d} items; correct it with {s}", .{ source.file_name, line, full_path, expected, items.items.len, corrected_example }),
+            .object => log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got table; correct it with {s}", .{ source.file_name, line, full_path, expected, corrected_example }),
+            .number_string => |text| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got number string \"{s}\"; correct it with {s}", .{ source.file_name, line, full_path, expected, text, corrected_example }),
+            .null => log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got null; correct it with {s}", .{ source.file_name, line, full_path, expected, corrected_example }),
         };
     }
 
@@ -2254,10 +2288,12 @@ pub const Config = struct {
     }
 
     fn logUndiagnosedError(err: anyerror) void {
+        if (diagnostics_suppressed) return;
         // `invalid` has already printed an actionable report.  This catches
         // future direct returns so they cannot silently reintroduce bare
         // errors such as FieldNotString.
         if (diagnostic_source) |source| {
+            last_load_diagnostic = true;
             log.log(.error_, "{s}: configuration validation failed ({s}); inspect the setting named by the preceding diagnostic", .{ source.file_name, @errorName(err) });
         }
     }
@@ -2442,6 +2478,62 @@ test "tui mascot speed is an integer from zero through ten" {
         \\{"tui":{"mascot_speed":11}}
     , .{});
     try std.testing.expectError(error.MascotSpeedOutOfRange, Config.parseConfig(arena, out_of_range));
+}
+
+test "config errors retain base and local TOML source paths" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // A nested base-table setting is rejected at its exact TOML line rather
+    // than becoming the old context-free FieldNotString startup error.
+    const base_bad =
+        \\default_provider = "test"
+        \\
+        \\[providers.test]
+        \\base_url = "http://127.0.0.1:1"
+        \\
+        \\[models."test/model"]
+        \\provider = "test"
+        \\
+        \\[agent]
+        \\max_iterations = "many"
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = base_bad });
+    try std.testing.expectEqual(@as(usize, 10), Config.lineForSetting(base_bad, "agent.max_iterations"));
+    try std.testing.expectError(error.FieldNotInt, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+    try std.testing.expect(Config.takeLoadDiagnostic());
+
+    // The local layer is parsed independently. An invalid array item there
+    // must identify config.local.toml instead of attributing it to the base.
+    const base_ok =
+        \\default_provider = "test"
+        \\
+        \\[providers.test]
+        \\base_url = "http://127.0.0.1:1"
+        \\
+        \\[models."test/model"]
+        \\provider = "test"
+        \\
+    ;
+    const local_bad =
+        \\[[ttsr.rules]]
+        \\name = "retry"
+        \\pattern = 7
+        \\inject = "retry"
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = base_ok });
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data = local_bad });
+    try std.testing.expectEqual(@as(usize, 3), Config.lineForSetting(local_bad, "ttsr.rules[].pattern"));
+    try std.testing.expectError(error.FieldNotString, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+    try std.testing.expect(Config.takeLoadDiagnostic());
 }
 
 test "hooks default off and parse explicit lifecycle settings" {
