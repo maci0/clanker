@@ -29,6 +29,7 @@ fn handlePanic(msg: []const u8, ret_addr: ?usize) noreturn {
 // containing tests so `zig build test` picks them all up.
 comptime {
     _ = @import("hooks/config.zig");
+    _ = @import("hooks/runner.zig");
     _ = @import("agent/loop_guard.zig");
     _ = @import("config.zig");
     _ = @import("llm/types.zig");
