@@ -15,6 +15,7 @@ const tool_out = @import("../util/tool_out.zig");
 
 const protocol_version = "2024-11-05";
 const max_line = 1 << 20;
+var mcp_sequence = std.atomic.Value(u64).init(1);
 
 /// Wire names include slashes (`tools/list`), so stringToEnum cannot be the
 /// table. Same closed-set map as `log.Level.fromStr`.
@@ -89,6 +90,10 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: 
         // arguments. Logging even a prefix leaks data without adding much
         // diagnostic value; the byte count still identifies framing issues.
         log.log(.debug, "mcp handling line bytes={d}", .{line.len});
+        var mcp_id_buf: [24]u8 = undefined;
+        const mcp_id = std.fmt.bufPrint(&mcp_id_buf, "mcp-{d}", .{mcp_sequence.fetchAdd(1, .monotonic)}) catch "mcp-unknown";
+        log.setContext(mcp_id);
+        defer log.clearContext();
         handleLine(io, gpa, cache_arena, cfg, environ_map, &reg, tool_defs, &module_cache, &llm_ctx, line) catch |err| {
             log.log(.error_, "mcp line error: {s}", .{@errorName(err)});
         };

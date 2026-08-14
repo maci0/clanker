@@ -403,6 +403,9 @@ pub const Engine = struct {
     const request_score: usize = 500_000;
 
     pub fn run(self: *Engine, opts: Options) !void {
+        const prev_context = log.getContext();
+        log.setContext("improve");
+        defer if (prev_context.len > 0) log.setContext(prev_context) else log.clearContext();
         log.log(.info, "improve-self: {s}", .{opts.instructions});
         for (gate_evals) |g| log.log(.info, "gate: {s}", .{g});
         self.requests_left = opts.max_context_requests;

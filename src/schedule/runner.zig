@@ -26,6 +26,22 @@ const file_lock = @import("../util/file_lock.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
 const log = @import("../util/log.zig");
 
+/// Process-local counters for scheduled entry fires. No per-entry labels.
+var schedule_fires_total = std.atomic.Value(u64).init(0);
+var schedule_errors_total = std.atomic.Value(u64).init(0);
+
+pub const ScheduleMetrics = struct {
+    fires_total: u64,
+    errors_total: u64,
+};
+
+pub fn snapshotScheduleMetrics() ScheduleMetrics {
+    return .{
+        .fires_total = schedule_fires_total.load(.monotonic),
+        .errors_total = schedule_errors_total.load(.monotonic),
+    };
+}
+
 /// Held for the whole of one `run-due`, so a cron that fires every minute
 /// cannot start a second sweep on top of a first one still waiting on a model.
 /// Non-blocking: a second invocation reports that it is already running and
@@ -239,6 +255,8 @@ fn fireOne(
     const elapsed_ns = started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
     const duration_ms: u64 = @intCast(@max(0, @divTrunc(elapsed_ns, std.time.ns_per_ms)));
     if (ok) log.log(.info, "schedule: entry {s} ok in {d}ms (trigger={s})", .{ entry.id, duration_ms, trigger });
+    _ = schedule_fires_total.fetchAdd(1, .monotonic);
+    if (!ok) _ = schedule_errors_total.fetchAdd(1, .monotonic);
 
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
     store.appendRecord(io, gpa, base, .{

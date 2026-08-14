@@ -6387,8 +6387,9 @@ fn recordHttpRequest(status: u16, duration_ms: u64) void {
 fn handleHttpMetrics(stream: std.Io.net.Stream) void {
     const llm = client.snapshotMetrics();
     const tools = agent.snapshotToolMetrics();
+    const schedule = schedule_runner.snapshotScheduleMetrics();
     var buf: [2048]u8 = undefined;
-    const body = std.fmt.bufPrint(&buf, "{{\"ok\":true,\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}}}}", .{
+    const body = std.fmt.bufPrint(&buf, "{{\"ok\":true,\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}}}}", .{
         http_requests_total.load(.monotonic),
         http_errors_total.load(.monotonic),
         http_client_errors_total.load(.monotonic),
@@ -6404,6 +6405,8 @@ fn handleHttpMetrics(stream: std.Io.net.Stream) void {
         llm.retries_total,
         tools.requests_total,
         tools.errors_total,
+        schedule.fires_total,
+        schedule.errors_total,
     }) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"metrics unavailable\"}");
         return;

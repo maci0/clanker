@@ -989,7 +989,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/webui/vendor/*.js` | GET | Vendored `preact`, `htm`, `signals-core`, `d3-dag`, `hljs`, `mermaid` |
 | `/health/live` | GET | Liveness probe; always `{"ok":true,"status":"live"}` if the process is up |
 | `/health/ready` | GET | Readiness probe. 200 with `in_flight`/`connection_limit` while the process can take work; 503 `saturated` when every connection slot is taken. Does not probe the LLM |
-| `/api/metrics` | GET | Process-local RED: HTTP request/error/4xx counters, latency buckets, in-flight connections, plus LLM and tool request/error counters (JSON, no high-cardinality labels) |
+| `/api/metrics` | GET | Process-local RED: HTTP request/error/4xx counters, latency buckets, in-flight connections, plus LLM, tool, and schedule request/error counters (JSON, no high-cardinality labels) |
 | `/.well-known/agent.json` | GET | Agent card for A2A discovery |
 | `/api/status` | GET | Instance + peers status (JSON) |
 | `/api/peers` | GET | Every configured peer's live A2A agent card, via the sandboxed `peers` tool (JSON) |
