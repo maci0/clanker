@@ -5,6 +5,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-14
+
 ### Added
 
 - Initial CLI, REPL, HTTP, MCP, peer, and sandboxed WASM tool surfaces.
@@ -92,10 +94,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Compatibility notes
 
-- There are no published releases or supported upgrade paths yet. Current
-  configuration and persisted state may change before the first tagged release.
+- This is the first tagged release. There is no prior version to be
+  compatible with; the `0.MINOR.0` policy in [RELEASES.md](RELEASES.md)
+  governs breaking changes from here on.
 - `manifest_version` is optional and absence means version 1, so existing
   `*.tool.json` files load unchanged. A manifest declaring a version this build
   does not understand is refused rather than read under version 1 rules.
 
-<!-- Release links are added when the first immutable version tag is created. -->
+[0.1.0]: https://github.com/maci0/clanker/releases/tag/v0.1.0

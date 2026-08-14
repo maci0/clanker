@@ -67,6 +67,12 @@ Before creating a tag:
    Never move a published tag or replace an artifact for an existing version;
    publish a new patch release instead.
 
-No version is currently supported and there is no security-backport branch.
-That changes only when a published release names its support window here. Until
-then, fixes are made on the development branch only.
+## Supported versions
+
+| Version | Supported until |
+|---|---|
+| 0.1.x | Next `0.MINOR.0` release |
+
+There is no security-backport branch. Fixes for the current `0.MINOR` line
+land on `main` and ship in the next patch release; there is no guarantee a fix
+is backported once a new `0.MINOR.0` has shipped.
