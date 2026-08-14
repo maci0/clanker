@@ -565,24 +565,30 @@ function applyRailCollapsed(collapsed) {
   if (btn) {
     btn.textContent = "";
     btn.appendChild(icon("panel", 15));
+    btn.setAttribute("aria-expanded", String(!collapsed));
     btn.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
     btn.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
   }
-  try { window.localStorage.setItem("clanker.railCollapsed", collapsed ? "1" : "0"); } catch (e) {}
 }
 
 (function initRail() {
   /* Always clear PatternFly's "gone" modifier; icon-rail uses data-collapsed. */
   el.rail.classList.remove("pf-m-collapsed");
   el.rail.classList.add("pf-m-expanded");
-  try {
-    if (window.localStorage.getItem("clanker.railCollapsed") === "1") applyRailCollapsed(true);
-  } catch (e) {}
+  /* Do not restore clanker.railCollapsed on load. HTML paints the full rail,
+     then app.js used to shrink it to the icon strip a moment later — that
+     read as "sidebar visible, then gone". Collapse stays a same-session
+     gesture via the masthead button. */
+  try { window.localStorage.removeItem("clanker.railCollapsed"); } catch (e) {}
+  el.rail.removeAttribute("data-collapsed");
   var cbtn = document.getElementById("rail-collapse");
-  if (cbtn) cbtn.addEventListener("click", function () {
-    var cur = el.rail.getAttribute("data-collapsed") === "true";
-    applyRailCollapsed(!cur);
-  });
+  if (cbtn) {
+    applyRailCollapsed(false);
+    cbtn.addEventListener("click", function () {
+      var cur = el.rail.getAttribute("data-collapsed") === "true";
+      applyRailCollapsed(!cur);
+    });
+  }
   // populate data-short for collapsed rail labels from existing tab text
   document.querySelectorAll(".rail-tab").forEach(function (t) {
     var txt = (t.textContent || "").trim();
