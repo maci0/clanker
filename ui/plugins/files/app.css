@@ -1,174 +1,217 @@
-/* Mounted in the page, so every token below is the page's own: a plugin cannot
-   drift from the theme it is rendered inside. */
+/* Files plugin — themed via CSS custom properties from the host page.
+   All tokens (--space-*, --fg, --accent, etc.) are the page's own. */
 
+/* ─── breadcrumbs ─────────────────────────────────────────────────────────── */
 .files-crumbs {
-  margin-top: var(--space-5);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1) var(--space-2);
   padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
   border: 1px solid var(--rule);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   font-family: var(--mono);
-  font-size: var(--step-0);
+  font-size: var(--step--1);
 }
-
 .files-crumb {
-  min-height: 32px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--rule);
+  padding: 2px var(--space-2);
+  border: 1px solid transparent;
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--fg-muted);
   font-family: var(--mono);
-  font-size: var(--step-0);
+  font-size: var(--step--1);
   cursor: pointer;
+  white-space: nowrap;
 }
+.files-crumb:hover { border-color: var(--accent); color: var(--accent); }
+.files-crumb-here { color: var(--fg); font-weight: 600; cursor: default; }
+.files-crumb-sep  { color: var(--fg-muted); opacity: 0.4; }
 
-.files-crumb:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.files-crumb:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.files-crumb-here {
-  color: var(--fg);
-  font-weight: 600;
-}
-
-.files-crumb-sep {
-  color: var(--fg-muted);
-  opacity: 0.5;
-}
-
-.files-list {
-  margin-top: var(--space-4);
+/* ─── toolbar ─────────────────────────────────────────────────────────────── */
+.files-toolbar {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.files-row {
-  display: grid;
-  grid-template-columns: 1.5rem minmax(10rem, 1fr) 5rem 6rem 9rem;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+.files-filter {
+  flex: 1 1 10rem;
+  min-width: 6rem;
+  padding: var(--space-1) var(--space-2);
   border: 1px solid var(--rule);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
-  font-size: var(--step-0);
-}
-
-.files-icon {
-  color: var(--fg-muted);
-  font-size: var(--step-1);
-  text-align: center;
-}
-
-.files-name {
-  min-width: 0;
-  overflow-wrap: anywhere;
   color: var(--fg);
+  font-family: var(--mono);
+  font-size: var(--step--1);
+}
+.files-filter:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.files-toggle-btn { font-family: var(--mono); letter-spacing: .05em; }
+.files-toggle-btn.active { border-color: var(--accent); color: var(--accent); }
+
+/* ─── split panes ─────────────────────────────────────────────────────────── */
+.files-panes {
+  display: grid;
+  grid-template-columns: 40% 1fr;
+  gap: var(--space-3);
+  align-items: start;
+}
+/* narrow: single column */
+@media (max-width: 700px) {
+  .files-panes { grid-template-columns: 1fr; }
+}
+.files-left  { min-width: 0; }
+.files-right { min-width: 0; }
+
+/* ─── column headers ──────────────────────────────────────────────────────── */
+.files-header {
+  background: transparent !important;
+  border-color: transparent !important;
+  padding-top: 0;
+  padding-bottom: var(--space-1);
+  margin-bottom: var(--space-1);
+  border-bottom: 1px solid var(--rule) !important;
+}
+.files-sort-btn {
+  padding: 2px var(--space-1);
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--step--1);
+  font-family: var(--sans, inherit);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.files-sort-btn:hover { color: var(--fg); }
+.files-sort-btn.active { color: var(--accent); font-weight: 600; }
+
+/* ─── file list ───────────────────────────────────────────────────────────── */
+.files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  outline: none;
+  max-height: 70vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.files-list:focus { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+.files-row {
+  display: grid;
+  grid-template-columns: 1.5rem 1fr 5rem 8rem;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: var(--step--1);
+  cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+.files-row:not(.files-header):hover {
+  border-color: var(--rule);
+  background: var(--surface-3, var(--surface-2));
+}
+.files-row-active {
+  border-color: var(--accent) !important;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2)) !important;
 }
 
+.files-icon-col { display: flex; align-items: center; justify-content: center; }
+.files-icon-svg { width: 1rem; height: 1rem; flex-shrink: 0; }
+
+.files-name { min-width: 0; overflow-wrap: anywhere; }
 .files-open {
-  min-height: 32px;
-  padding: 0;
   border: none;
   background: transparent;
   color: var(--fg);
   font-family: var(--mono);
-  font-size: var(--step-0);
+  font-size: var(--step--1);
   text-align: left;
   cursor: pointer;
+  padding: 0;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
+.files-open:hover { color: var(--accent); }
 
-.files-open:hover {
-  color: var(--accent);
-}
-
-.files-type {
+.files-size, .files-when {
   color: var(--fg-muted);
   font-family: var(--mono);
   font-size: var(--step--1);
-}
-
-.files-size {
-  color: var(--fg-muted);
-  font-family: var(--mono);
-  font-size: var(--step-0);
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  white-space: nowrap;
 }
-
-.files-when {
-  color: var(--fg-muted);
-  font-family: var(--mono);
-  font-size: var(--step-0);
-  font-variant-numeric: tabular-nums;
-}
+.files-size { text-align: right; }
 
 .files-empty {
-  margin-top: var(--space-5);
+  margin-top: var(--space-3);
   color: var(--fg-muted);
+  font-size: var(--step--1);
 }
 
-/* `.files-list`'s own `display: flex` would otherwise outrank the UA
-   stylesheet's `[hidden] { display: none }` — same selector specificity,
-   author rule wins — so hiding these via the `hidden` attribute needs an
-   explicit rule here rather than relying on the attribute alone. */
-.files-list[hidden],
-.files-viewer[hidden],
-.files-viewer-head[hidden] {
-  display: none;
-}
+/* ─── file viewer ─────────────────────────────────────────────────────────── */
+.files-right[hidden] { display: none; }
 
 .files-viewer-head {
-  margin-top: var(--space-4);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
+  gap: var(--space-2);
+  flex-wrap: wrap;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--rule);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   background: var(--surface-2);
 }
-
 .files-viewer-name {
   font-family: var(--mono);
-  font-size: var(--step-0);
+  font-size: var(--step--1);
   color: var(--fg);
+  font-weight: 600;
   overflow-wrap: anywhere;
+  flex: 1 1 8rem;
 }
+.files-viewer-meta {
+  font-family: var(--mono);
+  font-size: var(--step--1);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.files-copy-btn { font-size: var(--step--1); }
+.files-close-btn { font-size: var(--step-0); line-height: 1; }
+
+.files-viewer-note {
+  padding: var(--space-1) var(--space-3);
+  background: var(--surface-2);
+  border-left: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
+  color: var(--fg-muted);
+  font-size: var(--step--1);
+  margin: 0;
+}
+.files-viewer-note[hidden] { display: none; }
 
 .files-viewer {
-  margin-top: var(--space-3);
   border: 1px solid var(--rule);
-  border-radius: var(--radius-sm);
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
   padding: var(--space-3);
   background: var(--surface);
   overflow-x: auto;
+  max-height: 70vh;
+  overflow-y: auto;
 }
-
-.files-viewer-note {
-  color: var(--fg-muted);
-  font-size: var(--step--1);
-  margin: 0 0 var(--space-3);
-}
-
 .files-viewer-plain {
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--mono);
-  font-size: var(--step-0);
+  font-size: var(--step--1);
   color: var(--fg);
 }
