@@ -3507,6 +3507,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
     var messages: std.ArrayList(types.Message) = .empty;
     var created: i64 = 0;
+    var prev_title: []const u8 = "";
     var opts_session = opts.session;
     if (opts_session == null and opts.continue_last) {
         opts_session = latestSessionId(io, arena);
@@ -3524,6 +3525,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         };
         if (maybe_s) |s| {
             created = s.created;
+            prev_title = s.title;
             for (s.messages) |m| {
                 if (m.role == .system) continue;
                 try messages.append(arena, m);
@@ -3648,7 +3650,8 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     if (resolved_task.goal_id) |gid| setGoalStatusIf(io, init.gpa, std.Io.Dir.cwd(), gid, "active", "review");
 
     if (opts.session) |sid| {
-        const title = std.mem.trim(u8, opts.task.?[0..@min(opts.task.?.len, 60)], " \t\r\n");
+        var title_buf: [session.title_max]u8 = undefined;
+        const title = session.nextTitle(&title_buf, prev_title, session.titleSource(messages.items, opts.task.?));
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         if (!cfg.modules.sessions) return;
         session.compactMessages(&messages, session.max_session_tokens);
@@ -11609,6 +11612,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     // `clanker run --session` / the REPL.
     const has_session = cfg.modules.sessions and req.session.len > 0;
     var created: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    var prev_title: []const u8 = "";
     // Held from the load below through both saveSession calls further down:
     // serve runs one thread per connection, so two requests naming the same
     // session (a double-submit, two tabs) would otherwise both load the same
@@ -11623,6 +11627,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         session_lock = file_lock.acquire(io, std.Io.Dir.cwd(), "state/sessions", req.session, gpa);
         if (session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), req.session)) |s| {
             created = s.created;
+            prev_title = s.title;
             for (s.messages) |m| {
                 if (m.role == .system) continue;
                 messages.append(arena, m) catch {};
@@ -11705,8 +11710,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // when the tab that started the run is long gone.
         if (resolved.goal_id) |gid| setGoalStatusIf(io, gpa, std.Io.Dir.cwd(), gid, "active", "review");
         if (has_session) {
-            const title_src = if (req.task.len > 0) req.task else final_task;
-            const title = title_src[0..@min(title_src.len, 60)];
+            var title_buf: [session.title_max]u8 = undefined;
+            const title = session.nextTitle(&title_buf, prev_title, session.titleSource(messages.items, if (req.task.len > 0) req.task else final_task));
             const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
             session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), .{
                 .id = req.session,
@@ -11755,8 +11760,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     if (resolved.goal_id) |gid| setGoalStatusIf(io, gpa, std.Io.Dir.cwd(), gid, "active", "review");
 
     if (has_session) {
-        const title_src = if (req.task.len > 0) req.task else task_text;
-        const title = title_src[0..@min(title_src.len, 60)];
+        var title_buf: [session.title_max]u8 = undefined;
+        const title = session.nextTitle(&title_buf, prev_title, session.titleSource(messages.items, if (req.task.len > 0) req.task else task_text));
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), .{
             .id = req.session,

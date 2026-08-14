@@ -1,4 +1,4 @@
-import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max } from "./core/utils.js";
+import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max } from "./core/utils.js";
 import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, upgradePfButton, upgradePfButtons, upgradePfChip, upgradePfUi } from "./core/ui.js";
 import { icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
@@ -51,6 +51,7 @@ var newSessionId = utilNewSessionId;
 var fmtBytes = utilFmtBytes;
 var clip = utilClip;
 var sessionLabel = utilSessionLabel;
+var summarizeTitle = utilSummarizeTitle;
 var recencyGroup = utilRecencyGroup;
 var fmtInt = utilFmtInt;
 var fmtMs = utilFmtMs;
@@ -429,7 +430,7 @@ function renderSessionOptions(sessions) {
 }
 
 function railRowFor(s, current) {
-  var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
+  var title = summarizeTitle(s.title || "");
   var archivedMark = s.archived ? " · archived" : "";
   var meta = s.messages + (s.messages === 1 ? " msg" : " msgs") + archivedMark +
     (typeof s.bytes === "number" && s.bytes > 0 ? "  ·  " + fmtBytes(s.bytes) : "");
@@ -877,10 +878,9 @@ el.sessionMove.addEventListener("click", function () {
   });
 });
 
-/* A conversation's title is otherwise the first 60 characters of whatever
-   task opened it, which makes a picker full of them read like a list of
-   prefixes. Both actions refuse to touch a conversation that has never been
-   saved, since there is nothing on disk to act on yet. */
+/* Auto titles are a couple of content words from the opening task. Both
+   actions refuse to touch a conversation that has never been saved, since
+   there is nothing on disk to act on yet. */
 function currentSessionMeta() {
   for (var i = 0; i < knownSessions.length; i++) {
     if (knownSessions[i].id === sessionId) return knownSessions[i];

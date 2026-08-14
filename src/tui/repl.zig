@@ -2814,7 +2814,9 @@ const Model = struct {
 
         const owned_task = try self.arena.dupe(u8, task);
         if (self.session_title.len == 0) {
-            self.session_title = std.mem.trim(u8, owned_task[0..@min(owned_task.len, 60)], " \t\r\n");
+            var title_buf: [session_mod.title_max]u8 = undefined;
+            const t = session_mod.titleFromTask(&title_buf, owned_task);
+            self.session_title = try self.arena.dupe(u8, t);
         }
         self.thread = try std.Thread.spawn(.{}, runThreadMain, .{RunThreadArgs{ .model = self, .task = owned_task }});
 
@@ -2867,16 +2869,8 @@ const Model = struct {
             transcript.append(self.arena, m) catch {};
         }
         const title = if (self.session_title.len > 0) self.session_title else blk: {
-            var t: []const u8 = "";
-            for (transcript.items) |m| {
-                if (m.role == .user) {
-                    if (m.content) |c| {
-                        t = std.mem.trim(u8, c[0..@min(c.len, 60)], " \t\r\n");
-                        break;
-                    }
-                }
-            }
-            break :blk t;
+            var title_buf: [session_mod.title_max]u8 = undefined;
+            break :blk self.arena.dupe(u8, session_mod.titleFromTask(&title_buf, session_mod.titleSource(transcript.items, ""))) catch "";
         };
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.io, .real).nanoseconds, 1_000_000_000));
         session_mod.saveSession(self.io, self.gpa, self.arena, std.Io.Dir.cwd(), .{

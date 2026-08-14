@@ -255,10 +255,184 @@ pub fn branchSession(
     return new_id;
 }
 
+/// Two or three content words from `task`, for the rail. Skips filler so
+/// "please add a websocket for the live map" becomes "add websocket live",
+/// not a 60-character prefix of the opening sentence.
+pub const title_max = 28;
+
+fn isTitleWordByte(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '-' or c == '\'';
+}
+
+fn isTitleSkip(word: []const u8) bool {
+    const map = std.StaticStringMap(void).initComptime(.{
+        .{ "a", {} },
+        .{ "an", {} },
+        .{ "the", {} },
+        .{ "to", {} },
+        .{ "of", {} },
+        .{ "for", {} },
+        .{ "and", {} },
+        .{ "or", {} },
+        .{ "in", {} },
+        .{ "on", {} },
+        .{ "at", {} },
+        .{ "is", {} },
+        .{ "are", {} },
+        .{ "be", {} },
+        .{ "been", {} },
+        .{ "being", {} },
+        .{ "should", {} },
+        .{ "would", {} },
+        .{ "could", {} },
+        .{ "can", {} },
+        .{ "will", {} },
+        .{ "just", {} },
+        .{ "please", {} },
+        .{ "this", {} },
+        .{ "that", {} },
+        .{ "it", {} },
+        .{ "with", {} },
+        .{ "from", {} },
+        .{ "as", {} },
+        .{ "by", {} },
+        .{ "if", {} },
+        .{ "so", {} },
+        .{ "do", {} },
+        .{ "does", {} },
+        .{ "did", {} },
+        .{ "not", {} },
+        .{ "no", {} },
+        .{ "we", {} },
+        .{ "i", {} },
+        .{ "you", {} },
+        .{ "my", {} },
+        .{ "our", {} },
+        .{ "me", {} },
+        .{ "have", {} },
+        .{ "has", {} },
+        .{ "had", {} },
+        .{ "how", {} },
+        .{ "what", {} },
+        .{ "when", {} },
+        .{ "where", {} },
+        .{ "why", {} },
+        .{ "also", {} },
+        .{ "need", {} },
+        .{ "want", {} },
+        .{ "make", {} },
+        .{ "add", {} },
+    });
+    var buf: [16]u8 = undefined;
+    if (word.len == 0 or word.len > buf.len) return false;
+    _ = std.ascii.lowerString(buf[0..word.len], word);
+    return map.has(buf[0..word.len]);
+}
+
+fn appendTitleWord(out: []u8, used: *usize, word: []const u8) bool {
+    if (word.len == 0) return false;
+    const need_space: usize = if (used.* > 0) 1 else 0;
+    if (used.* + need_space >= out.len) return false;
+    if (need_space == 1) {
+        out[used.*] = ' ';
+        used.* += 1;
+    }
+    const take = @min(word.len, out.len - used.*);
+    if (take == 0) return false;
+    @memcpy(out[used.*..][0..take], word[0..take]);
+    used.* += take;
+    return true;
+}
+
+/// Writes a couple-word label into `out`. The return is a prefix of `out`.
+pub fn titleFromTask(out: []u8, task: []const u8) []const u8 {
+    const cap = @min(out.len, title_max);
+    const dest = out[0..cap];
+    var used: usize = 0;
+    var words: u8 = 0;
+    var i: usize = 0;
+    while (i < task.len and words < 3 and used < dest.len) {
+        while (i < task.len and !isTitleWordByte(task[i])) i += 1;
+        const start = i;
+        while (i < task.len and isTitleWordByte(task[i])) i += 1;
+        const word = task[start..i];
+        if (word.len == 0) break;
+        if (isTitleSkip(word)) continue;
+        if (!appendTitleWord(dest, &used, word)) break;
+        words += 1;
+    }
+    if (words == 0) {
+        i = 0;
+        while (i < task.len and words < 2 and used < dest.len) {
+            while (i < task.len and !isTitleWordByte(task[i])) i += 1;
+            const start = i;
+            while (i < task.len and isTitleWordByte(task[i])) i += 1;
+            const word = task[start..i];
+            if (word.len == 0) break;
+            if (!appendTitleWord(dest, &used, word)) break;
+            words += 1;
+        }
+    }
+    if (used == 0) return "(untitled)";
+    return dest[0..used];
+}
+
+/// A renamed title, a fork/branch label, or an already-short summary stays.
+/// Long auto prefixes (the old first-60-chars titles) are replaced.
+pub fn keepTitle(existing: []const u8) bool {
+    const t = std.mem.trim(u8, existing, " \t\r\n");
+    if (t.len == 0) return false;
+    if (std.mem.startsWith(u8, t, "fork of ") or std.mem.startsWith(u8, t, "branch of ")) return true;
+    if (t.len > 32) return false;
+    var n: u8 = 0;
+    var in_word = false;
+    for (t) |c| {
+        if (c == ' ') {
+            in_word = false;
+        } else if (!in_word) {
+            in_word = true;
+            n += 1;
+            if (n > 4) return false;
+        }
+    }
+    return true;
+}
+
+/// Keep `existing` when it looks chosen; otherwise summarise `task`.
+pub fn nextTitle(out: []u8, existing: []const u8, task: []const u8) []const u8 {
+    if (keepTitle(existing)) return std.mem.trim(u8, existing, " \t\r\n");
+    return titleFromTask(out, task);
+}
+
+/// First user line in the transcript, else `task`.
+pub fn titleSource(messages: []const types.Message, task: []const u8) []const u8 {
+    for (messages) |m| {
+        if (m.role != .user) continue;
+        if (m.content) |c| {
+            const t = std.mem.trim(u8, c, " \t\r\n");
+            if (t.len > 0) return t;
+        }
+    }
+    return task;
+}
+
+test "titleFromTask is a couple of content words" {
+    var buf: [title_max]u8 = undefined;
+    try std.testing.expectEqualStrings("left bar chat", titleFromTask(&buf, "left bar chat title should be a couple word summary of the chat"));
+    try std.testing.expectEqualStrings("Implement remaining clanker", titleFromTask(&buf, "Implement remaining clanker PRDs starting with persist"));
+    try std.testing.expectEqualStrings("websocket live map", titleFromTask(&buf, "please add a websocket for the live map"));
+    try std.testing.expectEqualStrings("a", titleFromTask(&buf, "a"));
+    try std.testing.expectEqualStrings("(untitled)", titleFromTask(&buf, "   "));
+    try std.testing.expect(keepTitle("Mesh map"));
+    try std.testing.expect(keepTitle("fork of Original"));
+    try std.testing.expect(!keepTitle("left bar chat title should be a couple word summary of the"));
+    try std.testing.expectEqualStrings("Mesh map", nextTitle(&buf, "Mesh map", "something else entirely"));
+}
+
 /// Retitles a conversation in place, leaving its messages untouched.
 ///
-/// Titles are otherwise derived from the first 60 characters of the opening
-/// task, which is why a picker full of them reads like a list of prefixes.
+/// Auto titles are a couple of content words from the opening task. A
+/// picker full of 60-character prefixes is what this replaced.
 pub fn renameSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, id: []const u8, title: []const u8) !void {
     const s = try loadSession(io, gpa, arena, base, id);
     try saveSession(io, gpa, arena, base, .{
