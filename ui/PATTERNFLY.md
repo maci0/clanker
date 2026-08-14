@@ -18,8 +18,8 @@ to [PatternFly 6](https://www.patternfly.org/) HTML/CSS. The app stays vanilla J
 | 1 | Vendored `patternfly.min.css` + `patternfly-addons.css`, served from `/webui/vendor/*` | done |
 | 2 | Page shell: `pf-v6-c-page`, Masthead, sidebar, `main` (`#main` unchanged) | done |
 | 3 | Rail navigation → PF Nav (vertical tabs, groups) | done |
-| 4 | Buttons (`primary`, `secondary`, `danger`, icon buttons) | next |
-| 5 | Forms (composer, filters, goal form, settings) | |
+| 4 | Buttons (`primary`, `secondary`, `danger`, icon buttons) | done |
+| 5 | Forms (composer, filters, goal form, settings) | next |
 | 6 | Overlays (palette, help, dialogs, card detail) | |
 | 7 | Toasts, chips, status indicators | |
 | 8 | Theme bridge (PF dark + clanker palette themes) | |
@@ -39,6 +39,13 @@ Target structure (IDs preserved on inner nodes):
 
 Bridge CSS will map `.shell` flex layout to PF page grid until rail collapse logic
 is rewritten for `pf-m-collapsed` on the sidebar.
+
+## Step 4 notes (buttons)
+
+`upgradePfButtons(document)` runs at init for static markup in `index.html`.
+Dynamic buttons call `upgradePfButton` after label/icon content is set. Cabinet
+classes (`secondary`, `danger`, `chip-btn`) stay until step 9; PF adds
+`pf-v6-c-button` + `pf-m-*` modifiers and wraps labels in `pf-v6-c-button__text`.
 
 ## Updating vendored PatternFly
 

@@ -101,10 +101,29 @@ function pfButtonVariant(el) {
   return "secondary";
 }
 
+function looseButtonText(el) {
+  var s = "";
+  for (var i = 0; i < el.childNodes.length; i++) {
+    var n = el.childNodes[i];
+    if (n.nodeType === 3) s += n.textContent;
+  }
+  return s.trim();
+}
+
 function wrapPfButtonContent(el) {
-  if (el.querySelector(".pf-v6-c-button__text, .pf-v6-c-button__icon")) return;
+  var textSpan = el.querySelector(":scope > .pf-v6-c-button__text");
+  var iconSpan = el.querySelector(":scope > .pf-v6-c-button__icon");
+  var loose = looseButtonText(el);
+  if (textSpan) {
+    if (loose) textSpan.textContent = loose;
+    for (var i = el.childNodes.length - 1; i >= 0; i--) {
+      if (el.childNodes[i].nodeType === 3) el.removeChild(el.childNodes[i]);
+    }
+    return;
+  }
+  if (iconSpan) return;
   var svg = el.querySelector("svg");
-  var text = (el.textContent || "").trim();
+  var text = loose || (el.textContent || "").trim();
   if (svg && (!text || el.getAttribute("aria-label"))) {
     el.textContent = "";
     var iconWrap = document.createElement("span");
@@ -122,17 +141,19 @@ function wrapPfButtonContent(el) {
 }
 
 export function upgradePfButton(el) {
-  if (!el || el.tagName !== "BUTTON" || el.classList.contains("pf-v6-c-button")) return el;
+  if (!el || el.tagName !== "BUTTON") return el;
   for (var cls in pfButtonSkip) {
     if (el.classList.contains(cls)) return el;
   }
-  var variant = pfButtonVariant(el);
-  el.classList.add("pf-v6-c-button");
-  if (variant === "plain") el.classList.add("pf-m-plain");
-  else if (variant === "secondary") el.classList.add("pf-m-secondary");
-  else if (variant === "danger") el.classList.add("pf-m-danger");
-  else if (variant === "secondary-danger") el.classList.add("pf-m-secondary", "pf-m-danger");
-  else if (variant === "primary") el.classList.add("pf-m-primary");
+  if (!el.classList.contains("pf-v6-c-button")) {
+    var variant = pfButtonVariant(el);
+    el.classList.add("pf-v6-c-button");
+    if (variant === "plain") el.classList.add("pf-m-plain");
+    else if (variant === "secondary") el.classList.add("pf-m-secondary");
+    else if (variant === "danger") el.classList.add("pf-m-danger");
+    else if (variant === "secondary-danger") el.classList.add("pf-m-secondary", "pf-m-danger");
+    else if (variant === "primary") el.classList.add("pf-m-primary");
+  }
   wrapPfButtonContent(el);
   return el;
 }
@@ -143,19 +164,178 @@ export function upgradePfButtons(root) {
   return scope;
 }
 
+/* PatternFly form bridge (step 5): pf-v6-c-form on forms, pf-v6-c-form-control on
+   inputs, pf-v6-c-check on checkbox labels. Cabinet layout classes stay until step 9. */
+var pfControlSkip = { hidden: 1, file: 1, button: 1, submit: 1, reset: 1, image: 1 };
+
+export function upgradePfFormControl(el) {
+  if (!el) return el;
+  var tag = el.tagName;
+  if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") return el;
+  if (tag === "INPUT" && pfControlSkip[el.type]) return el;
+  if (el.type === "checkbox" || el.type === "radio") return upgradePfCheckInput(el);
+  if (!el.classList.contains("pf-v6-c-form-control")) el.classList.add("pf-v6-c-form-control");
+  return el;
+}
+
+export function upgradePfCheckInput(input) {
+  if (!input || (input.type !== "checkbox" && input.type !== "radio")) return input;
+  var label = input.closest("label");
+  if (!label && input.id) label = document.querySelector('label[for="' + CSS.escape(input.id) + '"]');
+  if (!label) return input;
+  label.classList.add("pf-v6-c-check");
+  input.classList.add("pf-v6-c-check__input");
+  label.querySelectorAll(":scope > span").forEach(function (s) {
+    if (!s.classList.contains("pf-v6-c-check__label")) s.classList.add("pf-v6-c-check__label");
+  });
+  Array.prototype.slice.call(label.childNodes).forEach(function (n) {
+    if (n.nodeType !== 3 || !n.textContent.trim()) return;
+    var span = document.createElement("span");
+    span.className = "pf-v6-c-check__label";
+    span.textContent = n.textContent.trim();
+    label.replaceChild(span, n);
+  });
+  return input;
+}
+
+export function upgradePfLabel(el) {
+  if (!el || el.tagName !== "LABEL" || !el.htmlFor) return el;
+  if (el.querySelector("input, textarea, select")) return el;
+  if (!el.classList.contains("pf-v6-c-form__label")) el.classList.add("pf-v6-c-form__label");
+  return el;
+}
+
+export function upgradePfForm(el) {
+  if (!el || el.tagName !== "FORM") return el;
+  if (!el.classList.contains("pf-v6-c-form")) el.classList.add("pf-v6-c-form");
+  return el;
+}
+
+export function upgradePfForms(root) {
+  var scope = root || document;
+  scope.querySelectorAll("form").forEach(upgradePfForm);
+  scope.querySelectorAll("input, textarea, select").forEach(upgradePfFormControl);
+  scope.querySelectorAll("label[for]").forEach(upgradePfLabel);
+  scope.querySelectorAll('input[type="checkbox"], input[type="radio"]').forEach(upgradePfCheckInput);
+  return scope;
+}
+
+/* PatternFly modal bridge (step 6): backdrop + modal wrapper around overlay-box. */
+export function upgradePfOverlay(el) {
+  if (!el || !el.classList.contains("overlay")) return el;
+  if (!el.classList.contains("pf-v6-c-backdrop")) el.classList.add("pf-v6-c-backdrop");
+  var box = el.querySelector(":scope > .overlay-box");
+  if (!box) return el;
+  var modal = box.parentElement;
+  if (!modal.classList.contains("pf-v6-c-modal")) {
+    var wrap = document.createElement("div");
+    wrap.className = "pf-v6-c-modal";
+    if (el.getAttribute("aria-labelledby")) {
+      wrap.setAttribute("aria-labelledby", el.getAttribute("aria-labelledby"));
+      el.removeAttribute("aria-labelledby");
+    }
+    if (el.getAttribute("role") === "dialog") {
+      wrap.setAttribute("role", "dialog");
+      wrap.setAttribute("aria-modal", "true");
+      el.removeAttribute("role");
+      el.removeAttribute("aria-modal");
+    }
+    el.insertBefore(wrap, box);
+    wrap.appendChild(box);
+  }
+  if (!box.classList.contains("pf-v6-c-modal-box")) box.classList.add("pf-v6-c-modal-box");
+  var head = box.querySelector(":scope > .run-detail-head");
+  if (head && !head.classList.contains("pf-v6-c-modal__header")) {
+    head.classList.add("pf-v6-c-modal__header");
+    var title = head.querySelector(".run-detail-title");
+    if (title) title.classList.add("pf-v6-c-modal__title");
+  }
+  box.querySelectorAll("input, textarea, select").forEach(upgradePfFormControl);
+  box.querySelectorAll("label[for]").forEach(upgradePfLabel);
+  return el;
+}
+
+export function upgradePfOverlays(root) {
+  var scope = root || document;
+  scope.querySelectorAll(".overlay").forEach(upgradePfOverlay);
+  scope.querySelectorAll("dialog.slack-dialog").forEach(function (dlg) {
+    var form = dlg.querySelector("form");
+    if (form) upgradePfForm(form);
+  });
+  return scope;
+}
+
+/* PatternFly label bridge (step 7): status chips in the masthead and elsewhere. */
+export function upgradePfChip(el) {
+  if (!el) return el;
+  if (!el.classList.contains("chip") && !el.classList.contains("header-model")) return el;
+  if (!el.classList.contains("pf-v6-c-label")) el.classList.add("pf-v6-c-label");
+  if (!el.querySelector(":scope > .pf-v6-c-label__content")) {
+    var text = (el.textContent || "").trim();
+    if (text) {
+      el.textContent = "";
+      var content = document.createElement("span");
+      content.className = "pf-v6-c-label__content";
+      content.textContent = text;
+      el.appendChild(content);
+    }
+  }
+  var state = el.getAttribute("data-state");
+  el.classList.remove("pf-m-success", "pf-m-danger", "pf-m-blue", "pf-m-orange");
+  if (state === "live") el.classList.add("pf-m-success");
+  else if (state === "down") el.classList.add("pf-m-danger");
+  else el.classList.add("pf-m-blue");
+  return el;
+}
+
+export function upgradePfChips(root) {
+  var scope = root || document;
+  scope.querySelectorAll(".chip, .header-model").forEach(upgradePfChip);
+  return scope;
+}
+
+function upgradePfToastNode(node) {
+  if (!node || !node.classList.contains("toast")) return node;
+  node.classList.add("pf-v6-c-alert", "pf-m-inline", "pf-m-custom");
+  if (node.hasAttribute("data-kind")) node.classList.add("pf-m-danger");
+  if (!node.querySelector(".pf-v6-c-alert__title")) {
+    var title = document.createElement("span");
+    title.className = "pf-v6-c-alert__title";
+    title.textContent = node.textContent;
+    node.textContent = "";
+    node.appendChild(title);
+  }
+  return node;
+}
+
+/** Run all PatternFly DOM upgrades (steps 4–7) on static markup and a subtree. */
+export function upgradePfUi(root) {
+  var scope = root || document;
+  upgradePfButtons(scope);
+  upgradePfForms(scope);
+  upgradePfOverlays(scope);
+  upgradePfChips(scope);
+  scope.querySelectorAll(".toast").forEach(upgradePfToastNode);
+  return scope;
+}
+
 // A fixed timer is too short to read a long message, so hovering or
 // focusing a toast (mouse or keyboard) holds it on screen.
 export function toast(msg, kind) {
   if (!msg || typeof document === "undefined") return null;
   var host = document.getElementById("toasts");
   if (!host) return null;
-  var node = document.createElement("p");
-  node.className = "toast";
+  var node = document.createElement("div");
+  node.className = "toast pf-v6-c-alert pf-m-inline pf-m-custom";
   node.tabIndex = 0;
   node.setAttribute("role", "status");
   node.setAttribute("aria-live", "polite");
   if (kind === "bad" || /fail|error|could not|refus|denied|no such/i.test(msg)) node.setAttribute("data-kind", "bad");
-  node.textContent = msg;
+  var title = document.createElement("span");
+  title.className = "pf-v6-c-alert__title";
+  title.textContent = msg;
+  node.appendChild(title);
+  upgradePfToastNode(node);
   node.addEventListener("click", function () { node.remove(); });
   node.addEventListener("keydown", function (event) {
     if (event.key !== "Enter" && event.key !== " " && event.key !== "Escape") return;
@@ -186,10 +366,10 @@ export function toast(msg, kind) {
 function openDialog(build) {
   return new Promise(function (resolve) {
     var dlg = document.createElement("dialog");
-    dlg.className = "slack-dialog";
+    dlg.className = "slack-dialog pf-v6-c-modal-box";
     var form = document.createElement("form");
     form.method = "dialog";
-    form.className = "slack-dialog-form";
+    form.className = "slack-dialog-form pf-v6-c-form pf-v6-c-modal__body";
     dlg.appendChild(form);
     build(form, function done(value) {
       dlg.close();
@@ -262,6 +442,8 @@ export function uiPrompt(message, initial, opts) {
       });
     }
     form.appendChild(input);
+    upgradePfFormControl(input);
+    upgradePfLabel(label);
     var actions = document.createElement("div");
     actions.className = "slack-dialog-actions";
     var cancel = document.createElement("button");
@@ -345,7 +527,10 @@ export var UI = {
     return T.button(attrs, T.span({ class: "pf-v6-c-button__text" }, label));
   },
   field: function (id, label, control) {
-    return [T.label({ for: id }, label), control];
+    if (control && control.classList) upgradePfFormControl(control);
+    return T.div({ class: "pf-v6-c-form__group" },
+      T.label({ class: "pf-v6-c-form__label", for: id }, label),
+      T.div({ class: "pf-v6-c-form__group-control" }, control));
   },
   empty: function (text) {
     return T.p({ class: "run-empty" }, text);

@@ -1,5 +1,5 @@
 import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max } from "./core/utils.js";
-import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt } from "./core/ui.js";
+import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, upgradePfButton, upgradePfButtons, upgradePfChip, upgradePfUi } from "./core/ui.js";
 import { icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { THEMES as THEMESMod, loadTheme as loadThemeMod, applyTheme as applyThemeMod } from "./core/theme.js";
@@ -1251,6 +1251,7 @@ function addAskOptionsGroup(turn, row, evt, ariaLabel) {
     btn.type = "button";
     btn.className = "secondary";
     btn.textContent = opt;
+    upgradePfButton(btn);
     btn.addEventListener("click", function () { answerAsk(row, evt.id, opt); });
     group.appendChild(btn);
   });
@@ -1428,6 +1429,7 @@ function renderStats(turn, stats, task) {
   copyBtn.type = "button";
   copyBtn.className = "secondary";
   copyBtn.textContent = "Copy answer";
+  upgradePfButton(copyBtn);
   copyBtn.addEventListener("click", function () {
     copyText(turn.root.markdownSource || turn.answer.textContent, copyBtn, "Copy answer", turn.answer);
   });
@@ -1457,6 +1459,7 @@ function renderStats(turn, stats, task) {
     regenBtn.type = "button";
     regenBtn.className = "secondary";
     regenBtn.textContent = "Run again";
+    upgradePfButton(regenBtn);
     regenBtn.title = "Resubmit this task as a new turn";
     regenBtn.addEventListener("click", function () {
       if (busy) return;
@@ -1469,6 +1472,7 @@ function renderStats(turn, stats, task) {
     branchBtn.type = "button";
     branchBtn.className = "secondary";
     branchBtn.textContent = "Branch";
+    upgradePfButton(branchBtn);
     branchBtn.title = "Continue from this turn in a new conversation";
     branchBtn.addEventListener("click", function () {
       if (!currentSessionMeta()) {
@@ -1533,6 +1537,7 @@ function renderStats(turn, stats, task) {
     editBtn.type = "button";
     editBtn.className = "secondary";
     editBtn.textContent = "Edit & resend";
+    upgradePfButton(editBtn);
     editBtn.title = "Put this task back in the composer to change it";
     editBtn.addEventListener("click", function () {
       el.task.value = task;
@@ -1549,6 +1554,7 @@ function renderStats(turn, stats, task) {
     copyTurnBtn.type = "button";
     copyTurnBtn.className = "secondary";
     copyTurnBtn.textContent = "Copy turn";
+    upgradePfButton(copyTurnBtn);
     copyTurnBtn.title = "Copy this turn as markdown";
     copyTurnBtn.addEventListener("click", function(){
       var you = turn.root.querySelector(".turn-you");
@@ -1560,12 +1566,12 @@ function renderStats(turn, stats, task) {
     actions.appendChild(copyTurnBtn);
     if (stopped) {
       var contBtn = document.createElement("button");
-      contBtn.type = "button"; contBtn.className = "secondary"; contBtn.textContent = "Continue";
+      contBtn.type = "button"; contBtn.className = "secondary"; contBtn.textContent = "Continue"; upgradePfButton(contBtn);
       contBtn.title = "Continue this run from where it stopped";
       contBtn.addEventListener("click", function(){ if(busy) return; el.task.value = "Continue where you left off."; el.form.requestSubmit(); });
       actions.appendChild(contBtn);
       var regenEditBtn = document.createElement("button");
-      regenEditBtn.type = "button"; regenEditBtn.className = "secondary"; regenEditBtn.textContent = "Regenerate";
+      regenEditBtn.type = "button"; regenEditBtn.className = "secondary"; regenEditBtn.textContent = "Regenerate"; upgradePfButton(regenEditBtn);
       regenEditBtn.title = "Run this task again from scratch";
       regenEditBtn.addEventListener("click", function(){ if(busy) return; el.task.value = task; el.form.requestSubmit(); });
       actions.appendChild(regenEditBtn);
@@ -2211,10 +2217,10 @@ function drawRun(g) {
   if (g.provider) { var hp = document.createElement("span"); hp.className = "tool-tag"; hp.textContent = g.provider; head.appendChild(hp); }
   var hm = document.createElement("span"); hm.className = "meta"; hm.textContent = g.duration_ms + "ms · " + g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion"; head.appendChild(hm);
   if (g.task) { var ht = document.createElement("span"); ht.className = "meta"; ht.style.flexBasis = "100%"; ht.textContent = g.task; head.appendChild(ht); }
-  var copyHead = document.createElement("button"); copyHead.type = "button"; copyHead.className = "secondary"; copyHead.textContent = "Copy id";
+  var copyHead = document.createElement("button"); copyHead.type = "button"; copyHead.className = "secondary"; copyHead.textContent = "Copy id"; upgradePfButton(copyHead);
   copyHead.addEventListener("click", function(){ try{ navigator.clipboard.writeText(g.run_id); copyHead.textContent="Copied"; setTimeout(function(){ copyHead.textContent="Copy id"; }, 1200);}catch(_){} });
   head.appendChild(copyHead);
-  var copyLink = document.createElement("button"); copyLink.type = "button"; copyLink.className = "secondary"; copyLink.textContent = "Copy link";
+  var copyLink = document.createElement("button"); copyLink.type = "button"; copyLink.className = "secondary"; copyLink.textContent = "Copy link"; upgradePfButton(copyLink);
   copyLink.title = "Copy deep-link to this run — add ?node= to pin this exact graph position";
   copyLink.addEventListener("click", function(){
     var sel = el.runGraph.querySelector(".run-node.selected");
@@ -2223,7 +2229,7 @@ function drawRun(g) {
     try{ navigator.clipboard.writeText(u); copyLink.textContent="Copied"; setTimeout(function(){ copyLink.textContent="Copy link"; }, 1200);}catch(_){ copyText(u, copyLink, "Copy link", head); }
   });
   head.appendChild(copyLink);
-  var exportBtn = document.createElement("button"); exportBtn.type = "button"; exportBtn.className = "secondary"; exportBtn.textContent = "Export .html";
+  var exportBtn = document.createElement("button"); exportBtn.type = "button"; exportBtn.className = "secondary"; exportBtn.textContent = "Export .html"; upgradePfButton(exportBtn);
   exportBtn.title = "Download this run as a self-contained HTML file";
   exportBtn.addEventListener("click", function(){
     try{
@@ -2255,7 +2261,7 @@ function drawRun(g) {
   });
   head.appendChild(exportBtn);
   if (g.parent_run_id) {
-    var par = document.createElement("button"); par.type = "button"; par.className = "secondary"; par.textContent = "↑ Parent " + g.parent_run_id.slice(0,8);
+    var par = document.createElement("button"); par.type = "button"; par.className = "secondary"; par.textContent = "↑ Parent " + g.parent_run_id.slice(0,8); upgradePfButton(par);
     par.title = "Open parent run " + g.parent_run_id;
     par.addEventListener("click", function(){ openRun(g.parent_run_id); });
     head.appendChild(par);
@@ -2296,11 +2302,11 @@ function drawRun(g) {
   graphSearchInput.setAttribute("aria-label", "Filter graph nodes — press / to focus, n/N to step matches, F failed, j/k iterations, arrows walk nodes");
   graphSearchInput.title = "Filter nodes — / focuses, n/N next match, F failed, j/k next iteration";
   graphSearchInput.style.flex = "1"; graphSearchInput.style.minWidth = "12rem";
-  var graphNextBtn = document.createElement("button"); graphNextBtn.type = "button"; graphNextBtn.className = "secondary"; graphNextBtn.textContent = "Next";
+  var graphNextBtn = document.createElement("button"); graphNextBtn.type = "button"; graphNextBtn.className = "secondary"; graphNextBtn.textContent = "Next"; upgradePfButton(graphNextBtn);
   graphNextBtn.title = "Next match (n)";
-  var graphClearBtn = document.createElement("button"); graphClearBtn.type = "button"; graphClearBtn.className = "secondary"; graphClearBtn.textContent = "Clear";
+  var graphClearBtn = document.createElement("button"); graphClearBtn.type = "button"; graphClearBtn.className = "secondary"; graphClearBtn.textContent = "Clear"; upgradePfButton(graphClearBtn);
   graphClearBtn.title = "Clear filter";
-  var graphFitBtn = document.createElement("button"); graphFitBtn.type = "button"; graphFitBtn.className = "secondary"; graphFitBtn.textContent = "Fit";
+  var graphFitBtn = document.createElement("button"); graphFitBtn.type = "button"; graphFitBtn.className = "secondary"; graphFitBtn.textContent = "Fit"; upgradePfButton(graphFitBtn);
   graphFitBtn.title = "Fit graph to view (0)";
   graphSearch.appendChild(graphSearchInput); graphSearch.appendChild(graphNextBtn); graphSearch.appendChild(graphClearBtn); graphSearch.appendChild(graphFitBtn);
   var graphHint = document.createElement("span"); graphHint.className = "meta"; graphHint.textContent = "/ filter · n next · F failed · j/k iter · arrows walk · +/− zoom · click node to pin link";
@@ -2314,7 +2320,7 @@ function drawRun(g) {
   graphKindBar.className = "run-kind-filter"; graphKindBar.style.display = "flex"; graphKindBar.style.gap = "0.35rem"; graphKindBar.style.flexWrap = "wrap"; graphKindBar.style.marginBottom = "0.5rem";
   graphKindBar.setAttribute("role", "group"); graphKindBar.setAttribute("aria-label", "Filter by node kind");
   [{k:"",label:"All"},{k:"llm",label:"LLM"},{k:"tool",label:"Tools"},{k:"final",label:"Answer"},{k:"failed",label:"Failed"}].forEach(function(opt){
-    var b = document.createElement("button"); b.type = "button"; b.className = "secondary"; b.textContent = opt.label;
+    var b = document.createElement("button"); b.type = "button"; b.className = "secondary"; b.textContent = opt.label; upgradePfButton(b);
     b.dataset.kind = opt.k; b.setAttribute("aria-pressed", String(opt.k === _kindFilter));
     if (opt.k === "failed") b.title = "Only failed nodes";
     b.addEventListener("click", function(){
@@ -2333,7 +2339,7 @@ function drawRun(g) {
   crumb.setAttribute("role", "navigation"); crumb.setAttribute("aria-label", "Iterations");
   built.stages.forEach(function(st, idx){
     var chip = document.createElement("button");
-    chip.type = "button"; chip.className = "secondary"; chip.textContent = "iter " + st.iteration;
+    chip.type = "button"; chip.className = "secondary"; chip.textContent = "iter " + st.iteration; upgradePfButton(chip);
     chip.title = st.iteration + " · " + (st.llm.label || "llm") + (st.tools.length ? " · " + st.tools.map(function(t){ return t.label; }).join(", ") : "");
     chip.addEventListener("click", function(){
       // focus first node of this stage (llm)
@@ -2408,9 +2414,9 @@ function drawRun(g) {
   })();
   var zoomWrap = document.createElement("div");
   zoomWrap.style.display = "flex"; zoomWrap.style.gap = "0.4rem"; zoomWrap.style.marginTop = "0.4rem";
-  var zoomInBtn = document.createElement("button"); zoomInBtn.type = "button"; zoomInBtn.className = "secondary"; zoomInBtn.textContent = "+ Zoom";
-  var zoomOutBtn = document.createElement("button"); zoomOutBtn.type = "button"; zoomOutBtn.className = "secondary"; zoomOutBtn.textContent = "− Zoom";
-  var zoomResetBtn = document.createElement("button"); zoomResetBtn.type = "button"; zoomResetBtn.className = "secondary"; zoomResetBtn.textContent = "Reset";
+  var zoomInBtn = document.createElement("button"); zoomInBtn.type = "button"; zoomInBtn.className = "secondary"; zoomInBtn.textContent = "+ Zoom"; upgradePfButton(zoomInBtn);
+  var zoomOutBtn = document.createElement("button"); zoomOutBtn.type = "button"; zoomOutBtn.className = "secondary"; zoomOutBtn.textContent = "− Zoom"; upgradePfButton(zoomOutBtn);
+  var zoomResetBtn = document.createElement("button"); zoomResetBtn.type = "button"; zoomResetBtn.className = "secondary"; zoomResetBtn.textContent = "Reset"; upgradePfButton(zoomResetBtn);
   var zoomLevel = 1;
   function applyZoom(){ canvas.style.transform = zoomLevel === 1 ? "" : "scale(" + zoomLevel + ")"; canvas.style.transformOrigin = "top left"; }
   zoomInBtn.addEventListener("click", function(){ zoomLevel = Math.min(1.8, zoomLevel + 0.15); applyZoom(); });
@@ -2614,7 +2620,7 @@ function drawRun(g) {
     matches[_matchIdx].scrollIntoView({ block: "nearest", inline: "center" });
   }
   // An error lens — one button jumps to failed nodes
-  var graphFailedBtn = document.createElement("button"); graphFailedBtn.type = "button"; graphFailedBtn.className = "secondary"; graphFailedBtn.textContent = "⚠ Failed";
+  var graphFailedBtn = document.createElement("button"); graphFailedBtn.type = "button"; graphFailedBtn.className = "secondary"; graphFailedBtn.textContent = "⚠ Failed"; upgradePfButton(graphFailedBtn);
   graphFailedBtn.title = "Next failed node";
   graphSearch.appendChild(graphFailedBtn);
   function focusNextFailed(){
@@ -2798,14 +2804,14 @@ function showNodeDetail(kind, node) {
   (function(){
     var m = (node.output || "").match(/\[subagent run:\s*(sub-\d+)\]/);
     if (m) {
-      var j = document.createElement("button"); j.type = "button"; j.className = "secondary"; j.textContent = "↗ " + m[1];
+      var j = document.createElement("button"); j.type = "button"; j.className = "secondary"; j.textContent = "↗ " + m[1]; upgradePfButton(j);
       j.title = "Open sub-run " + m[1];
       j.addEventListener("click", function(){ openRun(m[1]); });
       head.appendChild(j);
     }
   })();
   var copyBtn = document.createElement("button");
-  copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy";
+  copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy"; upgradePfButton(copyBtn);
   copyBtn.title = "Copy this node's output";
   copyBtn.addEventListener("click", function(){
     var t = node.output || "";
@@ -2816,6 +2822,7 @@ function showNodeDetail(kind, node) {
   closeBtn.type = "button";
   closeBtn.className = "secondary run-detail-close";
   closeBtn.textContent = "Close";
+  upgradePfButton(closeBtn);
   closeBtn.addEventListener("click", closeNodeDetail);
   head.appendChild(closeBtn);
 
@@ -2855,7 +2862,7 @@ function showNodeDetail(kind, node) {
     var ref = m[1];
     if (seen[ref]) continue; seen[ref] = true; cnt++;
     (function(r){
-      var b = document.createElement("button"); b.type = "button"; b.className = "secondary"; b.textContent = r; b.title = "Search for " + r;
+      var b = document.createElement("button"); b.type = "button"; b.className = "secondary"; b.textContent = r; upgradePfButton(b); b.title = "Search for " + r;
       b.addEventListener("click", function(){
         // cross-link to graph search and file search where available
         var s = document.querySelector("#run-filter"); if (s) { s.value = r.split(":")[0]; s.dispatchEvent(new Event("input",{bubbles:true})); }
@@ -2869,7 +2876,7 @@ function showNodeDetail(kind, node) {
   var subRe = /\[subagent run:\s*(sub-\d+)\]/g, sm;
   while ((sm = subRe.exec(rawOut)) !== null) {
     var sid = sm[1];
-    var sb = document.createElement("button"); sb.type = "button"; sb.className = "secondary"; sb.textContent = "↗ " + sid;
+    var sb = document.createElement("button"); sb.type = "button"; sb.className = "secondary"; sb.textContent = "↗ " + sid; upgradePfButton(sb);
     sb.title = "Open sub-run " + sid;
     (function(id){ sb.addEventListener("click", function(){ if(typeof openRun==="function") openRun(id); }); })(sid);
     traceBar.appendChild(sb);
@@ -2967,9 +2974,9 @@ function showNodeDetail(kind, node) {
       tree.appendChild(buildJsonTree(parsed, null, 0));
       var treeBar = document.createElement("div");
       treeBar.style.display = "flex"; treeBar.style.gap = "0.4rem"; treeBar.style.marginBottom = "0.4rem";
-      var expandAll = document.createElement("button"); expandAll.type="button"; expandAll.className="secondary"; expandAll.textContent="Expand all";
+      var expandAll = document.createElement("button"); expandAll.type="button"; expandAll.className="secondary"; expandAll.textContent="Expand all"; upgradePfButton(expandAll);
       expandAll.addEventListener("click", function(){ tree.querySelectorAll("details").forEach(function(d){ d.open=true; }); });
-      var collapseAll = document.createElement("button"); collapseAll.type="button"; collapseAll.className="secondary"; collapseAll.textContent="Collapse all";
+      var collapseAll = document.createElement("button"); collapseAll.type="button"; collapseAll.className="secondary"; collapseAll.textContent="Collapse all"; upgradePfButton(collapseAll);
       collapseAll.addEventListener("click", function(){ tree.querySelectorAll("details").forEach(function(d){ d.open=false; }); var first = tree.querySelector("details"); if(first) first.open = true; });
       treeBar.appendChild(expandAll); treeBar.appendChild(collapseAll);
       out.appendChild(treeBar); out.appendChild(tree);
@@ -3643,11 +3650,12 @@ function buildChatMessage(m) {
   var threadKey = chatMessageKey(m);
   var replies = threadStore[threadKey] || [];
   var threadBar = document.createElement("div"); threadBar.className = "chat-thread-bar";
-  var threadCount = document.createElement("button"); threadCount.type="button"; threadCount.className="secondary";
+  var threadCount = document.createElement("button"); threadCount.type="button"; threadCount.className="secondary"; upgradePfButton(threadCount);
   function renderThreadBar(){
     if(!replies.length){ threadBar.hidden=true; return; }
     threadBar.hidden=false;
     threadCount.textContent = "↳ " + replies.length + (replies.length===1?" reply":" replies");
+    upgradePfButton(threadCount);
     threadBar.title = replies.slice(-2).map(function(r){return r.from+": "+r.text;}).join("\n");
   }
   threadBar.appendChild(threadCount);
@@ -3662,7 +3670,7 @@ function buildChatMessage(m) {
   }
   threadCount.addEventListener("click", function(e){ e.stopPropagation(); threadList.hidden=!threadList.hidden; });
   threadBar.appendChild(threadList);
-  var replyBtn = document.createElement("button"); replyBtn.type="button"; replyBtn.className="secondary"; replyBtn.textContent="Reply";
+  var replyBtn = document.createElement("button"); replyBtn.type="button"; replyBtn.className="secondary"; replyBtn.textContent="Reply"; upgradePfButton(replyBtn);
   replyBtn.addEventListener("click", function(e){
     e.stopPropagation();
     uiPrompt("Reply in thread", "", { confirmLabel: "Reply", maxlength: 4096 }).then(function (t) {
@@ -3679,12 +3687,12 @@ function buildChatMessage(m) {
   var actions = document.createElement("div");
   actions.className = "chat-actions";
   var copyBtn = document.createElement("button");
-  copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy";
+  copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy"; upgradePfButton(copyBtn);
   copyBtn.setAttribute("aria-label", "Copy message");
   copyBtn.addEventListener("click", function(e){ e.stopPropagation(); try{ navigator.clipboard.writeText(m.text); }catch(_){} });
   actions.appendChild(copyBtn);
   if (canAct) EMOJIS.forEach(function(emoji){
-    var b=document.createElement("button"); b.type="button"; b.className="secondary"; b.textContent=emoji; b.title="React "+emoji;
+    var b=document.createElement("button"); b.type="button"; b.className="secondary"; b.textContent=emoji; upgradePfButton(b); b.title="React "+emoji;
     b.setAttribute("aria-label", "React " + emoji);
     b.addEventListener("click", function(e){ e.stopPropagation(); toggleReact(emoji); });
     actions.appendChild(b);
@@ -3695,6 +3703,7 @@ function buildChatMessage(m) {
     pinBtn.type = "button"; pinBtn.className = "secondary"; pinBtn.title = "Pin/Unpin";
     pinBtn.setAttribute("aria-label", "Pin message");
     pinBtn.appendChild(icon("pin", 14));
+    upgradePfButton(pinBtn);
     pinBtn.addEventListener("click", function(e){ e.stopPropagation();
       fetch("/api/chat/pin", { method: "POST", headers: {"Content-Type":"application/json"},
         body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
@@ -3707,7 +3716,7 @@ function buildChatMessage(m) {
   // Edit + Delete only for own messages
   if (m.from === instanceName && canAct) {
     var editBtn = document.createElement("button");
-    editBtn.type = "button"; editBtn.className = "secondary"; editBtn.textContent = "✏️"; editBtn.title = "Edit message";
+    editBtn.type = "button"; editBtn.className = "secondary"; editBtn.textContent = "✏️"; upgradePfButton(editBtn); editBtn.title = "Edit message";
     editBtn.setAttribute("aria-label", "Edit message");
     editBtn.addEventListener("click", function(e){ e.stopPropagation();
       var cur = text.childNodes[0] ? text.childNodes[0].textContent || text.textContent : m.text;
@@ -3732,7 +3741,7 @@ function buildChatMessage(m) {
     });
     actions.appendChild(editBtn);
     var delBtn = document.createElement("button");
-    delBtn.type = "button"; delBtn.className = "secondary"; delBtn.textContent = "🗑️"; delBtn.title = "Delete message";
+    delBtn.type = "button"; delBtn.className = "secondary"; delBtn.textContent = "🗑️"; upgradePfButton(delBtn); delBtn.title = "Delete message";
     delBtn.setAttribute("aria-label", "Delete message");
     delBtn.addEventListener("click", function(e){ e.stopPropagation();
       uiConfirm("Delete this message?", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
@@ -4438,7 +4447,7 @@ function showView(name, focusPanel) {
               detail.textContent = "";
               var head = document.createElement("div"); head.className = "run-detail-head";
               var tt = document.createElement("span"); tt.className = "run-detail-title"; tt.textContent = d.title || pendingKnowledgeId; head.appendChild(tt);
-              var close = document.createElement("button"); close.type="button"; close.className="secondary"; close.textContent="Close";
+              var close = document.createElement("button"); close.type="button"; close.className="secondary"; close.textContent="Close"; upgradePfButton(close);
               close.addEventListener("click", function(){ detail.hidden = true; }); head.appendChild(close);
               detail.appendChild(head);
               if (d.description) { var desc=document.createElement("p"); desc.className="meta"; desc.textContent=d.description; detail.appendChild(desc); }
@@ -5113,7 +5122,7 @@ el.logsRefresh.addEventListener("click", function () { loadLogList(); });
         var a=document.createElement("a"); a.href="#"; a.textContent=(r.run_id||"run")+" · "+(r.provider||"?")+" · "+((r.duration_ms||0)+"ms");
         a.addEventListener("click", function(e){ e.preventDefault(); if(typeof openRun==="function") openRun(r.run_id); });
         li.appendChild(a);
-        var rev=document.createElement("button"); rev.type="button"; rev.className="secondary"; rev.textContent="Revert"; rev.style.marginLeft="0.5rem";
+        var rev=document.createElement("button"); rev.type="button"; rev.className="secondary"; rev.textContent="Revert"; upgradePfButton(rev); rev.style.marginLeft="0.5rem";
         rev.addEventListener("click", function(){
           uiConfirm("Revert to "+r.run_id+"? This restores the worktree from that run where available.", { danger: true, confirmLabel: "Revert" }).then(function (yes) {
             if(!yes) return;
@@ -5195,9 +5204,14 @@ dialogBindDialog(el, overlayOpen, overlayClose);
 
 function mountIcon(node, name, size) {
   if (!node) return;
+  upgradePfButton(node);
   node.textContent = "";
-  node.appendChild(icon(name, size || 15));
+  var wrap = document.createElement("span");
+  wrap.className = "pf-v6-c-button__icon";
+  wrap.appendChild(icon(name, size || 15));
+  node.appendChild(wrap);
 }
+upgradePfUi(document);
 mountIcon(el.helpOpen, "help", 15);
 mountIcon(document.getElementById("rail-collapse"), "panel", 15);
 mountIcon(document.getElementById("voice-btn"), "mic", 16);
