@@ -15,10 +15,6 @@ the process and starts fresh; session end SIGTERMs via the registry.
 bridge, a dedicated venv for `%pip`, and WASI-sandboxed persistence are
 still open. The leftover WASI one-shot in `src/sandbox/python_wasi.zig` is
 not the persist path.
-Sources of truth: `src/sandbox/host.zig` (`runPythonCell`),
-`src/sandbox/python_wasi.zig`, `src/agent/subprocess.zig`, `src/config.zig`
-(`Kernel`), `tools/zig/kernel.zig`, `tools/zig/kernel_magic.zig`,
-[ADR 0010](../adrs/0010-kernels-are-an-opt-in-unsandboxed-class.md).
 
 ## Problem
 

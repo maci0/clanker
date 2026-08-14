@@ -389,6 +389,16 @@ test "python cells persist, reset drops the name, persist works again" {
         .timeout_ms = 15_000,
     };
 
+    var arith = base;
+    arith.cell = "1 + 1";
+    const arith_out = eval(arith) catch |err| switch (err) {
+        error.Python3NotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    const arith_parsed = try parseResponse(arena, arith_out);
+    try std.testing.expect(arith_parsed.ok);
+    try std.testing.expectEqualStrings("2", arith_parsed.result.?);
+
     var first = base;
     first.cell = "x = 10";
     const out1 = eval(first) catch |err| switch (err) {

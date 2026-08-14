@@ -7,12 +7,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
-- The `kernel` tool's Python path runs under a real WASM/WASI sandbox
-  (fuel budget, wall-clock timeout, memory cap, one filesystem preopen, no
-  network) when `./scripts/setup-python-wasi.sh` has fetched the vendored
-  interpreter. Without it, `runPythonCell` falls back to an unsandboxed host
-  `python3` subprocess and logs a deprecation warning; that fallback will be
-  removed in a future release.
+- Persistent Python eval kernel (PRD 0016): a session-scoped `python3`
+  supervisor keeps `__main__` across cells. `reset: true` restarts it;
+  session end SIGTERMs via the shared subprocess registry. Still off
+  unless `kernel.enabled = true`.
+- DAP debug tool (PRD 0017): `debug` guest + `ck_debug` + `[debug]`
+  adapters. Off unless `debug.enabled = true`. Host tests speak DAP
+  to a stdio fake adapter (launch, breakpoints, continue, stack,
+  variables, evaluate, disconnect).
+- The `kernel` tool's Python path also has a WASI one-shot sandbox
+  (`./scripts/setup-python-wasi.sh`) that is not the persist path.
 
 ## [0.1.0] - 2026-08-14
 
