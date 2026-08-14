@@ -76,7 +76,6 @@ lamps carry further). The seven named palettes ride the same tokens.
         </svg>clanker</h1>
       </div>
     </div>
-    <span class="ai-masthead-indicator" id="ai-masthead-indicator" title="This chat uses AI technology"></span>
   </div>
   <div class="pf-v6-c-masthead__content">
     <button type="button" class="chip header-model" id="header-model" aria-live="polite" title="Active model (click to change)">…</button>
@@ -254,15 +253,6 @@ lamps carry further). The seven named palettes ride the same tokens.
     </div>
     </section>
 
-    <div class="ai-transparency-banner pf-v6-c-alert pf-m-warning" id="ai-transparency-banner" role="status" aria-live="polite">
-      <div class="ai-transparency-banner__icon" aria-hidden="true"></div>
-      <div class="ai-transparency-banner__text">
-        <strong>Important</strong>
-        This feature uses AI technology. Do not include any personal information or other sensitive information in your input.
-      </div>
-      <button type="button" class="chip-btn ai-transparency-dismiss" id="ai-transparency-dismiss" aria-label="Dismiss AI notice"></button>
-    </div>
-
     <form id="task-form" class="composer">
       <label for="task">Task</label>
       <div class="attachments" id="attachments" hidden></div>
@@ -316,10 +306,9 @@ lamps carry further). The seven named palettes ride the same tokens.
           </label>
           <button type="button" class="secondary" id="voice-btn" title="Voice input (hold or click)" aria-label="Voice input"></button>
           <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
-          <button type="submit" id="submit" disabled>Run with AI (Ctrl+Enter)</button>
+          <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
         </div>
       </div>
-      <p class="ai-review-notice" id="ai-review-notice"></p>
       <div class="chat-steer" id="steer-row" hidden>
         <textarea id="steer-input" rows="2" wrap="soft" placeholder="Steer the running turn mid-flight (optional)…" autocomplete="off" aria-label="Steer the running turn"></textarea>
         <button type="button" class="secondary" id="steer-btn">Steer</button>

@@ -93,6 +93,10 @@ typography:
     fontFamily: "ui-sans-serif, system-ui, sans-serif"
     fontSize: "18px"
     fontWeight: 600
+  feature:
+    fontFamily: "ui-sans-serif, system-ui, sans-serif"
+    fontSize: "20px"
+    fontWeight: 600
   display-sm:
     fontFamily: "ui-sans-serif, system-ui, sans-serif"
     fontSize: "1.15rem"
@@ -202,7 +206,7 @@ is rare and actionable.
 - **Rule** (#ececec): seams between jobs
 
 ### Semantic
-- **Held / OK** (#117a3a), **Warn** (#b45309), **Fault** (#dc2626), **Violet** (#7c3aed) for AI-answer / special states
+- **Held / OK** (#117a3a), **Warn** (#b45309), **Fault** (#dc2626), **Violet** (#7c3aed) for special states
 - Deep lamp fills (`ok-deep`, `warn-deep`) for denser status chips
 
 ### Named themes
