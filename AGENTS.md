@@ -268,6 +268,13 @@ checklist item at every depth is complete. Those predicates live in
 `tools/zig/cards.zig` so `zig build test` runs them; `board.zig` only enforces
 them.
 
+Goal surfaces have three deliberately separate effects: `write-goal` drafts
+without saving or running; `add-goal` saves without starting work; and
+`goal`/`/goal` start a goal loop that keeps taking turns until its condition is
+achieved, blocked, cancelled, or budget-limited. `run --goal <id>` starts that
+same loop from a saved record. Never describe or implement `goal` as one normal
+agent run.
+
 ## Local agent rules
 
 When `.agents/AGENTS.md` exists, agents must read it and every rule module it

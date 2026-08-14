@@ -49,6 +49,7 @@ const session_mod = @import("../agent/session.zig");
 const subprocess = @import("../agent/subprocess.zig");
 const dap = @import("../debug/dap.zig");
 const goal_prompt = @import("../agent/goal_prompt.zig");
+const goal_loop = @import("../agent/goal_loop.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const sandbox_host = @import("../sandbox/host.zig");
 const agent_loop = @import("../agent/loop.zig");
@@ -385,7 +386,52 @@ fn tuiConfirm(tool_name: []const u8, args_preview: []const u8) bool {
 const RunThreadArgs = struct {
     model: *Model,
     task: []const u8,
+    goal_condition: ?[]const u8 = null,
 };
+
+const TuiGoalLoopContext = struct {
+    model: *Model,
+    agent: *Agent,
+    condition: []const u8,
+    last_err_detail: ?[]const u8 = null,
+};
+
+fn tuiGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]const u8 {
+    const loop_ctx: *TuiGoalLoopContext = @ptrCast(@alignCast(context));
+    const self = loop_ctx.model;
+    const started = std.Io.Timestamp.now(self.io, .awake);
+    const resp = loop_ctx.agent.run(&self.messages, task, &loop_ctx.last_err_detail) catch |err| return err;
+    const answer = resp.message.content orelse "";
+    self.finishTurn(answer, self.turnStats(loop_ctx.agent, started, self.messages.items));
+    return answer;
+}
+
+fn tuiGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror!goal_loop.Decision {
+    const loop_ctx: *TuiGoalLoopContext = @ptrCast(@alignCast(context));
+    const self = loop_ctx.model;
+    const prompt = try goal_loop.evaluatorTask(self.arena, loop_ctx.condition, answer);
+    const messages = [_]types.Message{
+        .{ .role = .system, .content = "You are a conservative goal-completion evaluator. Do not use tools or perform work; assess only the supplied evidence." },
+        .{ .role = .user, .content = prompt },
+    };
+    var err_detail: ?[]const u8 = null;
+    const resp = try client.chat(&self.ctx, self.arena, .{
+        .provider = &self.provider,
+        .messages = &messages,
+        .max_tokens = 300,
+    }, &err_detail);
+    return goal_loop.parseDecision(self.arena, resp.message.content orelse "");
+}
+
+fn tuiGoalLoopDecision(context: *anyopaque, turn: u32, decision: goal_loop.Decision) void {
+    const loop_ctx: *TuiGoalLoopContext = @ptrCast(@alignCast(context));
+    const self = loop_ctx.model;
+    bridge_mutex.lockUncancelable(bridge_io);
+    defer bridge_mutex.unlock(bridge_io);
+    const reason = decision.reason[0..@min(decision.reason.len, 500)];
+    const line = std.fmt.allocPrint(self.arena, "goal loop turn {d}: {s} — {s}", .{ turn, @tagName(decision.verdict), reason }) catch return;
+    self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+}
 
 fn runThreadMain(args: RunThreadArgs) void {
     defer bridge_turn_done.store(true, .release);
@@ -417,6 +463,26 @@ fn runThreadMain(args: RunThreadArgs) void {
     if (self.cfg.agent.confirm_writes == .always) a.confirm_fn = &tuiConfirm;
     a.plan_mode = self.plan_mode;
     a.research_mode = self.research_mode;
+
+    if (args.goal_condition) |condition| {
+        var goal_ctx = TuiGoalLoopContext{ .model = self, .agent = &a, .condition = condition };
+        const outcome = goal_loop.run(self.arena, condition, args.task, self.cfg.agent.max_goal_turns, .{
+            .context = &goal_ctx,
+            .run_turn = tuiGoalLoopRunTurn,
+            .evaluate = tuiGoalLoopEvaluate,
+            .on_decision = tuiGoalLoopDecision,
+        }) catch |err| {
+            const hint = errorRecoveryHint(err, goal_ctx.last_err_detail);
+            const detail = goal_ctx.last_err_detail orelse @errorName(err);
+            self.finishTurn(std.fmt.allocPrint(self.arena, "goal loop blocked: {s}{s}", .{ detail, hint }) catch "goal loop blocked", null);
+            return;
+        };
+        bridge_mutex.lockUncancelable(bridge_io);
+        defer bridge_mutex.unlock(bridge_io);
+        const line = std.fmt.allocPrint(self.arena, "goal loop {s} after {d} turn(s): {s}", .{ @tagName(outcome.verdict), outcome.turns, outcome.reason }) catch return;
+        self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+        return;
+    }
 
     // Wall time spans the whole turn, tool rounds included, because that is
     // the wait the person at the keyboard actually sat through.
@@ -786,7 +852,7 @@ const CommandAction = union(enum) {
     model,
     workflows,
     workflow,
-    /// Routes into a goal-design agent turn (see `runGoalTask`).
+    /// Starts a continuing goal loop (see `runGoalTask`).
     goal,
     /// Invokes the draft-only write_goal tool directly (see `runWriteGoal`).
     write_goal,
@@ -843,7 +909,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/status", .help = "show instance identity and configured peers", .action = .{ .tool = .{ .name = "status", .args = "" } } },
     .{ .name = "/tools", .help = "list registered tools (same as clanker tools)", .action = .{ .tool = .{ .name = "tools", .args = "" } } },
     .{ .name = "/plugins", .aliases = &.{"/plugin"}, .takes_args = true, .arg_hint = "[on|off <name>]", .help = "list plugins or switch an optional one on or off", .action = .{ .tool = .{ .name = "plugins", .args = "", .forward_args = true } } },
-    .{ .name = "/goal", .takes_args = true, .arg_hint = "<prompt>", .help = "execute a goal directly", .action = .goal },
+    .{ .name = "/goal", .takes_args = true, .arg_hint = "<completion condition>", .help = "start a goal loop until achieved or blocked", .action = .goal },
     .{ .name = "/write-goal", .takes_args = true, .arg_hint = "<intent>", .help = "draft a structured goal without saving it", .action = .write_goal },
     .{ .name = "/add-goal", .takes_args = true, .arg_hint = "<objective> :: <completion criterion>", .help = "persist a structured goal without running it", .action = .add_goal },
     .{ .name = "/autoresearch", .takes_args = true, .arg_hint = "...", .help = "measurement loop (see /autoresearch --help)", .action = .autoresearch },
@@ -2807,12 +2873,12 @@ const Model = struct {
         return try self.gpa.dupe(u8, expanded);
     }
 
-    /// Submits a direct goal-execution task through the agent, exactly like
-    /// `clanker goal "<prompt>"`. Runs as a normal turn so it streams, is
-    /// saved to the session, and can be stopped like any other task.
+    /// Starts a continuing goal loop through the agent, exactly like
+    /// `clanker goal "<prompt>"`. It streams and remains cancellable as one
+    /// worker while completed turns are evaluated and continued.
     fn runGoalTask(self: *Model, ctx: *vxfw.EventContext, intent: []const u8) bool {
         const task = goal_prompt.task(self.arena, intent) catch return true;
-        self.submitTask(ctx, task) catch |err| {
+        self.submitTaskWithGoal(ctx, task, intent) catch |err| {
             self.lines.append(self.arena, .{
                 .text = std.fmt.allocPrint(self.arena, "error: could not start goal task: {s}", .{@errorName(err)}) catch "error: could not start goal task",
                 .dim = true,
@@ -2864,6 +2930,13 @@ const Model = struct {
     /// finishTurn's read of self.thread against this store, seeing it still
     /// null and leaking the handle.
     fn submitTask(self: *Model, ctx: *vxfw.EventContext, task: []const u8) !void {
+        return self.submitTaskWithGoal(ctx, task, null);
+    }
+
+    /// Shared task-submission plumbing. A non-null `goal_condition` turns
+    /// the spawned worker into a continuing goal loop; ordinary chat tasks
+    /// remain one agent turn.
+    fn submitTaskWithGoal(self: *Model, ctx: *vxfw.EventContext, task: []const u8, goal_condition: ?[]const u8) !void {
         // Submitting snaps a scrolled-up view back to the tail: the echoed
         // task and the streamed reply land there, and hiding them behind a
         // frozen window would make Enter look like it did nothing.
@@ -2895,7 +2968,11 @@ const Model = struct {
             const t = session_mod.titleFromTask(&title_buf, owned_task);
             self.session_title = try self.arena.dupe(u8, t);
         }
-        self.thread = try std.Thread.spawn(.{}, runThreadMain, .{RunThreadArgs{ .model = self, .task = owned_task }});
+        self.thread = try std.Thread.spawn(.{}, runThreadMain, .{RunThreadArgs{
+            .model = self,
+            .task = owned_task,
+            .goal_condition = if (goal_condition) |condition| try self.arena.dupe(u8, condition) else null,
+        }});
 
         // Kick off the tick heartbeat that picks up streamed deltas -- unless
         // the mascot's own heartbeat is already running, in which case the

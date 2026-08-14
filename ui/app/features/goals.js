@@ -401,6 +401,10 @@ function runGoal(g, opts) {
       var evt;
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
       if (evt.type === "error") appendGoalText(g.id, "\n[" + evt.message + "]\n");
+      else if (evt.type === "goal" && evt.status) {
+        appendGoalText(g.id, "[ goal loop turn " + (evt.turn || "?") + ": " + evt.status +
+          (evt.reason ? " — " + evt.reason : "") + " ]\n");
+      }
       // A status event is a run lifecycle note (contacting the provider,
       // processing, a steering message being applied) rather than answer
       // text: show it as a bracketed log line so a run that has just started
@@ -444,8 +448,8 @@ function runGoal(g, opts) {
       el.goalsStatus.textContent = "Goal run finished — waiting for review.";
       moveGoalCard(g, "review");
       logGoalRun(g, "finished");
-      // The server moved the goal to review when the run completed; re-fetch
-      // so the card and its status pill say so without a manual refresh.
+      // The server records the loop's achieved/review or blocked result; re-fetch
+      // so the card and its status pill show that durable verdict.
       loadGoals();
       if (opts.onDone) opts.onDone("finished");
     }

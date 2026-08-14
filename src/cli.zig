@@ -26,6 +26,7 @@ const subagent = @import("agent/subagent.zig");
 const private_todos = @import("agent/private_todos.zig");
 const graph = @import("agent/graph.zig");
 const goal_prompt = @import("agent/goal_prompt.zig");
+const goal_loop = @import("agent/goal_loop.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
 const raw_http = @import("util/raw_http.zig");
@@ -142,6 +143,11 @@ pub const Options = struct {
     /// a reviewable contract, not a raw prompt, so the CLI receives its two
     /// required fields separately rather than inventing one from the objective.
     goal_completion_criterion: ?[]const u8 = null,
+    /// Internal routing state for `goal` and `run "/goal …"`. It is never a
+    /// user-facing flag: persisted `--goal <id>` also enables the same loop.
+    goal_loop: bool = false,
+    /// Raw completion condition for a non-persisted goal loop.
+    goal_condition: ?[]const u8 = null,
     session: ?[]const u8 = null,
     goal: ?[]const u8 = null,
     peer: ?[]const u8 = null,
@@ -956,6 +962,13 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
         }
     }
 
+    // A selected persisted goal already contains the work order. Let
+    // `clanker run --goal <id>` start its loop without inventing an empty
+    // positional argument; `--goal none` remains an explicit request for an
+    // ordinary task and therefore still requires one.
+    if (opts.command == .run and opts.task == null and opts.goal != null and !std.mem.eql(u8, opts.goal.?, "none")) {
+        opts.task = "";
+    }
     if (opts.command == .run and opts.task == null) return error.MissingTask;
     // goal, write-goal, improve-self and revert all take one required positional too, but
     // used to fall through to a bare error name at runtime (exit 1) instead
@@ -1657,9 +1670,9 @@ const Spec = struct {
 /// `--verbose`/`-v`, `--help`/`-h` and `--version` are accepted everywhere and
 /// so are not listed per command.
 const specs = [_]Spec{
-    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal, .worktree }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        run against a persisted goal\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
+    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal, .worktree }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
     .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
-    .{ .command = .goal, .usage = "goal \"<prompt>\"", .blurb = "execute a goal directly", .group = .work, .flags = &.{ .provider, .model }, .detail = "Runs the goal loop directly from the supplied prompt. It does not require a write-goal draft or an added goal. Use `add-goal` when you want to persist a goal for a later `run --goal <id>`, and `write-goal` when you only want a structured draft." },
+    .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model }, .detail = "Starts work immediately, then evaluates every completed agent turn against the supplied condition and continues until achieved, blocked, or the goal-turn budget ends. It does not require a write-goal draft or an added goal. Use `add-goal` when you want to persist a goal for a later `run --goal <id>`, and `write-goal` when you only want a structured draft." },
     .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the write_goal tool directly and prints a reviewable draft. It never writes state/goals.json or starts an agent run." },
     .{ .command = .add_goal, .usage = "add-goal \"<objective>\" \"<completion criterion>\"", .blurb = "persist a goal without running it", .group = .work, .detail = "Calls the add_goal tool directly. It writes the supplied structured goal to state/goals.json and prints its id, but never starts work. Run it later with `clanker run --goal <id>` or from the goal board. Use `write-goal` first if you need help drafting the two fields." },
     .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--iters <n>        cap the number of attempts (default 3)\n--dry-run          propose changes without applying them" },
@@ -3421,8 +3434,9 @@ fn goalSlashIntent(task: []const u8) ?[]const u8 {
     return std.mem.trim(u8, trimmed[command.len..], " \t");
 }
 
-// `cmdGoal` deliberately delegates to the normal run lifecycle, while this
-// entry point recognizes the `/goal` execution alias. Name the error set to
+// `cmdGoal` deliberately delegates setup to the normal run lifecycle but
+// marks the result as a continuing goal loop; this entry point recognizes the
+// `/goal` alias. Name the error set to
 // keep that intentional routing cycle out of Zig's inferred-error analysis.
 fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
     if (opts.task) |task| {
@@ -3606,6 +3620,17 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
         cfg.modules.goal and cfg.modules.goal_auto_steer and opts.goal == null and !cfg.agent.isolated_cli,
     );
     const task_text_ = resolved_task.task;
+    // A raw `goal`/`/goal` carries its condition directly. An explicit saved
+    // `--goal <id>` uses the persisted completion criterion. Ambient
+    // auto-steering remains an ordinary run: it supplies context, but does not
+    // silently turn every chat task into an unattended multi-turn loop.
+    const starts_goal_loop = opts.goal_loop or requested_goal != null;
+    const goal_condition = if (opts.goal_condition) |condition|
+        condition
+    else if (starts_goal_loop and requested_goal != null) blk: {
+        const saved = (try loadGoalById(arena, io, std.Io.Dir.cwd(), requested_goal.?)) orelse return error.GoalNotFound;
+        break :blk if (saved.completion_criterion.len > 0) saved.completion_criterion else saved.objective;
+    } else "";
 
     // When the run lives in its own git worktree (whether via `--worktree`
     // / `-wt` or a goal-steered run), tell the agent up front. It is running
@@ -3661,48 +3686,71 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
     // animation to clean up out of a captured log.
     run_answer_started = false;
     run_md = .{};
-    const turn_start = std.Io.Timestamp.now(io, .awake);
-    const resp = a.run(&messages, task_text, &err_detail) catch |err| {
-        // Running out of iterations or budget is an outcome, not a crash. The
-        // run did real work, often minutes of it and a measurable amount of
-        // money, and returning the error threw all of it away behind a Zig
-        // stack trace that points at loop.zig internals and reads like a bug
-        // in the harness.
-        switch (err) {
-            error.MaxIterationsExceeded, error.SessionTokenBudgetExceeded => {
-                try reportUnfinishedRun(&out_w, &messages, &a, err);
-                std.process.exit(1);
-            },
-            else => {},
+    if (starts_goal_loop) {
+        var loop_ctx = CliGoalLoopContext{
+            .a = &a,
+            .messages = &messages,
+            .ctx = &ctx,
+            .arena = arena,
+            .provider = provider,
+            .condition = goal_condition,
+        };
+        const outcome = goal_loop.run(arena, goal_condition, task_text, cfg.agent.max_goal_turns, .{
+            .context = &loop_ctx,
+            .run_turn = cliGoalLoopRunTurn,
+            .evaluate = cliGoalLoopEvaluate,
+            .on_decision = cliGoalLoopDecision,
+        }) catch |err| {
+            const detail = enrichRunError(arena, provider.name, false, err_detail orelse @errorName(err));
+            log.log(.error_, "goal loop stopped: {s}", .{detail});
+            return err;
+        };
+        log.log(.info, "goal loop {s} after {d} turn(s): {s}", .{ @tagName(outcome.verdict), outcome.turns, outcome.reason });
+        if (resolved_task.goal_id) |gid| {
+            recordGoalLoopOutcome(io, init.gpa, std.Io.Dir.cwd(), gid, outcome);
         }
-        const detail = enrichRunError(arena, provider.name, false, err_detail orelse @errorName(err));
-        log.log(.error_, "{s}", .{detail});
-        return err;
-    };
+    } else {
+        const turn_start = std.Io.Timestamp.now(io, .awake);
+        const resp = a.run(&messages, task_text, &err_detail) catch |err| {
+            // Running out of iterations or budget is an outcome, not a crash. The
+            // run did real work, often minutes of it and a measurable amount of
+            // money, and returning the error threw all of it away behind a Zig
+            // stack trace that points at loop.zig internals and reads like a bug
+            // in the harness.
+            switch (err) {
+                error.MaxIterationsExceeded, error.SessionTokenBudgetExceeded => {
+                    try reportUnfinishedRun(&out_w, &messages, &a, err);
+                    std.process.exit(1);
+                },
+                else => {},
+            }
+            const detail = enrichRunError(arena, provider.name, false, err_detail orelse @errorName(err));
+            log.log(.error_, "{s}", .{detail});
+            return err;
+        };
 
-    const streamed = a.on_token != null and cfg.modules.streaming;
-    if (!streamed) {
-        if (run_stdout_color) try out_w.interface.writeAll("\x1b[1;35m\xe2\x80\xba \x1b[0m");
-        if (resp.message.content) |c| {
-            if (run_stdout_color) {
-                run_md.feed(&out_w.interface, c);
-            } else {
-                try out_w.interface.writeAll(c);
+        const streamed = a.on_token != null and cfg.modules.streaming;
+        if (!streamed) {
+            if (run_stdout_color) try out_w.interface.writeAll("\x1b[1;35m\xe2\x80\xba \x1b[0m");
+            if (resp.message.content) |c| {
+                if (run_stdout_color) {
+                    run_md.feed(&out_w.interface, c);
+                } else {
+                    try out_w.interface.writeAll(c);
+                }
             }
         }
+        if (run_stdout_color) run_md.flush(&out_w.interface);
+        try out_w.interface.writeAll("\n");
+        try out_w.interface.flush();
+
+        printTurnStats(io, arena, &a, provider, turn_start, messages.items);
+
+        // An ordinary goal-steered run is a one-turn review candidate. A
+        // real explicit `--goal` loop is handled above and distinguishes
+        // achieved from blocked instead of unconditionally parking here.
+        if (resolved_task.goal_id) |gid| setGoalStatusIf(io, init.gpa, std.Io.Dir.cwd(), gid, "active", "review");
     }
-    if (run_stdout_color) run_md.flush(&out_w.interface);
-    try out_w.interface.writeAll("\n");
-    try out_w.interface.flush();
-
-    printTurnStats(io, arena, &a, provider, turn_start, messages.items);
-
-    // The run this goal carried completed: move it to review so it stops
-    // being picked up as still-active work. `resolved_task.goal_id` covers
-    // both `--goal <id>` and auto-steer alike, using only an explicit id
-    // here previously left every auto-steered goal `active` forever, so the
-    // same one kept being re-run from scratch on each later invocation.
-    if (resolved_task.goal_id) |gid| setGoalStatusIf(io, init.gpa, std.Io.Dir.cwd(), gid, "active", "review");
 
     if (opts.session) |sid| {
         var title_buf: [session.title_max]u8 = undefined;
@@ -4085,6 +4133,114 @@ fn runDelta(delta: []const u8) void {
         w.interface.writeAll(delta) catch {};
     }
     w.interface.flush() catch {};
+}
+
+/// Surface adapter for the shared goal-loop driver. The agent and its message
+/// list stay alive across turns, so each continuation sees the work and proof
+/// from the previous turn rather than starting a fresh, amnesiac run.
+const CliGoalLoopContext = struct {
+    a: *agent.Agent,
+    messages: *std.ArrayList(types.Message),
+    ctx: *client.Ctx,
+    arena: std.mem.Allocator,
+    provider: *const config.Provider,
+    condition: []const u8,
+};
+
+fn cliGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]const u8 {
+    const loop_ctx: *CliGoalLoopContext = @ptrCast(@alignCast(context));
+    const out = run_out orelse return error.NoRunOutput;
+    var err_detail: ?[]const u8 = null;
+    run_answer_started = false;
+    run_md = .{};
+    const started = std.Io.Timestamp.now(loop_ctx.ctx.io, .awake);
+    const resp = try loop_ctx.a.run(loop_ctx.messages, task, &err_detail);
+    const streamed = loop_ctx.a.on_token != null and loop_ctx.a.cfg.modules.streaming;
+    const content = resp.message.content orelse "";
+    if (!streamed) {
+        if (run_stdout_color) try out.interface.writeAll("\x1b[1;35m› \x1b[0m");
+        if (run_stdout_color) {
+            run_md.feed(&out.interface, content);
+        } else {
+            try out.interface.writeAll(content);
+        }
+    }
+    if (run_stdout_color) run_md.flush(&out.interface);
+    try out.interface.writeAll("\n");
+    try out.interface.flush();
+    printTurnStats(loop_ctx.ctx.io, loop_ctx.arena, loop_ctx.a, loop_ctx.provider, started, loop_ctx.messages.items);
+    return content;
+}
+
+fn cliGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror!goal_loop.Decision {
+    const loop_ctx: *CliGoalLoopContext = @ptrCast(@alignCast(context));
+    const prompt = try goal_loop.evaluatorTask(loop_ctx.arena, loop_ctx.condition, answer);
+    const messages = [_]types.Message{
+        .{ .role = .system, .content = "You are a conservative goal-completion evaluator. Do not use tools or perform work; assess only the supplied evidence." },
+        .{ .role = .user, .content = prompt },
+    };
+    var err_detail: ?[]const u8 = null;
+    const resp = try client.chat(loop_ctx.ctx, loop_ctx.arena, .{
+        .provider = loop_ctx.provider,
+        .messages = &messages,
+        .max_tokens = 300,
+    }, &err_detail);
+    return goal_loop.parseDecision(loop_ctx.arena, resp.message.content orelse "");
+}
+
+fn cliGoalLoopDecision(_: *anyopaque, turn: u32, decision: goal_loop.Decision) void {
+    const capped = decision.reason[0..@min(decision.reason.len, 500)];
+    log.log(.info, "goal loop turn {d}: {s}: {s}", .{ turn, @tagName(decision.verdict), capped });
+}
+
+/// Server adapter for the same goal-loop driver. A streamed request receives
+/// each agent turn through the established callbacks plus an evaluator status
+/// event; a non-streaming caller receives all completed turn text together.
+const ServerGoalLoopContext = struct {
+    a: *agent.Agent,
+    messages: *std.ArrayList(types.Message),
+    ctx: *client.Ctx,
+    arena: std.mem.Allocator,
+    provider: *const config.Provider,
+    condition: []const u8,
+    answers: *std.ArrayList(u8),
+    last_err_detail: ?[]const u8 = null,
+};
+
+fn serverGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]const u8 {
+    const loop_ctx: *ServerGoalLoopContext = @ptrCast(@alignCast(context));
+    const resp = loop_ctx.a.run(loop_ctx.messages, task, &loop_ctx.last_err_detail) catch |err| return err;
+    const answer = resp.message.content orelse "";
+    if (loop_ctx.answers.items.len > 0) try loop_ctx.answers.appendSlice(loop_ctx.arena, "\n\n");
+    try loop_ctx.answers.appendSlice(loop_ctx.arena, answer);
+    return answer;
+}
+
+fn serverGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror!goal_loop.Decision {
+    const loop_ctx: *ServerGoalLoopContext = @ptrCast(@alignCast(context));
+    const prompt = try goal_loop.evaluatorTask(loop_ctx.arena, loop_ctx.condition, answer);
+    const messages = [_]types.Message{
+        .{ .role = .system, .content = "You are a conservative goal-completion evaluator. Do not use tools or perform work; assess only the supplied evidence." },
+        .{ .role = .user, .content = prompt },
+    };
+    var err_detail: ?[]const u8 = null;
+    const resp = try client.chat(loop_ctx.ctx, loop_ctx.arena, .{
+        .provider = loop_ctx.provider,
+        .messages = &messages,
+        .max_tokens = 300,
+    }, &err_detail);
+    return goal_loop.parseDecision(loop_ctx.arena, resp.message.content orelse "");
+}
+
+fn serverGoalLoopDecision(context: *anyopaque, turn: u32, decision: goal_loop.Decision) void {
+    _ = context;
+    if (run_stream_socket) |fd| {
+        writeStreamEvent(fd, "goal", .{
+            .turn = turn,
+            .status = @tagName(decision.verdict),
+            .reason = decision.reason[0..@min(decision.reason.len, 500)],
+        });
+    }
 }
 
 /// Runs one REPL turn for `task` (arena-owned): appends the user message, runs
@@ -4798,6 +4954,8 @@ fn cmdGoal(init: std.process.Init, opts: Options) !void {
     const task = try goal_prompt.task(arena, intent);
     var goal_opts = opts;
     goal_opts.task = task;
+    goal_opts.goal_loop = true;
+    goal_opts.goal_condition = intent;
     try cmdRun(init, goal_opts);
 }
 
@@ -7352,6 +7510,38 @@ fn setGoalStatusIf(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, goal_id:
     log.log(.info, "goal '{s}' moved {s} -> {s} (run completed)", .{ goal_id, from, to });
 }
 
+/// Persist the terminal result of a continuing goal loop. Review means the
+/// evaluator found the condition achieved and the operator can make the final
+/// workflow decision; blocked carries the reason that prevented another turn.
+fn recordGoalLoopOutcome(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, goal_id: []const u8, outcome: goal_loop.Outcome) void {
+    var guard = file_lock.acquire(io, dir, "state", "goals", gpa);
+    defer guard.release();
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const raw = dir.readFileAlloc(io, goals_path, arena, .limited(1 << 20)) catch return;
+    const list = std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true }) catch return;
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    var hit = false;
+    for (list) |*g| {
+        if (!std.mem.eql(u8, g.id, goal_id)) continue;
+        if (!std.mem.eql(u8, g.status, "active")) return;
+        g.status = if (outcome.verdict == .achieved) "review" else "blocked";
+        g.goal_loop_reason = outcome.reason;
+        g.goal_loop_turns = outcome.turns;
+        g.updated = now;
+        hit = true;
+        break;
+    }
+    if (!hit) return;
+    var enc: std.Io.Writer.Allocating = .init(arena);
+    std.json.Stringify.value(list, .{ .emit_null_optional_fields = false }, &enc.writer) catch return;
+    atomic_write.writeFile(io, dir, goals_path, enc.written()) catch |err| {
+        log.log(.warn, "goal '{s}' loop outcome could not be recorded: {s}", .{ goal_id, @errorName(err) });
+        return;
+    };
+}
+
 /// Persist the concrete worktree branch on the goal as soon as a run is
 /// assigned one. This is deliberately server-side: a config-defaulted goal
 /// run has no checkbox write from the browser, but its card must still say
@@ -7409,6 +7599,32 @@ test "a finished run moves its goal to review, and only from active" {
     try std.testing.expectEqualStrings("review", goals[0].status);
     try std.testing.expect(goals[0].updated > 1);
     try std.testing.expectEqualStrings("done", goals[1].status);
+}
+
+test "goal loop outcome records terminal status, reason, and turns" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.writeFile(io, .{ .sub_path = goals_path, .data =
+        \\[{"id":"g1","objective":"a","completion_criterion":"b","status":"active","created":1,"updated":1}]
+    });
+
+    recordGoalLoopOutcome(io, std.testing.allocator, tmp.dir, "g1", .{
+        .verdict = .blocked,
+        .turns = 3,
+        .reason = "waiting on credentials",
+    });
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const raw = try tmp.dir.readFileAlloc(io, goals_path, arena_state.allocator(), .limited(1 << 20));
+    const goals = try std.json.parseFromSliceLeaky([]StoredGoal, arena_state.allocator(), raw, .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqualStrings("blocked", goals[0].status);
+    try std.testing.expectEqualStrings("waiting on credentials", goals[0].goal_loop_reason);
+    try std.testing.expectEqual(@as(u32, 3), goals[0].goal_loop_turns);
 }
 
 test "concurrent goal status updates do not lose each other" {
@@ -10237,6 +10453,11 @@ const StoredGoal = struct {
     boundaries: []const u8 = "",
     stop_rule: []const u8 = "",
     status: []const u8 = "active",
+    /// Last terminal result from the continuing goal loop. Kept on the goal
+    /// rather than only in a transient stream so a later board visit can say
+    /// why work stopped.
+    goal_loop_reason: []const u8 = "",
+    goal_loop_turns: u32 = 0,
     max_iterations: ?u32 = null,
     /// Truthy when this goal runs in its own git worktree: either the web
     /// UI's flag (`"true"`) or the `goal` tool's branch/path. Omitted when the
@@ -10253,7 +10474,7 @@ const StoredGoal = struct {
 fn validGoalStatus(s: []const u8) bool {
     return std.mem.eql(u8, s, "active") or std.mem.eql(u8, s, "done") or
         std.mem.eql(u8, s, "archived") or std.mem.eql(u8, s, "abandoned") or
-        std.mem.eql(u8, s, "review");
+        std.mem.eql(u8, s, "review") or std.mem.eql(u8, s, "blocked");
 }
 
 test validGoalStatus {
@@ -10262,6 +10483,7 @@ test validGoalStatus {
     try std.testing.expect(validGoalStatus("abandoned"));
     try std.testing.expect(validGoalStatus("archived"));
     try std.testing.expect(validGoalStatus("review"));
+    try std.testing.expect(validGoalStatus("blocked"));
     try std.testing.expect(!validGoalStatus("Active"));
     try std.testing.expect(!validGoalStatus(""));
     try std.testing.expect(!validGoalStatus("deleted; drop table"));
@@ -11465,12 +11687,23 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     }
 
+    // The HTTP surface accepts the same raw `/goal <condition>` spelling as
+    // the CLI. The web board normally sends a saved id instead, but preserving
+    // this route keeps every public entry point on the one goal-loop contract.
+    const raw_goal_condition = goalSlashIntent(req.task);
+    const requested_task = if (raw_goal_condition) |condition|
+        goal_prompt.task(arena, condition) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not prepare goal task\"}");
+            return;
+        }
+    else
+        req.task;
     const explicit_goal_id: ?[]const u8 = if (req.goal.len > 0) req.goal else null;
     const resolved = resolveRunTask(
         arena,
         io,
         std.Io.Dir.cwd(),
-        req.task,
+        requested_task,
         explicit_goal_id,
         cfg.modules.goal and cfg.modules.goal_auto_steer and explicit_goal_id == null and !cfg.agent.isolated_webui,
     ) catch |err| {
@@ -11482,6 +11715,16 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     };
     const task_text = resolved.task;
+    const starts_goal_loop = raw_goal_condition != null or explicit_goal_id != null;
+    const goal_condition = if (raw_goal_condition) |condition|
+        condition
+    else if (explicit_goal_id) |id| blk: {
+        const saved = (loadGoalById(arena, io, std.Io.Dir.cwd(), id) catch null) orelse {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"goal not found\"}");
+            return;
+        };
+        break :blk if (saved.completion_criterion.len > 0) saved.completion_criterion else saved.objective;
+    } else "";
     // Inject knowledge context when requested, selected collections' documents
     // are prepended to the task so the model sees them without extra tool calls.
     // The boundary is part of the prompt contract: collection contents are
@@ -11827,21 +12070,51 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // happens entirely server-side.
         if (resolved.goal_id) |gid| writeStreamEvent(stream.socket.handle, "goal", .{ .id = gid });
         const t0 = std.Io.Timestamp.now(io, .awake);
-        const resp = a.run(&messages, final_task, &err_detail) catch |err| {
-            const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
-            writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
-            return;
+        var answers: std.ArrayList(u8) = .empty;
+        var loop_outcome: ?goal_loop.Outcome = null;
+        const streamed_content = if (starts_goal_loop) blk: {
+            var loop_ctx = ServerGoalLoopContext{
+                .a = &a,
+                .messages = &messages,
+                .ctx = &ctx,
+                .arena = arena,
+                .provider = provider,
+                .condition = goal_condition,
+                .answers = &answers,
+            };
+            const outcome = goal_loop.run(arena, goal_condition, final_task, run_cfg.agent.max_goal_turns, .{
+                .context = &loop_ctx,
+                .run_turn = serverGoalLoopRunTurn,
+                .evaluate = serverGoalLoopEvaluate,
+                .on_decision = serverGoalLoopDecision,
+            }) catch |err| {
+                const detail = enrichRunError(arena, provider.name, had_images, loop_ctx.last_err_detail orelse @errorName(err));
+                writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
+                return;
+            };
+            loop_outcome = outcome;
+            writeStreamEvent(stream.socket.handle, "status", .{ .message = std.fmt.allocPrint(arena, "Goal loop {s} after {d} turn(s): {s}", .{ @tagName(outcome.verdict), outcome.turns, outcome.reason }) catch "Goal loop finished." });
+            break :blk answers.items;
+        } else blk: {
+            const resp = a.run(&messages, final_task, &err_detail) catch |err| {
+                const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
+                writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
+                return;
+            };
+            break :blk resp.message.content orelse "";
         };
         // When modules.streaming is off the agent never invokes on_token,
         // so nothing was streamed, write the answer directly or the client
         // would receive an empty body (just the trailer) for a successful run.
         if (!cfg.modules.streaming) {
-            if (resp.message.content) |c| raw_http.writeAllFd(stream.socket.handle, c);
+            raw_http.writeAllFd(stream.socket.handle, streamed_content);
         }
-        // The run this goal carried completed: the goal moves to review and
-        // waits for a human verdict. Server-side, so the flip happens even
-        // when the tab that started the run is long gone.
-        if (resolved.goal_id) |gid| setGoalStatusIf(io, gpa, std.Io.Dir.cwd(), gid, "active", "review");
+        if (resolved.goal_id) |gid| {
+            if (loop_outcome) |outcome|
+                recordGoalLoopOutcome(io, gpa, std.Io.Dir.cwd(), gid, outcome)
+            else
+                setGoalStatusIf(io, gpa, std.Io.Dir.cwd(), gid, "active", "review");
+        }
         if (has_session) {
             var title_buf: [session.title_max]u8 = undefined;
             const title = session.nextTitle(&title_buf, prev_title, session.titleSource(messages.items, if (req.task.len > 0) req.task else final_task));
@@ -11867,30 +12140,74 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     }
 
-    const resp = a.run(&messages, final_task, &err_detail) catch |err| {
-        const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
-        // Escape `detail` through the JSON stringifier: provider error text
-        // can contain quotes, backslashes, or newlines that plain bufPrint
-        // interpolation would turn into malformed JSON clients cannot parse.
-        var ebuf: [8192]u8 = undefined;
-        var ew: std.Io.Writer = .fixed(&ebuf);
-        var es = std.json.Stringify{ .writer = &ew, .options = .{ .emit_null_optional_fields = false } };
-        const built = err_body: {
-            es.beginObject() catch break :err_body false;
-            es.objectField("ok") catch break :err_body false;
-            es.write(false) catch break :err_body false;
-            es.objectField("error") catch break :err_body false;
-            es.write(detail) catch break :err_body false;
-            es.endObject() catch break :err_body false;
-            break :err_body true;
+    var answers: std.ArrayList(u8) = .empty;
+    var loop_outcome: ?goal_loop.Outcome = null;
+    const content = if (starts_goal_loop) blk: {
+        var loop_ctx = ServerGoalLoopContext{
+            .a = &a,
+            .messages = &messages,
+            .ctx = &ctx,
+            .arena = arena,
+            .provider = provider,
+            .condition = goal_condition,
+            .answers = &answers,
         };
-        respond(stream, 500, "Internal Server Error", if (built) ebuf[0..ew.end] else "{\"ok\":false,\"error\":\"run failed\"}");
-        return;
+        const outcome = goal_loop.run(arena, goal_condition, final_task, run_cfg.agent.max_goal_turns, .{
+            .context = &loop_ctx,
+            .run_turn = serverGoalLoopRunTurn,
+            .evaluate = serverGoalLoopEvaluate,
+        }) catch |err| {
+            const detail = enrichRunError(arena, provider.name, had_images, loop_ctx.last_err_detail orelse @errorName(err));
+            // Escape `detail` through the JSON stringifier: provider error text
+            // can contain quotes, backslashes, or newlines that plain bufPrint
+            // interpolation would turn into malformed JSON clients cannot parse.
+            var ebuf: [8192]u8 = undefined;
+            var ew: std.Io.Writer = .fixed(&ebuf);
+            var es = std.json.Stringify{ .writer = &ew, .options = .{ .emit_null_optional_fields = false } };
+            const built = err_body: {
+                es.beginObject() catch break :err_body false;
+                es.objectField("ok") catch break :err_body false;
+                es.write(false) catch break :err_body false;
+                es.objectField("error") catch break :err_body false;
+                es.write(detail) catch break :err_body false;
+                es.endObject() catch break :err_body false;
+                break :err_body true;
+            };
+            respond(stream, 500, "Internal Server Error", if (built) ebuf[0..ew.end] else "{\"ok\":false,\"error\":\"goal loop failed\"}");
+            return;
+        };
+        loop_outcome = outcome;
+        break :blk answers.items;
+    } else blk: {
+        const resp = a.run(&messages, final_task, &err_detail) catch |err| {
+            const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
+            // Escape `detail` through the JSON stringifier: provider error text
+            // can contain quotes, backslashes, or newlines that plain bufPrint
+            // interpolation would turn into malformed JSON clients cannot parse.
+            var ebuf: [8192]u8 = undefined;
+            var ew: std.Io.Writer = .fixed(&ebuf);
+            var es = std.json.Stringify{ .writer = &ew, .options = .{ .emit_null_optional_fields = false } };
+            const built = err_body: {
+                es.beginObject() catch break :err_body false;
+                es.objectField("ok") catch break :err_body false;
+                es.write(false) catch break :err_body false;
+                es.objectField("error") catch break :err_body false;
+                es.write(detail) catch break :err_body false;
+                es.endObject() catch break :err_body false;
+                break :err_body true;
+            };
+            respond(stream, 500, "Internal Server Error", if (built) ebuf[0..ew.end] else "{\"ok\":false,\"error\":\"run failed\"}");
+            return;
+        };
+        break :blk resp.message.content orelse "";
     };
 
-    // Same as the streaming path: a completed goal run parks its goal in
-    // review rather than leaving it active.
-    if (resolved.goal_id) |gid| setGoalStatusIf(io, gpa, std.Io.Dir.cwd(), gid, "active", "review");
+    if (resolved.goal_id) |gid| {
+        if (loop_outcome) |outcome|
+            recordGoalLoopOutcome(io, gpa, std.Io.Dir.cwd(), gid, outcome)
+        else
+            setGoalStatusIf(io, gpa, std.Io.Dir.cwd(), gid, "active", "review");
+    }
 
     if (has_session) {
         var title_buf: [session.title_max]u8 = undefined;
@@ -11905,7 +12222,6 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         }) catch |err| log.log(.error_, "session '{s}' not saved: {s}", .{ req.session, @errorName(err) });
     }
 
-    const content = resp.message.content orelse "";
     var rbuf: [1 << 20]u8 = undefined;
     var w: std.Io.Writer = .fixed(&rbuf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -13246,6 +13562,11 @@ test "add-goal accepts two fields and goal slash tasks route deliberately" {
     try std.testing.expectEqualStrings("<completion criterion>", diag);
     try std.testing.expectEqualStrings("fix the web UI", goalSlashIntent(" /goal fix the web UI ").?);
     try std.testing.expect(goalSlashIntent("/goalkeeper fixes") == null);
+
+    const saved_goal = try parse(&.{ "clanker", "run", "--goal", "g-123" }, null);
+    try std.testing.expectEqual(Command.run, saved_goal.command);
+    try std.testing.expectEqualStrings("g-123", saved_goal.goal.?);
+    try std.testing.expectEqualStrings("", saved_goal.task.?);
 }
 
 test "plugin switches have the same command shape as the REPL" {

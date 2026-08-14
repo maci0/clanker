@@ -102,9 +102,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
-- `clanker goal`, `/goal`, and `clanker run "/goal …"` now execute the supplied
-  prompt directly. They no longer require or synthesize a `write_goal` draft
-  or persisted record; use `run --goal <id>` to execute a saved goal.
+- `clanker goal`, `/goal`, and `clanker run "/goal …"` start the supplied goal
+  loop. The loop keeps taking turns until it reaches the condition or reports a
+  blocker; it does not require a `write_goal` draft or persisted record. Use
+  `run --goal <id>` to start the loop from a saved goal.
 - `serve --webui-port` is the documented spelling for the web UI listen port.
   A second surface (`--proxy-port`) now has a peer name instead of overloading
   a generic `--port`.

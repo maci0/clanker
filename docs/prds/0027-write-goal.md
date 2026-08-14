@@ -23,8 +23,8 @@ because somebody asked for help wording that contract.
 ## Non-goals
 
 - Persisting a goal. `add_goal` (`tools/zig/add_goal.zig`) owns that explicit operation.
-- Executing a goal. `goal` owns direct execution; `run --goal <id>` executes a
-  selected persisted record.
+- Executing a goal. `goal` owns starting a goal loop; `run --goal <id>` starts
+  that loop from a selected persisted record.
 - Making drafting mandatory before either operation.
 
 ## Design
@@ -56,7 +56,7 @@ The same tool is exposed on both direct surfaces:
 
 - [x] CLI and TUI invoke the same direct draft-only tool.
 - [x] A draft is never persisted or executed as a side effect.
-- [x] Direct execution and persistence work without a prior draft.
+- [x] Goal-loop execution and persistence work without a prior draft.
 
 ## Open questions / future work
 

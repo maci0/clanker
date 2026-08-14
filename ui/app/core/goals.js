@@ -6,8 +6,12 @@ export function goalSortKey(a, b) {
 }
 
 export function goalFields(g) {
+  var loopResult = g.goal_loop_reason
+    ? ((g.goal_loop_turns || 0) + " turn(s): " + g.goal_loop_reason)
+    : "";
   return [["Done when", g.completion_criterion], ["Proof", g.proof],
-    ["Boundaries", g.boundaries], ["Stop rule", g.stop_rule]]
+    ["Boundaries", g.boundaries], ["Stop rule", g.stop_rule],
+    ["Goal loop", loopResult]]
     .filter(function (pair) { return !!pair[1]; });
 }
 
@@ -19,6 +23,7 @@ export function goalFields(g) {
 export function goalStatusLabel(g, running) {
   var s = g.status || "unknown";
   if (s === "review") return "waiting for review";
+  if (s === "blocked") return "blocked";
   if (s === "active" && running) return "running";
   if (s === "archived" || s === "abandoned") return "archived";
   return s;
@@ -44,8 +49,8 @@ export function goalPinnedColumn(g, running) {
   var s = g.status || "active";
   if (s === "done") return "done";
   if (s === "review") return "review";
+  if (s === "blocked") return "review";
   if (s === "archived" || s === "abandoned") return "archive";
   if (s === "active" && running) return "doing";
   return null;
 }
-

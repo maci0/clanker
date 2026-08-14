@@ -142,7 +142,7 @@ export function postBoard(payload, status) {
           } else if (payload.column === "archive" && cur !== "archived") {
             postGoal({ id: gid, status: "archived" }, "Goal archived and retained for future learning.");
           } else if (payload.column !== doneColumn() && payload.column !== "review" && payload.column !== "archive" &&
-                     (cur === "done" || cur === "review" || cur === "archived" || cur === "abandoned")) {
+                     (cur === "done" || cur === "review" || cur === "blocked" || cur === "archived" || cur === "abandoned")) {
             postGoal({ id: gid, status: "active" }, "Goal reactivated from the board.");
           }
         }

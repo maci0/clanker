@@ -2,7 +2,7 @@
 
 Use this skill only when the caller asks to draft, define, or refine a
 structured goal. Do not intercept `clanker goal "<intent>"` or `/goal
-<intent>`: those execute the supplied goal directly. Do not make a draft a
+<intent>`: those start the supplied goal loop. Do not make a draft a
 prerequisite for `add_goal`; persistence is a separate explicit choice.
 
 Call `write_goal` with the intent (and any workspace facts you already

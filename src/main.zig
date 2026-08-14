@@ -115,6 +115,7 @@ comptime {
     _ = @import("research/auto_research.zig");
     _ = @import("agent/workflows.zig");
     _ = @import("agent/goal_prompt.zig");
+    _ = @import("agent/goal_loop.zig");
     _ = @import("schedule/cron.zig");
     _ = @import("schedule/store.zig");
     _ = @import("schedule/runner.zig");

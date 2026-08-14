@@ -662,7 +662,7 @@ Composer editing follows readline conventions: Ctrl-U kills to the start, Ctrl-K
 | `/autoresearch ...` | in-process | Measurement loop (see `/autoresearch --help`) |
 | `/write-goal <intent>` | direct tool | Draft a structured goal; never saves or runs |
 | `/add-goal <objective> :: <completion criterion>` | direct tool | Save a structured goal; never runs it |
-| `/goal <prompt>` | in-process | Execute the supplied goal directly; no draft or saved goal required |
+| `/goal <condition>` | in-process | Start a goal loop; it keeps working until the condition is met, blocked, or cancelled. No draft or saved goal required |
 | `/arena "<question>" --for X --against Y` | in-process | Run a judged debate (runs the agent, which calls the `arena` tool). `--position` x3-8 for a Battle Royale |
 | `/compare "<prompt>" [--with <p[@model]>]...` | in-process | Put one prompt to 2-8 models at once and show the answers unlabeled (runs the agent, which calls the `compare` tool) |
 | `/compare --list`, `/compare --show <id> [--pick <letter>]` | `compare` | Read stored comparisons back, and record a pick. Calls the tool directly, with no model in the loop |

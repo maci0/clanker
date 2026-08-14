@@ -227,6 +227,7 @@ Run-loop and path settings. The commonly-touched keys:
 | Key | Default | Meaning |
 |---|---|---|
 | `max_iterations` | 50 | Tool-call rounds per turn before the run stops. Hitting it errors the turn, so keep it generous for multi-file work. |
+| `max_goal_turns` | 50 | Completed agent turns a `/goal` loop may start before it reports a blocked budget outcome. This is separate from `max_iterations`, which applies inside each turn. |
 | `provider_check_timeout_seconds` | 10 | Global ceiling for `providers check`; override per provider with `check_timeout_seconds`. |
 | `ask_timeout_seconds` | 120 | How long a serve-side `ask_user`/confirm question waits for the browser before giving up. |
 | `confirm_writes` | `never` | Gate write-capable tool calls on a human's allow/deny. `browser` asks streaming web runs; `always` also opens the REPL's allow/deny modal. Runs with no human channel are never gated. |
@@ -332,6 +333,9 @@ one off removes its tools, endpoints, and prompt surface: `mcp`, `peers`,
 stays on — explicit `--goal`, `goal`, `/goal`, `write-goal`, `add-goal`, and
 tracking all still work — but a run
 with no goal named stops attaching itself to whatever goal is newest.
+
+`goal` and `/goal` start a multi-turn goal loop; `--goal <id>` starts that
+same loop from a saved goal. They are not aliases for one ordinary agent turn.
 
 ```toml
 [modules]

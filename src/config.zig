@@ -192,6 +192,10 @@ pub const Agent = struct {
     /// turn (error.MaxIterationsExceeded), so the wasted cost is the full run.
     /// 50 matches what agentic coding CLIs (grok, kimi) allow per turn.
     max_iterations: u32 = 50,
+    /// Completed agent turns a continuing `/goal` loop may start before it
+    /// reports a blocked budget outcome. This is distinct from
+    /// `max_iterations`, which limits tool/model rounds *inside* one turn.
+    max_goal_turns: u32 = 50,
     compact_threshold_bytes: usize = 24000,
     tool_result_prune_bytes: usize = 8192,
     tool_result_prune_head_bytes: usize = 4096,
@@ -399,6 +403,7 @@ pub fn toolsDirDisplay(arena: std.mem.Allocator, dirs: []const []const u8) ![]co
 /// struct (and reset `tools_dir` etc. to struct defaults).
 pub const AgentFields = struct {
     max_iterations: bool = false,
+    max_goal_turns: bool = false,
     compact_threshold_bytes: bool = false,
     tool_result_prune_bytes: bool = false,
     tool_result_prune_head_bytes: bool = false,
@@ -1669,24 +1674,25 @@ pub const Config = struct {
         var a = Agent{};
         var f = AgentFields{};
         warnUnknownKeys(obj, &.{
-            "max_iterations",                 "compact_threshold_bytes",        "tool_result_prune_bytes",
-            "tool_result_prune_head_bytes",   "tool_result_prune_tail_bytes",   "repeat_tool_thresholds",
-            "repeat_tool_exclude",            "max_total_tokens",               "max_tokens_per_turn",
-            "max_history_tokens",             "tool_catalog",                   "hot_tools",
-            "tools_dir",                      "skills_dir",                     "system_prompt_file",
-            "learnings_file",                 "global_instructions_file",       "state_dir",
-            "sandbox_root",                   "workflows_dir",                  "chains_dir",
-            "git_commit",                     "git_remote_ops",                 "exec_pattern_allow",
-            "repl_exec_allow",                "seed",                           "ask_timeout_seconds",
-            "confirm_writes",                 "provider_check_timeout_seconds", "fallback_provider",
-            "fallback_providers",             "auto_thinking",                  "thinking_classifier_model",
-            "thinking_classifier_timeout_ms", "worktree",                       "goal_worktree",
-            "git_worktree_on",                "isolated_cli",                   "isolated_tui",
+            "max_iterations",               "max_goal_turns",                 "compact_threshold_bytes",        "tool_result_prune_bytes",
+            "tool_result_prune_head_bytes", "tool_result_prune_tail_bytes",   "repeat_tool_thresholds",         "repeat_tool_exclude",
+            "max_total_tokens",             "max_tokens_per_turn",            "max_history_tokens",             "tool_catalog",
+            "hot_tools",                    "tools_dir",                      "skills_dir",                     "system_prompt_file",
+            "learnings_file",               "global_instructions_file",       "state_dir",                      "sandbox_root",
+            "workflows_dir",                "chains_dir",                     "git_commit",                     "git_remote_ops",
+            "exec_pattern_allow",           "repl_exec_allow",                "seed",                           "ask_timeout_seconds",
+            "confirm_writes",               "provider_check_timeout_seconds", "fallback_provider",              "fallback_providers",
+            "auto_thinking",                "thinking_classifier_model",      "thinking_classifier_timeout_ms", "worktree",
+            "goal_worktree",                "git_worktree_on",                "isolated_cli",                   "isolated_tui",
             "isolated_webui",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
             f.max_iterations = true;
+        }
+        if (obj.get("max_goal_turns")) |k| {
+            a.max_goal_turns = try jsonUnsigned(u32, k, "max_goal_turns");
+            f.max_goal_turns = true;
         }
         if (obj.get("compact_threshold_bytes")) |k| {
             a.compact_threshold_bytes = try jsonUnsigned(usize, k, "compact_threshold_bytes");
@@ -1907,6 +1913,7 @@ pub const Config = struct {
 
     fn applyAgentFields(dst: *Agent, src: Agent, fields: AgentFields) void {
         if (fields.max_iterations) dst.max_iterations = src.max_iterations;
+        if (fields.max_goal_turns) dst.max_goal_turns = src.max_goal_turns;
         if (fields.compact_threshold_bytes) dst.compact_threshold_bytes = src.compact_threshold_bytes;
         if (fields.tool_result_prune_bytes) dst.tool_result_prune_bytes = src.tool_result_prune_bytes;
         if (fields.tool_result_prune_head_bytes) dst.tool_result_prune_head_bytes = src.tool_result_prune_head_bytes;
