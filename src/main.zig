@@ -57,6 +57,7 @@ comptime {
     _ = @import("agent/subprocess.zig");
     _ = @import("agent/kernel.zig");
     _ = @import("debug/dap.zig");
+    _ = @import("peers/mesh.zig");
     _ = @import("agent/session.zig");
     _ = @import("agent/prune.zig");
     _ = @import("agent/graph.zig");
