@@ -31,7 +31,7 @@ and Implementation lists checkable file-level phases.
 | [0008](0008-arena.md) | Arena | In progress | Phase 3 (multi-instance) open |
 | [0009](0009-schedule.md) | Scheduled runs | Shipped | Sweep-exit Known issue |
 | [0010](0010-plugin-manifest-sdk.md) | Plugin manifest SDK | Shipped | Out-of-tree list → 0022 |
-| [0011](0011-clanker-mesh.md) | Clanker mesh | Draft | Admission/TLS decided in Design |
+| [0011](0011-clanker-mesh.md) | Clanker mesh | Draft | Serve owns sockets; leave≠drop; home-instance; Design locked |
 | [0012](0012-surface-plugins.md) | Surface plugins | Partial | Web UI shipped; TUI/CLI draft |
 | [0013](0013-ttsr.md) | TTSR | Shipped | Substring/`*` abort-and-retry |
 | [0014](0014-hashline.md) | Hashline edit format | Shipped | `hashes:true` + `op:hashline` |
@@ -48,7 +48,7 @@ and Implementation lists checkable file-level phases.
 | [0025](0025-fallback-provider-chain.md) | Fallback provider chain | Shipped | Reactive list; vision path unchanged |
 | [0026](0026-llm-proxy.md) | LLM compatibility proxy | Draft | Independent of agent-loop drafts; four-PR plan |
 | [0027](0027-write-goal.md) | write-goal drafting | Shipped | Field list settled (shipped five); proof/stop_rule read |
-| [0028](0028-hooks-bridge.md) | Lifecycle hooks (Claude Code bridge) | Implemented | Five events wired; end-to-end fixture audit pending |
+| [0028](0028-hooks-bridge.md) | Lifecycle hooks (Claude Code bridge) | Shipped | Five events, bounded policy runner, black-box fixture |
 | [0029](0029-loop-hygiene-guard.md) | Loop-hygiene guard | Shipped | Consecutive canonical-call reminders; configurable thresholds/exclusions |
 | [0030](0030-acp-server.md) | ACP server (`clanker acp`) | Draft | deepseek-code.com audit; mirrors `clanker mcp`'s shape |
 | [0031](0031-tool-result-pruning.md) | Deterministic tool-result pruning | Shipped | Request-only head/tail pruning; saved transcripts stay exact |

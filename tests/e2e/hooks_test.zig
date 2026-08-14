@@ -46,7 +46,9 @@ test "clanker run: lifecycle hooks deny inject and force one more step" {
         \\p='stop.once'
         \\first=not os.path.exists(p)
         \\open(p,'a').close()
-        \\print('{\"decision\":\"deny\",\"reason\":\"stop-hook-continue\"}' if first else '{}')"
+        \\q=chr(34)
+        \\deny='{'+q+'decision'+q+':'+q+'deny'+q+','+q+'reason'+q+':'+q+'stop-hook-continue'+q+'}'
+        \\print(deny if first else '{}')"
     ;
     const hooks_json = try std.fmt.allocPrint(gpa,
         \\{{"hooks":{{

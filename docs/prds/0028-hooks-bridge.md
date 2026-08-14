@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented. `src/hooks/` owns config loading, matching and hook execution;
+Shipped. `src/hooks/` owns config loading, matching and hook execution;
 the agent loop wires all five lifecycle points, and a bounded stdin process
 primitive now lives in
 `src/sandbox/host.zig` beside `execUnderPolicy`. Gated by `[hooks]` in
@@ -161,6 +161,8 @@ principle the plugin manifest validator already applies to a malformed
 4. `UserPromptSubmit`, `SessionStart`, `Stop` wiring.
 5. End-to-end smoke test: a real `hooks.json` fixture exercising deny,
    allow-with-context, and a blocking `Stop` hook, run through `clanker run`.
+   Shipped in `tests/e2e/hooks_test.zig`; it asserts all three effects in the
+   recorded provider requests, not only the subprocess exit status.
 
 ## Failure modes
 
