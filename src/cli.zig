@@ -5406,6 +5406,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         }
         const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
             isWebuiAssetPath(path) or
+            std.mem.eql(u8, path, "/webui/import-map.json") or
             std.mem.eql(u8, path, "/webui/vendor/preact.module.js") or std.mem.eql(u8, path, "/webui/vendor/htm.module.js") or std.mem.eql(u8, path, "/webui/vendor/signals-core.module.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
             std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js") or
@@ -5472,6 +5473,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleHttpMetrics(stream);
         } else if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui"))) {
             handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), headers_raw, stream);
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/import-map.json")) {
+            handleWebuiImportMap(io, gpa, cfg, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/preact.module.js")) {
             respondJs(gpa, stream, webui_vendor_preact, &gzip_preact, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/htm.module.js")) {
@@ -7656,7 +7659,7 @@ fn withWebuiCacheUrls(arena: std.mem.Allocator, html: []const u8, tag: []const u
     const replacement = try std.fmt.allocPrint(arena, "/webui/~{s}/", .{tag});
     const map = try std.fmt.allocPrint(
         arena,
-        \\<script type="importmap">{{"imports":{{"/webui/":"/webui/~{s}/"}}}}</script>
+        \\<script type="importmap" src="/webui/~{s}/import-map.json"></script>
     ,
         .{tag},
     );
@@ -7826,6 +7829,24 @@ fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
     else
         body;
     respondHtmlGz(gpa, stream, tagged, accepts_gzip, headers_raw);
+}
+
+fn handleWebuiImportMap(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+    const tag = webuiAssetTag(io, gpa, cfg) orelse {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui asset tag unavailable\"}");
+        return;
+    };
+    var body_buf: [128]u8 = undefined;
+    const body = std.fmt.bufPrint(&body_buf, "{{\"imports\":{{\"/webui/\":\"/webui/~{s}/\"}}}}", .{tag}) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"import map overflow\"}");
+        return;
+    };
+    request_status = 200;
+    const cache_control = webuiAssetCacheControl("no-cache");
+    var hbuf: [512]u8 = undefined;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: application/importmap+json\r\nContent-Length: {d}\r\nCache-Control: {s}\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ body.len, cache_control, connHeader() }) catch return;
+    raw_http.writeAllFd(stream.socket.handle, hdr);
+    raw_http.writeAllFd(stream.socket.handle, body);
 }
 
 /// `GET /api/runs` lists recorded runs; `GET /api/runs/<id>` returns one whole
@@ -14245,7 +14266,7 @@ test "withWebuiCacheUrls rewrites assets and injects an import map" {
     try std.testing.expect(std.mem.indexOf(u8, out, "/webui/~deadbeef/app.css") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "/webui/~deadbeef/app.js") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "type=\"importmap\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"/webui/\":\"/webui/~deadbeef/\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "src=\"/webui/~deadbeef/import-map.json\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "href=\"/webui/app.css\"") == null);
 }
 

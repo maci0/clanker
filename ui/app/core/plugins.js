@@ -68,14 +68,14 @@ export function loadPluginAssets(list) {
     if (p.has_css && !document.querySelector('link[data-plugin="' + p.name + '"]')) {
       var link = document.createElement("link");
       link.rel = "stylesheet";
-      link.href = new URL("../../plugins/" + encodeURIComponent(p.name) + "/app.css", import.meta.url).href;
+      link.href = new URL("../plugins/" + encodeURIComponent(p.name) + "/app.css", import.meta.url).href;
       link.setAttribute("data-plugin", p.name);
       document.head.appendChild(link);
     }
     if (document.querySelector('script[data-plugin="' + p.name + '"]')) return;
     pending.push(new Promise(function (resolve) {
       var s = document.createElement("script");
-      s.src = new URL("../../plugins/" + encodeURIComponent(p.name) + "/app.js", import.meta.url).href;
+      s.src = new URL("../plugins/" + encodeURIComponent(p.name) + "/app.js", import.meta.url).href;
       s.setAttribute("data-plugin", p.name);
       s.onload = function () { resolve(true); };
       s.onerror = function () {
