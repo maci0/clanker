@@ -539,6 +539,9 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
 }
 @media (max-width: 34rem) {
   #app-masthead.pf-v6-c-masthead { padding: 0.7rem 1rem; }
@@ -1194,26 +1197,27 @@ textarea:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent);
 .toolbar > .meta { margin-right: auto; font-size: 11px; }
 .toolbar > .meta:empty { display: none; }
 .toolbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); min-width: 0; }
-/* Legacy actuators for controls that skip upgradePfButton (nav links, palette rows). */
-button:not(.pf-v6-c-button) {
+/* Legacy actuators for controls that skip upgradePfButton (nav links, palette rows).
+   :where() keeps specificity at one tag so .suggestion / .rail-pin / .rail-group win. */
+button:where(:not(.pf-v6-c-button)) {
   min-height: 40px; padding: 0.5rem 1.05rem;
   font-family: var(--sans); font-size: 14px; font-weight: 600;
   color: var(--on-accent); background: var(--accent);
   border: 0; border-radius: 999px; cursor: pointer;
   box-shadow: 0 1px 2px rgba(0,0,0,0.08);
 }
-button.secondary:not(.pf-v6-c-button) {
+button.secondary:where(:not(.pf-v6-c-button)) {
   font-size: 13px; padding: 0.4rem 0.8rem;
   background: var(--surface); color: var(--fg);
   border: 1px solid var(--border);
   font-family: var(--sans);
   border-radius: 999px;
 }
-button.secondary:not(.pf-v6-c-button):hover { border-color: var(--fg-muted); background: color-mix(in srgb, var(--fg) 5%, var(--surface)); }
-button.danger:not(.pf-v6-c-button) { background: var(--danger); color: var(--on-danger); }
-button.secondary.danger:not(.pf-v6-c-button) { background: var(--surface); color: var(--danger); border-color: var(--border); }
-button.secondary.danger:not(.pf-v6-c-button):hover,
-button.secondary.danger:not(.pf-v6-c-button):focus-visible {
+button.secondary:where(:not(.pf-v6-c-button)):hover { border-color: var(--fg-muted); background: color-mix(in srgb, var(--fg) 5%, var(--surface)); }
+button.danger:where(:not(.pf-v6-c-button)) { background: var(--danger); color: var(--on-danger); }
+button.secondary.danger:where(:not(.pf-v6-c-button)) { background: var(--surface); color: var(--danger); border-color: var(--border); }
+button.secondary.danger:where(:not(.pf-v6-c-button)):hover,
+button.secondary.danger:where(:not(.pf-v6-c-button)):focus-visible {
   background: var(--danger); color: var(--on-danger); border-color: var(--danger);
 }
 button:disabled { opacity: 0.5; cursor: not-allowed; }

@@ -48,6 +48,13 @@ Domain-specific surfaces keep cabinet CSS only (no PF wrapper):
 - Transcript turns, run graph nodes, code blocks, board cards, arena lamps
 - Chat bubbles, markdown prose, syntax-highlighted output
 
+## Step 9 notes
+
+Legacy `button` rules use `:where(:not(.pf-v6-c-button))` so component classes
+(`.suggestion`, `.rail-pin`, `.rail-group`, nav tabs) keep their own look.
+Plain `:not(.pf-v6-c-button)` raised specificity above those classes and painted
+the sidebar / suggestion chips as blue actuators.
+
 ## Updating vendored PatternFly
 
 ```sh
