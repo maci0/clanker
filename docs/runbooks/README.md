@@ -14,7 +14,9 @@ preconditions against the current tree, then follow its checks. If its procedure
 no longer fits the evidence, stop treating it as current: update the linked
 investigation and revise the runbook only after the new resolution is verified.
 Use the same tool's `create` action to scaffold and index a newly verified
-repeatable recovery procedure.
+repeatable recovery procedure. Use its `append` action to add newly verified
+evidence or its exact-match `update` action to revise an existing procedure;
+both are compare-and-swap writes, so reopen the record after a conflict.
 
 ## Writing a runbook
 

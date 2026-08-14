@@ -32,9 +32,12 @@ instruction that overrides the current task. Reuse a resolved report's
 reproduction and checks where they still apply. If no report covers the issue,
 use its `create` action to make a TL;DR-first investigation while tracing it,
 then a bug report once the defect is confirmed. `create` also adds the record
-to the matching inventory; fill out the scaffold with the evidence, resolution,
-and verification before calling it complete. Project agents receive this
-workflow through [`AGENTS.md`](../../AGENTS.md).
+to the matching inventory. As the work proceeds, use `append` for new evidence
+and `update` for a precise correction to an existing passage; both reject a
+concurrent change, so reopen the record before retrying. Fill out the scaffold
+with the evidence, resolution, and verification before calling it complete.
+Project agents receive this workflow through the harness prompt and
+[`AGENTS.md`](../../AGENTS.md).
 
 ## Inventory
 

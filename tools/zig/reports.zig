@@ -1,8 +1,7 @@
-//! reports: search and open the project's operational reports and runbooks.
+//! reports: search, open, and maintain the project's operational reports and runbooks.
 //!
 //! Reports preserve evidence and the history of a diagnosis; runbooks preserve
-//! the current recovery procedure. This tool deliberately has no write action:
-//! creating a report updates the matching inventory with a compare-and-swap
+//! the current recovery procedure. Every mutation uses a compare-and-swap
 //! write, so a concurrent documentation edit is never overwritten.
 //!
 //! Input:  {"action":"search", "query":"file_hash", "kind":"all"}
@@ -10,6 +9,10 @@
 //!         {"action":"open", "path":"docs/reports/investigations/foo.md"}
 //!         {"action":"create", "kind":"investigation", "slug":"2026-08-14-topic",
 //!          "title":"...", "summary":"..."}
+//!         {"action":"append", "path":"docs/reports/investigations/foo.md",
+//!          "content":"\n## New evidence\n\n...\n"}
+//!         {"action":"update", "path":"docs/runbooks/foo.md",
+//!          "old":"old text", "new":"new text"}
 //! Output: {"ok":true, ...}
 
 const std = @import("std");
@@ -30,7 +33,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (std.mem.eql(u8, action, "search")) return search(obj, out);
     if (std.mem.eql(u8, action, "open")) return open(obj, out);
     if (std.mem.eql(u8, action, "create")) return create(obj, out);
-    return lib.fail(out, "action must be search, list, open, or create");
+    if (std.mem.eql(u8, action, "append")) return append(obj, out);
+    if (std.mem.eql(u8, action, "update")) return update(obj, out);
+    return lib.fail(out, "action must be search, list, open, create, append, or update");
 }
 
 /// Return both indexes so the caller learns the available report/runbook kinds
@@ -160,6 +165,79 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
         try s.objectField("note");
         try s.write("the record was created, but the inventory changed concurrently or could not be updated; read the index and add the link without replacing another edit");
     }
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
+/// Append evidence or a newly verified procedure without replacing the record.
+/// A concurrent change refuses the write; the caller must re-open and decide
+/// where its new material belongs in the changed document.
+fn append(obj: std.json.Value, out: *lib.Out) !void {
+    const path = lib.str(obj, "path") catch
+        return lib.fail(out, "append needs a report or runbook path");
+    if (!isAllowedPath(path)) return lib.fail(out, "path must be a markdown file below docs/reports/ or docs/runbooks/");
+    const content = lib.str(obj, "content") catch
+        return lib.fail(out, "append needs non-empty content");
+    // The next host call (`hash`) reuses the shared response arena, so keep
+    // the text in guest memory before asking the host for its CAS hash.
+    const raw = lib.fsRead(path) catch |err| return lib.failErr(out, err, "opening the report or runbook before append");
+    const text = try lib.alloc.dupe(u8, raw);
+    const expected = try lib.alloc.dupe(u8, try lib.hash(text));
+
+    var updated: std.Io.Writer.Allocating = .init(lib.alloc);
+    defer updated.deinit();
+    try updated.writer.writeAll(text);
+    if (text.len > 0 and text[text.len - 1] != '\n') try updated.writer.writeByte('\n');
+    try updated.writer.writeAll(content);
+    lib.fsWriteIf(path, expected, updated.written()) catch |err| switch (err) {
+        error.Mismatch => return lib.fail(out, "the record changed while appending; open it again and retry against the current text"),
+        else => return lib.failErr(out, err, "appending to the report or runbook"),
+    };
+    return mutationResult(out, "append", path);
+}
+
+/// Replace one exact piece of a report or runbook. Requiring a unique old value
+/// prevents an agent from changing the wrong repeated heading or status line.
+fn update(obj: std.json.Value, out: *lib.Out) !void {
+    const path = lib.str(obj, "path") catch
+        return lib.fail(out, "update needs a report or runbook path");
+    if (!isAllowedPath(path)) return lib.fail(out, "path must be a markdown file below docs/reports/ or docs/runbooks/");
+    const old = lib.str(obj, "old") catch
+        return lib.fail(out, "update needs the exact non-empty old text from an open result");
+    const new = lib.optStr(obj, "new") orelse
+        return lib.fail(out, "update needs replacement text in new (it may be empty to remove old)");
+    // `hash` overwrites the shared host response arena; all later slicing has
+    // to use this guest-owned copy rather than the fsRead response.
+    const raw = lib.fsRead(path) catch |err| return lib.failErr(out, err, "opening the report or runbook before update");
+    const text = try lib.alloc.dupe(u8, raw);
+    const start = std.mem.indexOf(u8, text, old) orelse
+        return lib.fail(out, "old text was not found; open the current record and copy the exact text");
+    if (std.mem.indexOfPos(u8, text, start + old.len, old) != null)
+        return lib.fail(out, "old text appears more than once; include more surrounding text so the update is unambiguous");
+    const expected = try lib.alloc.dupe(u8, try lib.hash(text));
+
+    var updated: std.Io.Writer.Allocating = .init(lib.alloc);
+    defer updated.deinit();
+    try updated.writer.writeAll(text[0..start]);
+    try updated.writer.writeAll(new);
+    try updated.writer.writeAll(text[start + old.len ..]);
+    lib.fsWriteIf(path, expected, updated.written()) catch |err| switch (err) {
+        error.Mismatch => return lib.fail(out, "the record changed while updating; open it again and retry against the current text"),
+        else => return lib.failErr(out, err, "updating the report or runbook"),
+    };
+    return mutationResult(out, "update", path);
+}
+
+fn mutationResult(out: *lib.Out, action: []const u8, path: []const u8) !void {
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("action");
+    try s.write(action);
+    try s.objectField("path");
+    try s.write(path);
     try s.endObject();
     lib.commit(out, &w);
 }

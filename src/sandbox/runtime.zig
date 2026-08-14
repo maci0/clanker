@@ -1186,6 +1186,29 @@ test "reports wasm tool searches report history and current runbooks" {
     const index = try tmp.dir.readFileAlloc(io, "docs/reports/README.md", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(index);
     try std.testing.expect(std.mem.find(u8, index, "investigations/2026-08-14-new-issue.md") != null);
+
+    // The same report stays useful only if the agent can capture evidence as
+    // it learns it, not merely create an empty scaffold at the start.
+    const mod5 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod5.deinit();
+    const appended = try mod5.executeTool("{\"action\":\"append\",\"path\":\"docs/reports/investigations/2026-08-14-new-issue.md\",\"content\":\"\\n## Evidence\\n\\nThe focused gate reproduced the failure.\\n\"}");
+    defer std.testing.allocator.free(appended);
+    try std.testing.expect(std.mem.find(u8, appended, "\"action\":\"append\"") != null);
+    const appended_report = try tmp.dir.readFileAlloc(io, "docs/reports/investigations/2026-08-14-new-issue.md", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(appended_report);
+    try std.testing.expect(std.mem.find(u8, appended_report, "The focused gate reproduced the failure.") != null);
+
+    // Updates require a uniquely matching current passage, so they cannot
+    // silently alter a similarly worded conclusion elsewhere in the record.
+    const mod6 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod6.deinit();
+    const updated = try mod6.executeTool("{\"action\":\"update\",\"path\":\"docs/runbooks/improve-staging-build.md\",\"old\":\"Copy the missing build input, then run the focused gate.\",\"new\":\"Copy the missing build input, then run and inspect the focused gate.\"}");
+    defer std.testing.allocator.free(updated);
+    try std.testing.expect(std.mem.find(u8, updated, "\"action\":\"update\"") != null);
+    const updated_runbook = try tmp.dir.readFileAlloc(io, "docs/runbooks/improve-staging-build.md", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(updated_runbook);
+    try std.testing.expect(std.mem.find(u8, updated_runbook, "run and inspect the focused gate") != null);
+    try std.testing.expect(std.mem.find(u8, updated_runbook, "then run the focused gate") == null);
 }
 
 test "autolearn wasm tool reports the newest tool_error detail as 'last:'" {
