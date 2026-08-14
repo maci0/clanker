@@ -33,6 +33,6 @@ repeatable recovery procedure.
 ## Inventory
 
 <!-- inventory:runbook:start -->
-No runbooks yet. Add one after a report establishes and verifies a repeatable
-recovery procedure.
+- [Improve staging build inputs](improve-staging-build-inputs.md) — Verify the
+  staging root list covers every local module declared by `build.zig`.
 <!-- inventory:runbook:end -->

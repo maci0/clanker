@@ -41,13 +41,13 @@ workflow through [`AGENTS.md`](../../AGENTS.md).
 ### Bugs
 
 <!-- inventory:bug:start -->
-No reports yet. Start from the [bug report template](bugs/TEMPLATE.md).
+- [Improve staging misses UI build inputs](bugs/2026-08-14-improve-staging-misses-ui-build-inputs.md) — Resolved
 <!-- inventory:bug:end -->
 
 ### Investigations
 
 <!-- inventory:investigation:start -->
-- [Improve staging omits `ui/`](investigations/2026-08-14-improve-staging-omits-ui.md) — Cause identified; resolution pending
+- [Improve staging omits `ui/`](investigations/2026-08-14-improve-staging-omits-ui.md) — Resolved
 <!-- inventory:investigation:end -->
 
 ## Report lifecycle

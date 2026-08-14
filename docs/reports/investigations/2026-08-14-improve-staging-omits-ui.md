@@ -7,14 +7,13 @@
 - **Finding:** The staging copier excludes the repository's `ui/` directory,
   but `build.zig` unconditionally creates a module rooted at `ui/vendor.zig`.
   Every staged `zig build` therefore fails before it can assess a proposal.
-- **Resolution:** Pending. Copy `ui/` into staging and add a regression that
-  proves a staged build has the build inputs it requires.
+- **Resolution:** [`e10c868`](../../../src/improve/engine.zig) adds `ui` to
+  the staging roots and a regression that prevents it from being removed.
 
 ## Status
 
-Cause identified from the supplied run log and source trace. The fix and its
-regression verification are still required before this investigation is
-resolved.
+Resolved. The supplied run log and source trace identified the missing root;
+the staged-tree build now succeeds with `ui/` copied into the compile gate.
 
 ## Trigger and scope
 
@@ -52,26 +51,28 @@ input. The missing directory means Zig cannot hash the root source file for the
 The retry loop then asks for another proposal, which cannot change that shared
 failure condition.
 
-## Resolution or handoff
+## Resolution
 
-1. Add `ui` to `staging_roots` in `src/improve/engine.zig`; do not add
-   `ui/vendor/` as a separately mutable surface, since it is vendored content.
-2. Add a regression at the staging boundary: it must fail if a staged tree
-   lacks `ui/vendor.zig` and prove that the staging build can reach the proposal
-   gate once the source tree is complete.
-3. Run the normal gate, plus a direct improve-self or focused staging-build
-   reproduction that demonstrates the prior `file_hash FileNotFound` error is
-   gone.
-4. Create the linked bug report from
-   [`../bugs/TEMPLATE.md`](../bugs/TEMPLATE.md) if the final resolution needs a
-   user-facing defect record; update this report with the commit, checks, and
-   final status.
-5. If the resolution exposes a repeatable staging diagnosis, add its current
-   recovery procedure to [`docs/runbooks/`](../../runbooks/) and link it here.
+[`e10c868`](../../../src/improve/engine.zig) adds `ui` to `staging_roots`.
+`prepareStaging` already copies every root in that list recursively, so this
+carries `ui/vendor.zig` and the vendored assets it embeds into every proposed
+change's build tree. The regression test asserts that `ui` remains a staging
+root.
+
+The normal test suite executed that new regression. Its final process status
+was non-zero because separately uncommitted graph-tool work in the shared
+checkout failed its own runtime test; the staging fix itself was independently
+verified by building an isolated copy of exactly the staging roots.
+
+The confirmed defect is recorded in the linked [bug report](../bugs/2026-08-14-improve-staging-misses-ui-build-inputs.md). The current recovery procedure
+is in the [runbook](../../runbooks/improve-staging-build-inputs.md).
 
 ## References
 
 - Report index: [Operational reports](../README.md)
 - Build input: [`build.zig`](../../../build.zig)
 - Staging copy: [`src/improve/engine.zig`](../../../src/improve/engine.zig)
+- Fix: [`e10c868`](../../../src/improve/engine.zig)
+- Bug: [Improve staging misses UI build inputs](../bugs/2026-08-14-improve-staging-misses-ui-build-inputs.md)
+- Runbook: [Improve staging build inputs](../../runbooks/improve-staging-build-inputs.md)
 - Supplied run log: attached prompt, 2026-08-14
