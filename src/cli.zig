@@ -7022,6 +7022,9 @@ const SteerSlot = struct {
 // shares this pattern. Zero-default is the static initializer.
 var steer_mutex: std.c.pthread_mutex_t = .{};
 var steer_slots: [max_connection_threads]SteerSlot = @splat(.{});
+/// In-flight `/api/run` count. Steer slots only cover keyed (session/goal)
+/// streaming runs; a one-shot still has this instance working.
+var live_runs = std.atomic.Value(u32).init(0);
 
 /// The slot this connection thread's run registered. SteerFn is a bare
 /// function pointer (like AskFn), so the threadlocal is its context.
@@ -11010,6 +11013,7 @@ fn handlePeers(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
 }
 
 fn anyRunLive() bool {
+    if (live_runs.load(.monotonic) > 0) return true;
     _ = std.c.pthread_mutex_lock(&steer_mutex);
     defer _ = std.c.pthread_mutex_unlock(&steer_mutex);
     for (steer_slots) |s| {
@@ -11548,6 +11552,9 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             }
         } else |_| {}
     }
+
+    _ = live_runs.fetchAdd(1, .monotonic);
+    defer _ = live_runs.fetchSub(1, .monotonic);
 
     if (req.stream) {
         // Streaming mode: send headers up front, then the agent's tokens as
