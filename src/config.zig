@@ -16,6 +16,7 @@ const std = @import("std");
 const json = std.json;
 const log = @import("util/log.zig");
 const toml_bridge = @import("util/toml_bridge.zig");
+const atomic_write = @import("util/atomic_write.zig");
 
 /// A schema failure is reported before it reaches the command dispatcher.
 /// Keeping the original TOML source here is intentional: the intermediate
@@ -879,7 +880,41 @@ pub const Config = struct {
         }
         try validateToolResultPrune(cfg.agent);
         try validateRepeatToolThresholds(cfg.agent.repeat_tool_thresholds);
+        // First boot: neither file named an instance, so `cfg.instance.name`
+        // is the pid-seeded fallback from `defaultInstName`, which would pick
+        // a *different* name next launch. Persist it once so the instance
+        // keeps a stable identity (mesh, chat, run logs) across restarts.
+        // Best-effort: a read-only checkout keeps working off the in-memory
+        // fallback, it just re-rolls the name every launch.
+        if (!cfg.instance_present) {
+            persistInstanceName(io, arena, dir, local_file_name, cfg.instance.name);
+        }
         return cfg;
+    }
+
+    /// Appends an `[instance]` table naming `name` to `local_file_name`,
+    /// creating the file if absent. Swallows errors: this only runs on the
+    /// happy path of "no instance configured yet", never something a caller
+    /// should have to handle to get a working `Config`.
+    fn persistInstanceName(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, local_file_name: []const u8, name: []const u8) void {
+        const existing = dir.readFileAlloc(io, local_file_name, arena, .limited(1 << 20)) catch |err| switch (err) {
+            error.FileNotFound => "",
+            else => return,
+        };
+        const sep = if (existing.len == 0 or std.mem.endsWith(u8, existing, "\n\n"))
+            ""
+        else if (std.mem.endsWith(u8, existing, "\n"))
+            "\n"
+        else
+            "\n\n";
+        const content = std.fmt.allocPrint(arena, "{s}{s}[instance]\nname = \"{s}\"\n", .{
+            existing,
+            sep,
+            name,
+        }) catch return;
+        atomic_write.writeFile(io, dir, local_file_name, content) catch |err| {
+            log.log(.warn, "config: could not persist instance name to {s}: {s}", .{ local_file_name, @errorName(err) });
+        };
     }
 
     /// The startup dotenv probe needs to know whether `[modules] dotenv` is
@@ -3474,6 +3509,74 @@ test "debug adapters parse from nested tables" {
     }
     try std.testing.expect(saw_lldb);
     try std.testing.expect(!(Debug{}).enabled);
+}
+
+test "first boot with no [instance] anywhere persists a name to the local file" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        ,
+    });
+
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expect(cfg.instance.name.len > 0);
+
+    const written = try tmp.dir.readFileAlloc(io, "config.local.toml", std.testing.allocator, .limited(1 << 16));
+    defer std.testing.allocator.free(written);
+    try std.testing.expect(std.mem.indexOf(u8, written, "[instance]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, cfg.instance.name) != null);
+
+    // Second boot: the persisted name must survive unchanged rather than
+    // being re-rolled on every launch.
+    const cfg2 = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqualStrings(cfg.instance.name, cfg2.instance.name);
+}
+
+test "persisting an instance name appends to an existing local file without clobbering it" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.local.toml",
+        .data =
+        \\[agent]
+        \\max_iterations = 7
+        ,
+    });
+
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(@as(u32, 7), cfg.agent.max_iterations);
+
+    const written = try tmp.dir.readFileAlloc(io, "config.local.toml", std.testing.allocator, .limited(1 << 16));
+    defer std.testing.allocator.free(written);
+    try std.testing.expect(std.mem.indexOf(u8, written, "max_iterations = 7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "[instance]") != null);
 }
 
 test "mesh section and peer id parse" {
