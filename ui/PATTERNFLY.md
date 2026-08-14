@@ -55,6 +55,10 @@ Legacy `button` rules use `:where(:not(.pf-v6-c-button))` so component classes
 Plain `:not(.pf-v6-c-button)` raised specificity above those classes and painted
 the sidebar / suggestion chips as blue actuators.
 
+PF's page shell paints a glass frame on `.pf-v6-c-page__main-container` (4px
+accent border). Zero those tokens on `#app-page` and `.shell` so the cabinet
+surface shows through instead of a blue chrome box.
+
 ## Updating vendored PatternFly
 
 ```sh
