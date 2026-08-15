@@ -127,6 +127,7 @@ function showSnippet(m) {
   var host = document.getElementById("models-snippet");
   var body = document.getElementById("models-snippet-body");
   if (!host || !body) return;
+  hideEditPanel();
   snippetModel = m;
   pendingSave = null;
   var title = document.getElementById("models-snippet-title");
@@ -290,6 +291,13 @@ function loadConfigured() {
           providerSel.appendChild(opt);
         }
         (prov.models || []).forEach(function (m) {
+          var entry = {
+            provider: prov.name, model: m.name, display: m.display || "", category: m.category || "",
+            context_window: m.context_window, max_tokens: m.max_tokens,
+            temperature: m.temperature, top_p: m.top_p, reasoning_effort: m.reasoning_effort,
+            cost_per_1m_input: m.cost_per_1m_input, cost_per_1m_output: m.cost_per_1m_output,
+            capabilities: m.capabilities || []
+          };
           rows.push([
             prov.name,
             m.display || m.name,
@@ -297,7 +305,8 @@ function loadConfigured() {
             m.context_window ? fmtInt(m.context_window) : "",
             m.cost_per_1m_input != null ? "$" + m.cost_per_1m_input : "",
             m.cost_per_1m_output != null ? "$" + m.cost_per_1m_output : "",
-            m.name === prov.default_model ? "default" : ""
+            m.name === prov.default_model ? "default" : "",
+            editButton(entry)
           ]);
         });
       });
@@ -308,11 +317,175 @@ function loadConfigured() {
         box.appendChild(empty("No providers configured. Add [providers.<name>] in config.toml."));
         return;
       }
-      box.appendChild(table(["provider", "model", "category", "ctx", "in $/1M", "out $/1M", ""], rows));
+      box.appendChild(table(["provider", "model", "category", "ctx", "in $/1M", "out $/1M", "", ""], rows));
     })
     .catch(function (err) {
       box.textContent = "";
       box.appendChild(empty("Could not load providers: " + err.message));
+    });
+}
+
+function editButton(entry) {
+  var btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "secondary models-snippet-btn";
+  btn.textContent = "Edit";
+  btn.setAttribute("aria-label", "Edit " + entry.provider + "/" + entry.model);
+  btn.addEventListener("click", function () { showEditPanel(entry, false); });
+  return btn;
+}
+
+/* ---- edit / add: form fields instead of a read-only snippet -------------
+   Config replaces a model wholesale by table key on every load, so the form
+   is always pre-filled with the model's current values (loadConfigured's
+   entry, or all-blank for "Add model…") rather than left for the user to
+   guess what to fill in — an edit that omitted a field would silently reset
+   it to config.Model's struct default on the next `clanker serve` restart. */
+
+var editEntry = null;
+var editIsNew = false;
+var pendingRemove = false;
+
+function editField(id) { return document.getElementById(id); }
+
+function showEditPanel(entry, isNew) {
+  var host = document.getElementById("models-edit");
+  if (!host) return;
+  hideSnippet();
+  editEntry = entry;
+  editIsNew = !!isNew;
+  pendingRemove = false;
+  var title = document.getElementById("models-edit-title");
+  if (title) title.textContent = isNew ? "Add a model" : entry.provider + "/" + entry.model;
+  editField("models-edit-provider").value = entry.provider || "";
+  editField("models-edit-provider").disabled = !isNew;
+  editField("models-edit-model").value = entry.model || "";
+  editField("models-edit-model").disabled = !isNew;
+  editField("models-edit-display").value = entry.display || "";
+  editField("models-edit-category").value = entry.category || "";
+  editField("models-edit-context").value = entry.context_window != null ? entry.context_window : "";
+  editField("models-edit-max-tokens").value = entry.max_tokens != null ? entry.max_tokens : "";
+  editField("models-edit-temperature").value = entry.temperature != null ? entry.temperature : "";
+  editField("models-edit-top-p").value = entry.top_p != null ? entry.top_p : "";
+  editField("models-edit-reasoning").value = entry.reasoning_effort || "";
+  editField("models-edit-cost-in").value = entry.cost_per_1m_input != null ? entry.cost_per_1m_input : "";
+  editField("models-edit-cost-out").value = entry.cost_per_1m_output != null ? entry.cost_per_1m_output : "";
+  editField("models-edit-capabilities").value = (entry.capabilities || []).join(", ");
+  var removeBtn = document.getElementById("models-edit-remove");
+  if (removeBtn) removeBtn.hidden = isNew;
+  var save = document.getElementById("models-edit-save");
+  if (save) { save.disabled = false; save.textContent = isNew ? "Add model" : "Save changes"; }
+  setEditNote("");
+  host.hidden = false;
+  try { host.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_) {}
+}
+
+function hideEditPanel() {
+  var host = document.getElementById("models-edit");
+  if (host) host.hidden = true;
+  editEntry = null;
+  pendingRemove = false;
+}
+
+function setEditNote(text) {
+  var note = document.getElementById("models-edit-note");
+  if (!note) return;
+  note.textContent = text;
+  note.hidden = !text;
+}
+
+function numOrNull(id) {
+  var v = editField(id).value;
+  if (v === "" || v == null) return null;
+  var n = Number(v);
+  return isNaN(n) ? null : n;
+}
+
+function editPayload() {
+  var provider = editField("models-edit-provider").value.trim();
+  var model = editField("models-edit-model").value.trim();
+  var payload = { provider: provider, model: model };
+  var context = numOrNull("models-edit-context");
+  if (context != null) payload.context_window = context;
+  var maxTok = numOrNull("models-edit-max-tokens");
+  if (maxTok != null) payload.max_tokens = maxTok;
+  var temp = numOrNull("models-edit-temperature");
+  if (temp != null) payload.temperature = temp;
+  var topP = numOrNull("models-edit-top-p");
+  if (topP != null) payload.top_p = topP;
+  var reasoning = editField("models-edit-reasoning").value;
+  if (reasoning) payload.reasoning_effort = reasoning;
+  var display = editField("models-edit-display").value.trim();
+  if (display) payload.display = display;
+  var category = editField("models-edit-category").value.trim();
+  if (category) payload.category = category;
+  var costIn = numOrNull("models-edit-cost-in");
+  if (costIn != null) payload.cost_per_1m_input = costIn;
+  var costOut = numOrNull("models-edit-cost-out");
+  if (costOut != null) payload.cost_per_1m_output = costOut;
+  var caps = editField("models-edit-capabilities").value.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  if (caps.length) payload.capabilities = caps;
+  return payload;
+}
+
+function saveEdit() {
+  var payload = editPayload();
+  if (!payload.provider || !payload.model) {
+    setEditNote("Provider and model ID are both required.");
+    return;
+  }
+  var btn = document.getElementById("models-edit-save");
+  if (btn) btn.disabled = true;
+  fetch("/api/config/model/set", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  })
+    .then(readJson)
+    .then(function (d) {
+      if (!d.ok) throw new Error(d.error || "write failed");
+      setEditNote("Saved to config.local.toml. Restart clanker serve for this to take effect.");
+      status("Wrote " + (d.path || "config.local.toml") + " for " + payload.provider + "/" + payload.model + ".");
+      if (btn) btn.disabled = false;
+      loadConfigured();
+    })
+    .catch(function (err) {
+      if (btn) btn.disabled = false;
+      setEditNote("Could not save: " + err.message);
+    });
+}
+
+function removeEdit() {
+  if (!editEntry || editIsNew) return;
+  var btn = document.getElementById("models-edit-remove");
+  if (!pendingRemove) {
+    pendingRemove = true;
+    if (btn) btn.textContent = "Confirm remove";
+    setEditNote("Click again to delete this model from config.local.toml. A model only declared in the shared config.toml cannot be removed here.");
+    return;
+  }
+  pendingRemove = false;
+  if (btn) btn.disabled = true;
+  fetch("/api/config/model/remove", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ provider: editEntry.provider, model: editEntry.model })
+  })
+    .then(readJson)
+    .then(function (d) {
+      if (!d.ok) throw new Error(d.error || "remove failed");
+      if (btn) { btn.disabled = false; btn.textContent = "Remove"; }
+      if (d.removed) {
+        setEditNote("Removed from config.local.toml. Restart clanker serve for this to take effect.");
+        status("Removed " + editEntry.provider + "/" + editEntry.model + ".");
+        loadConfigured();
+      } else {
+        setEditNote("Not in config.local.toml — it must be declared in the shared config.toml, which this page never edits.");
+      }
+    })
+    .catch(function (err) {
+      if (btn) { btn.disabled = false; btn.textContent = "Remove"; }
+      setEditNote("Could not remove: " + err.message);
     });
 }
 
@@ -421,4 +594,19 @@ export function bindModels() {
   if (def) def.addEventListener("click", saveDefault);
   var close = document.getElementById("models-snippet-close");
   if (close) close.addEventListener("click", hideSnippet);
+  var add = document.getElementById("models-add");
+  if (add) add.addEventListener("click", function () {
+    showEditPanel({
+      provider: "", model: "", display: "", category: "",
+      context_window: 131072, max_tokens: 1024,
+      temperature: null, top_p: null, reasoning_effort: "",
+      cost_per_1m_input: null, cost_per_1m_output: null, capabilities: []
+    }, true);
+  });
+  var editSave = document.getElementById("models-edit-save");
+  if (editSave) editSave.addEventListener("click", saveEdit);
+  var editRemove = document.getElementById("models-edit-remove");
+  if (editRemove) editRemove.addEventListener("click", removeEdit);
+  var editClose = document.getElementById("models-edit-close");
+  if (editClose) editClose.addEventListener("click", hideEditPanel);
 }

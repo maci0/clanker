@@ -5744,6 +5744,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/logs");
         const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/plugins/config");
         const is_config_model = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/model");
+        const is_config_model_set = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/model/set");
+        const is_config_model_remove = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/model/remove");
         const is_config_default = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/default");
         if (is_webui and std.mem.eql(u8, method, "GET") and cfg.modules.webui) {
             const conn_val = headerValue(headers_raw, "connection") orelse "";
@@ -5854,6 +5856,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handlePluginConfig(io, gpa, cfg, body, stream);
         } else if (is_config_model) {
             handleConfigModel(io, gpa, body, stream);
+        } else if (is_config_model_set) {
+            handleConfigModelSet(io, gpa, body, stream);
+        } else if (is_config_model_remove) {
+            handleConfigModelRemove(io, gpa, body, stream);
         } else if (is_config_default) {
             handleConfigDefault(io, gpa, body, stream);
         } else if (is_plugins) {
@@ -8724,6 +8730,165 @@ fn handleConfigDefault(io: std.Io, gpa: std.mem.Allocator, body: []const u8, str
     respond(stream, 200, "OK", out.written());
 }
 
+/// The `[models."<provider>/<name>"]` block for an explicit field set (the
+/// Models view's edit form, not a catalog lookup). Config.zig replaces a
+/// model wholesale by table key on every load (`distributeModels`), so an
+/// edit that omits an existing field silently drops it back to that field's
+/// struct default — the caller is expected to send the model's full current
+/// config with only the edited fields changed, not a diff.
+fn renderModelConfigBlock(arena: std.mem.Allocator, provider_name: []const u8, name: []const u8, obj: std.json.ObjectMap) ![]const u8 {
+    var fields: std.ArrayList([]const u8) = .empty;
+    if (jsonNum(obj, "context_window")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "context_window = {d}", .{@as(i64, @intFromFloat(v))}));
+    if (jsonNum(obj, "max_tokens")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "max_tokens = {d}", .{@as(i64, @intFromFloat(v))}));
+    if (jsonNum(obj, "temperature")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "temperature = {d}", .{v}));
+    if (jsonNum(obj, "top_p")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "top_p = {d}", .{v}));
+    if (fieldStr(obj, "reasoning_effort")) |re| try fields.append(arena, try std.fmt.allocPrint(arena, "reasoning_effort = {s}", .{try tomlQuoted(arena, re)}));
+    if (fieldStr(obj, "display")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "display = {s}", .{try tomlQuoted(arena, disp)}));
+    if (jsonNum(obj, "cost_per_1m_input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_input = {d}", .{v}));
+    if (jsonNum(obj, "cost_per_1m_output")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_output = {d}", .{v}));
+    if (fieldStr(obj, "category")) |cat| try fields.append(arena, try std.fmt.allocPrint(arena, "category = {s}", .{try tomlQuoted(arena, cat)}));
+    if (obj.get("capabilities")) |caps_v| if (caps_v == .array) {
+        var quoted: std.ArrayList([]const u8) = .empty;
+        for (caps_v.array.items) |c| if (c == .string) try quoted.append(arena, try tomlQuoted(arena, c.string));
+        if (quoted.items.len > 0) {
+            const joined = try std.mem.join(arena, ", ", quoted.items);
+            try fields.append(arena, try std.fmt.allocPrint(arena, "capabilities = [{s}]", .{joined}));
+        }
+    };
+
+    var w: std.Io.Writer.Allocating = .init(arena);
+    const table_key = try tomlQuoted(arena, try std.fmt.allocPrint(arena, "{s}/{s}", .{ provider_name, name }));
+    const provider_q = try tomlQuoted(arena, provider_name);
+    try w.writer.print("[models.{s}]\nprovider = {s}\n", .{ table_key, provider_q });
+    for (fields.items) |f| {
+        try w.writer.writeAll(f);
+        try w.writer.writeAll("\n");
+    }
+    return w.toOwnedSlice();
+}
+
+/// `POST /api/config/model/set {"provider":…,"model":…, ...fields}` —
+/// table-replace an explicit field set into `config.local.toml`. Used both
+/// to hand-add a model (no catalog match needed) and to edit one already
+/// configured; the caller sends the model's complete desired config, see
+/// `renderModelConfigBlock`. Never touches the shared `config.toml`.
+fn handleConfigModelSet(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    if (parsed != .object) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    }
+    const provider = jsonObjectStr(parsed.object, "provider") orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing provider\"}");
+        return;
+    };
+    const model = jsonObjectStr(parsed.object, "model") orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing model\"}");
+        return;
+    };
+    const snippet = renderModelConfigBlock(arena, provider, model, parsed.object) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not render config\"}");
+        return;
+    };
+    const current = readLocalConfig(io, arena) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"config.local.toml unreadable\"}");
+        return;
+    };
+    const next = toml_edit.replaceTable(arena, current, snippet) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not edit config.local.toml\"}");
+        return;
+    };
+    writeLocalConfig(io, next) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"config.local.toml not writable\"}");
+        return;
+    };
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("path") catch return;
+    s.write(local_config_name) catch return;
+    s.objectField("written") catch return;
+    s.write(snippet) catch return;
+    s.objectField("restart") catch return;
+    s.write(true) catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
+}
+
+/// `POST /api/config/model/remove {"provider":…,"model":…}` — deletes that
+/// model's table from `config.local.toml` if present there. A model only
+/// declared in the shared `config.toml` is untouched (the server never
+/// writes that file); the response still reports success so the picker
+/// stops offering an entry it cannot remove without lying about it — the
+/// note explains this rather than leaving the row looking un-removable.
+fn handleConfigModelRemove(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    if (parsed != .object) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    }
+    const provider = jsonObjectStr(parsed.object, "provider") orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing provider\"}");
+        return;
+    };
+    const model = jsonObjectStr(parsed.object, "model") orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing model\"}");
+        return;
+    };
+    const header = blk: {
+        const key = std.fmt.allocPrint(arena, "{s}/{s}", .{ provider, model }) catch break :blk null;
+        const quoted = tomlQuoted(arena, key) catch break :blk null;
+        break :blk std.fmt.allocPrint(arena, "[models.{s}]", .{quoted}) catch null;
+    } orelse {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+        return;
+    };
+    const current = readLocalConfig(io, arena) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"config.local.toml unreadable\"}");
+        return;
+    };
+    const next = toml_edit.removeTable(arena, current, header) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not edit config.local.toml\"}");
+        return;
+    };
+    const removed = next.len != current.len;
+    writeLocalConfig(io, next) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"config.local.toml not writable\"}");
+        return;
+    };
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("removed") catch return;
+    s.write(removed) catch return;
+    s.objectField("path") catch return;
+    s.write(local_config_name) catch return;
+    s.objectField("restart") catch return;
+    s.write(true) catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
+}
+
 /// `GET /api/providers/models?name=<provider>` — a configured provider's own
 /// live /models listing (the OpenAI-compat endpoint every configured kind
 /// serves), so the Models view can show what the backend actually offers
@@ -8841,6 +9006,14 @@ fn handleProviders(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
             if (m.value_ptr.cost_per_1m_output) |c| {
                 s.objectField("cost_per_1m_output") catch return;
                 s.write(c) catch return;
+            }
+            if (m.value_ptr.reasoning_effort) |re| {
+                s.objectField("reasoning_effort") catch return;
+                s.write(@tagName(re)) catch return;
+            }
+            if (m.value_ptr.capabilities.len > 0) {
+                s.objectField("capabilities") catch return;
+                s.write(m.value_ptr.capabilities) catch return;
             }
             if (m.value_ptr.category.len > 0) {
                 s.objectField("category") catch return;

@@ -12,7 +12,7 @@ import { boardActionLine as boardActionLineMod } from "./lib/board.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
 import { clearMarks as searchClear, markMatches as searchMark, turnForMessage } from "./core/search.js";
 import { loadPrompts as compLoadPrompts, savePrompts as compSavePrompts, promptQuery as compPromptQuery, autoGrow as compAutoGrow, contextLabel as compContextLabel, transcriptMarkdown as compTranscriptMarkdown, downloadText as compDownloadText, forgetPrompt as compForgetPrompt, setActiveItem as compSetActiveItem, loadDrafts as compLoadDrafts, saveDrafts as compSaveDrafts, draftFor as compDraftFor, setDraft as compSetDraft } from "./core/composer.js";
-import { nearBottom as scrollNearBottom, prefersReducedMotion as scrollPrefersReducedMotion, syncScrollButton as scrollSyncButton } from "./core/scroll.js";
+import { nearBottom as scrollNearBottom, prefersReducedMotion as scrollPrefersReducedMotion, syncScrollButton as scrollSyncButton, scrollChatToLatest as scrollChatLatest, conversationScroller as scrollChatBox } from "./core/scroll.js";
 import { textPrompt as dialogTextPrompt, finishTextPrompt as dialogFinishTextPrompt, bindDialog as dialogBindDialog } from "./core/dialog.js";
 import { renderUsageTable as usageRenderTable } from "./core/usage.js";
 import { renderStatusInto as statusRenderInto } from "./core/status.js";
@@ -300,6 +300,8 @@ function restoreDraft() {
 function renderSessionChip() {
   if (el.sessionChip) {
     el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
+    el.sessionChip.hidden = false;
+    el.sessionChip.removeAttribute("aria-hidden");
     upgradePfChip(el.sessionChip);
   }
   var sel = el.modelSelect ? el.modelSelect.value : "";
@@ -1902,7 +1904,7 @@ el.form.addEventListener("submit", function (e) {
       }
     }
     setTurnPhase(turn, "llm");
-    if (stick) window.scrollTo(0, document.body.scrollHeight);
+    if (stick) scrollChatLatest("auto");
     else syncScrollButton();
   });
 
@@ -4024,6 +4026,7 @@ if (el.chatSearchInput) el.chatSearchInput.addEventListener("input", function ()
 
 var CHAT_EMOJI_PICKER_SET = ["👍","❤️","🎉","🔥","👀","✅","😀","😂","😅","😊","🙌","🙏","👏","💯","🚀","⚠️","❌","🤔","😢","👋","🎯","💡","✨","🐛"];
 if (el.chatEmojiBtn && el.chatEmojiPicker) {
+  if (!el.chatEmojiBtn.querySelector("svg")) uiAdd(el.chatEmojiBtn, icon("smile", 16));
   el.chatEmojiBtn.addEventListener("click", function () {
     if (!el.chatEmojiPicker.hidden) { el.chatEmojiPicker.hidden = true; return; }
     el.chatEmojiPicker.textContent = "";
@@ -4650,17 +4653,18 @@ el.turnFilter.addEventListener("input", applyTurnFilter);
 
 /* ---------- keeping up with a streaming answer ---------- */
 
-var nearBottom = scrollNearBottom;
+function nearBottom() { return scrollNearBottom(scrollChatBox()); }
 var prefersReducedMotion = scrollPrefersReducedMotion;
-function syncScrollButton() { scrollSyncButton(el.transcript, el.scrollBottom); }
+function syncScrollButton() { scrollSyncButton(el.transcript, el.scrollBottom, scrollChatBox()); }
 
 uiAdd(el.scrollBottom, icon("deposit", 14));
 el.scrollBottom.addEventListener("click", function () {
-  window.scrollTo({ top: document.body.scrollHeight, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+  scrollChatLatest(prefersReducedMotion() ? "auto" : "smooth");
   el.task.focus();
 });
 
-window.addEventListener("scroll", syncScrollButton, { passive: true });
+var chatScroll = scrollChatBox();
+if (chatScroll) chatScroll.addEventListener("scroll", syncScrollButton, { passive: true });
 window.addEventListener("resize", syncScrollButton);
 
 /* ---------- export ---------- */

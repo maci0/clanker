@@ -150,6 +150,11 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(exe_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
+    // Chat scroll math lives in the shipped ESM helper; node --test drives
+    // that file, not a Zig reimplementation.
+    const scroll_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    scroll_js_test.addFileArg(b.path("ui/app/core/scroll.test.mjs"));
+    test_step.dependOn(&scroll_js_test.step);
 
     // Logic that lives in a tool rather than in src/ still needs its tests run.
     // `zig build test` compiled only src/main.zig, so every `test` block under

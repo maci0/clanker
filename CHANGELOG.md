@@ -17,9 +17,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Web UI shell follows a session-first layout: conversations stay in the
   left rail, Watch and Set up fold away, and Chat is a header / transcript
   / docked-composer column. PatternFly page chrome and cabinet colors stay.
+- Phone Chat header keeps More only so empty-state suggestions sit above
+  the docked composer instead of under it.
 
 ### Added
 
+- The Models view can add, edit, and remove a configured model, not only
+  save a catalog snippet: `POST /api/config/model/set` table-replaces a
+  full field set (temperature, cost overrides, capabilities, etc.) into
+  `config.local.toml`, and `POST /api/config/model/remove` deletes a
+  model's table there. Both are surgical `config.local.toml` edits, same
+  as the existing catalog-save path; a model only declared in the shared
+  `config.toml` cannot be removed from the page.
 - `clanker add-goal` and `/add-goal` save a structured goal without starting
   work. The Goals board uses the same `add_goal` writer and tells the operator
   that a saved goal has not started.

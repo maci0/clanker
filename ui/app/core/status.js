@@ -1,12 +1,20 @@
 // Vanilla, no bundler. Instance / peers status helpers.
 import { upgradePfChip } from "./ui.js";
 
+function showChip(node, on) {
+  if (!node) return;
+  node.hidden = !on;
+  if (on) node.removeAttribute("aria-hidden");
+  else node.setAttribute("aria-hidden", "true");
+}
+
 export function renderStatusInto(status, els, readOnly) {
   if (!status) {
     els.instanceChip.textContent = "disconnected";
     els.instanceChip.dataset.state = "down";
     upgradePfChip(els.instanceChip);
-    els.peersChip.hidden = true;
+    showChip(els.instanceChip, true);
+    showChip(els.peersChip, false);
     els.instance.textContent = "unreachable (is `clanker serve` still running?)";
     els.peers.textContent = "unknown";
     return { instanceName: "", knownPeers: [] };
@@ -17,7 +25,8 @@ export function renderStatusInto(status, els, readOnly) {
   els.instanceChip.textContent = status.instance.name;
   els.instanceChip.dataset.state = "live";
   upgradePfChip(els.instanceChip);
-  els.peersChip.hidden = peers.length === 0;
+  showChip(els.instanceChip, true);
+  showChip(els.peersChip, peers.length > 0);
   els.peersChip.textContent = peers.length + (peers.length === 1 ? " peer" : " peers");
   upgradePfChip(els.peersChip);
   els.instance.textContent = status.instance.name + " (" + status.instance.id + ")";

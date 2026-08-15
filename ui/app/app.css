@@ -611,22 +611,19 @@ body {
   backdrop-filter: none;
   box-shadow: none;
 }
-@media (max-width: 34rem) {
-  #app-masthead.pf-v6-c-masthead { padding: 0.7rem 1rem; }
-  #app-masthead .pf-v6-c-masthead__content { gap: 0.4rem 0.5rem; }
-  /* Keep chips legible on narrow: dot + truncated single line instead of hidden.
-     8ch leaves room for "peers 2" / "sess ab12…" without pushing the actuator off. */
-  #instance-chip, #peers-chip, #session-chip {
-    display: inline-flex;
-    max-width: 8ch;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 0 1 auto;
-    min-width: 0;
-  }
-  #help-open { display: inline-flex; }
+@media (max-width: 40rem) {
+  #app-masthead.pf-v6-c-masthead { padding-block: 0.35rem; padding-inline: 0.75rem; }
+  #app-masthead .pf-v6-c-masthead__content { gap: 0.35rem 0.45rem; }
+  /* Phone chrome is Menu, model, Jump, theme. Lamps and help live in
+     System / the palette so they cannot wrap and clip here. */
+  #instance-chip, #peers-chip, #session-chip, #help-open { display: none; }
   #theme-toggle { font-size: var(--step--1); }
+  /* Compact the conversation header so empty-state chips sit above the
+     docked composer instead of under it. Daily session verbs stay in Jump. */
+  #view-chat .conversation-header .session-actions > .secondary { display: none; }
+  #view-chat .transcript-tools { display: none; }
+  #view-chat .suggestions { gap: var(--space-2); margin-top: var(--space-2); }
+  #view-chat .suggestion { min-height: 40px; padding: 0.45rem 0.7rem; }
 }
 h1 {
   font-family: var(--sans); font-size: 15px; font-weight: 600;
@@ -667,6 +664,7 @@ h1 .logo { flex: none; }
     color-mix(in srgb, currentColor 60%, #000) 100%);
   box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 30%, transparent);
 }
+.chip[hidden] { display: none; }
 .chip[data-state="down"] { color: var(--danger); }
 .chip[data-state="live"] { color: var(--ok); }
 .chip[data-state="live"]::before,
@@ -737,16 +735,18 @@ main.pf-v6-c-page__main {
 #view-chat .conversation-header .run-picker { margin: 0; }
 #view-chat .conversation-header .session-status-bar { margin-bottom: var(--space-2); }
 #view-chat .conversation-scroll {
-  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  flex: 1 1 auto; min-height: 5.5rem; overflow-x: hidden; overflow-y: auto;
+  overscroll-behavior: contain;
   width: 100%;
+  padding-bottom: var(--space-2);
 }
 #view-chat .conversation-scroll .transcript,
 #view-chat .conversation-scroll .run-empty {
   max-width: 46rem; margin-inline: auto;
 }
 #view-chat .composer {
-  flex: none; position: static;
-  width: 100%; max-width: 46rem; margin: var(--space-3) auto 0;
+  flex: none; position: relative; z-index: 3;
+  width: 100%; max-width: 46rem; margin: var(--space-2) auto 0;
 }
 .view:not(#view-chat):not([hidden]) {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
@@ -1358,7 +1358,11 @@ textarea:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent);
   background: transparent; border: 0; border-radius: 0; resize: none;
   box-shadow: none; outline: none; field-sizing: content;
 }
-.composer textarea:focus-visible { border-color: transparent; outline: none; }
+.composer textarea:focus-visible {
+  border-color: transparent;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 ::placeholder { color: var(--fg-muted); opacity: 1; }
 .composer textarea::placeholder { font-size: 13px; }
 .toolbar {
@@ -2337,6 +2341,27 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   font-size: var(--step-0);
   color: var(--fg-muted);
 }
+.models-edit-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--space-2) var(--space-3);
+}
+.models-edit-form label {
+  display: flex; flex-direction: column; gap: 0.2rem;
+  font-size: var(--step--1); color: var(--fg-muted);
+}
+.models-edit-form input,
+.models-edit-form select {
+  font-size: var(--step-0); color: var(--fg);
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--rule); border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.models-edit-form .models-edit-wide { grid-column: 1 / -1; }
+.models-edit-row-actions { display: flex; gap: var(--space-2); }
+/* upgradePfButton adds .pf-v6-c-button, whose `display: flex` outranks the
+   UA [hidden] default the same way .rail-context's own override exists for. */
+#models-edit-remove[hidden] { display: none; }
 
 /* ---- tools: every WASM plugin, and a switch for the optional ones ---- */
 .tool-group {
@@ -2554,7 +2579,6 @@ dd ul { margin: 0; padding-left: 1.1rem; }
 a { color: var(--accent-text); overflow-wrap: anywhere; }
 
 @media (max-width: 40rem) {
-  header { padding: 0.9rem 1rem; }
   main { padding: 1rem; }
   dl { grid-template-columns: 1fr; gap: 0.25rem; }
   dt { margin-top: 0.75rem; }
@@ -4229,6 +4253,8 @@ h2#session-title {
   .fleet-card, .card, .rail-tab[aria-selected="true"]::before { transition: none; }
   .turn[data-phase="ask"]::before,
   .turn[data-phase="llm"]::before { animation: none; }
+  .card-badge[data-due="late"],
+  .card-badge[data-goal-run="true"] { animation: none; }
   .card:hover { transform: none; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.15); }
   .card[data-dragging="true"] { transform: none; }
 }

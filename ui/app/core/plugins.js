@@ -214,6 +214,14 @@ export function bindPlugins(ctx) {
         var fallback = document.querySelector(".rail-nav");
         if (fallback) fallback.appendChild(tab);
       }
+      var tablist = document.querySelector(".rail-places[role='tablist']");
+      if (tablist && tab.id) {
+        var owns = (tablist.getAttribute("aria-owns") || "").split(/\s+/).filter(Boolean);
+        if (owns.indexOf(tab.id) === -1) {
+          owns.push(tab.id);
+          tablist.setAttribute("aria-owns", owns.join(" "));
+        }
+      }
       _VIEWS.push(spec.id);
       pluginViews[spec.id] = { spec: spec, section: section };
       var mounted = false;

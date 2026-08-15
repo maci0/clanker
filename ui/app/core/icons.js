@@ -83,6 +83,8 @@ export var ICON_PATHS = {
   ],
   // Circle-i for persistent review notices.
   aiInfo: ["M12 5.5a6.5 6.5 0 110 13 6.5 6.5 0 010-13z", "M12 11v5", "M12 8h.01"],
+  // A face: the rooms emoji picker trigger.
+  smile: ["M12 5.5a6.5 6.5 0 110 13 6.5 6.5 0 010-13z", "M9 10v.5", "M15 10v.5", "M8.5 14c1.1 1.6 2.7 2.4 3.5 2.4s2.4-.8 3.5-2.4"],
 };
 
 export function icon(name, size) {

@@ -16,6 +16,15 @@ pub fn replaceTable(arena: std.mem.Allocator, src: []const u8, block: []const u8
     return appendBlock(arena, src, ensureTrailingNewline(block));
 }
 
+/// Deletes one table's span (header through the line before the next
+/// header, or EOF). A no-op — returns `src` unchanged — when `header` is not
+/// a literal line in `src`, so removing a model that is already gone (config
+/// reloaded elsewhere, double-click) is not an error.
+pub fn removeTable(arena: std.mem.Allocator, src: []const u8, header: []const u8) ![]const u8 {
+    const span = findTableSpan(src, header) orelse return src;
+    return splice(arena, src, span.start, span.end, "");
+}
+
 /// Replace or insert a top-level `key = "value"` line. A new key is inserted
 /// immediately before the first table header so it stays at the root.
 pub fn setTopLevelString(arena: std.mem.Allocator, src: []const u8, key: []const u8, value: []const u8) ![]const u8 {
@@ -218,6 +227,37 @@ test "setTopLevelString replaces an existing key in place" {
     defer arena_state.deinit();
     const out = try setTopLevelString(arena_state.allocator(), src, "default_provider", "new");
     try std.testing.expectEqualStrings("default_provider = \"new\"\n[agent]\n", out);
+}
+
+test "removeTable deletes the table and leaves the rest" {
+    const src =
+        \\# keep me
+        \\[models."a/x"]
+        \\provider = "a"
+        \\max_tokens = 1
+        \\
+        \\[agent]
+        \\max_iterations = 4
+        \\
+    ;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const out = try removeTable(arena_state.allocator(), src, "[models.\"a/x\"]");
+    try std.testing.expect(std.mem.startsWith(u8, out, "# keep me\n"));
+    try std.testing.expect(std.mem.find(u8, out, "[models.\"a/x\"]") == null);
+    try std.testing.expect(std.mem.find(u8, out, "[agent]\nmax_iterations = 4") != null);
+}
+
+test "removeTable is a no-op when the table is absent" {
+    const src =
+        \\[agent]
+        \\max_iterations = 4
+        \\
+    ;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const out = try removeTable(arena_state.allocator(), src, "[models.\"a/x\"]");
+    try std.testing.expectEqualStrings(src, out);
 }
 
 test "replaceTable last matching header wins" {

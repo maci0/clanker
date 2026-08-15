@@ -276,6 +276,8 @@ CSS steps: `--step--1` 0.6875rem, `--step-0` 0.8125rem, `--step-1` 0.9375rem,
   Set up folded so they do not eat the list; 15rem; drawer below 40rem.
   Between 40rem and 75rem the main column leaves a 15rem inset so PF's
   overlay sidebar cannot cover the heading.
+- Phone masthead: Menu, model, Jump, theme. Status lamps live in System.
+  Phone Chat header shows More only so the empty state clears the composer.
 - Chat is a three-part column: session header, scrolling transcript,
   docked composer. Other views replace the conversation column; the
   session list stays
