@@ -140,7 +140,7 @@ fn walk(
 }
 
 fn skipDir(name: []const u8) bool {
-    for ([_][]const u8{ ".git", ".zig-cache", "zig-out", "zig-pkg", "node_modules", "vendor", "staging", "history" }) |d| {
+    for ([_][]const u8{ ".git", ".zig-cache", ".venv", ".cache", "zig-out", "zig-pkg", "node_modules", "vendor", "staging", "history", "__pycache__" }) |d| {
         if (std.mem.eql(u8, name, d)) return true;
     }
     return false;
