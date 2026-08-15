@@ -3224,6 +3224,13 @@ const ToolWorker = struct {
             .shared_root = self.cfg.agent.shared_root,
             .network_allow = self.tool.network_allow,
             .fs_prefixes = self.tool.fs_prefixes,
+            // The named host channels (ck_harness_config, ck_std_api,
+            // ck_model_stats, ck_chat, ...) gate on tool_self_name, and
+            // host.sandboxFor sets it from the descriptor. The worker builds
+            // its own Sandbox literal, and omitting it left every agent-run
+            // tool with an empty name, so peers/std_api/status were denied
+            // their own channels in capability evals and the improve loop.
+            .tool_self_name = self.tool.name,
             // Copied like every other policy field. Omitting them here did not
             // make a worker safer, it made it wrong: a tool ran with no
             // commands and no environment on the parallel path and the same
