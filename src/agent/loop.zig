@@ -31,6 +31,11 @@ const thinking = @import("thinking.zig");
 const ttsr = @import("ttsr.zig");
 const session = @import("session.zig");
 
+/// How many iterations before the budget runs out the wrap-up warning is
+/// injected. Skipped entirely on budgets small enough that the warning
+/// would arrive on the first iteration.
+const wrap_up_warning_iterations: u32 = 3;
+
 /// Process-local RED counters for tool invocations. No per-tool labels: the
 /// tally in state/tool_usage.json and the correlated logs carry that detail.
 var tool_requests_total = std.atomic.Value(u64).init(0);
@@ -123,6 +128,9 @@ pub const Agent = struct {
     cfg: *const config.Config,
     reg: *const registry.Registry,
     tool_defs: []const types.ToolDef,
+    /// Set on the budget's final iteration: the request goes out with no
+    /// tools so the model must land the run in text.
+    final_no_tools: bool = false,
     /// How often each tool has been called, across every run this clanker has
     /// ever done. Decides which schemas are loaded without being asked for.
     usage: tool_usage.Usage = .{},
@@ -657,6 +665,7 @@ pub const Agent = struct {
 
         var iteration: u32 = 0;
         var budget_hit = false;
+        self.final_no_tools = false;
         var repeat_guard: loop_guard.LoopGuard = .{};
         // Last private-todo revision already reported to `on_todos`. Starts at
         // the list's current revision rather than 0 so a nested run that
@@ -696,6 +705,20 @@ pub const Agent = struct {
                         .ok = true,
                     });
                 }
+            }
+            // Budget exhaustion is a landing, not a wall: a warning a few
+            // iterations out lets the model finish essentials, and the final
+            // iteration runs without tools so it must answer in text — a
+            // real answer or a handoff summary — instead of the whole run
+            // dying as MaxIterationsExceeded with everything discarded.
+            const remaining = self.max_iterations - iteration;
+            if (remaining == wrap_up_warning_iterations and self.max_iterations > wrap_up_warning_iterations) {
+                const warn_text = try std.fmt.allocPrint(self.arena, "[iteration budget] {d} tool iterations remain before this run must stop. Wrap up: finish only what is essential and prepare your final answer.", .{remaining});
+                try messages.append(self.arena, .{ .role = .system, .content = warn_text });
+            }
+            if (remaining == 1) {
+                self.final_no_tools = true;
+                try messages.append(self.arena, .{ .role = .system, .content = "[iteration budget] Final iteration: tool calls are disabled. Reply now with your final answer. If the task is unfinished, state plainly what was completed and exactly what remains, so a follow-up run can continue from here." });
             }
             // Log estimated prompt tokens before each LLM call for visibility
             // into context usage and to aid compaction tuning. maybeCompactMessages
@@ -745,7 +768,7 @@ pub const Agent = struct {
                 break :blk chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
                     .provider = self.provider,
                     .messages = request_messages,
-                    .tools = self.tool_defs,
+                    .tools = self.iterTools(),
                     .reasoning_effort = effort,
                     .max_tokens = self.cfg.agent.max_tokens_per_turn,
                 }, err_detail, ttsrStreamWrap, self.stop_flag) catch |err| {
@@ -2167,13 +2190,21 @@ pub const Agent = struct {
         return chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
             .provider = self.provider,
             .messages = messages,
-            .tools = self.tool_defs,
+            .tools = self.iterTools(),
             .reasoning_effort = effort,
             .max_tokens = self.cfg.agent.max_tokens_per_turn,
         }, err_detail, null, null) catch |err| {
             try self.recordFailedLlm(g, iteration, started, err, err_detail.*);
             return err;
         };
+    }
+
+    /// Tools offered this iteration: none on the budget's final one, so the
+    /// model lands the run in text instead of spending the last slot on a
+    /// tool call whose result nothing would ever read.
+    fn iterTools(self: *const Agent) ?[]const types.ToolDef {
+        if (self.final_no_tools) return null;
+        return self.tool_defs;
     }
 
     fn recordFailedLlm(

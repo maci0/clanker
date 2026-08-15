@@ -7,6 +7,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- Hitting the iteration budget lands the run instead of erroring it: a
+  wrap-up warning is injected three iterations out, and the final
+  iteration goes to the model with tools disabled so it must answer in
+  text — the result, or a handoff summary of what was done and what
+  remains. A goal loop then continues on its next turn with a fresh
+  budget rather than dying as `MaxIterationsExceeded` (which stays only
+  as a backstop).
 - Ad-hoc web UI addons from chat. Ask for a view ("build me a music
   player") and the `webui_addon` tool writes `ui/plugins/<name>/` and
   can enable it. System → Web UI plugins is the on/off switch. A
