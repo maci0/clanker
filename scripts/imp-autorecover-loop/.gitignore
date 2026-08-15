@@ -1,0 +1,18 @@
+run.local.sh
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+
+# Environments
+.venv/
+venv/
+
+.env
