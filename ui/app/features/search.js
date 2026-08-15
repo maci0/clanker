@@ -124,7 +124,13 @@ function render() {
   if (state.error) {
     var failed = document.createElement("p");
     failed.className = "run-empty";
-    failed.textContent = "Search failed: " + state.error;
+    failed.textContent = "Search failed: " + state.error + " ";
+    var retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "secondary";
+    retry.textContent = "Try again";
+    retry.addEventListener("click", function () { runSearch(state.query); });
+    failed.appendChild(retry);
     list.appendChild(failed);
     if (status) status.textContent = "Search failed: " + state.error;
     return;

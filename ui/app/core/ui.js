@@ -379,6 +379,40 @@ export function toast(msg, kind) {
   return node;
 }
 
+/* A failed list fetch used to write only the sr-only status line (mirrored
+   to a toast that then vanished). The panel looked empty, which reads as
+   "nothing here" rather than "could not load". Put the reason and a retry
+   where the rows would have been. */
+export function showLoadError(container, message, retryFn) {
+  if (!container) return null;
+  container.hidden = false;
+  container.removeAttribute("hidden");
+  container.textContent = "";
+  var p = document.createElement("p");
+  p.className = "run-empty";
+  p.appendChild(document.createTextNode(message));
+  if (typeof retryFn === "function") {
+    p.appendChild(document.createTextNode(" "));
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "secondary";
+    btn.textContent = "Try again";
+    btn.addEventListener("click", function () {
+      btn.disabled = true;
+      var done = function () { btn.disabled = false; };
+      try {
+        var out = retryFn();
+        if (out && typeof out.then === "function") out.then(done, done);
+        else done();
+      } catch (_) { done(); }
+    });
+    upgradePfButton(btn);
+    p.appendChild(btn);
+  }
+  container.appendChild(p);
+  return p;
+}
+
 /* Themed replacements for window.confirm / window.prompt. Native dialogs
    punch unthemed browser chrome through the page mid-task and block the
    main thread; these reuse the .slack-dialog <dialog> language the create-

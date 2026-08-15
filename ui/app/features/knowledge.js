@@ -1,5 +1,5 @@
 // Knowledge view — single-user. Collections of documents.
-import { uiConfirm, uiPrompt, toast } from "../core/ui.js";
+import { uiConfirm, uiPrompt, toast, showLoadError } from "../core/ui.js";
 import { readJson } from "../core/utils.js";
 export var selectedKnowledge = (function(){ try { var raw = window.localStorage.getItem("clanker.knowledge"); if (raw) return JSON.parse(raw); } catch(_){} return []; })();
 function persistKnowledge(){ try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(selectedKnowledge)); } catch(_){} }
@@ -77,7 +77,11 @@ export function loadKnowledge(){
     }
     if(status) status.textContent=cols.length+(cols.length===1?" collection.":" collections.");
     updateHint(); refreshBadge();
-  }).catch(function(err){ if(status) status.textContent="Could not load knowledge: "+err.message; });
+  }).catch(function(err){
+    var msg="Could not load knowledge: "+err.message;
+    if(status) status.textContent=msg;
+    showLoadError(document.getElementById("knowledge-list"), msg, loadKnowledge);
+  });
 }
 /* Folder-linked collections: which server-side folder a collection mirrors.
    The link lives in this browser (localStorage) rather than in the

@@ -1,5 +1,5 @@
 // Prompts library — single-user. Browse / create / use / delete prompt templates backed by GET/POST/DELETE /api/prompts.
-import { uiConfirm, toast } from "../core/ui.js";
+import { uiConfirm, toast, showLoadError } from "../core/ui.js";
 import { readJson } from "../core/utils.js";
 import { copyText } from "../core/vendor.js";
 
@@ -12,7 +12,11 @@ export function loadPromptsView() {
     // is the only thing that knows how many of the rendered cards are actually
     // on screen, and a count that ignores the filter contradicts the list.
     renderPrompts(prompts);
-  }).catch(function(err){ if(status) status.textContent = "Could not load prompts: " + err.message; });
+  }).catch(function(err){
+    var msg = "Could not load prompts: " + err.message;
+    if(status) status.textContent = msg;
+    showLoadError(document.getElementById("prompts-list"), msg, loadPromptsView);
+  });
 }
 
 /* What is on screen, decided in one place.

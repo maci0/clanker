@@ -8,7 +8,11 @@ export function loadLog(name, els, readJson, fmtBytes) {
       els.logView.scrollTop = els.logView.scrollHeight;
       els.logsStatus.textContent = "Showing the tail of " + d.name + " (" + fmtBytes(d.bytes) + " total).";
     })
-    .catch(function (err) { els.logsStatus.textContent = "Could not read log: " + err.message; });
+    .catch(function (err) {
+      var msg = "Could not read log: " + err.message;
+      els.logsStatus.textContent = msg;
+      if (els.logView) els.logView.textContent = msg;
+    });
 }
 
 export function loadLogList(els, readJson, fmtBytes) {
@@ -38,5 +42,9 @@ export function loadLogList(els, readJson, fmtBytes) {
       els.logSelect.value = keep && els.logSelect.querySelector('option[value="' + keep.replace(/"/g, '\\"') + '"]') ? keep : logs[0].name;
       return loadLog(els.logSelect.value, els, readJson, fmtBytes);
     })
-    .catch(function (err) { els.logsStatus.textContent = "Could not list logs: " + err.message; });
+    .catch(function (err) {
+      var msg = "Could not list logs: " + err.message;
+      els.logsStatus.textContent = msg;
+      if (els.logView) els.logView.textContent = msg;
+    });
 }

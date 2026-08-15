@@ -10,6 +10,7 @@
 // Reference: docs/prds/0008-arena.md, "Web UI: the arena view".
 
 import { readJson, peerColor, themeToken, cssColorAlpha } from "../core/utils.js";
+import { showLoadError } from "../core/ui.js";
 import { reducedMotion } from "../core/vendor.js";
 import { onLive, liveOk } from "../core/stream.js";
 
@@ -169,7 +170,9 @@ export function loadArenaView() {
     // Newest first from the tool, so the top row is the one just finished.
     return fetchMatch(state.id || matches[0].id, false);
   }).catch(function (err) {
-    if (status) status.textContent = "Could not load matches: " + err.message;
+    var msg = "Could not load matches: " + err.message;
+    if (status) status.textContent = msg;
+    showLoadError(byId("arena-list"), msg, loadArenaView);
   });
 }
 

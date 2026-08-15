@@ -3,6 +3,7 @@
 // a derived state (toolState) so filter and data cannot disagree.
 import { scrollTo as vendorScrollTo } from "./vendor.js";
 import { fmtBytes as utilFmtBytes } from "./utils.js";
+import { showLoadError } from "./ui.js";
 
 var _el = null;
 var _allToolsHolder = null;
@@ -296,12 +297,9 @@ export function loadTools() {
       renderTools(_el.toolFilter.value);
     })
     .catch(function (err) {
-      _el.tools.textContent = "";
-      var p = document.createElement("p");
-      p.className = "usage-empty";
-      p.textContent = "Could not load tools: " + err.message;
-      _el.tools.appendChild(p);
-      _el.toolsStatus.textContent = p.textContent;
+      var msg = "Could not load tools: " + err.message;
+      _el.toolsStatus.textContent = msg;
+      showLoadError(_el.tools, msg, loadTools);
     });
 }
 
@@ -319,7 +317,15 @@ function loadWorkflows() {
     .then(function (data) {
       var list = (data && data.workflows) || [];
       box.textContent = "";
-      box.hidden = list.length === 0;
+      box.hidden = false;
+      if (!list.length) {
+        var emptyWf = document.createElement("p");
+        emptyWf.className = "run-empty";
+        emptyWf.textContent = "No templates on file. Add a markdown file under workflows/.";
+        box.appendChild(emptyWf);
+        if (status) status.textContent = "No workflows.";
+        return;
+      }
       list.forEach(function (wf) {
         var card = document.createElement("div");
         card.className = "skill-card";
@@ -360,8 +366,9 @@ function loadWorkflows() {
       if (status) status.textContent = list.length + (list.length === 1 ? " workflow." : " workflows.");
     })
     .catch(function () {
-      box.hidden = true;
+      var msg = "Could not load templates.";
       if (status) status.textContent = "Could not load workflows.";
+      showLoadError(box, msg, loadWorkflows);
     });
 }
 
@@ -378,7 +385,15 @@ function loadSkills() {
     .then(function (data) {
       var list = (data && data.skills) || [];
       box.textContent = "";
-      box.hidden = list.length === 0;
+      box.hidden = false;
+      if (!list.length) {
+        var emptySk = document.createElement("p");
+        emptySk.className = "run-empty";
+        emptySk.textContent = "No skills on file. Add a markdown file under skills/.";
+        box.appendChild(emptySk);
+        if (status) status.textContent = "No skills.";
+        return;
+      }
       list.forEach(function (sk) {
         var card = document.createElement("div");
         card.className = "skill-card";
@@ -401,8 +416,9 @@ function loadSkills() {
       if (status) status.textContent = list.length + (list.length === 1 ? " skill." : " skills.");
     })
     .catch(function () {
-      box.hidden = true;
-      if (status) status.textContent = "Could not load skills.";
+      var msg = "Could not load skills.";
+      if (status) status.textContent = msg;
+      showLoadError(box, msg, loadSkills);
     });
 }
 

@@ -2752,6 +2752,20 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
 /* Narrow viewports: primary composer actions and rail channels stay hittable
    even when the UA reports a fine pointer (phones + many tablets). */
 @media (max-width: 40rem) {
+  /* iOS Safari zooms the page when a focused field is under 16px. */
+  input[type="text"]:not(.pf-v6-c-form-control),
+  input[type="search"]:not(.pf-v6-c-form-control),
+  input[type="date"]:not(.pf-v6-c-form-control),
+  input[type="number"]:not(.pf-v6-c-form-control),
+  input[type="url"]:not(.pf-v6-c-form-control),
+  textarea:not(.pf-v6-c-form-control),
+  .pf-v6-c-form-control,
+  input.pf-v6-c-form-control,
+  textarea.pf-v6-c-form-control,
+  select.pf-v6-c-form-control,
+  .composer textarea {
+    font-size: 16px;
+  }
   .composer .toolbar #submit,
   .composer .toolbar #cancel { min-height: 44px; }
   button.chip-btn,

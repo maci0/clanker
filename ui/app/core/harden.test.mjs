@@ -280,6 +280,51 @@ test("rooms copy uses the shared copy feedback helper", function () {
   assert.match(app, /function syncChatLogEmpty/);
 });
 
+test("failed list loads keep a visible retry in the panel", function () {
+  assert.match(uiSrc, /export function showLoadError/);
+  assert.match(uiSrc, /btn\.textContent = "Try again"/);
+  const schedule = readFileSync(join(here, "../features/schedule.js"), "utf8");
+  const prompts = readFileSync(join(here, "../features/prompts.js"), "utf8");
+  const knowledge = readFileSync(join(here, "../features/knowledge.js"), "utf8");
+  const plugins = readFileSync(join(here, "plugins.js"), "utf8");
+  const tools = readFileSync(join(here, "tools.js"), "utf8");
+  const board = readFileSync(join(here, "../features/board.js"), "utf8");
+  const search = readFileSync(join(here, "../features/search.js"), "utf8");
+  const compare = readFileSync(join(here, "../features/compare.js"), "utf8");
+  const arena = readFileSync(join(here, "../features/arena.js"), "utf8");
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  const logs = readFileSync(join(here, "logs.js"), "utf8");
+  assert.match(schedule, /showLoadError\(byId\("schedule-list"\)/);
+  assert.match(prompts, /showLoadError\(document\.getElementById\("prompts-list"\)/);
+  assert.match(knowledge, /showLoadError\(document\.getElementById\("knowledge-list"\)/);
+  assert.match(plugins, /showLoadError\(_el\.webuiPlugins/);
+  assert.match(tools, /showLoadError\(_el\.tools/);
+  assert.match(tools, /showLoadError\(box, msg, loadWorkflows\)/);
+  assert.match(tools, /showLoadError\(box, msg, loadSkills\)/);
+  assert.match(board, /showLoadError\(el\.board/);
+  assert.match(search, /Try again/);
+  assert.match(compare, /showLoadError\(byId\("compare-list"\)/);
+  assert.match(arena, /showLoadError\(byId\("arena-list"\)/);
+  assert.match(app, /showLoadError\(el\.usage/);
+  assert.match(logs, /els\.logView\.textContent = msg/);
+});
+
+test("templates and skills say when none are on file", function () {
+  const tools = readFileSync(join(here, "tools.js"), "utf8");
+  assert.match(tools, /No templates on file/);
+  assert.match(tools, /No skills on file/);
+  assert.doesNotMatch(tools, /box\.hidden = list\.length === 0/);
+});
+
+test("phone fields stay at 16px so iOS does not zoom on focus", function () {
+  const block = css.slice(css.indexOf("@media (max-width: 40rem)"));
+  const phone = block.slice(0, block.indexOf("@media (max-width: 40rem)", 10) === -1
+    ? block.length
+    : block.indexOf("/* Density"));
+  assert.match(phone, /\.composer textarea \{[\s\S]*font-size:\s*16px/);
+  assert.match(phone, /input\[type="text"\]:not\(\.pf-v6-c-form-control\)/);
+});
+
 test("accent pill is primary/#submit only, not every unmarked button", function () {
   assert.doesNotMatch(
     css,

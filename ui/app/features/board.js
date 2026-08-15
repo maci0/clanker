@@ -5,7 +5,7 @@
 // wires the DOM and the app-level callbacks (tab counts, run opening, the
 // peer roster for @ mention hints).
 import { fmtInt, fmtCost, formatChatTime, fmtDeadline, readJson, clip } from "../core/utils.js";
-import { T, bind, state, add, toast, uiConfirm, uiPrompt } from "../core/ui.js";
+import { T, bind, state, add, toast, uiConfirm, uiPrompt, showLoadError } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
 import { doneColumn as doneColumnOf, blockers as blockersOf, dueState, priorityRank } from "../lib/board.js";
@@ -130,7 +130,9 @@ export function loadBoard() {
       renderBoard(d.board || { columns: [], cards: [] });
     })
     .catch(function (err) {
-      el.boardStatus.textContent = "Could not load the board: " + err.message;
+      var msg = "Could not load the board: " + err.message;
+      el.boardStatus.textContent = msg;
+      showLoadError(el.board, msg, loadBoard);
       throw err;
     });
 }

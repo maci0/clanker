@@ -19,6 +19,7 @@
 // Reference: docs/prds/0006-webui.md, "Compare view".
 
 import { readJson } from "../core/utils.js";
+import { showLoadError } from "../core/ui.js";
 
 function byId(id) { return document.getElementById(id); }
 
@@ -55,7 +56,9 @@ export function loadCompareView() {
     // Newest first from the tool, so the top row is the one just finished.
     return fetchComparison(state.id || rows[0].id);
   }).catch(function (err) {
-    if (status) status.textContent = "Could not load comparisons: " + err.message;
+    var msg = "Could not load comparisons: " + err.message;
+    if (status) status.textContent = msg;
+    showLoadError(byId("compare-list"), msg, loadCompareView);
   });
 }
 

@@ -472,8 +472,14 @@ clanker.registerView({
           allEntries = [];
           drawCrumbs(want, cur.root);
           list.textContent = "";
-          list.appendChild(mk("p","files-empty","Error: "+err.message));
-          api.status("Files: "+err.message);
+          var fail = mk("p", "files-empty");
+          fail.appendChild(document.createTextNode("Could not open this folder. " + err.message + " "));
+          var retry = mk("button", "secondary", "Try again");
+          retry.type = "button";
+          retry.addEventListener("click", function () { load(want); });
+          fail.appendChild(retry);
+          list.appendChild(fail);
+          api.status("Could not open this folder. " + err.message);
         })
         .then(function() {
           if (mine !== generation) return;

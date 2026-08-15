@@ -1,5 +1,5 @@
 // Vanilla, no bundler. Web UI plugin host — view registration + asset loading.
-import { T, state, add, effect } from "./ui.js";
+import { T, state, add, effect, showLoadError } from "./ui.js";
 import { renderMarkdownWithFences, buildCodeBlock, renderMermaidBlocks } from "../lib/markdown.js";
 
 export var pluginViews = {};
@@ -95,7 +95,11 @@ export function loadWebuiPlugins() {
       renderWebuiPlugins(d.plugins || []);
       return loadPluginAssets(d.plugins || []);
     })
-    .catch(function (err) { _el.webuiPluginsStatus.textContent = "Could not load plugins: " + err.message; });
+    .catch(function (err) {
+      var msg = "Could not load plugins: " + err.message;
+      _el.webuiPluginsStatus.textContent = msg;
+      showLoadError(_el.webuiPlugins, msg, loadWebuiPlugins);
+    });
 }
 
 export function renderWebuiPlugins(list) {
