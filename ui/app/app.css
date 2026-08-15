@@ -1827,6 +1827,10 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted);
 }
 .knowledge-empty p { margin: 0 0 var(--space-4); max-width: 52ch; color: var(--fg-muted); line-height: 1.6; }
+.knowledge-doc[data-found="true"] {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
 
 /* ---- run canvas: llm -> tool(s) -> llm -> ... -> final, drawn as nodes and edges ---- */
 .run-canvas { position: relative; overflow: auto; border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--surface); max-height: min(60vh, 520px); }
@@ -2686,10 +2690,11 @@ button.tool-name:hover { color: var(--accent-text); }
    so the run can be course-corrected without waiting for it to finish. Same
    affordance the goals view's panel carries. */
 .chat-steer {
-  display: flex; gap: var(--space-3); align-items: center;
+  display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center;
   padding: var(--space-2) var(--space-3); border-top: 1px solid var(--rule);
 }
 .chat-steer[hidden] { display: none; }
+.chat-steer label { flex: 1 1 100%; margin: 0; }
 .chat-steer textarea { flex: 1; min-width: 0; min-height: 3.5rem; max-height: 8rem; resize: vertical; line-height: 1.4; }
 .chat-steer .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 

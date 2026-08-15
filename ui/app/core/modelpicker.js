@@ -409,7 +409,10 @@ export function fallbackProviderValue() {
 }
 
 export function syncSubmitLabel() {
-  var hint = _el.enterSends.checked ? "Run (Enter)" : "Run (Ctrl+Enter)";
+  var empty = !_el.task || !_el.task.value.trim();
+  var hint = empty
+    ? "Write a task first"
+    : (_el.enterSends.checked ? "Run (Enter)" : "Run (Ctrl+Enter)");
   _el.submit.title = hint;
   _el.submit.setAttribute("aria-label", hint);
 }

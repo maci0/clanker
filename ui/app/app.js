@@ -4225,12 +4225,29 @@ Array.prototype.forEach.call(document.querySelectorAll(".slack-room-group-head")
 
 if (el.chatRoomFilter) el.chatRoomFilter.addEventListener("input", function () {
   var q = el.chatRoomFilter.value.trim().toLowerCase();
+  var shown = 0;
   [el.chatRoomsItems, el.chatDmsItems].forEach(function (list) {
     if (!list) return;
     Array.prototype.forEach.call(list.querySelectorAll(".slack-room-item"), function (row) {
-      row.hidden = q.length > 0 && row.textContent.toLowerCase().indexOf(q) === -1;
+      var hide = q.length > 0 && row.textContent.toLowerCase().indexOf(q) === -1;
+      row.hidden = hide;
+      if (!hide) shown += 1;
     });
   });
+  var host = document.getElementById("chat-room-list");
+  var note = document.getElementById("chat-room-filter-empty");
+  if (q && !shown) {
+    if (!note && host) {
+      note = document.createElement("p");
+      note.id = "chat-room-filter-empty";
+      note.className = "run-empty";
+      host.appendChild(note);
+    }
+    if (note) {
+      note.textContent = "No channel matches “" + el.chatRoomFilter.value.trim() + "”.";
+      note.hidden = false;
+    }
+  } else if (note) note.hidden = true;
 });
 
 function closeChatPins() { if (el.chatPinsPanel) el.chatPinsPanel.hidden = true; }

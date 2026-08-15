@@ -25,9 +25,16 @@ export function loadLogList(els, readJson, fmtBytes) {
         els.logSelect.appendChild(opt);
       });
       if (!logs.length) {
+        var none = document.createElement("option");
+        none.value = "";
+        none.textContent = "No log files yet";
+        els.logSelect.appendChild(none);
+        els.logSelect.disabled = true;
         els.logView.textContent = "No logs yet. clanker writes them under state/logs/.";
+        if (els.logsStatus) els.logsStatus.textContent = "No log files yet.";
         return;
       }
+      els.logSelect.disabled = false;
       els.logSelect.value = keep && els.logSelect.querySelector('option[value="' + keep.replace(/"/g, '\\"') + '"]') ? keep : logs[0].name;
       return loadLog(els.logSelect.value, els, readJson, fmtBytes);
     })

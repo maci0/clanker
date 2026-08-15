@@ -161,6 +161,53 @@ test("parseCssColor reads rgb and hex", async function () {
   assert.equal(cssColorMix("rgb(0, 0, 0)", "rgb(100, 0, 0)", 0.5), "rgb(50,0,0)");
 });
 
+test("knowledge search hits open the matching collection", function () {
+  const src = readFileSync(join(here, "../features/knowledge.js"), "utf8");
+  assert.match(src, /openCollection\(h\.collection_id,\s*h\.doc_id\)/);
+  assert.match(src, /className="secondary search-hit knowledge-hit"/);
+  assert.match(src, /function openCollection\(id, docId\)/);
+});
+
+test("tools filter empty offers to clear the query", function () {
+  const src = readFileSync(join(here, "tools.js"), "utf8");
+  assert.match(src, /No tool matches “" \+ s\.filter \+ "”/);
+  assert.match(src, /Clear filter/);
+});
+
+test("prompts filter empty offers to clear the query", function () {
+  const src = readFileSync(join(here, "../features/prompts.js"), "utf8");
+  assert.match(src, /Clear filter/);
+});
+
+test("rooms filter and message search are search inputs", function () {
+  assert.match(html, /id="chat-room-filter"[^>]*type="search"/);
+  assert.match(html, /id="chat-search-input"[^>]*type="search"/);
+});
+
+test("steer row has a visible label", function () {
+  assert.match(html, /<label for="steer-input">Steer this turn<\/label>/);
+});
+
+test("empty Run control explains the disabled state", function () {
+  assert.match(html, /id="submit"[^>]*title="Write a task first"/);
+  const src = readFileSync(join(here, "modelpicker.js"), "utf8");
+  assert.match(src, /Write a task first/);
+});
+
+test("Search field names conversations, not Find", function () {
+  assert.match(html, /<label for="search-q">Search conversations<\/label>/);
+});
+
+test("Board create goal is the primary action", function () {
+  assert.match(html, /id="goal-add"[^>]*class="primary"|class="primary"[^>]*id="goal-add"/);
+});
+
+test("empty log picker names the empty state", function () {
+  const src = readFileSync(join(here, "logs.js"), "utf8");
+  assert.match(src, /No log files yet/);
+  assert.match(src, /logSelect\.disabled = true/);
+});
+
 test("accent pill is primary/#submit only, not every unmarked button", function () {
   assert.doesNotMatch(
     css,

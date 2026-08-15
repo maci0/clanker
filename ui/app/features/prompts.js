@@ -48,7 +48,17 @@ function applyPromptFilter(){
       note.className="run-empty";
       listEl.appendChild(note);
     }
-    note.textContent="No prompt matches “"+raw+"”.";
+    note.textContent="";
+    note.appendChild(document.createTextNode("No prompt matches “"+raw+"”. "));
+    var clear=document.createElement("button");
+    clear.type="button";
+    clear.className="secondary";
+    clear.textContent="Clear filter";
+    clear.addEventListener("click",function(){
+      if(filterEl){ filterEl.value=""; filterEl.focus(); }
+      applyPromptFilter();
+    });
+    note.appendChild(clear);
     note.hidden=false;
   } else if(note) note.hidden=true;
   var status=document.getElementById("prompts-status");

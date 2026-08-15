@@ -135,7 +135,7 @@ function runFolderSync(){
     .finally(function(){ btn.disabled = false; });
 }
 
-function openCollection(id){
+function openCollection(id, docId){
   fetch("/api/knowledge/"+encodeURIComponent(id)).then(readJson).then(function(data){
     var detail=document.getElementById("knowledge-detail"); if(!detail) return;
     detail.hidden=false; detail.textContent="";
@@ -168,6 +168,10 @@ function openCollection(id){
       });
       row.appendChild(rm);
       var pre=document.createElement("pre"); pre.className="knowledge-preview"; pre.textContent=(d.content||"").slice(0,800); row.appendChild(pre);
+      if(docId && d.id===docId){
+        row.setAttribute("data-found","true");
+        try{ row.scrollIntoView({behavior:"smooth",block:"center"}); }catch(_){}
+      }
       detail.appendChild(row);
     });
     var addForm=document.createElement("form"); addForm.className="goal-form"; addForm.style.marginTop="1rem";
@@ -238,17 +242,36 @@ export function bindKnowledge(){
   });
   if(refreshBtn) refreshBtn.addEventListener("click",function(){ loadKnowledge(); });
   function doSearch(){
-    var q=searchInput?searchInput.value.trim():""; if(!q){ if(searchOut) searchOut.textContent=""; return; }
+    var q=searchInput?searchInput.value.trim():"";
+    var status=document.getElementById("knowledge-status");
+    if(!q){ if(searchOut) searchOut.textContent=""; if(status) status.textContent=""; return; }
     if(searchOut) searchOut.textContent="Searching…";
+    if(status) status.textContent="Searching…";
     fetch("/api/knowledge/search?q="+encodeURIComponent(q)).then(readJson).then(function(data){
       var hits=(data&&data.hits)||[]; if(!searchOut) return; searchOut.textContent="";
-      if(!hits.length){ searchOut.textContent="No documents mention “"+q+"”."; return; }
+      if(!hits.length){
+        searchOut.textContent="No documents mention “"+q+"”.";
+        if(status) status.textContent="No documents mention “"+q+"”.";
+        return;
+      }
       hits.forEach(function(h){
-        var row=document.createElement("div"); row.className="knowledge-hit";
-        var meta=document.createElement("div"); meta.className="meta"; meta.textContent=h.collection_title+" / "+h.doc_name; row.appendChild(meta);
-        var snip=document.createElement("div"); snip.textContent=h.snippet; row.appendChild(snip); searchOut.appendChild(row);
+        var row=document.createElement("button");
+        row.type="button";
+        row.className="secondary search-hit knowledge-hit";
+        var label=(h.collection_title||h.collection_id||"collection")+" / "+(h.doc_name||h.doc_id||"document");
+        row.setAttribute("aria-label","Open "+label);
+        var meta=document.createElement("div"); meta.className="search-hit-head";
+        var title=document.createElement("span"); title.className="search-hit-title"; title.textContent=label;
+        meta.appendChild(title); row.appendChild(meta);
+        var snip=document.createElement("p"); snip.className="search-hit-snippet"; snip.textContent=h.snippet||"";
+        row.appendChild(snip);
+        row.addEventListener("click",function(){
+          if(h.collection_id) openCollection(h.collection_id, h.doc_id);
+        });
+        searchOut.appendChild(row);
       });
-    }).catch(function(err){ if(searchOut) searchOut.textContent=err.message; });
+      if(status) status.textContent=hits.length+(hits.length===1?" document.":" documents.");
+    }).catch(function(err){ if(searchOut) searchOut.textContent=err.message; if(status) status.textContent=err.message; });
   }
   if(searchBtn) searchBtn.addEventListener("click",doSearch);
   if(searchInput) searchInput.addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); doSearch(); } });

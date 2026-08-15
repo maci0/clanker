@@ -325,7 +325,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <button type="button" class="secondary danger" id="cancel" hidden
                   title="Stop the running turn" aria-label="Stop the running turn"></button>
           <button type="submit" class="primary" id="submit" disabled
-                  title="Run (Ctrl+Enter)" aria-label="Run (Ctrl+Enter)">Run</button>
+                  title="Write a task first" aria-label="Write a task first">Run</button>
         </div>
       </div>
       <!-- Session-lifetime run shape under the composer. Times tick every
@@ -334,7 +334,8 @@ lamps carry further). The seven named palettes ride the same tokens.
            switch, or a reload clears it. aria-live stays off while live. -->
       <p class="meta run-metrics" id="run-metrics" hidden></p>
       <div class="chat-steer" id="steer-row" hidden>
-        <textarea id="steer-input" rows="2" wrap="soft" placeholder="Steer the running turn mid-flight (optional)…" autocomplete="off" aria-label="Steer the running turn"></textarea>
+        <label for="steer-input">Steer this turn</label>
+        <textarea id="steer-input" rows="2" wrap="soft" placeholder="Change course while the run is in flight (optional)…" autocomplete="off"></textarea>
         <button type="button" class="secondary" id="steer-btn">Steer</button>
         <span class="meta" id="steer-hint"></span>
       </div>
@@ -502,7 +503,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         </div>
         <!-- Quick room switcher (Cmd+K / Ctrl+K) -->
         <div class="slack-search-box">
-          <input type="text" id="chat-room-filter" placeholder="Find a channel…" autocomplete="off" aria-label="Filter channels">
+          <input type="search" id="chat-room-filter" placeholder="Find a channel…" autocomplete="off" aria-label="Filter channels">
         </div>
         <div class="slack-room-list" id="chat-room-list" role="listbox" aria-label="Channels">
           <div class="slack-room-group" id="chat-rooms-group">
@@ -538,7 +539,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         </div>
         <!-- Search bar (hidden by default) -->
         <div class="slack-search-bar" id="chat-search-bar" hidden>
-          <input type="text" id="chat-search-input" placeholder="Search messages…" autocomplete="off" aria-label="Search messages">
+          <input type="search" id="chat-search-input" placeholder="Search messages…" autocomplete="off" aria-label="Search messages">
           <button type="button" class="slack-btn-icon" id="chat-search-close" title="Close search" aria-label="Close search"></button>
           <div class="slack-search-results" id="chat-search-results"></div>
         </div>
@@ -612,7 +613,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <input type="checkbox" id="goal-worktree">
           <span>Use git worktree (isolated branch)</span>
         </label>
-        <button type="submit" class="secondary" id="goal-add">Create goal card</button>
+        <button type="submit" class="primary" id="goal-add">Create goal card</button>
         <p class="meta board-create-note">Saves a Backlog card. It does not start a run.</p>
       </form>
       <!-- Kept for existing room boards and the board module's DOM contract;
@@ -673,7 +674,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <p class="meta">Find a saved conversation by what was said in it. The conversation list in the sidebar filters on titles; this reads the messages.</p>
       <div class="transcript-tools">
-        <label for="search-q">Find</label>
+        <label for="search-q">Search conversations</label>
         <input type="search" id="search-q" placeholder="e.g. cron spec, provider refused, safeJoin…" autocomplete="off" spellcheck="false">
         <button type="button" class="secondary" id="search-go">Search</button>
       </div>

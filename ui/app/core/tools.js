@@ -425,9 +425,20 @@ export function bindTools(ctx) {
         ? shown.length + (shown.length === 1 ? " tool matches." : " tools match.")
         : "";
       if (!shown.length) {
-        return ctx.UI.empty(s.filter
-          ? "No tool matches " + s.filter + "."
-          : "No tools registered. `zig build tools` compiles them.");
+        if (s.filter) {
+          return ctx.T.p({ class: "run-empty" },
+            "No tool matches “" + s.filter + "”. ",
+            ctx.T.button({
+              type: "button",
+              class: "secondary",
+              onclick: function () {
+                _el.toolFilter.value = "";
+                renderTools("");
+                if (_el.toolFilter.focus) _el.toolFilter.focus();
+              }
+            }, "Clear filter"));
+        }
+        return ctx.UI.empty("No tools registered. `zig build tools` compiles them.");
       }
 
       // Groups a filter matched stay open regardless of stored collapse
