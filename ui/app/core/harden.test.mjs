@@ -182,6 +182,9 @@ test("prompts filter empty offers to clear the query", function () {
 test("rooms filter and message search are search inputs", function () {
   assert.match(html, /type="search" id="chat-room-filter"/);
   assert.match(html, /type="search" id="chat-search-input"/);
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  assert.match(app, /chat-room-filter-empty/);
+  assert.match(app, /No channel matches/);
 });
 
 test("steer row has a visible label", function () {

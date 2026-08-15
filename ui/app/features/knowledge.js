@@ -200,7 +200,9 @@ function openCollection(id, docId){
         .then(function(){ openCollection(id); loadKnowledge(); }).catch(function(err){ toast(err.message); }).finally(function(){ submit.disabled=false; });
     });
     detail.appendChild(addForm);
-    try{ detail.scrollIntoView({behavior:"smooth",block:"nearest"}); }catch(_){}
+    if(!docId){
+      try{ detail.scrollIntoView({behavior:"smooth",block:"nearest"}); }catch(_){}
+    }
   }).catch(function(err){ toast(err.message); });
 }
 function deleteCollection(id,title){
