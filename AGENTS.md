@@ -129,7 +129,10 @@ through a gated loop. Follow these conventions when changing this codebase.
   OpenAI/Anthropic compatibility proxy (`clanker serve --proxy`; also
   `src/proxy_main.zig` via `zig build proxy`). The proxy is native because
   it attaches provider credentials. It forwards `/v1/*` 1:1 and must not
-  go through `client.chat` / `buildRequest`.
+  go through `client.chat` / `buildRequest`. HTTP routes live in `cli.zig`:
+  `toolRefusalStatus` maps a tool JSON `no such` / `not found` to 404 and
+  every other refusal to 400; `requestPath` strips the query before a
+  resource id is read off the target.
 - Every `.zig` file lives under a subsystem directory; only `main.zig`,
   `cli.zig`, `config.zig`, `doctor.zig`, and `proxy_main.zig` sit directly
   in `src/`.

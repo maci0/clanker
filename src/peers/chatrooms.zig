@@ -403,7 +403,7 @@ pub fn toggleReaction(
     const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
-    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return false;
+    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return error.NotFound;
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
@@ -430,13 +430,12 @@ pub fn toggleReaction(
         m.reactions = if (new_reactions.items.len > 0) new_reactions.items else null;
         break;
     }
-    if (!found) return false;
+    if (!found) return error.NotFound;
     try rewriteLog(base, io, gpa, arena, state_dir, messages.items);
     return was_added;
 }
 
 /// Edit a message's text. Only the original sender can edit.
-/// Returns the updated message or null if not found / not authorised.
 pub fn editMessage(
     base: std.Io.Dir,
     io: std.Io,
@@ -447,33 +446,32 @@ pub fn editMessage(
     msg_id: []const u8,
     new_text: []const u8,
     from: []const u8,
-) !?Message {
+) !Message {
     _ = cfg;
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
-    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return null;
+    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return error.NotFound;
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
     var result: ?Message = null;
     for (messages.items) |*m| {
         if (!std.mem.eql(u8, m.id, msg_id)) continue;
-        if (!std.mem.eql(u8, m.from, from)) return null;
+        if (!std.mem.eql(u8, m.from, from)) return error.NotOwner;
         const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         m.text = new_text;
         m.edited = now;
         result = m.*;
         break;
     }
-    if (result == null) return null;
+    const updated = result orelse return error.NotFound;
     try rewriteLog(base, io, gpa, arena, state_dir, messages.items);
-    return result;
+    return updated;
 }
 
 /// Mark a message as deleted. Only the original sender can delete.
-/// Returns true if the message was found and deleted.
 pub fn deleteMessage(
     base: std.Io.Dir,
     io: std.Io,
@@ -483,28 +481,27 @@ pub fn deleteMessage(
     cfg: *const config_mod.Config,
     msg_id: []const u8,
     from: []const u8,
-) !bool {
+) !void {
     _ = cfg;
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
-    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return false;
+    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return error.NotFound;
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
     var found = false;
     for (messages.items) |*m| {
         if (!std.mem.eql(u8, m.id, msg_id)) continue;
-        if (!std.mem.eql(u8, m.from, from)) return false;
+        if (!std.mem.eql(u8, m.from, from)) return error.NotOwner;
         m.deleted = true;
         m.text = "[deleted]";
         found = true;
         break;
     }
-    if (!found) return false;
+    if (!found) return error.NotFound;
     try rewriteLog(base, io, gpa, arena, state_dir, messages.items);
-    return true;
 }
 
 // ----------------------------------------------------------- room metadata --
@@ -1300,4 +1297,42 @@ test "down-peer backoff grows, caps, and recovers on success" {
     try std.testing.expect(recordSuccess(io, "down-peer"));
     try std.testing.expect(!inCooldown(io, "down-peer"));
     try std.testing.expect(!recordSuccess(io, "down-peer"));
+}
+
+test "edit, delete and react distinguish missing from not-owner" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "alice";
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"dev"};
+    cfg.chatrooms.max_history = 100;
+
+    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        .room = "dev",
+        .from = "alice",
+        .text = "mine",
+        .ts = 1,
+        .id = "m1",
+    });
+
+    try std.testing.expectError(error.NotFound, editMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "nope", "x", "alice"));
+    try std.testing.expectError(error.NotOwner, editMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "x", "bob"));
+    const edited = try editMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "updated", "alice");
+    try std.testing.expectEqualStrings("updated", edited.text);
+
+    try std.testing.expectError(error.NotFound, toggleReaction(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "nope", "👍", "alice"));
+    try std.testing.expect(try toggleReaction(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "👍", "alice"));
+
+    try std.testing.expectError(error.NotFound, deleteMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "nope", "alice"));
+    try std.testing.expectError(error.NotOwner, deleteMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "bob"));
+    try deleteMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "alice");
 }

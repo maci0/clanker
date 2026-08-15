@@ -2036,9 +2036,12 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             msg_id,
             emoji,
             cfg.instance.name,
-        ) catch |err| {
-            log.log(.warn, "[chat] react failed: {s}", .{@errorName(err)});
-            return Err.invalid;
+        ) catch |err| switch (err) {
+            error.NotFound => return h.writeResult(bytes, "{\"ok\":false,\"error\":\"no such message\"}"),
+            else => {
+                log.log(.warn, "[chat] react failed: {s}", .{@errorName(err)});
+                return Err.invalid;
+            },
         };
         s.beginObject() catch return Err.too_large;
         s.objectField("ok") catch return Err.too_large;
@@ -2051,7 +2054,7 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         const msg_id = parsed.msg_id orelse return Err.invalid;
         const new_text = parsed.text orelse return Err.invalid;
         if (new_text.len == 0 or new_text.len > chatrooms_mod.max_text_len) return Err.invalid;
-        const result = chatrooms_mod.editMessage(
+        const msg = chatrooms_mod.editMessage(
             base,
             h.sandbox.io,
             h.sandbox.gpa,
@@ -2061,26 +2064,26 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             msg_id,
             new_text,
             cfg.instance.name,
-        ) catch |err| {
-            log.log(.warn, "[chat] edit failed: {s}", .{@errorName(err)});
-            return Err.invalid;
+        ) catch |err| switch (err) {
+            error.NotFound => return h.writeResult(bytes, "{\"ok\":false,\"error\":\"no such message\"}"),
+            error.NotOwner => return h.writeResult(bytes, "{\"ok\":false,\"error\":\"not your message\"}"),
+            else => {
+                log.log(.warn, "[chat] edit failed: {s}", .{@errorName(err)});
+                return Err.invalid;
+            },
         };
-        if (result) |msg| {
-            s.beginObject() catch return Err.too_large;
-            s.objectField("ok") catch return Err.too_large;
-            s.write(true) catch return Err.too_large;
-            s.objectField("id") catch return Err.too_large;
-            s.write(msg.id) catch return Err.too_large;
-            s.objectField("edited") catch return Err.too_large;
-            s.print("{d}", .{msg.edited.?}) catch return Err.too_large;
-            s.endObject() catch return Err.too_large;
-            return h.writeResult(bytes, out_buf[0..w.end]);
-        } else {
-            return h.writeResult(bytes, "{\"ok\":false,\"error\":\"not found or not authorised\"}");
-        }
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.objectField("id") catch return Err.too_large;
+        s.write(msg.id) catch return Err.too_large;
+        s.objectField("edited") catch return Err.too_large;
+        s.print("{d}", .{msg.edited.?}) catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
     } else if (std.mem.eql(u8, op, "delete")) {
         const msg_id = parsed.msg_id orelse return Err.invalid;
-        const ok = chatrooms_mod.deleteMessage(
+        chatrooms_mod.deleteMessage(
             base,
             h.sandbox.io,
             h.sandbox.gpa,
@@ -2089,19 +2092,19 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             cfg,
             msg_id,
             cfg.instance.name,
-        ) catch |err| {
-            log.log(.warn, "[chat] delete failed: {s}", .{@errorName(err)});
-            return Err.invalid;
+        ) catch |err| switch (err) {
+            error.NotFound => return h.writeResult(bytes, "{\"ok\":false,\"error\":\"no such message\"}"),
+            error.NotOwner => return h.writeResult(bytes, "{\"ok\":false,\"error\":\"not your message\"}"),
+            else => {
+                log.log(.warn, "[chat] delete failed: {s}", .{@errorName(err)});
+                return Err.invalid;
+            },
         };
-        if (ok) {
-            s.beginObject() catch return Err.too_large;
-            s.objectField("ok") catch return Err.too_large;
-            s.write(true) catch return Err.too_large;
-            s.endObject() catch return Err.too_large;
-            return h.writeResult(bytes, out_buf[0..w.end]);
-        } else {
-            return h.writeResult(bytes, "{\"ok\":false,\"error\":\"not found or not authorised\"}");
-        }
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
     } else if (std.mem.eql(u8, op, "set_topic")) {
         const room = parsed.room orelse return Err.invalid;
         const new_topic = parsed.topic orelse return Err.invalid;

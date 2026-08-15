@@ -4413,6 +4413,70 @@ fn toolResultFailed(out: []const u8) bool {
     return std.mem.startsWith(u8, std.mem.trimStart(u8, out, " \t\r\n"), "{\"ok\":false");
 }
 
+/// Request-target without the query string. Resource ids live on the path;
+/// a cache-busting `?t=` must not become part of the id.
+fn requestPath(target: []const u8) []const u8 {
+    if (std.mem.findScalar(u8, target, '?')) |i| return target[0..i];
+    return target;
+}
+
+/// HTTP status for a tool JSON body. Success is 200. A refusal that names a
+/// missing resource (`no such …`, `not found`) is 404; every other refusal
+/// is a client mistake (400).
+fn toolRefusalStatus(out: []const u8) u16 {
+    if (!toolResultFailed(out)) return 200;
+    return if (toolRefusalIsMissing(out)) 404 else 400;
+}
+
+fn toolRefusalIsMissing(out: []const u8) bool {
+    const key = "\"error\":\"";
+    const start = std.mem.indexOf(u8, out, key) orelse return false;
+    const rest = out[start + key.len ..];
+    const end = std.mem.indexOfScalar(u8, rest, '"') orelse return false;
+    const msg = rest[0..end];
+    return std.mem.startsWith(u8, msg, "no such") or
+        std.mem.eql(u8, msg, "not found") or
+        std.mem.endsWith(u8, msg, " not found");
+}
+
+fn httpReason(status: u16) []const u8 {
+    return switch (status) {
+        200 => "OK",
+        400 => "Bad Request",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        409 => "Conflict",
+        413 => "Content Too Large",
+        421 => "Misdirected Request",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        503 => "Service Unavailable",
+        else => "Error",
+    };
+}
+
+fn respondTool(stream: std.Io.net.Stream, out: []const u8) void {
+    const status = toolRefusalStatus(out);
+    respond(stream, status, httpReason(status), out);
+}
+
+test "requestPath drops the query string and leaves a bare path alone" {
+    try std.testing.expectEqualStrings("/api/sessions/abc", requestPath("/api/sessions/abc?t=1"));
+    try std.testing.expectEqualStrings("/api/runs/run-1", requestPath("/api/runs/run-1"));
+    try std.testing.expectEqualStrings("/api/knowledge", requestPath("/api/knowledge?"));
+}
+
+test "toolRefusalStatus maps missing resources to 404 and other refusals to 400" {
+    try std.testing.expectEqual(@as(u16, 200), toolRefusalStatus("{\"ok\":true}"));
+    try std.testing.expectEqual(@as(u16, 404), toolRefusalStatus("{\"ok\":false,\"error\":\"no such collection\"}"));
+    try std.testing.expectEqual(@as(u16, 404), toolRefusalStatus("{\"ok\":false,\"error\":\"no such card\"}"));
+    try std.testing.expectEqual(@as(u16, 404), toolRefusalStatus("{\"ok\":false,\"error\":\"not found\"}"));
+    try std.testing.expectEqual(@as(u16, 400), toolRefusalStatus("{\"ok\":false,\"error\":\"need a title\"}"));
+    try std.testing.expectEqual(@as(u16, 400), toolRefusalStatus("{\"ok\":false,\"error\":\"pick must be A, B or C\"}"));
+}
+
 fn memorySearch(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -6004,12 +6068,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         {
             handleSessions(io, gpa, cfg, method, target, body, acceptsGzip(headers_raw), stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify")) {
-            handleNotify(io, gpa, body) catch |err| {
-                log.log(.error_, "POST /api/notify: {s}", .{@errorName(err)});
-                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"notify failed\"}");
-                return;
-            };
-            respond(stream, 200, "OK", "{\"ok\":true}");
+            handleNotify(io, gpa, body, stream);
         } else if (is_chat_message) {
             handleChatMessage(io, gpa, cfg, body, stream);
         } else if (is_chat_messages) {
@@ -6177,12 +6236,15 @@ const A2ARequest = struct {
     params: ?std.json.Value = null,
 };
 
-fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8) !void {
+fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = try std.json.parseFromSliceLeaky(NotifyRequestBody, arena, body, .{ .ignore_unknown_fields = true });
+    const parsed = std.json.parseFromSliceLeaky(NotifyRequestBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
     const from = parsed.from orelse "";
     const kind = parsed.kind orelse "";
     const topic = parsed.topic orelse "";
@@ -6192,7 +6254,12 @@ fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8) !void {
     // units used for session created/updated timestamps elsewhere.
     const received_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     const record = NotificationRecord{ .from = from, .kind = kind, .topic = topic, .payload = payload, .ts = ts, .received_at = received_at, .id = parsed.id };
-    try storeNotification(io, gpa, std.Io.Dir.cwd(), record);
+    storeNotification(io, gpa, std.Io.Dir.cwd(), record) catch |err| {
+        log.log(.error_, "POST /api/notify: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"notify failed\"}");
+        return;
+    };
+    respond(stream, 200, "OK", "{\"ok\":true}");
 }
 
 test "notification redelivery is stored once" {
@@ -6546,10 +6613,16 @@ fn handleChatReact(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         return;
     };
     _ = room;
-    const added = chatrooms.toggleReaction(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, emoji, cfg.instance.name) catch |err| {
-        log.log(.error_, "POST /api/chat/react: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"react failed\"}");
-        return;
+    const added = chatrooms.toggleReaction(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, emoji, cfg.instance.name) catch |err| switch (err) {
+        error.NotFound => {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such message\"}");
+            return;
+        },
+        else => {
+            log.log(.error_, "POST /api/chat/react: {s}", .{@errorName(err)});
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"react failed\"}");
+            return;
+        },
     };
     if (added) {
         respond(stream, 200, "OK", "{\"ok\":true,\"added\":true}");
@@ -6580,16 +6653,22 @@ fn handleChatEdit(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
         return;
     };
     _ = room;
-    const result = chatrooms.editMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, text, cfg.instance.name) catch |err| {
-        log.log(.error_, "POST /api/chat/edit: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"edit failed\"}");
-        return;
+    _ = chatrooms.editMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, text, cfg.instance.name) catch |err| switch (err) {
+        error.NotFound => {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such message\"}");
+            return;
+        },
+        error.NotOwner => {
+            respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"not your message\"}");
+            return;
+        },
+        else => {
+            log.log(.error_, "POST /api/chat/edit: {s}", .{@errorName(err)});
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"edit failed\"}");
+            return;
+        },
     };
-    if (result != null) {
-        respond(stream, 200, "OK", "{\"ok\":true}");
-    } else {
-        respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"not your message\"}");
-    }
+    respond(stream, 200, "OK", "{\"ok\":true}");
 }
 
 fn handleChatDelete(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
@@ -6610,16 +6689,22 @@ fn handleChatDelete(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         return;
     };
     _ = room;
-    const ok = chatrooms.deleteMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, cfg.instance.name) catch |err| {
-        log.log(.error_, "POST /api/chat/delete: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"delete failed\"}");
-        return;
+    chatrooms.deleteMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, cfg.instance.name) catch |err| switch (err) {
+        error.NotFound => {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such message\"}");
+            return;
+        },
+        error.NotOwner => {
+            respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"not your message\"}");
+            return;
+        },
+        else => {
+            log.log(.error_, "POST /api/chat/delete: {s}", .{@errorName(err)});
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"delete failed\"}");
+            return;
+        },
     };
-    if (ok) {
-        respond(stream, 200, "OK", "{\"ok\":true}");
-    } else {
-        respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"not your message\"}");
-    }
+    respond(stream, 200, "OK", "{\"ok\":true}");
 }
 
 fn handleChatPin(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
@@ -8478,7 +8563,7 @@ fn handleRuns(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const rest = target["/api/runs".len..];
+    const rest = requestPath(target)["/api/runs".len..];
     var args: []const u8 = "json";
     if (rest.len > 1 and rest[0] == '/') {
         const id = rest[1..];
@@ -9883,10 +9968,9 @@ fn handleBoard(
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"board tool unavailable\"}");
         return;
     };
-    // The tool reports its own refusals as {"ok":false,...}; a refusal is a bad
-    // request, not a server error.
-    const status: u16 = if (toolResultFailed(out)) 400 else 200;
-    respond(stream, status, if (status == 200) "OK" else "Bad Request", out);
+    // The tool reports its own refusals as {"ok":false,...}; a missing card
+    // or column is 404, every other refusal is a bad request.
+    respondTool(stream, out);
 }
 
 const goals_path = "state/goals.json";
@@ -10029,7 +10113,7 @@ fn handleLogs(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gz
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const rest = target["/api/logs".len..];
+    const rest = requestPath(target)["/api/logs".len..];
     var dir = std.Io.Dir.cwd().openDir(io, "state/logs", .{ .iterate = true }) catch {
         respond(stream, 200, "OK", "{\"ok\":true,\"logs\":[]}");
         return;
@@ -10123,14 +10207,11 @@ fn handleSessions(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const rest = target["/api/sessions".len..];
+    const rest = requestPath(target)["/api/sessions".len..];
 
     // `GET /api/sessions/search?q=` — full-text over saved conversations.
-    // Answered before the id branch below, because "search" is not an id and
-    // `validSessionId` would refuse the query string hanging off it anyway.
-    if (std.mem.eql(u8, method, "GET") and
-        (std.mem.eql(u8, rest, "/search") or std.mem.startsWith(u8, rest, "/search?")))
-    {
+    // Answered before the id branch below, because "search" is not an id.
+    if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, rest, "/search")) {
         handleSessionSearch(io, arena, target, stream);
         return;
     }
@@ -10199,6 +10280,15 @@ fn handleSessions(
             var cbuf: [128]u8 = undefined;
             const cbody = std.fmt.bufPrint(&cbuf, "{{\"ok\":true,\"bytes\":{d}}}", .{bytes}) catch return;
             respond(stream, 200, "OK", cbody);
+            return;
+        }
+        // GET/DELETE of an action suffix is not a session id. Say so rather
+        // than calling the slash a bad character in an id.
+        if (std.mem.endsWith(u8, id, "/fork") or
+            std.mem.endsWith(u8, id, "/compact") or
+            branchSuffix(id) != null)
+        {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such endpoint\"}");
             return;
         }
         if (!session.validSessionId(id)) {
@@ -10273,10 +10363,13 @@ fn handleSessions(
 
     // Import: POST /api/sessions with {import_chat:true, title, messages:[{role,content}]}
     if (std.mem.eql(u8, method, "POST")) {
-        const import_req = std.json.parseFromSliceLeaky(SessionPatchBody, arena, body, .{ .ignore_unknown_fields = true }) catch null;
-        if (import_req != null and import_req.?.import_chat != null and import_req.?.import_chat.? == true) {
-            const msgs = import_req.?.messages orelse &[_]session.StoredMessage{};
-            const title = if (import_req.?.title) |t| t else "imported chat";
+        const import_req = std.json.parseFromSliceLeaky(SessionPatchBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+            return;
+        };
+        if (import_req.import_chat != null and import_req.import_chat.? == true) {
+            const msgs = import_req.messages orelse &[_]session.StoredMessage{};
+            const title = if (import_req.title) |t| t else "imported chat";
             const new_id = session.importChat(io, gpa, arena, std.Io.Dir.cwd(), title, msgs) catch {
                 respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"import failed: need at least one user/assistant message with content\"}");
                 return;
@@ -10286,6 +10379,12 @@ fn handleSessions(
             respond(stream, 200, "OK", ibody);
             return;
         }
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"expected import_chat\"}");
+        return;
+    }
+    if (!std.mem.eql(u8, method, "GET")) {
+        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        return;
     }
 
     const list = session.listSessions(io, arena, std.Io.Dir.cwd()) catch |err| {
@@ -10424,7 +10523,7 @@ const file_preview_cap = 1 << 20;
 /// than sent if a NUL byte turns up in what was read). The workspace is the
 /// process working directory, which is all the server is allowed to see; a
 /// requested path is resolved component-wise and any attempt to escape above
-/// it (`..`) is clamped to the workspace root.
+/// it (`..`) is clamped to the workspace root. A missing directory is 404.
 fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -10481,10 +10580,13 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
         }
     }
 
-    // Open the resolved directory; a path that cannot be opened (nonexistent
-    // after normalization) is clamped back to the workspace root.
-    var dir = root_dir.dir.openDir(io, if (path.len > 0) path else ".", .{ .iterate = true }) catch
-        root_dir.dir.openDir(io, ".", .{ .iterate = true }) catch {
+    // A missing directory is 404, not a silent listing of the workspace
+    // root: clients cannot tell those two apart if we clamp.
+    var dir = root_dir.dir.openDir(io, if (path.len > 0) path else ".", .{ .iterate = true }) catch {
+        if (path.len > 0) {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such directory\"}");
+            return;
+        }
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"open failed\"}");
         return;
     };
@@ -11388,7 +11490,10 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const rest = if (target.len > "/api/knowledge".len) target["/api/knowledge".len..] else "";
+    const rest = blk: {
+        const path_only = requestPath(target);
+        break :blk if (path_only.len > "/api/knowledge".len) path_only["/api/knowledge".len..] else "";
+    };
 
     // Folder sync is host-side, not a tool-input translation: the knowledge
     // guest's fs scope is state/knowledge/ only, and mirroring an operator's
@@ -11406,6 +11511,11 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
             respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
         } else if (std.mem.startsWith(u8, rest, "/search") and std.mem.eql(u8, method, "GET")) {
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing q\"}");
+        } else if ((std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "DELETE")) and
+            (rest.len == 0 or std.mem.endsWith(u8, rest, "/docs") or std.mem.indexOf(u8, rest, "/docs/") != null))
+        {
+            // Known write shape, unreadable body (or empty id).
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         } else {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
         }
@@ -11415,11 +11525,11 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"knowledge tool unavailable\"}");
         return;
     };
-    const status: u16 = if (toolResultFailed(result)) 400 else 200;
+    const status = toolRefusalStatus(result);
     if (accepts_gzip and status == 200)
         respondCompressible(arena, stream, true, result)
     else
-        respond(stream, status, if (status == 200) "OK" else "Bad Request", result);
+        respond(stream, status, httpReason(status), result);
 }
 
 /// `POST /api/knowledge/<id>/sync {"path": "...", "prune": false}` — mirror
@@ -11741,16 +11851,22 @@ fn handlePrompts(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, 
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const tool_input = promptsRouteToToolInput(arena, method, body) orelse {
+    if (!std.mem.eql(u8, method, "GET") and
+        !std.mem.eql(u8, method, "POST") and
+        !std.mem.eql(u8, method, "DELETE"))
+    {
         respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        return;
+    }
+    const tool_input = promptsRouteToToolInput(arena, method, body) orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
     };
     const result = toolJson(io, gpa, arena, cfg, environ_map, "prompts", tool_input) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"prompts tool unavailable\"}");
         return;
     };
-    const status: u16 = if (toolResultFailed(result)) 400 else 200;
-    respond(stream, status, if (status == 200) "OK" else "Bad Request", result);
+    respondTool(stream, result);
 }
 
 /// `GET /api/arena` lists past matches; `GET /api/arena/<id>` returns one,
@@ -11782,8 +11898,7 @@ fn handleArena(
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"arena tool unavailable\"}");
         return;
     };
-    const status: u16 = if (toolResultFailed(result)) 404 else 200;
-    respond(stream, status, if (status == 200) "OK" else "Not Found", result);
+    respondTool(stream, result);
 }
 
 /// `/api/arena` -> list, `/api/arena/<id>` -> that match.
@@ -12054,26 +12169,21 @@ fn handleCompare(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const tool_input = compareRouteToToolInput(arena, method, path, body) orelse {
+    if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "POST")) {
         respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        return;
+    }
+    const tool_input = compareRouteToToolInput(arena, method, path, body) orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
     };
     const result = toolJson(io, gpa, arena, cfg, environ_map, "compare", tool_input) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"compare tool unavailable\"}");
         return;
     };
-    if (!toolResultFailed(result)) {
-        respond(stream, 200, "OK", result);
-        return;
-    }
-    // A refused read means there is no such comparison; a refused pick means
-    // the letter was not one of the answers on the table. Same tool, two
-    // different things gone wrong, so not the same status.
-    if (std.mem.eql(u8, method, "POST")) {
-        respond(stream, 400, "Bad Request", result);
-    } else {
-        respond(stream, 404, "Not Found", result);
-    }
+    // A refused read or a pick against a missing comparison is 404; a
+    // pick letter that is not on the table is 400.
+    respondTool(stream, result);
 }
 
 /// `/api/compare` -> the blind listing, `/api/compare/<id>` -> that comparison

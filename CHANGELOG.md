@@ -80,6 +80,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- HTTP API status codes now distinguish client mistakes from missing
+  resources. Tool-backed routes (`/api/board`, `/api/knowledge`,
+  `/api/prompts`, `/api/compare`, `/api/arena`) map `no such …` / `not
+  found` refusals to 404 instead of 400. `POST /api/notify` with unreadable
+  JSON is 400, not 500. `POST /api/sessions` without `import_chat` is 400
+  instead of listing chats; `DELETE /api/sessions` is 405. A query string
+  is no longer treated as part of a session, run, log, or knowledge id.
+  Chat edit/delete/react answer 404 for a missing message and 403 when
+  the caller is not the sender (reacting to a missing message used to
+  look like a successful un-react). `GET /api/files` on a missing
+  directory is 404 instead of silently listing the workspace root. A
+  malformed body on `POST /api/compare/<id>` or `POST /api/prompts` is
+  400, not 405.
 - Web UI ES modules no longer 404 as `/webui/~tag/core/core/…`. Two
   stacked bugs: `run-metrics.js` reused `app.js`'s gzip slot, so a gzip
   client received `app.js` at the run-metrics URL and then resolved
