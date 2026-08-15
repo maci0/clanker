@@ -3,6 +3,7 @@
 const std = @import("std");
 const atomic_write = @import("../util/atomic_write.zig");
 const file_lock = @import("../util/file_lock.zig");
+const log = @import("../util/log.zig");
 pub const Entry = struct { iter: u32, ts: i64, summary: []const u8 = "", ok: bool = false, metric: ?f64 = null, metric_name: []const u8 = "", duration_ms: u64 = 0, detail: []const u8 = "", stdout_tail: []const u8 = "", stderr_tail: []const u8 = "" };
 fn tail(text: []const u8, keep: usize) []const u8 {
     if (text.len <= keep) return text;
@@ -46,7 +47,13 @@ pub fn appendEntry(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, entry: E
     try s.endObject();
     w.writeAll("\n") catch return error.WriteFailed;
     const line = buf[0..w.end];
-    const lock = file_lock.createFileRetry(io, dir, "ledger.lock", .{ .truncate = false, .lock = .exclusive }) catch null;
+    const lock = file_lock.createFileRetry(io, dir, "ledger.lock", .{ .truncate = false, .lock = .exclusive }) catch |err| blk: {
+        // Best effort: a ledger entry is worth writing unserialised rather than
+        // dropping outright, but an unlocked read-modify-write can discard a
+        // concurrent writer's entry, so the failure must not pass silently.
+        log.log(.warn, "[ledger] could not lock ledger.lock ({s}); a concurrent write may be lost", .{@errorName(err)});
+        break :blk null;
+    };
     defer if (lock) |f| f.close(io);
     const existing = dir.readFileAlloc(io, "ledger.jsonl", gpa, .limited(10 << 20)) catch |err| switch (err) {
         error.FileNotFound => null,

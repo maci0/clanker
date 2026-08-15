@@ -27,6 +27,23 @@ const build_options = @import("build_options");
 const lock_file_name = "chatrooms.lock";
 const meta_lock_file_name = "chatrooms-meta.lock";
 
+/// Takes the exclusive lock for a chatroom read-modify-write, or null when it
+/// could not. Best effort by design: a message or mutation is worth applying
+/// unserialised rather than dropping outright, but the failure must not pass
+/// silently — an unlocked read-modify-write is exactly the case where two
+/// writers discard each other's write (see file_lock.zig), and every such
+/// discard loses a message with no trace.
+fn acquireChatroomLock(io: std.Io, base: std.Io.Dir, lock_path: []const u8) ?std.Io.File {
+    // createFileRetry, not createFile: racing creates of a not-yet-existing
+    // lock file spuriously fail ENOENT on macOS (see file_lock.zig), and every
+    // such failure here is a concurrent write running unserialised, i.e. a
+    // silently dropped message.
+    return file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| blk: {
+        log.log(.warn, "[chat] could not lock {s} ({s}); a concurrent write may be lost", .{ lock_path, @errorName(err) });
+        break :blk null;
+    };
+}
+
 pub const log_path = "chatrooms.jsonl";
 pub const sub_path = "chatrooms-sub.json";
 pub const cursor_path = "chatrooms-cursor.json";
@@ -269,16 +286,7 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     // trimming replaces the log and a lock taken on the replaced file no
     // longer guards anything.
     const lock_path = try subPath(arena, state_dir, lock_file_name);
-    // createFileRetry, not createFile: racing creates of a not-yet-existing
-    // lock file spuriously fail ENOENT on macOS (see file_lock.zig), and every
-    // such failure here is a concurrent append running unserialised, i.e. a
-    // silently dropped message.
-    const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| blk: {
-        // Best effort: a chat message is worth delivering unserialised rather
-        // than dropping outright, but say so.
-        log.log(.warn, "[chat] could not lock {s} ({s}); a concurrent write may be lost", .{ lock_path, @errorName(err) });
-        break :blk null;
-    };
+    const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
 
     const maybe_existing = base.readFileAlloc(io, path, gpa, .limited(1 << 20)) catch |err| switch (err) {
@@ -444,7 +452,7 @@ pub fn toggleReaction(
 ) !bool {
     _ = cfg;
     const lock_path = try subPath(arena, state_dir, lock_file_name);
-    const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
     const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return error.NotFound;
@@ -493,7 +501,7 @@ pub fn editMessage(
 ) !Message {
     _ = cfg;
     const lock_path = try subPath(arena, state_dir, lock_file_name);
-    const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
     const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return error.NotFound;
@@ -528,7 +536,7 @@ pub fn deleteMessage(
 ) !void {
     _ = cfg;
     const lock_path = try subPath(arena, state_dir, lock_file_name);
-    const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
     const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return error.NotFound;
@@ -585,7 +593,7 @@ fn saveMeta(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem
 
 pub fn setTopic(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, topic: []const u8) !void {
     const lock_path = try subPath(arena, state_dir, meta_lock_file_name);
-    const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
     var meta = try loadMeta(base, io, arena, state_dir);
     const gop = try meta.map.getOrPut(arena, room);
@@ -602,7 +610,7 @@ pub fn getTopic(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_di
 
 pub fn togglePin(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, msg_id: []const u8) !bool {
     const lock_path = try subPath(arena, state_dir, meta_lock_file_name);
-    const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
     var meta = try loadMeta(base, io, arena, state_dir);
     const gop = try meta.map.getOrPut(arena, room);
