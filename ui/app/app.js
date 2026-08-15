@@ -1,4 +1,4 @@
-import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max } from "./core/utils.js";
+import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max } from "./core/utils.js";
 import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, upgradePfButton, upgradePfButtons, upgradePfChip, upgradePfUi, showLoadError } from "./core/ui.js";
 import { icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
@@ -52,6 +52,7 @@ var newSessionId = utilNewSessionId;
 var fmtBytes = utilFmtBytes;
 var clip = utilClip;
 var sessionLabel = utilSessionLabel;
+var sessionMatchesFilter = utilSessionMatchesFilter;
 var summarizeTitle = utilSummarizeTitle;
 var recencyGroup = utilRecencyGroup;
 var fmtInt = utilFmtInt;
@@ -449,6 +450,7 @@ function renderSessionOptions(sessions) {
 }
 
 function railRowFor(s, current) {
+  var rawTitle = (s.title || "").replace(/\s+/g, " ").trim();
   var title = summarizeTitle(s.title || "");
   var archivedMark = s.archived ? " · archived" : "";
   var meta = s.messages + (s.messages === 1 ? " msg" : " msgs") + archivedMark +
@@ -458,7 +460,7 @@ function railRowFor(s, current) {
   var row = T.button({
     type: "button",
     class: "rail-item",
-    title: title,
+    title: rawTitle || title,
     onclick: function () {
       if (currentView !== "chat") showView("chat", false);
       switchSession(s.id);
@@ -470,6 +472,7 @@ function railRowFor(s, current) {
   var pin = T.button({
     type: "button",
     class: "rail-pin",
+    title: isPinned(s.id) ? "Stop pinning this conversation" : "Keep this conversation at the top of the list",
     "data-on": String(isPinned(s.id)),
     "aria-label": (isPinned(s.id) ? "Unpin " : "Pin ") + title,
     "aria-pressed": String(isPinned(s.id)),
@@ -507,7 +510,7 @@ bind(el.railList, railState, function (s) {
   var seen = scoped.some(function (item) { return item.id === s.current; });
   var matched = 0;
   var inWorkspace = scoped.filter(function (item) {
-    return !s.filter || sessionLabel(item).toLowerCase().indexOf(s.filter) !== -1;
+    return sessionMatchesFilter(item, s.filter);
   });
 
   var groups = [];
@@ -578,9 +581,17 @@ bind(el.railList, railState, function (s) {
 
 function renderSessionTitle() {
   var meta = currentSessionMeta();
-  var label = meta ? sessionLabel(meta) : "New conversation  ·  unsaved";
-  el.sessionTitle.textContent = label;
-  el.sessionTitle.title = label;
+  if (!meta) {
+    el.sessionTitle.textContent = "New conversation";
+    el.sessionTitle.title = "Unsaved conversation";
+    renderContextMeter();
+    return;
+  }
+  var full = (meta.title || "").replace(/\s+/g, " ").trim() || "Untitled conversation";
+  el.sessionTitle.textContent = full;
+  var bits = [full, meta.messages + (meta.messages === 1 ? " msg" : " msgs")];
+  if (typeof meta.bytes === "number" && meta.bytes > 0) bits.push(fmtBytes(meta.bytes));
+  el.sessionTitle.title = bits.join("  ·  ");
   renderContextMeter();
 }
 
@@ -3459,6 +3470,7 @@ function renderChatSidebarList(container, list, icon) {
     var name = document.createElement("span");
     name.className = "slack-room-name";
     name.textContent = chatRoomLabel(r).replace(/^[#@]/, "");
+    name.title = name.textContent;
     row.appendChild(name);
     /* Unread indicator: bold name + dot when room has unread messages */
     var hasUnread = _roomHasUnread(r) && el.chatRoom.value !== r.room;
@@ -3661,6 +3673,7 @@ function openChatRoom(room) {
     // An empty topic still needs something on screen to click, or a topic
     // could never be set the first time.
     el.chatChannelTopic.textContent = roomTopics[room] || (isDm(room) ? "" : "Add a topic");
+    el.chatChannelTopic.title = roomTopics[room] || (isDm(room) ? "" : "Set a topic for this channel");
     el.chatChannelTopic.classList.toggle("is-placeholder", !roomTopics[room] && !isDm(room));
     el.chatChannelTopic.onclick = isDm(room) ? null : function () {
       uiPrompt("Set channel topic for #" + room, roomTopics[room] || "", { maxlength: 1024 }).then(function (newTopic) {
@@ -3671,6 +3684,7 @@ function openChatRoom(room) {
           if (d.ok) {
             roomTopics[room] = newTopic;
             el.chatChannelTopic.textContent = newTopic || "Add a topic";
+            el.chatChannelTopic.title = newTopic || "Set a topic for this channel";
             el.chatChannelTopic.classList.toggle("is-placeholder", !newTopic);
           }
         }).catch(function () {});
@@ -4952,38 +4966,7 @@ function showView(name, focusPanel) {
     if (viewLoaded.runs) { openRun(deepRun); if (deepNode) setTimeout(function(){ try{ var n = el.runGraph.querySelector('.run-node[data-label="' + CSS.escape(deepNode) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); }
     else pendingRunId = deepRun;
   }
-  if (pendingKnowledgeId) {
-    setTimeout(function(){
-      try {
-        kbLoad().then(function(){
-          try {
-            // Reuse the same path as Knowledge Open button: populate detail via API
-            fetch("/api/knowledge/"+encodeURIComponent(pendingKnowledgeId)).then(function(r){ return r.json(); }).then(function(d){
-              var detail = document.getElementById("knowledge-detail");
-              if (!detail) return;
-              detail.hidden = false;
-              detail.textContent = "";
-              var head = document.createElement("div"); head.className = "run-detail-head";
-              var tt = document.createElement("span"); tt.className = "run-detail-title"; tt.textContent = d.title || pendingKnowledgeId; head.appendChild(tt);
-              var close = document.createElement("button"); close.type="button"; close.className="secondary"; close.textContent="Close"; upgradePfButton(close);
-              close.addEventListener("click", function(){ detail.hidden = true; }); head.appendChild(close);
-              detail.appendChild(head);
-              if (d.description) { var desc=document.createElement("p"); desc.className="meta"; desc.textContent=d.description; detail.appendChild(desc); }
-              var docs = d.docs || [];
-              if (!docs.length) { var empty=document.createElement("p"); empty.className="meta"; empty.textContent="No documents yet."; detail.appendChild(empty); }
-              else docs.forEach(function(doc){
-                var row=document.createElement("div"); row.className="knowledge-doc";
-                var dn=document.createElement("span"); dn.textContent=doc.name+" ("+doc.bytes+" bytes)"; row.appendChild(dn);
-                var pre=document.createElement("pre"); pre.className="knowledge-preview"; pre.textContent=(doc.content||"").slice(0,800); row.appendChild(pre);
-                detail.appendChild(row);
-              });
-              try { detail.scrollIntoView({behavior:"smooth", block:"nearest"}); } catch(_){}
-            }).catch(function(){});
-          } catch(_){}
-        }).catch(function(){});
-      } catch(_){}
-    }, 450);
-  }
+  if (pendingKnowledgeId && viewLoaded.knowledge) kbLoad();
   if (pendingBoardCard) {
     // need board loaded first — defer until after viewLoaders[board] would have fired, then poll
     var tries = 0;

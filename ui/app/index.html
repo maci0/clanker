@@ -211,7 +211,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <div class="run-picker" id="session-picker">
         <div class="session-actions">
           <div class="session-acts-body" id="session-acts-body">
-          <button type="button" class="secondary" id="session-fork">Fork</button>
+          <button type="button" class="secondary" id="session-fork" title="Open a copy you can change without affecting this conversation">Fork</button>
           <button type="button" class="secondary" id="session-rename">Rename</button>
           <button type="button" class="secondary" id="session-move" title="Put this conversation in a workspace">Move to…</button>
           <button type="button" class="secondary" id="session-archive" title="Hide from history without deleting (you can undo in Archived)">Archive</button>
@@ -608,7 +608,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <details class="board-create-fold" id="board-create-fold">
         <summary>New goal</summary>
       <form id="goal-form" class="goal-form board-goal-form">
-        <label for="goal-objective">New goal</label>
+        <label for="goal-objective">Objective</label>
         <input type="text" id="goal-objective" placeholder="What should clanker achieve?" maxlength="2000" autocomplete="off" required>
         <label for="goal-criterion">Done when</label>
         <input type="text" id="goal-criterion" placeholder="The observable completion criterion" maxlength="2000" autocomplete="off" required>
@@ -812,7 +812,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <p class="meta" id="knowledge-hint">No knowledge selected. Tick a collection to include its documents in the next chat.</p>
       <form class="goal-form" id="knowledge-create-form">
-        <label for="knowledge-title">New collection</label>
+        <label for="knowledge-title">Collection name</label>
         <input type="text" id="knowledge-title" placeholder="e.g. Project docs" maxlength="200" required>
         <label for="knowledge-desc">Description</label>
         <input type="text" id="knowledge-desc" placeholder="Optional description" maxlength="1000">
@@ -1054,7 +1054,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <div class="settings-panel-title">Session</div>
           <div class="meta" id="settings-session-chip">session …</div>
           <div class="settings-actions settings-actions-spaced">
-            <button type="button" class="secondary" id="settings-fork">Fork</button>
+            <button type="button" class="secondary" id="settings-fork" title="Open a copy you can change without affecting this conversation">Fork</button>
             <button type="button" class="secondary" id="settings-rename">Rename</button>
             <button type="button" class="secondary" id="settings-move">Move to workspace</button>
           </div>

@@ -177,6 +177,14 @@ test("knowledge search hits open the matching collection", function () {
   assert.match(src, /function openCollection\(id, docId\)/);
 });
 
+test("knowledge deep link opens the real collection view", function () {
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  const kb = readFileSync(join(here, "../features/knowledge.js"), "utf8");
+  assert.doesNotMatch(app, /knowledge-preview/);
+  assert.match(kb, /_pendingKnowledgeId/);
+  assert.match(kb, /Show all/);
+});
+
 test("tools filter empty offers to clear the query", function () {
   const src = readFileSync(join(here, "tools.js"), "utf8");
   assert.match(src, /No tool matches “" \+ s\.filter \+ "”/);

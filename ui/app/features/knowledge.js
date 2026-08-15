@@ -24,7 +24,7 @@ function refreshBadge(){
   var msg = hint ? hint.textContent : (n + (n === 1 ? " collection" : " collections") + " will be included in the next prompt.");
   badge.textContent = msg + " ";
   var clear = document.createElement("button");
-  clear.type="button"; clear.className="secondary knowledge-badge-clear"; clear.textContent="Clear";
+  clear.type="button"; clear.className="secondary knowledge-badge-clear"; clear.textContent="Don't include in next chat";
   clear.addEventListener("click", function(){ selectedKnowledge.length=0; persistKnowledge(); updateHint(); refreshBadge(); });
   badge.appendChild(clear);
 }
@@ -77,6 +77,11 @@ export function loadKnowledge(){
     }
     if(status) status.textContent=cols.length+(cols.length===1?" collection.":" collections.");
     updateHint(); refreshBadge();
+    var pending = typeof window !== "undefined" ? window._pendingKnowledgeId : null;
+    if (pending) {
+      window._pendingKnowledgeId = null;
+      openCollection(pending);
+    }
   }).catch(function(err){
     var msg="Could not load knowledge: "+err.message;
     if(status) status.textContent=msg;
@@ -108,6 +113,29 @@ function showSyncRow(id){
    collection the server had just removed: "Sync changes" then POSTed to a dead
    id and reported the failure as if the path were wrong. Every place that puts
    the detail away goes through here instead. */
+function fillPreview(row, text) {
+  var full = text || "";
+  var pre = document.createElement("pre");
+  pre.className = "knowledge-preview";
+  var cap = 800;
+  if (full.length <= cap) {
+    pre.textContent = full;
+    row.appendChild(pre);
+    return;
+  }
+  pre.textContent = full.slice(0, cap);
+  row.appendChild(pre);
+  var more = document.createElement("button");
+  more.type = "button";
+  more.className = "secondary";
+  more.textContent = "Show all";
+  more.title = "Show the rest of this document (" + full.length + " characters)";
+  more.addEventListener("click", function () {
+    pre.textContent = full;
+    more.remove();
+  });
+  row.appendChild(more);
+}
 function closeCollection(){
   var detail = document.getElementById("knowledge-detail");
   if(detail){ detail.hidden = true; detail.textContent = ""; }
@@ -171,7 +199,7 @@ function openCollection(id, docId){
         });
       });
       row.appendChild(rm);
-      var pre=document.createElement("pre"); pre.className="knowledge-preview"; pre.textContent=(d.content||"").slice(0,800); row.appendChild(pre);
+      fillPreview(row, d.content || "");
       if(docId && d.id===docId){
         row.setAttribute("data-found","true");
         try{ row.scrollIntoView({behavior:"smooth",block:"center"}); }catch(_){}

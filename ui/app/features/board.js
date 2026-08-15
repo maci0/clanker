@@ -2237,7 +2237,7 @@ export function bindBoard(deps) {
       var tbody=document.createElement("tbody");
       rows.forEach(function(c){
         var tr=document.createElement("tr");
-        var titleTd=document.createElement("th"); titleTd.scope="row"; titleTd.textContent=c.title; titleTd.className="board-list-title"; tr.appendChild(titleTd);
+        var titleTd=document.createElement("th"); titleTd.scope="row"; titleTd.textContent=c.title; titleTd.className="board-list-title"; titleTd.title=c.title; tr.appendChild(titleTd);
         var colTd=document.createElement("td"); colTd.textContent=c.column; tr.appendChild(colTd);
         var whoTd=document.createElement("td"); whoTd.textContent=c.assignee||"—"; tr.appendChild(whoTd);
         var dueTd=document.createElement("td"); dueTd.textContent=c.deadline?fmtBoardDate(c.deadline):"—"; if(c.deadline){ var ds=dueState(c); if(ds==="late") dueTd.style.color="var(--danger)"; else if(ds==="soon") dueTd.style.color="var(--warn-text)"; } tr.appendChild(dueTd);

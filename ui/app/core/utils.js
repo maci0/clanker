@@ -195,6 +195,18 @@ export function sessionLabel(s) {
   return label;
 }
 
+/* The rail filter box says "Filter by title…". Matching only sessionLabel
+   misses any word summarizeTitle dropped, so "ledger" would not find
+   "Investigate the schedule run-due empty ledger". The compact label stays
+   a fallback so a typed "12 msgs" still works. */
+export function sessionMatchesFilter(item, q) {
+  if (!q) return true;
+  var needle = String(q).toLowerCase();
+  if ((item.title || "").toLowerCase().indexOf(needle) !== -1) return true;
+  if ((item.id || "").toLowerCase().indexOf(needle) !== -1) return true;
+  return sessionLabel(item).toLowerCase().indexOf(needle) !== -1;
+}
+
 /* Conversations group by when they were last touched, because that is how
    you look for one: "the thing I was doing this morning", not an id. */
 export function recencyGroup(updated) {
