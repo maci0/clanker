@@ -317,6 +317,9 @@ was started, not something the agent can opt into mid-run.
    0 disables) caps how many a run gets. The readable surface is wider than the
    writable one — the gate machinery, `docs/`, and `AGENTS.md` can be read but
    not patched — and excludes `state/`, `.env` and `config.local.*` entirely.
+   It is a prefix-plus-extension allowlist, so a writable source type must be
+   listed by extension too: `.mjs` files under `ui/` are writable, and a model
+   that asks for one is refused unless `.mjs` is also readable.
 3. Validate and apply the proposal to `state/staging/<id>` inside an isolated
    Git worktree (or the current checkout if worktree creation fails).
 4. Run gates: `zig build`, `zig build test`, `zig build tools`, `zig fmt`,
