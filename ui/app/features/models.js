@@ -95,10 +95,25 @@ export function configSnippet(m, configured, known) {
   var provider = m.provider;
   if (known && (configured || []).indexOf(provider) === -1) {
     // The models table alone would be rejected at startup: a model entry names
-    // a provider, and clanker resolves it against [providers.*]. Saying so beats
-    // handing over something that looks complete.
-    lines.push("# " + provider + " has no [providers." + tomlKey(provider) + "] table yet.");
-    lines.push("# Add one (kind, base_url, api_key_env) before this entry.");
+    // a provider, and clanker resolves it against [providers.*]. The catalog
+    // classifier already picked kind/auth/base from the models.dev npm
+    // package, so the snippet can write the provider table rather than
+    // asking the operator to invent it.
+    if (m.kind) {
+      lines.push("[providers." + tomlKey(provider) + "]");
+      lines.push("kind = " + tomlStr(m.kind));
+      if (m.base_url) lines.push("base_url = " + tomlStr(m.base_url));
+      else if (m.kind === "vertex_anthropic") {
+        lines.push("# set project, location, service_account_file, and a base_url");
+      }
+      if (m.auth && m.auth !== "api_key") lines.push("auth = " + tomlStr(m.auth));
+      if (m.api_key_env) lines.push("api_key_env = " + tomlStr(m.api_key_env));
+      if (m.path) lines.push("path = " + tomlStr(m.path));
+      lines.push("");
+    } else {
+      lines.push("# " + provider + " has no [providers." + tomlKey(provider) + "] table yet.");
+      lines.push("# Add one (kind, base_url, api_key_env) before this entry.");
+    }
   }
   lines.push("[models." + tomlStr(provider + "/" + m.id) + "]");
   lines.push("provider = " + tomlStr(provider));

@@ -6,6 +6,7 @@ const toml = @import("toml");
 const config = @import("config.zig");
 const client = @import("llm/client.zig");
 const providers = @import("llm/registry.zig");
+const catalog_mod = @import("llm/catalog.zig");
 const types = @import("llm/types.zig");
 const agent = @import("agent/loop.zig");
 const registry = @import("toolhost/registry.zig");
@@ -2573,8 +2574,9 @@ fn cmdProvidersRefresh(init: std.process.Init) !void {
 
 /// `clanker providers catalog <query>`, search the local models.dev snapshot
 /// for provider or model ids/families containing `query` (case-insensitive)
-/// and print what it knows about each match. Read-only; nothing here touches
-/// config.toml. Downloads the snapshot only if it is missing.
+/// and print what it knows about each match. Only providers `catalog.zig`
+/// can map to a wire kind and auth strategy are listed. Read-only; nothing
+/// here touches config.toml. Downloads the snapshot only if it is missing.
 fn cmdProvidersCatalog(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -2590,11 +2592,12 @@ fn cmdProvidersCatalog(init: std.process.Init, opts: Options) !void {
     }
 
     const out = std.Io.File.stdout();
-    try out.writeStreamingAll(io, "provider/model\tctx\tout\tin $/1M\tout $/1M\treasoning\n");
+    try out.writeStreamingAll(io, "provider/model\tctx\tout\tin $/1M\tout $/1M\treasoning\tkind\n");
     var it = catalog.object.iterator();
     while (it.next()) |kv| {
         const provider_id = kv.key_ptr.*;
         const provider_entry = kv.value_ptr.*;
+        const support = catalog_mod.classifyEntry(provider_entry) orelse continue;
         if (provider_entry != .object) continue;
         const models_v = provider_entry.object.get("models") orelse continue;
         if (models_v != .object) continue;
@@ -2605,15 +2608,15 @@ fn cmdProvidersCatalog(init: std.process.Init, opts: Options) !void {
             if (std.ascii.findIgnoreCase(provider_id, query) == null and
                 std.ascii.findIgnoreCase(model_id, query) == null and
                 std.ascii.findIgnoreCase(family, query) == null) continue;
-            try out.writeStreamingAll(io, try renderCatalogRow(arena, provider_id, model_id, mkv.value_ptr.*));
+            try out.writeStreamingAll(io, try renderCatalogRow(arena, provider_id, model_id, mkv.value_ptr.*, support.kind));
         }
     }
 }
 
-/// One `provider/model\tctx\tout\tin $/1M\tout $/1M\treasoning\n` line for the
-/// catalog table.
-fn renderCatalogRow(arena: std.mem.Allocator, provider_id: []const u8, model_id: []const u8, m: std.json.Value) ![]const u8 {
-    if (m != .object) return std.fmt.allocPrint(arena, "{s}/{s}\t?\t?\t?\t?\t?\n", .{ provider_id, model_id });
+/// One `provider/model\tctx\tout\tin $/1M\tout $/1M\treasoning\tkind\n` line
+/// for the catalog table.
+fn renderCatalogRow(arena: std.mem.Allocator, provider_id: []const u8, model_id: []const u8, m: std.json.Value, kind: config.ProviderKind) ![]const u8 {
+    if (m != .object) return std.fmt.allocPrint(arena, "{s}/{s}\t?\t?\t?\t?\t?\t{s}\n", .{ provider_id, model_id, @tagName(kind) });
     var ctx: f64 = 0;
     var out_limit: f64 = 0;
     if (m.object.get("limit")) |l| if (l == .object) {
@@ -2627,9 +2630,9 @@ fn renderCatalogRow(arena: std.mem.Allocator, provider_id: []const u8, model_id:
         cost_out = jsonNum(c.object, "output") orelse 0;
     };
     const reasoning = if (m.object.get("reasoning")) |r| (r == .bool and r.bool) else false;
-    return std.fmt.allocPrint(arena, "{s}/{s}\t{d}\t{d}\t{d:.2}\t{d:.2}\t{s}\n", .{
+    return std.fmt.allocPrint(arena, "{s}/{s}\t{d}\t{d}\t{d:.2}\t{d:.2}\t{s}\t{s}\n", .{
         provider_id, model_id, @as(i64, @trunc(ctx)),          @as(i64, @trunc(out_limit)),
-        cost_in,     cost_out, if (reasoning) "yes" else "no",
+        cost_in,     cost_out, if (reasoning) "yes" else "no", @tagName(kind),
     });
 }
 
@@ -8558,6 +8561,7 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
     outer: while (it.next()) |kv| {
         const provider_id = kv.key_ptr.*;
         const provider_entry = kv.value_ptr.*;
+        const support = catalog_mod.classifyEntry(provider_entry) orelse continue;
         if (provider_entry != .object) continue;
         const models_v = provider_entry.object.get("models") orelse continue;
         if (models_v != .object) continue;
@@ -8572,6 +8576,22 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
             s.beginObject() catch return;
             s.objectField("provider") catch return;
             s.write(provider_id) catch return;
+            s.objectField("kind") catch return;
+            s.write(@tagName(support.kind)) catch return;
+            s.objectField("auth") catch return;
+            s.write(@tagName(support.auth)) catch return;
+            if (support.base_url.len > 0) {
+                s.objectField("base_url") catch return;
+                s.write(support.base_url) catch return;
+            }
+            if (support.api_key_env.len > 0) {
+                s.objectField("api_key_env") catch return;
+                s.write(support.api_key_env) catch return;
+            }
+            if (support.path) |path| {
+                s.objectField("path") catch return;
+                s.write(path) catch return;
+            }
             s.objectField("id") catch return;
             s.write(model_id) catch return;
             if (m == .object) {

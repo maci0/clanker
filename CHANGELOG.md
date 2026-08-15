@@ -35,6 +35,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   it once; `clanker providers refresh` and Refresh catalog on the Models
   view replace it. An older `state/cache/models-dev.json` is still read
   so an existing download is kept on upgrade.
+- Discover and `providers catalog` only list models.dev providers
+  clanker can run. Support is the catalog `npm` package plus a base URL,
+  mapped in `src/llm/catalog.zig` to `openai_compat` (Bearer API key),
+  `anthropic` (API key or OAuth by token shape), or `vertex_anthropic`
+  (GCP `oauth_refresh`). Gemini-native, Bedrock, and Azure stay out.
+  A missing `[providers.*]` table in a snippet is now filled from that
+  mapping (kind, base_url, api_key_env) instead of a comment.
 - Web UI shell follows a session-first layout: conversations stay in the
   left rail, Watch and Set up fold away, and Chat is a header / transcript
   / docked-composer column. PatternFly page chrome and cabinet colors stay.

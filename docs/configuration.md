@@ -220,6 +220,13 @@ models, so most of the model section can be generated rather than
 hand-typed. The snapshot is downloaded the first time something needs it,
 then only when `clanker providers refresh` (or Refresh catalog in the
 Models view) is asked. Serve start does not contact models.dev.
+Only providers whose API and auth clanker implements appear in catalog
+search: OpenAI-compatible (`@ai-sdk/openai-compatible` and the official
+OpenAI / xAI / Groq / … packages, Bearer API key), Anthropic Messages
+(`@ai-sdk/anthropic`, API key or OAuth by token shape), and Vertex
+Anthropic (`@ai-sdk/google-vertex/anthropic`, GCP `oauth_refresh`).
+Gemini-native, Amazon Bedrock, and Azure are not in that map. The table
+is `src/llm/catalog.zig`.
 `clanker providers check` pings every configured provider and reports
 latency/cost; `clanker providers models <name>` lists a provider's models.
 

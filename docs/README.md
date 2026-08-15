@@ -1020,7 +1020,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/sessions/<id>/compact` | POST | Compact one conversation in place |
 | `/api/skills` | GET | Skills discovered under `agent.skills_dir` (JSON) |
 | `/api/workflows` | GET | Reusable prompt workflows (JSON) |
-| `/api/catalog` | GET | Local models.dev snapshot search (JSON). Downloads the snapshot only if `state/models-dev.json` is missing |
+| `/api/catalog` | GET | Local models.dev snapshot search (JSON). Only providers whose API+auth clanker implements. Downloads the snapshot only if `state/models-dev.json` is missing |
 | `/api/catalog/refresh` | POST | Replace `state/models-dev.json` from models.dev |
 | `/api/providers/models` | GET | Models for a configured provider (JSON) |
 | `/api/files?path=` | GET | List one directory of the workspace (JSON). `..` is clamped at the working directory, so no traversal escapes it |
