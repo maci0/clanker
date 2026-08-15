@@ -8740,12 +8740,31 @@ test "transcriptBytes counts tool call arguments, like the session listing" {
     try std.testing.expectEqual(@as(usize, 510), transcriptBytes(&msgs));
 }
 
-/// The on-disk catalog body, held in process so a search keystroke does not
-/// re-read several MB. Filled on first /api/catalog in this process, replaced
-/// by POST /api/catalog/refresh. Guarded because catalog searches arrive on
-/// connection threads.
+/// The on-disk catalog body and its parsed tree, held in process so a
+/// search keystroke does not re-read or re-parse several MB. Filled on first
+/// /api/catalog in this process, replaced by POST /api/catalog/refresh.
+/// Guarded because catalog searches arrive on connection threads; the tree
+/// points into `catalog_cache`, so both are swapped under the same lock.
 var catalog_cache_mutex: std.c.pthread_mutex_t = .{};
 var catalog_cache: ?[]const u8 = null;
+var catalog_parsed: ?std.json.Parsed(std.json.Value) = null;
+
+fn dropCatalogCacheLocked(gpa: std.mem.Allocator) void {
+    if (catalog_parsed) |*p| {
+        p.deinit();
+        catalog_parsed = null;
+    }
+    if (catalog_cache) |c| {
+        gpa.free(c);
+        catalog_cache = null;
+    }
+}
+
+fn installCatalogCacheLocked(gpa: std.mem.Allocator, owned: []const u8) void {
+    dropCatalogCacheLocked(gpa);
+    catalog_cache = owned;
+    catalog_parsed = std.json.parseFromSlice(std.json.Value, gpa, owned, .{ .ignore_unknown_fields = true }) catch null;
+}
 
 /// Returns a query-string value from `target` (e.g. `q` from
 /// `/api/catalog?q=kimi`), percent-decoded, or null when absent.
@@ -8770,8 +8789,7 @@ fn handleCatalogRefresh(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.S
         return;
     };
     _ = std.c.pthread_mutex_lock(&catalog_cache_mutex);
-    if (catalog_cache) |c| gpa.free(c);
-    catalog_cache = owned;
+    installCatalogCacheLocked(gpa, owned);
     _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
 
     var out: std.Io.Writer.Allocating = .init(arena);
@@ -8804,22 +8822,25 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
         return;
     }
 
-    const body = blk: {
-        _ = std.c.pthread_mutex_lock(&catalog_cache_mutex);
-        defer _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
-        if (catalog_cache) |c| break :blk c;
-        const fetched = loadModelsDev(io, gpa, arena, false) catch {
-            respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"no local catalog; run clanker providers refresh\"}");
-            return;
-        };
-        catalog_cache = gpa.dupe(u8, fetched) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
-            return;
-        };
-        break :blk catalog_cache.?;
-    };
+    _ = std.c.pthread_mutex_lock(&catalog_cache_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
 
-    const catalog = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true }) catch {
+    if (catalog_parsed == null) {
+        if (catalog_cache == null) {
+            const fetched = loadModelsDev(io, gpa, arena, false) catch {
+                respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"no local catalog; run clanker providers refresh\"}");
+                return;
+            };
+            const owned = gpa.dupe(u8, fetched) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+                return;
+            };
+            installCatalogCacheLocked(gpa, owned);
+        } else {
+            catalog_parsed = std.json.parseFromSlice(std.json.Value, gpa, catalog_cache.?, .{ .ignore_unknown_fields = true }) catch null;
+        }
+    }
+    const catalog = if (catalog_parsed) |*p| p.value else {
         respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"catalog is not JSON\"}");
         return;
     };

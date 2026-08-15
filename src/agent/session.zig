@@ -558,8 +558,10 @@ fn storedListingFromPrefix(scratch: std.mem.Allocator, prefix: []const u8) ?Stor
 
 fn sessionMetaFromPrefix(arena: std.mem.Allocator, scratch: std.mem.Allocator, prefix: []const u8) ?SessionMeta {
     const h = storedListingFromPrefix(scratch, prefix) orelse return null;
-    const count = h.message_count orelse return null;
-    const bytes = h.bytes orelse return null;
+    // Counters are optional: files written before message_count/bytes still
+    // carry id/title/updated in the first kilobytes. Missing counts stay 0
+    // until the next save, rather than pulling the whole transcript just to
+    // fill a picker column.
     return .{
         .id = arena.dupe(u8, h.id) catch return null,
         .title = arena.dupe(u8, h.title) catch return null,
@@ -567,8 +569,8 @@ fn sessionMetaFromPrefix(arena: std.mem.Allocator, scratch: std.mem.Allocator, p
         .updated = h.updated,
         .workspace = arena.dupe(u8, h.workspace) catch return null,
         .archived = h.archived,
-        .messages = count,
-        .bytes = bytes,
+        .messages = h.message_count orelse 0,
+        .bytes = h.bytes orelse 0,
     };
 }
 
@@ -600,8 +602,9 @@ pub fn listSessions(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]S
                 continue;
             }
         }
-        // Pre-counter files (and a 4 KiB title that pushed the counters
-        // off the prefix) still need the transcript walk.
+        // Prefix missed id/title (a 4 KiB title pushed the header off the
+        // window). Walk the transcript only then, never for a file that
+        // already named itself in the first kilobytes.
         const raw = base.readFileAlloc(io, path, scratch, .limited(1 << 24)) catch continue;
         const stored = json.parseFromSliceLeaky(StoredSession, scratch, raw, .{ .ignore_unknown_fields = true }) catch continue;
         out.append(arena, sessionMetaFromStored(arena, stored) catch continue) catch continue;
@@ -642,6 +645,16 @@ const snippet_radius = 90;
 pub fn findFold(haystack: []const u8, needle: []const u8) ?usize {
     if (needle.len == 0 or needle.len > haystack.len) return null;
     return std.ascii.findIgnoreCase(haystack, needle);
+}
+
+/// False when `query` cannot appear in this file's raw JSON, so the
+/// transcript parse can be skipped. Queries that JSON would escape (`"`,
+/// `\`, controls) must still be parsed: the stored form is not the needle.
+fn rawMayContainQuery(raw: []const u8, query: []const u8) bool {
+    for (query) |c| {
+        if (c < 0x20 or c == '"' or c == '\\') return true;
+    }
+    return findFold(raw, query) != null;
 }
 
 /// The text around `at`, trimmed to a word boundary where one is close, with
@@ -709,6 +722,10 @@ pub fn searchSessions(
         const scratch = scratch_state.allocator();
         const path = std.fmt.allocPrint(scratch, "{s}/{s}", .{ store_dir, entry.name }) catch continue;
         const raw = base.readFileAlloc(io, path, scratch, .limited(1 << 24)) catch continue;
+        // A query that cannot appear escaped in JSON (`"` / `\` / controls)
+        // is stored verbatim. If the raw file does not contain it, skip the
+        // transcript parse: most conversations miss a typical search.
+        if (!rawMayContainQuery(raw, query)) continue;
         const stored = json.parseFromSliceLeaky(StoredSession, scratch, raw, .{ .ignore_unknown_fields = true }) catch continue;
 
         var first: ?SearchHit = null;
@@ -1011,6 +1028,34 @@ test "listSessions and latestSessionId use the listing header without the transc
     try std.testing.expectEqual(@as(usize, 3), list[0].messages);
     try std.testing.expectEqual(@as(usize, 42), list[0].bytes);
     try std.testing.expectEqualStrings("hdr", latestSessionId(io, arena, tmp.dir).?);
+}
+
+test "listSessions lists a pre-counter file from the header alone" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "state/sessions");
+    // No message_count/bytes, and the transcript is garbage: a full parse
+    // would skip this file. The picker still needs the title and updated.
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "state/sessions/old.json",
+        .data = "{\"id\":\"old\",\"title\":\"legacy\",\"created\":1,\"updated\":8,\"messages\":[THIS IS NOT JSON",
+    });
+
+    const list = try listSessions(io, arena, tmp.dir);
+    try std.testing.expectEqual(@as(usize, 1), list.len);
+    try std.testing.expectEqualStrings("old", list[0].id);
+    try std.testing.expectEqualStrings("legacy", list[0].title);
+    try std.testing.expectEqual(@as(i64, 8), list[0].updated);
+    try std.testing.expectEqual(@as(usize, 0), list[0].messages);
+    try std.testing.expectEqual(@as(usize, 0), list[0].bytes);
+    try std.testing.expectEqualStrings("old", latestSessionId(io, arena, tmp.dir).?);
 }
 
 test "session save/load round trip" {
@@ -1706,4 +1751,10 @@ test "searchSessions finds conversations by message text, newest first" {
     const capped = try searchSessions(io, arena, tmp.dir, "spec", 1);
     try std.testing.expectEqual(@as(usize, 1), capped.len);
     try std.testing.expectEqualStrings("newer", capped[0].id);
+}
+
+test "rawMayContainQuery skips a miss and still parses escaped needles" {
+    try std.testing.expect(!rawMayContainQuery("{\"content\":\"hello world\"}", "zzzz"));
+    try std.testing.expect(rawMayContainQuery("{\"content\":\"hello world\"}", "HELLO"));
+    try std.testing.expect(rawMayContainQuery("{\"content\":\"say \\\"hi\\\"\"}", "\"hi\""));
 }
