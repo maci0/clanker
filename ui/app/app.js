@@ -4584,6 +4584,13 @@ if (el.chatCreateRoomBtn && el.chatCreateDialog) {
     el.chatCreateDialog.showModal();
     el.chatNewRoomName.focus();
   });
+  if (el.chatNewRoomName) {
+    el.chatNewRoomName.addEventListener("input", function () {
+      var v = el.chatNewRoomName.value;
+      var next = v.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9_\-]/g, "");
+      if (next !== v) el.chatNewRoomName.value = next;
+    });
+  }
   if (el.chatCreateCancel) el.chatCreateCancel.addEventListener("click", function () { el.chatCreateDialog.close(); });
   el.chatCreateDialog.addEventListener("close", function () {
     if (el.chatCreateDialog.returnValue !== "ok") return;

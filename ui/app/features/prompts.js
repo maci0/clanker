@@ -99,11 +99,7 @@ function renderPrompts(prompts){
     var head=document.createElement("div"); head.style.cssText="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap";
     var title=document.createElement("strong"); title.textContent=p.title||p.id; title.style.flex="1"; head.appendChild(title);
     var useBtn=document.createElement("button"); useBtn.type="button"; useBtn.className="secondary"; useBtn.textContent="Use";
-    useBtn.addEventListener("click",function(){
-      var dest=document.getElementById("task");
-      if(dest){ dest.value=p.content; dest.focus(); try{ dest.dispatchEvent(new Event("input",{bubbles:true})); }catch(_){} }
-      try{ document.getElementById("tab-chat").click(); }catch(_){ window.location.hash="#chat"; }
-    });
+    useBtn.addEventListener("click",function(){ applyPromptToComposer(p.content); });
     head.appendChild(useBtn);
     var body=document.createElement("pre"); body.textContent=p.content;
     body.style.cssText="white-space:pre-wrap;word-break:break-word;margin:0.5rem 0 0;font-size:13px;color:var(--fg-muted);max-height:9rem;overflow:auto";
@@ -130,6 +126,23 @@ function renderPrompts(prompts){
     listEl.appendChild(card);
   });
   applyPromptFilter();
+}
+
+/* The composer already refuses to restore a draft over typed text. Use used
+   to assign through that guard, so an unsent task vanished when someone
+   reached for a saved snippet. Confirm only when there is something to lose. */
+function applyPromptToComposer(content){
+  var dest=document.getElementById("task");
+  if(!dest) return;
+  function fill(){
+    dest.value=content;
+    dest.focus();
+    try{ dest.dispatchEvent(new Event("input",{bubbles:true})); }catch(_){}
+    try{ document.getElementById("tab-chat").click(); }catch(_){ window.location.hash="#chat"; }
+  }
+  if(dest.value.trim()){
+    uiConfirm("Replace the unsent task with this prompt?", { confirmLabel: "Replace" }).then(function(yes){ if(yes) fill(); });
+  } else fill();
 }
 
 function refreshLocalPrompts(){

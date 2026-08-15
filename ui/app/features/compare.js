@@ -19,7 +19,7 @@
 // Reference: docs/prds/0006-webui.md, "Compare view".
 
 import { readJson } from "../core/utils.js";
-import { showLoadError } from "../core/ui.js";
+import { showLoadError, uiConfirm } from "../core/ui.js";
 
 function byId(id) { return document.getElementById(id); }
 
@@ -210,7 +210,12 @@ function answerColumn(doc, a, picked, winner) {
     btn.textContent = picked === a.label ? ("Picked " + a.label) : ("Pick " + a.label);
     btn.disabled = !!picked;
     btn.setAttribute("aria-label", picked === a.label ? ("Answer " + a.label + " is your pick") : ("Pick answer " + a.label));
-    btn.addEventListener("click", function () { recordPick(doc.id, a.label); });
+    btn.addEventListener("click", function () {
+      if (picked || state.picking) return;
+      uiConfirm("Pick answer " + a.label + "? You cannot change this later.", {
+        confirmLabel: "Pick " + a.label
+      }).then(function (yes) { if (yes) recordPick(doc.id, a.label); });
+    });
     col.appendChild(btn);
   }
   return col;

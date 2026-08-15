@@ -343,11 +343,48 @@ test("Search stays disabled until the query is long enough", function () {
   assert.match(src, /Type at least /);
 });
 
-test("knowledge hint tells the reader to tick a collection", function () {
-  assert.match(html, /Tick a collection to include its documents in the next chat/);
+test("knowledge hint tells the reader to include a collection in chat", function () {
+  assert.match(html, /Check Include in chat on a collection to add its documents to the next chat/);
   assert.doesNotMatch(html, /inject documents/);
   const kb = readFileSync(join(here, "../features/knowledge.js"), "utf8");
-  assert.match(kb, /Tick a collection to include its documents in the next chat/);
+  assert.match(kb, /Check Include in chat on a collection to add its documents to the next chat/);
+  assert.match(kb, /includeTxt\.textContent="Include in chat"/);
+});
+
+test("goal Isolated worktree label matches the composer toggle", function () {
+  assert.match(html, /id="worktree-mode"/);
+  assert.match(html, /id="goal-worktree"/);
+  const composer = html.slice(html.indexOf('id="worktree-mode"') - 80, html.indexOf('id="worktree-mode"') + 180);
+  const goal = html.slice(html.indexOf('id="goal-worktree"') - 20, html.indexOf('id="goal-worktree"') + 80);
+  assert.match(composer, />Isolated worktree</);
+  assert.match(goal, />Isolated worktree</);
+  assert.doesNotMatch(html, /Use git worktree \(isolated branch\)/);
+});
+
+test("Prompts Use confirms before replacing an unsent task", function () {
+  const src = readFileSync(join(here, "../features/prompts.js"), "utf8");
+  assert.match(src, /function applyPromptToComposer/);
+  assert.match(src, /Replace the unsent task with this prompt\?/);
+  assert.match(src, /if\(dest\.value\.trim\(\)\)/);
+  assert.match(src, /applyPromptToComposer\(p\.content\)/);
+});
+
+test("Compare pick asks before recording an irreversible choice", function () {
+  const src = readFileSync(join(here, "../features/compare.js"), "utf8");
+  assert.match(src, /uiConfirm\("Pick answer " \+ a\.label \+ "\? You cannot change this later\."/);
+  assert.match(src, /if \(yes\) recordPick\(doc\.id, a\.label\)/);
+});
+
+test("channel create turns spaces into hyphens as you type", function () {
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  assert.match(app, /replace\(\/\\s\+\/g, "-"/);
+  assert.match(app, /\[\^a-zA-Z0-9_\\-\]/);
+});
+
+test("disabling a web UI plugin offers a reload control", function () {
+  const src = readFileSync(join(here, "plugins.js"), "utf8");
+  assert.match(src, /Reload page/);
+  assert.match(src, /window\.location\.reload\(\)/);
 });
 
 test("Board new-goal form sits behind a disclosure", function () {

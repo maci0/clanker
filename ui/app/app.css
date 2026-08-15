@@ -1732,6 +1732,19 @@ dialog.slack-dialog.pf-v6-c-modal-box {
   border: 1px dashed var(--rule); border-radius: 8px; background: var(--surface-2);
 }
 .knowledge-badge-clear { margin-left: 0.4rem; padding: 0.15rem 0.45rem; font-size: 11px; }
+.knowledge-card {
+  padding: 0.6rem 0.1rem;
+  border-bottom: 1px solid var(--rule);
+}
+.knowledge-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.knowledge-include { flex: 0 0 auto; margin: 0; }
+.knowledge-name { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
+.knowledge-actions { margin-left: auto; display: flex; gap: var(--space-2); }
 
 section { margin-top: var(--space-3); border-top: 0; padding-top: 0; }
 .view > section + section { margin-top: var(--space-5); border-top: 1px solid var(--rule); padding-top: var(--space-4); }

@@ -151,7 +151,11 @@ pub fn noteChat(room: []const u8, id: []const u8, from: []const u8, text: []cons
     s.write(.{ .t = "chat", .room = room, .id = id, .from = from, .text = text, .ts = ts }) catch return;
     publish(.chat, buf[0..w.end]);
     w.end = 0;
-    s.write(.{ .t = "talk", .from = from, .room = room, .ts = ts }) catch return;
+    // A Stringify tracks completion internally (next_punctuation), so the
+    // instance from the first write() is "done" and asserts on reuse — a
+    // fresh Stringify is required per document, not just a rewound writer.
+    var s2 = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s2.write(.{ .t = "talk", .from = from, .room = room, .ts = ts }) catch return;
     publish(.mesh, buf[0..w.end]);
 }
 
@@ -229,4 +233,18 @@ test "writeSse frames one event" {
     var buf: [64]u8 = undefined;
     const got = writeSse(&buf, "{\"t\":\"ping\"}") orelse return error.Short;
     try std.testing.expectEqualStrings("event: live\ndata: {\"t\":\"ping\"}\n\n", got);
+}
+
+test "noteChat publishes both a chat and a mesh event without reusing a completed Stringify" {
+    const a = subscribe(topicBit(.chat) | topicBit(.mesh)) orelse return error.NoSlot;
+    defer unsubscribe(a);
+    noteChat("general", "m1", "clanker-a", "hi", 123);
+    var buf: [event_cap]u8 = undefined;
+    const chat_ev = take(a, &buf) orelse return error.MissingChat;
+    try std.testing.expectEqual(Topic.chat, chat_ev.topic);
+    try std.testing.expect(std.mem.indexOf(u8, chat_ev.json, "\"t\":\"chat\"") != null);
+    var buf2: [event_cap]u8 = undefined;
+    const mesh_ev = take(a, &buf2) orelse return error.MissingMesh;
+    try std.testing.expectEqual(Topic.mesh, mesh_ev.topic);
+    try std.testing.expect(std.mem.indexOf(u8, mesh_ev.json, "\"t\":\"talk\"") != null);
 }

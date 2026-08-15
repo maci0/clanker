@@ -34,7 +34,7 @@ function updateHint(){
   var n = selectedKnowledge.length;
   hint.textContent = n
     ? n + (n === 1 ? " collection" : " collections") + " will be included in the next prompt."
-    : "No knowledge selected. Tick a collection to include its documents in the next chat.";
+    : "No knowledge selected. Check Include in chat on a collection to add its documents to the next chat.";
 }
 export function loadKnowledge(){
   var status=document.getElementById("knowledge-status");
@@ -58,14 +58,20 @@ export function loadKnowledge(){
         var card=document.createElement("div"); card.className="knowledge-card";
         var title=document.createElement("div"); title.className="knowledge-title";
         var cb=document.createElement("input"); cb.type="checkbox"; cb.value=c.id; cb.checked=selectedKnowledge.indexOf(c.id)!==-1;
-        cb.setAttribute("aria-label","Include "+c.title+" in chat context");
+        cb.setAttribute("aria-label","Include "+c.title+" in chat");
         cb.addEventListener("change",function(){
           if(cb.checked){ if(selectedKnowledge.indexOf(c.id)===-1) selectedKnowledge.push(c.id); }
           else { var at=selectedKnowledge.indexOf(c.id); if(at!==-1) selectedKnowledge.splice(at,1); }
           persistKnowledge(); updateHint(); refreshBadge();
         });
-        title.appendChild(cb);
-        var name=document.createElement("span"); name.textContent=" "+c.title+"  ·  "+c.doc_count+" docs  ·  "+(c.bytes||0)+" bytes";
+        var include=document.createElement("label");
+        include.className="checkbox-row knowledge-include";
+        include.appendChild(cb);
+        var includeTxt=document.createElement("span"); includeTxt.textContent="Include in chat";
+        include.appendChild(includeTxt);
+        title.appendChild(include);
+        var name=document.createElement("span"); name.className="knowledge-name";
+        name.textContent=c.title+"  ·  "+c.doc_count+" docs  ·  "+(c.bytes||0)+" bytes";
         if(c.description) name.title=c.description; title.appendChild(name);
         var actions=document.createElement("span"); actions.className="knowledge-actions";
         var open=document.createElement("button"); open.type="button"; open.className="secondary"; open.textContent="Open";
