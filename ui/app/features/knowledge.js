@@ -141,7 +141,10 @@ function openCollection(id){
     var share=document.createElement("button"); share.type="button"; share.className="secondary"; share.textContent="Copy link"; share.style.marginLeft="0.5rem";
     share.addEventListener("click", function(){
       var url = window.location.origin + window.location.pathname + "#knowledge/" + encodeURIComponent(id);
-      try { navigator.clipboard.writeText(url); share.textContent="Copied"; setTimeout(function(){ share.textContent="Copy link"; }, 1200); } catch(_){ uiPrompt("Share link", url); }
+      if (!navigator.clipboard || !window.isSecureContext) { uiPrompt("Share link", url); return; }
+      navigator.clipboard.writeText(url).then(function(){
+        share.textContent="Copied"; setTimeout(function(){ share.textContent="Copy link"; }, 1200);
+      }, function(){ uiPrompt("Share link", url); });
     }); head.appendChild(share);
     var close=document.createElement("button"); close.type="button"; close.className="secondary"; close.textContent="Close";
     close.addEventListener("click",closeCollection); head.appendChild(close); detail.appendChild(head);
@@ -164,11 +167,15 @@ function openCollection(id){
       detail.appendChild(row);
     });
     var addForm=document.createElement("form"); addForm.className="goal-form"; addForm.style.marginTop="1rem";
-    var nLabel=document.createElement("label"); nLabel.textContent="New document name"; addForm.appendChild(nLabel);
-    var nInput=document.createElement("input"); nInput.type="text"; nInput.placeholder="e.g. notes.md"; nInput.maxLength=200; addForm.appendChild(nInput);
-    var cLabel=document.createElement("label"); cLabel.textContent="Content"; addForm.appendChild(cLabel);
-    var cInput=document.createElement("textarea"); cInput.rows=6; cInput.placeholder="Paste document content…"; addForm.appendChild(cInput);
-    var fileInput=document.createElement("input"); fileInput.type="file"; fileInput.accept=".txt,.md,.json,.csv,text/*";
+    var nId="knowledge-new-doc-name";
+    var nLabel=document.createElement("label"); nLabel.setAttribute("for", nId); nLabel.textContent="New document name"; addForm.appendChild(nLabel);
+    var nInput=document.createElement("input"); nInput.type="text"; nInput.id=nId; nInput.placeholder="e.g. notes.md"; nInput.maxLength=200; nInput.required=true; addForm.appendChild(nInput);
+    var cId="knowledge-new-doc-content";
+    var cLabel=document.createElement("label"); cLabel.setAttribute("for", cId); cLabel.textContent="Content"; addForm.appendChild(cLabel);
+    var cInput=document.createElement("textarea"); cInput.id=cId; cInput.rows=6; cInput.placeholder="Paste document content…"; cInput.required=true; addForm.appendChild(cInput);
+    var fId="knowledge-new-doc-file";
+    var fLabel=document.createElement("label"); fLabel.setAttribute("for", fId); fLabel.textContent="Or attach a text file"; addForm.appendChild(fLabel);
+    var fileInput=document.createElement("input"); fileInput.type="file"; fileInput.id=fId; fileInput.accept=".txt,.md,.json,.csv,text/*";
     fileInput.addEventListener("change",function(){
       var f=fileInput.files&&fileInput.files[0]; if(!f) return;
       if(f.size>500000){ toast("File too large (max 500KB)."); return; }

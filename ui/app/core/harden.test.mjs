@@ -98,6 +98,54 @@ test("phone composer suggestions and attachment remove are 44px", function () {
   assert.match(css, /\.attachment button \{[\s\S]*min-height: 44px/);
 });
 
+test("Search sits in Work, not the folded Set up group", function () {
+  const work = html.slice(html.indexOf('id="rail-section-work"'), html.indexOf('id="rail-section-watch"'));
+  const setup = html.slice(html.indexOf('id="rail-section-setup"'));
+  assert.match(work, /id="tab-search"/);
+  assert.doesNotMatch(setup, /id="tab-search"/);
+});
+
+test("conversation filter says it matches titles", function () {
+  assert.match(html, /id="session-filter"[^>]*placeholder="Filter by title…"/);
+});
+
+test("channel name pattern explains the allowed characters", function () {
+  assert.match(html, /id="chat-new-room-name"[^>]*title="Letters, numbers, underscores, and hyphens only/);
+  assert.match(html, /id="chat-new-room-hint"/);
+});
+
+test("workspace plus minus hit 44px on coarse pointers", function () {
+  assert.match(css, /@media \(pointer: coarse\) \{\s*\.rail-ws-btn \{ min-width: 44px; min-height: 44px; \}/);
+});
+
+test("required field labels are marked in CSS", function () {
+  assert.match(css, /label:has\(\+ input\[required\]\)::after/);
+});
+
+test("Search sits in Work, not the folded Set up group", function () {
+  const work = html.slice(html.indexOf('id="rail-section-work"'), html.indexOf('id="rail-section-watch"'));
+  const setup = html.slice(html.indexOf('id="rail-section-setup"'));
+  assert.match(work, /id="tab-search"/);
+  assert.doesNotMatch(setup, /id="tab-search"/);
+});
+
+test("conversation filter says it matches titles", function () {
+  assert.match(html, /id="session-filter"[^>]*placeholder="Filter by title…"/);
+});
+
+test("channel name pattern explains the allowed characters", function () {
+  assert.match(html, /id="chat-new-room-name"[^>]*title="Letters, numbers, underscores, and hyphens only/);
+  assert.match(html, /id="chat-new-room-hint"/);
+});
+
+test("workspace plus minus hit 44px on coarse pointers", function () {
+  assert.match(css, /@media \(pointer: coarse\) \{\s*\.rail-ws-btn \{ min-width: 44px; min-height: 44px; \}/);
+});
+
+test("required field labels are marked in CSS", function () {
+  assert.match(css, /label:has\(\+ input\[required\]\)::after/);
+});
+
 test("parseCssColor reads rgb and hex", async function () {
   const { parseCssColor, cssColorMix, cssColorAlpha } = await import("./utils.js");
   assert.deepEqual(parseCssColor("rgb(11, 87, 208)"), [11, 87, 208]);

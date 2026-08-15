@@ -29,7 +29,7 @@ import { selectedKnowledge as kbSelected, loadKnowledge as kbLoad, bindKnowledge
 import { loadPromptsView as promptsLoadView, bindPrompts as promptsBind } from "./features/prompts.js";
 import { loadModelsView as modelsLoadView, bindModels as modelsBind } from "./features/models.js";
 import { loadScheduleView as scheduleLoadView, bindSchedule as scheduleBind } from "./features/schedule.js";
-import { loadSearchView as searchLoadView, bindSearch as searchBind, bindSearchDeps as searchDeps } from "./features/search.js";
+import { loadSearchView as searchLoadView, bindSearch as searchBind, bindSearchDeps as searchDeps, runSearch as searchRun } from "./features/search.js";
 import { createAnswerHead, ANSWER_LABEL } from "./core/ai-disclosure.js";
 import { applyDoneStats, applyLiveUsage, beginLiveTurn, emptyRunMetrics, formatRunMetricsParts, liveElapsedMs, noteFirstToken, noteLiveChars } from "./core/run-metrics.js";
 
@@ -542,7 +542,21 @@ bind(el.railList, railState, function (s) {
         T.span({ class: "rail-item-title" }, "New conversation"),
         T.span({ class: "rail-item-meta" }, "unsaved"))));
   }
-  if (!matched && s.filter) out.push(T.li({ class: "rail-empty" }, "No conversation matches."));
+  if (!matched && s.filter) {
+    out.push(T.li({ class: "rail-empty" },
+      "No title matches. ",
+      T.button({
+        type: "button",
+        class: "rail-empty-action",
+        onclick: function () {
+          var q = s.filter;
+          var input = document.getElementById("search-q");
+          if (input) input.value = q;
+          showView("search", true);
+          searchRun(q);
+        }
+      }, "Search messages")));
+  }
   return out;
 });
 
@@ -5855,6 +5869,11 @@ Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
 
   function setNote(msg) { if (note) note.textContent = msg; }
 
+  var lastFile = fileSel.value;
+  var savedText = "";
+  function isDirty() { return text.value !== savedText; }
+  function markClean() { savedText = text.value; }
+
   function paint() {
     loadHljs().then(function () {
       var out = window.hljs.highlight(text.value, { language: "toml", ignoreIllegals: true });
@@ -5876,10 +5895,18 @@ Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
       .then(readJson)
       .then(function (d) {
         text.value = d.content || "";
+        markClean();
         paint();
         syncScroll();
       })
       .catch(function (err) { setNote("Could not read " + fileSel.value + ": " + err.message); });
+  }
+
+  function confirmDiscard(next) {
+    if (!isDirty()) { next(); return; }
+    uiConfirm("Discard unsaved changes to " + lastFile + "?", { danger: true, confirmLabel: "Discard" }).then(function (yes) {
+      if (yes) next();
+    });
   }
 
   function save() {
@@ -5892,6 +5919,7 @@ Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
     })
       .then(readJson)
       .then(function (d) {
+        markClean();
         setNote("Saved. " + (d.applied || "Hot reload applies it."));
       })
       .catch(function (err) {
@@ -5903,9 +5931,24 @@ Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
 
   text.addEventListener("input", paint);
   text.addEventListener("scroll", syncScroll);
-  fileSel.addEventListener("change", load);
-  if (reloadBtn) reloadBtn.addEventListener("click", load);
+  fileSel.addEventListener("change", function () {
+    var nextFile = fileSel.value;
+    if (nextFile === lastFile) return;
+    if (!isDirty()) { lastFile = nextFile; load(); return; }
+    fileSel.value = lastFile;
+    confirmDiscard(function () {
+      fileSel.value = nextFile;
+      lastFile = nextFile;
+      load();
+    });
+  });
+  if (reloadBtn) reloadBtn.addEventListener("click", function () { confirmDiscard(load); });
   if (saveBtn) saveBtn.addEventListener("click", save);
+  window.addEventListener("beforeunload", function (e) {
+    if (!isDirty()) return;
+    e.preventDefault();
+    e.returnValue = "";
+  });
   // Tab inserts two spaces instead of leaving the editor.
   text.addEventListener("keydown", function (e) {
     if (e.key !== "Tab") return;

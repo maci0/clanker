@@ -3273,6 +3273,12 @@ main.pf-v6-c-page__main {
   font-family: var(--mono); font-size: 16px; line-height: 1;
   cursor: pointer;
 }
+@media (pointer: coarse) {
+  .rail-ws-btn { min-width: 44px; min-height: 44px; }
+}
+@media (max-width: 40rem) {
+  .rail-ws-btn { min-width: 44px; min-height: 44px; }
+}
 /* The rail is pinned: only the conversation list scrolls, not the whole
    sidebar, so the tabs and the chat controls stay put while the history
    moves under the pointer. The list owns the scrollbar. */
@@ -3352,6 +3358,22 @@ button.rail-group:hover { color: var(--fg); }
    sit near the 4.5:1 floor on a raised panel. */
 .rail-item-meta { color: color-mix(in srgb, var(--fg-muted) 55%, var(--fg)); }
 .rail-empty { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
+.rail-empty-action {
+  display: inline; min-height: 0; min-width: 0; padding: 0; margin: 0;
+  border: 0; background: none; box-shadow: none;
+  color: var(--accent-text); font: inherit; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 0.15em;
+}
+.rail-empty-action:hover, .rail-empty-action:focus-visible { color: var(--accent); }
+label:has(+ input[required])::after,
+label:has(+ textarea[required])::after,
+label.pf-v6-c-form__label:has(+ input[required])::after,
+label.pf-v6-c-form__label:has(+ textarea[required])::after {
+  content: " (required)";
+  color: var(--fg-muted);
+  font-weight: 400;
+  font-size: 0.92em;
+}
 h2#session-title {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 100%;

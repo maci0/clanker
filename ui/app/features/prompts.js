@@ -1,6 +1,7 @@
 // Prompts library — single-user. Browse / create / use / delete prompt templates backed by GET/POST/DELETE /api/prompts.
 import { uiConfirm, toast } from "../core/ui.js";
 import { readJson } from "../core/utils.js";
+import { copyText } from "../core/vendor.js";
 
 export function loadPromptsView() {
   var status = document.getElementById("prompts-status");
@@ -82,7 +83,7 @@ function renderPrompts(prompts){
     head.appendChild(useBtn);
     var copyBtn=document.createElement("button"); copyBtn.type="button"; copyBtn.className="secondary"; copyBtn.textContent="Copy";
     copyBtn.addEventListener("click",function(){
-      try{ navigator.clipboard.writeText(p.content); copyBtn.textContent="Copied"; setTimeout(function(){ copyBtn.textContent="Copy"; },1200); }catch(_){}
+      copyText(p.content, copyBtn, "Copy", body);
     });
     head.appendChild(copyBtn);
     var delBtn=document.createElement("button"); delBtn.type="button"; delBtn.className="secondary danger"; delBtn.textContent="Delete";

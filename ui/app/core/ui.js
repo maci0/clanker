@@ -89,6 +89,7 @@ export function bind(node, st, render) {
 var pfButtonSkip = {
   "rail-tab": 1, "rail-item": 1, "tool-name": 1, "suggestion": 1,
   "palette-item": 1, "board-header-btn": 1, "rail-pin": 1, "label-picker-item": 1,
+  "rail-empty-action": 1,
   /* Status lamps and model pills are labels, not actuators. Upgrading them to
      pf-m-primary painted the masthead solid PatternFly blue. */
   "chip": 1, "header-model": 1, "model-pill": 1,
@@ -401,6 +402,9 @@ function openDialog(build) {
 export function uiConfirm(message, opts) {
   opts = opts || {};
   return openDialog(function (form, done) {
+    var title = document.createElement("h3");
+    title.textContent = opts.title || opts.confirmLabel || "Confirm";
+    form.appendChild(title);
     var p = document.createElement("p");
     p.className = "ui-dialog-message";
     p.textContent = message;
