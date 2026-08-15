@@ -164,6 +164,39 @@ default and never gives up:
 ./loop.py --max-repairs 3
 ```
 
+## When a run is stopped
+
+No child may hang the loop, so every run the loop starts has two limits. A run
+that hits either is stopped and counts as a failed run, which means the level
+below it repairs it exactly as it would any other failure.
+
+A repair, escalation or harness run is capped at one hour of wall clock:
+
+```bash
+./loop.py --repair-timeout 1800
+```
+
+Any run that prints nothing for fifteen minutes is stopped as hung:
+
+```bash
+./loop.py --stall-timeout 300
+```
+
+`improve-self` batches have no wall-clock cap by default, because a batch is
+meant to run long. Give them one when you want the loop to stay on a schedule:
+
+```bash
+./loop.py --batch-timeout 14400
+```
+
+`0` disables any of the three.
+
+The two limits catch different failures, and the difference matters. A hung run
+goes quiet, so the silence timeout finds it. A livelocked run keeps printing —
+the failure that motivated this was a `clanker run` that compacted its context
+on every iteration for hours, logging all the while — so only the wall-clock cap
+catches that one.
+
 ## Finding the clanker binary
 
 The binary is resolved in this order, so `clanker` does not have to be on

@@ -3088,9 +3088,15 @@ fn reportUnfinishedRun(
         log.log(.info, "raise agent.max_iterations in config.toml (currently {d}) if the task needs more steps", .{a.max_iterations});
     }
     if (err == error.CompactionStalled) {
-        // The knob and the diet, in that order: one is immediate, the other is
-        // what stops the history from being this shape again.
-        log.log(.info, "the system prompt and the kept tail already fill agent.max_history_tokens (currently {d}); raise it, or trim what the system prompt carries (AGENTS.md, state/learnings.md)", .{a.cfg.agent.max_history_tokens});
+        // Two different ceilings can pin a history, and they need opposite
+        // answers: raising the cap works only when the model has the room for
+        // it, so name both numbers and let the operator see which one binds.
+        log.log(.info, "agent.max_history_tokens is {d} and this model gives compaction {d} tokens to work in (half of a {d} context window)", .{
+            a.cfg.agent.max_history_tokens,
+            a.provider.activeModel().context_window / 2,
+            a.provider.activeModel().context_window,
+        });
+        log.log(.info, "raise the cap if the model has room, otherwise use a model with a larger window or trim what the system prompt carries (AGENTS.md, state/learnings.md)", .{});
     }
 }
 

@@ -60,6 +60,14 @@ ERROR_LINE = re.compile(
 )
 IMPROVE_SOURCE = "improve-self"
 CLANK_SOURCE = "the clanker repair run"
+# A repair run that has not finished within this long is not working: the
+# observed failure was a clanker run that compacted its context on every
+# iteration for hours, printing all the while, so silence detection alone would
+# not have caught it. Generous enough that a slow but real repair finishes.
+DEFAULT_REPAIR_TIMEOUT = 3600.0
+# Nothing printed for this long means the child is stuck rather than slow;
+# every level of this loop logs far more often than that when it is working.
+DEFAULT_STALL_TIMEOUT = 900.0
 ESCALATE_SOURCE = "the clanker escalation run"
 # Which repair level a failed run is waiting for.
 ESCALATE_STAGE = "escalate"
@@ -76,6 +84,8 @@ EXAMPLES
   loop.py --max-repairs 3                   give up after 3 failed repair runs
   loop.py --escalate-model zai/glm-5.2      escalation runs on a better model
   loop.py --fix-repairs-with "codex exec"   repair failed escalation runs
+  loop.py --repair-timeout 1800             stop a repair run after 30 minutes
+  loop.py --batch-timeout 14400             cap an improve-self batch too
 
 CLANKER
   Without --clanker the loop takes clanker from PATH, and falls back
@@ -98,6 +108,22 @@ REPAIR
   Every level returns to improve-self afterwards, so the loop
   keeps going. Each only ever triggers on a non-zero exit, and
   every harness is resolved before the first batch starts.
+
+WATCHDOG
+  No run may hang the loop, so every child has two limits.
+
+  --repair-timeout  caps how long one repair, escalation or
+                    harness run may take. A run that livelocks
+                    keeps printing, so this is the limit that
+                    catches it.
+  --stall-timeout   stops any run that prints nothing for that
+                    long, which is what a real hang looks like.
+  --batch-timeout   the same wall-clock cap for an improve-self
+                    batch. Off by default: a batch is meant to
+                    run long.
+
+  A stopped run counts as a failed run, so the level below it
+  repairs it exactly as it would any other failure.
 """
 DETAIL_LINE = re.compile(r"^\s+\S")  # traceback frames and other indented detail
 # Fields that differ on every line of an otherwise identical repeated error.
@@ -361,6 +387,14 @@ def add_note(previous: str | None, sentence: str) -> str:
     return f"{previous} {sentence}" if previous else sentence
 
 
+def outcome(result: CommandResult) -> str:
+    """How a run ended, in a clause. A stopped run says so rather than showing
+    the signal's exit status, which explains nothing to a reader or a model."""
+    if result.timed_out is not None:
+        return f"was stopped by the loop because it {result.timed_out}"
+    return f"exited with status {result.status}"
+
+
 def resolve_clanker(explicit: str, clanker_dir: Path) -> str | None:
     """Find the clanker binary: the flag first, then PATH, then the checkout build.
 
@@ -548,7 +582,13 @@ def main() -> int:
                 f"==> repairing the failed clanker repair run with a clanker escalation run{on_model}",
                 flush=True,
             )
-            escalation = run_to_log(escalate, cwd=clanker_dir, label="escalate")
+            escalation = run_to_log(
+                escalate,
+                cwd=clanker_dir,
+                label="escalate",
+                cap=args.repair_timeout,
+                silence=args.stall_timeout,
+            )
             if escalation.status == 0:
                 # The repair run works again, so the next batch starts clean.
                 escalation.log_path.unlink(missing_ok=True)
@@ -557,13 +597,13 @@ def main() -> int:
                 print("==> clanker escalation run completed; resuming improve-self", flush=True)
                 continue
             print(
-                f"==> clanker escalation run exited with status {escalation.status}",
+                f"==> clanker escalation run {outcome(escalation)}",
                 flush=True,
             )
             previous_repair = add_note(
                 previous_repair,
                 "A clanker escalation run then tried to repair that clanker repair run "
-                f"and exited with status {escalation.status}.",
+                f"and {outcome(escalation)}.",
             )
             # Hand the failed escalation run to the harness when one is configured;
             # otherwise drop it and let the next improve-self batch resurface it.
@@ -579,7 +619,13 @@ def main() -> int:
             pending = None
             harness = args.fix_repairs_command
             print(f"==> repairing the failed clanker escalation run with {harness[0]}", flush=True)
-            meta = run_to_log([*harness, prompt], cwd=clanker_dir, label="meta-repair")
+            meta = run_to_log(
+                [*harness, prompt],
+                cwd=clanker_dir,
+                label="meta-repair",
+                cap=args.repair_timeout,
+                silence=args.stall_timeout,
+            )
             meta.log_path.unlink(missing_ok=True)
             if meta.status == 0:
                 # Clanker's own repair levels work again, so the next batch starts clean.
@@ -588,13 +634,13 @@ def main() -> int:
                 print("==> clanker repair runs fixed; resuming improve-self", flush=True)
             else:
                 print(
-                    f"==> {harness[0]} exited with status {meta.status}; resuming improve-self",
+                    f"==> {harness[0]} {outcome(meta)}; resuming improve-self",
                     flush=True,
                 )
                 previous_repair = add_note(
                     previous_repair,
                     f"A {harness[0]} run then tried to repair that clanker escalation run "
-                    f"and exited with status {meta.status}.",
+                    f"and {outcome(meta)}.",
                 )
             continue
 
@@ -609,7 +655,9 @@ def main() -> int:
             improve += ["--model", args.model]
         improve.append(goal)
         print(f"\n==> starting improve-self: {goal}", flush=True)
-        improve_result = run_improve_to_log(improve, cwd=clanker_dir)
+        improve_result = run_improve_to_log(
+            improve, cwd=clanker_dir, cap=args.batch_timeout, silence=args.stall_timeout
+        )
         if improve_result.running_pid is not None:
             improve_result.log_path.unlink(missing_ok=True)
             print(
@@ -634,7 +682,7 @@ def main() -> int:
                 f"{first} and {second} each exhausted all attempts."
             )
         else:
-            failure = f"improve-self exited with status {improve_result.status}."
+            failure = f"improve-self {outcome(improve_result)}."
         if previous_repair is not None:
             failure = f"{failure} {previous_repair}"
         print(f"==> {failure} Starting a clanker repair run", flush=True)
@@ -644,6 +692,8 @@ def main() -> int:
             [clanker, "run", "--no-worktree", prompt],
             cwd=clanker_dir,
             label="repair",
+            cap=args.repair_timeout,
+            silence=args.stall_timeout,
         )
         if repair_result.status == 0:
             repair_result.log_path.unlink(missing_ok=True)
@@ -654,11 +704,10 @@ def main() -> int:
 
         repair_failures += 1
         previous_repair = (
-            f"A clanker repair run already tried to fix this and exited with status "
-            f"{repair_result.status}."
+            f"A clanker repair run already tried to fix this and {outcome(repair_result)}."
         )
         print(
-            f"==> clanker repair run exited with status {repair_result.status}",
+            f"==> clanker repair run {outcome(repair_result)}",
             flush=True,
         )
         if args.max_repairs and repair_failures >= args.max_repairs:

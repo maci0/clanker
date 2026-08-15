@@ -26,6 +26,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const utf8 = @import("utf8");
 const parse = @import("search_parse.zig");
 const rq = @import("research_queries.zig");
 const doc = @import("doc_scaffold.zig");
@@ -320,7 +321,7 @@ fn sweepWeb(st: *Sweep, queries: []const Query, per_query: usize) !void {
             return;
         }
         var enc_buf: [2048]u8 = undefined;
-        const enc = parse.percentEncode(lib.utf8Prefix(q.text, 300), &enc_buf);
+        const enc = parse.percentEncode(utf8.cap(q.text, 300), &enc_buf);
         var url_buf: [2400]u8 = undefined;
 
         var count: usize = 0;
@@ -391,7 +392,7 @@ fn resolveUrl(raw: []const u8, backend: []const u8) ![]const u8 {
 /// boundary, and copies it into guest memory — the host arena the raw bytes
 /// live in is overwritten by the next host call.
 fn cleanCopy(raw: []const u8, max: usize) ![]const u8 {
-    const capped = lib.utf8Prefix(raw, max);
+    const capped = utf8.cap(raw, max);
     if (capped.len == 0) return "";
     const buf = try lib.alloc.alloc(u8, capped.len);
     return parse.cleanInto(capped, buf);
@@ -400,7 +401,7 @@ fn cleanCopy(raw: []const u8, max: usize) ![]const u8 {
 fn sweepGithub(st: *Sweep, subject: []const u8, per_query: usize) !void {
     if (!st.budgetLeft()) return;
     var enc_buf: [1024]u8 = undefined;
-    const enc = parse.percentEncode(lib.utf8Prefix(subject, 200), &enc_buf);
+    const enc = parse.percentEncode(utf8.cap(subject, 200), &enc_buf);
     var url_buf: [1280]u8 = undefined;
     const url = std.fmt.bufPrint(
         &url_buf,
@@ -428,7 +429,7 @@ fn sweepGithub(st: *Sweep, subject: []const u8, per_query: usize) !void {
     };
     const items = switch (v.object.get("items") orelse {
         if (objStr(v, "message")) |msg| {
-            st.note(try std.fmt.allocPrint(lib.alloc, "GitHub declined the search: {s}", .{lib.utf8Prefix(msg, 160)}));
+            st.note(try std.fmt.allocPrint(lib.alloc, "GitHub declined the search: {s}", .{utf8.cap(msg, 160)}));
         }
         return;
     }) {
@@ -462,7 +463,7 @@ fn licenseOf(item: std.json.Value) []const u8 {
 fn sweepDiscussion(st: *Sweep, subject: []const u8, per_query: usize) !void {
     if (!st.budgetLeft()) return;
     var enc_buf: [1024]u8 = undefined;
-    const enc = parse.percentEncode(lib.utf8Prefix(subject, 200), &enc_buf);
+    const enc = parse.percentEncode(utf8.cap(subject, 200), &enc_buf);
     var url_buf: [1280]u8 = undefined;
     const url = std.fmt.bufPrint(
         &url_buf,
@@ -497,7 +498,7 @@ fn sweepDiscussion(st: *Sweep, subject: []const u8, per_query: usize) !void {
 fn sweepPapers(st: *Sweep, subject: []const u8, per_query: usize) !void {
     if (!st.budgetLeft()) return;
     var enc_buf: [1024]u8 = undefined;
-    const enc = parse.percentEncode(lib.utf8Prefix(subject, 200), &enc_buf);
+    const enc = parse.percentEncode(utf8.cap(subject, 200), &enc_buf);
     var url_buf: [1280]u8 = undefined;
     const url = std.fmt.bufPrint(
         &url_buf,
@@ -526,7 +527,7 @@ fn sweepPapers(st: *Sweep, subject: []const u8, per_query: usize) !void {
 }
 
 fn dupeCapped(text: []const u8, max: usize) ![]const u8 {
-    const capped = lib.utf8Prefix(text, max);
+    const capped = utf8.cap(text, max);
     if (capped.len == 0) return "";
     return lib.alloc.dupe(u8, capped);
 }

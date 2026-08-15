@@ -115,6 +115,14 @@ process group. That is what makes `stop_process_group` able to kill
 `improve-self` *and* the model and gate processes it spawned — killing only the
 direct child would leave those orphaned and still holding the run lock.
 
+Each child also gets a `Watchdog`: a daemon thread that checks, once a second,
+how long the run has taken and how long since its last line, and calls the same
+`stop_process_group` when either limit is passed. It is a thread rather than a
+timeout on the read, so the streaming reader and the two-failed-iterations
+detector stay exactly as they are — the killed child closes its pipe, the reader
+ends naturally, and `CommandResult.timed_out` carries the reason into the
+failure sentence the next repair level is given.
+
 Temporary logs are unlinked on every path, including the exception path.
 
 ## Binary resolution

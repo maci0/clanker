@@ -81,13 +81,14 @@ const compaction_summary_reserve_tokens: usize = (4000 + original_request_anchor
 /// threshold leaves for the conversation. Without it a run compacts down to the
 /// floor and is immediately over the threshold again.
 const compaction_headroom_divisor: usize = 2;
-/// A compaction has to free at least this share of the history it started from
-/// (1/16, ~6%) to count as progress. Anything less is noise, not compaction.
-const compaction_progress_divisor: usize = 16;
-/// Consecutive compactions that freed nothing before the run is stopped. Three
-/// is enough to distinguish a genuinely stuck history from one turn where the
-/// tail happened to be large.
-const max_compaction_stalls: u8 = 3;
+/// Consecutive iterations that each needed a compaction before the run is
+/// stopped. With headroom above the floor a healthy run compacts, works for a
+/// while, and compacts again, so compaction on every iteration in a row means
+/// the history is pinned against a ceiling it cannot get away from — whether
+/// each individual compaction dipped under the threshold or not. Five rather
+/// than two or three, so an unusually large stretch of tool output cannot end
+/// a run that would have recovered on its own.
+const max_consecutive_compactions: u8 = 5;
 /// LLM summarization failures in one run before compaction stops asking and
 /// summarizes locally. The extractive summary costs nothing and never fails,
 /// so a summarizer that has failed twice is not worth a round trip per
@@ -109,9 +110,9 @@ const summary_reasoning_cap: usize = 4000;
 /// than a slow run. See
 /// docs/reports/bugs/2026-08-16-compaction-cannot-shrink-immovable-history.md.
 const CompactionState = struct {
-    /// Consecutive compactions that did not free a meaningful share of the
-    /// history. `max_compaction_stalls` of them ends the run.
-    stalls: u8 = 0,
+    /// Consecutive iterations that each needed a compaction.
+    /// `max_consecutive_compactions` of them ends the run.
+    consecutive: u8 = 0,
     /// The immovable floor has been reported once; it does not change within a
     /// run often enough to be worth a line per iteration.
     floor_reported: bool = false,
@@ -1351,9 +1352,7 @@ pub const Agent = struct {
     /// an LLM-generated summary (or a static placeholder when summarization
     /// fails).
     fn maybeCompactMessages(self: *Agent, messages: *std.ArrayList(types.Message)) !usize {
-        const raw_estimated_tokens = estimateMessageTokens(messages.items);
-        const reclaimable = prune.reclaimableBytes(messages.items, self.cfg.agent.tool_result_prune_bytes, self.cfg.agent.tool_result_prune_head_bytes, self.cfg.agent.tool_result_prune_tail_bytes);
-        const estimated_tokens = raw_estimated_tokens -| reclaimable / 4;
+        const estimated_tokens = self.historyTokens(messages.items);
         // Effective context budget in tokens: never exceed half the provider's
         // context window (room for input plus output), and honor an explicit
         // byte cap converted to tokens.
@@ -1382,7 +1381,12 @@ pub const Agent = struct {
         // under their combined size asks for the impossible and is answered
         // with a compaction every iteration, forever.
         if (compactable(messages.items)) {
-            const immovable = immovableTokens(messages.items, tailStart(messages.items));
+            const keep = tailStart(messages.items);
+            // Only the tail can carry prunable tool results; the system message
+            // never does. Same knobs as the estimate above, so both sides of the
+            // comparison size a tool result the same way.
+            const tail_reclaimable = prune.reclaimableBytes(messages.items[keep..], self.cfg.agent.tool_result_prune_bytes, self.cfg.agent.tool_result_prune_head_bytes, self.cfg.agent.tool_result_prune_tail_bytes);
+            const immovable = immovableTokens(messages.items, keep, tail_reclaimable);
             const raised = raisedThreshold(threshold, immovable, ctx_budget_tokens);
             if (raised > threshold) {
                 if (!self.compaction.floor_reported) {
@@ -1392,7 +1396,12 @@ pub const Agent = struct {
                 threshold = raised;
             }
         }
-        const keep_start = compactionKeepStart(messages.items, estimated_tokens, threshold) orelse return estimated_tokens;
+        const keep_start = compactionKeepStart(messages.items, estimated_tokens, threshold) orelse {
+            // An iteration that needed no compaction is the gap that says the
+            // history is not pinned against a ceiling.
+            self.compaction.consecutive = 0;
+            return estimated_tokens;
+        };
         log.log(.info, "compacting conversation: {d} messages, ~{d} estimated tokens (threshold {d})", .{ messages.items.len, estimated_tokens, threshold });
         // Build a summary of the messages being removed (indices 1..keep_start-1).
         const summary_text = self.compactionSummary(messages.items[1..keep_start]);
@@ -1403,21 +1412,32 @@ pub const Agent = struct {
         // repeated compaction cannot turn an active task into guesswork.
         const placeholder = try compactionSummaryWithOriginalRequest(self.arena, messages.items[1..keep_start], summary);
         try compactMiddle(messages, self.arena, keep_start, placeholder);
-        // Raw against raw: `estimated_tokens` is discounted by what tool-result
-        // pruning would reclaim, so comparing it with an undiscounted total
-        // would read as progress that never happened.
-        const raw_after = estimateMessageTokens(messages.items);
-        if (madeProgress(raw_estimated_tokens, raw_after)) {
-            self.compaction.stalls = 0;
-        } else {
-            self.compaction.stalls += 1;
-            log.log(.warn, "compaction freed nothing: ~{d} tokens before, ~{d} after ({d} consecutive)", .{ raw_estimated_tokens, raw_after, self.compaction.stalls });
-            if (self.compaction.stalls >= max_compaction_stalls) {
-                log.log(.error_, "history cannot be compacted below the threshold; the run cannot make progress", .{});
-                return error.CompactionStalled;
-            }
+        // Measured the same way on both sides, and the same way the threshold
+        // decision measures. Comparing raw totals here would call a compaction
+        // productive whenever the middle it dropped held a large tool result,
+        // even though pruning was already keeping that result out of the
+        // request and the number the threshold looks at barely moved.
+        const after = self.historyTokens(messages.items);
+        self.compaction.consecutive += 1;
+        if (!compactionSucceeded(after, threshold)) {
+            // Compaction is already at its floor and the history is still over,
+            // so the next iteration will compact the same history again.
+            log.log(.warn, "compaction left ~{d} tokens, still over the {d} threshold", .{ after, threshold });
         }
-        return raw_after;
+        if (self.compaction.consecutive >= max_consecutive_compactions) {
+            log.log(.error_, "compacted on {d} iterations in a row and the history is still ~{d} tokens against a {d} threshold: the run is spending itself on compaction instead of the task", .{ self.compaction.consecutive, after, threshold });
+            return error.CompactionStalled;
+        }
+        return after;
+    }
+
+    /// The history as the compaction decision counts it: estimated tokens, less
+    /// what tool-result pruning would strip on the way to the provider. One
+    /// definition, so the threshold test, the immovable floor and the
+    /// before/after progress check cannot disagree about what a message costs.
+    fn historyTokens(self: *const Agent, messages: []const types.Message) usize {
+        const reclaimable = prune.reclaimableBytes(messages, self.cfg.agent.tool_result_prune_bytes, self.cfg.agent.tool_result_prune_head_bytes, self.cfg.agent.tool_result_prune_tail_bytes);
+        return estimateMessageTokens(messages) -| reclaimable / 4;
     }
 
     /// The LLM summary, falling back to the local extractive one. Stops asking
@@ -1480,10 +1500,15 @@ pub const Agent = struct {
     /// What a compaction cannot remove, in tokens: the system message it always
     /// preserves, the tail it always keeps verbatim, and the summary it writes
     /// back in place of the middle.
-    fn immovableTokens(messages: []const types.Message, keep_start: usize) usize {
-        return estimateMessageTokens(messages[0..1]) +
-            estimateMessageTokens(messages[keep_start..]) +
-            compaction_summary_reserve_tokens;
+    ///
+    /// `reclaimable_bytes` is what tool-result pruning would take out of the
+    /// tail on its way to the provider. It has to be discounted here because it
+    /// is discounted from the estimate this floor is compared against; counting
+    /// a 44 KB tool result at full size on one side of that comparison and at
+    /// its pruned size on the other overstates the floor several times over.
+    fn immovableTokens(messages: []const types.Message, keep_start: usize, reclaimable_bytes: usize) usize {
+        const raw = estimateMessageTokens(messages[0..1]) + estimateMessageTokens(messages[keep_start..]);
+        return (raw -| reclaimable_bytes / 4) + compaction_summary_reserve_tokens;
     }
 
     /// Lifts a threshold that compaction could never satisfy up to one it can,
@@ -1500,11 +1525,13 @@ pub const Agent = struct {
         return @max(configured, @min(needed, ctx_budget_tokens));
     }
 
-    /// Whether a compaction freed a meaningful share of the history. Both
-    /// figures must be raw `estimateMessageTokens` totals.
-    fn madeProgress(before: usize, after: usize) bool {
-        if (after >= before) return false;
-        return before - after >= before / compaction_progress_divisor;
+    /// Whether a finished compaction did its job. The test is the threshold,
+    /// not how much was freed: compaction reduces the whole middle to one
+    /// summary in a single pass, so a result still over the threshold is
+    /// already at the floor, and the next iteration will measure the same
+    /// history against the same threshold and compact it again for nothing.
+    fn compactionSucceeded(after: usize, threshold: usize) bool {
+        return after <= threshold;
     }
 
     /// Replaces messages[1..keep_start] with a single synthetic user message
@@ -3706,22 +3733,26 @@ test "immovableTokens counts the system message, the kept tail and the summary" 
     };
     const keep_start = Agent.tailStart(&msgs);
     try std.testing.expectEqual(@as(usize, 3), keep_start);
-    const immovable = Agent.immovableTokens(&msgs, keep_start);
+    const immovable = Agent.immovableTokens(&msgs, keep_start, 0);
     // system (104) + six tail messages (5 each) + the summary reserve.
     try std.testing.expectEqual(104 + 30 + compaction_summary_reserve_tokens, immovable);
     // The dropped middle is not counted: that is the part compaction can free.
     try std.testing.expect(immovable < Agent.estimateMessageTokens(&msgs) + compaction_summary_reserve_tokens);
+    // What pruning would strip from the tail is discounted, because the
+    // estimate this floor is compared against discounts it too.
+    try std.testing.expectEqual(immovable - 25, Agent.immovableTokens(&msgs, keep_start, 100));
 }
 
-test "madeProgress rejects a compaction that freed nothing worth counting" {
-    try std.testing.expect(Agent.madeProgress(20_000, 10_000));
-    // The observed steady state: identical before and after, every iteration.
-    try std.testing.expect(!Agent.madeProgress(19_496, 19_496));
-    // Growth is never progress.
-    try std.testing.expect(!Agent.madeProgress(18_364, 18_891));
-    // A rounding-error saving is not progress either (1/16 of 16000 = 1000).
-    try std.testing.expect(!Agent.madeProgress(16_000, 15_500));
-    try std.testing.expect(Agent.madeProgress(16_000, 15_000));
+test "a compaction that leaves the history over the threshold has not succeeded" {
+    try std.testing.expect(Agent.compactionSucceeded(10_000, 16_000));
+    try std.testing.expect(Agent.compactionSucceeded(16_000, 16_000));
+    // The observed steady state: compaction ran, the history is still over, so
+    // the next iteration compacts the same history again.
+    try std.testing.expect(!Agent.compactionSucceeded(19_496, 16_000));
+    // Freeing a slice is not success either. This one freed 6% and stayed over
+    // the threshold, which is a livelock that merely looks busy — the criterion
+    // has to be the threshold, not the size of the saving.
+    try std.testing.expect(!Agent.compactionSucceeded(18_852, 16_000));
 }
 
 test "compactionKeepStart returns null when the history is too short to compact" {
