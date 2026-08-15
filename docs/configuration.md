@@ -395,6 +395,11 @@ fuel/memory/timeout limits.
 | `enabled` | `false` | Start kernels. Off = the tool returns a disabled error. |
 | `max_output_bytes` | 65536 | Cap on returned stdout/stderr/result. |
 | `cleanup_delay_ms` | 5000 | Delay before deleting `state/kernels/<session>/` after SIGTERM. |
+| `python_wasi_binary` | `vendor/python-wasi/bin/python-3.12.0.wasm` | Vendored WASI interpreter path; absent means the unsandboxed fallback. |
+| `python_wasi_stdlib` | `vendor/python-wasi/usr/local/lib` | Stdlib directory, preopened read-only into the guest at `/usr/local/lib`. |
+| `python_wasi_fuel` | 5000000000 | Instruction budget (engine-specific units, not wall-clock). |
+| `python_wasi_timeout_ms` | 30000 | Wall-clock deadline; a timeout traps the sandboxed cell. |
+| `python_wasi_max_memory_bytes` | 268435456 | Guest linear-memory cap. |
 
 ## `[debug]`
 
@@ -408,19 +413,15 @@ unsandboxed subprocess (ADR 0010 / 0011 carve-out). Do not flip
 | `disconnect_timeout_ms` | 3000 | How long to wait after `disconnect`/`terminate` before SIGTERM. |
 | `launch_timeout_ms` | 15000 | How long to wait for the adapter's `initialized` event. |
 | `adapters.<name>.command` | (unset) | argv to spawn. v1 requires an explicit `adapter` on `launch`. |
-| `python_wasi_binary` | `vendor/python-wasi/bin/python-3.12.0.wasm` | Vendored WASI interpreter path; absent means the unsandboxed fallback. |
-| `python_wasi_stdlib` | `vendor/python-wasi/usr/local/lib` | Stdlib directory, preopened read-only into the guest at `/usr/local/lib`. |
-| `python_wasi_fuel` | 5000000000 | Instruction budget (engine-specific units, not wall-clock). |
-| `python_wasi_timeout_ms` | 30000 | Wall-clock deadline; a timeout traps the sandboxed cell. |
-| `python_wasi_max_memory_bytes` | 268435456 | Guest linear-memory cap. |
 
 ## `[modules]`
 
-Feature toggles, all boolean, all default `true` (except where noted). Turning
+Feature toggles, all boolean. All default `true` except `acp` and `mesh`, which
+default `false`. Turning
 one off removes its tools, endpoints, and prompt surface: `mcp`, `peers`,
 `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`,
 `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`,
-`rlm`, `multimodal`, `chatrooms`, `token_stats`.
+`rlm`, `multimodal`, `chatrooms`, `token_stats`, `acp`, `mesh`.
 
 `goal_auto_steer` is the one that is not a whole subsystem: off, the goal module
 stays on — explicit `--goal`, `goal`, `/goal`, `write-goal`, `add-goal`, and
@@ -533,13 +534,13 @@ chatrooms = false
   | --- | --- | --- |
   | `mascot` | `"off"` | `off`, `type`, `loop`, `place`, `input` |
   | `mascot_size` | `""` (= per mode) | `mini`, `xsmall`, `small`, `medium`, `large` |
-  | `mascot_facing` | `""` (= per mode) | `left`, `right` |
+  | `mascot_facing` | `""` (= per mode) | `default`, `inverted` |
   | `mascot_speed` | unset (= `5`) | Integer `0` through `10`; `0` never moves, `10` is fastest |
 
   The modes differ in where the robot lives and what moves it:
 
   - `type` — position tracks the composer, one column per byte typed. Stands
-    still between keystrokes, and turns upside down while you backspace.
+    still between keystrokes, and mirrors horizontally while you backspace.
   - `loop` — runs across the width, off the right edge, back in from the left,
     ignoring what you are doing.
   - `place` — runs on the spot, bottom right above the box, facing left by
@@ -561,8 +562,9 @@ chatrooms = false
   generator drops its emptiness threshold and leans harder on the eye to keep
   even that (`src/tui/mascot/gen_frames.py`).
 
-  `mascot_facing` applies only to `loop` and `place`. `type` sets its own
-  orientation and `input` is never mirrored.
+  `mascot_facing` applies in every mode: `inverted` mirrors whatever the
+  mode's natural orientation is, so it flips `type`'s travel, reverses `loop`,
+  and faces `place` and `input` the other way.
 
   `mascot_speed` is an integer setting: write an unquoted value from `0`
   through `10`. Unset is the regular pace (`5`); `0` freezes movement, and
@@ -571,9 +573,10 @@ chatrooms = false
 
   `--mascot[=<mode>]`, `--mascot-size`, `--mascot-facing`, and
   `--mascot-speed` override these settings for one session; a bare `--mascot`
-  means `loop`. An invalid command-line value is reported on the transcript
-  and falls back rather than refusing to start the REPL; an invalid config
-  value is rejected while loading the configuration.
+  means `loop`. An invalid command-line value — or an unparseable `mascot`,
+  `mascot_size`, or `mascot_facing` from config — is reported on the transcript
+  and falls back rather than refusing to start the REPL; only an out-of-range
+  `mascot_speed` in config is rejected while loading the configuration.
 
   ```toml
   [tui]

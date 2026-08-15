@@ -40,8 +40,8 @@ author wrote, which is the one failure mode a version key exists to prevent.
 | Key | Type | Meaning |
 |---|---|---|
 | `name` | string | What the model writes to call the tool. Lowercase letters, digits and underscores only. Also the registry key, so it must be unique across the tools directory |
-| `description` | string | What the model reads to decide whether to call it. The first line (up to 160 characters) is what the catalog shows; the rest is only seen once the schema is loaded, so put the *what* first and the argument detail after |
-| `llm_description` | string | Optional compressed variant of `description`, sent to the model instead of it. The catalog line is paid on nearly every request, so a long human-facing `description` costs tokens every turn; this is where you keep the short one. Omitted, the loader falls back to `description`, so an unmigrated manifest still works — just not as cheaply |
+| `description` | string | Human-facing description — what a person reads in the web UI's Tools view or the REPL's tool detail. The model only ever sees it as the loader's fallback when `llm_description` is absent |
+| `llm_description` | string | Optional compressed variant of `description`, sent to the model instead of it. Its first line (up to 160 characters) is what the catalog shows, and the catalog line is paid on nearly every request, so a long human-facing `description` costs tokens every turn; this is where you keep the short one. Omitted, the loader falls back to `description`, so an unmigrated manifest still works — just not as cheaply |
 | `wasm` | string | The module. See [Where the module lives](#where-the-module-lives) |
 
 `input_schema` is not strictly required, but a manifest without one tells the
@@ -75,7 +75,7 @@ its arguments.
 | `env_allow` | string[] | `[]` | Environment variables this tool may read. Empty means the safe defaults in `host.zig`, never the whole process environment: that is where the API keys are |
 | `fuel` | integer | sandbox default | Instruction budget for one call. See below |
 | `llm` | bool | `false` | May call the model through `ck_llm` / `ck_llm_many`. Costs tokens, so it is opt-in, and it forces the tool onto the sequential execution path |
-| `tool_call` | bool | `false` | May call other tools through `ck_tool`. Only `chain` needs it |
+| `tool_call` | bool | `false` | May call other tools through `ck_tool`. Only tools that call others need it — as shipped, `chain` (the tools it wraps), `bugreport` (`kanban_add`), and `write_goal` (`ask_user`) |
 | `tool_allow` | string[] | all | With `tool_call`, which tool names it may invoke. Absent or empty means every enabled non-internal tool. Ignored entirely without `tool_call` |
 | `confirm` | bool | derived | Ask the human before running, when a confirm channel is installed (`agent.confirm_writes`). Unset, it is derived from the grants: any tool with `exec_allow` or `fs_prefixes` is a write in a viewer's eyes. A read-only tool opts out with `false`; a tool whose risk its grants understate opts in with `true` |
 

@@ -3,7 +3,7 @@
 External-project digests (what we can learn from them) live in [docs/digests/](digests/).
 Product requirement docs live in [docs/prds/](prds/) ([index](prds/README.md), [template](prds/TEMPLATE.md));
 the Done/Planned narrative is [docs/ROADMAP.md](ROADMAP.md).
-Working review logs live in [docs/reviews/](reviews/); design/implementation plans in [docs/plans/](plans/).
+Working review logs live in [docs/reviews/](reviews/).
 Operational bugs and their evidence-led investigations live in [docs/reports/](reports/).
 Current recovery procedures for recurring failures live in [docs/runbooks/](runbooks/).
 Decisions that are still open live in [docs/rfcs/](rfcs/) ([index](rfcs/README.md), [template](rfcs/TEMPLATE.md)),
@@ -27,9 +27,8 @@ Sessions are stateful: messages persist across turns and can be saved/restored v
 
 ### Interactive UX (REPL, `clanker run`)
 
-Both `clanker repl` and `clanker run` render the same live status while a turn is in flight, so there is never a silent gap between hitting enter and seeing output:
-- a dim animated braille spinner (`⠋⠙⠹…`) while waiting on the LLM or a tool,
-- a `⚙ <tool names>` line when a tool batch starts, and a `↳ <ms>` line when it finishes,
+`clanker repl` and `clanker run` share the same live output pieces, so there is never a silent gap between hitting enter and seeing output:
+- a dim animated braille spinner (`⠋⠙⠹…`) while waiting on the LLM or a tool, and a `⚙ <tool names>` line when a tool batch starts, with a `↳ <ms>` line when it finishes — REPL-only; a one-shot `run` stays plain so its output is safe to pipe into scripts,
 - a bold `›` gutter marking where the model's actual answer begins,
 - the answer itself rendered live: `**bold**`, `*italic*`, `` `inline code` ``, fenced blocks, and `- ` bullets turn into real ANSI styling as tokens stream in (`MdStream` in `src/tui/transcript.zig`; a marker split across two deltas, e.g. `**` arriving as two 1-byte chunks, is buffered and resolved once the rest arrives),
 - a dim stats footer per turn: `[turn: 1234 in / 567 out · 4.2s · 135.1 tok/s · cache 82% · $0.0031 · ctx 12.3k/128k (10%)]`. One formatter behind both surfaces (`src/tui/turn_stats.zig`): `clanker run` prints it on stderr, `clanker repl` appends it to the transcript as the last line of the turn. A model with no `cost_per_1m_input`/`cost_per_1m_output` in the catalogue drops the `$` segment rather than claiming the turn was free, and a provider that reported no cache accounting drops `cache` rather than showing 0%.
@@ -42,7 +41,7 @@ The vaxis REPL adds two things `clanker run` has no use for, since a one-shot ru
 - a running `ctx <used>/<window> (<pct>%)` meter, the tokens the session has spent, and its cost so far, in the status bar next to the provider/model,
 - a line whenever history is actually dropped. `[history compacted: dropped 12 messages, freed 48 KB]` is the save-time trim against `max_session_tokens`; `[context compacted: N earlier messages replaced by a summary to fit the model window]` is the mid-turn compaction `agent.compact_threshold_bytes` triggers inside the agent loop. Mid-turn compaction keeps the run's original request as a labeled anchor ahead of the generated summary, so a failed or incomplete summary cannot leave the model without the task it is meant to finish. Both used to happen silently, which meant a long session could lose the exchange it was about to be asked to remember with nothing on screen.
 
-`clanker run` keeps stdout content-only (safe to pipe: identical bytes whether or not it's a terminal, markdown rendering included — a redirected run gets plain, unstyled text) and puts the spinner/tool status and the per-turn stats footer on stderr, both gated on `stderr` being a real TTY; the gutter and markdown styling on stdout are gated on `stdout` being a real TTY. So `clanker run "…" > out.txt` stays byte-clean while an interactive shell gets the full live view.
+`clanker run` keeps stdout content-only (safe to pipe: identical bytes whether or not it's a terminal, markdown rendering included — a redirected run gets plain, unstyled text) and puts the per-turn stats footer on stderr, gated on `stderr` being a real TTY; the gutter and markdown styling on stdout are gated on `stdout` being a real TTY. So `clanker run "…" > out.txt` stays byte-clean while an interactive shell gets the live stats footer.
 
 ### LLM providers (`src/llm/`)
 
@@ -446,7 +445,7 @@ peer keeps the message only when it subscribes to that room.
 
 ### Patch application (`tools/zig/patch_apply.zig`)
 
-Proposals are applied via exact-match `old` → `new` replacements, through the sandboxed `patch_apply` WASM tool (`fs_prefixes: ["state/staging"]`). The first occurrence of each `old` is replaced. The improve engine (`src/improve/engine.zig`) decides what to apply and whether to promote the result; the tool only performs the text edits.
+Proposals are applied via exact-match `old` → `new` replacements, through the sandboxed `patch_apply` WASM tool (`fs_prefixes: ["state/staging", "state/autoresearch"]`). The first occurrence of each `old` is replaced. The improve engine (`src/improve/engine.zig`) decides what to apply and whether to promote the result; the tool only performs the text edits.
 
 ## WASM tool ABI
 
@@ -692,7 +691,7 @@ A line starting with `!` is a third input mode, checked before the command table
 
 It is not a shell. The line is split into one fixed argv — whitespace separates arguments, `'…'` or `"…"` groups one argument that contains spaces, there are no backslash escapes — and that argv goes through the same `ck_exec` gate a WASM tool's exec call goes through (`host.execUnderPolicy` → `host.execDenial`). So there are no pipes, redirections, globs or `$VAR` expansion, because there is no shell to expand them; the child also gets the same filtered environment a tool's subprocess gets, which is why an allowed binary cannot print this project's API keys.
 
-The commands it may run are the union of every registered tool's `exec_allow` (`ast-grep`, `gh`, `git`, `rg`, `semcode`, `uv`, `zig`, `zls` as shipped) plus anything in `agent.repl_exec_allow`. A bare `!` prints usage and that list. The rest of the policy still applies: `git` is limited to its local verbs, the deny tokens (`reset`, `rebase`, `rm`, `-f`, …) still refuse, and a refusal is printed as a transcript line saying which token tripped it. A non-zero exit is reported as `[! exit N]`; output is control-stripped like every other untrusted string and capped at 200 lines.
+The commands it may run are the union of every registered tool's `exec_allow` (`ast-grep`, `gh`, `git`, `rg`, `semcode`, `uv`, `zig`, `zls` as shipped) plus anything in `agent.repl_exec_allow`. A bare `!` prints usage and that list. The rest of the policy still applies: `git` is limited to its local verbs, the deny tokens (`reset`, `rebase`, `rm`, `-f`, …) still refuse, and a refusal is printed as a transcript line saying which token tripped it. A non-zero exit is reported as `error: ! exited with status N`; output is control-stripped like every other untrusted string and capped at 200 lines.
 
 ### `/graph`
 
@@ -762,7 +761,7 @@ A bare `clanker providers check` sweeps every configured provider in config orde
 
 - The `default provider: <name> (from <path>)` line comes first, whatever happens below it.
 - A provider that cannot possibly answer — no `base_url`, or an `api_key_env` that is not set in the environment — is reported as `not configured — …, nothing sent` before any socket work, so it costs the sweep nothing.
-- Every other provider is announced (`<name>: checking <base_url> — <model> — timeout <n>s`) *before* the request goes out, then gets its result line.
+- Every other provider is announced (`<name>: checking <model>...`) *before* the request goes out, then gets its result line.
 - Each attempt is capped by `agent.provider_check_timeout_seconds` (default 10, `0` disables) or the provider's own `check_timeout_seconds`. A provider that has not answered by then is canceled and reported as timed out, and the sweep moves on.
 - The sweep ends with a summary table on stdout: one row per provider with name, status, model, latency, and `*` in the `default` column. Statuses are a closed set — `OK`, `not configured`, `failed` (it answered, with an error status — a model the endpoint does not serve looks like this), `unreachable` (nothing answered: refused, DNS, TLS), `timed out`.
 
@@ -959,7 +958,7 @@ Fields:
   - `worktree`, `goal_worktree`, `git_worktree_on`: default isolation for
     ordinary, goal/scheduled, and named run modes. `worktree` and
     `goal_worktree` accept `auto`, `yes`, or `no`; `git_worktree_on` names any
-    of `run`, `goal`, `tui`, and `schedule`. An explicit
+    of `run`, `goal`, `tui`, and `webui`. An explicit
     `--worktree`/`--no-worktree` always wins.
   - `fallback_provider` / `fallback_providers`: ordered fallbacks after the selected provider cannot serve a request (default unset). A string still means one name. After the primary exhausts its own retries (or fails before any content is delivered), the next configured name is tried. Also the preferred vision-routing target: ignored unless it names a configured provider that differs from the current one and has a vision model; with nothing set, the first other provider that qualifies is used.
   - `ask_timeout_seconds`: how long a serve-side `ask_user` question waits for the browser before giving up (default 120). Confirm questions share the timeout.
