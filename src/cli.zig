@@ -34,6 +34,7 @@ const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
 const raw_http = @import("util/raw_http.zig");
 const toml_edit = @import("util/toml_edit.zig");
+const json_util = @import("util/json.zig");
 // tui/transcript.zig's MdStream is still used by cmdRun's own run_md; the
 // rest of tui/* (input, region, statusbar, palette, approval, term) was
 // exclusive to the REPL that's now src/tui/repl.zig, and was
@@ -2467,7 +2468,7 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
                 if (data == .array) {
                     for (data.array.items) |item| {
                         if (item != .object) continue;
-                        const id = fieldStr(item.object, "id") orelse continue;
+                        const id = json_util.strFieldOrNull(item.object, "id") orelse continue;
                         var relevant = false;
                         for (families) |f| {
                             if (std.ascii.findIgnoreCase(id, f) != null) {
@@ -2529,7 +2530,7 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
             if (data == .array) {
                 for (data.array.items) |item| {
                     if (item != .object) continue;
-                    const id = fieldStr(item.object, "id") orelse continue;
+                    const id = json_util.strFieldOrNull(item.object, "id") orelse continue;
                     const ctx = if (item.object.get("context_length")) |c| switch (c) {
                         .integer => |i| i,
                         else => 0,
@@ -2650,7 +2651,7 @@ fn cmdProvidersCatalog(init: std.process.Init, opts: Options) !void {
         var mit = models_v.object.iterator();
         while (mit.next()) |mkv| {
             const model_id = mkv.key_ptr.*;
-            const family = if (mkv.value_ptr.* == .object) fieldStr(mkv.value_ptr.object, "family") orelse "" else "";
+            const family = if (mkv.value_ptr.* == .object) json_util.strFieldOrNull(mkv.value_ptr.object, "family") orelse "" else "";
             if (std.ascii.findIgnoreCase(provider_id, query) == null and
                 std.ascii.findIgnoreCase(model_id, query) == null and
                 std.ascii.findIgnoreCase(family, query) == null) continue;
@@ -2751,7 +2752,7 @@ fn renderModelSnippet(arena: std.mem.Allocator, provider_name: []const u8, name:
         if (jsonNum(c.object, "input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_input = {d}", .{v}));
         if (jsonNum(c.object, "output")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_output = {d}", .{v}));
     };
-    if (fieldStr(m.object, "name")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "display = {s}", .{try tomlQuoted(arena, disp)}));
+    if (json_util.strFieldOrNull(m.object, "name")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "display = {s}", .{try tomlQuoted(arena, disp)}));
     // models.dev's "temperature" is a capability flag, not a recommended
     // value; 0.7 matches sampling_profiles.zig's own chat default so a
     // fresh entry does not silently run at the provider's own default
@@ -2788,13 +2789,6 @@ fn jsonNum(obj: std.json.ObjectMap, key: []const u8) ?f64 {
         .integer, .float, .number_string, .string => numToF64(v),
         else => null,
     };
-}
-
-fn fieldStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
-    if (obj.get(key)) |v| {
-        if (v == .string) return v.string;
-    }
-    return null;
 }
 
 fn numToF64(v: std.json.Value) f64 {
@@ -3147,11 +3141,6 @@ fn formatGoalSection(
     );
 }
 
-fn goalField(obj: std.json.ObjectMap, key: []const u8) []const u8 {
-    if (obj.get(key)) |v| if (v == .string) return v.string;
-    return "";
-}
-
 fn goalUpdated(obj: std.json.ObjectMap) i64 {
     if (obj.get("updated")) |v| switch (v) {
         .integer => |n| return n,
@@ -3181,12 +3170,12 @@ fn goalMaxIterations(obj: std.json.ObjectMap) ?u32 {
 fn goalFromObject(arena: std.mem.Allocator, obj: std.json.ObjectMap) !?GoalContext {
     const idv = obj.get("id") orelse return null;
     if (idv != .string or idv.string.len == 0) return null;
-    const objective = goalField(obj, "objective");
+    const objective = json_util.strFieldOrEmpty(obj, "objective");
     if (objective.len == 0) return null;
-    const completion = goalField(obj, "completion_criterion");
-    const proof = goalField(obj, "proof");
-    const boundaries = goalField(obj, "boundaries");
-    const stop_rule = goalField(obj, "stop_rule");
+    const completion = json_util.strFieldOrEmpty(obj, "completion_criterion");
+    const proof = json_util.strFieldOrEmpty(obj, "proof");
+    const boundaries = json_util.strFieldOrEmpty(obj, "boundaries");
+    const stop_rule = json_util.strFieldOrEmpty(obj, "stop_rule");
     return .{
         .id = idv.string,
         .objective = objective,
@@ -3226,7 +3215,7 @@ fn findNewestActiveGoalIn(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir)
     for (root.array.items, 0..) |item, i| {
         if (item != .object) continue;
         const obj = item.object;
-        const status = goalField(obj, "status");
+        const status = json_util.strFieldOrEmpty(obj, "status");
         // Default status is active when the field is missing (older files).
         if (status.len > 0 and !std.mem.eql(u8, status, "active")) continue;
         const g = try goalFromObject(arena, obj) orelse continue;
@@ -8994,7 +8983,7 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
         while (mit.next()) |mkv| {
             const model_id = mkv.key_ptr.*;
             const m = mkv.value_ptr.*;
-            const family = if (m == .object) fieldStr(m.object, "family") orelse "" else "";
+            const family = if (m == .object) json_util.strFieldOrNull(m.object, "family") orelse "" else "";
             if (std.ascii.findIgnoreCase(provider_id, query) == null and
                 std.ascii.findIgnoreCase(model_id, query) == null and
                 std.ascii.findIgnoreCase(family, query) == null) continue;
@@ -9025,7 +9014,7 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
                 // [models."…"] block without max_tokens silently takes
                 // config.Model's 1024 default and truncates every answer, so a
                 // snippet that omits it is worse than no snippet.
-                if (fieldStr(m.object, "name")) |disp| {
+                if (json_util.strFieldOrNull(m.object, "name")) |disp| {
                     s.objectField("display") catch return;
                     s.write(disp) catch return;
                 }
@@ -9500,17 +9489,17 @@ fn handleConfigDefault(io: std.Io, gpa: std.mem.Allocator, body: []const u8, str
 /// config with only the edited fields changed, not a diff.
 fn renderModelConfigBlock(arena: std.mem.Allocator, provider_name: []const u8, name: []const u8, obj: std.json.ObjectMap) ![]const u8 {
     var fields: std.ArrayList([]const u8) = .empty;
-    if (fieldStr(obj, "id")) |sku| try fields.append(arena, try std.fmt.allocPrint(arena, "id = {s}", .{try tomlQuoted(arena, sku)}));
+    if (json_util.strFieldOrNull(obj, "id")) |sku| try fields.append(arena, try std.fmt.allocPrint(arena, "id = {s}", .{try tomlQuoted(arena, sku)}));
     if (jsonNum(obj, "rpm")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "rpm = {d}", .{@as(i64, @trunc(v))}));
     if (jsonNum(obj, "context_window")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "context_window = {d}", .{@as(i64, @trunc(v))}));
     if (jsonNum(obj, "max_tokens")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "max_tokens = {d}", .{@as(i64, @trunc(v))}));
     if (jsonNum(obj, "temperature")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "temperature = {d}", .{v}));
     if (jsonNum(obj, "top_p")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "top_p = {d}", .{v}));
-    if (fieldStr(obj, "reasoning_effort")) |re| try fields.append(arena, try std.fmt.allocPrint(arena, "reasoning_effort = {s}", .{try tomlQuoted(arena, re)}));
-    if (fieldStr(obj, "display")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "display = {s}", .{try tomlQuoted(arena, disp)}));
+    if (json_util.strFieldOrNull(obj, "reasoning_effort")) |re| try fields.append(arena, try std.fmt.allocPrint(arena, "reasoning_effort = {s}", .{try tomlQuoted(arena, re)}));
+    if (json_util.strFieldOrNull(obj, "display")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "display = {s}", .{try tomlQuoted(arena, disp)}));
     if (jsonNum(obj, "cost_per_1m_input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_input = {d}", .{v}));
     if (jsonNum(obj, "cost_per_1m_output")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_output = {d}", .{v}));
-    if (fieldStr(obj, "category")) |cat| try fields.append(arena, try std.fmt.allocPrint(arena, "category = {s}", .{try tomlQuoted(arena, cat)}));
+    if (json_util.strFieldOrNull(obj, "category")) |cat| try fields.append(arena, try std.fmt.allocPrint(arena, "category = {s}", .{try tomlQuoted(arena, cat)}));
     if (obj.get("capabilities")) |caps_v| if (caps_v == .array) {
         var quoted: std.ArrayList([]const u8) = .empty;
         for (caps_v.array.items) |c| if (c == .string) try quoted.append(arena, try tomlQuoted(arena, c.string));
@@ -9695,7 +9684,7 @@ fn handleProviderModels(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.C
             if (data == .array) {
                 for (data.array.items) |item| {
                     if (item != .object) continue;
-                    const id = fieldStr(item.object, "id") orelse continue;
+                    const id = json_util.strFieldOrNull(item.object, "id") orelse continue;
                     s.beginObject() catch return;
                     s.objectField("id") catch return;
                     s.write(id) catch return;
@@ -9855,7 +9844,7 @@ fn writeListingModels(
     if (data != .array) return;
     for (data.array.items) |item| {
         if (item != .object) continue;
-        const id = fieldStr(item.object, "id") orelse continue;
+        const id = json_util.strFieldOrNull(item.object, "id") orelse continue;
         if (id.len == 0) continue;
         if (provider.models.get(id) != null) continue;
         s.beginObject() catch return;

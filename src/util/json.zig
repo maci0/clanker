@@ -28,6 +28,23 @@ pub fn strField(obj: std.json.ObjectMap, key: []const u8) ![]const u8 {
     };
 }
 
+/// Tolerant string field: missing or non-string reads as "". The wire-format
+/// readers (mesh frames, tool answers) all want a value, not an error, when a
+/// field is absent; "" and "the field is not there" are the same at those call
+/// sites. An empty string is kept as-is.
+pub fn strFieldOrEmpty(obj: std.json.ObjectMap, key: []const u8) []const u8 {
+    const v = obj.get(key) orelse return "";
+    return if (v == .string) v.string else "";
+}
+
+/// Tolerant string field: missing or non-string reads as null. Unlike
+/// `strFieldOrEmpty`, a caller can tell "absent" apart from "empty"; callers
+/// that must drop empty strings check `.len` themselves.
+pub fn strFieldOrNull(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    const v = obj.get(key) orelse return null;
+    return if (v == .string) v.string else null;
+}
+
 test "strField rejects missing and non-string values" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -63,4 +80,29 @@ test "pluginStr and pluginU32 fall back to null on missing, empty, or wrong-type
 
     const huge = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"max_tokens\":9000000000}", .{});
     try std.testing.expect(pluginU32(huge, "max_tokens") == null);
+}
+
+test "strFieldOrEmpty and strFieldOrNull read tolerant string fields" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"name\":\"x\",\"empty\":\"\",\"n\":3,\"b\":true,\"arr\":[1]}", .{});
+    const obj = v.object;
+
+    // Present string: both return it, empty string included.
+    try std.testing.expectEqualStrings("x", strFieldOrEmpty(obj, "name"));
+    try std.testing.expectEqualStrings("x", strFieldOrNull(obj, "name").?);
+    try std.testing.expectEqualStrings("", strFieldOrEmpty(obj, "empty"));
+    try std.testing.expectEqualStrings("", strFieldOrNull(obj, "empty").?);
+
+    // Missing, and non-string values: empty vs null by contract.
+    try std.testing.expectEqualStrings("", strFieldOrEmpty(obj, "missing"));
+    try std.testing.expect(strFieldOrNull(obj, "missing") == null);
+    try std.testing.expectEqualStrings("", strFieldOrEmpty(obj, "n"));
+    try std.testing.expect(strFieldOrNull(obj, "n") == null);
+    try std.testing.expectEqualStrings("", strFieldOrEmpty(obj, "b"));
+    try std.testing.expect(strFieldOrNull(obj, "b") == null);
+    try std.testing.expectEqualStrings("", strFieldOrEmpty(obj, "arr"));
+    try std.testing.expect(strFieldOrNull(obj, "arr") == null);
 }

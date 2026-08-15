@@ -5,6 +5,7 @@ const std = @import("std");
 const mesh = @import("../peers/mesh.zig");
 const config = @import("../config.zig");
 const log = @import("../util/log.zig");
+const json_util = @import("../util/json.zig");
 const live = @import("live.zig");
 
 pub const ChatBody = struct {
@@ -143,11 +144,6 @@ fn payloadObj(arena: std.mem.Allocator, raw: []const u8) !std.json.ObjectMap {
     };
 }
 
-fn strField(obj: std.json.ObjectMap, k: []const u8) []const u8 {
-    const v = obj.get(k) orelse return "";
-    return if (v == .string) v.string else "";
-}
-
 /// Deliver on a live mesh link. False means the caller should use HTTP.
 pub fn trySendChat(gpa: std.mem.Allocator, peer_id: []const u8, peer_name: []const u8, msg: ChatBody) bool {
     const rt = runtime orelse return false;
@@ -188,10 +184,10 @@ fn handleInbound(rt: *Runtime, raw: []const u8) void {
     if (header.kind != .chat) return;
     const p = payloadObj(arena, raw) catch return;
     if (rt.on_chat) |cb| cb(.{
-        .room = strField(p, "room"),
-        .from = strField(p, "from"),
-        .text = strField(p, "text"),
-        .id = strField(p, "id"),
+        .room = json_util.strFieldOrEmpty(p, "room"),
+        .from = json_util.strFieldOrEmpty(p, "from"),
+        .text = json_util.strFieldOrEmpty(p, "text"),
+        .id = json_util.strFieldOrEmpty(p, "id"),
         .ts = if (p.get("ts")) |v| (if (v == .integer) v.integer else 0) else 0,
     });
 }
@@ -252,10 +248,10 @@ fn acceptOne(arg: *Conn) void {
         if (header.kind != .join) break;
         const p = payloadObj(arena, got.payload) catch break;
         const join_id = blk: {
-            const id = strField(p, "id");
+            const id = json_util.strFieldOrEmpty(p, "id");
             break :blk if (id.len > 0) id else header.from;
         };
-        const join_name = strField(p, "name");
+        const join_name = json_util.strFieldOrEmpty(p, "name");
         const ok = mesh.admit(rt.admission, rt.our_id, join_id, join_name, rt.seeds) == .accept;
         var ack_out: std.Io.Writer.Allocating = .init(arena);
         var ack_s = std.json.Stringify{ .writer = &ack_out.writer, .options = .{ .emit_null_optional_fields = false } };

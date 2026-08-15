@@ -15,6 +15,7 @@
 const std = @import("std");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
+const json_util = @import("../util/json.zig");
 
 pub const Options = struct {
     /// "list" (default), "search", "open", "create", "append" or "update".
@@ -86,8 +87,8 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
 
 fn list(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
     const result = try callTool(arena, tool, "{\"action\":\"list\"}");
-    const reports_index = strField(result, "reports_index");
-    const runbooks_index = strField(result, "runbooks_index");
+    const reports_index = json_util.strFieldOrEmpty(result.object, "reports_index");
+    const runbooks_index = json_util.strFieldOrEmpty(result.object, "runbooks_index");
     try out(io, try renderList(arena, reports_index, runbooks_index));
 }
 
@@ -133,7 +134,7 @@ fn open(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
     const result = try callTool(arena, tool, input.written());
     // The record is markdown that was written to be read; print it as it is
     // rather than reflowing someone's report in a pager-less terminal.
-    const text = strField(result, "text");
+    const text = json_util.strFieldOrEmpty(result.object, "text");
     try out(io, text);
     if (text.len > 0 and text[text.len - 1] != '\n') try out(io, "\n");
 }
@@ -163,7 +164,7 @@ fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try s.endObject();
 
     const result = try callTool(arena, tool, input.written());
-    const path = strField(result, "path");
+    const path = json_util.strFieldOrEmpty(result.object, "path");
     var w: std.Io.Writer.Allocating = .init(arena);
     defer w.deinit();
     try w.writer.print("created {s}\n", .{path});
@@ -204,7 +205,7 @@ fn append(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try s.endObject();
 
     const result = try callTool(arena, tool, input.written());
-    try out(io, try std.fmt.allocPrint(arena, "appended to {s}\n", .{strField(result, "path")}));
+    try out(io, try std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
 }
 
 fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
@@ -238,7 +239,7 @@ fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try s.endObject();
 
     const result = try callTool(arena, tool, input.written());
-    try out(io, try std.fmt.allocPrint(arena, "updated {s}\n", .{strField(result, "path")}));
+    try out(io, try std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
 }
 
 // ----------------------------------------------------------------- the tool --
@@ -267,11 +268,6 @@ fn callTool(arena: std.mem.Allocator, tool: Tool, input: []const u8) !std.json.V
         return Error.ToolFailed;
     }
     return parsed;
-}
-
-fn strField(obj: std.json.Value, name: []const u8) []const u8 {
-    const v = obj.object.get(name) orelse return "";
-    return if (v == .string) v.string else "";
 }
 
 fn boolField(obj: std.json.Value, name: []const u8) bool {
@@ -515,8 +511,8 @@ fn renderMatchGroup(w: *std.Io.Writer, heading: []const u8, matches: []const std
     var last_file: []const u8 = "";
     for (matches) |m| {
         if (m != .object) continue;
-        const file = strField(m, "file");
-        const text = strField(m, "text");
+        const file = json_util.strFieldOrEmpty(m.object, "file");
+        const text = json_util.strFieldOrEmpty(m.object, "text");
         // A line number is printed unsigned: `{d}` on an i64 carries an
         // explicit `+`, which reads as a diff marker in a column of numbers.
         const line: u64 = blk: {
@@ -685,5 +681,5 @@ test "a refused tool call fails with the tool's own sentence, not a generic erro
 
     var fine: Canned = .{ .answer = "{\"ok\":true,\"path\":\"docs/reports/bugs/a.md\"}" };
     const parsed = try callTool(arena, .{ .ctx = &fine, .call = Canned.call }, "{}");
-    try std.testing.expectEqualStrings("docs/reports/bugs/a.md", strField(parsed, "path"));
+    try std.testing.expectEqualStrings("docs/reports/bugs/a.md", json_util.strFieldOrEmpty(parsed.object, "path"));
 }

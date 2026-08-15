@@ -75,6 +75,9 @@ pub fn classify(npm: []const u8, api: []const u8, env0: []const u8) ?Support {
     };
 }
 
+// Not `util/json.zig`'s strFieldOrNull: this drops empty strings too. An
+// empty `npm`/`api` name is a broken models.dev row, and treating it as
+// absent here is the fail-closed read the catalog wants.
 fn fieldStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
     return switch (obj.get(key) orelse return null) {
         .string => |s| if (s.len > 0) s else null,
