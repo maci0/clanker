@@ -8,6 +8,31 @@
 
 clanker is a self-improving AI agent harness written in Zig 0.16. It runs its tools as sandboxed WebAssembly modules via zwasm, and improves its own source code through a gated loop: the agent proposes an exact-match patch, applies it to a staging copy, verifies it with `zig build`, `zig build test`, `zig build tools`, `zig fmt`, and lint, and promotes it to the live tree only if all gates pass.
 
+## Everything is a plugin
+
+Not a tagline — a design pressure, borrowed with admiration from
+DeepSeek Harness. Whatever can be a drop-in unit with a declared
+surface, is one; whatever isn't yet is expected to justify itself.
+
+- **Tools?** Plugin. A WASM guest plus a `*.tool.json` manifest is the
+  whole contract (`clanker plugins new <name>` scaffolds one).
+- **Models and providers?** Plugin. One vtable file, one registry row,
+  one `ProviderKind` tag — never a new `switch (provider.kind)`.
+- **Web UI views?** Plugin. A directory under `ui/plugins/` with
+  `plugin.json` + `app.js` is a live page surface, no rebuild; the
+  `webui_addon` tool lets a chat write one.
+- **Skills and prompts?** Plugin. Markdown in `skills/`, records in the
+  prompts store — data the harness loads, not code it hardcodes.
+- **Config?** Hot-loaded. A clean edit restarts the server into it; a
+  broken one is refused and the last known good config keeps serving.
+- **The improve loop itself?** Gated, not trusted: every self-change is
+  a proposal that must survive build, tests, tools, fmt, and lint
+  before it exists.
+
+The core that remains core — the sandbox policy, the gates, the
+credential handling — is small on purpose, and stays out of any
+plugin's reach.
+
 ## Release status
 
 clanker is unreleased development software. The `0.1.0` package version is not
