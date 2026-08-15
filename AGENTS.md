@@ -78,8 +78,8 @@ through a gated loop. Follow these conventions when changing this codebase.
   most args as patterns: `..` is checked only on the last argument.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   workspace registry (`workspace.zig`: folder + chat-history set; empty id is
-  the serve cwd), execution graphs, sub-agents, autolearn, workflows. Session ids are path
-  fragments; every CLI, TUI, and HTTP entry point uses
+  the serve cwd), execution graphs, sub-agents, autolearn, workflows. Session
+  ids are path fragments; every CLI, TUI, and HTTP entry point uses
   `session.zig`'s `validSessionId` rather than restating its alphabet.
   `Agent.on_token` has no context argument, so streaming side-state
   (`stream_tally`, the TTSR guard, `run_stream_socket`) is threadlocal; a
