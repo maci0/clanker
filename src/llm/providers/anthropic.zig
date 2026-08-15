@@ -110,7 +110,7 @@ pub fn buildBody(gpa: std.mem.Allocator, params: api.RequestParams, opts: BodyOp
         try s.write(v);
     } else {
         try s.objectField("model");
-        try s.write(params.provider.activeModelName());
+        try s.write(params.provider.wireModelName());
     }
     // Anthropic streams only when asked in the body; the endpoint verb alone
     // (Vertex's :streamRawPredict) is not enough.

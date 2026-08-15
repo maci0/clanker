@@ -314,7 +314,7 @@ function loadConfigured() {
         }
         (prov.models || []).forEach(function (m) {
           var entry = {
-            provider: prov.name, model: m.name, display: m.display || "", category: m.category || "",
+            provider: prov.name, model: m.name, id: m.id || "", display: m.display || "", category: m.category || "",
             context_window: m.context_window, max_tokens: m.max_tokens,
             temperature: m.temperature, top_p: m.top_p, reasoning_effort: m.reasoning_effort,
             cost_per_1m_input: m.cost_per_1m_input, cost_per_1m_output: m.cost_per_1m_output,
@@ -383,6 +383,7 @@ function showEditPanel(entry, isNew) {
   editField("models-edit-provider").disabled = !isNew;
   editField("models-edit-model").value = entry.model || "";
   editField("models-edit-model").disabled = !isNew;
+  editField("models-edit-id").value = entry.id || "";
   editField("models-edit-display").value = entry.display || "";
   editField("models-edit-category").value = entry.category || "";
   editField("models-edit-context").value = entry.context_window != null ? entry.context_window : "";
@@ -427,6 +428,8 @@ function editPayload() {
   var provider = editField("models-edit-provider").value.trim();
   var model = editField("models-edit-model").value.trim();
   var payload = { provider: provider, model: model };
+  var sku = editField("models-edit-id").value.trim();
+  if (sku) payload.id = sku;
   var context = numOrNull("models-edit-context");
   if (context != null) payload.context_window = context;
   var maxTok = numOrNull("models-edit-max-tokens");
@@ -649,7 +652,7 @@ export function bindModels() {
   var add = document.getElementById("models-add");
   if (add) add.addEventListener("click", function () {
     showEditPanel({
-      provider: "", model: "", display: "", category: "",
+      provider: "", model: "", id: "", display: "", category: "",
       context_window: 131072, max_tokens: 1024,
       temperature: null, top_p: null, reasoning_effort: "",
       cost_per_1m_input: null, cost_per_1m_output: null, capabilities: []

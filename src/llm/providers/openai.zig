@@ -46,7 +46,7 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
 
     try s.beginObject();
     try s.objectField("model");
-    try s.write(params.provider.activeModelName());
+    try s.write(params.provider.wireModelName());
     try s.objectField("messages");
     try s.beginArray();
     for (params.messages) |m| {
@@ -381,6 +381,23 @@ test "openai request body golden" {
         \\{"model":"deepseek-chat","messages":[{"role":"system","content":"be brief"},{"role":"user","content":"hi"}],"temperature":0.2,"max_tokens":512,"stream":false}
     ;
     try std.testing.expectEqualStrings(expected, body);
+}
+
+test "openai request body sends a model alias id as the wire SKU" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const p = try config.Provider.single(arena, "xai", "https://api.x.ai/v1", .openai_compat, "grok4.6-coding", .{
+        .id = "grok-4.6",
+        .temperature = 0.2,
+        .max_tokens = 512,
+    });
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    const body = try buildRequest(arena, .{ .provider = &p, .messages = &messages });
+    defer arena.free(body);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"model\":\"grok-4.6\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "grok4.6-coding") == null);
 }
 
 test "openai request body sends reasoning_effort and omits it when unset" {

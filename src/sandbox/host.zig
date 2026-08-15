@@ -1207,6 +1207,10 @@ fn writeModelJson(s: *std.json.Stringify, m: *const config_mod.Model, provider: 
         try s.objectField("provider");
         try s.write(p);
     }
+    if (m.id.len > 0) {
+        try s.objectField("id");
+        try s.write(m.id);
+    }
     try s.objectField("context_window");
     try s.write(m.context_window);
     try s.objectField("max_tokens");

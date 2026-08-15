@@ -235,14 +235,16 @@ implementation is `src/llm/auth.zig` plus each provider's `authHeaders`.
 
 ## `[models."<provider>/<model>"]`
 
-One table per model. The table key is `"<provider>/<model>"`; the `provider`
-field inside links it to a `[providers.<name>]` entry. The model name (the part
-after the slash) is what gets sent as the API `model` field, unless `display`
-overrides how it is *shown* (never what is *sent*).
+One table per model. The table key is `"<provider>/<name>"`; the `provider`
+field inside links it to a `[providers.<name>]` entry. The name after the slash
+is the local id (`--model xai/grok4.6-coding`, the picker). It is also the
+API `model` field unless `id` names a different wire SKU. `display` only
+changes how it is shown, never what is sent.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `provider` | string | required | Which provider serves this model. |
+| `id` | string | unset | Wire SKU. Omit to send the table-key name. Set this to give one SKU two local names with different sampling (`grok4.6-coding` and `grok4.6-general` both `id = "grok-4.6"`). |
 | `context_window` | int | 131072 | Total context in tokens; sizes compaction and the improve context budget. |
 | `max_tokens` | int | 1024 | Per-request output-token cap. |
 | `temperature` | float | unset | Sampling temperature. |
@@ -272,6 +274,16 @@ reasoning_effort = "high"
 cost_per_1m_input = 3.0
 cost_per_1m_output = 15.0
 capabilities = ["thinking", "tool_use", "image_in", "video_in"]
+
+[models."xai/grok4.6-coding"]
+provider = "xai"
+id = "grok-4.6"
+temperature = 0.2
+
+[models."xai/grok4.6-general"]
+provider = "xai"
+id = "grok-4.6"
+temperature = 0.7
 ```
 
 ### Auto-populating model specs

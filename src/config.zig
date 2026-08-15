@@ -92,6 +92,11 @@ pub const AuthStrategy = enum {
 };
 
 pub const Model = struct {
+    /// SKU sent as the API `model` field. Empty means the table-key name
+    /// (the part after `provider/`) is the SKU. Set this to give one SKU
+    /// two local names with different sampling settings
+    /// (`grok4.6-coding` and `grok4.6-general` both `id = "grok-4.6"`).
+    id: []const u8 = "",
     /// Total model context window in tokens (input + output). Used to size
     /// conversation compaction and the improve context budget.
     context_window: u32 = 131072,
@@ -129,6 +134,11 @@ pub const Model = struct {
     /// /model picker, and the CLI. Purely presentational: never sent to a
     /// provider. Empty sorts last within its provider.
     category: []const u8 = "",
+
+    /// The name the provider API wants. `key` is the table-key name.
+    pub fn wireName(self: Model, key: []const u8) []const u8 {
+        return if (self.id.len > 0) self.id else key;
+    }
 };
 
 pub const Provider = struct {
@@ -185,8 +195,8 @@ pub const Provider = struct {
         return p;
     }
 
-    /// The active model's name. Loading guarantees `default_model` is set and
-    /// present in `models`, so there is exactly one place this can come from.
+    /// The active model's local name (table key / picker id). Loading
+    /// guarantees `default_model` is set and present in `models`.
     pub fn activeModelName(self: *const Provider) []const u8 {
         return self.default_model;
     }
@@ -194,6 +204,19 @@ pub const Provider = struct {
     /// The active model's settings.
     pub fn activeModel(self: *const Provider) Model {
         return self.models.get(self.default_model) orelse .{};
+    }
+
+    /// The SKU sent on the wire for the active model. Differs from
+    /// `activeModelName` when that entry is a local alias (`id` set).
+    pub fn wireModelName(self: *const Provider) []const u8 {
+        return self.activeModel().wireName(self.default_model);
+    }
+
+    /// The SKU for a named entry, or `key` itself when that entry is
+    /// missing or has no `id`.
+    pub fn modelSku(self: *const Provider, key: []const u8) []const u8 {
+        if (self.models.get(key)) |m| return m.wireName(key);
+        return key;
     }
 };
 
@@ -1371,6 +1394,7 @@ pub const Config = struct {
             // entry belongs to, before the table-key prefix is stripped down
             // to the bare model name passed in here), accepted, not unknown.
             "provider",
+            "id",
             "context_window",
             "max_tokens",
             "temperature",
@@ -1382,6 +1406,7 @@ pub const Config = struct {
             "capabilities",
             "category",
         }, name);
+        if (obj.get("id")) |k| m.id = try jsonStr(k, "id");
         if (obj.get("context_window")) |k| m.context_window = try jsonUnsigned(u32, k, "context_window");
         if (obj.get("max_tokens")) |k| m.max_tokens = try jsonUnsigned(u32, k, "max_tokens");
         if (obj.get("temperature")) |k| m.temperature = try jsonFloat(k, "temperature");
@@ -3369,6 +3394,48 @@ test "a single model needs no default_model" {
     const solo = cfg.providers.getPtr("solo").?;
     try std.testing.expectEqualStrings("only", solo.activeModelName());
     try std.testing.expectEqual(@as(u32, 128), solo.activeModel().max_tokens);
+}
+
+test "a model id is the wire SKU; the table key is the local name" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "xai"
+        \\providers = { xai = { base_url = "https://api.x.ai/v1", default_model = "grok4.6-coding" } }
+        \\[models."xai/grok4.6-coding"]
+        \\provider = "xai"
+        \\id = "grok-4.6"
+        \\temperature = 0.2
+        \\[models."xai/grok4.6-general"]
+        \\provider = "xai"
+        \\id = "grok-4.6"
+        \\temperature = 0.7
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    const xai = cfg.providers.getPtr("xai").?;
+    try std.testing.expectEqual(@as(usize, 2), xai.models.count());
+    try std.testing.expectEqualStrings("grok4.6-coding", xai.activeModelName());
+    try std.testing.expectEqualStrings("grok-4.6", xai.wireModelName());
+    try std.testing.expectEqual(@as(f64, 0.2), xai.activeModel().temperature.?);
+    try std.testing.expectEqual(@as(f64, 0.7), xai.models.get("grok4.6-general").?.temperature.?);
+    try std.testing.expectEqualStrings("grok-4.6", xai.modelSku("grok4.6-general"));
+    // No id: the table key is what goes on the wire.
+    try std.testing.expectEqualStrings("only", (Model{}).wireName("only"));
+
+    const picked = try cfg.resolveProvider(null, "xai/grok4.6-general");
+    try std.testing.expectEqualStrings("grok4.6-general", picked.activeModelName());
+    try std.testing.expectEqualStrings("grok-4.6", picked.wireModelName());
+    try std.testing.expectEqual(@as(f64, 0.7), picked.activeModel().temperature.?);
 }
 
 test "a local override with only default_provider keeps the base providers" {

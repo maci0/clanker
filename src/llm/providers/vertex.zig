@@ -78,7 +78,7 @@ fn endpointUrl(gpa: std.mem.Allocator, p: *const config.Provider, streaming: boo
     return std.fmt.allocPrint(
         gpa,
         "{s}/v1/projects/{s}/locations/{s}/publishers/anthropic/models/{s}:{s}",
-        .{ base, p.project, p.location, p.activeModelName(), verb },
+        .{ base, p.project, p.location, p.wireModelName(), verb },
     );
 }
 

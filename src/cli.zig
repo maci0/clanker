@@ -8868,6 +8868,7 @@ fn handleConfigDefault(io: std.Io, gpa: std.mem.Allocator, body: []const u8, str
 /// config with only the edited fields changed, not a diff.
 fn renderModelConfigBlock(arena: std.mem.Allocator, provider_name: []const u8, name: []const u8, obj: std.json.ObjectMap) ![]const u8 {
     var fields: std.ArrayList([]const u8) = .empty;
+    if (fieldStr(obj, "id")) |sku| try fields.append(arena, try std.fmt.allocPrint(arena, "id = {s}", .{try tomlQuoted(arena, sku)}));
     if (jsonNum(obj, "context_window")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "context_window = {d}", .{@as(i64, @intFromFloat(v))}));
     if (jsonNum(obj, "max_tokens")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "max_tokens = {d}", .{@as(i64, @intFromFloat(v))}));
     if (jsonNum(obj, "temperature")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "temperature = {d}", .{v}));
@@ -9113,6 +9114,10 @@ fn handleProviders(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
             s.beginObject() catch return;
             s.objectField("name") catch return;
             s.write(m.key_ptr.*) catch return;
+            if (m.value_ptr.id.len > 0) {
+                s.objectField("id") catch return;
+                s.write(m.value_ptr.id) catch return;
+            }
             if (m.value_ptr.display) |disp| {
                 s.objectField("display") catch return;
                 s.write(disp) catch return;

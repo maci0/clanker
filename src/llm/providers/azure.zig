@@ -41,7 +41,7 @@ fn endpointUrl(gpa: std.mem.Allocator, p: *const config.Provider, _: bool) anyer
     return std.fmt.allocPrint(
         gpa,
         "{s}/openai/deployments/{s}/chat/completions?api-version={s}",
-        .{ base, p.activeModelName(), version },
+        .{ base, p.wireModelName(), version },
     );
 }
 

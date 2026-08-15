@@ -92,6 +92,8 @@ base_url = "http://127.0.0.1:8000/v1"
 #
 # [models."example/example-pro"]
 # provider = "example"           # required, must match the key's prefix
+# id = "example-pro"             # wire SKU when the table key is a local alias
+#                                # (two keys can share an id with different temps)
 # context_window = 131072        # input + output, sizes compaction budgets
 # max_tokens = 1024              # per-request completion cap
 # temperature = 0.2

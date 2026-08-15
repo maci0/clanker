@@ -195,7 +195,7 @@ fn forward(ctx: Ctx, family: Family) u16 {
     if (resolved.provider.kind == .gemini) {
         return writeEnvelope(ctx, 400, "protocol_mismatch", "gemini is not available on the OpenAI/Anthropic proxy");
     }
-    if (resolved.provider.kind == .vertex and !vertex_ai.isAnthropicModel(resolved.provider.activeModelName())) {
+    if (resolved.provider.kind == .vertex and !vertex_ai.isAnthropicModel(resolved.provider.wireModelName())) {
         return writeEnvelope(ctx, 400, "protocol_mismatch", "Vertex Gemini is not available on the OpenAI/Anthropic proxy");
     }
 
@@ -835,7 +835,8 @@ fn uniqueWire(cfg: *const config.Config, family: ?Family, id: []const u8) Lookup
         if (found != null) return null;
         var copy = p.*;
         copy.default_model = id;
-        found = .{ .provider = copy, .wire_id = id, .splice = false };
+        const sku = copy.modelSku(id);
+        found = .{ .provider = copy, .wire_id = sku, .splice = !std.mem.eql(u8, sku, id) };
     }
     return found;
 }
@@ -852,7 +853,8 @@ fn composite(cfg: *const config.Config, family: ?Family, name: []const u8) Looku
     if (p.models.count() > 0 and p.models.get(tail) == null) return error.ModelNotFound;
     var copy = p.*;
     copy.default_model = tail;
-    return .{ .provider = copy, .wire_id = tail, .splice = !std.mem.eql(u8, name, tail) };
+    const sku = copy.modelSku(tail);
+    return .{ .provider = copy, .wire_id = sku, .splice = !std.mem.eql(u8, name, sku) };
 }
 
 fn aliasOf(cfg: *const config.Config, name: []const u8) ?[]const u8 {
@@ -897,7 +899,7 @@ fn uniqueProvider(cfg: *const config.Config, family: ?Family) LookupError!Resolv
     }
     const p = found orelse return error.ModelNotFound;
     const copy = p.*;
-    return .{ .provider = copy, .wire_id = copy.default_model, .splice = false };
+    return .{ .provider = copy, .wire_id = copy.wireModelName(), .splice = false };
 }
 
 fn speaks(kind: config.ProviderKind, family: Family) bool {
@@ -1265,6 +1267,27 @@ test "lookup unique wire id, composite, alias, protocol mismatch" {
     const mapped = try lookup(&cfg, null, "claude-3-5-sonnet-20241022");
     try std.testing.expectEqualStrings("kimi-k3", mapped.wire_id);
     try std.testing.expectEqualStrings("kimi-k3", mapped.provider.name);
+}
+
+test "lookup splices a local alias to its wire SKU" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var cfg = config.Config{};
+    var xai = try config.Provider.single(arena, "xai", "https://api.x.ai/v1", .openai_compat, "grok4.6-coding", .{ .id = "grok-4.6" });
+    try xai.models.put(arena, "grok4.6-general", .{ .id = "grok-4.6", .temperature = 0.7 });
+    try cfg.providers.put(arena, "xai", xai);
+
+    const a = try lookup(&cfg, .openai, "grok4.6-coding");
+    try std.testing.expectEqualStrings("grok-4.6", a.wire_id);
+    try std.testing.expect(a.splice);
+    try std.testing.expectEqualStrings("grok4.6-coding", a.provider.activeModelName());
+
+    const b = try lookup(&cfg, .openai, "xai/grok4.6-general");
+    try std.testing.expectEqualStrings("grok-4.6", b.wire_id);
+    try std.testing.expect(b.splice);
+    try std.testing.expectEqualStrings("grok4.6-general", b.provider.activeModelName());
+    try std.testing.expectEqual(@as(f64, 0.7), b.provider.activeModel().temperature.?);
 }
 
 test "lookup does not mutate cfg.providers" {

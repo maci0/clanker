@@ -7,6 +7,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- A `[models."<provider>/<name>"]` entry can set `id` to the wire SKU so
+  the table key is a local alias. Two names can share one SKU with
+  different temperature (or other) settings:
+  `grok4.6-coding` and `grok4.6-general` both `id = "grok-4.6"`.
 - `zig build proxy` builds `clanker-proxy`, the OpenAI/Anthropic
   compatibility proxy as a standalone binary: same `config.toml` /
   `config.local.toml`, `/v1` at the root, `[serve] proxy_token_env`

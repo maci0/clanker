@@ -39,7 +39,7 @@ fn endpointUrl(gpa: std.mem.Allocator, p: *const config.Provider, streaming: boo
     const base = std.mem.trimEnd(u8, raw_base, "/");
     if (p.path) |path| return common.joinBaseAndPath(gpa, p, path);
     const verb = if (streaming) "streamGenerateContent?alt=sse" else "generateContent";
-    return std.fmt.allocPrint(gpa, "{s}/models/{s}:{s}", .{ base, p.activeModelName(), verb });
+    return std.fmt.allocPrint(gpa, "{s}/models/{s}:{s}", .{ base, p.wireModelName(), verb });
 }
 
 // ---------------------------------------------------------------- request --

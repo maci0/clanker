@@ -52,7 +52,7 @@ fn looksLikeGemini(body: []const u8) bool {
 }
 
 fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildError![]u8 {
-    if (isAnthropicModel(params.provider.activeModelName())) {
+    if (isAnthropicModel(params.provider.wireModelName())) {
         return anthropic.buildBody(gpa, params, .{ .anthropic_version = vertex.body_version });
     }
     return gemini.provider.buildRequest(gpa, params);
@@ -82,7 +82,7 @@ fn endpointUrl(gpa: std.mem.Allocator, p: *const config.Provider, streaming: boo
         break :blk owned_base.?;
     };
 
-    const model = p.activeModelName();
+    const model = p.wireModelName();
     if (p.path) |path| {
         const joined = try common.joinBaseAndPath(gpa, p, path);
         defer gpa.free(joined);
