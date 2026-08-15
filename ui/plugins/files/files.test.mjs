@@ -11,9 +11,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const css = readFileSync(join(here, "app.css"), "utf8");
 const host = readFileSync(join(here, "../../app/app.css"), "utf8");
 
-test("host still paints a bare button as a tall pill", function () {
-  assert.match(host, /button:where\(:not\(\.pf-v6-c-button\)\)/);
-  assert.match(host, /min-height:\s*40px/);
+test("host accent pill is primary and submit only", function () {
+  assert.match(host, /button\.primary:where\(:not\(\.pf-v6-c-button\)\)/);
+  assert.doesNotMatch(
+    host,
+    /button:where\(:not\(\.pf-v6-c-button\)\)\s*\{[^}]*background:\s*var\(--accent\)/,
+  );
 });
 
 test("Files listing fills the column until a preview is open", function () {

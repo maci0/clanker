@@ -11,6 +11,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   symlink to shared durable storage. Previously Zig reported `NotDir` before
   any shared paths were linked, leaving host-side state private to the
   worktree while sandboxed tools used the checkout state.
+- Board no longer paints the leftover `#card-form` Add control. PatternFly
+  `display: grid` on `.pf-v6-c-form` was beating the UA `[hidden]` rule;
+  the form stays in the tree for the board module but stays hidden.
+- Unmarked buttons (plugin filenames, crumbs, `#card-add`) are no longer
+  styled as the accent Run pill. That look is `button.primary` and `#submit`
+  only.
 
 ### Changed
 
