@@ -17,6 +17,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Unmarked buttons (plugin filenames, crumbs, `#card-add`) are no longer
   styled as the accent Run pill. That look is `button.primary` and `#submit`
   only.
+- Empty Chat hides Fork/Rename/Archive/Delete and find until a turn exists.
+  Plan, Research, Long run, and Isolated worktree sit in one Run shape
+  control. Submit is labeled Run.
+- Board filters fold behind “Filter cards”; Only mine is a single checkbox.
+  Creating a goal says it saves a Backlog card and does not start a run.
+- Rooms’ selected channel is a cabinet lamp on surface-2, not a Slack
+  accent slab. Board header is a plate, not a tinted Trello bar.
+- Files ships on when `state/webui_plugins.json` is missing, and its
+  toolbar uses Hidden / Refresh / Close.
 
 ### Changed
 

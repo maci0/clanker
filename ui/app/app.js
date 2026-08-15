@@ -4736,7 +4736,8 @@ var prefersReducedMotion = scrollPrefersReducedMotion;
 function syncScrollButton() { scrollSyncButton(el.transcript, el.scrollBottom, scrollChatBox()); }
 
 uiAdd(el.scrollBottom, icon("deposit", 14));
-uiAdd(el.submit, icon("arrowUp", 16));
+el.submit.textContent = "";
+uiAdd(el.submit, icon("arrowUp", 16), document.createTextNode("Run"));
 uiAdd(el.cancel, icon("stop", 14));
 el.scrollBottom.addEventListener("click", function () {
   scrollChatLatest(prefersReducedMotion() ? "auto" : "smooth");

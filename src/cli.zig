@@ -9192,6 +9192,26 @@ fn pluginEnabled(state: WebuiPluginState, name: []const u8) bool {
     return false;
 }
 
+/// Fresh `state/webui_plugins.json` is missing: Files is the Work surface
+/// (workspace browser) and ships on. A written enabled list is respected,
+/// including an empty one after the operator turned Files off.
+fn seedWebuiPluginState(had_file: bool, state: *WebuiPluginState, arena: std.mem.Allocator) void {
+    if (had_file) return;
+    const seeded = arena.dupe([]const u8, &.{"files"}) catch return;
+    state.enabled = seeded;
+}
+
+test "missing webui plugin state enables files" {
+    var seeded: WebuiPluginState = .{};
+    seedWebuiPluginState(false, &seeded, std.testing.allocator);
+    defer if (seeded.enabled.len > 0) std.testing.allocator.free(seeded.enabled);
+    try std.testing.expect(pluginEnabled(seeded, "files"));
+    try std.testing.expect(!pluginEnabled(seeded, "office"));
+    var written: WebuiPluginState = .{ .enabled = &.{} };
+    seedWebuiPluginState(true, &written, std.testing.allocator);
+    try std.testing.expect(!pluginEnabled(written, "files"));
+}
+
 /// Which plugins exist and which are turned on. A plugin is off until someone
 /// turns it on: it contributes script to the page, so its presence on disk is
 /// not consent to run it.
@@ -9206,8 +9226,13 @@ fn handleWebuiPlugins(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const raw_state = std.Io.Dir.cwd().readFileAlloc(io, webui_plugins_state, arena, .limited(1 << 16)) catch "{}";
+    var had_plugin_state = true;
+    const raw_state = std.Io.Dir.cwd().readFileAlloc(io, webui_plugins_state, arena, .limited(1 << 16)) catch blk: {
+        had_plugin_state = false;
+        break :blk "{}";
+    };
     var state = std.json.parseFromSliceLeaky(WebuiPluginState, arena, raw_state, .{ .ignore_unknown_fields = true }) catch WebuiPluginState{};
+    seedWebuiPluginState(had_plugin_state, &state, arena);
 
     if (std.mem.eql(u8, method, "POST")) {
         const req = std.json.parseFromSliceLeaky(WebuiPluginPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
@@ -9315,8 +9340,13 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8
         return;
     };
 
-    const raw_state = std.Io.Dir.cwd().readFileAlloc(io, webui_plugins_state, arena, .limited(1 << 16)) catch "{}";
-    const state = std.json.parseFromSliceLeaky(WebuiPluginState, arena, raw_state, .{ .ignore_unknown_fields = true }) catch WebuiPluginState{};
+    var had_plugin_state = true;
+    const raw_state = std.Io.Dir.cwd().readFileAlloc(io, webui_plugins_state, arena, .limited(1 << 16)) catch blk: {
+        had_plugin_state = false;
+        break :blk "{}";
+    };
+    var state = std.json.parseFromSliceLeaky(WebuiPluginState, arena, raw_state, .{ .ignore_unknown_fields = true }) catch WebuiPluginState{};
+    seedWebuiPluginState(had_plugin_state, &state, arena);
     if (!pluginEnabled(state, name)) {
         respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"plugin is not enabled\"}");
         return;

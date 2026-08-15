@@ -792,8 +792,36 @@ main.pf-v6-c-page__main {
 #view-chat.chat-empty .suggestions { order: 3; margin-top: var(--space-4); }
 #view-chat.chat-empty .run-empty p {
   font-family: var(--sans); font-size: var(--step-2); font-weight: 600;
+  letter-spacing: -0.02em; text-transform: none;
   color: var(--fg); margin: 0 0 var(--space-3);
 }
+/* Empty Chat is one task: greeting, composer, suggestions. Session verbs
+   and find wait until a turn exists (they stay in the palette). */
+#view-chat.chat-empty #session-acts-body,
+#view-chat.chat-empty #session-more,
+#view-chat.chat-empty #transcript-tools { display: none; }
+.run-shape { position: relative; }
+.run-shape > summary {
+  list-style: none; cursor: pointer;
+  font-family: var(--mono); font-size: var(--step--1); font-weight: 600;
+  letter-spacing: 0.04em; color: var(--fg-muted);
+  min-height: 32px; padding: 0.25rem 0.55rem;
+  border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--surface);
+}
+.run-shape > summary::-webkit-details-marker { display: none; }
+.run-shape[open] > summary { color: var(--fg); border-color: var(--accent); }
+.run-shape-body {
+  position: absolute; bottom: calc(100% + 0.35rem); left: 0; z-index: 4;
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+  min-width: 16rem; padding: var(--space-2);
+  border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--surface); box-shadow: var(--lift);
+}
+.plan-toggle.safety-toggle span {
+  font-family: var(--mono); letter-spacing: 0.03em;
+}
+#submit { display: inline-flex; align-items: center; gap: 0.35rem; }
 .view:not(#view-chat):not([hidden]) {
   flex: 1 1 auto; min-height: 0; width: 100%; overflow-y: auto; overscroll-behavior: contain;
 }
@@ -1422,14 +1450,14 @@ textarea:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent);
 }
 .composer .toolbar { border-top-color: color-mix(in srgb, var(--rule) 35%, transparent); }
 .composer .toolbar #submit { border-radius: 999px; padding-inline: 1rem; min-height: 34px; font-size: 13px; }
-/* Send and stop are one circular spot that swaps content: an up arrow when
-   idle, a stop square while a turn runs. aspect-ratio keeps the circle
-   square when the touch media queries raise min-height to 44px. */
-.composer .toolbar #submit,
+/* Send is a labeled "↑ Run" pill (rule above); Stop swaps into its spot as
+   a circle while a turn runs. aspect-ratio keeps the circle square when the
+   touch media queries raise min-height to 44px. */
 .composer .toolbar #cancel {
   display: inline-flex; align-items: center; justify-content: center;
   min-height: 36px; aspect-ratio: 1; padding: 0; border-radius: 50%;
 }
+.composer .toolbar #submit { display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; }
 .composer .toolbar #submit svg,
 .composer .toolbar #cancel svg { display: block; }
 /* The author display above beats the UA [hidden] rule (same trap as
@@ -1931,7 +1959,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   /* dvh tracks mobile browsers' collapsing URL bar; vh above is the fallback. */
   height: calc(100dvh - 56px);
   width: 100%; min-width: 0;
-  border: 1px solid var(--rule); border-radius: var(--radius-lg);
+  border: 1px solid var(--rule); border-radius: var(--radius);
   background: var(--surface);
 }
 
@@ -2005,10 +2033,16 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
 .slack-room-item:hover { background: var(--surface-hover); color: var(--fg); }
 .slack-room-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 .slack-room-item.is-active {
-  background: var(--accent); color: var(--on-accent, #fff);
+  background: var(--surface-2); color: var(--fg);
   font-weight: 600;
 }
-.slack-room-item.is-active:hover { filter: brightness(1.05); }
+.slack-room-item.is-active::before {
+  content: ""; position: absolute; left: 0.4rem; top: 50%;
+  width: 0.4rem; height: 0.4rem; margin-top: -0.2rem;
+  border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 6px 0 color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.slack-room-item.is-active:hover { background: var(--surface-2); }
 .slack-room-icon { width: 16px; text-align: center; flex-shrink: 0; font-size: 12px; }
 .slack-room-name {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -2021,7 +2055,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   padding: 0 5px; flex-shrink: 0;
 }
 .slack-room-item.is-active .slack-room-badge {
-  background: rgba(255,255,255,0.3); color: var(--on-accent, #fff);
+  background: var(--danger); color: var(--on-danger);
 }
 .slack-presence-dot {
   width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
@@ -2041,7 +2075,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   justify-content: center; padding: 0 5px; flex-shrink: 0;
 }
 .slack-room-item.is-active .slack-room-item-count {
-  background: rgba(255,255,255,0.3); color: var(--on-accent, #fff);
+  background: var(--danger); color: var(--on-danger);
 }
 .slack-room-presence {
   width: 8px; height: 8px; border-radius: 50%;
@@ -3077,14 +3111,22 @@ mark {
    left to the global rule; only the stretch is undone here. */
 .goal-form input[type="checkbox"] { flex: none; }
 .board-goal-form input[type="checkbox"] { justify-self: start; align-self: center; }
-/* Board header — Trello-style prominent top bar */
+/* Board header — lane plate, not a Trello banner */
 .board-header {
   display: flex; align-items: center; gap: 0.75rem;
-  padding: 0.6rem 0.8rem; margin-top: var(--space-3);
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
-  border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--accent) 15%, var(--rule));
+  padding: 0.45rem 0; margin-top: var(--space-3);
+  background: transparent;
+  border-radius: 0;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
 }
+.board-filter-fold { margin: var(--space-3) 0; }
+.board-filter-fold > summary {
+  cursor: pointer; font-family: var(--mono); font-size: var(--step--1);
+  font-weight: 600; letter-spacing: 0.04em; color: var(--fg-muted);
+  min-height: 32px;
+}
+.board-create-note { grid-column: 1 / -1; margin: var(--space-2) 0 0; }
 .board-header-icon { font-size: 1.3rem; }
 .board-header-title {
   font-size: 1.15rem; font-weight: 700; margin: 0; letter-spacing: -0.01em;

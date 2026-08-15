@@ -36,15 +36,17 @@ var MD = {md:1, markdown:1, mdx:1};
 
 // file-type → accent color
 var COLOR = {
-  dir:"#f0a500",
-  zig:"#f7a41d", js:"#f0db4f", mjs:"#f0db4f", ts:"#3178c6", tsx:"#61dafb",
-  jsx:"#61dafb", py:"#3572a5", rs:"#dea584", go:"#00acd7",
-  c:"#999", h:"#999", cpp:"#f34b7d", java:"#b07219", rb:"#cc342d",
-  md:"#7c6aff", markdown:"#7c6aff", mdx:"#7c6aff",
-  json:"#888", toml:"#9c4221", yaml:"#888", yml:"#888",
-  css:"#264de4", scss:"#c6538c", html:"#e34c26", xml:"#e34c26",
-  svg:"#f9a03c", sh:"#89e051", bash:"#89e051", zsh:"#89e051",
-  wasm:"#654ff0", sql:"#e38c00", lock:"#888",
+  dir: "var(--warn)",
+  zig: "var(--accent-text)", js: "var(--accent-text)", mjs: "var(--accent-text)",
+  ts: "var(--accent-text)", tsx: "var(--accent-text)", jsx: "var(--accent-text)",
+  py: "var(--accent-text)", rs: "var(--fg)", go: "var(--accent-text)",
+  c: "var(--fg-muted)", h: "var(--fg-muted)", cpp: "var(--fg)", java: "var(--fg)",
+  rb: "var(--danger)", md: "var(--violet-text)", markdown: "var(--violet-text)",
+  mdx: "var(--violet-text)", json: "var(--fg-muted)", toml: "var(--fg-muted)",
+  yaml: "var(--fg-muted)", yml: "var(--fg-muted)", css: "var(--accent-text)",
+  scss: "var(--accent-text)", html: "var(--fg)", xml: "var(--fg)",
+  svg: "var(--warn)", sh: "var(--ok)", bash: "var(--ok)", zsh: "var(--ok)",
+  wasm: "var(--violet)", sql: "var(--warn)", lock: "var(--fg-muted)",
 };
 
 function extOf(n) {
@@ -124,7 +126,7 @@ clanker.registerView({
     filterInput.setAttribute("aria-label", "Filter entries");
     toolbar.appendChild(filterInput);
 
-    var hiddenBtn = mk("button", "secondary files-toggle-btn", "·/·");
+    var hiddenBtn = mk("button", "secondary files-toggle-btn", "Hidden");
     hiddenBtn.type = "button";
     hiddenBtn.title = "Show hidden files";
     hiddenBtn.setAttribute("aria-pressed","false");
@@ -136,7 +138,7 @@ clanker.registerView({
     upBtn.setAttribute("aria-label","Go up one directory");
     toolbar.appendChild(upBtn);
 
-    var refreshBtn = mk("button", "secondary", "↺");
+    var refreshBtn = mk("button", "secondary", "Refresh");
     refreshBtn.type = "button";
     refreshBtn.setAttribute("aria-label","Refresh");
     toolbar.appendChild(refreshBtn);
@@ -201,7 +203,7 @@ clanker.registerView({
     var vMeta = mk("span", "files-viewer-meta");
     var copyBtn = mk("button", "secondary files-copy-btn", "Copy path");
     copyBtn.type = "button";
-    var closeBtn = mk("button", "secondary files-close-btn", "✕");
+    var closeBtn = mk("button", "secondary files-close-btn", "Close");
     closeBtn.type = "button";
     closeBtn.setAttribute("aria-label","Close preview");
     vHead.appendChild(vName);

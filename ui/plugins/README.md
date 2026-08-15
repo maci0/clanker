@@ -66,8 +66,10 @@ van.derive(function () {
 });
 ```
 
-Plugins are off until turned on in System → Web UI plugins. Enabled ones are
-recorded in `state/webui_plugins.json`.
+Plugins are off until turned on in System → Web UI plugins, except Files,
+which is on when `state/webui_plugins.json` has never been written (the
+Work rail’s workspace browser). Enabled ones are recorded in
+`state/webui_plugins.json`.
 
 A disabled plugin's assets are not served: `GET /webui/plugins/<name>/app.js`
 answers `404` with `{"ok":false,"error":"plugin is not enabled"}` before it

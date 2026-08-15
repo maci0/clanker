@@ -2040,7 +2040,7 @@ export function bindBoard(deps) {
     if (filterRaf) return;
     filterRaf = window.requestAnimationFrame(run);
   }
-  ["board-filter-input","board-filter-mine","board-filter-blocked","board-filter-priority","board-filter-assignee","board-filter-label"].forEach(function(id){
+  ["board-filter-input","board-mine","board-filter-blocked","board-filter-priority","board-filter-assignee","board-filter-label"].forEach(function(id){
     var n=document.getElementById(id);
     if(!n) return;
     if (id === "board-filter-input") {
@@ -2049,10 +2049,6 @@ export function bindBoard(deps) {
       n.addEventListener("change", function(){ scheduleFilterRebuild(false); });
     }
   });
-  var boardMine=document.getElementById("board-filter-mine");
-  if(boardMine) boardMine.addEventListener("change", function(){ var top=document.getElementById("board-mine"); if(top) top.checked=boardMine.checked; });
-  var topMine=document.getElementById("board-mine");
-  if(topMine) topMine.addEventListener("change", function(){ var b=document.getElementById("board-filter-mine"); if(b) b.checked=topMine.checked; scheduleFilterRebuild(false); });
   // ---- Keyboard shortcuts (Trello-style) ----
   // n = new card, / = focus filter, ? = show shortcuts, Escape = close detail
   document.addEventListener("keydown", function(e) {

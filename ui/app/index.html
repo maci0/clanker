@@ -293,6 +293,9 @@ lamps carry further). The seven named palettes ride the same tokens.
           <button type="button" class="chip model-pill" id="composer-model" title="Model (click to change)" aria-haspopup="dialog" aria-expanded="false">
             <span class="model-chip__name">…</span>
           </button>
+          <details class="run-shape" id="run-shape">
+            <summary>Run shape</summary>
+            <div class="run-shape-body">
           <label for="plan-mode" class="checkbox-row plan-toggle" title="The run proposes a plan instead of executing: write-capable tools are refused until you apply it">
             <input type="checkbox" id="plan-mode">
             <span>Plan</span>
@@ -301,19 +304,21 @@ lamps carry further). The seven named palettes ride the same tokens.
             <input type="checkbox" id="research-mode">
             <span>Research</span>
           </label>
-          <label for="unlimited-iterations" class="checkbox-row plan-toggle" title="Raise this run's iteration budget to the hard ceiling (1000) instead of the configured default (usually 50), for tasks that legitimately need many steps. Not truly unlimited: the harness always stops eventually.">
+          <label for="unlimited-iterations" class="checkbox-row plan-toggle" title="Raise this run's iteration budget to the hard ceiling (1000 steps) instead of the configured default (usually 50). The harness still stops.">
             <input type="checkbox" id="unlimited-iterations">
-            <span>No limit</span>
+            <span>Long run (1000 steps)</span>
           </label>
-          <label for="worktree-mode" class="checkbox-row plan-toggle" title="Run this chat in its own git worktree and branch, leaving the shared checkout untouched.">
+          <label for="worktree-mode" class="checkbox-row plan-toggle safety-toggle" title="Run this chat in its own git worktree and branch, leaving the shared checkout untouched.">
             <input type="checkbox" id="worktree-mode">
-            <span>Worktree</span>
+            <span>Isolated worktree</span>
           </label>
+            </div>
+          </details>
           <button type="button" class="secondary" id="voice-btn" title="Voice input (hold or click)" aria-label="Voice input"></button>
           <button type="button" class="secondary danger" id="cancel" hidden
                   title="Stop the running turn" aria-label="Stop the running turn"></button>
           <button type="submit" class="primary" id="submit" disabled
-                  title="Run (Ctrl+Enter)" aria-label="Run (Ctrl+Enter)"></button>
+                  title="Run (Ctrl+Enter)" aria-label="Run (Ctrl+Enter)">Run</button>
         </div>
       </div>
       <!-- Last turn's run shape: steps, LLM vs tool time, TTFT, throughput,
@@ -580,10 +585,6 @@ lamps carry further). The seven named palettes ride the same tokens.
             <span>Room</span>
             <select id="board-room"></select>
           </label>
-          <label class="checkbox-row" for="board-mine">
-            <input type="checkbox" id="board-mine">
-            <span>Only mine</span>
-          </label>
           <button type="button" class="secondary" id="board-resync-goals" title="Put every goal card in the lane its status asks for, including retained goals in Archive">Re-sync goals</button>
           <button type="button" class="secondary" id="board-refresh">Refresh</button>
         </div>
@@ -602,6 +603,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <span>Use git worktree (isolated branch)</span>
         </label>
         <button type="submit" class="secondary" id="goal-add">Create goal card</button>
+        <p class="meta board-create-note">Saves a Backlog card. It does not start a run.</p>
       </form>
       <!-- Kept for existing room boards and the board module's DOM contract;
            primary creation above always produces a structured goal. -->
@@ -615,10 +617,12 @@ lamps carry further). The seven named palettes ride the same tokens.
         <span class="board-header-sep"></span>
         <button type="button" class="board-header-btn" id="board-toggle-list" title="Toggle list view" aria-label="Switch to list view"></button>
       </div>
+      <details class="board-filter-fold">
+        <summary>Filter cards</summary>
       <div class="transcript-tools board-filter" id="board-filter">
         <label for="board-filter-input">Filter</label>
         <input type="search" id="board-filter-input" placeholder="Filter cards…" autocomplete="off">
-        <label for="board-filter-mine" class="checkbox-row"><input type="checkbox" id="board-filter-mine"> Only mine</label>
+        <label for="board-mine" class="checkbox-row"><input type="checkbox" id="board-mine"> Only mine</label>
         <label for="board-filter-blocked" class="checkbox-row"><input type="checkbox" id="board-filter-blocked"> Blocked only</label>
         <label for="board-filter-assignee">Assignee</label>
         <select id="board-filter-assignee"><option value="">All</option></select>
@@ -627,6 +631,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <label for="board-filter-label">Label</label>
         <select id="board-filter-label"><option value="">All</option><option value="green">Green</option><option value="yellow">Yellow</option><option value="orange">Orange</option><option value="red">Red</option><option value="purple">Purple</option><option value="blue">Blue</option><option value="sky">Sky</option><option value="pink">Pink</option><option value="lime">Lime</option><option value="black">Black</option></select>
       </div>
+      </details>
       <!-- Keep the DOM id distinct from the #board route. If both are
            "board", native fragment scrolling opens this view halfway down. -->
       <div class="board" id="board-grid"></div>
