@@ -87,7 +87,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <button type="button" class="chip-btn" id="rail-collapse" title="Collapse sidebar" aria-expanded="true" aria-controls="rail" aria-label="Collapse sidebar"></button>
     <button type="button" class="chip-btn" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
     <button type="button" class="chip-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"></button>
-    <button type="button" class="chip-btn" id="theme-toggle" title="Cycle theme: system / light / dark / mocha / latte / frappe / macchiato / tokyonight / tokyonight-storm / tokyonight-day" aria-label="Theme: system">system</button>
+    <button type="button" class="chip-btn" id="theme-toggle" title="Choose theme" aria-haspopup="listbox" aria-expanded="false" aria-label="Theme: system">system</button>
   </div>
 </header>
 
@@ -503,7 +503,7 @@ lamps carry further). The seven named palettes ride the same tokens.
             <div class="slack-room-group-head" data-group="rooms">
               <span class="slack-caret">▸</span> Channels
             </div>
-            <div class="slack-room-items" id="chat-rooms-items"></div>
+            <div class="slack-room-items" id="chat-rooms-items"><p class="meta slack-room-loading">Loading channels…</p></div>
           </div>
           <div class="slack-room-group" id="chat-dms-group">
             <div class="slack-room-group-head" data-group="dms">
@@ -545,7 +545,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <div class="slack-pins-list" id="chat-pins-list"></div>
         </div>
         <!-- Message log -->
-        <div class="chat-log" id="chat-log" role="log" aria-label="Room messages" aria-live="polite" tabindex="0"></div>
+        <div class="chat-log" id="chat-log" role="log" aria-label="Room messages" tabindex="0"></div>
         <!-- Typing indicator -->
         <div class="slack-typing-indicator" id="chat-typing" aria-live="polite"></div>
         <!-- Composer -->

@@ -1,6 +1,6 @@
 // Fleet / cross-agent view — ES module, no bundler.
 // Owns #view-fleet: roster + DM channels + grouped runs. Works without app.js.
-import { clip, peerColor, escapeHtml } from "../core/utils.js";
+import { clip, peerColor, escapeHtml, themeToken, cssColorAlpha, cssColorMix } from "../core/utils.js";
 import { readJson } from "../core/vendor.js";
 import { onLive, liveOk } from "../core/stream.js";
 
@@ -475,38 +475,18 @@ function _toolBucket(label){
 // and the status hues follow --ok/--warn/--accent and stay re-tunable. Frames
 // re-read the tokens on every draw; reduced-motion static frames are re-seeded
 // by the theme observer registered in initFleet.
-function _themeVar(name) {
-  var root = document.documentElement;
-  if (!root) return "";
-  var v = (getComputedStyle(root).getPropertyValue(name) || "").trim();
-  // Some themes alias a token (mocha/latte set --surface: var(--paper)); resolve
-  // one level so the palette gets a concrete colour, not the var() string.
-  var m = /^var\(\s*([--A-Za-z0-9_]+)\s*\)$/.exec(v);
-  return m ? _themeVar(m[1]) : v;
-}
-function _hexRgb(hex) {
-  var s = (hex || "").trim();
-  if (s.charAt(0) === "#") s = s.slice(1);
-  if (s.length === 3) s = s.replace(/./g, function (c) { return c + c; });
-  if (s.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(s)) return null;
-  var n = parseInt(s, 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-function _alpha(color, a) {
-  var rgb = _hexRgb(color);
-  return rgb ? "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + a + ")" : color;
-}
 function _floorTheme() {
   return {
-    bg: _themeVar("--surface-2") || "#1d2225",
-    surface: _themeVar("--surface") || "#2a3033",
-    border: _themeVar("--border") || "#343b3f",
-    fg: _themeVar("--fg") || "#ffffff",
-    muted: _themeVar("--fg-muted") || "#dfe5df",
-    accent: _themeVar("--accent") || "#3f97dd",
-    ok: _themeVar("--ok") || "#4cc468",
-    warn: _themeVar("--warn") || "#e5b54a",
-    okFill: _themeVar("--ok-fill") || "#2fae4d"
+    bg: themeToken("--surface-2"),
+    surface: themeToken("--surface"),
+    border: themeToken("--border"),
+    fg: themeToken("--fg"),
+    muted: themeToken("--fg-muted"),
+    paper: themeToken("--paper"),
+    accent: themeToken("--accent"),
+    ok: themeToken("--ok"),
+    warn: themeToken("--warn"),
+    okFill: themeToken("--ok-fill")
   };
 }
 function _floorFrame(ts){
@@ -522,7 +502,7 @@ function _floorFrame(ts){
   ctx.clearRect(0,0,cv.width,cv.height);
   ctx.fillStyle=pal.bg; ctx.fillRect(0,0,cv.width,cv.height);
   // brushed backplane lines
-  ctx.fillStyle=_alpha(pal.fg, 0.04);
+  ctx.fillStyle=cssColorAlpha(pal.fg, 0.04);
   for(var gx=0; gx<cv.width; gx+=8) ctx.fillRect(gx, 0, 1, cv.height);
   var names=_floorState.names; var cols=Math.max(1,names.length); var cw=cv.width/cols;
   for(var i=0;i<names.length;i++){
@@ -551,7 +531,7 @@ function _floorFrame(ts){
     else if(bucket==="edit") { ctx.fillRect(bx+6, by+6, 8, 2); }
     // lamp
     ctx.globalAlpha=breathe; ctx.fillStyle=glow; ctx.beginPath(); ctx.arc(x+Math.floor(cw/2), 48, 6, 0, Math.PI*2); ctx.fill(); ctx.globalAlpha=1;
-    if(dozing){ ctx.fillStyle="rgba(255,255,255,0.9)"; ctx.font="9px monospace"; ctx.textAlign="center"; ctx.fillText("zZ", x+Math.floor(cw/2), 44); }
+    if(dozing){ ctx.fillStyle=cssColorAlpha(pal.fg, 0.9); ctx.font="9px monospace"; ctx.textAlign="center"; ctx.fillText("zZ", x+Math.floor(cw/2), 44); }
     // label
     ctx.fillStyle=pal.muted; ctx.font="10px monospace"; ctx.textAlign="center"; ctx.fillText(name.slice(0,12), x+Math.floor(cw/2), 168);
     // helper sprite
@@ -661,9 +641,13 @@ function renderMeshMap(el, data, statusEl) {
   var parts = [];
   parts.push('<svg viewBox="0 0 ' + w + " " + h + '" role="presentation">');
   parts.push("<defs>");
-  parts.push('<radialGradient id="mesh-lamp-idle" cx="35%" cy="30%"><stop offset="0%" stop-color="#d8dde6"/><stop offset="70%" stop-color="#8b93a1"/><stop offset="100%" stop-color="#5c6470"/></radialGradient>');
-  parts.push('<radialGradient id="mesh-lamp-self" cx="35%" cy="30%"><stop offset="0%" stop-color="#cfe0ff"/><stop offset="65%" stop-color="#0b57d0"/><stop offset="100%" stop-color="#083a8c"/></radialGradient>');
-  parts.push('<radialGradient id="mesh-lamp-live" cx="35%" cy="30%"><stop offset="0%" stop-color="#d8ffe4"/><stop offset="60%" stop-color="#16a34a"/><stop offset="100%" stop-color="#0d5c2a"/></radialGradient>');
+  var paper = themeToken("--paper");
+  var muted = themeToken("--fg-muted");
+  var accent = themeToken("--accent");
+  var ok = themeToken("--ok-fill") || themeToken("--ok");
+  parts.push('<radialGradient id="mesh-lamp-idle" cx="35%" cy="30%"><stop offset="0%" stop-color="' + cssColorMix(muted, paper, 0.45) + '"/><stop offset="70%" stop-color="' + muted + '"/><stop offset="100%" stop-color="' + cssColorMix(muted, themeToken("--fg"), 0.35) + '"/></radialGradient>');
+  parts.push('<radialGradient id="mesh-lamp-self" cx="35%" cy="30%"><stop offset="0%" stop-color="' + cssColorMix(accent, paper, 0.45) + '"/><stop offset="65%" stop-color="' + accent + '"/><stop offset="100%" stop-color="' + cssColorMix(accent, themeToken("--fg"), 0.4) + '"/></radialGradient>');
+  parts.push('<radialGradient id="mesh-lamp-live" cx="35%" cy="30%"><stop offset="0%" stop-color="' + cssColorMix(ok, paper, 0.45) + '"/><stop offset="60%" stop-color="' + ok + '"/><stop offset="100%" stop-color="' + cssColorMix(ok, themeToken("--fg"), 0.4) + '"/></radialGradient>');
   parts.push("</defs>");
   links.forEach(function (l, i) {
     var a = pos[l.from];

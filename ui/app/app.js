@@ -2,7 +2,7 @@ import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as
 import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, upgradePfButton, upgradePfButtons, upgradePfChip, upgradePfUi } from "./core/ui.js";
 import { icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
-import { THEMES as THEMESMod, loadTheme as loadThemeMod, applyTheme as applyThemeMod } from "./core/theme.js";
+import { THEMES as THEMESMod, loadTheme as loadThemeMod, applyTheme as applyThemeMod, bindThemeToggle as bindThemeToggleMod } from "./core/theme.js";
 import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod, messageKey as chatMessageKey, hasServerId as chatHasServerId } from "./core/chat.js";
 import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
 import { makeLineSplitter as makeLineSplitterMod, onLive as liveOn, liveOk as liveIsUp } from "./core/stream.js";
@@ -336,12 +336,7 @@ var applyTheme = applyThemeMod;
 
 var theme = loadTheme();
 applyTheme(theme);
-
-el.themeToggle.addEventListener("click", function () {
-  theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
-  try { window.localStorage.setItem("clanker.theme", theme); } catch (e) {}
-  applyTheme(theme);
-});
+bindThemeToggleMod(el.themeToggle, function (next) { theme = next; });
 
 el.newChat.addEventListener("click", function () {
   if (busy) return;
@@ -3298,6 +3293,14 @@ function renderChatRooms(rooms) {
 
 var roomTopics = {};
 function loadChatRooms() {
+  if (el.chatRoomsItems && !el.chatRoomsItems.querySelector(".slack-room-item")) {
+    el.chatRoomsItems.textContent = "";
+    var loading = document.createElement("p");
+    loading.className = "meta slack-room-loading";
+    loading.textContent = "Loading channels…";
+    el.chatRoomsItems.appendChild(loading);
+  }
+  if (el.chatStatus) el.chatStatus.textContent = "Loading channels…";
   return fetch("/api/chat/rooms")
     .then(readJson)
     .then(function (data) {
@@ -3363,14 +3366,13 @@ function openChatRoom(room) {
   // A room switch invalidates whatever the pins/search panels were showing.
   if (el.chatPinsPanel && !el.chatPinsPanel.hidden) loadChatPins(room);
   if (el.chatSearchBar && !el.chatSearchBar.hidden) el.chatSearchResults.textContent = "";
-  // Opening a room fills the log with its history, and a live region would
-  // read every one of those out as if it had just arrived. Announcements
-  // start once the backlog is in place.
-  el.chatLog.setAttribute("aria-live", "off");
+  // History must not dump into a live region. Announce only arrivals after
+  // the backlog is on screen, and only through #chat-status.
+  _chatAnnounce = false;
   return joinIfNeeded(room)
     .then(function () { return pollChat(room); })
     .then(function () {
-      el.chatLog.setAttribute("aria-live", "polite");
+      _chatAnnounce = true;
       startChatPoll(room);
     });
 }
@@ -3398,6 +3400,14 @@ function joinIfNeeded(room) {
    one-second resolution, and `after` is inclusive of neither side reliably
    once that happens. */
 var lastSeenAt = {};
+var _chatAnnounce = false;
+function announceChatArrival(fresh) {
+  if (!_chatAnnounce || !fresh || !fresh.length || !el.chatStatus) return;
+  var last = fresh[fresh.length - 1];
+  var who = last.from || "someone";
+  var text = String(last.text || "").replace(/\s+/g, " ").trim();
+  el.chatStatus.textContent = who + (text ? ": " + text.slice(0, 80) : " sent a message");
+}
 function ingestChatMessages(messages) {
   var fresh = (messages || []).filter(function (m) { return m && !chatSeen[chatMessageKey(m)]; }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
   if (!el.chatLog) return;
@@ -3422,6 +3432,7 @@ function ingestChatMessages(messages) {
     el.chatLog.appendChild(node);
   });
   _chatUnreadCutoff = 0;
+  announceChatArrival(fresh);
   if (fresh.length && following) el.chatLog.scrollTop = el.chatLog.scrollHeight;
 }
 function pollChat(room) {
@@ -3467,6 +3478,7 @@ function pollChat(room) {
       /* Consumed — subsequent poll batches should not re-insert the divider */
       _chatUnreadCutoff = 0;
       // presence dot freshness handled via CSS only — timestamps already in lastSeenAt for future use
+      announceChatArrival(fresh);
       if (fresh.length && following) el.chatLog.scrollTop = el.chatLog.scrollHeight;
     })
     .catch(function (err) {

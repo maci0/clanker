@@ -9,7 +9,7 @@
 //
 // Reference: docs/prds/0008-arena.md, "Web UI: the arena view".
 
-import { readJson, peerColor } from "../core/utils.js";
+import { readJson, peerColor, themeToken, cssColorAlpha } from "../core/utils.js";
 import { reducedMotion } from "../core/vendor.js";
 import { onLive, liveOk } from "../core/stream.js";
 
@@ -23,37 +23,19 @@ function byId(id) { return document.getElementById(id); }
 // stage and the status colours stay re-tunable. The palette is re-read on every
 // draw/redraw; the theme observer in bindArena re-seeds static reduced-motion
 // frames.
-function themeVar(name) {
-  var root = document.documentElement;
-  if (!root) return "";
-  var v = (getComputedStyle(root).getPropertyValue(name) || "").trim();
-  // Some themes alias a token (mocha/latte set --surface: var(--paper)); resolve
-  // one level so the palette gets a concrete colour, not the var() string.
-  var m = /^var\(\s*([--A-Za-z0-9_]+)\s*\)$/.exec(v);
-  return m ? themeVar(m[1]) : v;
-}
-function hexRgb(hex) {
-  var s = (hex || "").trim();
-  if (s.charAt(0) === "#") s = s.slice(1);
-  if (s.length === 3) s = s.replace(/./g, function (c) { return c + c; });
-  if (s.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(s)) return null;
-  var n = parseInt(s, 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
 function withAlpha(color, a) {
-  var rgb = hexRgb(color);
-  return rgb ? "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + a + ")" : color;
+  return cssColorAlpha(color, a);
 }
 function arenaTheme() {
   return {
-    bg: themeVar("--surface-2") || "#1d2225",
-    surface: themeVar("--surface") || "#2a3033",
-    border: themeVar("--border") || "#343b3f",
-    fg: themeVar("--fg") || "#ffffff",
-    muted: themeVar("--fg-muted") || "#8b948b",
-    ok: themeVar("--ok") || "#2fae4d",
-    warn: themeVar("--warn") || "#e5b54a",
-    danger: themeVar("--danger") || "#dc4c3f"
+    bg: themeToken("--surface-2"),
+    surface: themeToken("--surface"),
+    border: themeToken("--border"),
+    fg: themeToken("--fg"),
+    muted: themeToken("--fg-muted"),
+    ok: themeToken("--ok"),
+    warn: themeToken("--warn"),
+    danger: themeToken("--danger")
   };
 }
 

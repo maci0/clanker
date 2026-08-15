@@ -247,4 +247,41 @@ export function peerColor(name) {
   return "hsl(" + (hashName(name || "") % 360) + " 35% 62%)";
 }
 
+export function parseCssColor(color) {
+  var s = String(color || "").trim();
+  var m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(s);
+  if (m) return [+m[1], +m[2], +m[3]];
+  if (s.charAt(0) === "#") {
+    var h = s.slice(1);
+    if (h.length === 3) h = h.replace(/./g, function (c) { return c + c; });
+    if (h.length === 6 && /^[0-9a-fA-F]{6}$/.test(h)) {
+      var n = parseInt(h, 16);
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    }
+  }
+  return null;
+}
+
+export function cssColorAlpha(color, a) {
+  var rgb = parseCssColor(color);
+  return rgb ? "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + a + ")" : color;
+}
+
+export function cssColorMix(a, b, t) {
+  var ca = parseCssColor(a);
+  var cb = parseCssColor(b);
+  if (!ca || !cb) return a;
+  var u = Math.max(0, Math.min(1, t));
+  return "rgb(" + Math.round(ca[0] + (cb[0] - ca[0]) * u) + "," +
+    Math.round(ca[1] + (cb[1] - ca[1]) * u) + "," +
+    Math.round(ca[2] + (cb[2] - ca[2]) * u) + ")";
+}
+
+export function themeToken(name) {
+  if (typeof document === "undefined" || !document.documentElement) return "";
+  var v = (getComputedStyle(document.documentElement).getPropertyValue(name) || "").trim();
+  var aliased = /^var\(\s*([--A-Za-z0-9_]+)\s*\)$/.exec(v);
+  return aliased ? themeToken(aliased[1]) : v;
+}
+
 
