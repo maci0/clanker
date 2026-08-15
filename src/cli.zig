@@ -2757,6 +2757,13 @@ fn renderModelSnippet(arena: std.mem.Allocator, provider_name: []const u8, name:
         if (jsonNum(c.object, "output")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_output = {d}", .{v}));
     };
     if (fieldStr(m.object, "name")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "display = {s}", .{try tomlQuoted(arena, disp)}));
+    // models.dev's "temperature" is a capability flag, not a recommended
+    // value; 0.7 matches sampling_profiles.zig's own chat default so a
+    // fresh entry does not silently run at the provider's own default
+    // (often 1.0, which reads noisier than clanker's other chat traffic).
+    if (m.object.get("temperature")) |t| if (t == .bool and t.bool) {
+        try fields.append(arena, "temperature = 0.7");
+    };
 
     const caps = try catalogCapabilities(arena, m);
     if (caps.len > 0) {
@@ -8552,6 +8559,14 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
                     s.objectField("tool_call") catch return;
                     s.write(true) catch return;
                 };
+                // models.dev's own field is a capability flag ("does this
+                // model accept a temperature parameter at all"), not a
+                // recommended value — renderModelSnippet fills in clanker's
+                // own chat default (sampling_profiles.zig) when this is true.
+                if (m.object.get("temperature")) |t| if (t == .bool and t.bool) {
+                    s.objectField("temperature_ok") catch return;
+                    s.write(true) catch return;
+                };
                 // The same tag vocabulary `providers fill` writes, from the same
                 // helper, so the snippet the page builds is the snippet the CLI
                 // prints.
@@ -12311,6 +12326,10 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             .completion_tokens = a.stats.total_completion_tokens,
             .cost = a.stats.cost,
             .ms = ms,
+            .cache_hit_tokens = a.stats.total_cache_hit_tokens,
+            .cache_miss_tokens = a.stats.total_cache_miss_tokens,
+            .ttft_ms_total = a.stats.total_ttft_ms,
+            .ttft_samples = a.stats.ttft_samples,
         });
         return;
     }

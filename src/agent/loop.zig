@@ -108,6 +108,11 @@ pub const RunStats = struct {
     /// Estimated USD cost for this run (from the active model's
     /// cost_per_1k_input / cost_per_1k_output).
     cost: f64 = 0,
+    /// Sum of every streamed LLM call's time-to-first-delta, divided by
+    /// `ttft_samples` for the run's average. A non-streaming call
+    /// contributes neither (types.ChatResponse.ttft_ms is null there).
+    total_ttft_ms: u64 = 0,
+    ttft_samples: u32 = 0,
 };
 
 pub const Agent = struct {
@@ -833,6 +838,10 @@ pub const Agent = struct {
             }
 
             if (resp.usage) |u| self.recordUsage(u);
+            if (resp.ttft_ms) |t| {
+                self.stats.total_ttft_ms += t;
+                self.stats.ttft_samples += 1;
+            }
 
             try messages.append(self.arena, resp.message);
 

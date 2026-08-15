@@ -87,7 +87,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <button type="button" class="chip-btn" id="rail-collapse" title="Collapse sidebar" aria-expanded="true" aria-controls="rail" aria-label="Collapse sidebar"></button>
     <button type="button" class="chip-btn" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
     <button type="button" class="chip-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"></button>
-    <button type="button" class="chip-btn" id="theme-toggle" title="Cycle theme: system / light / dark / mocha / latte / frappe / macchiato / tokyonight / tokyonight-storm / tokyonight-day">theme: system</button>
+    <button type="button" class="chip-btn" id="theme-toggle" title="Cycle theme: system / light / dark / mocha / latte / frappe / macchiato / tokyonight / tokyonight-storm / tokyonight-day" aria-label="Theme: system">system</button>
   </div>
 </header>
 
@@ -204,17 +204,20 @@ lamps carry further). The seven named palettes ride the same tokens.
       <h2 id="session-title">…</h2>
       <div class="run-picker" id="session-picker">
         <div class="session-actions">
+          <div class="session-acts-body" id="session-acts-body">
           <button type="button" class="secondary" id="session-fork">Fork</button>
           <button type="button" class="secondary" id="session-rename">Rename</button>
           <button type="button" class="secondary" id="session-move" title="Put this conversation in a workspace">Move to…</button>
           <button type="button" class="secondary" id="session-archive" title="Hide from history without deleting (you can undo in Archived)">Archive</button>
           <button type="button" class="secondary danger" id="session-delete">Delete</button>
+          </div>
           <!-- Folded away rather than dropped: six equal buttons in a row read as
                one wall and hide which three you reach for daily. All of them are
-               also in the command palette. -->
-          <details class="more">
+               also in the command palette. On a phone this More also hosts the
+               five daily verbs and find-in-transcript (same nodes, reparented). -->
+          <details class="more" id="session-more">
             <summary>More</summary>
-            <div class="more-actions">
+            <div class="more-actions" id="session-more-actions">
               <button type="button" class="secondary" id="session-share" title="Copy a link to this conversation">Share</button>
               <button type="button" class="secondary" id="session-compact" title="Drop the oldest exchanges from this conversation">Compact</button>
               <button type="button" class="secondary" id="session-export" title="Download this conversation as Markdown">Export .md</button>
@@ -240,7 +243,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <span class="status-chip" id="status-subagent" hidden></span>
       <span class="status-chip" id="status-todos" hidden></span>
     </div>
-    <div class="transcript-tools">
+    <div class="transcript-tools" id="transcript-tools">
       <label for="turn-filter">Search this conversation</label>
       <input type="search" id="turn-filter" placeholder="Find in transcript…" autocomplete="off">
       <span class="meta" id="turn-filter-count"></span>
@@ -314,6 +317,10 @@ lamps carry further). The seven named palettes ride the same tokens.
           <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
         </div>
       </div>
+      <!-- Last turn's run shape: steps, LLM vs tool time, TTFT, throughput,
+           cache hit rate, token counts. Session-lifetime only, like the
+           status bar chips above the transcript — a reload clears it. -->
+      <p class="meta run-metrics" id="run-metrics" hidden aria-live="polite"></p>
       <div class="chat-steer" id="steer-row" hidden>
         <textarea id="steer-input" rows="2" wrap="soft" placeholder="Steer the running turn mid-flight (optional)…" autocomplete="off" aria-label="Steer the running turn"></textarea>
         <button type="button" class="secondary" id="steer-btn">Steer</button>

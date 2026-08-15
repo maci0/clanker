@@ -618,12 +618,13 @@ body {
      System / the palette so they cannot wrap and clip here. */
   #instance-chip, #peers-chip, #session-chip, #help-open { display: none; }
   #theme-toggle { font-size: var(--step--1); }
-  /* Compact the conversation header so empty-state chips sit above the
-     docked composer instead of under it. Daily session verbs stay in Jump. */
-  #view-chat .conversation-header .session-actions > .secondary { display: none; }
-  #view-chat .transcript-tools { display: none; }
+  /* Compact header: daily verbs + find move into More (same nodes). */
   #view-chat .suggestions { gap: var(--space-2); margin-top: var(--space-2); }
   #view-chat .suggestion { min-height: 40px; padding: 0.45rem 0.7rem; }
+  #session-more-actions .session-acts-body,
+  #session-more-actions .transcript-tools { width: 100%; }
+  #session-more-actions .transcript-tools { margin-top: 0; }
+  #view-chat .conversation-header > .transcript-tools { display: none; }
 }
 h1 {
   font-family: var(--sans); font-size: 15px; font-weight: 600;
@@ -1621,6 +1622,8 @@ dialog.slack-dialog.pf-v6-c-modal-box {
   font-variant-numeric: tabular-nums; letter-spacing: 0.02em; line-height: 1.5;
   opacity: 1;
 }
+.run-metrics { margin: 0.3rem 0 0; }
+.run-metrics[hidden] { display: none; }
 .knowledge-badge {
   display: none; margin: 0.35rem 0 0; padding: 0.35rem 0.55rem;
   border: 1px dashed var(--rule); border-radius: 8px; background: var(--surface-2);
@@ -1658,6 +1661,7 @@ h2 {
 .run-compare[hidden] { display: none; }
 .run-compare label { margin: 0; }
 .session-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; min-width: 0; }
+.session-acts-body { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; min-width: 0; }
 .session-actions .secondary { min-height: 30px; padding: 0.25rem 0.6rem; font-size: 12px; border-radius: 999px; }
 .session-actions .more > summary { min-height: 30px; padding: 0.25rem 0.6rem; font-size: 12px; border-radius: 999px; }
 select, #run-filter {

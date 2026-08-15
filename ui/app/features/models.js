@@ -107,6 +107,11 @@ export function configSnippet(m, configured, known) {
   // entry takes config.Model's 1024-token default and truncates every answer.
   if (m.output) lines.push("max_tokens = " + m.output);
   if (m.display) lines.push("display = " + tomlStr(m.display));
+  // models.dev's own field only says the model accepts a temperature
+  // parameter, not what to set it to; 0.7 matches sampling_profiles.zig's
+  // chat default rather than leaving a fresh entry at the provider's own
+  // default (often 1.0, noisier than clanker's other chat traffic).
+  if (m.temperature_ok) lines.push("temperature = 0.7");
   if (m.cost_in != null) lines.push("cost_per_1m_input = " + m.cost_in);
   if (m.cost_out != null) lines.push("cost_per_1m_output = " + m.cost_out);
   if (m.capabilities && m.capabilities.length) {

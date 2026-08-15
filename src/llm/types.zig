@@ -73,6 +73,10 @@ pub const ChatResponse = struct {
     reasoning: ?[]const u8 = null,
     /// Full raw response body (arena-owned).
     raw: ?[]const u8 = null,
+    /// Time from request start to the first content delta (streaming only;
+    /// null on a non-streaming call, where the whole response arrives at
+    /// once and the number would just restate the total).
+    ttft_ms: ?u64 = null,
 };
 
 // ---------------------------------------------------------------------------

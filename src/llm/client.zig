@@ -674,6 +674,7 @@ pub fn chatStream(
     defer sse.deinit(ctx.gpa);
     var sse_done = false;
     var at_eof = false;
+    var ttft_ms: ?u64 = null;
     while (!sse_done) {
         // A peek, not a consuming swap: Agent.stopRequested() is the one
         // place that consumes the flag, so a Ctrl-C caught here still gets
@@ -722,6 +723,7 @@ pub fn chatStream(
                     frame_done = true;
                     break;
                 }
+                if (ttft_ms == null) ttft_ms = elapsedMs(ctx.io, llm_t0);
                 try acc.apply(ev, on_delta);
             }
             const rest = sse.items[frame_end + 2 ..];
@@ -735,8 +737,9 @@ pub fn chatStream(
         if (at_eof) break;
     }
 
-    const resp = try acc.finish();
+    var resp = try acc.finish();
     const ms: u64 = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
+    resp.ttft_ms = ttft_ms;
     recordUsage(ctx, arena, provider, resp.usage, ms);
     return resp;
 }

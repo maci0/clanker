@@ -18,17 +18,27 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   left rail, Watch and Set up fold away, and Chat is a header / transcript
   / docked-composer column. PatternFly page chrome and cabinet colors stay.
 - Phone Chat header keeps More only so empty-state suggestions sit above
-  the docked composer instead of under it.
+  the docked composer instead of under it. More holds the same Fork/Rename/
+  Delete nodes and find-in-transcript on a phone.
 
 ### Added
 
+- A run-metrics line under the composer, DeepSeek-harness style: turns,
+  steps, LLM time vs tool-call time, average time-to-first-token,
+  completion tok/s, cache hit rate, and input/output token counts. TTFT
+  is newly measured (`types.ChatResponse.ttft_ms`, streaming only) and
+  folded into `RunStats`; steps and the LLM/tool time split are derived
+  client-side from the existing `tool_call`/`tool_result` stream events.
 - The Models view can add, edit, and remove a configured model, not only
   save a catalog snippet: `POST /api/config/model/set` table-replaces a
   full field set (temperature, cost overrides, capabilities, etc.) into
   `config.local.toml`, and `POST /api/config/model/remove` deletes a
   model's table there. Both are surgical `config.local.toml` edits, same
   as the existing catalog-save path; a model only declared in the shared
-  `config.toml` cannot be removed from the page.
+  `config.toml` cannot be removed from the page. A catalog entry that
+  supports a temperature parameter (models.dev only signals the
+  capability, not a value) now fills in clanker's own chat default
+  (0.7) instead of leaving the field for the provider's own default.
 - `clanker add-goal` and `/add-goal` save a structured goal without starting
   work. The Goals board uses the same `add_goal` writer and tells the operator
   that a saved goal has not started.

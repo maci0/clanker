@@ -92,6 +92,7 @@ var el = {
   railToggle: document.getElementById("rail-toggle"),
   sessionTitle: document.getElementById("session-title"),
   sessionStatusBar: document.getElementById("session-status-bar"),
+  runMetrics: document.getElementById("run-metrics"),
   statusGoal: document.getElementById("status-goal"),
   statusTools: document.getElementById("status-tools"),
   statusSubagent: document.getElementById("status-subagent"),
@@ -607,6 +608,33 @@ function applyRailCollapsed(collapsed) {
     if (!t.getAttribute("data-short") && txt) t.setAttribute("data-short", txt.slice(0, 2));
   });
 })();
+
+/* Phone More hosts the same Fork/Rename/Delete nodes and the transcript
+   find field so they stay in the tree when the header is compact. */
+function placeSessionChrome() {
+  var phone = window.matchMedia && window.matchMedia("(max-width: 40rem)").matches;
+  var acts = document.getElementById("session-acts-body");
+  var tools = document.getElementById("transcript-tools");
+  var more = document.getElementById("session-more-actions");
+  var row = document.querySelector("#session-picker .session-actions");
+  var moreFold = document.getElementById("session-more");
+  var header = document.querySelector("#view-chat .conversation-header");
+  if (!acts || !more || !row) return;
+  if (phone) {
+    if (acts.parentNode !== more) more.insertBefore(acts, more.firstChild);
+    if (tools && tools.parentNode !== more) more.appendChild(tools);
+  } else {
+    if (moreFold && acts.parentNode !== row) row.insertBefore(acts, moreFold);
+    else if (acts.parentNode !== row) row.insertBefore(acts, row.firstChild);
+    if (tools && header && tools.parentNode !== header) header.appendChild(tools);
+  }
+}
+placeSessionChrome();
+if (window.matchMedia) {
+  var mqPhone = window.matchMedia("(max-width: 40rem)");
+  if (mqPhone.addEventListener) mqPhone.addEventListener("change", placeSessionChrome);
+  else if (mqPhone.addListener) mqPhone.addListener(placeSessionChrome);
+}
 
 function closeRailOnNarrow() {
   if (window.matchMedia && window.matchMedia("(max-width: 40rem)").matches) setRailOpen(false);
@@ -1749,15 +1777,57 @@ function handleSlashDocFile(task){
 // persisted, so a reload clears it the same way the live caret does.
 var statusToolCalls = 0;
 var statusSubagentCalls = 0;
+var runSteps = 0;
+var runToolMs = 0;
 
 function resetSessionStatusBar() {
   statusToolCalls = 0;
   statusSubagentCalls = 0;
+  runSteps = 0;
+  runToolMs = 0;
   if (!el.sessionStatusBar) return;
   el.sessionStatusBar.hidden = false;
   [el.statusGoal, el.statusTools, el.statusSubagent, el.statusTodos].forEach(function (chip) {
     if (chip) chip.hidden = true;
   });
+}
+
+/* Compact token counts: DeepSeek's own strip reads "4.6M tok" / "73.9K tok",
+   not a locale-grouped "4,632,904" that would not fit one line. */
+function fmtTok(n) {
+  if (typeof n !== "number" || !isFinite(n)) return "0";
+  var abs = Math.abs(n);
+  if (abs >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (abs >= 1e3) return (n / 1e3).toFixed(1) + "K";
+  return String(Math.round(n));
+}
+
+function renderRunMetrics(stats) {
+  if (!el.runMetrics) return;
+  if (typeof stats.ms !== "number") { el.runMetrics.hidden = true; return; }
+  var turns = el.transcript ? el.transcript.querySelectorAll(".turn").length : 0;
+  // +1: the final answer-producing iteration never fires a tool_call event,
+  // so runSteps alone undercounts by exactly the one step every turn has.
+  var steps = runSteps + 1;
+  var llmMs = Math.max(stats.ms - runToolMs, 0);
+  var parts = [];
+  parts.push(fmtInt(turns) + " turn" + (turns === 1 ? "" : "s") + " · " + fmtInt(steps) + " step" + (steps === 1 ? "" : "s"));
+  parts.push("LLM " + fmtMs(llmMs) + " · Tool call " + fmtMs(runToolMs));
+  var bits2 = [];
+  if (typeof stats.ttft_samples === "number" && stats.ttft_samples > 0) {
+    bits2.push("TTFT avg " + fmtMs(stats.ttft_ms_total / stats.ttft_samples));
+  }
+  var completion = typeof stats.completion_tokens === "number" ? stats.completion_tokens : 0;
+  if (stats.ms > 0) bits2.push((completion / (stats.ms / 1000)).toFixed(0) + " tok/s");
+  if (bits2.length) parts.push(bits2.join(" · "));
+  var hit = typeof stats.cache_hit_tokens === "number" ? stats.cache_hit_tokens : 0;
+  var miss = typeof stats.cache_miss_tokens === "number" ? stats.cache_miss_tokens : 0;
+  if (hit + miss > 0) parts.push("Cache hit " + ((hit / (hit + miss)) * 100).toFixed(0) + "%");
+  if (typeof stats.prompt_tokens === "number" && typeof stats.completion_tokens === "number") {
+    parts.push("Input " + fmtTok(stats.prompt_tokens) + " tok · Output " + fmtTok(stats.completion_tokens) + " tok");
+  }
+  el.runMetrics.textContent = parts.join(" | ");
+  el.runMetrics.hidden = false;
 }
 
 function setStatusGoal(goalId) {
@@ -1859,8 +1929,8 @@ el.form.addEventListener("submit", function (e) {
     if (line.charCodeAt(0) === 1) {
       var evt;
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
-      if (evt.type === "tool_call") { addToolEvent(turn, evt.names, evt.calls); setTurnPhase(turn, "tool"); if (evt.names) { runWaitLabel = "running " + evt.names; pushLiveNode("tool", evt.names, evt.names, 0); } bumpStatusTools(evt.calls); }
-      else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); runWaitLabel = "thinking"; if(evt.ms){
+      if (evt.type === "tool_call") { addToolEvent(turn, evt.names, evt.calls); setTurnPhase(turn, "tool"); if (evt.names) { runWaitLabel = "running " + evt.names; pushLiveNode("tool", evt.names, evt.names, 0); } bumpStatusTools(evt.calls); runSteps += 1; }
+      else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); runWaitLabel = "thinking"; if (typeof evt.ms === "number") runToolMs += evt.ms; if(evt.ms){
         var last = liveGraph.nodes[liveGraph.nodes.length-1]; if(last && last.kind==="tool") last.duration_ms = evt.ms;
       }}
       // The run's own private checklist (features/todos.js): pushed whenever a
@@ -1877,6 +1947,7 @@ el.form.addEventListener("submit", function (e) {
       else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + errorRecoveryHint(evt.message) + "]\n", true); setTurnPhase(turn, ""); pushLiveNode("tool", evt.message, "error", 0); }
       else if (evt.type === "done") {
         renderStats(turn, evt, task);
+        renderRunMetrics(evt);
         statsRendered = true;
         setTurnPhase(turn, "");
         pushLiveNode("final", "done", "done", evt.ms||0);
