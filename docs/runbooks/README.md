@@ -5,6 +5,22 @@ operation or development. They answer "what should I check and do now?";
 [reports](../reports/) preserve the broader evidence, failed hypotheses, and
 historical resolution that explain why the procedure is safe.
 
+## From a terminal
+
+`clanker reports` reads and writes this directory alongside
+[reports](../reports/), through the same tool. Search only the recovery
+procedures:
+
+```bash
+clanker reports search "worktree" --kind runbook
+```
+
+Read one:
+
+```bash
+clanker reports open docs/runbooks/improve-staging-build-inputs.md
+```
+
 ## Agent workflow
 
 Before starting a fresh diagnosis, use the `reports` tool's `search` action

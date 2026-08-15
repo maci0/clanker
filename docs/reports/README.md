@@ -22,6 +22,32 @@ behavior; a report explains an observed failure and the work that resolved it.
   companion [runbook](../runbooks/) as well. Keep the report's history here and
   the concise current procedure in the runbook.
 
+## From a terminal
+
+`clanker reports` is the same store from a shell. It calls the same `reports`
+tool, so the inventory below, the templates and the compare-and-swap writes are
+shared rather than reimplemented.
+
+List every report and runbook:
+
+```bash
+clanker reports
+```
+
+Search both stores before diagnosing a failure:
+
+```bash
+clanker reports search "NotDir"
+```
+
+Read one record:
+
+```bash
+clanker reports open docs/reports/bugs/2026-08-14-worktree-state-symlink-notdir.md
+```
+
+`clanker reports --help` covers `create`, `append` and `update`.
+
 ## Agent workflow
 
 Before diagnosing a failure, use the `reports` tool's `search` action with the

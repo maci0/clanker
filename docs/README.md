@@ -745,6 +745,7 @@ iter 2
 | `chat rooms` | List chatrooms and this instance's subscriptions |
 | `chat subscribe <room> [on]` | Join or leave a chatroom (`on` = true/false) |
 | `schedule [list\|add\|remove\|enable\|disable\|run\|run-due\|log]` | Recurring agent runs from `state/schedule.json`; see [Scheduled runs](#scheduled-runs) |
+| `reports [list\|search <query>\|open <path>\|create\|append\|update]` | Read and record the operational reports and runbooks in `docs/reports/` and `docs/runbooks/`; see [Reports and runbooks](#reports-and-runbooks) |
 | `stats` | Token usage per provider/model |
 | `serve [--host A] [--serve-as N]... [--webui-port N]` | HTTP server + web UI (loopback, port 17921 by default) |
 | `setup` | Guided first run: check config, keys and tools |
@@ -762,6 +763,28 @@ A bare `clanker providers check` sweeps every configured provider in config orde
 - The sweep ends with a summary table on stdout: one row per provider with name, status, model, latency, and `*` in the `default` column. Statuses are a closed set — `OK`, `not configured`, `failed` (it answered, with an error status — a model the endpoint does not serve looks like this), `unreachable` (nothing answered: refused, DNS, TLS), `timed out`.
 
 `clanker providers check <name>` checks one provider: the same provenance line and `default=true`/`default=false` marker, no summary table. It exits non-zero when the named provider is unknown (`UnknownProvider`) or did not come back OK (`ProviderCheckFailed`); a full sweep does not fail on a provider that is down.
+
+### Reports and runbooks
+
+The records in [docs/reports/](reports/) and [docs/runbooks/](runbooks/), from a terminal. `clanker reports` goes through the same sandboxed `reports` tool the agent calls (`tools/zig/reports.zig`), so both surfaces share one store, one inventory and one set of compare-and-swap writes; the CLI half is `src/reports/command.zig`, which only renders. Read them:
+
+```bash
+clanker reports
+clanker reports search NotDir
+clanker reports open docs/runbooks/improve-staging-build-inputs.md
+```
+
+Narrow a search to one store with `--kind report` or `--kind runbook` (default `all` searches both).
+
+Write them:
+
+```bash
+clanker reports create investigation 2026-08-16-run-livelock "clanker run never finishes" "TL;DR of the symptom"
+clanker reports append docs/reports/investigations/2026-08-16-run-livelock.md "## New evidence"
+clanker reports update docs/reports/investigations/2026-08-16-run-livelock.md "Investigating." "Resolved."
+```
+
+`create` writes a TL;DR-first scaffold and adds it to the matching inventory; its kind is `bug`, `investigation` or `runbook`, report slugs start `YYYY-MM-DD-`, and runbook slugs are lowercase and hyphenated. `append` adds markdown to the end of a record and `update` replaces one exact passage. Both are compare-and-swap writes: a concurrent documentation edit is refused rather than overwritten, so reopen the record and retry against its current text. A refused write exits 1, a usage mistake exits 2.
 
 ### Scheduled runs
 

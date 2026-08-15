@@ -3070,9 +3070,14 @@ fn reportUnfinishedRun(
     const why = switch (err) {
         error.MaxIterationsExceeded => "hit the iteration limit",
         error.SessionTokenBudgetExceeded => "hit the session token budget",
+        error.CompactionStalled => "could not compact its history any further",
         else => "stopped early",
     };
-    log.log(.error_, "run {s} after {d} iterations and did not produce a final answer", .{ why, a.max_iterations });
+    if (err == error.MaxIterationsExceeded) {
+        log.log(.error_, "run {s} after {d} iterations and did not produce a final answer", .{ why, a.max_iterations });
+    } else {
+        log.log(.error_, "run {s} and did not produce a final answer", .{why});
+    }
     if (partial != null) {
         log.log(.info, "the assistant's last message is printed above; it is partial work, not an answer", .{});
     } else {
@@ -3080,6 +3085,11 @@ fn reportUnfinishedRun(
     }
     if (err == error.MaxIterationsExceeded) {
         log.log(.info, "raise agent.max_iterations in config.toml (currently {d}) if the task needs more steps", .{a.max_iterations});
+    }
+    if (err == error.CompactionStalled) {
+        // The knob and the diet, in that order: one is immediate, the other is
+        // what stops the history from being this shape again.
+        log.log(.info, "the system prompt and the kept tail already fill agent.max_history_tokens (currently {d}); raise it, or trim what the system prompt carries (AGENTS.md, state/learnings.md)", .{a.cfg.agent.max_history_tokens});
     }
 }
 
@@ -3719,7 +3729,7 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
             // stack trace that points at loop.zig internals and reads like a bug
             // in the harness.
             switch (err) {
-                error.MaxIterationsExceeded, error.SessionTokenBudgetExceeded => {
+                error.MaxIterationsExceeded, error.SessionTokenBudgetExceeded, error.CompactionStalled => {
                     try reportUnfinishedRun(&out_w, &messages, &a, err);
                     std.process.exit(1);
                 },

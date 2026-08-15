@@ -7,6 +7,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker reports` puts the operational reports and runbooks on the CLI:
+  `list` (the default) prints the whole index with each record's status and
+  path, `search <query>` runs one literal search across `docs/reports/` and
+  `docs/runbooks/` with `--kind` to narrow it to one store, `open <path>`
+  prints a record, and `create`, `append` and `update` write one. It calls the
+  same sandboxed `reports` tool the agent uses, so there is one store, one
+  inventory and one set of compare-and-swap writes rather than a second
+  implementation beside them — a refused write exits 1 and says which record to
+  reopen. Until now the records were reachable only from inside an agent run.
+
 - Two tools for the work that precedes a decision, independent of each other.
   `research` plans a search (the angles a single query misses: alternatives,
   failure reports, production experience, standards, and the out-of-the-box
