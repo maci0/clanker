@@ -25,7 +25,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             if (l == .integer and l.integer > 0) last = @intCast(l.integer);
         }
     }
-    const raw = lib.fsRead("state/improvements.jsonl") catch return lib.fail(out, "no history yet");
+    // Newest entries only: a full ck_fs_read fails once the log exceeds 1 MiB.
+    const raw = lib.fsReadTail("state/improvements.jsonl", 256 * 1024) catch return lib.fail(out, "no history yet");
 
     var recs: std.ArrayList(Rec) = .empty;
     defer recs.deinit(lib.alloc);

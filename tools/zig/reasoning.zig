@@ -27,7 +27,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             if (l == .integer and l.integer > 0) last = @intCast(l.integer);
         }
     }
-    const raw = lib.fsRead("state/reasoning.jsonl") catch return lib.fail(out, "no reasoning traces yet");
+    // Newest traces only: the log can grow to 8 MiB, and a full ck_fs_read
+    // fails once it exceeds the 1 MiB host arena.
+    const raw = lib.fsReadTail("state/reasoning.jsonl", 256 * 1024) catch return lib.fail(out, "no reasoning traces yet");
 
     var traces: std.ArrayList(Trace) = .empty;
     defer traces.deinit(lib.alloc);

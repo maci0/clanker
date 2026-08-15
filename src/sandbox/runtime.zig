@@ -980,6 +980,13 @@ test "graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_read 
     const json_out = try mod3.executeTool("{\"args\":\"json " ++ run_id ++ "\"}");
     defer std.testing.allocator.free(json_out);
     try std.testing.expect(std.mem.find(u8, json_out, "\\\"parent_run_id\\\":\\\"run-parent\\\"") != null);
+
+    // Listing must still name the run after the 4 KiB prefix cut. A 70 KiB
+    // task sits in this same directory; the picker has to survive that.
+    const list_out = try mod3.executeTool("{\"args\":\"json\"}");
+    defer std.testing.allocator.free(list_out);
+    try std.testing.expect(std.mem.find(u8, list_out, run_id) != null);
+    try std.testing.expect(std.mem.find(u8, list_out, large_run_id) != null);
 }
 
 test "sessions and graph report empty when the state dir does not exist" {

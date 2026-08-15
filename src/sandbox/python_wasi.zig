@@ -152,6 +152,7 @@ pub fn run(
     }
     c.wasm_trap_delete(trap);
     if (store.wasi_host) |host_opaque| {
+        // Instance.wasi_host is the Host pointer we stored at instantiate.
         const host: *wasi_host.Host = @ptrCast(@alignCast(host_opaque));
         if (host.exit_code) |code| {
             return .{

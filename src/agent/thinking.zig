@@ -32,7 +32,13 @@ pub fn parseLevel(raw: []const u8) Level {
     var buf: [8]u8 = undefined;
     if (word.len > buf.len) return .medium;
     const lower = std.ascii.lowerString(&buf, word);
-    return std.meta.stringToEnum(Level, lower) orelse .medium;
+    const names = std.StaticStringMap(Level).initComptime(.{
+        .{ "low", .low },
+        .{ "medium", .medium },
+        .{ "high", .high },
+        .{ "xhigh", .xhigh },
+    });
+    return names.get(lower) orelse .medium;
 }
 
 pub fn effortFor(level: Level) []const u8 {

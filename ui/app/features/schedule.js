@@ -14,6 +14,7 @@
 // almost always that nothing is calling `run-due`, so the empty state says so
 // rather than leaving the reader to wonder.
 import { readJson, fmtMs } from "../core/utils.js";
+import { showLoadError } from "../core/ui.js";
 
 function byId(id) { return document.getElementById(id); }
 
@@ -198,7 +199,9 @@ export function loadScheduleView() {
     render();
     return data;
   }).catch(function (err) {
-    if (status) status.textContent = "Could not load the schedule: " + err.message;
+    var msg = "Could not load the schedule: " + err.message;
+    if (status) status.textContent = msg;
+    showLoadError(byId("schedule-list"), msg, loadScheduleView);
   });
 }
 

@@ -89,6 +89,7 @@ export function bind(node, st, render) {
 var pfButtonSkip = {
   "rail-tab": 1, "rail-item": 1, "tool-name": 1, "suggestion": 1,
   "palette-item": 1, "board-header-btn": 1, "rail-pin": 1, "label-picker-item": 1,
+  "rail-empty-action": 1, "toast-dismiss": 1,
   /* Status lamps and model pills are labels, not actuators. Upgrading them to
      pf-m-primary painted the masthead solid PatternFly blue. */
   "chip": 1, "header-model": 1, "model-pill": 1,
@@ -348,6 +349,15 @@ export function toast(msg, kind) {
   title.className = "pf-v6-c-alert__title";
   title.textContent = msg;
   node.appendChild(title);
+  var dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.className = "toast-dismiss";
+  dismiss.textContent = "Dismiss";
+  dismiss.addEventListener("click", function (event) {
+    event.stopPropagation();
+    node.remove();
+  });
+  node.appendChild(dismiss);
   upgradePfToastNode(node);
   node.addEventListener("click", function () { node.remove(); });
   node.addEventListener("keydown", function (event) {
@@ -355,7 +365,7 @@ export function toast(msg, kind) {
     event.preventDefault();
     node.remove();
   });
-  node.setAttribute("aria-label", msg + ". Press Enter, Space, or Escape to dismiss.");
+  node.setAttribute("aria-label", msg + ". Dismiss, or press Enter, Space, or Escape.");
   var timer;
   var ms = node.hasAttribute("data-kind") ? 9000 : 5000;
   function schedule() { timer = window.setTimeout(function () { node.remove(); }, ms); }
@@ -367,6 +377,40 @@ export function toast(msg, kind) {
   while (host.children.length > 3) host.removeChild(host.firstChild);
   schedule();
   return node;
+}
+
+/* A failed list fetch used to write only the sr-only status line (mirrored
+   to a toast that then vanished). The panel looked empty, which reads as
+   "nothing here" rather than "could not load". Put the reason and a retry
+   where the rows would have been. */
+export function showLoadError(container, message, retryFn) {
+  if (!container) return null;
+  container.hidden = false;
+  container.removeAttribute("hidden");
+  container.textContent = "";
+  var p = document.createElement("p");
+  p.className = "run-empty";
+  p.appendChild(document.createTextNode(message));
+  if (typeof retryFn === "function") {
+    p.appendChild(document.createTextNode(" "));
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "secondary";
+    btn.textContent = "Try again";
+    btn.addEventListener("click", function () {
+      btn.disabled = true;
+      var done = function () { btn.disabled = false; };
+      try {
+        var out = retryFn();
+        if (out && typeof out.then === "function") out.then(done, done);
+        else done();
+      } catch (_) { done(); }
+    });
+    upgradePfButton(btn);
+    p.appendChild(btn);
+  }
+  container.appendChild(p);
+  return p;
 }
 
 /* Themed replacements for window.confirm / window.prompt. Native dialogs
@@ -401,6 +445,9 @@ function openDialog(build) {
 export function uiConfirm(message, opts) {
   opts = opts || {};
   return openDialog(function (form, done) {
+    var title = document.createElement("h3");
+    title.textContent = opts.title || opts.confirmLabel || "Confirm";
+    form.appendChild(title);
     var p = document.createElement("p");
     p.className = "ui-dialog-message";
     p.textContent = message;

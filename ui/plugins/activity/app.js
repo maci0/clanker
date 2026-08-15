@@ -46,7 +46,12 @@ clanker.registerView({
     function draw(entries) {
       list.textContent = "";
       if (!entries.length) {
-        list.appendChild(api.el("p", "run-empty", "Nothing recorded yet. Move a card, or write a line in a card's activity box."));
+        var empty = api.el("p", "run-empty", "Nothing recorded yet. Move a card, or write a line in a card's activity box. ");
+        var go = api.el("button", "primary", "Open board");
+        go.type = "button";
+        go.addEventListener("click", function () { api.showView("board"); });
+        empty.appendChild(go);
+        list.appendChild(empty);
         return;
       }
       entries.forEach(function (e) {
@@ -55,7 +60,7 @@ clanker.registerView({
         row.appendChild(api.el("span", "activity-who", e.who || "someone"));
         row.appendChild(api.el("span", "activity-what", e.what));
         var label = cardLabel(e);
-        var card = api.el("button", "activity-card", e.card);
+        var card = api.el("button", "activity-card", label);
         card.type = "button";
         card.title = "Open this card on the board";
         card.setAttribute("aria-label", "Open " + label + " on the board");
@@ -70,7 +75,12 @@ clanker.registerView({
     /// itself: rows describing work while the status said the load had failed.
     function drawFailure(message) {
       list.textContent = "";
-      list.appendChild(api.el("p", "run-empty", message));
+      var row = api.el("p", "run-empty", message + " ");
+      var retry = api.el("button", "secondary", "Try again");
+      retry.type = "button";
+      retry.addEventListener("click", load);
+      row.appendChild(retry);
+      list.appendChild(row);
     }
 
     function load() {

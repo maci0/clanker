@@ -69,6 +69,7 @@ comptime {
     _ = @import("serve/live.zig");
     _ = @import("serve/mesh_net.zig");
     _ = @import("agent/session.zig");
+    _ = @import("agent/workspace.zig");
     _ = @import("agent/prune.zig");
     _ = @import("agent/graph.zig");
     _ = @import("agent/subagent.zig");

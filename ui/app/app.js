@@ -1,8 +1,8 @@
-import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max } from "./core/utils.js";
-import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, upgradePfButton, upgradePfButtons, upgradePfChip, upgradePfUi } from "./core/ui.js";
+import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max } from "./core/utils.js";
+import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, upgradePfButton, upgradePfButtons, upgradePfChip, upgradePfUi, showLoadError } from "./core/ui.js";
 import { icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
-import { THEMES as THEMESMod, loadTheme as loadThemeMod, applyTheme as applyThemeMod } from "./core/theme.js";
+import { loadTheme as loadThemeMod, applyTheme as applyThemeMod, bindThemeToggle as bindThemeToggleMod } from "./core/theme.js";
 import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod, messageKey as chatMessageKey, hasServerId as chatHasServerId } from "./core/chat.js";
 import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
 import { makeLineSplitter as makeLineSplitterMod, onLive as liveOn, liveOk as liveIsUp } from "./core/stream.js";
@@ -29,9 +29,9 @@ import { selectedKnowledge as kbSelected, loadKnowledge as kbLoad, bindKnowledge
 import { loadPromptsView as promptsLoadView, bindPrompts as promptsBind } from "./features/prompts.js";
 import { loadModelsView as modelsLoadView, bindModels as modelsBind } from "./features/models.js";
 import { loadScheduleView as scheduleLoadView, bindSchedule as scheduleBind } from "./features/schedule.js";
-import { loadSearchView as searchLoadView, bindSearch as searchBind, bindSearchDeps as searchDeps } from "./features/search.js";
+import { loadSearchView as searchLoadView, bindSearch as searchBind, bindSearchDeps as searchDeps, runSearch as searchRun } from "./features/search.js";
 import { createAnswerHead, ANSWER_LABEL } from "./core/ai-disclosure.js";
-import { applyDoneStats, beginLiveTurn, emptyRunMetrics, formatRunMetrics, liveElapsedMs, noteFirstToken } from "./core/run-metrics.js";
+import { applyDoneStats, applyLiveUsage, beginLiveTurn, emptyRunMetrics, formatRunMetricsParts, liveElapsedMs, noteFirstToken, noteLiveChars } from "./core/run-metrics.js";
 
 /* CSP blocks inline onload handlers, so PatternFly stays media=print until
    this module runs. Flip to all as soon as the sheet is ready so first paint
@@ -52,6 +52,7 @@ var newSessionId = utilNewSessionId;
 var fmtBytes = utilFmtBytes;
 var clip = utilClip;
 var sessionLabel = utilSessionLabel;
+var sessionMatchesFilter = utilSessionMatchesFilter;
 var summarizeTitle = utilSummarizeTitle;
 var recencyGroup = utilRecencyGroup;
 var fmtInt = utilFmtInt;
@@ -157,6 +158,14 @@ var el = {
   runGraph: document.getElementById("run-graph"),
   runDetail: document.getElementById("run-detail"),
   sessionFilter: document.getElementById("session-filter"),
+  workspacePick: document.getElementById("workspace-pick"),
+  workspaceNew: document.getElementById("workspace-new"),
+  workspaceRemove: document.getElementById("workspace-remove"),
+  workspaceNewDialog: document.getElementById("workspace-new-dialog"),
+  workspaceNewForm: document.getElementById("workspace-new-form"),
+  workspaceNewName: document.getElementById("workspace-new-name"),
+  workspaceNewPath: document.getElementById("workspace-new-path"),
+  workspaceNewCancel: document.getElementById("workspace-new-cancel"),
   sessionCompact: document.getElementById("session-compact"),
   sessionExport: document.getElementById("session-export"),
   sessionCopy: document.getElementById("session-copy"),
@@ -247,6 +256,12 @@ var controller = null;
 var elapsedTimer = null;
 var runWaitLabel = "thinking";
 var sessionId = loadSession();
+function loadCurrentWorkspace() {
+  try { return window.localStorage.getItem("clanker.workspace") || ""; } catch (e) { return ""; }
+}
+var currentWorkspace = loadCurrentWorkspace();
+window.clankerWorkspace = currentWorkspace;
+var knownWorkspaces = [];
 
 function loadSession() {
   var id = null;
@@ -330,17 +345,15 @@ function renderSessionChip() {
   if (cm) cm.addEventListener("click", openFrom(cm));
 })();
 
-var THEMES = THEMESMod;
 var loadTheme = loadThemeMod;
 var applyTheme = applyThemeMod;
 
 var theme = loadTheme();
 applyTheme(theme);
-
-el.themeToggle.addEventListener("click", function () {
-  theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
-  try { window.localStorage.setItem("clanker.theme", theme); } catch (e) {}
-  applyTheme(theme);
+bindThemeToggleMod(el.themeToggle, function (next) {
+  theme = next;
+  var themeLabel = document.getElementById("settings-theme-label");
+  if (themeLabel) themeLabel.textContent = next;
 });
 
 el.newChat.addEventListener("click", function () {
@@ -430,12 +443,14 @@ function renderSessionOptions(sessions) {
     filter: el.sessionFilter ? el.sessionFilter.value.trim().toLowerCase() : "",
     pins: pins.slice(),
     current: sessionId,
-    collapsed: collapsedGroups.slice()
+    collapsed: collapsedGroups.slice(),
+    workspace: currentWorkspace
   };
   renderSessionTitle();
 }
 
 function railRowFor(s, current) {
+  var rawTitle = (s.title || "").replace(/\s+/g, " ").trim();
   var title = summarizeTitle(s.title || "");
   var archivedMark = s.archived ? " · archived" : "";
   var meta = s.messages + (s.messages === 1 ? " msg" : " msgs") + archivedMark +
@@ -445,7 +460,7 @@ function railRowFor(s, current) {
   var row = T.button({
     type: "button",
     class: "rail-item",
-    title: title,
+    title: rawTitle || title,
     onclick: function () {
       if (currentView !== "chat") showView("chat", false);
       switchSession(s.id);
@@ -457,6 +472,7 @@ function railRowFor(s, current) {
   var pin = T.button({
     type: "button",
     class: "rail-pin",
+    title: isPinned(s.id) ? "Stop pinning this conversation" : "Keep this conversation at the top of the list",
     "data-on": String(isPinned(s.id)),
     "aria-label": (isPinned(s.id) ? "Unpin " : "Pin ") + title,
     "aria-pressed": String(isPinned(s.id)),
@@ -488,57 +504,40 @@ bind(el.railList, railState, function (s) {
     var pa = isPinned(a.id) ? 1 : 0, pb = isPinned(b.id) ? 1 : 0;
     return pa === pb ? 0 : pb - pa;
   });
-  var seen = ordered.some(function (item) { return item.id === s.current; });
+  var scoped = ordered.filter(function (item) {
+    return (item.workspace || "") === (s.workspace || "");
+  });
+  var seen = scoped.some(function (item) { return item.id === s.current; });
   var matched = 0;
+  var inWorkspace = scoped.filter(function (item) {
+    return sessionMatchesFilter(item, s.filter);
+  });
 
-  var wsList = workspacesOf(ordered);
-  wsList.forEach(function (ws) {
-    var inWorkspace = ordered.filter(function (item) {
-      if ((item.workspace || "") !== ws) return false;
-      return !s.filter || sessionLabel(item).toLowerCase().indexOf(s.filter) !== -1;
+  var groups = [];
+  var lastGroup = "";
+  inWorkspace.forEach(function (item) {
+    var group = isPinned(item.id) ? "Pinned" : recencyGroup(item.updated);
+    if (group !== lastGroup) { groups.push({ name: group, items: [] }); lastGroup = group; }
+    groups[groups.length - 1].items.push(item);
+  });
+  groups.forEach(function (g) {
+    var collapsed = isCollapsedGroup(g.name);
+    var head = T.button({
+      type: "button",
+      class: "rail-group",
+      "aria-expanded": String(!collapsed),
+      "aria-label": (collapsed ? "Expand " : "Collapse ") + g.name,
+      title: (collapsed ? "Show " : "Hide ") + g.items.length + (g.items.length === 1 ? " conversation" : " conversations") + " in " + g.name,
+      onclick: function () { toggleCollapsedGroup(g.name); }
+    }, T.span({ class: "rail-group-caret" }, collapsed ? "▸" : "▾"),
+      T.span({ class: "rail-group-name" }, g.name),
+      T.span({ class: "rail-group-count" }, String(g.items.length)));
+    out.push(T.li({ class: "rail-group-row", role: "presentation" }, head));
+    if (collapsed) { matched += g.items.length; return; }
+    g.items.forEach(function (item) {
+      out.push(railRowFor(item, s.current));
     });
-    // A folder with nothing to show under the current filter is not drawn:
-    // an empty heading says a folder is empty when it is only filtered out.
-    if (!inWorkspace.length) return;
-
-    // The default folder needs no name when it is the only one there is.
-    var onlyDefault = ws === "" && wsList.length === 1;
-    if (!onlyDefault) {
-      out.push(T.li({ class: "rail-workspace", role: "presentation" },
-        ws === "" ? "Conversations" : ws,
-        T.span({ class: "rail-workspace-count" }, String(inWorkspace.length))));
-    }
-
-    // Bucket the folder's conversations into day-groups (in order), then
-    // render each group as a collapsible header plus its rows.
-    var groups = [];
-    var lastGroup = "";
-    inWorkspace.forEach(function (item) {
-      var group = isPinned(item.id) ? "Pinned" : recencyGroup(item.updated);
-      if (group !== lastGroup) { groups.push({ name: group, items: [] }); lastGroup = group; }
-      groups[groups.length - 1].items.push(item);
-    });
-    groups.forEach(function (g) {
-      var collapsed = isCollapsedGroup(g.name);
-      var head = T.button({
-        type: "button",
-        class: "rail-group",
-        "aria-expanded": String(!collapsed),
-        "aria-label": (collapsed ? "Expand " : "Collapse ") + g.name,
-        title: (collapsed ? "Show " : "Hide ") + g.items.length + (g.items.length === 1 ? " conversation" : " conversations") + " in " + g.name,
-        onclick: function () { toggleCollapsedGroup(g.name); }
-      }, T.span({ class: "rail-group-caret" }, collapsed ? "▸" : "▾"),
-        T.span({ class: "rail-group-name" }, g.name),
-        T.span({ class: "rail-group-count" }, String(g.items.length)));
-      out.push(T.li({ class: "rail-group-row", role: "presentation" }, head));
-      if (collapsed) { matched += g.items.length; return; }
-      g.items.forEach(function (item) {
-        var row = railRowFor(item, s.current);
-        if (!onlyDefault) row.classList.add("rail-folder");
-        out.push(row);
-      });
-      matched += g.items.length;
-    });
+    matched += g.items.length;
   });
 
   /* A brand new chat has no file on disk until its first turn completes;
@@ -550,15 +549,49 @@ bind(el.railList, railState, function (s) {
         T.span({ class: "rail-item-title" }, "New conversation"),
         T.span({ class: "rail-item-meta" }, "unsaved"))));
   }
-  if (!matched && s.filter) out.push(T.li({ class: "rail-empty" }, "No conversation matches."));
+  if (!matched && s.filter) {
+    out.push(T.li({ class: "rail-empty" },
+      "No title matches. ",
+      T.button({
+        type: "button",
+        class: "rail-empty-action",
+        onclick: function () {
+          var q = s.filter;
+          var input = document.getElementById("search-q");
+          if (input) input.value = q;
+          showView("search", true);
+          searchRun(q);
+        }
+      }, "Search messages"),
+      " or ",
+      T.button({
+        type: "button",
+        class: "rail-empty-action",
+        onclick: function () {
+          if (el.sessionFilter) {
+            el.sessionFilter.value = "";
+            el.sessionFilter.focus();
+          }
+          renderSessionOptions(null);
+        }
+      }, "clear the filter")));
+  }
   return out;
 });
 
 function renderSessionTitle() {
   var meta = currentSessionMeta();
-  var label = meta ? sessionLabel(meta) : "New conversation  ·  unsaved";
-  el.sessionTitle.textContent = label;
-  el.sessionTitle.title = label;
+  if (!meta) {
+    el.sessionTitle.textContent = "New conversation";
+    el.sessionTitle.title = "Unsaved conversation";
+    renderContextMeter();
+    return;
+  }
+  var full = (meta.title || "").replace(/\s+/g, " ").trim() || "Untitled conversation";
+  el.sessionTitle.textContent = full;
+  var bits = [full, meta.messages + (meta.messages === 1 ? " msg" : " msgs")];
+  if (typeof meta.bytes === "number" && meta.bytes > 0) bits.push(fmtBytes(meta.bytes));
+  el.sessionTitle.title = bits.join("  ·  ");
   renderContextMeter();
 }
 
@@ -732,8 +765,8 @@ el.newChat.addEventListener("click", closeRailOnNarrow);
 function syncTranscriptEmpty() {
   var empty = el.transcript.querySelector(".turn") === null;
   el.transcriptEmpty.hidden = !empty;
-  // Empty conversations center the greeting + composer mid-screen with the
-  // suggestions underneath; the first turn docks the composer to the bottom.
+  // Empty conversations keep the idle plate, composer and jobs stacked from
+  // the top; the first turn docks the composer to the bottom.
   document.getElementById("view-chat").classList.toggle("chat-empty", empty);
 }
 
@@ -748,6 +781,88 @@ function loadSessions() {
       // the conversation the composer is using.
       renderSessionOptions([]);
     });
+}
+
+function workspaceLabel(w) {
+  if (!w) return "This folder";
+  var name = w.name || w.id || "This folder";
+  if (w.builtin) return name + " (this folder)";
+  if (w.orphan) return name + " (no folder)";
+  return name;
+}
+
+function renderWorkspacePick() {
+  if (!el.workspacePick) return;
+  var pick = el.workspacePick;
+  var keep = currentWorkspace;
+  pick.textContent = "";
+  if (!knownWorkspaces.length) {
+    var fallback = document.createElement("option");
+    fallback.value = "";
+    fallback.textContent = "This folder";
+    pick.appendChild(fallback);
+  } else {
+    knownWorkspaces.forEach(function (w) {
+      var opt = document.createElement("option");
+      opt.value = w.id || "";
+      opt.textContent = workspaceLabel(w);
+      pick.appendChild(opt);
+    });
+  }
+  pick.value = keep;
+  if (pick.value !== keep) {
+    var missing = document.createElement("option");
+    missing.value = keep;
+    missing.textContent = keep || "This folder";
+    pick.appendChild(missing);
+    pick.value = keep;
+  }
+  if (el.workspaceRemove) {
+    var cur = knownWorkspaces.filter(function (w) { return (w.id || "") === keep; })[0];
+    el.workspaceRemove.hidden = !cur || !!cur.builtin;
+  }
+}
+
+function loadWorkspaces() {
+  return fetch("/api/workspaces")
+    .then(readJson)
+    .then(function (data) {
+      knownWorkspaces = data.workspaces || [];
+      renderWorkspacePick();
+    })
+    .catch(function () {
+      knownWorkspaces = [];
+      renderWorkspacePick();
+    });
+}
+
+function setCurrentWorkspace(id, opts) {
+  opts = opts || {};
+  currentWorkspace = id || "";
+  window.clankerWorkspace = currentWorkspace;
+  try { window.localStorage.setItem("clanker.workspace", currentWorkspace); } catch (e) {}
+  try { window.dispatchEvent(new CustomEvent("clanker-workspace", { detail: currentWorkspace })); } catch (e) {}
+  renderWorkspacePick();
+  if (opts.silent) {
+    renderSessionOptions(null);
+    return;
+  }
+  var meta = currentSessionMeta();
+  if (meta && (meta.workspace || "") !== currentWorkspace) {
+    var next = null;
+    for (var i = 0; i < knownSessions.length; i++) {
+      var s = knownSessions[i];
+      if ((s.workspace || "") === currentWorkspace && (showArchived() || !s.archived)) {
+        next = s;
+        break;
+      }
+    }
+    if (next) switchSession(next.id);
+    else if (el.newChat) el.newChat.click();
+    else renderSessionOptions(null);
+  } else {
+    renderSessionOptions(null);
+  }
 }
 
 /* Which message indices each rendered turn covers, in render order. Written
@@ -864,6 +979,10 @@ function switchSession(id, jump) {
   resetSessionMetrics();
   el.task.value = "";
   try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+  var opened = currentSessionMeta();
+  if (opened && (opened.workspace || "") !== currentWorkspace) {
+    setCurrentWorkspace(opened.workspace || "", { silent: true });
+  }
   renderSessionChip();
   renderSessionOptions(null);
   el.transcript.textContent = "";
@@ -896,14 +1015,89 @@ function switchSession(id, jump) {
 
 /* Workspaces are created by naming one: there is no separate "new folder"
    step, because a folder with nothing in it is not yet a folder. */
+if (el.workspacePick) {
+  el.workspacePick.addEventListener("change", function () {
+    setCurrentWorkspace(el.workspacePick.value || "");
+  });
+}
+if (el.workspaceNew) {
+  el.workspaceNew.addEventListener("click", function () {
+    if (!el.workspaceNewDialog) return;
+    if (el.workspaceNewName) el.workspaceNewName.value = "";
+    if (el.workspaceNewPath) el.workspaceNewPath.value = "";
+    overlayOpen(el.workspaceNewDialog, el.workspaceNewName);
+  });
+}
+if (el.workspaceNewCancel) {
+  el.workspaceNewCancel.addEventListener("click", function () {
+    if (el.workspaceNewDialog) overlayClose(el.workspaceNewDialog);
+  });
+}
+if (el.workspaceNewDialog) {
+  el.workspaceNewDialog.addEventListener("mousedown", function (e) {
+    if (e.target === el.workspaceNewDialog) overlayClose(el.workspaceNewDialog);
+  });
+}
+if (el.workspaceNewForm) {
+  el.workspaceNewForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var name = el.workspaceNewName ? el.workspaceNewName.value.trim() : "";
+    var path = el.workspaceNewPath ? el.workspaceNewPath.value.trim() : "";
+    if (!name || !path) return;
+    fetch("/api/workspaces", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name, path: path })
+    })
+      .then(readJson)
+      .then(function (data) {
+        if (el.workspaceNewDialog) overlayClose(el.workspaceNewDialog);
+        return loadWorkspaces().then(function () {
+          setCurrentWorkspace(data.id || name);
+          el.sessionStatus.textContent = "Workspace " + (data.name || name) + " ready.";
+        });
+      })
+      .catch(function (err) {
+        el.sessionStatus.textContent = "Could not create workspace: " + err.message;
+      });
+  });
+}
+if (el.workspaceRemove) {
+  el.workspaceRemove.addEventListener("click", function () {
+    var id = currentWorkspace;
+    if (!id) return;
+    var cur = knownWorkspaces.filter(function (w) { return (w.id || "") === id; })[0];
+    var label = cur ? (cur.name || id) : id;
+    uiConfirm("Remove workspace \"" + label + "\"? Its chats move back to this folder. The directory on disk is not deleted.", { confirmLabel: "Remove" }).then(function (yes) {
+      if (!yes) return;
+      fetch("/api/workspaces/" + encodeURIComponent(id), { method: "DELETE" })
+        .then(readJson)
+        .then(function () {
+          return Promise.all([loadWorkspaces(), loadSessions()]).then(function () {
+            setCurrentWorkspace("");
+            el.sessionStatus.textContent = "Removed " + label + ".";
+          });
+        })
+        .catch(function (err) {
+          el.sessionStatus.textContent = "Could not remove workspace: " + err.message;
+        });
+    });
+  });
+}
+
 el.sessionMove.addEventListener("click", function () {
   var meta = currentSessionMeta();
   if (!meta) {
     el.sessionStatus.textContent = "This conversation has no saved turns yet.";
     return;
   }
-  var existing = workspacesOf(knownSessions).filter(function (w) { return w !== ""; });
-  var hint = existing.length ? "Pick an existing one or type a new name. Leave empty for the default." : "Leave empty for the default. This will be the first workspace.";
+  var existing = knownWorkspaces.map(function (w) { return w.id || ""; }).filter(function (w) { return w !== ""; });
+  workspacesOf(knownSessions).forEach(function (w) {
+    if (w && existing.indexOf(w) === -1) existing.push(w);
+  });
+  var hint = existing.length
+    ? "Pick a workspace or type a new name. Leave empty for this folder."
+    : "Leave empty for this folder, or type a name. Use + to attach a directory.";
   textPrompt({
     title: "Move to workspace", label: "Workspace", value: meta.workspace || "",
     hint: hint, suggestions: existing
@@ -919,8 +1113,10 @@ el.sessionMove.addEventListener("click", function () {
       .then(function () {
         el.sessionStatus.textContent = next.trim()
           ? "Moved to " + next.trim() + "."
-          : "Moved to the default workspace.";
-        return loadSessions();
+          : "Moved to this folder.";
+        return Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
+          if (next.trim()) setCurrentWorkspace(next.trim(), { silent: true });
+        });
       })
       .catch(function (err) { el.sessionStatus.textContent = "Move failed: " + err.message; })
       .then(function () { el.sessionMove.disabled = false; });
@@ -1003,7 +1199,7 @@ el.sessionDelete.addEventListener("click", function () {
   // Deleting a transcript cannot be undone from here, so it is confirmed.
   // The run graphs survive it: they record runs that really happened and are
   // addressed by run id, not by session.
-  uiConfirm("Delete \"" + (meta.title || sessionId) + "\"? Its recorded runs are kept.", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
+  uiConfirm("Delete \"" + (meta.title || sessionId) + "\"? This cannot be undone. Its recorded runs are kept.", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
     if (!yes) return;
     el.sessionDelete.disabled = true;
     fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "DELETE" })
@@ -1045,12 +1241,41 @@ function syncControls() {
   document.title = busy ? "Running… · clanker" : "clanker";
 }
 
+/* The disclosure starts closed, so a checked Plan / Isolated box used to
+   vanish behind "Run shape" with no lamp on the summary. Isolated can also
+   arrive pre-checked from the server default. The summary is the only
+   control still visible, so it has to name what is on. */
+function syncRunShape() {
+  var shape = document.getElementById("run-shape");
+  if (!shape) return;
+  var summary = shape.querySelector("summary");
+  var bits = [];
+  if (el.planMode && el.planMode.checked) bits.push("Plan");
+  if (el.researchMode && el.researchMode.checked) bits.push("Research");
+  if (el.unlimitedIterations && el.unlimitedIterations.checked) bits.push("Long run");
+  if (el.worktreeMode && el.worktreeMode.checked) bits.push("Isolated");
+  if (summary) {
+    summary.textContent = bits.length ? bits.join(" · ") : "Run shape";
+    summary.title = bits.length
+      ? "This run: " + bits.join(", ") + ". Click to change."
+      : "Plan, research, long run, and isolated worktree";
+  }
+  if (bits.length) shape.setAttribute("data-active", "true");
+  else shape.removeAttribute("data-active");
+}
+
 /** Idle composer hint for plan/research toggles (matches TUI status bar labels). */
 function updateComposerModeHint() {
+  syncRunShape();
   if (busy) return;
   var parts = [];
   if (el.planMode && el.planMode.checked) parts.push("Plan mode · write tools refused");
   if (el.researchMode && el.researchMode.checked) parts.push("Research mode · web search preferred");
+  if (el.unlimitedIterations && el.unlimitedIterations.checked) parts.push("Long run · 1000-step budget");
+  if (el.worktreeMode && el.worktreeMode.checked) parts.push("Isolated worktree · shared checkout untouched");
+  if (attachImages.length) {
+    parts.push(attachImages.length + (attachImages.length === 1 ? " image attached" : " images attached"));
+  }
   el.hint.textContent = parts.join(" · ");
 }
 
@@ -1062,15 +1287,15 @@ function setBusy(next) {
 function startElapsed(startedAt) {
   stopElapsed();
   function tick() {
+    elapsedTimer = window.requestAnimationFrame(tick);
     el.hint.textContent = runWaitLabel + " · " + ((Date.now() - startedAt) / 1000).toFixed(1) + "s";
     paintRunMetrics();
   }
   tick();
-  elapsedTimer = window.setInterval(tick, 200);
 }
 
 function stopElapsed() {
-  if (elapsedTimer) { window.clearInterval(elapsedTimer); elapsedTimer = null; }
+  if (elapsedTimer) { window.cancelAnimationFrame(elapsedTimer); elapsedTimer = null; }
 }
 
 /* Mid-run steering for the chat composer (same POST /api/steer the goals
@@ -1669,6 +1894,7 @@ function renderStatus(status) {
     window.clankerWorktreeDefault = !!defaults.webui_worktree;
     if (el.worktreeMode) el.worktreeMode.checked = !!defaults.webui_worktree;
     if (el.goalWorktree) el.goalWorktree.checked = !!defaults.goal_worktree;
+    updateComposerModeHint();
   }
 }
 
@@ -1688,6 +1914,7 @@ function loadStatus() {
 var pendingImages = attachImages;
 var max_image_bytes = attachMaxBytes;
 function renderAttachments() { attachRender(el, icon, fmtBytes); }
+el.onAttachmentsChange = updateComposerModeHint;
 /* A dropped or pasted file may be an image or a video (Kimi Code parity:
    drop a screen recording and the agent watches it). Videos are sampled to
    JPEG frames by the attachments module and ride the same image path. */
@@ -1720,6 +1947,8 @@ el.task.addEventListener("input", syncControls);
 el.task.addEventListener("input", rememberDraft);
 if (el.planMode) el.planMode.addEventListener("change", updateComposerModeHint);
 if (el.researchMode) el.researchMode.addEventListener("change", updateComposerModeHint);
+if (el.unlimitedIterations) el.unlimitedIterations.addEventListener("change", updateComposerModeHint);
+if (el.worktreeMode) el.worktreeMode.addEventListener("change", updateComposerModeHint);
 // A tab closed or reloaded mid-sentence has no other chance to write.
 window.addEventListener("beforeunload", flushDraft);
 
@@ -1736,6 +1965,7 @@ window.addEventListener("beforeunload", flushDraft);
     btn.appendChild(icon(on ? "minus" : "mic", 16));
     btn.setAttribute("aria-pressed", String(on));
     btn.title = on ? "Listening (click to stop)" : "Voice input (click to start)";
+    btn.setAttribute("aria-label", btn.title);
     el.task.placeholder = on ? "Listening…" : "Describe the task, / for prompts";
   }
   btn.addEventListener("click", function(){
@@ -1816,10 +2046,30 @@ function resetSessionMetrics() {
 
 function paintRunMetrics() {
   if (!el.runMetrics) return;
-  var line = formatRunMetrics(sessionMetrics, Date.now());
-  el.runMetrics.textContent = line;
-  el.runMetrics.hidden = !line;
+  var parts = formatRunMetricsParts(sessionMetrics, Date.now());
+  el.runMetrics.hidden = !parts.length;
   el.runMetrics.setAttribute("aria-live", sessionMetrics.live ? "off" : "polite");
+  el.runMetrics.title = "This visit only. Reloading or opening another conversation clears these numbers.";
+  if (!parts.length) {
+    el.runMetrics.textContent = "";
+    return;
+  }
+  var cells = [{ key: "scope", text: "This visit" }].concat(parts);
+  var kids = el.runMetrics.children;
+  if (kids.length !== cells.length) {
+    el.runMetrics.textContent = "";
+    cells.forEach(function (p) {
+      var s = document.createElement("span");
+      s.className = "run-metrics-cell" + (p.key === "scope" ? " run-metrics-scope" : "");
+      s.setAttribute("data-m", p.key);
+      s.textContent = p.text;
+      el.runMetrics.appendChild(s);
+    });
+    return;
+  }
+  for (var i = 0; i < cells.length; i++) {
+    if (kids[i].textContent !== cells[i].text) kids[i].textContent = cells[i].text;
+  }
 }
 
 function setStatusGoal(goalId) {
@@ -1939,6 +2189,10 @@ el.form.addEventListener("submit", function (e) {
       else if (evt.type === "ask") { addAskEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "confirm") { addConfirmEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + errorRecoveryHint(evt.message) + "]\n", true); setTurnPhase(turn, ""); pushLiveNode("tool", evt.message, "error", 0); }
+      else if (evt.type === "usage") {
+        applyLiveUsage(sessionMetrics, evt);
+        paintRunMetrics();
+      }
       else if (evt.type === "done") {
         renderStats(turn, evt, task);
         applyDoneStats(sessionMetrics, evt);
@@ -1952,8 +2206,9 @@ el.form.addEventListener("submit", function (e) {
     var stick = nearBottom();
     if (sessionMetrics.live && sessionMetrics.liveTtftMs == null) {
       noteFirstToken(sessionMetrics, Date.now());
-      paintRunMetrics();
     }
+    if (sessionMetrics.live) noteLiveChars(sessionMetrics, line.length + 1);
+    paintRunMetrics();
     appendText(turn, line + "\n", false);
     // live markdown: throttled incremental render while streaming
     if (!turn._mdThrottle) { turn._mdThrottle = 0; turn._lastMD = ""; }
@@ -1996,7 +2251,8 @@ el.form.addEventListener("submit", function (e) {
       research: isResearch,
       max_iterations: noLimit ? 1000 : null,
       worktree: !!(el.worktreeMode && el.worktreeMode.checked),
-      knowledge: (typeof kbSelected !== "undefined" ? kbSelected.slice() : [])
+      knowledge: (typeof kbSelected !== "undefined" ? kbSelected.slice() : []),
+      workspace: currentWorkspace || ""
     }),
     signal: controller.signal
   }).then(function (resp) {
@@ -2123,7 +2379,31 @@ function renderRunOptions(filterText) {
     closeNodeDetail();
     var none = document.createElement("p");
     none.className = "run-empty";
-    none.textContent = q ? "No recorded runs match “" + filterText.trim() + "”." : "No runs recorded yet. Run a task and it appears here.";
+    if (q) {
+      none.appendChild(document.createTextNode("No recorded runs match “" + filterText.trim() + "”. "));
+      var clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "secondary";
+      clear.textContent = "Clear filter";
+      clear.addEventListener("click", function () {
+        el.runFilter.value = "";
+        el.runFilter.dispatchEvent(new Event("input", { bubbles: true }));
+        el.runFilter.focus();
+      });
+      none.appendChild(clear);
+    } else {
+      none.appendChild(document.createTextNode("No runs recorded yet. Start a task in Chat and it appears here. "));
+      var go = document.createElement("button");
+      go.type = "button";
+      go.className = "primary";
+      go.textContent = "Open Chat";
+      go.addEventListener("click", function () {
+        var tab = document.getElementById("tab-chat");
+        if (tab) tab.click();
+        else showView("chat", true);
+      });
+      none.appendChild(go);
+    }
     el.runGraph.appendChild(none);
     announceRunMatches(q, 0);
     return null;
@@ -3219,6 +3499,7 @@ function renderChatSidebarList(container, list, icon) {
     var name = document.createElement("span");
     name.className = "slack-room-name";
     name.textContent = chatRoomLabel(r).replace(/^[#@]/, "");
+    name.title = name.textContent;
     row.appendChild(name);
     /* Unread indicator: bold name + dot when room has unread messages */
     var hasUnread = _roomHasUnread(r) && el.chatRoom.value !== r.room;
@@ -3285,9 +3566,10 @@ function renderChatRooms(rooms) {
   var empty = options.length === 0;
   el.chatRoom.disabled = empty;
   el.chatText.disabled = empty;
-  el.chatSend.disabled = empty;
+  syncChatSend();
   if (empty) {
     el.chatStatus.textContent = "No rooms yet. Add [chat.rooms] in config.toml or use --serve-as to peer.";
+    showRoomsComposerLocked("No channels yet. Create one to start talking, or add rooms in config.toml.", true);
     return null;
   }
   var wanted = Array.prototype.some.call(options, function (o) { return o.value === previous; })
@@ -3298,6 +3580,14 @@ function renderChatRooms(rooms) {
 
 var roomTopics = {};
 function loadChatRooms() {
+  if (el.chatRoomsItems && !el.chatRoomsItems.querySelector(".slack-room-item")) {
+    el.chatRoomsItems.textContent = "";
+    var loading = document.createElement("p");
+    loading.className = "meta slack-room-loading";
+    loading.textContent = "Loading channels…";
+    el.chatRoomsItems.appendChild(loading);
+  }
+  if (el.chatStatus) el.chatStatus.textContent = "Loading channels…";
   return fetch("/api/chat/rooms")
     .then(readJson)
     .then(function (data) {
@@ -3310,9 +3600,79 @@ function loadChatRooms() {
     .catch(function (err) {
       el.chatRoom.disabled = true;
       el.chatText.disabled = true;
-      el.chatSend.disabled = true;
+      syncChatSend();
       el.chatStatus.textContent = "Could not load rooms: " + err.message;
+      if (el.chatRoomsItems && !el.chatRoomsItems.querySelector(".slack-room-item")) {
+        el.chatRoomsItems.textContent = "";
+        var fail = document.createElement("p");
+        fail.className = "meta";
+        fail.appendChild(document.createTextNode("Could not load channels. "));
+        var retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "secondary";
+        retry.textContent = "Try again";
+        retry.addEventListener("click", function () { loadChatRooms(); });
+        fail.appendChild(retry);
+        el.chatRoomsItems.appendChild(fail);
+      }
+      showRoomsComposerLocked("Could not load rooms: " + err.message, false);
     });
+}
+
+function showRoomsComposerLocked(message, offerCreate) {
+  if (el.chatChannelTitle) el.chatChannelTitle.textContent = offerCreate ? "No channels" : "Channels unavailable";
+  if (el.chatChannelTopic) {
+    el.chatChannelTopic.textContent = "";
+    el.chatChannelTopic.classList.remove("is-placeholder");
+    el.chatChannelTopic.onclick = null;
+  }
+  if (el.chatText) el.chatText.placeholder = offerCreate
+    ? "Create a channel to send a message"
+    : "Retry loading channels to send a message";
+  if (!el.chatLog) return;
+  el.chatLog.textContent = "";
+  var box = document.createElement("div");
+  box.className = "run-empty";
+  var p = document.createElement("p");
+  p.textContent = message;
+  box.appendChild(p);
+  if (offerCreate && el.chatCreateRoomBtn) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "primary";
+    btn.textContent = "Create a channel";
+    btn.addEventListener("click", function () { el.chatCreateRoomBtn.click(); });
+    box.appendChild(btn);
+  } else {
+    var retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "secondary";
+    retry.textContent = "Try again";
+    retry.addEventListener("click", function () { loadChatRooms(); });
+    box.appendChild(retry);
+  }
+  el.chatLog.appendChild(box);
+}
+
+function syncChatLogEmpty(room) {
+  if (!el.chatLog) return;
+  var existing = document.getElementById("chat-log-empty");
+  if (el.chatLog.querySelector(".chat-msg")) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (el.chatRoom && el.chatRoom.disabled) return;
+  var who = room || (el.chatRoom && el.chatRoom.value) || "";
+  var msg = isDm(who)
+    ? "No messages with " + dmPartner(who) + " yet. Write the first one below."
+    : (who ? "No messages in #" + who + " yet. Write the first one below."
+      : "No messages in this room yet. Write the first one below.");
+  if (existing) { existing.textContent = msg; return; }
+  var box = document.createElement("div");
+  box.id = "chat-log-empty";
+  box.className = "run-empty";
+  box.textContent = msg;
+  el.chatLog.appendChild(box);
 }
 
 var _chatUnreadCutoff = 0;   /* ts before which msgs are "read" (for divider) */
@@ -3321,6 +3681,11 @@ function openChatRoom(room) {
   _chatUnreadCutoff = _chatReadTimestamps[room] || 0;
   _markRoomRead(room);
   el.chatLog.textContent = "";
+  var loading = document.createElement("p");
+  loading.id = "chat-log-empty";
+  loading.className = "run-empty";
+  loading.textContent = "Loading messages…";
+  el.chatLog.appendChild(loading);
   chatLastTs = 0;
   chatSeen = {};
   chatSeenOrder = [];
@@ -3328,7 +3693,7 @@ function openChatRoom(room) {
   _lastChatFrom = null; _lastChatTs = 0; _lastChatDay = "";
   chatBackoff = chat_poll_base_ms;
   el.chatText.disabled = false;
-  el.chatSend.disabled = false;
+  syncChatSend();
   el.chatText.placeholder = isDm(room) ? "Message " + dmPartner(room) + "…" : "Message " + room + "…";
   // Channel header: title + topic (click to set/change). DMs get no topic —
   // it is a per-channel concept, and a DM has nothing to name.
@@ -3337,6 +3702,7 @@ function openChatRoom(room) {
     // An empty topic still needs something on screen to click, or a topic
     // could never be set the first time.
     el.chatChannelTopic.textContent = roomTopics[room] || (isDm(room) ? "" : "Add a topic");
+    el.chatChannelTopic.title = roomTopics[room] || (isDm(room) ? "" : "Set a topic for this channel");
     el.chatChannelTopic.classList.toggle("is-placeholder", !roomTopics[room] && !isDm(room));
     el.chatChannelTopic.onclick = isDm(room) ? null : function () {
       uiPrompt("Set channel topic for #" + room, roomTopics[room] || "", { maxlength: 1024 }).then(function (newTopic) {
@@ -3347,6 +3713,7 @@ function openChatRoom(room) {
           if (d.ok) {
             roomTopics[room] = newTopic;
             el.chatChannelTopic.textContent = newTopic || "Add a topic";
+            el.chatChannelTopic.title = newTopic || "Set a topic for this channel";
             el.chatChannelTopic.classList.toggle("is-placeholder", !newTopic);
           }
         }).catch(function () {});
@@ -3363,14 +3730,16 @@ function openChatRoom(room) {
   // A room switch invalidates whatever the pins/search panels were showing.
   if (el.chatPinsPanel && !el.chatPinsPanel.hidden) loadChatPins(room);
   if (el.chatSearchBar && !el.chatSearchBar.hidden) el.chatSearchResults.textContent = "";
-  // Opening a room fills the log with its history, and a live region would
-  // read every one of those out as if it had just arrived. Announcements
-  // start once the backlog is in place.
-  el.chatLog.setAttribute("aria-live", "off");
+  // Phone: the channel drawer sits over the transcript and covers the
+  // header toggle. Picking a room has to put the messages in front.
+  setRoomsSidebarOpen(false, true);
+  // History must not dump into a live region. Announce only arrivals after
+  // the backlog is on screen, and only through #chat-status.
+  _chatAnnounce = false;
   return joinIfNeeded(room)
     .then(function () { return pollChat(room); })
     .then(function () {
-      el.chatLog.setAttribute("aria-live", "polite");
+      _chatAnnounce = true;
       startChatPoll(room);
     });
 }
@@ -3398,6 +3767,14 @@ function joinIfNeeded(room) {
    one-second resolution, and `after` is inclusive of neither side reliably
    once that happens. */
 var lastSeenAt = {};
+var _chatAnnounce = false;
+function announceChatArrival(fresh) {
+  if (!_chatAnnounce || !fresh || !fresh.length || !el.chatStatus) return;
+  var last = fresh[fresh.length - 1];
+  var who = last.from || "someone";
+  var text = String(last.text || "").replace(/\s+/g, " ").trim();
+  el.chatStatus.textContent = who + (text ? ": " + text.slice(0, 80) : " sent a message");
+}
 function ingestChatMessages(messages) {
   var fresh = (messages || []).filter(function (m) { return m && !chatSeen[chatMessageKey(m)]; }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
   if (!el.chatLog) return;
@@ -3422,7 +3799,9 @@ function ingestChatMessages(messages) {
     el.chatLog.appendChild(node);
   });
   _chatUnreadCutoff = 0;
+  announceChatArrival(fresh);
   if (fresh.length && following) el.chatLog.scrollTop = el.chatLog.scrollHeight;
+  syncChatLogEmpty(el.chatRoom && el.chatRoom.value);
 }
 function pollChat(room) {
   return fetch("/api/chat/messages?room=" + encodeURIComponent(room) + "&after=" + chatLastTs)
@@ -3467,7 +3846,9 @@ function pollChat(room) {
       /* Consumed — subsequent poll batches should not re-insert the divider */
       _chatUnreadCutoff = 0;
       // presence dot freshness handled via CSS only — timestamps already in lastSeenAt for future use
+      announceChatArrival(fresh);
       if (fresh.length && following) el.chatLog.scrollTop = el.chatLog.scrollHeight;
+      syncChatLogEmpty(room);
     })
     .catch(function (err) {
       // Backs off rather than giving up. Stopping outright meant one
@@ -3478,6 +3859,10 @@ function pollChat(room) {
       chatBackoff = Math.min(chatBackoff * 3, chat_poll_max_ms);
       el.chatStatus.textContent = "Could not load messages: " + err.message +
         " — retrying in " + Math.round(chatBackoff / 1000) + "s.";
+      var empty = document.getElementById("chat-log-empty");
+      if (empty && !el.chatLog.querySelector(".chat-msg")) {
+        empty.textContent = "Could not load messages. Retrying…";
+      }
     });
 }
 
@@ -3820,7 +4205,7 @@ function buildChatMessage(m) {
   var copyBtn = document.createElement("button");
   copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy"; upgradePfButton(copyBtn);
   copyBtn.setAttribute("aria-label", "Copy message");
-  copyBtn.addEventListener("click", function(e){ e.stopPropagation(); try{ navigator.clipboard.writeText(m.text); }catch(_){} });
+  copyBtn.addEventListener("click", function(e){ e.stopPropagation(); copyText(m.text, copyBtn, "Copy", text); });
   actions.appendChild(copyBtn);
   if (canAct) EMOJIS.forEach(function(emoji){
     var b=document.createElement("button"); b.type="button"; b.className="secondary"; b.textContent=emoji; upgradePfButton(b); b.title="React "+emoji;
@@ -3840,14 +4225,17 @@ function buildChatMessage(m) {
         body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
       }).then(function(r){ return r.json(); }).then(function(d){
         if(d.ok) pollChat(el.chatRoom.value);
-      }).catch(function(){});
+        else if (el.chatStatus) el.chatStatus.textContent = "Could not pin that message.";
+      }).catch(function(err){
+        if (el.chatStatus) el.chatStatus.textContent = "Could not pin: " + (err && err.message ? err.message : "request failed");
+      });
     });
     actions.appendChild(pinBtn);
   }
   // Edit + Delete only for own messages
   if (m.from === instanceName && canAct) {
     var editBtn = document.createElement("button");
-    editBtn.type = "button"; editBtn.className = "secondary"; editBtn.textContent = "✏️"; upgradePfButton(editBtn); editBtn.title = "Edit message";
+    editBtn.type = "button"; editBtn.className = "secondary"; editBtn.textContent = "Edit"; upgradePfButton(editBtn); editBtn.title = "Edit message";
     editBtn.setAttribute("aria-label", "Edit message");
     editBtn.addEventListener("click", function(e){ e.stopPropagation();
       var cur = text.childNodes[0] ? text.childNodes[0].textContent || text.textContent : m.text;
@@ -3861,8 +4249,14 @@ function buildChatMessage(m) {
           }).then(function(r){ return r.json(); }).then(function(d){
             if(d.ok){ m.text = v; m.edited = true; text.textContent = v;
               var ed = document.createElement("span"); ed.className="chat-edited"; ed.textContent=" (edited)"; text.appendChild(ed);
-            } else { text.textContent = m.text; }
-          }).catch(function(){ text.textContent = m.text; });
+            } else {
+              text.textContent = m.text;
+              if (el.chatStatus) el.chatStatus.textContent = "Could not save the edit.";
+            }
+          }).catch(function(err){
+            text.textContent = m.text;
+            if (el.chatStatus) el.chatStatus.textContent = "Could not save the edit: " + (err && err.message ? err.message : "request failed");
+          });
         } else { text.textContent = m.text; if(m.edited){
           var ed2 = document.createElement("span"); ed2.className="chat-edited"; ed2.textContent=" (edited)"; text.appendChild(ed2); }}
       }
@@ -3872,7 +4266,7 @@ function buildChatMessage(m) {
     });
     actions.appendChild(editBtn);
     var delBtn = document.createElement("button");
-    delBtn.type = "button"; delBtn.className = "secondary"; delBtn.textContent = "🗑️"; upgradePfButton(delBtn); delBtn.title = "Delete message";
+    delBtn.type = "button"; delBtn.className = "secondary danger"; delBtn.textContent = "Delete"; upgradePfButton(delBtn); delBtn.title = "Delete message";
     delBtn.setAttribute("aria-label", "Delete message");
     delBtn.addEventListener("click", function(e){ e.stopPropagation();
       uiConfirm("Delete this message?", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
@@ -3881,7 +4275,10 @@ function buildChatMessage(m) {
           body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
         }).then(function(r){ return r.json(); }).then(function(d){
           if(d.ok) { wrap.classList.add("chat-msg-deleted"); text.textContent = "[This message was deleted]"; text.classList.add("chat-deleted"); }
-        }).catch(function(){});
+          else if (el.chatStatus) el.chatStatus.textContent = "Could not delete that message.";
+        }).catch(function(err){
+          if (el.chatStatus) el.chatStatus.textContent = "Could not delete: " + (err && err.message ? err.message : "request failed");
+        });
       });
     });
     actions.appendChild(delBtn);
@@ -3965,9 +4362,33 @@ el.chatRefresh.addEventListener("click", function () {
 //      emoji picker, create-channel. All thin wrappers over state and
 //      endpoints the message-level code above already uses. ----
 
+function roomsSidebarIsPhone() {
+  return !!(window.matchMedia && window.matchMedia("(max-width: 48rem)").matches);
+}
+
+function setRoomsSidebarOpen(open, phoneOnly) {
+  if (!el.chatSidebar) return;
+  if (phoneOnly && !roomsSidebarIsPhone()) return;
+  el.chatSidebar.classList.toggle("is-collapsed", !open);
+  if (el.chatSidebarToggle) {
+    el.chatSidebarToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    el.chatSidebarToggle.setAttribute("aria-label", open ? "Hide channels" : "Show channels");
+  }
+}
+
 if (el.chatSidebarToggle) el.chatSidebarToggle.addEventListener("click", function () {
-  el.chatSidebar.classList.toggle("is-collapsed");
+  setRoomsSidebarOpen(el.chatSidebar.classList.contains("is-collapsed"), false);
 });
+
+var chatSidebarScrim = document.getElementById("chat-sidebar-scrim");
+if (chatSidebarScrim) chatSidebarScrim.addEventListener("click", function () {
+  setRoomsSidebarOpen(false, true);
+});
+
+// First paint on a phone: start closed so the transcript is not under the
+// drawer. Opening the view then picking a channel still closes it.
+if (roomsSidebarIsPhone()) setRoomsSidebarOpen(false, true);
+else setRoomsSidebarOpen(true, false);
 
 // Group headers (Channels / Direct Messages) fold their own items away —
 // .slack-room-group.is-collapsed hides .slack-room-items via CSS.
@@ -3980,12 +4401,40 @@ Array.prototype.forEach.call(document.querySelectorAll(".slack-room-group-head")
 
 if (el.chatRoomFilter) el.chatRoomFilter.addEventListener("input", function () {
   var q = el.chatRoomFilter.value.trim().toLowerCase();
+  var shown = 0;
   [el.chatRoomsItems, el.chatDmsItems].forEach(function (list) {
     if (!list) return;
     Array.prototype.forEach.call(list.querySelectorAll(".slack-room-item"), function (row) {
-      row.hidden = q.length > 0 && row.textContent.toLowerCase().indexOf(q) === -1;
+      var hide = q.length > 0 && row.textContent.toLowerCase().indexOf(q) === -1;
+      row.hidden = hide;
+      if (!hide) shown += 1;
     });
   });
+  var host = document.getElementById("chat-room-list");
+  var note = document.getElementById("chat-room-filter-empty");
+  if (q && !shown) {
+    if (!note && host) {
+      note = document.createElement("p");
+      note.id = "chat-room-filter-empty";
+      note.className = "run-empty";
+      host.appendChild(note);
+    }
+    if (note) {
+      note.textContent = "";
+      note.appendChild(document.createTextNode("No channel matches “" + el.chatRoomFilter.value.trim() + "”. "));
+      var clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "secondary";
+      clear.textContent = "Clear filter";
+      clear.addEventListener("click", function () {
+        el.chatRoomFilter.value = "";
+        el.chatRoomFilter.dispatchEvent(new Event("input", { bubbles: true }));
+        el.chatRoomFilter.focus();
+      });
+      note.appendChild(clear);
+      note.hidden = false;
+    }
+  } else if (note) note.hidden = true;
 });
 
 function closeChatPins() { if (el.chatPinsPanel) el.chatPinsPanel.hidden = true; }
@@ -4077,7 +4526,7 @@ if (el.chatSearchInput) el.chatSearchInput.addEventListener("input", function ()
         el.chatSearchResults.textContent = "";
         if (!hits.length) {
           var empty = document.createElement("p");
-          empty.textContent = "No matches.";
+          empty.textContent = "No messages mention “" + q + "”.";
           el.chatSearchResults.appendChild(empty);
           return;
         }
@@ -4116,6 +4565,7 @@ if (el.chatEmojiBtn && el.chatEmojiPicker) {
         el.chatText.focus();
         el.chatText.selectionStart = el.chatText.selectionEnd = start + emoji.length;
         el.chatEmojiPicker.hidden = true;
+        syncChatSend();
       });
       el.chatEmojiPicker.appendChild(b);
     });
@@ -4134,6 +4584,13 @@ if (el.chatCreateRoomBtn && el.chatCreateDialog) {
     el.chatCreateDialog.showModal();
     el.chatNewRoomName.focus();
   });
+  if (el.chatNewRoomName) {
+    el.chatNewRoomName.addEventListener("input", function () {
+      var v = el.chatNewRoomName.value;
+      var next = v.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9_\-]/g, "");
+      if (next !== v) el.chatNewRoomName.value = next;
+    });
+  }
   if (el.chatCreateCancel) el.chatCreateCancel.addEventListener("click", function () { el.chatCreateDialog.close(); });
   el.chatCreateDialog.addEventListener("close", function () {
     if (el.chatCreateDialog.returnValue !== "ok") return;
@@ -4142,12 +4599,21 @@ if (el.chatCreateRoomBtn && el.chatCreateDialog) {
     fetch("/api/chat/subscribe", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ room: name, on: true })
     }).then(function (r) { return r.json(); }).then(function (d) {
-      if (!d.ok) { el.chatStatus.textContent = "Could not create channel: " + (d.error || "unknown error"); return; }
+      if (!d.ok) {
+        var fail = "Could not create channel: " + (d.error || "unknown error");
+        el.chatStatus.textContent = fail;
+        uiToast(fail);
+        return;
+      }
       loadChatRooms().then(function () {
         el.chatRoom.value = name;
         openChatRoom(name);
       });
-    }).catch(function (err) { el.chatStatus.textContent = "Could not create channel: " + err.message; });
+    }).catch(function (err) {
+      var fail = "Could not create channel: " + err.message;
+      el.chatStatus.textContent = fail;
+      uiToast(fail);
+    });
   });
 }
 
@@ -4177,71 +4643,29 @@ el.chatText.addEventListener("input", function(){
   setTyping(true);
   if(typingTimer) clearTimeout(typingTimer);
   typingTimer = setTimeout(function(){ if(Date.now()-typingAt >= 1800) setTyping(false); }, 2000);
+  syncChatSend();
 });
 
-/* ── Ctrl+K / Cmd+K: Quick channel switcher (Slack-style) ── */
-document.addEventListener("keydown", function(e){
-  if ((e.ctrlKey || e.metaKey) && e.key === "k") {
-    /* Only intercept when the chat view is visible */
-    var chatView = document.getElementById("view-rooms");
-    if (!chatView || chatView.hidden) return;
-    e.preventDefault();
-    var existing = document.getElementById("slack-quick-switch");
-    if (existing) { existing.remove(); return; }
-    var overlay = document.createElement("div");
-    overlay.id = "slack-quick-switch";
-    overlay.style.cssText = "position:fixed;inset:0;z-index:100;display:flex;align-items:flex-start;justify-content:center;padding-top:20vh;background:rgba(0,0,0,.5);";
-    var box = document.createElement("div");
-    box.style.cssText = "background:var(--surface);border:1px solid var(--rule);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.3);width:480px;max-width:90vw;overflow:hidden;";
-    var input = document.createElement("input");
-    input.type = "text"; input.placeholder = "Switch to channel or DM…";
-    input.style.cssText = "width:100%;padding:0.75rem 1rem;border:none;background:transparent;color:var(--fg);font-size:15px;outline:none;";
-    var results = document.createElement("div");
-    results.style.cssText = "max-height:300px;overflow-y:auto;";
-    box.appendChild(input);
-    box.appendChild(results);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-    input.focus();
-
-    function renderResults(filter) {
-      results.textContent = "";
-      var opts = Array.from(el.chatRoom.options);
-      var filtered = opts.filter(function(o){ return !filter || o.value.toLowerCase().indexOf(filter.toLowerCase()) !== -1; });
-      filtered.forEach(function(o){
-        var btn = document.createElement("button");
-        btn.type = "button";
-        btn.style.cssText = "display:block;width:100%;text-align:left;padding:0.5rem 1rem;border:none;background:none;color:var(--fg);font-size:14px;cursor:pointer;";
-        var isDM = o.value.indexOf("dm:") === 0;
-        btn.textContent = (isDM ? "@ " : "# ") + chatRoomLabel(o.value);
-        btn.addEventListener("mouseenter", function(){ btn.style.background = "var(--surface-hover)"; });
-        btn.addEventListener("mouseleave", function(){ btn.style.background = "none"; });
-        btn.addEventListener("click", function(){
-          el.chatRoom.value = o.value;
-          openChatRoom(o.value);
-          overlay.remove();
-        });
-        results.appendChild(btn);
-      });
-    }
-    renderResults("");
-    input.addEventListener("input", function(){ renderResults(input.value); });
-    input.addEventListener("keydown", function(ev){
-      if (ev.key === "Escape") { overlay.remove(); ev.stopPropagation(); }
-      if (ev.key === "Enter") {
-        var first = results.querySelector("button");
-        if (first) first.click();
-      }
-    });
-    overlay.addEventListener("click", function(ev){ if (ev.target === overlay) overlay.remove(); });
-  }
-});
+/* Ctrl+K is the Jump palette on every view. Rooms used to spawn a second
+   overlay here; both listeners fired, so the switcher stacked on Jump.
+   Filter channels in #chat-room-filter instead. */
 el.chatText.addEventListener("keydown", function(e){
   if (e.key === "@" || (e.key.length === 1 && el.chatText.value.slice(-1) === "@")) {
     var peers = (knownPeers || []).map(function(p){ return p.name || p; }).join(", ");
     if (peers) el.chatStatus.textContent = "Mention: @" + (peers.split(",")[0].trim()) + (peers.indexOf(",") !== -1 ? " — also: " + peers.split(",").slice(1,2).join("") + "…" : "");
   }
 });
+var chatSending = false;
+function syncChatSend() {
+  if (!el.chatSend || !el.chatText) return;
+  var noRoom = !el.chatRoom || el.chatRoom.disabled || !el.chatRoom.value;
+  var empty = !el.chatText.value.trim();
+  el.chatSend.disabled = chatSending || noRoom || el.chatText.disabled || empty;
+  var hint = noRoom ? "Pick a channel first" : (empty ? "Write a message first" : "Send");
+  el.chatSend.title = hint;
+  el.chatSend.setAttribute("aria-label", hint);
+}
+
 el.chatForm.addEventListener("submit", function (e) {
   e.preventDefault();
   var text = el.chatText.value.trim();
@@ -4265,7 +4689,8 @@ el.chatForm.addEventListener("submit", function (e) {
     el.chatStatus.textContent = "Message is " + bytes + " bytes; the limit is " + chat_max_bytes + ".";
     return;
   }
-  el.chatSend.disabled = true;
+  chatSending = true;
+  syncChatSend();
   // /api/chat/send, not /api/chat/message: the latter is the inbound
   // endpoint peers post to, which only logs rooms this instance has already
   // joined. Sending appends locally and fans out to every peer, and joins
@@ -4280,7 +4705,8 @@ el.chatForm.addEventListener("submit", function (e) {
   }).catch(function (err) {
     el.chatStatus.textContent = "Could not send: " + err.message;
   }).finally(function () {
-    el.chatSend.disabled = false;
+    chatSending = false;
+    syncChatSend();
     el.chatText.focus();
   });
 });
@@ -4305,11 +4731,8 @@ function loadUsage() {
     .then(readJson)
     .then(function (data) { renderUsage(data.stats || []); })
     .catch(function (err) {
-      el.usage.textContent = "";
-      var p = document.createElement("p");
-      p.className = "usage-empty";
-      p.textContent = "Could not load usage: " + err.message;
-      el.usage.appendChild(p);
+      var msg = "Could not load usage: " + err.message;
+      showLoadError(el.usage, msg, loadUsage);
     });
 }
 
@@ -4479,11 +4902,32 @@ function parseRunsHash(hash){
   var id=""; try{ id=decodeURIComponent(idPart);}catch(_){ id=idPart; }
   return { id: id, search: params.search||"", kind: params.kind||"", node: params.node||"" };
 }
+function persistRailFolds() {
+  var data = {};
+  document.querySelectorAll("details.rail-fold[id]").forEach(function (d) {
+    data[d.id] = !!d.open;
+  });
+  try { window.localStorage.setItem("clanker.railFolds", JSON.stringify(data)); } catch (e) {}
+}
+
+function restoreRailFolds() {
+  var raw;
+  try { raw = JSON.parse(window.localStorage.getItem("clanker.railFolds") || "null"); } catch (e) { return; }
+  if (!raw || typeof raw !== "object") return;
+  document.querySelectorAll("details.rail-fold[id]").forEach(function (d) {
+    if (Object.prototype.hasOwnProperty.call(raw, d.id)) d.open = !!raw[d.id];
+  });
+}
+
 function syncRailFolds(name) {
   var tab = document.getElementById("tab-" + name);
   var fold = tab && tab.closest ? tab.closest("details.rail-fold") : null;
   if (fold) fold.open = true;
 }
+
+document.querySelectorAll("details.rail-fold[id]").forEach(function (d) {
+  d.addEventListener("toggle", persistRailFolds);
+});
 
 function showView(name, focusPanel) {
   // Goals and board are one workflow now. Keep old bookmarks working while
@@ -4579,38 +5023,7 @@ function showView(name, focusPanel) {
     if (viewLoaded.runs) { openRun(deepRun); if (deepNode) setTimeout(function(){ try{ var n = el.runGraph.querySelector('.run-node[data-label="' + CSS.escape(deepNode) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); }
     else pendingRunId = deepRun;
   }
-  if (pendingKnowledgeId) {
-    setTimeout(function(){
-      try {
-        kbLoad().then(function(){
-          try {
-            // Reuse the same path as Knowledge Open button: populate detail via API
-            fetch("/api/knowledge/"+encodeURIComponent(pendingKnowledgeId)).then(function(r){ return r.json(); }).then(function(d){
-              var detail = document.getElementById("knowledge-detail");
-              if (!detail) return;
-              detail.hidden = false;
-              detail.textContent = "";
-              var head = document.createElement("div"); head.className = "run-detail-head";
-              var tt = document.createElement("span"); tt.className = "run-detail-title"; tt.textContent = d.title || pendingKnowledgeId; head.appendChild(tt);
-              var close = document.createElement("button"); close.type="button"; close.className="secondary"; close.textContent="Close"; upgradePfButton(close);
-              close.addEventListener("click", function(){ detail.hidden = true; }); head.appendChild(close);
-              detail.appendChild(head);
-              if (d.description) { var desc=document.createElement("p"); desc.className="meta"; desc.textContent=d.description; detail.appendChild(desc); }
-              var docs = d.docs || [];
-              if (!docs.length) { var empty=document.createElement("p"); empty.className="meta"; empty.textContent="No documents yet."; detail.appendChild(empty); }
-              else docs.forEach(function(doc){
-                var row=document.createElement("div"); row.className="knowledge-doc";
-                var dn=document.createElement("span"); dn.textContent=doc.name+" ("+doc.bytes+" bytes)"; row.appendChild(dn);
-                var pre=document.createElement("pre"); pre.className="knowledge-preview"; pre.textContent=(doc.content||"").slice(0,800); row.appendChild(pre);
-                detail.appendChild(row);
-              });
-              try { detail.scrollIntoView({behavior:"smooth", block:"nearest"}); } catch(_){}
-            }).catch(function(){});
-          } catch(_){}
-        }).catch(function(){});
-      } catch(_){}
-    }, 450);
-  }
+  if (pendingKnowledgeId && viewLoaded.knowledge) kbLoad();
   if (pendingBoardCard) {
     // need board loaded first — defer until after viewLoaders[board] would have fired, then poll
     var tries = 0;
@@ -4738,7 +5151,7 @@ function syncScrollButton() { scrollSyncButton(el.transcript, el.scrollBottom, s
 uiAdd(el.scrollBottom, icon("deposit", 14));
 el.submit.textContent = "";
 uiAdd(el.submit, icon("arrowUp", 16), document.createTextNode("Run"));
-uiAdd(el.cancel, icon("stop", 14));
+uiAdd(el.cancel, icon("stop", 14), document.createTextNode("Stop"));
 el.scrollBottom.addEventListener("click", function () {
   scrollChatLatest(prefersReducedMotion() ? "auto" : "smooth");
   el.task.focus();
@@ -5210,14 +5623,14 @@ bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: f
       var fr = new FileReader();
       fr.onload = function(){
         var text = String(fr.result || "");
-        var parsed = null; try { parsed = JSON.parse(text); } catch(e){ uiConfirm("Not valid JSON: "+e.message); return; }
+        var parsed = null; try { parsed = JSON.parse(text); } catch(e){ uiToast("Not valid JSON: "+e.message); return; }
         // Accept {messages:[{role,content}]} or {conversations:[...]} or bare array
         var msgs = null; var title = "";
         if (Array.isArray(parsed)) msgs = parsed;
         else if (parsed && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
         else if (parsed && Array.isArray(parsed.conversations) && parsed.conversations[0]) { var c = parsed.conversations[0]; msgs = c.messages || c.mapping && Object.values(c.mapping).map(function(v){ var m=v.message; return m?{role:m.author&&m.author.role,content:(m.content&&m.content.parts&&m.content.parts[0])||m.content} : null; }).filter(Boolean) || []; title = c.title || ""; }
         else if (parsed && parsed.id && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
-        if (!msgs || !msgs.length){ uiConfirm("No messages found in file. Expected {messages:[{role,content}]} or an array of messages."); return; }
+        if (!msgs || !msgs.length){ uiToast("No messages found in file. Expected {messages:[{role,content}]} or an array of messages."); return; }
         // Normalize to StoredMessage shape the server expects
         var norm = msgs.map(function(m){
           var role = (m.role==="assistant"||m.role==="assistant") ? "assistant" : (m.role==="user"?"user":String(m.role||"user"));
@@ -5225,14 +5638,14 @@ bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: f
           if (role!=="user" && role!=="assistant") role="user";
           return { role: role, content: content };
         }).filter(function(m){ return m.content && m.content.trim(); });
-        if (!norm.length){ uiConfirm("No importable messages."); return; }
+        if (!norm.length){ uiToast("No importable messages."); return; }
         fetch("/api/sessions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ import_chat: true, title: title || ("imported "+new Date().toLocaleString()), messages: norm }) })
           .then(function(r){ return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; }); })
           .then(function(d){
             el.sessionStatus.textContent = "Imported.";
             if (d.id){ sessionId = d.id; try{ window.localStorage.setItem("clanker.session", sessionId); }catch(_){} renderSessionChip(); }
             return loadSessions();
-          }).catch(function(err){ uiConfirm("Import failed: "+err.message); });
+          }).catch(function(err){ uiToast("Import failed: "+err.message); });
       };
       fr.readAsText(f);
     });
@@ -5277,7 +5690,16 @@ el.logsRefresh.addEventListener("click", function () { loadLogList(); });
       fetch("/api/providers").then(function(r){ return r.json(); }).catch(function(){ return null; })
     ]).then(function(vals){
       var runs=vals[0]||[]; progHist.textContent="";
-      if(!runs.length){ var p=document.createElement("p"); p.className="run-empty"; p.textContent="No runs yet — start a task in Chat and it appears here and in the gate history."; progHist.appendChild(p); return; }
+      if(!runs.length){
+        var p=document.createElement("p"); p.className="run-empty";
+        p.appendChild(document.createTextNode("No runs yet. Start a task in Chat and it appears here and in the gate history. "));
+        var go=document.createElement("button"); go.type="button"; go.className="primary"; go.textContent="Open Chat";
+        go.addEventListener("click", function(){
+          var tab=document.getElementById("tab-chat");
+          if(tab) tab.click(); else showView("chat", true);
+        });
+        p.appendChild(go); progHist.appendChild(p); return;
+      }
       var recent=runs.slice(0, 8);
       var ul=document.createElement("ul"); ul.className="fleet-roster-list";
       recent.forEach(function(r){
@@ -5391,6 +5813,12 @@ if (pinsTitle && !pinsTitle.querySelector(".icon")) {
 }
 el.helpOpen.addEventListener("click", function () { openOverlay(el.help, el.helpClose); });
 el.helpClose.addEventListener("click", function () { closeOverlay(el.help); });
+document.querySelectorAll("[data-system-jump]").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    var target = document.getElementById(btn.getAttribute("data-system-jump"));
+    if (target) target.scrollIntoView({ block: "start", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+  });
+});
 
 var providerCacheHolder = { list: providerCache };
 mpBind({ el: el, readJson: readJson, fmtInt: fmtInt, allUsage: allUsage, renderUsage: renderUsage, renderContextMeter: renderContextMeter, providerCacheHolder: providerCacheHolder, onModelChange: renderSessionChip });
@@ -5418,12 +5846,8 @@ try {
   (function(){
     var themeCycle = document.getElementById("settings-theme-cycle");
     var themeLabel = document.getElementById("settings-theme-label");
-    var headerCycle = document.getElementById("theme-toggle");
-    function syncThemeLabel(){
-      try { themeLabel.textContent = theme; } catch(_){}
-    }
-    if (themeCycle) themeCycle.addEventListener("click", function(){ if(headerCycle) headerCycle.click(); setTimeout(syncThemeLabel, 0); });
-    syncThemeLabel();
+    if (themeCycle) bindThemeToggleMod(themeCycle);
+    if (themeLabel) themeLabel.textContent = theme;
     // session/status mirrors
     function syncSessionMirror(){
       try {
@@ -5454,6 +5878,17 @@ try {
     if (sFork && document.getElementById("session-fork")) sFork.addEventListener("click", function(){ document.getElementById("session-fork").click(); });
     if (sRename && document.getElementById("session-rename")) sRename.addEventListener("click", function(){ document.getElementById("session-rename").click(); });
     if (sMove && document.getElementById("session-move")) sMove.addEventListener("click", function(){ document.getElementById("session-move").click(); });
+    var settingsEnter = document.getElementById("settings-enter-sends");
+    if (settingsEnter && el.enterSends) {
+      settingsEnter.checked = el.enterSends.checked;
+      settingsEnter.addEventListener("change", function () {
+        el.enterSends.checked = settingsEnter.checked;
+        el.enterSends.dispatchEvent(new Event("change"));
+      });
+      el.enterSends.addEventListener("change", function () {
+        settingsEnter.checked = el.enterSends.checked;
+      });
+    }
   })();
 } catch(_){}
 
@@ -5496,7 +5931,10 @@ function renderKbMentionList() {
         el.promptList.hidden = true;
         el.task.focus();
         var hint = document.getElementById("knowledge-hint");
-        if (hint) hint.textContent = kbSelected.length + " collection(s) will be included in the next prompt.";
+        if (hint) {
+          var n = kbSelected.length;
+          hint.textContent = n + (n === 1 ? " collection" : " collections") + " will be included in the next prompt.";
+        }
       });
       el.promptList.appendChild(li);
     });
@@ -5580,13 +6018,16 @@ afterFirstDraw(function () {
 });
 syncSubmitLabel();
 updateComposerModeHint();
+restoreRailFolds();
 // Only the opening view's data is fetched now; the rest load when opened.
 showView(openingView, false);
 /* Reopening the page used to show an empty transcript even when the picker
    said the conversation had nine messages: nothing ever fetched them. The
    conversation you were last in is replayed, so a reload resumes rather
    than restarts. */
-loadSessions().then(function () {
+Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
+  var meta = currentSessionMeta();
+  if (meta) setCurrentWorkspace(meta.workspace || "", { silent: true });
   if (!currentSessionMeta()) {
     syncTranscriptEmpty();
     return;
@@ -5602,3 +6043,316 @@ loadSessions().then(function () {
     .catch(function () { syncTranscriptEmpty(); });
 });
 });
+
+/* ---- config editor (System view) ----------------------------------------
+   Raw TOML editing with validate-before-write: POST /api/config/raw refuses
+   a config that does not load, so the server never leaves its last known
+   good state; a valid save hot-restarts serve into the new config. The
+   highlight is the overlay trick: the textarea owns the text and the caret,
+   the <pre> behind it owns the colors. */
+(function bindConfigEditor() {
+  var fileSel = document.getElementById("config-editor-file");
+  var text = document.getElementById("config-editor-text");
+  var code = document.getElementById("config-editor-code");
+  var note = document.getElementById("config-editor-note");
+  var saveBtn = document.getElementById("config-editor-save");
+  var reloadBtn = document.getElementById("config-editor-reload");
+  if (!fileSel || !text || !code) return;
+
+  function setNote(msg) { if (note) note.textContent = msg; }
+
+  var lastFile = fileSel.value;
+  var savedText = "";
+  function isDirty() { return text.value !== savedText; }
+  function markClean() { savedText = text.value; }
+
+  function paint() {
+    loadHljs().then(function () {
+      var out = window.hljs.highlight(text.value, { language: "toml", ignoreIllegals: true });
+      code.innerHTML = out.value;
+      // Trailing newline keeps the pre as tall as the textarea's last line.
+      code.appendChild(document.createTextNode("\n"));
+    }).catch(function () { code.textContent = text.value; });
+  }
+
+  function syncScroll() {
+    var pre = code.parentElement;
+    pre.scrollTop = text.scrollTop;
+    pre.scrollLeft = text.scrollLeft;
+  }
+
+  function load() {
+    setNote("");
+    fetch("/api/config/raw?file=" + encodeURIComponent(fileSel.value))
+      .then(readJson)
+      .then(function (d) {
+        text.value = d.content || "";
+        markClean();
+        paint();
+        syncScroll();
+      })
+      .catch(function (err) { setNote("Could not read " + fileSel.value + ": " + err.message); });
+  }
+
+  function confirmDiscard(next) {
+    if (!isDirty()) { next(); return; }
+    uiConfirm("Discard unsaved changes to " + lastFile + "?", { danger: true, confirmLabel: "Discard" }).then(function (yes) {
+      if (yes) next();
+    });
+  }
+
+  function save() {
+    saveBtn.disabled = true;
+    setNote("Validating…");
+    fetch("/api/config/raw", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file: fileSel.value, content: text.value }),
+    })
+      .then(readJson)
+      .then(function (d) {
+        markClean();
+        setNote("Saved. " + (d.applied || "Hot reload applies it."));
+      })
+      .catch(function (err) {
+        // readJson surfaces the server's {error} message on a 400.
+        setNote("Refused: " + err.message + " — the running config is unchanged.");
+      })
+      .finally(function () { saveBtn.disabled = false; });
+  }
+
+  text.addEventListener("input", function () {
+    paint();
+    if (isDirty()) setNote("Unsaved changes.");
+    else setNote("");
+  });
+  text.addEventListener("scroll", syncScroll);
+  fileSel.addEventListener("change", function () {
+    var nextFile = fileSel.value;
+    if (nextFile === lastFile) return;
+    if (!isDirty()) { lastFile = nextFile; load(); return; }
+    fileSel.value = lastFile;
+    confirmDiscard(function () {
+      fileSel.value = nextFile;
+      lastFile = nextFile;
+      load();
+    });
+  });
+  if (reloadBtn) reloadBtn.addEventListener("click", function () { confirmDiscard(load); });
+  if (saveBtn) saveBtn.addEventListener("click", save);
+  window.addEventListener("beforeunload", function (e) {
+    if (!isDirty()) return;
+    e.preventDefault();
+    e.returnValue = "";
+  });
+  // Tab inserts two spaces instead of leaving the editor.
+  text.addEventListener("keydown", function (e) {
+    if (e.key !== "Tab") return;
+    e.preventDefault();
+    var s = text.selectionStart;
+    text.setRangeText("  ", s, text.selectionEnd, "end");
+    paint();
+  });
+  load();
+})();
+
+/* ---- MCP servers (System view) -------------------------------------------
+   CRUD over [mcp_servers.<name>] stanzas in config.local.toml, through the
+   same validated table/set + table/remove pipeline every config write uses.
+   Config is live now; the client bridge that connects ships behind
+   modules.mcp_client (PRD 0032). */
+(function bindMcpServers() {
+  var list = document.getElementById("mcp-list");
+  var host = document.getElementById("mcp-edit");
+  if (!list || !host) return;
+  var statusEl = document.getElementById("mcp-status");
+
+  function f(id) { return document.getElementById(id); }
+  function note(msg) {
+    var n = f("mcp-edit-note");
+    if (n) { n.textContent = msg; n.hidden = !msg; }
+    if (statusEl && msg) statusEl.textContent = msg;
+  }
+  function syncMcpTransportFields() {
+    var transport = f("mcp-edit-transport") ? f("mcp-edit-transport").value : "stdio";
+    var form = f("mcp-edit-form");
+    if (!form) return;
+    form.querySelectorAll("[data-mcp-for]").forEach(function (row) {
+      row.hidden = row.getAttribute("data-mcp-for") !== transport;
+    });
+  }
+  function tomlStr(v) {
+    return '"' + String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+  }
+  function splitList(v) {
+    return String(v || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
+  function openEdit(s) {
+    var isNew = !s;
+    s = s || {};
+    f("mcp-edit-title").textContent = isNew ? "Add an MCP server" : "mcp_servers." + s.name;
+    f("mcp-edit-name").value = s.name || "";
+    f("mcp-edit-name").disabled = !isNew;
+    f("mcp-edit-transport").value = s.transport || "stdio";
+    f("mcp-edit-command").value = s.command || "";
+    f("mcp-edit-args").value = (s.args || []).join(", ");
+    f("mcp-edit-cwd").value = s.cwd || "";
+    f("mcp-edit-url").value = s.url || "";
+    f("mcp-edit-timeout").value = s.tool_call_timeout_ms || "";
+    // Values never round-trip (the listing withholds them); editing an
+    // existing server keeps its env/headers unless new ones are typed.
+    f("mcp-edit-env").value = "";
+    f("mcp-edit-env").placeholder = (s.env_names || []).length
+      ? "keeps: " + s.env_names.join(", ") + " (type to replace)"
+      : "GITHUB_TOKEN=...";
+    f("mcp-edit-headers").value = "";
+    f("mcp-edit-headers").placeholder = (s.header_names || []).length
+      ? "keeps: " + s.header_names.join(", ") + " (type to replace)"
+      : "Authorization: Bearer ...";
+    f("mcp-edit-remove").hidden = isNew;
+    note("");
+    syncMcpTransportFields();
+    host.hidden = false;
+    try { host.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_) {}
+  }
+
+  function buildBlock(name) {
+    var lines = ['[mcp_servers.' + (/^[A-Za-z0-9_-]+$/.test(name) ? name : tomlStr(name)) + "]"];
+    var transport = f("mcp-edit-transport").value;
+    lines.push("transport = " + tomlStr(transport));
+    var command = f("mcp-edit-command").value.trim();
+    if (command) lines.push("command = " + tomlStr(command));
+    var args = splitList(f("mcp-edit-args").value);
+    if (args.length) lines.push("args = [" + args.map(tomlStr).join(", ") + "]");
+    var env = splitList(f("mcp-edit-env").value);
+    if (env.length) lines.push("env = [" + env.map(tomlStr).join(", ") + "]");
+    var cwd = f("mcp-edit-cwd").value.trim();
+    if (cwd) lines.push("cwd = " + tomlStr(cwd));
+    var url = f("mcp-edit-url").value.trim();
+    if (url) lines.push("url = " + tomlStr(url));
+    var headers = splitList(f("mcp-edit-headers").value);
+    if (headers.length) lines.push("headers = [" + headers.map(tomlStr).join(", ") + "]");
+    var timeout = f("mcp-edit-timeout").value;
+    if (timeout) lines.push("tool_call_timeout_ms = " + Number(timeout));
+    return lines.join("\n") + "\n";
+  }
+
+  function save() {
+    var name = f("mcp-edit-name").value.trim();
+    if (!name) { note("Name is required."); return; }
+    var transport = f("mcp-edit-transport").value;
+    if (transport === "stdio" && !f("mcp-edit-command").value.trim()) {
+      note("stdio needs a command to spawn.");
+      f("mcp-edit-command").focus();
+      return;
+    }
+    if (transport === "http" && !f("mcp-edit-url").value.trim()) {
+      note("http needs a stream URL.");
+      f("mcp-edit-url").focus();
+      return;
+    }
+    var btn = f("mcp-edit-save");
+    btn.disabled = true;
+    fetch("/api/config/table/set", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ block: buildBlock(name) })
+    })
+      .then(readJson)
+      .then(function (d) {
+        if (!d.ok) throw new Error(d.error || "write failed");
+        note("Saved. " + (d.applied || "The server reloads into it."));
+        load();
+      })
+      .catch(function (err) { note("Refused: " + err.message + " — nothing was written."); })
+      .finally(function () { btn.disabled = false; });
+  }
+
+  function removeServer() {
+    var name = f("mcp-edit-name").value.trim();
+    if (!name) return;
+    import("./core/ui.js").then(function (mod) {
+      return mod.uiConfirm("Remove MCP server " + name + " from config.local.toml?", { danger: true, confirmLabel: "Remove" });
+    }).then(function (yes) {
+      if (!yes) return;
+      var header = "mcp_servers." + (/^[A-Za-z0-9_-]+$/.test(name) ? name : tomlStr(name));
+      fetch("/api/config/table/remove", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ header: header })
+      })
+        .then(readJson)
+        .then(function (d) {
+          if (!d.ok) throw new Error(d.error || "remove failed");
+          note(d.removed === false ? "Nothing by that name in config.local.toml (a server declared in the shared config.toml cannot be removed here)." : "Removed.");
+          host.hidden = true;
+          load();
+        })
+        .catch(function (err) { note("Refused: " + err.message); });
+    });
+  }
+
+  function load() {
+    fetch("/api/mcp/servers")
+      .then(readJson)
+      .then(function (d) {
+        var servers = (d && d.servers) || [];
+        list.textContent = "";
+        if (!servers.length) {
+          var p = document.createElement("p");
+          p.className = "run-empty";
+          p.appendChild(document.createTextNode("No MCP servers configured. "));
+          var add = document.createElement("button");
+          add.type = "button";
+          add.className = "secondary";
+          add.textContent = "Add server";
+          add.addEventListener("click", function () { openEdit(null); });
+          upgradePfButton(add);
+          p.appendChild(add);
+          p.appendChild(document.createTextNode(" to record one in config.local.toml. The client bridge that connects is not on yet."));
+          list.appendChild(p);
+          return;
+        }
+        servers.forEach(function (s) {
+          var row = document.createElement("div");
+          row.className = "settings-panel";
+          var head = document.createElement("div");
+          head.className = "subsection-head-row";
+          var title = document.createElement("code");
+          title.textContent = s.name;
+          head.appendChild(title);
+          var edit = document.createElement("button");
+          edit.type = "button";
+          edit.className = "secondary";
+          edit.textContent = "Edit";
+          edit.addEventListener("click", function () { openEdit(s); });
+          head.appendChild(edit);
+          row.appendChild(head);
+          var meta = document.createElement("p");
+          meta.className = "meta";
+          meta.textContent = s.transport === "http"
+            ? "http · " + s.url
+            : "stdio · " + s.command + (s.args && s.args.length ? " " + s.args.join(" ") : "");
+          row.appendChild(meta);
+          list.appendChild(row);
+        });
+      })
+      .catch(function (err) {
+        var msg = "Could not load MCP servers: " + err.message;
+        if (statusEl) statusEl.textContent = msg;
+        showLoadError(list, msg, load);
+      });
+  }
+
+  var addBtn = f("mcp-add");
+  if (addBtn) addBtn.addEventListener("click", function () { openEdit(null); });
+  var transportSel = f("mcp-edit-transport");
+  if (transportSel) transportSel.addEventListener("change", syncMcpTransportFields);
+  var refreshBtn = f("mcp-refresh");
+  if (refreshBtn) refreshBtn.addEventListener("click", load);
+  f("mcp-edit-save").addEventListener("click", save);
+  f("mcp-edit-remove").addEventListener("click", removeServer);
+  f("mcp-edit-close").addEventListener("click", function () { host.hidden = true; });
+  load();
+})();

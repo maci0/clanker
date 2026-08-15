@@ -12,11 +12,11 @@
 //!   - Twenty-five of the last forty promoted improvements added a unit test
 //!     and touched no other code. A new test in an untouched file is the
 //!     cheapest possible way to be accepted.
-//!   - `intField`, `boolField` and `floatField` in `src/util/json.zig` are
+//!   - `intField`, `boolField` and `floatField` in `src/util/json.zig` were
 //!     three separate promotions that each added a function, added a test for
-//!     that function, and added no caller. They are still unreachable. An
-//!     earlier run produced about fifteen `History` helper methods the same way
-//!     ("so the engine can detect ..."), every one of them unreachable,
+//!     that function, and added no caller. They were later deleted by hand.
+//!     An earlier run produced about fifteen `History` helper methods the same
+//!     way ("so the engine can detect ..."), every one of them unreachable,
 //!     because the engine that would have called them is outside the surface
 //!     the loop may write, and all fifteen were later deleted by hand.
 //!

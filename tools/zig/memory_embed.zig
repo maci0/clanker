@@ -4,6 +4,7 @@ const std = @import("std");
 const max_token_bytes: usize = 128;
 
 fn hashIndex(hash: u64, len: usize) usize {
+    // Bucket index uses the low 32 bits of the 64-bit hash (lossy by design).
     const low_bits: u32 = @truncate(hash);
     return @as(usize, low_bits) % len;
 }

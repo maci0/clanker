@@ -3,6 +3,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const logic = @import("commit_logic.zig");
+const utf8 = @import("utf8");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -171,7 +172,7 @@ fn groupViaLlm(files: []const []const u8, diff: []const u8, max_commits: usize) 
         \\
         \\Diff:
         \\{s}
-    , .{ joinLines(files), lib.utf8Prefix(diff, 12000) });
+    , .{ joinLines(files), utf8.cap(diff, 12000) });
     const reply = lib.llm(prompt) catch return oneGroup(files, "chore: update working tree");
     return parseGroups(reply, files, max_commits) catch oneGroup(files, "chore: update working tree");
 }

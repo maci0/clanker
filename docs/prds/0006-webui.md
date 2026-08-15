@@ -300,6 +300,7 @@ Phase 2 — session and context control:
 - [x] 2.2 Plan mode
 - [x] 2.3 Visible compaction
 - [x] 2.4 Provider/model switching
+- [x] 2.5 Folder-backed workspaces — any number of `{name, path}` rows in `state/workspaces.json`; rail picker scopes chats; files + run sandbox root at that folder
 
 Phase 3 — see what the agents are doing:
 

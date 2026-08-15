@@ -122,7 +122,7 @@ clanker.registerView({
 
     var filterInput = mk("input", "files-filter");
     filterInput.type = "search";
-    filterInput.placeholder = "Filter…";
+    filterInput.placeholder = "Filter by name…";
     filterInput.setAttribute("aria-label", "Filter entries");
     toolbar.appendChild(filterInput);
 
@@ -243,12 +243,45 @@ clanker.registerView({
       focusIdx = -1;
       list.textContent = "";
       var entries = visibleEntries();
-      emptyMsg.hidden = entries.length > 0 || filterText.length > 0;
+      var hiddenCount = 0;
+      if (!showHidden && !filterText) {
+        allEntries.forEach(function(e) { if (e.name.charAt(0) === ".") hiddenCount += 1; });
+      }
+      emptyMsg.hidden = true;
       if (!entries.length) {
         if (filterText) {
           var none = mk("p","files-empty");
-          none.textContent = "No matches for “" + filterText + "”.";
+          none.appendChild(document.createTextNode("No matches for “" + filterText + "”. "));
+          var clear = mk("button","files-clear-filter","Clear filter");
+          clear.type = "button";
+          clear.addEventListener("click", function() {
+            filterInput.value = "";
+            filterText = "";
+            renderEntries();
+            filterInput.focus();
+          });
+          none.appendChild(clear);
           list.appendChild(none);
+        } else if (hiddenCount) {
+          var hidden = mk("p","files-empty");
+          hidden.appendChild(document.createTextNode(
+            hiddenCount === 1 ? "This folder has 1 hidden item. " : "This folder has " + hiddenCount + " hidden items. "
+          ));
+          var show = mk("button","files-clear-filter","Show hidden");
+          show.type = "button";
+          show.addEventListener("click", function() { hiddenBtn.click(); });
+          hidden.appendChild(show);
+          list.appendChild(hidden);
+        } else if (cur.atRoot) {
+          emptyMsg.hidden = false;
+        } else {
+          var empty = mk("p","files-empty");
+          empty.appendChild(document.createTextNode("This folder is empty. "));
+          var up = mk("button","files-clear-filter","Go up");
+          up.type = "button";
+          up.addEventListener("click", function() { upBtn.click(); });
+          empty.appendChild(up);
+          list.appendChild(empty);
         }
         return;
       }
@@ -363,7 +396,7 @@ clanker.registerView({
     function openFile(path, name) {
       var mine = ++generation;
       api.status("Loading "+name+"…");
-      return api.getJSON("/api/files?path="+encodeURIComponent(path))
+      return api.getJSON("/api/files?path="+encodeURIComponent(path)+(window.clankerWorkspace ? "&workspace="+encodeURIComponent(window.clankerWorkspace) : ""))
         .then(function(d) {
           if (mine !== generation) return;
           openPath = path;
@@ -402,7 +435,20 @@ clanker.registerView({
         })
         .catch(function(err) {
           if (mine !== generation) return;
-          api.status("Files: "+err.message);
+          openPath = path;
+          vName.textContent = name;
+          vMeta.textContent = "";
+          vNote.hidden = true;
+          vBody.textContent = "";
+          var fail = mk("p", "files-empty");
+          fail.appendChild(document.createTextNode("Could not open this file. " + err.message + " "));
+          var retry = mk("button", "secondary", "Try again");
+          retry.type = "button";
+          retry.addEventListener("click", function () { openFile(path, name); });
+          fail.appendChild(retry);
+          vBody.appendChild(fail);
+          rightPane.hidden = false;
+          api.status("Could not open this file. " + err.message);
         });
     }
 
@@ -441,7 +487,7 @@ clanker.registerView({
       refreshBtn.disabled = true;
       filterInput.value = "";
       filterText = "";
-      return api.getJSON("/api/files?path="+encodeURIComponent(want))
+      return api.getJSON("/api/files?path="+encodeURIComponent(want)+(window.clankerWorkspace ? "&workspace="+encodeURIComponent(window.clankerWorkspace) : ""))
         .then(function(d) {
           if (mine !== generation) return;
           cur.path = d.path || "";
@@ -463,8 +509,14 @@ clanker.registerView({
           allEntries = [];
           drawCrumbs(want, cur.root);
           list.textContent = "";
-          list.appendChild(mk("p","files-empty","Error: "+err.message));
-          api.status("Files: "+err.message);
+          var fail = mk("p", "files-empty");
+          fail.appendChild(document.createTextNode("Could not open this folder. " + err.message + " "));
+          var retry = mk("button", "secondary", "Try again");
+          retry.type = "button";
+          retry.addEventListener("click", function () { load(want); });
+          fail.appendChild(retry);
+          list.appendChild(fail);
+          api.status("Could not open this folder. " + err.message);
         })
         .then(function() {
           if (mine !== generation) return;
@@ -480,6 +532,7 @@ clanker.registerView({
     refreshSort();
 
     this.reload = load;
+    window.addEventListener("clanker-workspace", function () { load(""); });
     return load();
   },
 

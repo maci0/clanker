@@ -725,13 +725,7 @@ fn nestedCached(obj: std.json.ObjectMap) ?std.json.Value {
     };
 }
 
-fn jsonU32(v: ?std.json.Value) ?u32 {
-    const val = v orelse return null;
-    return switch (val) {
-        .integer => |i| if (i >= 0 and i <= std.math.maxInt(u32)) @intCast(i) else null,
-        else => null,
-    };
-}
+const jsonU32 = xcode.jsonU32;
 
 const Peek = struct {
     model: ?[]const u8 = null,

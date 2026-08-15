@@ -78,11 +78,19 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.write(if (dir.len == 0) "." else dir);
     try s.objectField("paths");
     try s.write(found);
+    const count: usize = if (found == .array) found.array.items.len else 0;
     try s.objectField("count");
-    try s.write(if (found == .array) found.array.items.len else 0);
-    // Nothing found is an answer, not a failure, but a bare empty list invites
-    // a second identical call with the same spelling.
-    if (found == .array and found.array.items.len == 0) {
+    try s.write(count);
+    // The host stops at 200 paths so a `*` walk cannot fill the arena. Say
+    // so: a list that looks complete at exactly that bound is not complete.
+    if (count >= 200) {
+        try s.objectField("truncated");
+        try s.write(true);
+        try s.objectField("note");
+        try s.write("stopped at 200 paths; narrow the pattern or dir");
+    } else if (found == .array and found.array.items.len == 0) {
+        // Nothing found is an answer, not a failure, but a bare empty list
+        // invites a second identical call with the same spelling.
         try s.objectField("note");
         try s.write("nothing matched; the pattern matches file names case-sensitively, and * and ? are the only wildcards");
     }

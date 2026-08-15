@@ -373,26 +373,24 @@ fn fsPrefixesFor(
 /// Builds the `config` object handed to an exec-capable tool, merging its
 /// descriptor config with the harness's exec policy (git_remote_ops,
 /// exec_pattern_allow). Non-exec tools keep their own config untouched. The
-/// extra keys are inert to a tool that does not read `config`. The JSON is
-/// built by hand because it is small and controlled, and avoids relying on
-/// std.json.Stringify's serialization of a nested string slice.
+/// extra keys are inert to a tool that does not read `config`.
 pub fn execPolicyConfig(
     arena: std.mem.Allocator,
     tool_config: []const u8,
     cfg: *const config_mod.Config,
 ) ![]const u8 {
     _ = tool_config; // git.zig / gh.zig carry no descriptor config of their own.
-    var out: std.ArrayList(u8) = .empty;
-    try out.append(arena, '{');
-    try out.appendSlice(arena, "\"git_remote_ops\":");
-    try out.appendSlice(arena, if (cfg.agent.git_remote_ops) "true" else "false");
-    try out.appendSlice(arena, ",\"exec_pattern_allow\":[");
-    for (cfg.agent.exec_pattern_allow, 0..) |p, i| {
-        if (i > 0) try out.append(arena, ',');
-        try json_util.appendJsonString(arena, &out, p);
-    }
-    try out.appendSlice(arena, "]}");
-    return out.toOwnedSlice(arena);
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("git_remote_ops");
+    try s.write(cfg.agent.git_remote_ops);
+    try s.objectField("exec_pattern_allow");
+    try s.beginArray();
+    for (cfg.agent.exec_pattern_allow) |p| try s.write(p);
+    try s.endArray();
+    try s.endObject();
+    return out.toOwnedSlice();
 }
 
 fn appendNetworkAllow(
@@ -654,6 +652,15 @@ fn parseCkLlmRequest(arena: std.mem.Allocator, raw: []const u8) ?CkLlmRequest {
     return req;
 }
 
+/// Descriptor `max_tokens` is the grant. A guest may only lower it, never
+/// raise it: otherwise a confused (or injected) tool call bills an unbounded
+/// completion against the operator's key. A grant of 0 is treated as the
+/// same 1024 default `sandboxFor` uses when the descriptor omits the key.
+fn clampCkLlmMaxTokens(requested: ?u32, granted: u32) u32 {
+    const cap: u32 = if (granted == 0) 1024 else granted;
+    return @min(requested orelse cap, cap);
+}
+
 /// ck_llm(request) -> completion text in the host arena. The request is either
 /// a bare prompt or a JSON object:
 /// `{"prompt": "...", "provider": "<name>", "model": "<name>", "system": "...", "max_tokens": N}`.
@@ -682,7 +689,7 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     var system: ?[]const u8 = null;
     if (parseCkLlmRequest(arena, raw)) |req| {
         if (req.prompt) |p| prompt = p;
-        if (req.max_tokens) |m| max_tokens = m;
+        max_tokens = clampCkLlmMaxTokens(req.max_tokens, access.max_tokens);
         if (req.system) |s| system = s;
         if (req.provider) |pn| {
             const cfg = h.sandbox.cfg orelse {
@@ -865,8 +872,7 @@ pub fn ckLlmMany(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     if (obj.get("system")) |s| {
         if (s == .string and s.string.len > 0) system = s.string;
     }
-    var max_tokens = access.max_tokens;
-    if (json_util.pluginU32(parsed, "max_tokens")) |mt| max_tokens = mt;
+    const max_tokens = clampCkLlmMaxTokens(json_util.pluginU32(parsed, "max_tokens"), access.max_tokens);
 
     const targets_val = obj.get("targets") orelse return Err.invalid;
     if (targets_val != .array) return Err.invalid;
@@ -1398,8 +1404,8 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
             return Err.network;
         };
         if (nr == 0) break;
+        if (nr > h.sandbox.max_http_bytes -| resp.items.len) return Err.too_large;
         resp.appendSlice(h.sandbox.gpa, tmp[0..nr]) catch return Err.too_large;
-        if (resp.items.len > h.sandbox.max_http_bytes) return Err.too_large;
     }
 
     // Strip headers and write the body into the host arena.
@@ -2037,9 +2043,12 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             msg_id,
             emoji,
             cfg.instance.name,
-        ) catch |err| {
-            log.log(.warn, "[chat] react failed: {s}", .{@errorName(err)});
-            return Err.invalid;
+        ) catch |err| switch (err) {
+            error.NotFound => return h.writeResult(bytes, "{\"ok\":false,\"error\":\"no such message\"}"),
+            else => {
+                log.log(.warn, "[chat] react failed: {s}", .{@errorName(err)});
+                return Err.invalid;
+            },
         };
         s.beginObject() catch return Err.too_large;
         s.objectField("ok") catch return Err.too_large;
@@ -2052,7 +2061,7 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         const msg_id = parsed.msg_id orelse return Err.invalid;
         const new_text = parsed.text orelse return Err.invalid;
         if (new_text.len == 0 or new_text.len > chatrooms_mod.max_text_len) return Err.invalid;
-        const result = chatrooms_mod.editMessage(
+        const msg = chatrooms_mod.editMessage(
             base,
             h.sandbox.io,
             h.sandbox.gpa,
@@ -2062,26 +2071,26 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             msg_id,
             new_text,
             cfg.instance.name,
-        ) catch |err| {
-            log.log(.warn, "[chat] edit failed: {s}", .{@errorName(err)});
-            return Err.invalid;
+        ) catch |err| switch (err) {
+            error.NotFound => return h.writeResult(bytes, "{\"ok\":false,\"error\":\"no such message\"}"),
+            error.NotOwner => return h.writeResult(bytes, "{\"ok\":false,\"error\":\"not your message\"}"),
+            else => {
+                log.log(.warn, "[chat] edit failed: {s}", .{@errorName(err)});
+                return Err.invalid;
+            },
         };
-        if (result) |msg| {
-            s.beginObject() catch return Err.too_large;
-            s.objectField("ok") catch return Err.too_large;
-            s.write(true) catch return Err.too_large;
-            s.objectField("id") catch return Err.too_large;
-            s.write(msg.id) catch return Err.too_large;
-            s.objectField("edited") catch return Err.too_large;
-            s.print("{d}", .{msg.edited.?}) catch return Err.too_large;
-            s.endObject() catch return Err.too_large;
-            return h.writeResult(bytes, out_buf[0..w.end]);
-        } else {
-            return h.writeResult(bytes, "{\"ok\":false,\"error\":\"not found or not authorised\"}");
-        }
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.objectField("id") catch return Err.too_large;
+        s.write(msg.id) catch return Err.too_large;
+        s.objectField("edited") catch return Err.too_large;
+        s.print("{d}", .{msg.edited.?}) catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
     } else if (std.mem.eql(u8, op, "delete")) {
         const msg_id = parsed.msg_id orelse return Err.invalid;
-        const ok = chatrooms_mod.deleteMessage(
+        chatrooms_mod.deleteMessage(
             base,
             h.sandbox.io,
             h.sandbox.gpa,
@@ -2090,19 +2099,19 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             cfg,
             msg_id,
             cfg.instance.name,
-        ) catch |err| {
-            log.log(.warn, "[chat] delete failed: {s}", .{@errorName(err)});
-            return Err.invalid;
+        ) catch |err| switch (err) {
+            error.NotFound => return h.writeResult(bytes, "{\"ok\":false,\"error\":\"no such message\"}"),
+            error.NotOwner => return h.writeResult(bytes, "{\"ok\":false,\"error\":\"not your message\"}"),
+            else => {
+                log.log(.warn, "[chat] delete failed: {s}", .{@errorName(err)});
+                return Err.invalid;
+            },
         };
-        if (ok) {
-            s.beginObject() catch return Err.too_large;
-            s.objectField("ok") catch return Err.too_large;
-            s.write(true) catch return Err.too_large;
-            s.endObject() catch return Err.too_large;
-            return h.writeResult(bytes, out_buf[0..w.end]);
-        } else {
-            return h.writeResult(bytes, "{\"ok\":false,\"error\":\"not found or not authorised\"}");
-        }
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
     } else if (std.mem.eql(u8, op, "set_topic")) {
         const room = parsed.room orelse return Err.invalid;
         const new_topic = parsed.topic orelse return Err.invalid;
@@ -2225,10 +2234,11 @@ fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
     return false;
 }
 
-/// ck_stats() exposes the authorized global token-usage records to the
-/// model_stats guest. Parsing and aggregation are application logic and live
-/// in tools/zig/stats.zig; the native boundary only resolves the configured
-/// state directory, enforces the module switch, and reads the protected log.
+/// ck_stats() returns the host-side aggregate of token_stats.jsonl to the
+/// model_stats guest. Shipping every raw record through the 1 MiB guest arena
+/// fails once the log has a few thousand lines; the table itself is a handful
+/// of (provider, model) rows. The native side resolves the state directory,
+/// enforces the module switch, and aggregates. The guest renders.
 pub fn ckStats(caller: *zwasm.Caller) u32 {
     const h = getHost(caller);
     if (!std.mem.eql(u8, h.sandbox.tool_self_name, "model_stats")) return Err.denied;
@@ -2246,15 +2256,12 @@ pub fn ckStats(caller: *zwasm.Caller) u32 {
     const base = h.sandbox.state_base_dir orelse std.Io.Dir.cwd();
     const state_dir = h.sandbox.state_dir;
 
-    const records = token_stats.loadAll(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir) catch |err| {
+    const stats = token_stats.aggregate(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir) catch |err| {
         log.log(.warn, "[stats] read failed: {s}", .{@errorName(err)});
         return Err.invalid;
     };
-    var out: std.Io.Writer.Allocating = .init(arena);
-    defer out.deinit();
-    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
-    s.write(records) catch return Err.too_large;
-    return h.writeResult(bytes, out.written());
+    const json = token_stats.statsJSON(arena, stats, token_stats.totals(stats)) catch return Err.too_large;
+    return h.writeResult(bytes, json);
 }
 
 /// Maximum number of custom headers a tool may send per request.
@@ -2487,6 +2494,9 @@ pub fn ckFsList(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
 /// '*' (matches any sequence of non-'/' chars) and '?' (matches exactly one
 /// non-'/' char); everything else is a literal match. Returns a JSON string
 /// array of relative paths (relative to the sandbox root) in the host arena.
+/// Stops after `fs_find_max_results` matches, the same bound grep uses on
+/// lines: a `*` walk of a large tree used to serialize every path (or fail
+/// the whole call with too_large) instead of returning a useful page.
 /// Enforces the same fs_prefixes policy as ck_fs_read.
 /// Returns Err.not_found when the directory does not exist.
 pub fn ckFsFind(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32 {
@@ -2507,18 +2517,20 @@ pub fn ckFsFind(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32,
     var s = std.json.Stringify{ .writer = &w, .options = .{} };
     s.beginArray() catch return Err.too_large;
 
-    fsFindRecurse(h, &s, dir, dir_path, pattern, 0) catch return Err.too_large;
+    var count: u32 = 0;
+    fsFindRecurse(h, &s, dir, dir_path, pattern, 0, &count) catch return Err.too_large;
 
     s.endArray() catch return Err.too_large;
     return h.writeResult(bytes, buf[0..w.end]);
 }
 
 const fs_find_max_depth: u32 = 12;
+const fs_find_max_results: u32 = 200;
 
 /// Directories a name search should never descend into. Without this, a search
 /// of the project answers mostly with copies of it: build caches, vendored
 /// dependencies, and the staging trees the improvement engine leaves behind.
-const fs_skip_dirs = [_][]const u8{ ".git", ".zig-cache", "zig-out", "zig-pkg", "node_modules", "staging", "history" };
+const fs_skip_dirs = [_][]const u8{ ".git", ".zig-cache", ".venv", ".cache", "zig-out", "zig-pkg", "node_modules", "vendor", "staging", "history", "__pycache__" };
 
 fn skipDir(name: []const u8) bool {
     for (fs_skip_dirs) |d| {
@@ -2527,27 +2539,34 @@ fn skipDir(name: []const u8) bool {
     return false;
 }
 
-fn fsFindRecurse(h: *Host, s: *std.json.Stringify, dir: std.Io.Dir, prefix: []const u8, pattern: []const u8, depth: u32) !void {
+fn joinRel(gpa: std.mem.Allocator, prefix: []const u8, name: []const u8) ![]u8 {
+    return std.fmt.allocPrint(gpa, "{s}{s}{s}", .{
+        prefix,
+        if (prefix.len > 0) "/" else "",
+        name,
+    });
+}
+
+fn fsFindRecurse(h: *Host, s: *std.json.Stringify, dir: std.Io.Dir, prefix: []const u8, pattern: []const u8, depth: u32, count: *u32) !void {
     if (depth > fs_find_max_depth) return;
+    if (count.* >= fs_find_max_results) return;
     var it = dir.iterate();
     while (it.next(h.sandbox.io) catch null) |entry| {
+        if (count.* >= fs_find_max_results) return;
         if (entry.name.len == 0) continue;
-        const rel = std.fmt.allocPrint(h.sandbox.gpa, "{s}{s}{s}", .{
-            prefix,
-            if (prefix.len > 0) "/" else "",
-            entry.name,
-        }) catch return error.OutOfMemory;
-        defer h.sandbox.gpa.free(rel);
-
         if (entry.kind == .directory) {
             if (skipDir(entry.name)) continue;
+            const rel = joinRel(h.sandbox.gpa, prefix, entry.name) catch return error.OutOfMemory;
+            defer h.sandbox.gpa.free(rel);
             var sub = dir.openDir(h.sandbox.io, entry.name, .{ .iterate = true }) catch continue;
             defer sub.close(h.sandbox.io);
-            try fsFindRecurse(h, s, sub, rel, pattern, depth + 1);
+            try fsFindRecurse(h, s, sub, rel, pattern, depth + 1, count);
         } else if (entry.kind == .file) {
-            if (globMatch(pattern, entry.name)) {
-                try s.write(rel);
-            }
+            if (!globMatch(pattern, entry.name)) continue;
+            const rel = joinRel(h.sandbox.gpa, prefix, entry.name) catch return error.OutOfMemory;
+            defer h.sandbox.gpa.free(rel);
+            try s.write(rel);
+            count.* += 1;
         }
     }
 }
@@ -2641,24 +2660,82 @@ fn fsGrepRecurse(
     while (it.next(h.sandbox.io) catch null) |entry| {
         if (count.* >= fs_grep_max_results) return;
         if (entry.name.len == 0) continue;
-        const rel = std.fmt.allocPrint(h.sandbox.gpa, "{s}{s}{s}", .{
-            prefix,
-            if (prefix.len > 0) "/" else "",
-            entry.name,
-        }) catch return error.OutOfMemory;
-        defer h.sandbox.gpa.free(rel);
-
         if (entry.kind == .directory) {
-            // Skip hidden directories (e.g. .git)
+            // Hidden names (.git, .zig-cache) plus the same cache/vendor
+            // trees find already skips. Without that, a project-root grep
+            // (the rg-missing fallback in repo_search) reads hundreds of
+            // megabytes of zig-pkg, zig-out, node_modules, and history
+            // copies before it ever reaches source.
             if (entry.name[0] == '.') continue;
+            if (skipDir(entry.name)) continue;
+            const rel = joinRel(h.sandbox.gpa, prefix, entry.name) catch return error.OutOfMemory;
+            defer h.sandbox.gpa.free(rel);
             var sub = dir.openDir(h.sandbox.io, entry.name, .{ .iterate = true }) catch continue;
             defer sub.close(h.sandbox.io);
             try fsGrepRecurse(h, s, sub, rel, pattern, depth + 1, count);
         } else if (entry.kind == .file) {
+            if (skipGrepName(entry.name)) continue;
+            const rel = joinRel(h.sandbox.gpa, prefix, entry.name) catch return error.OutOfMemory;
+            defer h.sandbox.gpa.free(rel);
             fsGrepFile(h, s, dir, entry.name, rel, pattern, count) catch continue;
         }
     }
 }
+
+/// File-name extensions a content search will never match usefully. Opening
+/// them still costs a 1 MiB cap-read apiece, and a project-root walk hits
+/// hundreds of `.wasm` / image / archive files before it reaches source.
+fn skipGrepName(name: []const u8) bool {
+    const dot = std.mem.findScalarLast(u8, name, '.') orelse return false;
+    if (dot == 0) return false;
+    const ext = name[dot..];
+    if (ext.len < 2 or ext.len > 7) return false;
+    var buf: [7]u8 = undefined;
+    for (ext, 0..) |c, i| buf[i] = std.ascii.toLower(c);
+    return grep_skip_ext.get(buf[0..ext.len]) != null;
+}
+
+const grep_skip_ext = std.StaticStringMap(void).initComptime(.{
+    .{ ".wasm", {} },
+    .{ ".png", {} },
+    .{ ".jpg", {} },
+    .{ ".jpeg", {} },
+    .{ ".gif", {} },
+    .{ ".webp", {} },
+    .{ ".ico", {} },
+    .{ ".bmp", {} },
+    .{ ".zip", {} },
+    .{ ".gz", {} },
+    .{ ".tgz", {} },
+    .{ ".bz2", {} },
+    .{ ".xz", {} },
+    .{ ".7z", {} },
+    .{ ".tar", {} },
+    .{ ".o", {} },
+    .{ ".a", {} },
+    .{ ".so", {} },
+    .{ ".dll", {} },
+    .{ ".dylib", {} },
+    .{ ".exe", {} },
+    .{ ".woff", {} },
+    .{ ".woff2", {} },
+    .{ ".ttf", {} },
+    .{ ".otf", {} },
+    .{ ".mp3", {} },
+    .{ ".mp4", {} },
+    .{ ".webm", {} },
+    .{ ".wav", {} },
+    .{ ".pdf", {} },
+    .{ ".class", {} },
+    .{ ".jar", {} },
+    .{ ".pyc", {} },
+    .{ ".map", {} },
+    .{ ".obj", {} },
+    .{ ".bin", {} },
+    .{ ".sqlite", {} },
+    .{ ".db", {} },
+    .{ ".pack", {} },
+});
 
 fn fsGrepFile(
     h: *Host,
@@ -2669,6 +2746,9 @@ fn fsGrepFile(
     pattern: []const u8,
     count: *u32,
 ) !void {
+    const st = dir.statFile(h.sandbox.io, name, .{}) catch return;
+    if (st.size == 0 or pattern.len > st.size) return;
+
     // Read the file (up to max_fs_bytes).
     const data = dir.readFileAlloc(h.sandbox.io, name, h.sandbox.gpa, .limited(h.sandbox.max_fs_bytes)) catch return;
     defer h.sandbox.gpa.free(data);
@@ -2676,9 +2756,7 @@ fn fsGrepFile(
 
     // Skip binary files: check first 512 bytes for null.
     const check_len = @min(data.len, 512);
-    for (data[0..check_len]) |b| {
-        if (b == 0) return;
-    }
+    if (std.mem.indexOfScalar(u8, data[0..check_len], 0) != null) return;
 
     // Scan line by line.
     var line_no: u32 = 1;
@@ -3680,15 +3758,17 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         const sz = sf.call(.{}) catch 0;
         if (sz > 0) child_host.arena_cap = sz;
     }
+    if (args_json.len > std.math.maxInt(u32)) return Err.too_large;
+    const args_len: u32 = @intCast(args_json.len);
     var scratch_fn = inst.typedFunc(fn (u32) u32, "scratch");
-    const sp = scratch_fn.call(.{@intCast(args_json.len)}) catch return Err.invalid;
+    const sp = scratch_fn.call(.{args_len}) catch return Err.invalid;
     if (sp == 0) return Err.too_large;
     const mem = inst.memory() orelse return Err.invalid;
     const slice = mem.slice();
-    if (@as(u64, sp) + args_json.len > slice.len) return Err.too_large;
-    @memcpy(slice[sp .. sp + args_json.len], args_json);
+    if (@as(u64, sp) + args_len > slice.len) return Err.too_large;
+    @memcpy(slice[sp .. sp + args_len], args_json);
     var run_fn = inst.typedFunc(fn (u32, u32) u64, "run");
-    const packed_val = run_fn.call(.{ sp, @intCast(args_json.len) }) catch return Err.invalid;
+    const packed_val = run_fn.call(.{ sp, args_len }) catch return Err.invalid;
     const out_ptr: u32 = @intCast(packed_val >> 32);
     const out_len: u32 = @intCast(packed_val & 0xFFFF_FFFF);
     const mem2 = inst.memory() orelse return Err.invalid;
@@ -4836,6 +4916,36 @@ test "argDenied matches operator tokens anywhere, word tokens only at boundaries
     try std.testing.expect(argDenied("--force", "--force"));
 }
 
+test "skipDir names the cache and vendor trees a project-root walk must not enter" {
+    try std.testing.expect(skipDir("node_modules"));
+    try std.testing.expect(skipDir("zig-pkg"));
+    try std.testing.expect(skipDir("zig-out"));
+    try std.testing.expect(skipDir("vendor"));
+    try std.testing.expect(skipDir("staging"));
+    try std.testing.expect(skipDir("history"));
+    try std.testing.expect(skipDir(".zig-cache"));
+    try std.testing.expect(skipDir(".venv"));
+    try std.testing.expect(skipDir(".cache"));
+    try std.testing.expect(skipDir("__pycache__"));
+    try std.testing.expect(!skipDir("src"));
+    try std.testing.expect(!skipDir("tools"));
+}
+
+test "skipGrepName skips binary artifacts and leaves source names alone" {
+    try std.testing.expect(skipGrepName("app.wasm"));
+    try std.testing.expect(skipGrepName("mascot.PNG"));
+    try std.testing.expect(skipGrepName("libfoo.dylib"));
+    try std.testing.expect(skipGrepName("bundle.js.map"));
+    try std.testing.expect(skipGrepName("app.sqlite"));
+    try std.testing.expect(!skipGrepName("loop.zig"));
+    try std.testing.expect(!skipGrepName("README.md"));
+    try std.testing.expect(!skipGrepName(".gitignore"));
+}
+
+test "find and grep share the same result cap" {
+    try std.testing.expectEqual(fs_grep_max_results, fs_find_max_results);
+}
+
 test "globMatch handles basic patterns" {
     // Exact match
     try std.testing.expect(globMatch("foo.zig", "foo.zig"));
@@ -5640,6 +5750,14 @@ test "parseCkLlmRequest ignores malformed and out-of-range fields" {
     // A max_tokens beyond u32 range must be ignored, not panic @intCast.
     const big = parseCkLlmRequest(arena, "{\"prompt\":\"x\",\"max_tokens\":9000000000}") orelse return error.TestUnexpectedNull;
     try std.testing.expect(big.max_tokens == null);
+}
+
+test "ck_llm max_tokens cannot exceed the descriptor grant" {
+    try std.testing.expectEqual(@as(u32, 1024), clampCkLlmMaxTokens(null, 1024));
+    try std.testing.expectEqual(@as(u32, 64), clampCkLlmMaxTokens(64, 1024));
+    try std.testing.expectEqual(@as(u32, 1024), clampCkLlmMaxTokens(99_999, 1024));
+    try std.testing.expectEqual(@as(u32, 1024), clampCkLlmMaxTokens(4_000_000_000, 0));
+    try std.testing.expectEqual(@as(u32, 256), clampCkLlmMaxTokens(256, 0));
 }
 
 test "Host.writeResult enforces the arena cap and memory bounds" {

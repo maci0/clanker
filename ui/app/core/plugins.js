@@ -1,5 +1,5 @@
 // Vanilla, no bundler. Web UI plugin host — view registration + asset loading.
-import { T, state, add, effect } from "./ui.js";
+import { T, state, add, effect, showLoadError, upgradePfButton } from "./ui.js";
 import { renderMarkdownWithFences, buildCodeBlock, renderMermaidBlocks } from "../lib/markdown.js";
 
 export var pluginViews = {};
@@ -95,7 +95,11 @@ export function loadWebuiPlugins() {
       renderWebuiPlugins(d.plugins || []);
       return loadPluginAssets(d.plugins || []);
     })
-    .catch(function (err) { _el.webuiPluginsStatus.textContent = "Could not load plugins: " + err.message; });
+    .catch(function (err) {
+      var msg = "Could not load plugins: " + err.message;
+      _el.webuiPluginsStatus.textContent = msg;
+      showLoadError(_el.webuiPlugins, msg, loadWebuiPlugins);
+    });
 }
 
 export function renderWebuiPlugins(list) {
@@ -130,7 +134,18 @@ export function renderWebuiPlugins(list) {
               _el.webuiPluginsStatus.textContent = (p.title || p.name) + " enabled.";
             });
           }
-          _el.webuiPluginsStatus.textContent = (p.title || p.name) + " disabled. Reload to remove it from this page.";
+          _el.webuiPluginsStatus.textContent = (p.title || p.name) + " disabled. Reload the page to remove it.";
+          var note = document.createElement("p");
+          note.className = "run-empty";
+          note.appendChild(document.createTextNode((p.title || p.name) + " is off. Reload the page to take it off this screen. "));
+          var reload = document.createElement("button");
+          reload.type = "button";
+          reload.className = "secondary";
+          reload.textContent = "Reload page";
+          upgradePfButton(reload);
+          reload.addEventListener("click", function () { window.location.reload(); });
+          note.appendChild(reload);
+          _el.webuiPlugins.appendChild(note);
         })
         .catch(function (err) {
           box.checked = !box.checked;
@@ -234,6 +249,9 @@ export function bindPlugins(ctx) {
         return null;
       };
       _wireTab(tab, _VIEWS.length - 1);
+      if (typeof spec.boot === "function") {
+        try { spec.boot(pluginApi()); } catch (e) {}
+      }
     }
   };
   if (_el.webuiPluginsRefresh && !_el.webuiPluginsRefresh._bound) {

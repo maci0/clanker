@@ -15,6 +15,9 @@ pub const Mode = enum {
     /// Always 503. Used to exhaust `client.chat`'s same-provider retries so
     /// a fallback-chain test can assert the next provider is reached.
     http_503,
+    /// First response is 429 with Retry-After: 0; later responses are the
+    /// OpenAI SSE stream. Exercises `chatStream`'s same-provider retry.
+    openai_stream_after_429,
     /// Reads the request and deliberately never sends a response. Timeout
     /// tests stop the server after the client has aborted its socket.
     stall,
@@ -36,6 +39,9 @@ pub const MockServer = struct {
     captured: std.ArrayList(Captured) = .empty,
     mode: Mode,
     port: u16,
+    /// Responses written so far. `openai_stream_after_429` uses this to
+    /// flip from the 429 to the stream after the first hit.
+    served: std.atomic.Value(u32) = .init(0),
 
     pub fn start(io: std.Io, gpa: std.mem.Allocator, mode: Mode) !*MockServer {
         var seed_ctr: std.atomic.Value(u64) = .init(0);
@@ -149,8 +155,19 @@ pub const MockServer = struct {
             }
             return;
         }
+        const n = self.served.fetchAdd(1, .monotonic);
+        if (self.mode == .openai_stream_after_429 and n == 0) {
+            const limited =
+                \\{"error":{"message":"rate limited","type":"rate_limit_error"}}
+            ;
+            var lbuf: [4096]u8 = undefined;
+            const lhdr = std.fmt.bufPrint(&lbuf, "HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nRetry-After: 0\r\nConnection: close\r\n\r\n", .{limited.len}) catch return;
+            raw_http.writeAllFd(stream.socket.handle, lhdr);
+            raw_http.writeAllFd(stream.socket.handle, limited);
+            return;
+        }
         const pair = switch (self.mode) {
-            .openai_stream => .{
+            .openai_stream, .openai_stream_after_429 => .{
                 \\data: {"id":"chatcmpl-mock2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello "},"finish_reason":null}]}
                 \\
                 \\data: {"id":"chatcmpl-mock2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"from the "},"finish_reason":null}]}

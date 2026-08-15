@@ -320,7 +320,12 @@ clanker.registerView({
       table.textContent = "";
       state.textContent = "";
       state.removeAttribute("data-state");
-      tiles.appendChild(api.el("p", "run-empty", message));
+      var row = api.el("p", "run-empty", message + " ");
+      var retry = api.el("button", "secondary", "Try again");
+      retry.type = "button";
+      retry.addEventListener("click", load);
+      row.appendChild(retry);
+      tiles.appendChild(row);
     }
 
     /* ------------------------------------------------------------- loading */

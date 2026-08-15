@@ -5,7 +5,7 @@
 // wires the DOM and the app-level callbacks (tab counts, run opening, the
 // peer roster for @ mention hints).
 import { fmtInt, fmtCost, formatChatTime, fmtDeadline, readJson, clip } from "../core/utils.js";
-import { T, bind, state, add, toast, uiConfirm, uiPrompt } from "../core/ui.js";
+import { T, bind, state, add, toast, uiConfirm, uiPrompt, showLoadError } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
 import { doneColumn as doneColumnOf, blockers as blockersOf, dueState, priorityRank } from "../lib/board.js";
@@ -47,7 +47,9 @@ export function setListMode(on) {
     toggleBtn.setAttribute("aria-pressed", listMode ? "true" : "false");
     toggleBtn.textContent = "";
     toggleBtn.appendChild(icon(listMode ? "grid" : "list", 16));
-    toggleBtn.title = listMode ? "Switch to board view" : "Switch to list view";
+    var next = listMode ? "Switch to board view" : "Switch to list view";
+    toggleBtn.title = next;
+    toggleBtn.setAttribute("aria-label", next);
   }
   syncListControls();
 }
@@ -61,6 +63,40 @@ function syncListControls() {
 
 function doneColumn() { return doneColumnOf(board); }
 function blockers(card) { return blockersOf(card, board, cardById); }
+
+function boardHasActiveFilters(s) {
+  return !!(s.mine || s.text || s.blockedOnly || s.priority || s.assignee || s.label);
+}
+
+function cardMatchesBoardFilter(c, s) {
+  if (s.mine && c.assignee !== s.me) return false;
+  if (s.assignee) {
+    if (s.assignee === "(unassigned)") { if (c.assignee) return false; }
+    else if (c.assignee !== s.assignee) return false;
+  }
+  if (s.blockedOnly && blockers(c).length === 0) return false;
+  if (s.priority && (c.priority || "normal") !== s.priority) return false;
+  if (s.label && !(c.labels || []).some(function (l) { return l.color === s.label; })) return false;
+  var hay = c.title + " " + (c.body || "") + " " + (c.assignee || "") + " " +
+    (c.labels || []).map(function (l) { return l.text || l.color || ""; }).join(" ");
+  if (s.text && hay.toLowerCase().indexOf(s.text) === -1) return false;
+  return true;
+}
+
+function clearBoardFilters() {
+  var input = document.getElementById("board-filter-input");
+  if (input) input.value = "";
+  if (el && el.boardMine) el.boardMine.checked = false;
+  var blocked = document.getElementById("board-filter-blocked");
+  if (blocked) blocked.checked = false;
+  var prio = document.getElementById("board-filter-priority");
+  if (prio) prio.value = "";
+  var who = document.getElementById("board-filter-assignee");
+  if (who) who.value = "";
+  var label = document.getElementById("board-filter-label");
+  if (label) label.value = "";
+  renderBoard();
+}
 
 /* A board belongs to a chatroom, because a card *is* a message in that room's
    log. The picker is the room list, so joining a room is what gives you its
@@ -94,7 +130,10 @@ export function loadBoard() {
       renderBoard(d.board || { columns: [], cards: [] });
     })
     .catch(function (err) {
-      el.boardStatus.textContent = "Could not load the board: " + err.message;
+      var msg = "Could not load the board: " + err.message;
+      el.boardStatus.textContent = msg;
+      if (el.boardEmpty) el.boardEmpty.hidden = true;
+      showLoadError(el.board, msg, loadBoard);
       throw err;
     });
 }
@@ -228,9 +267,7 @@ export function renderBoard(next) {
 
 function boardColumn(col, s) {
   var shown = s.cards
-    .filter(function (c) { return c.column === col.id; })
-    .filter(function (c) { return !s.mine || c.assignee === s.me; })
-    .filter(function (c) { if (s.assignee) { if (s.assignee === "(unassigned)") { if (c.assignee) return false; } else if (c.assignee !== s.assignee) return false; } if (s.blockedOnly && blockers(c).length === 0) return false; if (s.priority && (c.priority || "normal") !== s.priority) return false; if (s.label && !(c.labels || []).some(function (l) { return l.color === s.label; })) return false; if (s.text && (c.title + " " + (c.body || "") + " " + (c.assignee || "") + " " + (c.labels || []).map(function(l){ return l.text || l.color || ""; }).join(" ")).toLowerCase().indexOf(s.text) === -1) return false; return true; })
+    .filter(function (c) { return c.column === col.id && cardMatchesBoardFilter(c, s); })
     .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
 
   var over = col.wip && shown.length > col.wip;
@@ -247,12 +284,16 @@ function boardColumn(col, s) {
   if (!shown.length) {
     var emptySlot = document.createElement("li");
     emptySlot.className = "board-empty-slot";
-    emptySlot.textContent = "Drop here — or ";
-    var addLink = document.createElement("button");
-    addLink.type = "button"; addLink.className = "secondary";
-    addLink.textContent = "Add goal";
-    addLink.addEventListener("click", function(e){ e.stopPropagation(); openQuickAdd(); });
-    emptySlot.appendChild(addLink);
+    if (boardHasActiveFilters(s)) {
+      emptySlot.textContent = "No cards in this lane match the filters";
+    } else {
+      emptySlot.textContent = "Drop here — or ";
+      var addLink = document.createElement("button");
+      addLink.type = "button"; addLink.className = "secondary";
+      addLink.textContent = "Add goal";
+      addLink.addEventListener("click", function(e){ e.stopPropagation(); openQuickAdd(); });
+      emptySlot.appendChild(addLink);
+    }
     items.push(emptySlot);
   }
   var list = T.ul({
@@ -691,10 +732,10 @@ function cardNode(c) {
     gf.appendChild(icon("goal", 14));
     gf.title = "Mirrors a goal — kept in step with the Goals view";
     badges.appendChild(gf);
-    // The same rocket that the "Start work" button shows on the open card,
+    // The same start actuator the "Start work" button shows on the open card,
     // surfaced on the closed card so goal runs are visible at a glance. While
     // a run for this goal is in flight (streaming here or on another client)
-    // the rocket lights up, so the closed card shows the live run state.
+    // the actuator lights up, so the closed card shows the live run state.
     var sw = document.createElement("span");
     sw.className = "card-badge";
     sw.appendChild(icon("rocket", 14));
@@ -1526,14 +1567,14 @@ function showCardDetail(id) {
   // placeholder with the mirrored goal's stored default, like the Goals view.
   var goalRow = document.createElement("div");
   goalRow.className = "goal-row";
-  var goalIters = input("card-f-goal-iters", "number", "", "max iters (default)");
+  var goalIters = input("card-f-goal-iters", "number", "", "steps (default)");
   goalIters.min = "1"; goalIters.step = "1";
-  goalIters.title = "Optional per-run max iterations. Blank uses the goal's stored default, then the global agent.max_iterations.";
+  goalIters.title = "Optional per-run step limit. Leave blank to use this goal's saved default, then the configured default (usually 50).";
   var gid = goalIdForCard(c.id);
   var gl = goalState.val || [];
   for (var gi = 0; gi < gl.length; gi++) {
     if (gl[gi].id === gid && gl[gi].max_iterations) {
-      goalIters.placeholder = "\u2264 " + gl[gi].max_iterations + " iters (default)";
+      goalIters.placeholder = "\u2264 " + gl[gi].max_iterations + " steps";
       break;
     }
   }
@@ -1960,7 +2001,15 @@ export function bindBoard(deps) {
       if (c.column !== "done" && c.column !== "archive" && (!s.mine || c.assignee === s.me)) open += 1;
     });
     _setTabCount("board", open);
-    el.boardEmpty.hidden = s.cards.length > 0;
+    el.boardEmpty.hidden = !boardLoaded || s.cards.length > 0;
+    var filterEmpty = document.getElementById("board-filter-empty");
+    if (filterEmpty) {
+      var shownN = 0;
+      s.cards.forEach(function (c) { if (cardMatchesBoardFilter(c, s)) shownN += 1; });
+      filterEmpty.hidden = !(s.cards.length && boardHasActiveFilters(s) && shownN === 0);
+    }
+    var createFold = document.getElementById("board-create-fold");
+    if (createFold && boardLoaded && !s.cards.length) createFold.open = true;
     syncListControls();
 
     // The detail panel is rebuilt with the board because it shows one of these
@@ -2040,6 +2089,18 @@ export function bindBoard(deps) {
     if (filterRaf) return;
     filterRaf = window.requestAnimationFrame(run);
   }
+  var clearBtn = document.getElementById("board-filter-clear");
+  if (clearBtn) clearBtn.addEventListener("click", function () { clearBoardFilters(); });
+  var emptyCreate = document.getElementById("board-empty-create");
+  if (emptyCreate) emptyCreate.addEventListener("click", function () {
+    var fold = document.getElementById("board-create-fold");
+    if (fold) fold.open = true;
+    var obj = document.getElementById("goal-objective");
+    if (obj) {
+      try { obj.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
+      obj.focus();
+    }
+  });
   ["board-filter-input","board-mine","board-filter-blocked","board-filter-priority","board-filter-assignee","board-filter-label"].forEach(function(id){
     var n=document.getElementById(id);
     if(!n) return;
@@ -2136,16 +2197,7 @@ export function bindBoard(deps) {
     function boardListRows(){
       var s=boardState.val;
       var rows=[].concat(s.cards||[]);
-      // reuse same filters as columns
-      rows=rows.filter(function(c){
-        if(s.assignee) { if(s.assignee==="(unassigned)"){ if(c.assignee) return false; } else if(c.assignee!==s.assignee) return false; }
-        if(s.mine && c.assignee!==s.me) return false;
-        if(s.blockedOnly && blockers(c).length===0) return false;
-        if(s.priority && (c.priority||"normal")!==s.priority) return false;
-        if(s.label && !(c.labels||[]).some(function(l){ return l.color===s.label; })) return false;
-        if(s.text && (c.title+" "+(c.body||"")+" "+(c.assignee||"")).toLowerCase().indexOf(s.text)===-1) return false;
-        return true;
-      });
+      rows=rows.filter(function(c){ return cardMatchesBoardFilter(c, s); });
       var how=(sortSel && sortSel.value) || "updated";
       rows.sort(function(a,b){
         if(how==="priority"){
@@ -2169,11 +2221,7 @@ export function bindBoard(deps) {
         // The board-level first-use message already explains how cards get
         // here. Reserve this list message for the genuinely different case
         // where cards exist but the active filters hide all of them.
-        if(!(boardState.val.cards||[]).length) return;
-        var empty=document.createElement("p");
-        empty.className="run-empty";
-        empty.textContent="No cards match the current filters.";
-        listView.appendChild(empty);
+        // #board-filter-empty already explains a filter miss for both views.
         return;
       }
       var table=document.createElement("table");
@@ -2189,7 +2237,7 @@ export function bindBoard(deps) {
       var tbody=document.createElement("tbody");
       rows.forEach(function(c){
         var tr=document.createElement("tr");
-        var titleTd=document.createElement("th"); titleTd.scope="row"; titleTd.textContent=c.title; titleTd.className="board-list-title"; tr.appendChild(titleTd);
+        var titleTd=document.createElement("th"); titleTd.scope="row"; titleTd.textContent=c.title; titleTd.className="board-list-title"; titleTd.title=c.title; tr.appendChild(titleTd);
         var colTd=document.createElement("td"); colTd.textContent=c.column; tr.appendChild(colTd);
         var whoTd=document.createElement("td"); whoTd.textContent=c.assignee||"—"; tr.appendChild(whoTd);
         var dueTd=document.createElement("td"); dueTd.textContent=c.deadline?fmtBoardDate(c.deadline):"—"; if(c.deadline){ var ds=dueState(c); if(ds==="late") dueTd.style.color="var(--danger)"; else if(ds==="soon") dueTd.style.color="var(--warn-text)"; } tr.appendChild(dueTd);

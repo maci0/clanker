@@ -28,7 +28,58 @@ test("Files listing fills the column until a preview is open", function () {
   assert.match(css, /\.files-panes:has\(\.files-right:not\(\[hidden\]\)\)/);
 });
 
+test("Files hidden-only folder offers to show hidden items", function () {
+  const js = readFileSync(join(here, "app.js"), "utf8");
+  assert.match(js, /This folder has /);
+  assert.match(js, /hidden item/);
+  assert.match(js, /Show hidden/);
+  assert.match(js, /hiddenBtn\.click\(\)/);
+});
+
+test("Files filter is 16px on a phone so iOS does not zoom", function () {
+  assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*\.files-filter \{ font-size: 16px; \}/);
+});
+
+test("Files empty nested folder offers to go up", function () {
+  const js = readFileSync(join(here, "app.js"), "utf8");
+  assert.match(js, /This folder is empty\./);
+  assert.match(js, /Go up/);
+  assert.match(js, /cur\.atRoot/);
+  assert.match(js, /upBtn\.click\(\)/);
+});
+
+test("Files filter empty state offers to clear the filter", function () {
+  const js = readFileSync(join(here, "app.js"), "utf8");
+  assert.match(js, /files-clear-filter/);
+  assert.match(js, /Clear filter/);
+  assert.match(js, /Filter by name/);
+  assert.match(css, /\.files-clear-filter\s*\{/);
+});
+
+test("Files folder load error offers to try again", function () {
+  const js = readFileSync(join(here, "app.js"), "utf8");
+  assert.match(js, /Could not open this folder/);
+  assert.match(js, /Try again/);
+  assert.doesNotMatch(js, /"Error: "\s*\+\s*err\.message/);
+});
+
+test("Files file open error shows in the preview with retry", function () {
+  const js = readFileSync(join(here, "app.js"), "utf8");
+  assert.match(js, /Could not open this file/);
+  assert.match(js, /openFile\(path, name\)/);
+  assert.match(js, /rightPane\.hidden = false/);
+});
+
 test("Files buttons reset the host pill so filenames stay compact", function () {
   assert.match(css, /:where\(#view-files\)\s*button:where\(:not\(\.secondary\)\)/);
   assert.match(css, /\.files-open\s*\{[^}]*min-height:\s*28px/);
+});
+
+test("Files crumbs and rows are 44px on a phone", function () {
+  assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*\.files-crumb, \.files-sort-btn, \.files-open \{ min-height: 44px; \}/);
+});
+
+test("Files listing drops Size and Modified on a phone so names stay on-screen", function () {
+  assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*\.files-size,\s*\.files-when \{ display: none; \}/);
+  assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*grid-template-columns:\s*1\.5rem minmax\(0,\s*1fr\)/);
 });

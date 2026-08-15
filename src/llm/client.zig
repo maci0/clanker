@@ -210,7 +210,11 @@ pub fn chat(
     const body = try impl.buildRequest(ctx.gpa, params);
     defer ctx.gpa.free(body);
 
-    const url = try impl.endpointUrl(ctx.gpa, provider, false);
+    // Endpoint override: a model can point at a different host/path than
+    // its provider entry (local vLLM vs the hosted API). URL only — auth
+    // and the rest of the request still come from `provider`.
+    const wire = provider.wireProvider();
+    const url = try impl.endpointUrl(ctx.gpa, &wire, false);
     defer ctx.gpa.free(url);
 
     var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
@@ -291,7 +295,33 @@ pub fn chat(
     };
     const ms: u64 = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
     recordUsage(ctx, arena, provider, resp.usage, ms);
-    return resp;
+    var out = resp;
+    applyReasoningFormat(provider, &out);
+    return out;
+}
+
+/// Parse-side reasoning override (`reasoning_format`). The same weights can
+/// answer differently by host: the DeepSeek API puts reasoning in its own
+/// field while a local vLLM inlines `<think>...</think>` into the content.
+/// Slices point into the same arena the response came from, so re-slicing
+/// needs no copies.
+fn applyReasoningFormat(provider: *const config.Provider, resp: *types.ChatResponse) void {
+    switch (provider.effectiveReasoningFormat()) {
+        .auto => {},
+        .none => resp.reasoning = null,
+        .think_tag => {
+            const content = resp.message.content orelse return;
+            const t = std.mem.trimStart(u8, content, " \t\r\n");
+            if (!std.mem.startsWith(u8, t, "<think>")) return;
+            const inner = t["<think>".len..];
+            // Unclosed tag: the model is still "thinking" or truncated;
+            // leave the content alone rather than guess at a boundary.
+            const close = std.mem.find(u8, inner, "</think>") orelse return;
+            const thought = std.mem.trim(u8, inner[0..close], " \t\r\n");
+            if (resp.reasoning == null and thought.len > 0) resp.reasoning = thought;
+            resp.message.content = std.mem.trimStart(u8, inner[close + "</think>".len ..], " \t\r\n");
+        },
+    }
 }
 
 fn boundedChatTask(
@@ -485,6 +515,43 @@ fn retryDelayNs(io: std.Io, attempt: u32) u64 {
     return base + jitter;
 }
 
+/// Ceiling on a provider-supplied Retry-After so a hostile or misconfigured
+/// header cannot park the retry loop for minutes. Three attempts at this
+/// cap is already a long wait for a single turn.
+const retry_after_cap_ns: u64 = 30 * std.time.ns_per_s;
+
+/// Parse `Retry-After` as integer seconds. HTTP-date values are ignored and
+/// the caller falls back to `retryDelayNs`. `0` is a valid "retry now".
+fn parseRetryAfterNs(value: []const u8) ?u64 {
+    const trimmed = std.mem.trim(u8, value, " \t");
+    if (trimmed.len == 0) return null;
+    const secs = std.fmt.parseInt(u64, trimmed, 10) catch return null;
+    const ns = secs *| std.time.ns_per_s;
+    return @min(ns, retry_after_cap_ns);
+}
+
+fn headerValueIgnoreCase(head: std.http.Client.Response.Head, name: []const u8) ?[]const u8 {
+    var it = head.iterateHeaders();
+    while (it.next()) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, name)) return h.value;
+    }
+    return null;
+}
+
+fn retryDelayForHead(io: std.Io, attempt: u32, head: std.http.Client.Response.Head) u64 {
+    if (headerValueIgnoreCase(head, "retry-after")) |v| {
+        if (parseRetryAfterNs(v)) |ns| return ns;
+    }
+    return retryDelayNs(io, attempt);
+}
+
+fn sendStreamBody(req: *std.http.Client.Request, body: []const u8) !void {
+    var body_writer = try req.sendBodyUnflushed(&.{});
+    try body_writer.writer.writeAll(body);
+    try body_writer.end();
+    try req.connection.?.flush();
+}
+
 fn sleepRetry(io: std.Io, attempt: u32, provider_name: []const u8, http_status: u16, reason: []const u8) !void {
     const delay = retryDelayNs(io, attempt);
     if (http_status == 0) {
@@ -578,7 +645,9 @@ pub fn chatStream(
     const body = try impl.buildRequest(ctx.gpa, p);
     defer ctx.gpa.free(body);
 
-    const url = try impl.endpointUrl(ctx.gpa, provider, true);
+    // Same endpoint override as chat(): URL only, auth stays the provider's.
+    const wire = provider.wireProvider();
+    const url = try impl.endpointUrl(ctx.gpa, &wire, true);
     defer ctx.gpa.free(url);
 
     var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
@@ -591,34 +660,97 @@ pub fn chatStream(
     defer if (ctx.abort) |a| a.disarm(ctx.io);
 
     noteRequest();
-    try rate_limit.waitFor(ctx.io, ctx.gpa, provider);
 
     var headers = baseHeaders();
     var extra: providers.ExtraHeaders = undefined;
-    const extra_len = impl.authHeaders(cred, &headers, &extra);
-
+    var extra_len: usize = 0;
     const uri = std.Uri.parse(url) catch return error.InvalidUrl;
-    var req = try client.request(.POST, uri, .{
-        .redirect_behavior = .unhandled,
-        .headers = headers,
-        .extra_headers = extra[0..extra_len],
-    });
-    defer req.deinit();
 
-    req.transfer_encoding = .{ .content_length = body.len };
-    // Request bodies contain the complete conversation, tool output, and
-    // attachments. Debugging must never copy that user data into terminal or
-    // CI logs; the byte count is enough to diagnose framing problems.
-    if (ctx.environ_map.get("CLANKER_DEBUG_BODY") != null) {
-        log.log(.debug, "LLM streaming request provider={s} bytes={d}", .{ provider.name, body.len });
-    }
-    var body_writer = try req.sendBodyUnflushed(&.{});
-    try body_writer.writer.writeAll(body);
-    try body_writer.end();
-    try req.connection.?.flush();
-
+    // Request lives in this slot so Response.request stays valid across the
+    // rest of the call. A retry deinits the previous attempt before opening
+    // a new one; the successful request is deferred to the function end.
+    var req_slot: ?std.http.Client.Request = null;
+    defer if (req_slot) |*r| r.deinit();
     var redirect_buffer: [8192]u8 = undefined;
-    var response = try req.receiveHead(&redirect_buffer);
+    var response: std.http.Client.Response = undefined;
+    var attempt: u32 = 0;
+    while (true) {
+        attempt += 1;
+        if (stop_flag) |f| if (f.load(.acquire)) return error.Interrupted;
+        if (req_slot) |*r| {
+            r.deinit();
+            req_slot = null;
+        }
+        try rate_limit.waitFor(ctx.io, ctx.gpa, provider);
+        headers = baseHeaders();
+        extra_len = impl.authHeaders(cred, &headers, &extra);
+
+        const opened = client.request(.POST, uri, .{
+            .redirect_behavior = .unhandled,
+            .headers = headers,
+            .extra_headers = extra[0..extra_len],
+        }) catch |err| {
+            if (attempt < max_attempts and isRetryableTransport(err)) {
+                noteRetry();
+                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
+                continue;
+            }
+            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
+                provider.name, @errorName(err), attempt, max_attempts,
+            });
+            noteError();
+            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            return err;
+        };
+        req_slot = opened;
+        var req = &req_slot.?;
+
+        req.transfer_encoding = .{ .content_length = body.len };
+        // Request bodies contain the complete conversation, tool output, and
+        // attachments. Debugging must never copy that user data into terminal or
+        // CI logs; the byte count is enough to diagnose framing problems.
+        if (ctx.environ_map.get("CLANKER_DEBUG_BODY") != null) {
+            log.log(.debug, "LLM streaming request provider={s} bytes={d}", .{ provider.name, body.len });
+        }
+        sendStreamBody(req, body) catch |err| {
+            if (attempt < max_attempts and isRetryableTransport(err)) {
+                noteRetry();
+                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
+                continue;
+            }
+            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
+                provider.name, @errorName(err), attempt, max_attempts,
+            });
+            noteError();
+            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            return err;
+        };
+
+        response = req.receiveHead(&redirect_buffer) catch |err| {
+            if (attempt < max_attempts and isRetryableTransport(err)) {
+                noteRetry();
+                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
+                continue;
+            }
+            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
+                provider.name, @errorName(err), attempt, max_attempts,
+            });
+            noteError();
+            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            return err;
+        };
+
+        if (isRetryable(response.head.status) and attempt < max_attempts) {
+            noteRetry();
+            const delay = retryDelayForHead(ctx.io, attempt, response.head);
+            log.log(.warn, "HTTP {d} from '{s}', retrying in {d}ms (attempt {d}/{d})", .{
+                @intFromEnum(response.head.status), provider.name, delay / std.time.ns_per_ms, attempt, max_attempts,
+            });
+            try std.Io.sleep(ctx.io, .{ .nanoseconds = @intCast(delay) }, .awake);
+            continue;
+        }
+        break;
+    }
 
     if (@intFromEnum(response.head.status) >= 400) {
         // The client advertises gzip, and providers compress error bodies too:
@@ -743,6 +875,7 @@ pub fn chatStream(
     var resp = try acc.finish();
     const ms: u64 = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
     resp.ttft_ms = ttft_ms;
+    applyReasoningFormat(provider, &resp);
     recordUsage(ctx, arena, provider, resp.usage, ms);
     return resp;
 }
@@ -845,6 +978,49 @@ const StreamAccumulator = struct {
     }
 };
 
+test "reasoning_format think_tag splits content into reasoning and answer" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const p = try config.Provider.single(arena, "vllm", "http://127.0.0.1:8000/v1", .openai_compat, "deepseek", .{ .max_tokens = 64, .reasoning_format = .think_tag });
+    var resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "<think>step by step</think>\nfinal answer" } };
+    applyReasoningFormat(&p, &resp);
+    try std.testing.expectEqualStrings("step by step", resp.reasoning.?);
+    try std.testing.expectEqualStrings("final answer", resp.message.content.?);
+
+    // Unclosed tag stays untouched rather than guessing a boundary.
+    var open = types.ChatResponse{ .message = .{ .role = .assistant, .content = "<think>never closed" } };
+    applyReasoningFormat(&p, &open);
+    try std.testing.expect(open.reasoning == null);
+    try std.testing.expectEqualStrings("<think>never closed", open.message.content.?);
+
+    // auto (a provider with no override anywhere) leaves the native parse alone.
+    const auto_p = try config.Provider.single(arena, "api", "https://api.deepseek.com", .openai_compat, "deepseek", .{ .max_tokens = 64 });
+    var plain = types.ChatResponse{ .message = .{ .role = .assistant, .content = "<think>x</think>y" } };
+    applyReasoningFormat(&auto_p, &plain);
+    try std.testing.expectEqualStrings("<think>x</think>y", plain.message.content.?);
+
+    // none discards a provider-native reasoning field.
+    const none_p = try config.Provider.single(arena, "q", "https://q.test/v1", .openai_compat, "m", .{ .max_tokens = 64, .reasoning_format = .none });
+    var dropped = types.ChatResponse{ .message = .{ .role = .assistant, .content = "y" }, .reasoning = "secret chain" };
+    applyReasoningFormat(&none_p, &dropped);
+    try std.testing.expect(dropped.reasoning == null);
+}
+
+test "a model's base_url/path override the provider's for the URL only" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const p = try config.Provider.single(arena, "deepseek", "https://api.deepseek.com", .openai_compat, "deepseek-v4-pro", .{ .max_tokens = 64, .base_url = "http://127.0.0.1:8000/v1", .path = "/custom/completions" });
+    const wire = p.wireProvider();
+    try std.testing.expectEqualStrings("http://127.0.0.1:8000/v1", wire.base_url);
+    try std.testing.expectEqualStrings("/custom/completions", wire.path.?);
+    // Auth-side fields are untouched on the original.
+    try std.testing.expectEqualStrings("https://api.deepseek.com", p.base_url);
+}
+
 fn isRetryable(status: std.http.Status) bool {
     return switch (status) {
         .too_many_requests, .internal_server_error, .bad_gateway, .service_unavailable, .gateway_timeout => true,
@@ -894,6 +1070,15 @@ test "transport retries cover dropped connections, not auth or parse" {
     try std.testing.expect(!isRetryableTransport(error.OutOfMemory));
     try std.testing.expect(!isRetryableTransport(error.InvalidUrl));
     try std.testing.expect(!isRetryableTransport(error.ApiError));
+}
+
+test "Retry-After is integer seconds, capped, and ignores HTTP-date" {
+    try std.testing.expectEqual(@as(?u64, 0), parseRetryAfterNs("0"));
+    try std.testing.expectEqual(@as(?u64, 2 * std.time.ns_per_s), parseRetryAfterNs(" 2 "));
+    try std.testing.expectEqual(@as(?u64, retry_after_cap_ns), parseRetryAfterNs("999"));
+    try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs(""));
+    try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs("Wed, 21 Oct 2015 07:28:00 GMT"));
+    try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs("-1"));
 }
 
 // ------------------------------------------------------------------- tests --
@@ -1118,6 +1303,42 @@ test "streaming chat assembles SSE deltas" {
     }
     try std.testing.expectEqualStrings("Hello from the mock stream", resp.message.content orelse "");
     try std.testing.expectEqualStrings("Hello from the mock stream", Sink.collected.items);
+}
+
+test "chatStream retries a 429 then streams the next response" {
+    const mock_server = @import("mock_server.zig");
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, std.testing.allocator, .openai_stream_after_429);
+    defer mock.stop();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("MOCK_API_KEY", "test-key");
+
+    const base_url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}", .{mock.port});
+    defer std.testing.allocator.free(base_url);
+    var arena_for_provider = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_for_provider.deinit();
+    var provider = try config.Provider.single(arena_for_provider.allocator(), "mock-stream-429", base_url, .openai_compat, "mock", .{ .max_tokens = 64 });
+    provider.api_key_env = "MOCK_API_KEY";
+
+    var ctx = Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    const Noop = struct {
+        fn cb(_: []const u8) void {}
+    };
+    var err_detail: ?[]const u8 = null;
+    const resp = try chatStream(&ctx, arena, .{
+        .provider = &provider,
+        .messages = &messages,
+    }, &err_detail, Noop.cb, null);
+    try std.testing.expectEqualStrings("Hello from the mock stream", resp.message.content orelse "");
+    try std.testing.expectEqual(@as(usize, 2), mock.captured.items.len);
 }
 
 test "bounded chat aborts a provider that never sends a response" {

@@ -78,7 +78,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     </div>
   </div>
   <div class="pf-v6-c-masthead__content">
-    <button type="button" class="chip header-model" id="header-model" aria-live="polite" title="Active model (click to change)" aria-haspopup="dialog" aria-expanded="false">
+    <button type="button" class="chip header-model" id="header-model" title="Active model (click to change)" aria-haspopup="dialog" aria-expanded="false">
       <span class="model-chip__name">…</span>
     </button>
     <span class="chip" id="instance-chip" hidden aria-hidden="true">connecting…</span>
@@ -87,7 +87,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <button type="button" class="chip-btn" id="rail-collapse" title="Collapse sidebar" aria-expanded="true" aria-controls="rail" aria-label="Collapse sidebar"></button>
     <button type="button" class="chip-btn" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
     <button type="button" class="chip-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"></button>
-    <button type="button" class="chip-btn" id="theme-toggle" title="Cycle theme: system / light / dark / mocha / latte / frappe / macchiato / tokyonight / tokyonight-storm / tokyonight-day" aria-label="Theme: system">system</button>
+    <button type="button" class="chip-btn" id="theme-toggle" title="Choose theme" aria-haspopup="listbox" aria-expanded="false" aria-label="Theme: system">system</button>
   </div>
 </header>
 
@@ -106,7 +106,7 @@ lamps carry further). The seven named palettes ride the same tokens.
        Work destinations stay visible, conversations fill the column,
        Watch and Set up fold so they do not eat the list. -->
   <nav class="pf-v6-c-nav rail-nav rail-places" role="tablist" aria-orientation="vertical" aria-label="Sections"
-       aria-owns="tab-chat tab-board tab-runs tab-fleet tab-arena tab-compare tab-rooms tab-models tab-search tab-schedule tab-knowledge tab-prompts tab-tools tab-system">
+       aria-owns="tab-chat tab-board tab-search tab-runs tab-fleet tab-arena tab-compare tab-rooms tab-models tab-schedule tab-knowledge tab-prompts tab-tools tab-system">
     <section class="pf-v6-c-nav__section" aria-labelledby="rail-section-work">
       <h2 class="pf-v6-c-nav__section-title rail-group" id="rail-section-work">Work</h2>
       <ul class="pf-v6-c-nav__list" role="presentation">
@@ -115,6 +115,9 @@ lamps carry further). The seven named palettes ride the same tokens.
         </li>
         <li class="pf-v6-c-nav__item">
           <button type="button" class="rail-tab" role="tab" id="tab-board" aria-controls="view-board" aria-selected="false" tabindex="-1" data-view="board">Board</button>
+        </li>
+        <li class="pf-v6-c-nav__item">
+          <button type="button" class="rail-tab" role="tab" id="tab-search" aria-controls="view-search" aria-selected="false" tabindex="-1" data-view="search">Search</button>
         </li>
       </ul>
     </section>
@@ -144,9 +147,15 @@ lamps carry further). The seven named palettes ride the same tokens.
 
   <div class="rail-context" id="rail-context">
     <div class="rail-head">
+      <div class="rail-workspace-bar">
+        <label class="sr-only" for="workspace-pick">Workspace</label>
+        <select id="workspace-pick" title="Workspace"></select>
+        <button type="button" class="rail-ws-btn" id="workspace-new" title="New workspace" aria-label="New workspace">+</button>
+        <button type="button" class="rail-ws-btn" id="workspace-remove" title="Remove this workspace" aria-label="Remove this workspace" hidden>−</button>
+      </div>
       <button type="button" class="rail-new" id="new-chat">New chat</button>
-      <label class="sr-only" for="session-filter">Filter conversations</label>
-      <input type="search" id="session-filter" placeholder="Filter conversations…" autocomplete="off">
+      <label class="sr-only" for="session-filter">Filter conversations by title</label>
+      <input type="search" id="session-filter" placeholder="Filter by title…" autocomplete="off">
       <!-- The Archive action tells people to toggle this; without it an
            archived conversation could never be listed or unarchived again. -->
       <label class="rail-archived" for="archived-toggle">
@@ -163,9 +172,6 @@ lamps carry further). The seven named palettes ride the same tokens.
         <ul class="pf-v6-c-nav__list" role="presentation">
           <li class="pf-v6-c-nav__item">
             <button type="button" class="rail-tab" role="tab" id="tab-models" aria-controls="view-models" aria-selected="false" tabindex="-1" data-view="models">Models</button>
-          </li>
-          <li class="pf-v6-c-nav__item">
-            <button type="button" class="rail-tab" role="tab" id="tab-search" aria-controls="view-search" aria-selected="false" tabindex="-1" data-view="search">Search</button>
           </li>
           <li class="pf-v6-c-nav__item">
             <button type="button" class="rail-tab" role="tab" id="tab-schedule" aria-controls="view-schedule" aria-selected="false" tabindex="-1" data-view="schedule">Schedule</button>
@@ -201,15 +207,15 @@ lamps carry further). The seven named palettes ride the same tokens.
     <!-- A heading, not the kicker this used to be: it names the conversation
          rather than labelling the row beneath it. -->
     <div class="section-head">
-      <h2 id="session-title">…</h2>
+      <h2 id="session-title">New conversation</h2>
       <div class="run-picker" id="session-picker">
         <div class="session-actions">
           <div class="session-acts-body" id="session-acts-body">
-          <button type="button" class="secondary" id="session-fork">Fork</button>
+          <button type="button" class="secondary" id="session-fork" title="Open a copy you can change without affecting this conversation">Fork</button>
           <button type="button" class="secondary" id="session-rename">Rename</button>
           <button type="button" class="secondary" id="session-move" title="Put this conversation in a workspace">Move to…</button>
           <button type="button" class="secondary" id="session-archive" title="Hide from history without deleting (you can undo in Archived)">Archive</button>
-          <button type="button" class="secondary danger" id="session-delete">Delete</button>
+          <button type="button" class="secondary danger" id="session-delete" title="Permanently delete this conversation. Recorded runs are kept.">Delete</button>
           </div>
           <!-- Folded away rather than dropped: six equal buttons in a row read as
                one wall and hide which three you reach for daily. All of them are
@@ -253,7 +259,8 @@ lamps carry further). The seven named palettes ride the same tokens.
     <div class="conversation-scroll">
     <div class="transcript" id="transcript"></div>
     <div class="run-empty" id="transcript-empty" hidden>
-      <p>What are we working on?</p>
+      <p>New conversation</p>
+      <p>Write a task or pick one below.</p>
     </div>
     </div>
 
@@ -275,9 +282,9 @@ lamps carry further). The seven named palettes ride the same tokens.
               <option value="">None (no auto-retry)</option>
             </select>
             <label for="param-temp">Temperature</label>
-            <input type="number" id="param-temp" min="0" max="2" step="0.05" placeholder="config">
+            <input type="number" id="param-temp" min="0" max="2" step="0.05" placeholder="model default">
             <label for="param-topp">Top-p</label>
-            <input type="number" id="param-topp" min="0" max="1" step="0.05" placeholder="config">
+            <input type="number" id="param-topp" min="0" max="1" step="0.05" placeholder="model default">
             <label for="enter-sends" class="checkbox-row">
               <input type="checkbox" id="enter-sends">
               <span>Enter sends, Shift+Enter makes a new line</span>
@@ -314,21 +321,21 @@ lamps carry further). The seven named palettes ride the same tokens.
           </label>
             </div>
           </details>
-          <button type="button" class="secondary" id="voice-btn" title="Voice input (hold or click)" aria-label="Voice input"></button>
+          <button type="button" class="secondary" id="voice-btn" title="Voice input (click to start)" aria-label="Voice input (click to start)"></button>
           <button type="button" class="secondary danger" id="cancel" hidden
                   title="Stop the running turn" aria-label="Stop the running turn"></button>
           <button type="submit" class="primary" id="submit" disabled
-                  title="Run (Ctrl+Enter)" aria-label="Run (Ctrl+Enter)">Run</button>
+                  title="Write a task first" aria-label="Write a task first">Run</button>
         </div>
       </div>
-      <!-- Session-lifetime run shape under the composer: ticks while a
-           turn is live (times, steps, client TTFT), then fills tokens /
-           cache / tok/s from `done`. New chat, a session switch, or a
-           reload clears it. aria-live stays off during the 200ms tick
-           so a screen reader is not announced every fifth of a second. -->
+      <!-- Session-lifetime run shape under the composer. Times tick every
+           frame. Tokens, cache and tok/s follow mid-run usage events plus
+           a live output estimate from streamed text. New chat, a session
+           switch, or a reload clears it. aria-live stays off while live. -->
       <p class="meta run-metrics" id="run-metrics" hidden></p>
       <div class="chat-steer" id="steer-row" hidden>
-        <textarea id="steer-input" rows="2" wrap="soft" placeholder="Steer the running turn mid-flight (optional)…" autocomplete="off" aria-label="Steer the running turn"></textarea>
+        <label for="steer-input">Steer this turn</label>
+        <textarea id="steer-input" rows="2" wrap="soft" placeholder="Change course while the run is in flight (optional)…" autocomplete="off"></textarea>
         <button type="button" class="secondary" id="steer-btn">Steer</button>
         <span class="meta" id="steer-hint"></span>
       </div>
@@ -336,8 +343,8 @@ lamps carry further). The seven named palettes ride the same tokens.
     </form>
     <!-- Suggestions are the shortest path from an empty page to seeing what
          this thing does; each one is a real task against this repo. They sit
-         under the composer (the centered empty-state convention) and leave
-         with the empty state once the first turn lands. -->
+         under the composer and leave with the empty state once the first
+         turn lands. -->
     <div class="suggestions" id="suggestions"></div>
 
   </div>
@@ -494,16 +501,16 @@ lamps carry further). The seven named palettes ride the same tokens.
           <h2>Channels</h2>
           <button type="button" class="slack-btn-icon" id="chat-create-room" title="Create channel" aria-label="Create channel">+</button>
         </div>
-        <!-- Quick room switcher (Cmd+K / Ctrl+K) -->
+        <!-- Filter the channel list. Ctrl+K stays the page Jump palette. -->
         <div class="slack-search-box">
-          <input type="text" id="chat-room-filter" placeholder="Find a channel…" autocomplete="off" aria-label="Filter channels">
+          <input type="search" id="chat-room-filter" placeholder="Find a channel…" autocomplete="off" aria-label="Filter channels">
         </div>
         <div class="slack-room-list" id="chat-room-list" role="listbox" aria-label="Channels">
           <div class="slack-room-group" id="chat-rooms-group">
             <div class="slack-room-group-head" data-group="rooms">
               <span class="slack-caret">▸</span> Channels
             </div>
-            <div class="slack-room-items" id="chat-rooms-items"></div>
+            <div class="slack-room-items" id="chat-rooms-items"><p class="meta slack-room-loading">Loading channels…</p></div>
           </div>
           <div class="slack-room-group" id="chat-dms-group">
             <div class="slack-room-group-head" data-group="dms">
@@ -515,13 +522,16 @@ lamps carry further). The seven named palettes ride the same tokens.
         <!-- Hidden select for backwards compat -->
         <select id="chat-room" class="sr-only" aria-hidden="true"></select>
       </aside>
+      <!-- Mobile only: tap the dimmed chat to close the channel drawer.
+           The header toggle sits under the drawer while it is open. -->
+      <div class="slack-sidebar-scrim" id="chat-sidebar-scrim"></div>
       <!-- Main chat area -->
       <div class="slack-main">
         <!-- Channel header -->
         <div class="slack-channel-header" id="chat-channel-header">
           <div class="slack-channel-name">
-            <button type="button" class="slack-sidebar-toggle" id="chat-sidebar-toggle" title="Toggle sidebar" aria-label="Toggle sidebar"></button>
-            <span id="chat-channel-title">#general</span>
+            <button type="button" class="slack-sidebar-toggle" id="chat-sidebar-toggle" title="Show channels" aria-label="Show channels" aria-controls="chat-sidebar" aria-expanded="false"></button>
+            <span id="chat-channel-title">Loading…</span>
             <span class="slack-channel-topic" id="chat-channel-topic"></span>
           </div>
           <div class="slack-channel-actions">
@@ -532,7 +542,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         </div>
         <!-- Search bar (hidden by default) -->
         <div class="slack-search-bar" id="chat-search-bar" hidden>
-          <input type="text" id="chat-search-input" placeholder="Search messages…" autocomplete="off" aria-label="Search messages">
+          <input type="search" id="chat-search-input" placeholder="Search messages…" autocomplete="off" aria-label="Search messages">
           <button type="button" class="slack-btn-icon" id="chat-search-close" title="Close search" aria-label="Close search"></button>
           <div class="slack-search-results" id="chat-search-results"></div>
         </div>
@@ -545,7 +555,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <div class="slack-pins-list" id="chat-pins-list"></div>
         </div>
         <!-- Message log -->
-        <div class="chat-log" id="chat-log" role="log" aria-label="Room messages" aria-live="polite" tabindex="0"></div>
+        <div class="chat-log" id="chat-log" role="log" aria-label="Room messages" tabindex="0"></div>
         <!-- Typing indicator -->
         <div class="slack-typing-indicator" id="chat-typing" aria-live="polite"></div>
         <!-- Composer -->
@@ -554,7 +564,8 @@ lamps carry further). The seven named palettes ride the same tokens.
             <button type="button" class="slack-btn-icon slack-emoji-trigger" id="chat-emoji-btn" title="Emoji picker" aria-label="Emoji picker"></button>
             <label class="sr-only" for="chat-text">Message</label>
             <input type="text" id="chat-text" autocomplete="off" placeholder="Message this room…" maxlength="4096" disabled>
-            <button type="submit" id="chat-send" disabled>Send</button>
+            <button type="submit" id="chat-send" disabled
+                    title="Write a message first" aria-label="Write a message first">Send</button>
           </div>
           <div class="slack-formatting-hint">
             <span><b>*bold*</b> <i>_italic_</i> <code>`code`</code> ~strike~ &gt;quote</span>
@@ -570,10 +581,11 @@ lamps carry further). The seven named palettes ride the same tokens.
       <form method="dialog" class="slack-dialog-form">
         <h3>Create a channel</h3>
         <label for="chat-new-room-name">Channel name</label>
-        <input type="text" id="chat-new-room-name" placeholder="e.g. project-alpha" pattern="[a-zA-Z0-9_\-]+" maxlength="64" required>
+        <input type="text" id="chat-new-room-name" placeholder="e.g. project-alpha" pattern="[a-zA-Z0-9_\-]+" maxlength="64" required title="Letters, numbers, underscores, and hyphens only. No spaces." aria-describedby="chat-new-room-hint">
+        <p class="meta" id="chat-new-room-hint">Letters, numbers, _ and - only. No spaces.</p>
         <div class="slack-dialog-actions">
           <button type="button" class="secondary" id="chat-create-cancel">Cancel</button>
-          <button type="submit" id="chat-create-confirm" value="ok">Create</button>
+          <button type="submit" class="primary" id="chat-create-confirm" value="ok">Create channel</button>
         </div>
       </form>
     </dialog>
@@ -593,20 +605,24 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <!-- Creating a goal creates its durable Kanban card. The completion
            criterion travels with the card as its definition of done. -->
+      <details class="board-create-fold" id="board-create-fold">
+        <summary>New goal</summary>
       <form id="goal-form" class="goal-form board-goal-form">
-        <label for="goal-objective">New goal</label>
+        <label for="goal-objective">Objective</label>
         <input type="text" id="goal-objective" placeholder="What should clanker achieve?" maxlength="2000" autocomplete="off" required>
         <label for="goal-criterion">Done when</label>
         <input type="text" id="goal-criterion" placeholder="The observable completion criterion" maxlength="2000" autocomplete="off" required>
-        <label for="goal-max-iterations">Budget</label>
-        <input type="number" id="goal-max-iterations" placeholder="global default" min="1" max="1000" autocomplete="off">
+        <label for="goal-max-iterations">Max steps</label>
+        <input type="number" id="goal-max-iterations" placeholder="usually 50" min="1" max="1000" autocomplete="off"
+               title="How many tool steps each run of this goal may take. Leave blank to use the configured default (usually 50). The hard ceiling is 1000.">
         <label class="checkbox-row" for="goal-worktree" title="Work this goal in its own git worktree and branch, leaving the shared checkout untouched">
           <input type="checkbox" id="goal-worktree">
-          <span>Use git worktree (isolated branch)</span>
+          <span>Isolated worktree</span>
         </label>
-        <button type="submit" class="secondary" id="goal-add">Create goal card</button>
+        <button type="submit" class="primary" id="goal-add">Create goal card</button>
         <p class="meta board-create-note">Saves a Backlog card. It does not start a run.</p>
       </form>
+      </details>
       <!-- Kept for existing room boards and the board module's DOM contract;
            primary creation above always produces a structured goal. -->
       <form id="card-form" hidden>
@@ -646,7 +662,13 @@ lamps carry further). The seven named palettes ride the same tokens.
            opposite of what a first-run message is for. -->
       <div class="board-empty" id="board-empty" hidden>
         <strong>No goal cards yet</strong>
-        <span>Define the outcome and its completion criterion above. The new goal will enter Backlog and remain available to every clanker in this room.</span>
+        <span>Define the outcome and its completion criterion. The new goal will enter Backlog and remain available to every clanker in this room.</span>
+        <button type="button" class="primary" id="board-empty-create">New goal</button>
+      </div>
+      <div class="board-empty" id="board-filter-empty" hidden>
+        <strong>No cards match</strong>
+        <span>The current filters hide every card.</span>
+        <button type="button" class="secondary" id="board-filter-clear">Clear filters</button>
       </div>
       <p class="sr-only" id="board-status" role="status" aria-live="polite"></p>
       <p class="sr-only" id="goals-status" role="status" aria-live="polite"></p>
@@ -665,9 +687,9 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <p class="meta">Find a saved conversation by what was said in it. The conversation list in the sidebar filters on titles; this reads the messages.</p>
       <div class="transcript-tools">
-        <label for="search-q">Find</label>
+        <label for="search-q">Search conversations</label>
         <input type="search" id="search-q" placeholder="e.g. cron spec, provider refused, safeJoin…" autocomplete="off" spellcheck="false">
-        <button type="button" class="secondary" id="search-go">Search</button>
+        <button type="button" class="primary" id="search-go">Search conversations</button>
       </div>
       <p class="sr-only" id="search-status" role="status" aria-live="polite"></p>
       <div id="search-results"></div>
@@ -741,13 +763,14 @@ lamps carry further). The seven named palettes ride the same tokens.
         <div class="models-snippet-head">
           <code id="models-edit-title"></code>
           <button type="button" class="primary" id="models-edit-save">Save changes</button>
+          <button type="button" class="secondary" id="models-edit-toml" aria-pressed="false" title="Edit this model's TOML table directly">TOML</button>
           <button type="button" class="secondary danger" id="models-edit-remove">Remove</button>
           <button type="button" class="secondary" id="models-edit-close">Close</button>
         </div>
         <form id="models-edit-form" class="models-edit-form" onsubmit="return false">
-          <label>Provider<input type="text" id="models-edit-provider" autocomplete="off"></label>
-          <label>Local name<input type="text" id="models-edit-model" autocomplete="off"></label>
-          <label>Wire id<input type="text" id="models-edit-id" autocomplete="off" placeholder="same as local name"></label>
+          <label>Provider<input type="text" id="models-edit-provider" autocomplete="off" required></label>
+          <label>Local name<input type="text" id="models-edit-model" autocomplete="off" required></label>
+          <label title="The model name sent to the provider. Leave blank to use the local name.">API model id<input type="text" id="models-edit-id" autocomplete="off" placeholder="same as local name"></label>
           <label>Display name<input type="text" id="models-edit-display" autocomplete="off"></label>
           <label>Category<input type="text" id="models-edit-category" autocomplete="off"></label>
           <label>Context window<input type="number" id="models-edit-context" min="0" step="1"></label>
@@ -764,11 +787,18 @@ lamps carry further). The seven named palettes ride the same tokens.
               <option value="max">max</option>
             </select>
           </label>
-          <label>Cost in $/1M tok<input type="number" id="models-edit-cost-in" min="0" step="0.001" placeholder="(unset)"></label>
-          <label>Cost out $/1M tok<input type="number" id="models-edit-cost-out" min="0" step="0.001" placeholder="(unset)"></label>
-          <label>RPM<input type="number" id="models-edit-rpm" min="0" step="1" placeholder="(unset)"></label>
+          <label title="Input price in US dollars per million tokens">Input cost ($/1M tokens)<input type="number" id="models-edit-cost-in" min="0" step="0.001" placeholder="(unset)"></label>
+          <label title="Output price in US dollars per million tokens">Output cost ($/1M tokens)<input type="number" id="models-edit-cost-out" min="0" step="0.001" placeholder="(unset)"></label>
+          <label title="Maximum requests per minute this model may send">Requests per minute<input type="number" id="models-edit-rpm" min="0" step="1" placeholder="(unset)"></label>
           <label class="models-edit-wide">Capabilities (comma-separated)<input type="text" id="models-edit-capabilities" autocomplete="off" placeholder="tools, vision, reasoning"></label>
         </form>
+        <!-- The OpenShift-console pattern: the same resource, editable as its
+             raw table. Saved through /api/config/table/set, which validates
+             the whole candidate config before writing anything. -->
+        <div class="config-editor models-edit-toml-editor" id="models-edit-toml-editor" hidden>
+          <pre class="config-editor-highlight" aria-hidden="true"><code id="models-edit-toml-code" class="language-toml"></code></pre>
+          <textarea id="models-edit-toml-text" spellcheck="false" autocomplete="off" aria-label="Model TOML table"></textarea>
+        </div>
         <p class="models-snippet-note" id="models-edit-note" hidden></p>
       </div>
       <p class="sr-only" id="models-status" role="status" aria-live="polite"></p>
@@ -780,13 +810,13 @@ lamps carry further). The seven named palettes ride the same tokens.
         <h2>Knowledge</h2>
         <button type="button" class="secondary" id="knowledge-refresh">Refresh</button>
       </div>
-      <p class="meta" id="knowledge-hint"></p>
+      <p class="meta" id="knowledge-hint">No knowledge selected. Check Include in chat on a collection to add its documents to the next chat.</p>
       <form class="goal-form" id="knowledge-create-form">
-        <label for="knowledge-title">New collection</label>
-        <input type="text" id="knowledge-title" placeholder="e.g. Project docs" maxlength="200">
+        <label for="knowledge-title">Collection name</label>
+        <input type="text" id="knowledge-title" placeholder="e.g. Project docs" maxlength="200" required>
         <label for="knowledge-desc">Description</label>
         <input type="text" id="knowledge-desc" placeholder="Optional description" maxlength="1000">
-        <button type="submit" class="secondary" id="knowledge-create">Create</button>
+        <button type="submit" class="primary" id="knowledge-create">Create collection</button>
       </form>
       <div class="transcript-tools">
         <label for="knowledge-search">Search</label>
@@ -821,10 +851,10 @@ lamps carry further). The seven named palettes ride the same tokens.
       <p class="meta">Saved snippets. Insert with <code>/</code> in the composer, or click Use.</p>
       <form class="goal-form" id="prompts-create-form">
         <label for="prompts-title">Title</label>
-        <input type="text" id="prompts-title" placeholder="e.g. Explain like I'm 5" maxlength="200">
+        <input type="text" id="prompts-title" placeholder="e.g. Explain like I'm 5" maxlength="200" required>
         <label for="prompts-content">Content</label>
-        <textarea id="prompts-content" rows="4" placeholder="Prompt content…" maxlength="20000"></textarea>
-        <button type="submit" class="secondary" id="prompts-create">Create</button>
+        <textarea id="prompts-content" rows="4" placeholder="Prompt content…" maxlength="20000" required></textarea>
+        <button type="submit" class="primary" id="prompts-create">Create prompt</button>
       </form>
       <div class="transcript-tools">
         <label for="prompts-filter">Filter</label>
@@ -870,7 +900,17 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
   </div>
   <div class="view" id="view-system" role="tabpanel" aria-labelledby="tab-system" tabindex="-1" hidden>
-    <section>
+    <nav class="system-jump" aria-label="On this page">
+      <button type="button" data-system-jump="system-progress">Progress</button>
+      <button type="button" data-system-jump="system-usage">Usage</button>
+      <button type="button" data-system-jump="system-status">Status</button>
+      <button type="button" data-system-jump="system-plugins">Plugins</button>
+      <button type="button" data-system-jump="mcp-section">MCP</button>
+      <button type="button" data-system-jump="config-editor-section">Config</button>
+      <button type="button" data-system-jump="settings-section">Settings</button>
+      <button type="button" data-system-jump="system-logs">Logs</button>
+    </nav>
+    <section id="system-progress">
       <div class="section-head">
         <h2>Progress</h2>
         <div class="toolbar-actions">
@@ -880,7 +920,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <button type="button" class="secondary danger" id="progress-stop" hidden>Stop</button>
         </div>
       </div>
-      <div class="run-detail progress-log" id="progress-log" role="log" aria-live="polite" aria-label="Progress log"></div>
+      <div class="run-detail progress-log" id="progress-log" role="log" aria-label="Progress log"></div>
       <p class="sr-only" id="progress-status" role="status" aria-live="polite"></p>
       <div class="subsection-head-row">
         <h3 class="detail-head">History</h3>
@@ -888,14 +928,14 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <div id="progress-history" class="section-output"></div>
     </section>
-    <section>
+    <section id="system-usage">
       <div class="section-head">
         <h2>Usage</h2>
         <button type="button" class="secondary" id="usage-refresh">Refresh</button>
       </div>
       <div id="usage"></div>
     </section>
-    <section>
+    <section id="system-status">
       <div class="section-head">
         <h2>Status</h2>
         <button type="button" class="secondary" id="refresh">Refresh</button>
@@ -907,7 +947,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <dd id="peers">…</dd>
       </dl>
     </section>
-    <section>
+    <section id="system-plugins">
       <div class="section-head">
         <h2>Web UI plugins</h2>
         <button type="button" class="secondary" id="webui-plugins-refresh">Refresh</button>
@@ -919,6 +959,68 @@ lamps carry further). The seven named palettes ride the same tokens.
       <p class="sr-only" id="webui-plugins-status" role="status" aria-live="polite"></p>
     </section>
 
+    <section id="mcp-section">
+      <div class="section-head">
+        <h2>MCP servers</h2>
+        <div class="toolbar-actions">
+          <button type="button" class="secondary" id="mcp-add">Add server…</button>
+          <button type="button" class="secondary" id="mcp-refresh">Refresh</button>
+        </div>
+      </div>
+      <p class="meta">External MCP servers this clanker may consume tools from. Configuration is live and saved to <code>config.local.toml</code>; the client bridge that connects to them ships behind <code>modules.mcp_client</code> and is not active yet.</p>
+      <div id="mcp-list"></div>
+      <div id="mcp-edit" class="models-snippet" role="region" aria-label="Edit MCP server" hidden>
+        <div class="models-snippet-head">
+          <code id="mcp-edit-title"></code>
+          <button type="button" class="primary" id="mcp-edit-save">Save</button>
+          <button type="button" class="secondary danger" id="mcp-edit-remove">Remove</button>
+          <button type="button" class="secondary" id="mcp-edit-close">Close</button>
+        </div>
+        <form id="mcp-edit-form" class="models-edit-form" onsubmit="return false">
+          <label>Name<input type="text" id="mcp-edit-name" autocomplete="off" placeholder="e.g. github" required></label>
+          <label>Transport
+            <select id="mcp-edit-transport">
+              <option value="stdio">stdio (spawn a command)</option>
+              <option value="http">http (streamable HTTP)</option>
+            </select>
+          </label>
+          <label data-mcp-for="stdio">Command<input type="text" id="mcp-edit-command" autocomplete="off" placeholder="github-mcp-server"></label>
+          <label data-mcp-for="stdio">Args (comma-separated)<input type="text" id="mcp-edit-args" autocomplete="off" placeholder="stdio"></label>
+          <label data-mcp-for="stdio">Working dir<input type="text" id="mcp-edit-cwd" autocomplete="off" placeholder="(inherit)"></label>
+          <label data-mcp-for="http">URL<input type="url" id="mcp-edit-url" autocomplete="off" placeholder="https://mcp.example.com/stream"></label>
+          <label>Timeout ms<input type="number" id="mcp-edit-timeout" min="0" step="1" placeholder="60000"></label>
+          <label class="models-edit-wide">Env (KEY=value, comma-separated)<input type="text" id="mcp-edit-env" autocomplete="off" placeholder="GITHUB_TOKEN=..."></label>
+          <label class="models-edit-wide" data-mcp-for="http">Headers (Name: value, comma-separated)<input type="text" id="mcp-edit-headers" autocomplete="off" placeholder="Authorization: Bearer ..."></label>
+        </form>
+        <p class="models-snippet-note" id="mcp-edit-note" hidden></p>
+      </div>
+      <p class="sr-only" id="mcp-status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="config-editor-section">
+      <div class="section-head">
+        <h2>Config files</h2>
+        <div class="toolbar-actions">
+          <label for="config-editor-file">File</label>
+          <select id="config-editor-file" class="model-select" title="Which config file to edit">
+            <option value="config.local.toml">config.local.toml</option>
+            <option value="config.toml">config.toml</option>
+          </select>
+          <button type="button" class="secondary" id="config-editor-reload" title="Discard the editor and re-read the file">Reload</button>
+          <button type="button" class="primary" id="config-editor-save">Save file</button>
+        </div>
+      </div>
+      <p class="meta">Saves validate first: a config that does not load is refused with the reason, and the running server keeps its last known good config. A valid save hot-restarts the server into it. <code>config.local.toml</code> is this machine's overlay; <code>config.toml</code> is shared.</p>
+      <!-- Overlay editor: the textarea holds the truth and stays focusable;
+           the pre behind it carries the syntax colors. Same trick as every
+           lightweight in-browser code editor. -->
+      <div class="config-editor" id="config-editor">
+        <pre class="config-editor-highlight" aria-hidden="true"><code id="config-editor-code" class="language-toml"></code></pre>
+        <textarea id="config-editor-text" spellcheck="false" autocomplete="off" aria-label="Config file contents"></textarea>
+      </div>
+      <p class="meta" id="config-editor-note" role="status" aria-live="polite"></p>
+    </section>
+
     <section id="settings-section">
       <div class="section-head">
         <h2>Settings</h2>
@@ -926,12 +1028,20 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <div class="settings-grid">
         <div class="settings-panel">
+          <div class="settings-panel-title">Composer</div>
+          <label class="checkbox-row" for="settings-enter-sends">
+            <input type="checkbox" id="settings-enter-sends">
+            <span>Enter sends, Shift+Enter makes a new line</span>
+          </label>
+          <div class="meta settings-note">Same as Advanced in the chat composer. Local to this browser.</div>
+        </div>
+        <div class="settings-panel">
           <div class="settings-panel-title">Appearance</div>
           <div class="settings-actions">
-            <button type="button" class="secondary" id="settings-theme-cycle">Cycle theme</button>
+            <button type="button" class="secondary" id="settings-theme-cycle" title="Choose theme" aria-haspopup="listbox" aria-expanded="false">Choose theme</button>
             <span class="meta" id="settings-theme-label">system</span>
           </div>
-          <div class="meta settings-note">Cycles through the header theme control's themes (single-user).</div>
+          <div class="meta settings-note">Same themes as the header control. Local to this browser.</div>
         </div>
         <div class="settings-panel">
           <div class="settings-panel-title">Chat history</div>
@@ -945,7 +1055,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <div class="settings-panel-title">Session</div>
           <div class="meta" id="settings-session-chip">session …</div>
           <div class="settings-actions settings-actions-spaced">
-            <button type="button" class="secondary" id="settings-fork">Fork</button>
+            <button type="button" class="secondary" id="settings-fork" title="Open a copy you can change without affecting this conversation">Fork</button>
             <button type="button" class="secondary" id="settings-rename">Rename</button>
             <button type="button" class="secondary" id="settings-move">Move to workspace</button>
           </div>
@@ -955,7 +1065,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <p class="sr-only" id="settings-status" role="status" aria-live="polite"></p>
     </section>
 
-    <section>
+    <section id="system-logs">
       <div class="section-head">
         <h2>Logs</h2>
         <button type="button" class="secondary" id="logs-refresh">Refresh</button>
@@ -1006,6 +1116,26 @@ lamps carry further). The seven named palettes ride the same tokens.
   <div class="overlay-box overlay-box-wide"></div>
 </div>
 
+<div class="overlay" id="workspace-new-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-new-title" hidden>
+  <div class="overlay-box">
+    <form id="workspace-new-form" class="goal-form">
+      <div class="run-detail-head">
+        <span class="run-detail-title" id="workspace-new-title">New workspace</span>
+      </div>
+      <label for="workspace-new-name">Name</label>
+      <input type="text" id="workspace-new-name" maxlength="64" autocomplete="off" required>
+      <label for="workspace-new-path">Folder</label>
+      <input type="text" id="workspace-new-path" autocomplete="off" required
+             placeholder="/path/to/project">
+      <p class="meta" id="workspace-new-hint">Each workspace is a folder on this machine and keeps its own chat history. The folder must already exist.</p>
+      <div class="goal-actions">
+        <button type="submit" class="primary" id="workspace-new-save">Create workspace</button>
+        <button type="button" class="secondary" id="workspace-new-cancel">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div class="overlay" id="text-prompt" role="dialog" aria-modal="true" aria-labelledby="text-prompt-title" hidden>
   <div class="overlay-box">
     <form id="text-prompt-form" class="goal-form">
@@ -1018,7 +1148,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <datalist id="text-prompt-options"></datalist>
       <p class="meta" id="text-prompt-hint"></p>
       <div class="goal-actions">
-        <button type="submit" class="secondary" id="text-prompt-save">Save</button>
+        <button type="submit" class="primary" id="text-prompt-save">Save</button>
         <button type="button" class="secondary" id="text-prompt-cancel">Cancel</button>
       </div>
     </form>

@@ -2,6 +2,11 @@
 // /models listing, and models.dev discovery. Save writes config.local.toml
 // only (never the shared config.toml), after an explicit confirm.
 import { readJson, fmtInt } from "../core/utils.js";
+import { loadHljs } from "../core/vendor.js";
+
+function askConfirm(message, opts) {
+  return import("../core/ui.js").then(function (mod) { return mod.uiConfirm(message, opts); });
+}
 
 /* Generic grid builder. Shares only the .usage-wrap/.usage presentation classes
    with core/usage.js — whose renderUsageTable is a fixed-column token-stat
@@ -49,6 +54,19 @@ function empty(text) {
   p.className = "usage-empty";
   p.textContent = text;
   return p;
+}
+
+function failWithRetry(host, message, retryFn) {
+  if (!host) return;
+  host.textContent = "";
+  var p = empty(message + " ");
+  var btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "secondary";
+  btn.textContent = "Try again";
+  btn.addEventListener("click", retryFn);
+  p.appendChild(btn);
+  host.appendChild(p);
 }
 
 function status(msg) {
@@ -138,7 +156,6 @@ export function configSnippet(m, configured, known) {
 }
 
 var snippetModel = null;
-var pendingSave = null;
 
 function hideSnippet() {
   var host = document.getElementById("models-snippet");
@@ -151,7 +168,6 @@ function showSnippet(m) {
   if (!host || !body) return;
   hideEditPanel();
   snippetModel = m;
-  pendingSave = null;
   var title = document.getElementById("models-snippet-title");
   if (title) title.textContent = m.provider + "/" + m.id;
   body.textContent = configSnippet(m, configuredProviders, providersKnown);
@@ -178,32 +194,28 @@ function setSnippetNote(text) {
   note.hidden = !text;
 }
 
-function postConfig(path, payload, btn, confirmLabel, doneLabel) {
+function postConfig(path, payload, btn, confirmMessage, doneLabel) {
   if (!snippetModel) return;
-  if (pendingSave !== path) {
-    pendingSave = path;
-    if (btn) btn.textContent = confirmLabel;
-    setSnippetNote("Click again to write this exact block to config.local.toml.");
-    return;
-  }
-  pendingSave = null;
-  if (btn) btn.disabled = true;
-  fetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
-  })
-    .then(readJson)
-    .then(function (d) {
-      if (!d.ok) throw new Error(d.error || "write failed");
-      if (btn) btn.textContent = doneLabel;
-      setSnippetNote("Saved to config.local.toml. Restart clanker serve for this to take effect.");
-      status("Wrote " + (d.path || "config.local.toml") + ".");
+  askConfirm(confirmMessage, { confirmLabel: "Save", title: "Write config.local.toml" }).then(function (yes) {
+    if (!yes) return;
+    if (btn) btn.disabled = true;
+    fetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
     })
-    .catch(function (err) {
-      if (btn) { btn.disabled = false; btn.textContent = "Retry"; }
-      setSnippetNote("Could not save: " + err.message);
-    });
+      .then(readJson)
+      .then(function (d) {
+        if (!d.ok) throw new Error(d.error || "write failed");
+        if (btn) btn.textContent = doneLabel;
+        setSnippetNote("Saved to config.local.toml. " + (d.applied || "The server reloads into it."));
+        status("Wrote " + (d.path || "config.local.toml") + ".");
+      })
+      .catch(function (err) {
+        if (btn) { btn.disabled = false; btn.textContent = "Retry"; }
+        setSnippetNote("Could not save: " + err.message);
+      });
+  });
 }
 
 function saveSnippet() {
@@ -212,7 +224,7 @@ function saveSnippet() {
     "/api/config/model",
     { provider: snippetModel.provider, model: snippetModel.id },
     document.getElementById("models-snippet-save"),
-    "Confirm save",
+    "Save " + snippetModel.provider + "/" + snippetModel.id + " to config.local.toml?",
     "Saved"
   );
 }
@@ -223,7 +235,7 @@ function saveDefault() {
     "/api/config/default",
     { provider: snippetModel.provider, model: snippetModel.id },
     document.getElementById("models-snippet-default"),
-    "Confirm default",
+    "Set " + snippetModel.provider + "/" + snippetModel.id + " as the default model in config.local.toml?",
     "Default set"
   );
 }
@@ -305,6 +317,11 @@ function loadConfigured() {
       configuredProviders = (d.providers || []).map(function (p) { return p.name; });
       providersKnown = true;
       var rows = [];
+      // Parallel to `rows`: null for an ordinary row, or {group, variant}
+      // so the post-render pass can fold alias variants (several local
+      // names sharing one wire SKU, e.g. grok4.6-coding / grok4.6-general)
+      // behind one toggle row.
+      var rowMeta = [];
       (d.providers || []).forEach(function (prov) {
         if (providerSel) {
           var opt = document.createElement("option");
@@ -312,6 +329,11 @@ function loadConfigured() {
           opt.textContent = prov.name;
           providerSel.appendChild(opt);
         }
+        var bySku = {};
+        (prov.models || []).forEach(function (m) {
+          var sku = m.id || m.name;
+          (bySku[sku] = bySku[sku] || []).push(m);
+        });
         (prov.models || []).forEach(function (m) {
           var entry = {
             provider: prov.name, model: m.name, id: m.id || "", display: m.display || "", category: m.category || "",
@@ -320,6 +342,18 @@ function loadConfigured() {
             cost_per_1m_input: m.cost_per_1m_input, cost_per_1m_output: m.cost_per_1m_output,
             capabilities: m.capabilities || []
           };
+          var sku = m.id || m.name;
+          var variants = bySku[sku];
+          var groupKey = prov.name + "/" + sku;
+          if (variants.length > 1 && variants[0] === m) {
+            // First variant carries the fold row for the whole group.
+            rows.push([
+              prov.name,
+              groupToggle(m.display || sku, variants.length, groupKey),
+              "", "", "", "", "", ""
+            ]);
+            rowMeta.push({ group: groupKey, head: true });
+          }
           rows.push([
             prov.name,
             m.display || m.name,
@@ -330,21 +364,65 @@ function loadConfigured() {
             m.name === prov.default_model ? "default" : "",
             editButton(entry)
           ]);
+          rowMeta.push(variants.length > 1 ? { group: groupKey, variant: true } : null);
         });
       });
       // Before the early return below: a config with providers but no declared
       // models still fills the select, and the choice still has to survive.
       if (providerSel) restoreProvider(providerSel, chosen);
       if (!rows.length) {
-        box.appendChild(empty("No providers configured. Add [providers.<name>] in config.toml."));
+        var msg = configuredProviders.length
+          ? "Providers are configured, but none list a model here. Use Add model… or Discover below."
+          : "No models configured yet. Use Add model… above, or search Discover below.";
+        var none = empty(msg + " ");
+        var start = document.createElement("button");
+        start.type = "button";
+        start.className = "primary";
+        start.textContent = "Add model…";
+        start.addEventListener("click", function () {
+          var add = document.getElementById("models-add");
+          if (add) add.click();
+        });
+        none.appendChild(start);
+        box.appendChild(none);
         return;
       }
       box.appendChild(table(["provider", "model", "category", "ctx", "in $/1M", "out $/1M", "", ""], rows));
+      // Fold pass: hide variant rows behind their group's toggle row.
+      var trs = box.querySelectorAll("tbody tr");
+      trs.forEach(function (tr, i) {
+        var meta = rowMeta[i];
+        if (meta && meta.variant) {
+          tr.hidden = true;
+          tr.className = "models-variant-row";
+          tr.setAttribute("data-group", meta.group);
+        }
+      });
     })
     .catch(function (err) {
-      box.textContent = "";
-      box.appendChild(empty("Could not load providers: " + err.message));
+      failWithRetry(box, "Could not load providers: " + err.message, loadConfigured);
     });
+}
+
+/* One SKU under several local names folds behind this row: the chevron
+   toggle shows/hides every tr carrying the group's data-group. */
+function groupToggle(label, count, groupKey) {
+  var btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "secondary models-group-toggle";
+  btn.setAttribute("aria-expanded", "false");
+  btn.textContent = "▸ " + label + " · " + count + " variants";
+  btn.addEventListener("click", function () {
+    var open = btn.getAttribute("aria-expanded") === "true";
+    btn.setAttribute("aria-expanded", String(!open));
+    btn.textContent = (open ? "▸ " : "▾ ") + label + " · " + count + " variants";
+    // Attribute-value comparison instead of a selector: the key is data,
+    // not selector syntax, so no escaping questions.
+    document.querySelectorAll("tr[data-group]").forEach(function (tr) {
+      if (tr.getAttribute("data-group") === groupKey) tr.hidden = open;
+    });
+  });
+  return btn;
 }
 
 function editButton(entry) {
@@ -366,7 +444,6 @@ function editButton(entry) {
 
 var editEntry = null;
 var editIsNew = false;
-var pendingRemove = false;
 
 function editField(id) { return document.getElementById(id); }
 
@@ -376,7 +453,6 @@ function showEditPanel(entry, isNew) {
   hideSnippet();
   editEntry = entry;
   editIsNew = !!isNew;
-  pendingRemove = false;
   var title = document.getElementById("models-edit-title");
   if (title) title.textContent = isNew ? "Add a model" : entry.provider + "/" + entry.model;
   editField("models-edit-provider").value = entry.provider || "";
@@ -399,6 +475,7 @@ function showEditPanel(entry, isNew) {
   if (removeBtn) removeBtn.hidden = isNew;
   var save = document.getElementById("models-edit-save");
   if (save) { save.disabled = false; save.textContent = isNew ? "Add model" : "Save changes"; }
+  setTomlMode(false);
   setEditNote("");
   host.hidden = false;
   try { host.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_) {}
@@ -408,7 +485,6 @@ function hideEditPanel() {
   var host = document.getElementById("models-edit");
   if (host) host.hidden = true;
   editEntry = null;
-  pendingRemove = false;
 }
 
 function setEditNote(text) {
@@ -456,7 +532,85 @@ function editPayload() {
   return payload;
 }
 
+/* ---- raw table mode (the OpenShift YAML-tab pattern, in TOML) ----------- */
+
+var tomlMode = false;
+
+/** The `[models."p/m"]` block the form currently describes. */
+function editToml() {
+  var p = editPayload();
+  var lines = ["[models." + tomlStr(p.provider + "/" + p.model) + "]"];
+  lines.push("provider = " + tomlStr(p.provider));
+  if (p.id) lines.push("id = " + tomlStr(p.id));
+  if (p.context_window != null) lines.push("context_window = " + p.context_window);
+  if (p.max_tokens != null) lines.push("max_tokens = " + p.max_tokens);
+  if (p.temperature != null) lines.push("temperature = " + p.temperature);
+  if (p.top_p != null) lines.push("top_p = " + p.top_p);
+  if (p.reasoning_effort) lines.push("reasoning_effort = " + tomlStr(p.reasoning_effort));
+  if (p.display) lines.push("display = " + tomlStr(p.display));
+  if (p.category) lines.push("category = " + tomlStr(p.category));
+  if (p.cost_per_1m_input != null) lines.push("cost_per_1m_input = " + p.cost_per_1m_input);
+  if (p.cost_per_1m_output != null) lines.push("cost_per_1m_output = " + p.cost_per_1m_output);
+  if (p.rpm != null) lines.push("rpm = " + p.rpm);
+  if (p.capabilities && p.capabilities.length) lines.push("capabilities = [" + p.capabilities.map(tomlStr).join(", ") + "]");
+  return lines.join("\n") + "\n";
+}
+
+function paintEditToml() {
+  var text = document.getElementById("models-edit-toml-text");
+  var code = document.getElementById("models-edit-toml-code");
+  if (!text || !code) return;
+  loadHljs().then(function () {
+    var out = window.hljs.highlight(text.value, { language: "toml", ignoreIllegals: true });
+    code.innerHTML = out.value;
+    code.appendChild(document.createTextNode("\n"));
+  }).catch(function () { code.textContent = text.value; });
+}
+
+function setTomlMode(on) {
+  tomlMode = on;
+  var form = document.getElementById("models-edit-form");
+  var editor = document.getElementById("models-edit-toml-editor");
+  var toggle = document.getElementById("models-edit-toml");
+  var save = document.getElementById("models-edit-save");
+  if (!form || !editor) return;
+  form.hidden = on;
+  editor.hidden = !on;
+  if (toggle) toggle.setAttribute("aria-pressed", String(on));
+  if (save) save.textContent = on ? "Save TOML" : (editIsNew ? "Add model" : "Save changes");
+  if (on) {
+    var text = document.getElementById("models-edit-toml-text");
+    if (text) { text.value = editToml(); paintEditToml(); }
+    setEditNote("Editing the raw table. Saving validates the whole config first; an invalid table is refused and nothing is written.");
+  } else {
+    setEditNote("");
+  }
+}
+
+function saveTomlEdit() {
+  var text = document.getElementById("models-edit-toml-text");
+  var btn = document.getElementById("models-edit-save");
+  if (!text) return;
+  if (btn) btn.disabled = true;
+  fetch("/api/config/table/set", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ block: text.value })
+  })
+    .then(readJson)
+    .then(function (d) {
+      if (!d.ok) throw new Error(d.error || "write failed");
+      setEditNote("Saved to config.local.toml. " + (d.applied || "Hot reload applies it."));
+      loadConfigured();
+    })
+    .catch(function (err) {
+      setEditNote("Refused: " + err.message + " — the running config is unchanged.");
+    })
+    .finally(function () { if (btn) btn.disabled = false; });
+}
+
 function saveEdit() {
+  if (tomlMode) return saveTomlEdit();
   var payload = editPayload();
   if (!payload.provider || !payload.model) {
     setEditNote("Provider and model ID are both required.");
@@ -472,7 +626,7 @@ function saveEdit() {
     .then(readJson)
     .then(function (d) {
       if (!d.ok) throw new Error(d.error || "write failed");
-      setEditNote("Saved to config.local.toml. Restart clanker serve for this to take effect.");
+      setEditNote("Saved to config.local.toml. " + (d.applied || "The server reloads into it."));
       status("Wrote " + (d.path || "config.local.toml") + " for " + payload.provider + "/" + payload.model + ".");
       if (btn) btn.disabled = false;
       loadConfigured();
@@ -486,35 +640,36 @@ function saveEdit() {
 function removeEdit() {
   if (!editEntry || editIsNew) return;
   var btn = document.getElementById("models-edit-remove");
-  if (!pendingRemove) {
-    pendingRemove = true;
-    if (btn) btn.textContent = "Confirm remove";
-    setEditNote("Click again to delete this model from config.local.toml. A model only declared in the shared config.toml cannot be removed here.");
-    return;
-  }
-  pendingRemove = false;
-  if (btn) btn.disabled = true;
-  fetch("/api/config/model/remove", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ provider: editEntry.provider, model: editEntry.model })
-  })
-    .then(readJson)
-    .then(function (d) {
-      if (!d.ok) throw new Error(d.error || "remove failed");
-      if (btn) { btn.disabled = false; btn.textContent = "Remove"; }
-      if (d.removed) {
-        setEditNote("Removed from config.local.toml. Restart clanker serve for this to take effect.");
-        status("Removed " + editEntry.provider + "/" + editEntry.model + ".");
-        loadConfigured();
-      } else {
-        setEditNote("Not in config.local.toml — it must be declared in the shared config.toml, which this page never edits.");
-      }
+  var name = editEntry.provider + "/" + editEntry.model;
+  askConfirm("Remove \"" + name + "\" from config.local.toml? A model only declared in the shared config.toml cannot be removed here.", {
+    danger: true,
+    confirmLabel: "Remove",
+    title: "Remove model"
+  }).then(function (yes) {
+    if (!yes) return;
+    if (btn) btn.disabled = true;
+    fetch("/api/config/model/remove", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: editEntry.provider, model: editEntry.model })
     })
-    .catch(function (err) {
-      if (btn) { btn.disabled = false; btn.textContent = "Remove"; }
-      setEditNote("Could not remove: " + err.message);
-    });
+      .then(readJson)
+      .then(function (d) {
+        if (!d.ok) throw new Error(d.error || "remove failed");
+        if (btn) { btn.disabled = false; btn.textContent = "Remove"; }
+        if (d.removed) {
+          setEditNote("Removed from config.local.toml. " + (d.applied || "The server reloads into it."));
+          status("Removed " + name + ".");
+          loadConfigured();
+        } else {
+          setEditNote("Not in config.local.toml — it must be declared in the shared config.toml, which this page never edits.");
+        }
+      })
+      .catch(function (err) {
+        if (btn) { btn.disabled = false; btn.textContent = "Remove"; }
+        setEditNote("Could not remove: " + err.message);
+      });
+  });
 }
 
 function loadLive() {
@@ -540,24 +695,36 @@ function loadLive() {
       status(rows.length + " models from " + sel.value + ".");
     })
     .catch(function (err) {
-      out.textContent = "";
-      out.appendChild(empty("Could not list: " + err.message));
+      failWithRetry(out, "Could not list: " + err.message, loadLive);
     })
     .finally(function () { btn.disabled = false; });
+}
+
+var catalogSearching = false;
+function syncCatalogBtn() {
+  var q = document.getElementById("models-catalog-q");
+  var btn = document.getElementById("models-catalog-btn");
+  if (!btn) return;
+  var tooShort = !q || q.value.trim().length < 2;
+  btn.disabled = catalogSearching || tooShort;
+  btn.title = catalogSearching ? "Searching…" : (tooShort
+    ? "Type at least 2 characters"
+    : "Search the models.dev catalog");
 }
 
 function searchCatalog() {
   var out = document.getElementById("models-catalog-out");
   var q = document.getElementById("models-catalog-q");
-  var btn = document.getElementById("models-catalog-btn");
   if (!out || !q) return;
   var query = q.value.trim();
   if (query.length < 2) {
     out.textContent = "";
     out.appendChild(empty("Type at least 2 characters."));
+    syncCatalogBtn();
     return;
   }
-  btn.disabled = true;
+  catalogSearching = true;
+  syncCatalogBtn();
   out.textContent = "";
   // The panel names a model from the result set being replaced.
   hideSnippet();
@@ -580,7 +747,7 @@ function searchCatalog() {
         ];
       });
       if (!rows.length) {
-        out.appendChild(empty("No catalog entry matches \"" + query + "\"."));
+        out.appendChild(empty("No catalog entry matches \"" + query + "\". Try another name, or refresh the catalog."));
         return;
       }
       out.appendChild(table(["provider/model", "ctx", "in $/1M", "out $/1M", "capabilities", ""], rows));
@@ -590,10 +757,9 @@ function searchCatalog() {
       }
     })
     .catch(function (err) {
-      out.textContent = "";
-      out.appendChild(empty("Catalog search failed: " + err.message));
+      failWithRetry(out, "Catalog search failed: " + err.message, searchCatalog);
     })
-    .finally(function () { btn.disabled = false; });
+    .finally(function () { catalogSearching = false; syncCatalogBtn(); });
 }
 
 function refreshCatalog() {
@@ -616,10 +782,7 @@ function refreshCatalog() {
     })
     .catch(function (err) {
       status("Catalog refresh failed.");
-      if (out) {
-        out.textContent = "";
-        out.appendChild(empty("Catalog refresh failed: " + err.message));
-      }
+      failWithRetry(out, "Catalog refresh failed: " + err.message, refreshCatalog);
     })
     .finally(function () { if (btn) btn.disabled = false; });
 }
@@ -639,9 +802,13 @@ export function bindModels() {
   var catRefresh = document.getElementById("models-catalog-refresh");
   if (catRefresh) catRefresh.addEventListener("click", refreshCatalog);
   var q = document.getElementById("models-catalog-q");
-  if (q) q.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") { e.preventDefault(); searchCatalog(); }
-  });
+  if (q) {
+    q.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); searchCatalog(); }
+    });
+    q.addEventListener("input", syncCatalogBtn);
+  }
+  syncCatalogBtn();
   var refresh = document.getElementById("models-refresh");
   if (refresh) refresh.addEventListener("click", function () { loadModelsView(); });
   var copy = document.getElementById("models-snippet-copy");
@@ -667,4 +834,14 @@ export function bindModels() {
   if (editRemove) editRemove.addEventListener("click", removeEdit);
   var editClose = document.getElementById("models-edit-close");
   if (editClose) editClose.addEventListener("click", hideEditPanel);
+  var tomlToggle = document.getElementById("models-edit-toml");
+  if (tomlToggle) tomlToggle.addEventListener("click", function () { setTomlMode(!tomlMode); });
+  var tomlText = document.getElementById("models-edit-toml-text");
+  if (tomlText) {
+    tomlText.addEventListener("input", paintEditToml);
+    tomlText.addEventListener("scroll", function () {
+      var pre = tomlText.previousElementSibling;
+      if (pre) { pre.scrollTop = tomlText.scrollTop; pre.scrollLeft = tomlText.scrollLeft; }
+    });
+  }
 }

@@ -35,7 +35,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const worktree = fieldString(obj, "worktree") orelse "";
     const max_iterations: ?u32 = if (lib.optNum(parsed, "max_iterations")) |n| blk: {
         if (n < 1 or n > 1000 or @floor(n) != n) return lib.fail(out, "max_iterations must be an integer from 1 to 1000");
-        break :blk @intFromFloat(n);
+        break :blk @as(u32, @trunc(n));
     } else null;
 
     const now = ck_now();

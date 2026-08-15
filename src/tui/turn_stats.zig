@@ -4,7 +4,9 @@
 //! One formatter, two surfaces. `clanker run` prints the turn line on stderr
 //! (stdout stays pipe-clean, as ever) and the vaxis REPL appends the same
 //! string to its transcript, so the two can't drift into two dialects of
-//! "1234 in / 567 out". Everything here is pure: a struct of numbers in, a
+//! "1234 in / 567 out". Session-lifetime totals share this file too
+//! (`writeSession`): the web `#run-metrics` strip and the REPL's last row
+//! under the composer. Everything here is pure: a struct of numbers in, a
 //! string out, no allocator-per-frame and no terminal, which is what makes it
 //! testable at all, the vaxis event loop is not.
 //!
@@ -16,13 +18,14 @@
 //!   * Cache hit rate is dropped when the provider reported no cache
 //!     accounting at all, rather than shown as `cache 0%`.
 //!
-//! The context meter estimates history at bytes/4, the same chars-per-token
-//! heuristic `session.compactMessages` compacts against and the web UI's own
-//! context meter divides by (`core/composer.js`'s `contextLabel`), so the
-//! REPL's percentage and the browser's agree on the same conversation.
+//! The context meter uses `session.estimatedTokens`, the same per-message
+//! chars/4 `session.compactMessages` trims against. The web composer's
+//! "about N%" label is a cheaper total-bytes/4 of the session file, close
+//! enough for a percentage, not a second budget.
 
 const std = @import("std");
 const types = @import("../llm/types.zig");
+const session = @import("../agent/session.zig");
 
 /// Everything one completed turn is worth reporting. Zero-valued fields are
 /// omitted from the rendered line rather than printed as zeroes (see the
@@ -138,6 +141,72 @@ pub fn writeTurn(w: *std.Io.Writer, s: TurnStats) !void {
     try w.writeAll("]");
 }
 
+/// Session-lifetime strip, same fields as the web UI's `#run-metrics`.
+/// Times include the in-flight turn when the caller folds live elapsed in.
+pub const SessionStats = struct {
+    turns: u64 = 0,
+    steps: u64 = 0,
+    llm_ms: u64 = 0,
+    tool_ms: u64 = 0,
+    ttft_ms_total: u64 = 0,
+    ttft_samples: u32 = 0,
+    live_ttft_ms: ?u64 = null,
+    prompt_tokens: u64 = 0,
+    completion_tokens: u64 = 0,
+    cache_hit_tokens: u64 = 0,
+    cache_miss_tokens: u64 = 0,
+
+    pub fn empty(self: SessionStats) bool {
+        return self.turns == 0 and self.steps == 0 and self.llm_ms == 0 and self.tool_ms == 0;
+    }
+};
+
+/// Writes `21 turns · 1588 steps | LLM 4m25s · Tool call 2m10s | TTFT avg 3.0s · 143 tok/s | Cache hit 100% | Input 1.0M tok · Output 1.6M tok`.
+pub fn writeSession(w: *std.Io.Writer, s: SessionStats) !void {
+    if (s.empty()) return;
+    var a: [32]u8 = undefined;
+    var b: [32]u8 = undefined;
+    try w.print("{d} turn{s}" ++ dot ++ "{d} step{s}", .{
+        s.turns,
+        if (s.turns == 1) "" else "s",
+        s.steps,
+        if (s.steps == 1) "" else "s",
+    });
+    try w.print(" | LLM {s}" ++ dot ++ "Tool call {s}", .{
+        compactDuration(&a, s.llm_ms),
+        compactDuration(&b, s.tool_ms),
+    });
+    var rate_started = false;
+    if (s.ttft_samples > 0) {
+        try w.print(" | TTFT avg {s}", .{compactDuration(&a, s.ttft_ms_total / s.ttft_samples)});
+        rate_started = true;
+    } else if (s.live_ttft_ms) |ttft| {
+        try w.print(" | TTFT {s}", .{compactDuration(&a, ttft)});
+        rate_started = true;
+    }
+    if (s.completion_tokens > 0 and s.llm_ms > 0) {
+        const tps = tokensPerSecond(s.completion_tokens, s.llm_ms);
+        if (rate_started) try w.print(dot ++ "{d:.0} tok/s", .{tps}) else try w.print(" | {d:.0} tok/s", .{tps});
+    }
+    if (cacheHitRate(s.cache_hit_tokens, s.cache_miss_tokens)) |rate| {
+        try w.print(" | Cache hit {d:.0}%", .{rate});
+    }
+    if (s.prompt_tokens > 0 or s.completion_tokens > 0) {
+        try w.print(" | Input {s} tok" ++ dot ++ "Output {s} tok", .{
+            compactCount(&a, s.prompt_tokens),
+            compactCount(&b, s.completion_tokens),
+        });
+    }
+}
+
+/// `writeSession` into `buf`. Null when there is nothing to show.
+pub fn formatSession(buf: []u8, s: SessionStats) ?[]const u8 {
+    var w: std.Io.Writer = .fixed(buf);
+    writeSession(&w, s) catch return null;
+    if (w.end == 0) return null;
+    return buf[0..w.end];
+}
+
 /// `writeTurn` into a fresh allocation, for the surfaces that store a line
 /// rather than stream it (the REPL's transcript owns its strings).
 pub fn formatTurn(alloc: std.mem.Allocator, s: TurnStats) ![]u8 {
@@ -220,11 +289,12 @@ pub fn historyBytes(messages: []const types.Message) usize {
     return n;
 }
 
-/// The same chars/4 estimate `session.compactMessages` budgets against. It is
-/// a heuristic, not a tokenizer: the meter says "roughly how full", and being
-/// exactly right would need a per-provider tokenizer clanker does not carry.
+/// The same per-message chars/4 estimate `session.compactMessages` budgets
+/// against. A heuristic, not a tokenizer: the meter says "roughly how full".
 pub fn historyTokens(messages: []const types.Message) usize {
-    return historyBytes(messages) / 4;
+    var n: usize = 0;
+    for (messages) |m| n +|= session.estimatedTokens(m);
+    return n;
 }
 
 /// How many mid-turn compactions a conversation carries, and how many
@@ -372,6 +442,40 @@ test "a turn with no reported usage is not worth a line" {
     try std.testing.expect((TurnStats{ .completion_tokens = 1 }).accounted());
 }
 
+test "session strip matches the web UI field set" {
+    var buf: [256]u8 = undefined;
+    try std.testing.expectEqual(@as(?[]const u8, null), formatSession(&buf, .{}));
+    const line = formatSession(&buf, .{
+        .turns = 21,
+        .steps = 1588,
+        .llm_ms = 265 * 60_000 + 34_000,
+        .tool_ms = 130 * 60_000 + 18_000,
+        .ttft_ms_total = 3000,
+        .ttft_samples = 1,
+        .prompt_tokens = 682_000_000,
+        .completion_tokens = 1_600_000,
+        .cache_hit_tokens = 100,
+        .cache_miss_tokens = 0,
+    }).?;
+    try std.testing.expectEqualStrings(
+        "21 turns \u{b7} 1588 steps | LLM 265m34s \u{b7} Tool call 130m18s | TTFT avg 3.0s \u{b7} 100 tok/s | Cache hit 100% | Input 682.0M tok \u{b7} Output 1.6M tok",
+        line,
+    );
+}
+
+test "live session strip shows a turn before any tokens land" {
+    var buf: [256]u8 = undefined;
+    const line = formatSession(&buf, .{
+        .turns = 1,
+        .steps = 1,
+        .llm_ms = 400,
+        .live_ttft_ms = 320,
+    }).?;
+    try std.testing.expect(std.mem.startsWith(u8, line, "1 turn \u{b7} 1 step"));
+    try std.testing.expect(std.mem.indexOf(u8, line, "TTFT 320ms") != null);
+    try std.testing.expect(std.mem.indexOf(u8, line, "Input") == null);
+}
+
 test "contextMeter is null without a window" {
     var buf: [64]u8 = undefined;
     try std.testing.expectEqual(@as(?[]const u8, null), contextMeter(&buf, 1000, 0));
@@ -413,7 +517,8 @@ test "historyBytes counts tool-call arguments, not just content" {
         .{ .role = .user, .content = "abcde" },
     };
     try std.testing.expectEqual(@as(usize, 16), historyBytes(&msgs));
-    try std.testing.expectEqual(@as(usize, 4), historyTokens(&msgs));
+    // Per-message ceil(bytes/4): sys 3 -> 1, args 8 -> 2, user 5 -> 2.
+    try std.testing.expectEqual(@as(usize, 5), historyTokens(&msgs));
 }
 
 test "summaryState finds both placeholder spellings and lifts the count out" {

@@ -19,6 +19,7 @@
 // Reference: docs/prds/0006-webui.md, "Compare view".
 
 import { readJson } from "../core/utils.js";
+import { showLoadError, uiConfirm } from "../core/ui.js";
 
 function byId(id) { return document.getElementById(id); }
 
@@ -55,7 +56,9 @@ export function loadCompareView() {
     // Newest first from the tool, so the top row is the one just finished.
     return fetchComparison(state.id || rows[0].id);
   }).catch(function (err) {
-    if (status) status.textContent = "Could not load comparisons: " + err.message;
+    var msg = "Could not load comparisons: " + err.message;
+    if (status) status.textContent = msg;
+    showLoadError(byId("compare-list"), msg, loadCompareView);
   });
 }
 
@@ -63,6 +66,16 @@ function renderPicker(rows) {
   var host = byId("compare-list");
   if (!host) return;
   host.textContent = "";
+  if (!rows.length) {
+    var empty = document.createElement("p");
+    empty.className = "run-empty";
+    empty.appendChild(document.createTextNode("No comparisons yet. Run one with "));
+    var cmd = document.createElement("code");
+    cmd.textContent = "clanker compare \"<prompt>\" --with a --with b";
+    empty.appendChild(cmd);
+    host.appendChild(empty);
+    return;
+  }
   rows.forEach(function (c) {
     var row = document.createElement("button");
     row.type = "button";
@@ -105,7 +118,17 @@ function fetchComparison(id) {
     renderPicker(state.list);
     return data;
   }).catch(function (err) {
-    if (status) status.textContent = "Could not load comparison: " + err.message;
+    var msg = "Could not load comparison: " + err.message;
+    if (status) status.textContent = msg;
+    // A failed open used to leave the previous comparison on screen under a
+    // status line, so the click looked like it had switched answers.
+    var head = byId("compare-prompt");
+    var foot = byId("compare-verdict");
+    var key = byId("compare-key");
+    if (head) head.textContent = "";
+    if (foot) foot.textContent = "";
+    if (key) { key.textContent = ""; key.hidden = true; }
+    showLoadError(byId("compare-answers"), msg, function () { return fetchComparison(id); });
     return null;
   });
 }
@@ -187,7 +210,12 @@ function answerColumn(doc, a, picked, winner) {
     btn.textContent = picked === a.label ? ("Picked " + a.label) : ("Pick " + a.label);
     btn.disabled = !!picked;
     btn.setAttribute("aria-label", picked === a.label ? ("Answer " + a.label + " is your pick") : ("Pick answer " + a.label));
-    btn.addEventListener("click", function () { recordPick(doc.id, a.label); });
+    btn.addEventListener("click", function () {
+      if (picked || state.picking) return;
+      uiConfirm("Pick answer " + a.label + "? You cannot change this later.", {
+        confirmLabel: "Pick " + a.label
+      }).then(function (yes) { if (yes) recordPick(doc.id, a.label); });
+    });
     col.appendChild(btn);
   }
   return col;

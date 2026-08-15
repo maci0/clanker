@@ -19,22 +19,39 @@
 }
 
 .health-tile {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-3) var(--space-4);
+  padding-inline-start: calc(var(--space-4) + 0.9rem);
   background: var(--surface);
   border: 1px solid var(--border);
-  /* State rides on the edge rather than on the number: the value keeps the
-     page's ink so it stays legible, and the word in the note below says the
-     same thing for anyone the colour does not reach. */
-  border-left: 3px solid var(--border);
   border-radius: 4px;
 }
 
-.health-tile[data-state="good"] { border-left-color: var(--ok-fill); }
-.health-tile[data-state="warn"] { border-left-color: var(--warn); }
-.health-tile[data-state="bad"] { border-left-color: var(--danger); }
+/* IEC lamp: state on a dome, not a card side-tab. The note still names
+   the state so colour is never the only encoding. */
+.health-tile::before {
+  content: "";
+  position: absolute;
+  left: var(--space-3);
+  top: 1.15rem;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--fg-muted) 40%, var(--paper)), var(--fg-muted));
+  box-shadow: inset 0 -1px 1px color-mix(in srgb, var(--fg) 22%, transparent);
+}
+.health-tile[data-state="good"]::before {
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--ok-fill) 42%, var(--paper)), var(--ok-fill));
+}
+.health-tile[data-state="warn"]::before {
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--warn) 42%, var(--paper)), var(--warn));
+}
+.health-tile[data-state="bad"]::before {
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--danger) 42%, var(--paper)), var(--danger));
+}
 
 .health-tile-label {
   font-size: var(--step--1);
@@ -151,5 +168,5 @@
     opacity: 1;
     border: 1px solid CanvasText;
   }
-  .health-tile { border-left-color: CanvasText; }
+  .health-tile::before { background: CanvasText; box-shadow: none; }
 }

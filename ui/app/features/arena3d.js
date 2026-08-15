@@ -18,33 +18,22 @@
 // centre — the compactor's job, done as a vortex.
 
 import { reducedMotion } from "../core/vendor.js";
-import { hashName } from "../core/utils.js";
+import { hashName, themeToken } from "../core/utils.js";
 
 var THREE = null;
 var S = null; // live scene state, null when unmounted
 
 function hueFor(name) { return (hashName(name || "") % 360) / 360; }
 
-function themeVar(name) {
-  var root = document.documentElement;
-  if (!root) return "";
-  var v = (getComputedStyle(root).getPropertyValue(name) || "").trim();
-  var m = /^var\(\s*([--A-Za-z0-9_]+)\s*\)$/.exec(v);
-  return m ? themeVar(m[1]) : v;
-}
-function colOr(name, fallback) {
-  var v = themeVar(name);
-  return v || fallback;
-}
 function pal() {
   return {
-    bg: colOr("--surface-2", "#1d2225"),
-    fg: colOr("--fg", "#ffffff"),
-    rule: colOr("--rule", "#343b3f"),
-    ok: colOr("--ok", "#2fae4d"),
-    warn: colOr("--warn", "#e5b54a"),
-    danger: colOr("--danger", "#dc4c3f"),
-    accent: colOr("--accent", "#7aa2f7")
+    bg: themeToken("--surface-2"),
+    fg: themeToken("--fg"),
+    rule: themeToken("--rule"),
+    ok: themeToken("--ok"),
+    warn: themeToken("--warn"),
+    danger: themeToken("--danger"),
+    accent: themeToken("--accent")
   };
 }
 

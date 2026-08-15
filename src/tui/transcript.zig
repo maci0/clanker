@@ -21,12 +21,12 @@ pub const Theme = theme_mod.Theme;
 const strippedControl = sanitize.isControl;
 const writeSanitized = sanitize.writeSanitized;
 
-/// Renders the same markdown subset as the `format` WASM tool (bold, italic,
-/// inline code, fenced blocks, "- " bullets) straight into ANSI as content
-/// streams in, one delta at a time. A marker can split across two deltas
-/// (e.g. "**" arriving as two separate one-byte chunks), so up to 2 bytes
-/// are held back whenever the tail of a chunk could still be the start of a
-/// longer marker, and resolved once the next chunk arrives.
+/// Renders markdown (bold, italic, inline code, fenced blocks, "- " bullets)
+/// straight into ANSI as content streams in, one delta at a time. A marker
+/// can split across two deltas (e.g. "**" arriving as two separate one-byte
+/// chunks), so up to 2 bytes are held back whenever the tail of a chunk
+/// could still be the start of a longer marker, and resolved once the next
+/// chunk arrives.
 pub const MdStream = struct {
     theme: Theme = Theme.default,
     in_fence: bool = false,

@@ -680,13 +680,27 @@ clanker.registerView({
       ctx2d.fillStyle = "#b9bfc5";
       ctx2d.fillRect(wx + 2, wy + L.whiteboard.h * TILE - 4, L.whiteboard.w * TILE - 4, 3);
       // Goals as lines of "writing": the text itself is in the Goals view.
+      // Each line carries an IEC lamp for its status — green working (and
+      // breathing while the clankers are actually on it), amber in review,
+      // red blocked — so a glance at the room says how the work stands.
       ctx2d.fillStyle = "#4a4a4a";
       ctx2d.font = "9px ui-monospace, monospace";
-      ctx2d.fillText("GOALS", wx + 8, wy + 11);
-      ctx2d.fillStyle = "#2f6ea8";
+      var live = goals.filter(function (g) { return g.status === "active"; }).length;
+      ctx2d.fillText("GOALS" + (live ? " · " + live + " live" : ""), wx + 8, wy + 11);
+      var now2 = performance.now();
       goals.slice(0, 4).forEach(function (g, i) {
-        var lineW = Math.min(L.whiteboard.w * TILE - 16, 20 + (hashString(g.objective || "") % 46));
-        ctx2d.fillRect(wx + 8, wy + 20 + i * 12, lineW, 3);
+        var ly = wy + 20 + i * 12;
+        var lamp = g.status === "active" ? "#2fae4d" : g.status === "review" ? "#c9a50a" : "#c62828";
+        // The breath: a working goal's lamp swells, unless motion is reduced.
+        var r = 2.5;
+        if (g.status === "active" && !reduced) r += 0.8 * Math.abs(Math.sin(now2 / 600 + i));
+        ctx2d.fillStyle = lamp;
+        ctx2d.beginPath();
+        ctx2d.arc(wx + 10, ly + 1, r, 0, Math.PI * 2);
+        ctx2d.fill();
+        var lineW = Math.min(L.whiteboard.w * TILE - 24, 20 + (hashString(g.objective || "") % 40));
+        ctx2d.fillStyle = g.status === "active" ? "#2f6ea8" : "#8a8f96";
+        ctx2d.fillRect(wx + 16, ly, lineW, 3);
       });
     }
 
@@ -882,7 +896,12 @@ clanker.registerView({
         offices = list;
         return api.getJSON("/api/goals").catch(function () { return { goals: [] }; });
       }).then(function (g) {
-        goals = (g.goals || []).filter(function (x) { return x.status === "active"; });
+        // Working goals lead; review and blocked follow so the board also
+        // says what is waiting on the operator, not only what is running.
+        var rank = { active: 0, review: 1, blocked: 2 };
+        goals = (g.goals || [])
+          .filter(function (x) { return x.status in rank; })
+          .sort(function (a, b) { return rank[a.status] - rank[b.status]; });
         // Only the position is settled here; the fields themselves exist from
         // the moment the office does.
         offices.forEach(function (o, i) { o.index = i; });

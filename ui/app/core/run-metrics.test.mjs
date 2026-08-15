@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { applyDoneStats, beginLiveTurn, emptyRunMetrics, formatRunMetrics, fmtTok, liveElapsedMs, noteFirstToken } from "./run-metrics.js";
+import { applyDoneStats, applyLiveUsage, beginLiveTurn, emptyRunMetrics, estTokens, formatRunMetrics, formatRunMetricsParts, fmtTok, liveElapsedMs, noteFirstToken, noteLiveChars } from "./run-metrics.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const app = readFileSync(join(here, "..", "app.js"), "utf8");
@@ -91,15 +91,38 @@ test("live TTFT shows before tokens arrive", function () {
   assert.doesNotMatch(line, /Input/);
 });
 
-test("app.js ticks the strip from the elapsed timer and stream events", function () {
+test("app.js ticks the strip from rAF and stream usage events", function () {
   assert.match(app, /from "\.\/core\/run-metrics\.js"/);
   assert.match(app, /beginLiveTurn\(/);
   assert.match(app, /applyDoneStats\(/);
+  assert.match(app, /applyLiveUsage\(/);
   assert.match(app, /noteFirstToken\(/);
+  assert.match(app, /requestAnimationFrame\(tick\)/);
   assert.match(app, /function startElapsed[\s\S]*paintRunMetrics\(/);
   assert.match(app, /function switchSession[\s\S]*resetSessionMetrics\(/);
+  assert.match(app, /evt\.type === "usage"/);
+  assert.match(app, /This visit/);
   assert.doesNotMatch(app, /function renderRunMetrics\(/);
   assert.doesNotMatch(app, /function fmtTok\(/);
+});
+
+test("usage events and streamed chars show tokens before done", function () {
+  var m = beginLiveTurn(emptyRunMetrics(), 0);
+  applyLiveUsage(m, { prompt_tokens: 1200, completion_tokens: 40, cache_hit_tokens: 900, cache_miss_tokens: 100 });
+  noteLiveChars(m, 80);
+  var line = formatRunMetrics(m, 2000);
+  assert.match(line, /Input 1\.2K tok/);
+  assert.match(line, /Output 60 tok/);
+  assert.match(line, /Cache hit 90%/);
+  assert.match(line, /tok\/s/);
+  var parts = formatRunMetricsParts(m, 2000);
+  assert.ok(parts.some(function (p) { return p.key === "io"; }));
+});
+
+test("estTokens is 4 chars per token", function () {
+  assert.equal(estTokens(0), 0);
+  assert.equal(estTokens(4), 1);
+  assert.equal(estTokens(5), 2);
 });
 
 test("second turn accumulates tokens and steps", function () {

@@ -13,6 +13,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const mcp = @import("alphaxiv_client.zig");
+const utf8 = @import("utf8");
 
 const endpoint = "https://api.alphaxiv.org/mcp/v1";
 const default_max_chars: usize = 16000;
@@ -71,5 +72,5 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return lib.fail(out, "alphaXiv returned a response that is not a JSON-RPC message");
     if (!extracted.ok) return lib.fail(out, extracted.text);
 
-    return lib.okText(out, lib.utf8Prefix(extracted.text, max_chars));
+    return lib.okText(out, utf8.cap(extracted.text, max_chars));
 }

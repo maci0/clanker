@@ -147,14 +147,19 @@ pub fn readHistory(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: 
     _ = gpa;
     const path = subPath(arena, state_dir, log_path) catch return &[_]Message{};
     const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return &[_]Message{};
-    var all: std.ArrayList(Message) = .empty;
-    try parseLog(arena, raw, &all);
     var out: std.ArrayList(Message) = .empty;
-    // Iterate newest-first so `limit` keeps the most recent messages.
-    var i = all.items.len;
-    while (i > 0) {
-        i -= 1;
-        const m = all.items[i];
+    if (limit == 0) return out.toOwnedSlice(arena);
+    // Walk lines from the end and stop at `limit`. Parsing every record
+    // first then discarding all but the last page was O(log) allocations
+    // for a 50-message inbox read.
+    var end = raw.len;
+    while (end > 0) {
+        var start = end;
+        while (start > 0 and raw[start - 1] != '\n') start -= 1;
+        const line = raw[start..end];
+        end = if (start > 0) start - 1 else 0;
+        if (line.len == 0) continue;
+        const m = std.json.parseFromSliceLeaky(Message, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
         if (!std.mem.eql(u8, m.room, room)) continue;
         if (m.ts <= after) continue;
         try out.append(arena, m);
@@ -177,10 +182,14 @@ pub const AscPage = struct { msgs: []Message = &.{}, has_more: bool = false };
 pub fn readHistoryAsc(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, after: i64, limit: usize) !AscPage {
     const path = subPath(arena, state_dir, log_path) catch return .{};
     const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return .{};
-    var all: std.ArrayList(Message) = .empty;
-    try parseLog(arena, raw, &all);
     var out: std.ArrayList(Message) = .empty;
-    for (all.items) |m| {
+    // Keep only this room's page candidates. The log is shared across every
+    // room (board + chat + inbox), so materializing the whole file first
+    // allocated every foreign message on each board page.
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        const m = std.json.parseFromSliceLeaky(Message, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
         if (!std.mem.eql(u8, m.room, room)) continue;
         if (m.ts <= after) continue;
         try out.append(arena, m);
@@ -205,10 +214,11 @@ pub fn listRooms(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
     _ = gpa;
     const path = subPath(arena, state_dir, log_path) catch return &[_]RoomInfo{};
     const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return &[_]RoomInfo{};
-    var all: std.ArrayList(Message) = .empty;
-    try parseLog(arena, raw, &all);
     var by_room: std.StringArrayHashMapUnmanaged(RoomInfo) = .empty;
-    for (all.items) |m| {
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        const m = std.json.parseFromSliceLeaky(Message, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
         const gop = try by_room.getOrPut(arena, m.room);
         if (!gop.found_existing) {
             gop.value_ptr.* = .{ .room = m.room, .messages = 0 };
@@ -304,14 +314,48 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     try s.write(msg);
     const line = line_buf[0..w.end];
 
+    const max = cfg.chatrooms.max_history;
+    // Under the cap, seek-append the new line. Rewriting the whole log on
+    // every send used to copy up to 1 MiB per message even when nothing
+    // needed dropping. Trim still rewrites, that is the only path that
+    // must replace the file.
+    if (max > 0 and jsonlLineCount(existing) + 1 <= max) {
+        try appendLogLine(base, io, path, existing, line);
+        return;
+    }
+
     var out_list = std.ArrayList(u8).empty;
     defer out_list.deinit(gpa);
     try out_list.appendSlice(gpa, existing);
     if (existing.len > 0 and existing[existing.len - 1] != '\n') try out_list.append(gpa, '\n');
     try out_list.appendSlice(gpa, line);
     try out_list.append(gpa, '\n');
-    try trimLog(gpa, arena, &out_list, cfg.chatrooms.max_history);
+    try trimLog(gpa, arena, &out_list, max);
     try atomic_write.writeFile(io, base, path, out_list.items);
+}
+
+fn jsonlLineCount(raw: []const u8) usize {
+    var n: usize = 0;
+    var it = std.mem.splitScalar(u8, raw, '\n');
+    while (it.next()) |ln| {
+        if (ln.len > 0) n += 1;
+    }
+    return n;
+}
+
+fn appendLogLine(base: std.Io.Dir, io: std.Io, path: []const u8, existing: []const u8, line: []const u8) !void {
+    const file = try base.createFile(io, path, .{ .truncate = false });
+    defer file.close(io);
+    const size = (try file.stat(io)).size;
+    var wbuf: [512]u8 = undefined;
+    var fw = file.writer(io, &wbuf);
+    try fw.seekToUnbuffered(size);
+    if (existing.len > 0 and existing[existing.len - 1] != '\n') {
+        try fw.interface.writeAll("\n");
+    }
+    try fw.interface.writeAll(line);
+    try fw.interface.writeAll("\n");
+    try fw.flush();
 }
 
 /// Keeps only the last `max` lines of the JSONL log.
@@ -403,7 +447,7 @@ pub fn toggleReaction(
     const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
-    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return false;
+    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return error.NotFound;
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
@@ -430,13 +474,12 @@ pub fn toggleReaction(
         m.reactions = if (new_reactions.items.len > 0) new_reactions.items else null;
         break;
     }
-    if (!found) return false;
+    if (!found) return error.NotFound;
     try rewriteLog(base, io, gpa, arena, state_dir, messages.items);
     return was_added;
 }
 
 /// Edit a message's text. Only the original sender can edit.
-/// Returns the updated message or null if not found / not authorised.
 pub fn editMessage(
     base: std.Io.Dir,
     io: std.Io,
@@ -447,33 +490,32 @@ pub fn editMessage(
     msg_id: []const u8,
     new_text: []const u8,
     from: []const u8,
-) !?Message {
+) !Message {
     _ = cfg;
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
-    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return null;
+    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return error.NotFound;
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
     var result: ?Message = null;
     for (messages.items) |*m| {
         if (!std.mem.eql(u8, m.id, msg_id)) continue;
-        if (!std.mem.eql(u8, m.from, from)) return null;
+        if (!std.mem.eql(u8, m.from, from)) return error.NotOwner;
         const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         m.text = new_text;
         m.edited = now;
         result = m.*;
         break;
     }
-    if (result == null) return null;
+    const updated = result orelse return error.NotFound;
     try rewriteLog(base, io, gpa, arena, state_dir, messages.items);
-    return result;
+    return updated;
 }
 
 /// Mark a message as deleted. Only the original sender can delete.
-/// Returns true if the message was found and deleted.
 pub fn deleteMessage(
     base: std.Io.Dir,
     io: std.Io,
@@ -483,28 +525,27 @@ pub fn deleteMessage(
     cfg: *const config_mod.Config,
     msg_id: []const u8,
     from: []const u8,
-) !bool {
+) !void {
     _ = cfg;
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     const lock = file_lock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
-    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return false;
+    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return error.NotFound;
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
     var found = false;
     for (messages.items) |*m| {
         if (!std.mem.eql(u8, m.id, msg_id)) continue;
-        if (!std.mem.eql(u8, m.from, from)) return false;
+        if (!std.mem.eql(u8, m.from, from)) return error.NotOwner;
         m.deleted = true;
         m.text = "[deleted]";
         found = true;
         break;
     }
-    if (!found) return false;
+    if (!found) return error.NotFound;
     try rewriteLog(base, io, gpa, arena, state_dir, messages.items);
-    return true;
 }
 
 // ----------------------------------------------------------- room metadata --
@@ -924,6 +965,14 @@ fn makeId(arena: std.mem.Allocator, ts: i64) ![]const u8 {
 
 // ------------------------------------------------------------------- tests --
 
+test "jsonlLineCount ignores blank lines" {
+    try std.testing.expectEqual(@as(usize, 0), jsonlLineCount(""));
+    try std.testing.expectEqual(@as(usize, 0), jsonlLineCount("\n\n"));
+    try std.testing.expectEqual(@as(usize, 1), jsonlLineCount("a\n"));
+    try std.testing.expectEqual(@as(usize, 2), jsonlLineCount("a\n\nb\n"));
+    try std.testing.expectEqual(@as(usize, 2), jsonlLineCount("a\nb"));
+}
+
 test "append + readHistory + listRooms round-trip" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
@@ -1300,4 +1349,42 @@ test "down-peer backoff grows, caps, and recovers on success" {
     try std.testing.expect(recordSuccess(io, "down-peer"));
     try std.testing.expect(!inCooldown(io, "down-peer"));
     try std.testing.expect(!recordSuccess(io, "down-peer"));
+}
+
+test "edit, delete and react distinguish missing from not-owner" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "alice";
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"dev"};
+    cfg.chatrooms.max_history = 100;
+
+    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        .room = "dev",
+        .from = "alice",
+        .text = "mine",
+        .ts = 1,
+        .id = "m1",
+    });
+
+    try std.testing.expectError(error.NotFound, editMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "nope", "x", "alice"));
+    try std.testing.expectError(error.NotOwner, editMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "x", "bob"));
+    const edited = try editMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "updated", "alice");
+    try std.testing.expectEqualStrings("updated", edited.text);
+
+    try std.testing.expectError(error.NotFound, toggleReaction(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "nope", "👍", "alice"));
+    try std.testing.expect(try toggleReaction(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "👍", "alice"));
+
+    try std.testing.expectError(error.NotFound, deleteMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "nope", "alice"));
+    try std.testing.expectError(error.NotOwner, deleteMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "bob"));
+    try deleteMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "alice");
 }

@@ -31,11 +31,11 @@ export function renderAttachments(els, iconFn, fmtBytesFn) {
     rm.addEventListener("click", function () {
       pendingImages.splice(i, 1);
       renderAttachments(els, iconFn, fmtBytesFn);
-      els.hint.textContent = "";
     });
     wrap.appendChild(rm);
     els.attachments.appendChild(wrap);
   });
+  if (typeof els.onAttachmentsChange === "function") els.onAttachmentsChange();
 }
 
 export function addImageFile(file, els, iconFn, fmtBytesFn) {
@@ -70,7 +70,6 @@ export function addImageFile(file, els, iconFn, fmtBytesFn) {
     }
     pendingImages.push({ mime: file.type, b64: b64, bytes: bytes });
     renderAttachments(els, iconFn, fmtBytesFn);
-    els.hint.textContent = pendingImages.length + (pendingImages.length === 1 ? " image attached." : " images attached.");
   };
   reader.readAsDataURL(file);
 }
@@ -135,9 +134,11 @@ export function addVideoFile(file, els, iconFn, fmtBytesFn) {
       if (idx >= times.length) {
         cleanup();
         renderAttachments(els, iconFn, fmtBytesFn);
-        els.hint.textContent = pushed > 0
-          ? "video sampled to " + pushed + (pushed === 1 ? " frame." : " frames.")
-          : "No frames could be read from that video.";
+        if (els.sessionStatus) {
+          els.sessionStatus.textContent = pushed > 0
+            ? "video sampled to " + pushed + (pushed === 1 ? " frame." : " frames.")
+            : "No frames could be read from that video.";
+        }
         return;
       }
       video.onseeked = function () {

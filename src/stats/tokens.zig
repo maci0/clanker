@@ -215,9 +215,14 @@ pub fn loadAll(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
 
 /// Groups records by (provider, model), newest-first by total tokens.
 pub fn aggregate(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8) ![]Stat {
-    const recs = try loadAll(base, io, gpa, arena, state_dir);
+    _ = gpa;
+    const path = subPath(arena, state_dir) catch return &.{};
+    const raw = base.readFileAlloc(io, path, arena, .limited(max_log_bytes)) catch return &.{};
     var by_key: std.StringArrayHashMapUnmanaged(Stat) = .empty;
-    for (recs) |r| {
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        const r = std.json.parseFromSliceLeaky(Record, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
         const key = std.fmt.allocPrint(arena, "{s}/{s}", .{ r.provider, r.model }) catch continue;
         const gop = try by_key.getOrPut(arena, key);
         if (!gop.found_existing) {

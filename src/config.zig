@@ -74,6 +74,54 @@ pub const ReasoningEffort = enum {
     }
 };
 
+/// How tool definitions are encoded on the wire. Most OpenAI-compatible
+/// endpoints take the standard `tools` array; a few reject it outright, and
+/// `none` keeps the request clean for those (the agent then runs without
+/// tool calling on that model).
+pub const ToolSchema = enum {
+    openai,
+    none,
+
+    pub fn fromStr(s: []const u8) ?ToolSchema {
+        return std.meta.stringToEnum(ToolSchema, s);
+    }
+};
+
+/// How the reasoning knob is encoded on the wire. `reasoning_effort` is the
+/// flat OpenAI field (the default today); `reasoning` nests it OpenRouter
+/// style (`"reasoning":{"effort":...}`); `thinking` sends the GLM/Zhipu
+/// toggle (`"thinking":{"type":"enabled"}`); `none` omits every reasoning
+/// field for endpoints that 400 on unknown keys.
+pub const ThinkingSchema = enum {
+    reasoning_effort,
+    reasoning,
+    thinking,
+    none,
+
+    pub fn fromStr(s: []const u8) ?ThinkingSchema {
+        return std.meta.stringToEnum(ThinkingSchema, s);
+    }
+};
+
+/// How reasoning is read OUT of a response. The request side is
+/// `ThinkingSchema`; this is the parse side, because the same model can
+/// differ by host: the DeepSeek API returns a `reasoning_content` field
+/// while a local vLLM serving the same weights inlines `<think>...</think>`
+/// into the content.
+pub const ReasoningFormat = enum {
+    /// The provider's native reasoning field, as parsed today.
+    auto,
+    /// Extract a leading `<think>...</think>` block from the content into
+    /// the response's reasoning; the content keeps only what follows.
+    think_tag,
+    /// Discard reasoning entirely.
+    none,
+
+    pub fn fromStr(s: []const u8) ?ReasoningFormat {
+        return std.meta.stringToEnum(ReasoningFormat, s);
+    }
+};
+
 /// How a provider's credential is acquired, a separate axis from the wire
 /// kind, because one wire format can accept several (docs/adrs/0005). Left
 /// unset, each kind auto-detects from the credential's shape where the two
@@ -144,6 +192,16 @@ pub const Model = struct {
     /// Self-imposed requests per minute for this local name. Null or 0 is
     /// unlimited. Independent of the provider's own `rpm` (both apply).
     rpm: ?u32 = null,
+    /// Wire encoding overrides for this model. Null falls back to the
+    /// provider's setting, then the kind default.
+    tool_schema: ?ToolSchema = null,
+    thinking_schema: ?ThinkingSchema = null,
+    reasoning_format: ?ReasoningFormat = null,
+    /// Endpoint override for this model alone: a different host serving the
+    /// same provider entry (empty keeps the provider's `base_url`) and a
+    /// different endpoint path (null keeps the provider's `path`/default).
+    base_url: []const u8 = "",
+    path: ?[]const u8 = null,
 
     /// The name the provider API wants. `key` is the table-key name.
     pub fn wireName(self: Model, key: []const u8) []const u8 {
@@ -184,6 +242,11 @@ pub const Provider = struct {
     /// provider. Null or 0 is unlimited. A model's own `rpm` is a separate
     /// cap on that name, not an override of this one.
     rpm: ?u32 = null,
+
+    /// Endpoint-wide wire encoding defaults; a model's own setting wins.
+    tool_schema: ?ToolSchema = null,
+    thinking_schema: ?ThinkingSchema = null,
+    reasoning_format: ?ReasoningFormat = null,
 
     /// How long `providers check` waits for this endpoint before giving up on
     /// it, overriding `agent.provider_check_timeout_seconds` for this provider
@@ -232,6 +295,34 @@ pub const Provider = struct {
     pub fn modelSku(self: *const Provider, key: []const u8) []const u8 {
         if (self.models.get(key)) |m| return m.wireName(key);
         return key;
+    }
+
+    /// Wire encoding for the active model's tools: model, then provider,
+    /// then the standard OpenAI array.
+    pub fn effectiveToolSchema(self: *const Provider) ToolSchema {
+        return self.activeModel().tool_schema orelse self.tool_schema orelse .openai;
+    }
+
+    /// Wire encoding for the active model's reasoning knob: model, then
+    /// provider, then the flat `reasoning_effort` field.
+    pub fn effectiveThinkingSchema(self: *const Provider) ThinkingSchema {
+        return self.activeModel().thinking_schema orelse self.thinking_schema orelse .reasoning_effort;
+    }
+
+    /// How the active model's reasoning is read out of a response: model,
+    /// then provider, then the provider kind's native field.
+    pub fn effectiveReasoningFormat(self: *const Provider) ReasoningFormat {
+        return self.activeModel().reasoning_format orelse self.reasoning_format orelse .auto;
+    }
+
+    /// This provider with the active model's endpoint overrides folded in,
+    /// for URL building only — auth and everything else stay the provider's.
+    pub fn wireProvider(self: *const Provider) Provider {
+        var p = self.*;
+        const m = self.activeModel();
+        if (m.base_url.len > 0) p.base_url = m.base_url;
+        if (m.path) |mp| p.path = mp;
+        return p;
     }
 };
 
@@ -539,7 +630,7 @@ pub const Improve = struct {
     /// Reject a proposal whose only effect is to add code nothing can reach.
     /// Every other gate asks whether a change is safe; a change that does
     /// nothing is maximally safe, so without this the loop is rewarded for
-    /// producing it. `src/util/json.zig` still carries three such promotions.
+    /// producing it.
     inert_gate: bool = true,
     /// How many accepted improvements in a row may be test-only before the
     /// next test-only proposal is refused. Tests are worth promoting; a run
@@ -797,6 +888,11 @@ pub const TtsrRule = struct {
     max_fires: u32 = 1,
 };
 
+/// Upper bound on the streamed TTSR rolling window. The window is allocated
+/// once per LLM turn from the run arena; a u32-wide `buffer_bytes` with no
+/// cap would let a config grow that allocation without bound.
+pub const ttsr_buffer_bytes_max: u32 = 64 * 1024;
+
 pub const Ttsr = struct {
     max_retries_per_turn: u32 = 3,
     buffer_bytes: u32 = 4096,
@@ -821,6 +917,23 @@ pub const Hooks = struct {
     default_timeout_ms: u32 = 60_000,
 };
 
+/// One external MCP server this clanker may consume tools from
+/// (`[mcp_servers.<name>]`). Parsed and validated now so the web UI and
+/// the agent can manage integrations; the client bridge that actually
+/// connects is PRD 0032 and stays behind `modules.mcp_client` until it
+/// lands. Shape matches that PRD exactly, so nothing re-migrates later.
+pub const McpServer = struct {
+    /// "stdio" (spawn `command`) or "http" (streamable-HTTP at `url`).
+    transport: []const u8 = "stdio",
+    command: []const u8 = "",
+    args: []const []const u8 = &.{},
+    env: []const []const u8 = &.{},
+    cwd: []const u8 = "",
+    url: []const u8 = "",
+    headers: []const []const u8 = &.{},
+    tool_call_timeout_ms: u32 = 60_000,
+};
+
 pub const Config = struct {
     agent_present: bool = false,
     /// Which keys inside `"agent"` were set when this Config was parsed.
@@ -828,6 +941,7 @@ pub const Config = struct {
     improve_present: bool = false,
     default_provider: []const u8 = "deepseek",
     providers: std.StringArrayHashMapUnmanaged(Provider) = .empty,
+    mcp_servers: std.StringArrayHashMapUnmanaged(McpServer) = .empty,
     agent: Agent = .{},
     improve: Improve = .{},
     peers: []const Peer = &.{},
@@ -1095,6 +1209,7 @@ pub const Config = struct {
             "chatrooms",        "modules",  "web",     "memory",
             "serve",            "tui",      "advisor", "hooks",
             "ttsr",             "kernel",   "debug",   "mesh",
+            "mcp_servers",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -1134,6 +1249,17 @@ pub const Config = struct {
         if (obj.get("mesh")) |v| {
             cfg.mesh = try parseMesh(v);
             cfg.mesh_present = true;
+        }
+        if (obj.get("mcp_servers")) |v| {
+            const mobj = switch (v) {
+                .object => |o| o,
+                else => return error.McpServersNotObject,
+            };
+            var it = mobj.iterator();
+            while (it.next()) |kv| {
+                const s = try parseMcpServer(arena, kv.key_ptr.*, kv.value_ptr.*);
+                try cfg.mcp_servers.put(arena, kv.key_ptr.*, s);
+            }
         }
         if (obj.get("providers")) |v| {
             const pobj = switch (v) {
@@ -1218,6 +1344,9 @@ pub const Config = struct {
             "path",
             "default_model",
             "rpm",
+            "tool_schema",
+            "thinking_schema",
+            "reasoning_format",
             "check_timeout_seconds",
             // Legacy names: flagged with a dedicated error below, not a warning.
             "model",
@@ -1284,15 +1413,30 @@ pub const Config = struct {
         if (obj.get("rpm")) |k| {
             p.rpm = try jsonUnsigned(u32, k, "rpm");
         }
+        if (obj.get("tool_schema")) |k| {
+            const s = try jsonStr(k, "tool_schema");
+            p.tool_schema = ToolSchema.fromStr(s) orelse {
+                log.log(.error_, "provider '{s}': tool_schema \"{s}\" is not one of \"openai\", \"none\"", .{ name, s });
+                return error.UnknownToolSchema;
+            };
+        }
+        if (obj.get("thinking_schema")) |k| {
+            const s = try jsonStr(k, "thinking_schema");
+            p.thinking_schema = ThinkingSchema.fromStr(s) orelse {
+                log.log(.error_, "provider '{s}': thinking_schema \"{s}\" is not one of \"reasoning_effort\", \"reasoning\", \"thinking\", \"none\"", .{ name, s });
+                return error.UnknownThinkingSchema;
+            };
+        }
+        if (obj.get("reasoning_format")) |k| {
+            const s = try jsonStr(k, "reasoning_format");
+            p.reasoning_format = ReasoningFormat.fromStr(s) orelse {
+                log.log(.error_, "provider '{s}': reasoning_format \"{s}\" is not one of \"auto\", \"think_tag\", \"none\"", .{ name, s });
+                return error.UnknownReasoningFormat;
+            };
+        }
         if (obj.get("check_timeout_seconds")) |k| {
-            const secs = try jsonInt(k, "check_timeout_seconds");
-            // Rejected rather than @intCast into a panic: a negative timeout
-            // has no sensible reading, and "0 disables" is already taken.
-            if (secs < 0) {
-                log.log(.error_, "provider '{s}': \"check_timeout_seconds\" must be >= 0 (0 = no ceiling)", .{name});
-                return error.BadCheckTimeout;
-            }
-            p.check_timeout_seconds = @intCast(secs);
+            // 0 = no ceiling. A negative used to @intCast into a 4G hang.
+            p.check_timeout_seconds = try jsonUnsigned(u32, k, "check_timeout_seconds");
         }
 
         // vertex / vertex_anthropic address the model by project/location in
@@ -1457,6 +1601,11 @@ pub const Config = struct {
             "capabilities",
             "category",
             "rpm",
+            "tool_schema",
+            "thinking_schema",
+            "reasoning_format",
+            "base_url",
+            "path",
         }, name);
         if (obj.get("id")) |k| m.id = try jsonStr(k, "id");
         if (obj.get("context_window")) |k| {
@@ -1476,6 +1625,29 @@ pub const Config = struct {
                 return error.UnknownReasoningEffort;
             };
         }
+        if (obj.get("tool_schema")) |k| {
+            const s = try jsonStr(k, "tool_schema");
+            m.tool_schema = ToolSchema.fromStr(s) orelse {
+                log.log(.error_, "models[\"{s}\"]: tool_schema \"{s}\" is not one of \"openai\", \"none\"", .{ name, s });
+                return error.UnknownToolSchema;
+            };
+        }
+        if (obj.get("thinking_schema")) |k| {
+            const s = try jsonStr(k, "thinking_schema");
+            m.thinking_schema = ThinkingSchema.fromStr(s) orelse {
+                log.log(.error_, "models[\"{s}\"]: thinking_schema \"{s}\" is not one of \"reasoning_effort\", \"reasoning\", \"thinking\", \"none\"", .{ name, s });
+                return error.UnknownThinkingSchema;
+            };
+        }
+        if (obj.get("reasoning_format")) |k| {
+            const s = try jsonStr(k, "reasoning_format");
+            m.reasoning_format = ReasoningFormat.fromStr(s) orelse {
+                log.log(.error_, "models[\"{s}\"]: reasoning_format \"{s}\" is not one of \"auto\", \"think_tag\", \"none\"", .{ name, s });
+                return error.UnknownReasoningFormat;
+            };
+        }
+        if (obj.get("base_url")) |k| m.base_url = try jsonStr(k, "base_url");
+        if (obj.get("path")) |k| m.path = try jsonStr(k, "path");
         if (obj.get("display")) |k| m.display = try jsonStr(k, "display");
         if (obj.get("cost_per_1m_input")) |k| m.cost_per_1m_input = try jsonFloat(k, "cost_per_1m_input");
         if (obj.get("cost_per_1m_output")) |k| m.cost_per_1m_output = try jsonFloat(k, "cost_per_1m_output");
@@ -1939,12 +2111,7 @@ pub const Config = struct {
             f.ask_timeout_seconds = true;
         }
         if (obj.get("provider_check_timeout_seconds")) |k| {
-            const secs = try jsonInt(k, "provider_check_timeout_seconds");
-            if (secs < 0) {
-                log.log(.error_, "agent.provider_check_timeout_seconds must be >= 0 (0 = no ceiling)", .{});
-                return error.BadCheckTimeout;
-            }
-            a.provider_check_timeout_seconds = @intCast(secs);
+            a.provider_check_timeout_seconds = try jsonUnsigned(u32, k, "provider_check_timeout_seconds");
             f.provider_check_timeout_seconds = true;
         }
         if (obj.get("confirm_writes")) |k| {
@@ -2135,6 +2302,50 @@ pub const Config = struct {
         return d;
     }
 
+    fn parseMcpServer(arena: std.mem.Allocator, name: []const u8, v: json.Value) !McpServer {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.McpServerNotObject,
+        };
+        warnUnknownKeys(obj, &.{
+            "transport", "command", "args", "env", "cwd", "url", "headers", "tool_call_timeout_ms",
+        }, name);
+        var s = McpServer{};
+        if (obj.get("transport")) |k| s.transport = try jsonStr(k, "transport");
+        if (obj.get("command")) |k| s.command = try jsonStr(k, "command");
+        if (obj.get("cwd")) |k| s.cwd = try jsonStr(k, "cwd");
+        if (obj.get("url")) |k| s.url = try jsonStr(k, "url");
+        if (obj.get("tool_call_timeout_ms")) |k| s.tool_call_timeout_ms = try jsonUnsigned(u32, k, "tool_call_timeout_ms");
+        inline for (.{ "args", "env", "headers" }) |field| {
+            if (obj.get(field)) |k| {
+                const arr = switch (k) {
+                    .array => |a| a,
+                    else => return error.McpServerFieldNotArray,
+                };
+                var list: std.ArrayList([]const u8) = .empty;
+                for (arr.items) |item| try list.append(arena, try jsonStr(item, field ++ "[]"));
+                @field(s, field) = try list.toOwnedSlice(arena);
+            }
+        }
+        // Misconfiguration surfaces at load, next to the file, not on the
+        // first tool call after the client bridge lands.
+        if (std.mem.eql(u8, s.transport, "stdio")) {
+            if (s.command.len == 0) {
+                log.log(.error_, "mcp_servers '{s}': transport \"stdio\" requires \"command\"", .{name});
+                return error.McpServerCommandMissing;
+            }
+        } else if (std.mem.eql(u8, s.transport, "http")) {
+            if (s.url.len == 0 or (!std.mem.startsWith(u8, s.url, "http://") and !std.mem.startsWith(u8, s.url, "https://"))) {
+                log.log(.error_, "mcp_servers '{s}': transport \"http\" requires an http(s) \"url\"", .{name});
+                return error.McpServerUrlMissing;
+            }
+        } else {
+            log.log(.error_, "mcp_servers '{s}': transport \"{s}\" is not one of \"stdio\", \"http\"", .{ name, s.transport });
+            return error.UnknownMcpTransport;
+        }
+        return s;
+    }
+
     fn parseMesh(v: json.Value) !Mesh {
         const obj = switch (v) {
             .object => |o| o,
@@ -2182,6 +2393,7 @@ pub const Config = struct {
         if (obj.get("buffer_bytes")) |k| {
             t.buffer_bytes = try jsonUnsigned(u32, k, "ttsr.buffer_bytes");
             if (t.buffer_bytes == 0) t.buffer_bytes = 4096;
+            if (t.buffer_bytes > ttsr_buffer_bytes_max) t.buffer_bytes = ttsr_buffer_bytes_max;
         }
         if (obj.get("rules")) |k| {
             const arr = switch (k) {
@@ -2199,9 +2411,9 @@ pub const Config = struct {
                 if (ro.get("pattern")) |p| rule.pattern = try jsonStr(p, "rules[].pattern");
                 if (ro.get("inject")) |inj| rule.inject = try jsonStr(inj, "rules[].inject");
                 if (ro.get("max_fires")) |mf| {
-                    const n = try jsonInt(mf, "rules[].max_fires");
-                    if (n <= 0) return error.TtsrMaxFiresZero;
-                    rule.max_fires = @intCast(n);
+                    const n = try jsonUnsigned(u32, mf, "rules[].max_fires");
+                    if (n == 0) return error.TtsrMaxFiresZero;
+                    rule.max_fires = n;
                 }
                 if (rule.name.len == 0) return error.TtsrRuleNameEmpty;
                 if (rule.pattern.len == 0) return error.TtsrRulePatternEmpty;
@@ -2227,12 +2439,11 @@ pub const Config = struct {
         if (obj.get("model")) |k| a.model = try jsonStr(k, "advisor.model");
         if (obj.get("scope")) |k| a.scope = try jsonStr(k, "advisor.scope");
         if (obj.get("context_turns")) |k| {
-            const n = try jsonInt(k, "advisor.context_turns");
-            a.context_turns = if (n <= 0) 1 else @intCast(n);
+            const n = try jsonUnsigned(u32, k, "advisor.context_turns");
+            a.context_turns = if (n == 0) 1 else n;
         }
         if (obj.get("timeout_ms")) |k| {
-            const n = try jsonInt(k, "advisor.timeout_ms");
-            a.timeout_ms = if (n <= 0) 0 else @intCast(n);
+            a.timeout_ms = try jsonUnsigned(u32, k, "advisor.timeout_ms");
         }
         return a;
     }
@@ -2265,8 +2476,8 @@ pub const Config = struct {
         var im = Improve{};
         warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "arena_advisory", "max_cache_bytes", "max_context_requests", "inert_gate", "max_consecutive_test_only", "eval_provider", "plan_phase" }, "improve");
         if (obj.get("max_context_bytes")) |k| {
-            const n = try jsonInt(k, "max_context_bytes");
-            im.max_context_bytes = if (n <= 0) null else @intCast(n);
+            const n = try jsonUnsigned(usize, k, "max_context_bytes");
+            im.max_context_bytes = if (n == 0) null else n;
         }
         if (obj.get("capability_gate")) |k| im.capability_gate = switch (k) {
             .bool => |b| b,
@@ -2275,16 +2486,14 @@ pub const Config = struct {
         if (obj.get("arena_advisory")) |k| im.arena_advisory = try jsonBool(k, "arena_advisory");
         if (obj.get("max_cache_bytes")) |k| im.max_cache_bytes = try jsonUnsigned(u64, k, "max_cache_bytes");
         if (obj.get("max_context_requests")) |k| {
-            const n = try jsonInt(k, "max_context_requests");
-            im.max_context_requests = if (n <= 0) 0 else @intCast(n);
+            im.max_context_requests = try jsonUnsigned(u32, k, "max_context_requests");
         }
         if (obj.get("inert_gate")) |k| im.inert_gate = switch (k) {
             .bool => |b| b,
             else => return error.FieldNotBool,
         };
         if (obj.get("max_consecutive_test_only")) |k| {
-            const n = try jsonInt(k, "max_consecutive_test_only");
-            im.max_consecutive_test_only = if (n <= 0) 0 else @intCast(n);
+            im.max_consecutive_test_only = try jsonUnsigned(u32, k, "max_consecutive_test_only");
         }
         if (obj.get("eval_provider")) |k| im.eval_provider = try jsonStr(k, "eval_provider");
         if (obj.get("plan_phase")) |k| im.plan_phase = switch (k) {
@@ -2302,6 +2511,12 @@ pub const Config = struct {
         var it = src.providers.iterator();
         while (it.next()) |kv| {
             try dst.providers.put(arena, kv.key_ptr.*, kv.value_ptr.*);
+        }
+        // Same table-by-table overlay as providers: a local
+        // [mcp_servers.<name>] adds or replaces that one server.
+        var mcp_it = src.mcp_servers.iterator();
+        while (mcp_it.next()) |kv| {
+            try dst.mcp_servers.put(arena, kv.key_ptr.*, kv.value_ptr.*);
         }
         // Agent is field-merged: a local file that only sets e.g. sandbox_root
         // must not reset tools_dir (and the rest) to Agent{} defaults, that
@@ -3591,6 +3806,135 @@ test "rpm is accepted on a provider and on a model" {
     try std.testing.expect(n.models.get("slow").?.rpm == null);
 }
 
+test "tool_schema and thinking_schema parse on providers and models, model wins" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "n"
+        \\[providers.n]
+        \\base_url = "https://n.test/v1"
+        \\thinking_schema = "thinking"
+        \\[models."n/plain"]
+        \\provider = "n"
+        \\[models."n/bare"]
+        \\provider = "n"
+        \\tool_schema = "none"
+        \\thinking_schema = "none"
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    var n = cfg.providers.get("n").?;
+    n.default_model = "plain";
+    try std.testing.expectEqual(ToolSchema.openai, n.effectiveToolSchema());
+    try std.testing.expectEqual(ThinkingSchema.thinking, n.effectiveThinkingSchema());
+    n.default_model = "bare";
+    try std.testing.expectEqual(ToolSchema.none, n.effectiveToolSchema());
+    try std.testing.expectEqual(ThinkingSchema.none, n.effectiveThinkingSchema());
+}
+
+test "an unknown thinking_schema is rejected at load" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "n"
+        \\providers = { n = { base_url = "https://n.test/v1", thinking_schema = "cot" } }
+        \\models = { "n/m" = { provider = "n" } }
+        ,
+    });
+    try std.testing.expectError(
+        error.UnknownThinkingSchema,
+        Config.load(io, arena, tmp.dir, "config.toml", "missing.toml"),
+    );
+}
+
+test "mcp_servers stanzas parse and validate per transport" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "n"
+        \\providers = { n = { base_url = "https://n.test/v1" } }
+        \\models = { "n/m" = { provider = "n" } }
+        \\[mcp_servers.github]
+        \\transport = "stdio"
+        \\command = "github-mcp-server"
+        \\args = ["stdio"]
+        \\env = ["GITHUB_TOKEN=x"]
+        \\[mcp_servers.remote]
+        \\transport = "http"
+        \\url = "https://mcp.example.com/stream"
+        \\headers = ["Authorization: Bearer x"]
+        ,
+    });
+    // Loaded as the LOCAL overlay too: merge() must carry mcp_servers
+    // through, or a stanza in config.local.toml validates and then vanishes.
+    try tmp.dir.writeFile(io, .{ .sub_path = "base.toml", .data =
+        \\default_provider = "n"
+        \\providers = { n = { base_url = "https://n.test/v1" } }
+        \\models = { "n/m" = { provider = "n" } }
+    });
+    const merged = try Config.load(io, arena, tmp.dir, "base.toml", "config.toml");
+    try std.testing.expect(merged.mcp_servers.get("github") != null);
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    const gh = cfg.mcp_servers.get("github").?;
+    try std.testing.expectEqualStrings("github-mcp-server", gh.command);
+    try std.testing.expectEqual(@as(usize, 1), gh.args.len);
+    const remote = cfg.mcp_servers.get("remote").?;
+    try std.testing.expectEqualStrings("https://mcp.example.com/stream", remote.url);
+    try std.testing.expectEqual(@as(u32, 60_000), remote.tool_call_timeout_ms);
+}
+
+test "an mcp server with a bad transport or missing endpoint is rejected" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "n"
+        \\providers = { n = { base_url = "https://n.test/v1" } }
+        \\models = { "n/m" = { provider = "n" } }
+        \\mcp_servers = { bad = { transport = "stdio" } }
+        ,
+    });
+    try std.testing.expectError(
+        error.McpServerCommandMissing,
+        Config.load(io, arena, tmp.dir, "config.toml", "missing.toml"),
+    );
+}
+
 test "a local override with only default_provider keeps the base providers" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -3966,7 +4310,7 @@ test "a negative check timeout is rejected instead of wrapping into a huge one" 
         \\models = { "a/m" = { provider = "a" } }
         ,
     });
-    try std.testing.expectError(error.BadCheckTimeout, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
 }
 
 test "a negative max_tokens is rejected instead of wrapping into a huge cap" {
@@ -3988,6 +4332,60 @@ test "a negative max_tokens is rejected instead of wrapping into a huge cap" {
         ,
     });
     try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+}
+
+test "advisor and improve unsigned fields reject negatives; ttsr buffer is capped" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[advisor]
+        \\context_turns = -1
+        ,
+    });
+    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[improve]
+        \\max_context_bytes = -1
+        ,
+    });
+    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[ttsr]
+        \\buffer_bytes = 4000000000
+        \\[[ttsr.rules]]
+        \\name = "x"
+        \\pattern = "boom"
+        \\max_fires = 2
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(ttsr_buffer_bytes_max, cfg.ttsr.buffer_bytes);
+    try std.testing.expectEqual(@as(usize, 1), cfg.ttsr.rules.len);
+    try std.testing.expectEqual(@as(u32, 2), cfg.ttsr.rules[0].max_fires);
 }
 
 test "reasoning_effort parses supported values and null when absent" {

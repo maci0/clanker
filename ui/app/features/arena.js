@@ -9,7 +9,8 @@
 //
 // Reference: docs/prds/0008-arena.md, "Web UI: the arena view".
 
-import { readJson, peerColor } from "../core/utils.js";
+import { readJson, peerColor, themeToken, cssColorAlpha } from "../core/utils.js";
+import { showLoadError } from "../core/ui.js";
 import { reducedMotion } from "../core/vendor.js";
 import { onLive, liveOk } from "../core/stream.js";
 
@@ -23,37 +24,19 @@ function byId(id) { return document.getElementById(id); }
 // stage and the status colours stay re-tunable. The palette is re-read on every
 // draw/redraw; the theme observer in bindArena re-seeds static reduced-motion
 // frames.
-function themeVar(name) {
-  var root = document.documentElement;
-  if (!root) return "";
-  var v = (getComputedStyle(root).getPropertyValue(name) || "").trim();
-  // Some themes alias a token (mocha/latte set --surface: var(--paper)); resolve
-  // one level so the palette gets a concrete colour, not the var() string.
-  var m = /^var\(\s*([--A-Za-z0-9_]+)\s*\)$/.exec(v);
-  return m ? themeVar(m[1]) : v;
-}
-function hexRgb(hex) {
-  var s = (hex || "").trim();
-  if (s.charAt(0) === "#") s = s.slice(1);
-  if (s.length === 3) s = s.replace(/./g, function (c) { return c + c; });
-  if (s.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(s)) return null;
-  var n = parseInt(s, 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
 function withAlpha(color, a) {
-  var rgb = hexRgb(color);
-  return rgb ? "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + a + ")" : color;
+  return cssColorAlpha(color, a);
 }
 function arenaTheme() {
   return {
-    bg: themeVar("--surface-2") || "#1d2225",
-    surface: themeVar("--surface") || "#2a3033",
-    border: themeVar("--border") || "#343b3f",
-    fg: themeVar("--fg") || "#ffffff",
-    muted: themeVar("--fg-muted") || "#8b948b",
-    ok: themeVar("--ok") || "#2fae4d",
-    warn: themeVar("--warn") || "#e5b54a",
-    danger: themeVar("--danger") || "#dc4c3f"
+    bg: themeToken("--surface-2"),
+    surface: themeToken("--surface"),
+    border: themeToken("--border"),
+    fg: themeToken("--fg"),
+    muted: themeToken("--fg-muted"),
+    ok: themeToken("--ok"),
+    warn: themeToken("--warn"),
+    danger: themeToken("--danger")
   };
 }
 
@@ -156,7 +139,17 @@ function fetchMatch(id, quiet) {
       return null;
     }
     stopPolling();
-    if (status) status.textContent = "Could not load match: " + err.message;
+    var msg = "Could not load match: " + err.message;
+    if (status) status.textContent = msg;
+    // Same trap as Compare: a failed open used to leave the last match's
+    // transcript and stage up, so the picker click looked like it worked.
+    var chips = byId("arena-combatants");
+    if (chips) chips.textContent = "";
+    var stage = byId("arena-stage");
+    if (stage) stage.hidden = true;
+    var graph = byId("arena-graph");
+    if (graph) graph.hidden = true;
+    showLoadError(byId("arena-transcript"), msg, function () { return fetchMatch(id, false); });
     return null;
   });
 }
@@ -187,7 +180,9 @@ export function loadArenaView() {
     // Newest first from the tool, so the top row is the one just finished.
     return fetchMatch(state.id || matches[0].id, false);
   }).catch(function (err) {
-    if (status) status.textContent = "Could not load matches: " + err.message;
+    var msg = "Could not load matches: " + err.message;
+    if (status) status.textContent = msg;
+    showLoadError(byId("arena-list"), msg, loadArenaView);
   });
 }
 
@@ -197,6 +192,16 @@ function renderPicker(matches) {
   var host = byId("arena-list");
   if (!host) return;
   host.textContent = "";
+  if (!matches.length) {
+    var empty = document.createElement("p");
+    empty.className = "run-empty";
+    empty.appendChild(document.createTextNode("No matches yet. Run one with "));
+    var cmd = document.createElement("code");
+    cmd.textContent = "clanker arena \"<question>\" --for X --against Y";
+    empty.appendChild(cmd);
+    host.appendChild(empty);
+    return;
+  }
   matches.forEach(function (m) {
     var row = document.createElement("button");
     row.type = "button";
@@ -610,7 +615,7 @@ function drawCompactor(ctx, cv, m, t, ground, cw, pal) {
   if (age < pushMs) {
     var p = age / pushMs;
     // Dark hole at the far edge.
-    ctx.fillStyle = pal ? pal.bg : "#0b0e0f";
+    ctx.fillStyle = pal.bg;
     ctx.fillRect(hole, ground - 16, 22, 18);
     // The loser's sprite, pushed ahead of the blade, shrinking into the hole.
     var lx = Math.round(cx + (hole - cx) * p);
@@ -622,11 +627,11 @@ function drawCompactor(ctx, cv, m, t, ground, cw, pal) {
     ctx.globalAlpha = 1;
     // Bulldozer: body, blade, two treads that step-cycle on the same t.
     var bx = Math.round(cx - 40 + (hole - cx) * p);
-    ctx.fillStyle = pal ? pal.warn : "#e5b54a";
+    ctx.fillStyle = pal.warn;
     ctx.fillRect(bx, ground - 18, 24, 12);
-    ctx.fillStyle = pal ? pal.warn : "#c9a038";
+    ctx.fillStyle = pal.warn;
     ctx.fillRect(bx + 24, ground - 20, 4, 16);
-    ctx.fillStyle = pal ? pal.surface : "#2a3033";
+    ctx.fillStyle = pal.surface;
     var step = Math.floor(t / 90) % 2;
     ctx.fillRect(bx + 2 + step, ground - 6, 7, 6);
     ctx.fillRect(bx + 14 - step, ground - 6, 7, 6);
@@ -638,11 +643,11 @@ function drawCompactor(ctx, cv, m, t, ground, cw, pal) {
     // short of full closure: the point is the walls closing.
     var w = (age - pushMs) / wallMs;
     ctx.globalAlpha = Math.min(1, w * 3);
-    ctx.fillStyle = pal ? pal.bg : "#121618";
+    ctx.fillStyle = pal.bg;
     ctx.fillRect(0, 0, cv.width, cv.height);
     var gap = 26;
     var travel = Math.round((cv.width / 2 - gap) * Math.min(1, w * 1.2));
-    ctx.fillStyle = pal ? pal.border : "#3a4146";
+    ctx.fillStyle = pal.border;
     ctx.fillRect(0, 0, travel, cv.height);
     ctx.fillRect(cv.width - travel, 0, travel, cv.height);
     ctx.fillStyle = peerColor((cs[idx] && cs[idx].label) || String(idx));

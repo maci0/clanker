@@ -42,6 +42,72 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `patches/vaxis-sixel-graphics.patch`; an unpatched build keeps the previous
   two renderers.
 
+- MCP integrations are configurable: `[mcp_servers.<name>]` stanzas
+  (stdio: command/args/env/cwd; http: url/headers; timeout) parse and
+  validate at load, System -> MCP servers in the web UI adds, edits,
+  and removes them through the validated config pipeline (secret env
+  and header values never round-trip to the page), and the `mcp` skill
+  teaches the agent to manage them by editing `config.local.toml`. The
+  client bridge that actually connects is PRD 0032 and stays behind
+  `modules.mcp_client`. `POST /api/config/table/remove` deletes any
+  table from `config.local.toml` with the same refuse-or-write
+  validation as every other config write.
+
+- Hitting the iteration budget lands the run instead of erroring it: a
+  wrap-up warning is injected three iterations out, and the final
+  iteration goes to the model with tools disabled so it must answer in
+  text — the result, or a handoff summary of what was done and what
+  remains. A goal loop then continues on its next turn with a fresh
+  budget rather than dying as `MaxIterationsExceeded` (which stays only
+  as a backstop).
+- Ad-hoc web UI addons from chat. Ask for a view ("build me a music
+  player") and the `webui_addon` tool writes `ui/plugins/<name>/` and
+  can enable it. System → Web UI plugins is the on/off switch. A
+  shipped Music addon plays local files or URLs, with a dock that stays
+  up while the addon is on. `registerView` now has an optional `boot`
+  hook for that kind of persistent chrome.
+- The Office whiteboard shows goal work at a glance: each line carries
+  an IEC status lamp (green working — breathing while a clanker is on
+  it, amber in review, red blocked), working goals lead the board with
+  a live count, and review/blocked goals appear greyed instead of
+  vanishing. Reduced motion stills the breath.
+- Config hot reload: `clanker serve` watches `config.toml` /
+  `config.local.toml`. A change that loads cleanly restarts the server
+  into it (the same idle-aware exec a binary rebuild uses); a broken
+  edit logs a warning and the server keeps running on its last known
+  good config. `GET /api/config/status` reports the last verdict.
+- The System view gains a raw config editor with TOML syntax
+  highlighting for both files. Saving validates first via
+  `POST /api/config/raw`: a config that does not load is refused with
+  the reason and nothing is written, so a save can never take the
+  server from good to broken.
+- The Models edit panel gains a TOML mode (the OpenShift-console
+  YAML-tab pattern): the same model, editable as its raw
+  `[models."..."]` table with highlighting. `POST /api/config/table/set`
+  splices the block into `config.local.toml` and validates the whole
+  candidate before writing, through the same refuse-or-write pipeline
+  as the raw editor.
+- Workspaces are first-class: create any number of them, each a folder on
+  disk with its own chat history. The rail picker switches folder and
+  conversation list; New chat and `/api/run` inherit the current workspace;
+  the files browser and the agent sandbox root at that folder. Registry is
+  `state/workspaces.json`. The serve cwd remains the default workspace.
+- `reasoning_format` on a provider or model overrides how reasoning is
+  read out of a response: `auto` (the kind's native field), `think_tag`
+  (pull a leading `<think>...</think>` out of the content — the local
+  vLLM DeepSeek shape, vs the API's `reasoning_content` field), or
+  `none` (discard). An unclosed tag leaves the content untouched.
+- A model entry can override its endpoint: `base_url` and `path` on a
+  `[models."..."]` table point that one model at a different host or
+  route (a local vLLM beside the hosted API on the same provider entry).
+  URL only; auth still comes from the provider.
+- `tool_schema` and `thinking_schema` on a provider or model override the
+  wire encoding for endpoints that deviate from the flat OpenAI shape:
+  tools can be the standard array or omitted entirely (`"none"`), and the
+  reasoning knob can go out as `reasoning_effort` (default), the
+  OpenRouter `"reasoning": {"effort": ...}` nest, the GLM
+  `"thinking": {"type": "enabled"}` toggle, or nothing. A model's setting
+  wins over its provider's.
 - A `[models."<provider>/<name>"]` entry can set `id` to the wire SKU so
   the table key is a local alias. Two names can share one SKU with
   different temperature (or other) settings:
@@ -67,6 +133,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- HTTP API status codes now distinguish client mistakes from missing
+  resources. Tool-backed routes (`/api/board`, `/api/knowledge`,
+  `/api/prompts`, `/api/compare`, `/api/arena`) map `no such …` / `not
+  found` refusals to 404 instead of 400. `POST /api/notify` with unreadable
+  JSON is 400, not 500. `POST /api/sessions` without `import_chat` is 400
+  instead of listing chats; `DELETE /api/sessions` is 405. A query string
+  is no longer treated as part of a session, run, log, or knowledge id.
+  Chat edit/delete/react answer 404 for a missing message and 403 when
+  the caller is not the sender (reacting to a missing message used to
+  look like a successful un-react). `GET /api/files` on a missing
+  directory is 404 instead of silently listing the workspace root. A
+  malformed body on `POST /api/compare/<id>` or `POST /api/prompts` is
+  400, not 405.
 - Web UI ES modules no longer 404 as `/webui/~tag/core/core/…`. Two
   stacked bugs: `run-metrics.js` reused `app.js`'s gzip slot, so a gzip
   client received `app.js` at the run-metrics URL and then resolved
@@ -78,6 +157,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - `GET /webui/` (trailing slash) serves the same HTML as `/webui`.
 - Opening the phone rail no longer focus-scrolls Work (Chat/Board) off
   the top of the drawer. Picking a section closes the drawer.
+- Rooms `#chat-log` is no longer a live region. New messages are
+  announced once through `#chat-status`. Theme is a picker, not an
+  11-click cycle. Channel list first paint says Loading channels.
+- Phone suggestions and attachment remove are 44px. Fleet/Arena canvas
+  and mesh lamps read computed theme tokens only. `HEAD /webui` returns
+  the same headers as GET with an empty body. Health tiles use a lamp
+  dome instead of a left-edge tab.
+- System `#progress-log` is no longer a live region (status goes through
+  `#progress-status`). The header model chip is not live either. The
+  Runs graph flushes layout once, then reads node heights.
+- Chat run metrics tick every frame and update tokens, cache and tok/s
+  mid-turn from stream `usage` events plus a live output estimate.
 - Isolated `clanker run` now provisions a checkout `state/` path that is a
   symlink to shared durable storage. Previously Zig reported `NotDir` before
   any shared paths were linked, leaving host-side state private to the
@@ -169,12 +260,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - A run-metrics line under the composer, DeepSeek-harness style: turns,
   steps, LLM time vs tool-call time, average time-to-first-token,
   completion tok/s, cache hit rate, and input/output token counts. The
-  strip ticks while a turn is running (wall clock and step count every
-  200ms, client TTFT on the first stream delta) and accumulates across
-  turns until New chat, a session switch, or reload. Token totals,
-  cache hit rate, and tok/s wait for the server `done` event. TTFT is
-  also measured server-side (`types.ChatResponse.ttft_ms`, streaming
-  only) and folded into `RunStats` when that event arrives.
+  strip ticks every animation frame while a turn is running (wall clock,
+  steps, live tokens from mid-run `usage` events plus a chars/4 estimate
+  until the next official snapshot) and accumulates across turns until
+  New chat, a session switch, or reload. The vaxis REPL paints the same
+  strip on its last row, under the composer, and redraws it on the
+  stream tick (~33ms). TTFT is also measured server-side
+  (`types.ChatResponse.ttft_ms`, streaming only) and folded into
+  `RunStats` when that event arrives.
 - The Models view can add, edit, and remove a configured model, not only
   save a catalog snippet: `POST /api/config/model/set` table-replaces a
   full field set (temperature, cost overrides, capabilities, etc.) into

@@ -14,6 +14,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const utf8 = @import("utf8");
 
 const Settings = struct {
     max_depth: u32 = default_max_depth,
@@ -58,7 +59,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     var result: []const u8 = undefined;
     if (depth >= max_depth) {
-        const excerpt = lib.utf8Prefix(text, 2000);
+        const excerpt = utf8.cap(text, 2000);
         result = try std.fmt.allocPrint(lib.alloc, "(rlm depth limit {d} reached) excerpt: {s}", .{ max_depth, excerpt });
     } else {
         const task = try std.fmt.allocPrint(

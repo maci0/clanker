@@ -35,12 +35,28 @@ test("configSnippet writes a provider table from the catalog mapping", function 
 
 test("Models edit form has an rpm field", function () {
   assert.match(html, /id="models-edit-rpm"/);
+  assert.match(html, /Requests per minute/);
   assert.match(js, /payload\.rpm = rpm/);
 });
 
 test("Models edit form has a wire id field for aliases", function () {
   assert.match(html, /id="models-edit-id"/);
+  assert.match(html, /API model id/);
   assert.match(js, /payload\.id = sku/);
+});
+
+test("catalog Search stays disabled until the query is long enough", function () {
+  assert.match(js, /function syncCatalogBtn/);
+  assert.match(js, /tooShort = !q \|\| q\.value\.trim\(\)\.length < 2/);
+  assert.match(js, /Try another name, or refresh the catalog/);
+});
+
+test("Models list and catalog failures offer to try again", function () {
+  assert.match(js, /function failWithRetry/);
+  assert.match(js, /failWithRetry\(box, "Could not load providers/);
+  assert.match(js, /failWithRetry\(out, "Could not list/);
+  assert.match(js, /failWithRetry\(out, "Catalog search failed/);
+  assert.match(js, /failWithRetry\(out, "Catalog refresh failed/);
 });
 
 test("catalog refresh posts to /api/catalog/refresh", function () {
@@ -48,4 +64,30 @@ test("catalog refresh posts to /api/catalog/refresh", function () {
   assert.match(js, /\/api\/catalog\/refresh/);
   assert.match(js, /method:\s*"POST"/);
   assert.match(js, /getElementById\("models-catalog-refresh"\)[\s\S]*refreshCatalog/);
+});
+
+test("model save copy does not tell the operator to restart by hand", function () {
+  assert.doesNotMatch(js, /Restart clanker serve for this to take effect/);
+  assert.match(js, /The server reloads into it/);
+});
+
+test("model write and remove use a confirm dialog, not click-again", function () {
+  assert.match(js, /function askConfirm/);
+  assert.match(js, /mod\.uiConfirm/);
+  assert.match(js, /from config.local.toml\? A model only declared/);
+  assert.doesNotMatch(js, /Click again/);
+  assert.doesNotMatch(js, /pendingRemove|pendingSave/);
+});
+
+test("configured empty state offers Add model instead of only config.toml", function () {
+  assert.match(js, /No models configured yet\. Use Add model/);
+  assert.match(js, /Providers are configured, but none list a model here/);
+  assert.match(js, /start\.textContent = "Add model…"/);
+  assert.doesNotMatch(js, /No providers configured\. Add \[providers\.<name>\] in config\.toml/);
+});
+
+test("Configured table folds alias variants behind a group toggle", function () {
+  assert.match(js, /models-group-toggle/);
+  assert.match(js, /data-group/);
+  assert.match(js, /variants\.length > 1/);
 });

@@ -198,12 +198,48 @@ var bridge_turn_done: std.atomic.Value(bool) = .init(false);
 /// of a bare "thinking".
 var bridge_active_tool: [64]u8 = undefined;
 var bridge_active_tool_len: usize = 0;
+/// Live session-strip counters for the in-flight turn. Folded into Model
+/// totals in finishTurn. Guarded by bridge_mutex.
+var bridge_live_started_ns: i128 = 0;
+var bridge_live_tool_ms: u64 = 0;
+var bridge_live_steps: u64 = 0;
+var bridge_live_prompt: u64 = 0;
+var bridge_live_completion: u64 = 0;
+var bridge_live_cache_hit: u64 = 0;
+var bridge_live_cache_miss: u64 = 0;
+var bridge_live_ttft_ms: ?u64 = null;
+var bridge_live_ttft_total: u64 = 0;
+var bridge_live_ttft_samples: u32 = 0;
+
+fn resetBridgeLive() void {
+    bridge_live_started_ns = 0;
+    bridge_live_tool_ms = 0;
+    bridge_live_steps = 0;
+    bridge_live_prompt = 0;
+    bridge_live_completion = 0;
+    bridge_live_cache_hit = 0;
+    bridge_live_cache_miss = 0;
+    bridge_live_ttft_ms = null;
+    bridge_live_ttft_total = 0;
+    bridge_live_ttft_samples = 0;
+}
+
+fn liveElapsedMs() u64 {
+    if (bridge_live_started_ns == 0) return 0;
+    const now = std.Io.Timestamp.now(bridge_io, .awake);
+    const d = now.nanoseconds - bridge_live_started_ns;
+    if (d <= 0) return 0;
+    return @intCast(@divTrunc(d, std.time.ns_per_ms));
+}
 
 fn onToken(delta: []const u8) void {
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
     const safe = clean(bridge_gpa, delta) orelse return;
     defer if (safe.ptr != delta.ptr) bridge_gpa.free(safe);
+    if (bridge_live_ttft_ms == null and bridge_live_started_ns != 0) {
+        bridge_live_ttft_ms = liveElapsedMs();
+    }
     bridge_stream_buf.appendSlice(bridge_gpa, safe) catch {};
 }
 
@@ -227,6 +263,7 @@ fn onToolCall(calls: []const types.ToolCall) void {
         const n = @min(name.len, bridge_active_tool.len);
         @memcpy(bridge_active_tool[0..n], name[0..n]);
         bridge_active_tool_len = n;
+        bridge_live_steps += 1;
     }
 }
 
@@ -234,8 +271,22 @@ fn onToolResult(elapsed_ms: u64) void {
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
     bridge_active_tool_len = 0;
+    bridge_live_tool_ms +|= elapsed_ms;
     const line = transcript_mod.toolCardFooter(bridge_gpa, elapsed_ms) catch return;
     bridge_tool_lines.append(bridge_gpa, line) catch bridge_gpa.free(line);
+}
+
+fn onUsage(stats: agent_loop.RunStats) void {
+    bridge_mutex.lockUncancelable(bridge_io);
+    defer bridge_mutex.unlock(bridge_io);
+    bridge_live_prompt = stats.total_prompt_tokens;
+    bridge_live_completion = stats.total_completion_tokens;
+    bridge_live_cache_hit = stats.total_cache_hit_tokens;
+    bridge_live_cache_miss = stats.total_cache_miss_tokens;
+    if (stats.ttft_samples > 0) {
+        bridge_live_ttft_total = stats.total_ttft_ms;
+        bridge_live_ttft_samples = stats.ttft_samples;
+    }
 }
 
 /// Frees and empties the mid-run steering queue. Called at turn start (so a
@@ -398,6 +449,7 @@ const TuiGoalLoopContext = struct {
 };
 
 fn tuiGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]const u8 {
+    // goal_loop.run boxed this TuiGoalLoopContext as Callbacks.context.
     const loop_ctx: *TuiGoalLoopContext = @ptrCast(@alignCast(context));
     const self = loop_ctx.model;
     const started = std.Io.Timestamp.now(self.io, .awake);
@@ -408,6 +460,7 @@ fn tuiGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]
 }
 
 fn tuiGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror!goal_loop.Decision {
+    // goal_loop.run boxed this TuiGoalLoopContext as Callbacks.context.
     const loop_ctx: *TuiGoalLoopContext = @ptrCast(@alignCast(context));
     const self = loop_ctx.model;
     const prompt = try goal_loop.evaluatorTask(self.arena, loop_ctx.condition, answer);
@@ -419,18 +472,19 @@ fn tuiGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror
     const resp = try client.chat(&self.ctx, self.arena, .{
         .provider = &self.provider,
         .messages = &messages,
-        .max_tokens = 300,
+        .max_tokens = goal_loop.evaluator_max_tokens,
     }, &err_detail);
     return goal_loop.parseDecision(self.arena, resp.message.content orelse "");
 }
 
 fn tuiGoalLoopDecision(context: *anyopaque, turn: u32, decision: goal_loop.Decision) void {
+    // goal_loop.run boxed this TuiGoalLoopContext as Callbacks.context.
     const loop_ctx: *TuiGoalLoopContext = @ptrCast(@alignCast(context));
     const self = loop_ctx.model;
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
-    const reason = decision.reason[0..@min(decision.reason.len, 500)];
-    const line = std.fmt.allocPrint(self.arena, "goal loop turn {d}: {s} — {s}", .{ turn, @tagName(decision.verdict), reason }) catch return;
+    const reason = decision.reason[0..@min(decision.reason.len, goal_loop.reason_log_bytes)];
+    const line = std.fmt.allocPrint(self.arena, "goal loop turn {d}: {s}: {s}", .{ turn, @tagName(decision.verdict), reason }) catch return;
     self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
 }
 
@@ -451,6 +505,7 @@ fn runThreadMain(args: RunThreadArgs) void {
     a.on_token = onToken;
     a.on_tool_call = onToolCall;
     a.on_tool_result = onToolResult;
+    a.on_usage = onUsage;
     a.stop_flag = &bridge_stop_flag;
     // Mid-run steering: messages typed into the composer while this turn
     // runs are drained between iterations, exactly as POST /api/steer feeds
@@ -1939,6 +1994,17 @@ const Model = struct {
     /// this is everything the session has ever sent and received, that is how
     /// much of it the model can still see.
     session_tokens: u64 = 0,
+    session_turns: u64 = 0,
+    session_steps: u64 = 0,
+    session_llm_ms: u64 = 0,
+    session_tool_ms: u64 = 0,
+    session_ttft_ms: u64 = 0,
+    session_ttft_n: u32 = 0,
+    session_prompt: u64 = 0,
+    session_completion: u64 = 0,
+    session_cache_hit: u64 = 0,
+    session_cache_miss: u64 = 0,
+    metrics_buf: [256]u8 = undefined,
     /// Null until a turn on a priced model lands, so an unpriced session
     /// shows no cost at all rather than a running $0.00.
     session_cost: ?f64 = null,
@@ -2115,18 +2181,70 @@ const Model = struct {
         self.maybeFoldReply(reply_start);
         bridge_stream_buf.clearRetainingCapacity();
 
+        // Fold live session-strip counters before resetting them. finishTurn
+        // runs while `bridge_streaming` is still true (the UI thread clears
+        // that after join); draw treats `bridge_live_started_ns == 0` as
+        // idle so the same numbers are not added twice in that window.
+        const official = if (turn) |t| t.accounted() else false;
+        const wall_ms: u64 = if (turn) |t| t.wall_ms else liveElapsedMs();
+        self.session_steps +|= bridge_live_steps +| 1;
+        self.session_tool_ms +|= bridge_live_tool_ms;
+        self.session_llm_ms +|= wall_ms -| bridge_live_tool_ms;
+        if (official) {
+            const t = turn.?;
+            self.session_tokens +|= t.prompt_tokens +| t.completion_tokens;
+            if (t.cost_usd) |c| self.session_cost = (self.session_cost orelse 0) + c;
+            self.session_prompt +|= t.prompt_tokens;
+            self.session_completion +|= t.completion_tokens;
+            self.session_cache_hit +|= t.cache_hit_tokens;
+            self.session_cache_miss +|= t.cache_miss_tokens;
+        } else {
+            self.session_tokens +|= bridge_live_prompt +| bridge_live_completion;
+            self.session_prompt +|= bridge_live_prompt;
+            self.session_completion +|= bridge_live_completion;
+            self.session_cache_hit +|= bridge_live_cache_hit;
+            self.session_cache_miss +|= bridge_live_cache_miss;
+        }
+        if (bridge_live_ttft_samples > 0) {
+            self.session_ttft_ms +|= bridge_live_ttft_total;
+            self.session_ttft_n +|= bridge_live_ttft_samples;
+        } else if (bridge_live_ttft_ms) |ttft| {
+            self.session_ttft_ms +|= ttft;
+            self.session_ttft_n +|= 1;
+        }
+        resetBridgeLive();
+
         // The turn's receipt, last line of the turn: tokens, wall time,
         // tok/s, cache hit rate, cost and how full the context now is. Same
         // formatter `clanker run` prints on stderr (`tui/turn_stats.zig`).
-        if (turn) |t| {
-            if (t.accounted()) {
-                self.session_tokens +|= t.prompt_tokens +| t.completion_tokens;
-                if (t.cost_usd) |c| self.session_cost = (self.session_cost orelse 0) + c;
-                if (stats_mod.formatTurn(self.arena, t)) |line| {
-                    self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
-                } else |_| {}
-            }
+        if (official) {
+            if (stats_mod.formatTurn(self.arena, turn.?)) |line| {
+                self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+            } else |_| {}
         }
+    }
+
+    /// Completed totals plus the in-flight turn. Caller holds `bridge_mutex`.
+    fn sessionStrip(self: *const Model) stats_mod.SessionStats {
+        const live = bridge_live_started_ns != 0;
+        const live_ms: u64 = if (live) liveElapsedMs() else 0;
+        const est: u64 = if (live and bridge_live_completion == 0)
+            @as(u64, @intCast(bridge_stream_buf.items.len / 4))
+        else
+            0;
+        return .{
+            .turns = self.session_turns,
+            .steps = self.session_steps +| bridge_live_steps +| if (live) @as(u64, 1) else 0,
+            .llm_ms = self.session_llm_ms +| (if (live) live_ms -| bridge_live_tool_ms else 0),
+            .tool_ms = self.session_tool_ms +| bridge_live_tool_ms,
+            .ttft_ms_total = self.session_ttft_ms +| bridge_live_ttft_total,
+            .ttft_samples = self.session_ttft_n +| bridge_live_ttft_samples,
+            .live_ttft_ms = if (bridge_live_ttft_samples == 0) bridge_live_ttft_ms else null,
+            .prompt_tokens = self.session_prompt +| bridge_live_prompt,
+            .completion_tokens = self.session_completion +| bridge_live_completion +| est,
+            .cache_hit_tokens = self.session_cache_hit +| bridge_live_cache_hit,
+            .cache_miss_tokens = self.session_cache_miss +| bridge_live_cache_miss,
+        };
     }
 
     /// If the reply that begins at `reply_start` is long enough, mark it as a
@@ -2158,24 +2276,6 @@ const Model = struct {
             if (f.start == line_idx) return k;
         }
         return null;
-    }
-
-    /// Index into `self.folds` of the fold whose region contains `line_idx`
-    /// (start <= idx < start+count), or null.
-    fn foldContaining(self: *const Model, line_idx: usize) ?usize {
-        for (self.folds.items, 0..) |f, k| {
-            if (line_idx >= f.start and line_idx < f.start + f.count) return k;
-        }
-        return null;
-    }
-
-    /// Wrapped terminal rows the fold's body occupies when fully open.
-    fn foldBodyRows(self: *const Model, fold: Fold, width: u16) usize {
-        var total: usize = 0;
-        for (self.lines.items[fold.start .. fold.start + fold.count]) |l| {
-            total += lineRows(l.text, width);
-        }
-        return total;
     }
 
     /// The `▸ N lines` / `▾` header standing in for a collapsed reply. Arena
@@ -2391,6 +2491,8 @@ const Model = struct {
         // freed when `submit` returns, so own a copy in the arena.
         if (self.arena.dupe(u8, task)) |owned| {
             self.history.append(self.arena, owned) catch {};
+            self.hist_idx = self.history.items.len;
+            self.hist_draft = "";
         } else |_| {}
         switch (pc.spec.action) {
             // A quit command has to set `ctx.quit`, rather than merely stop
@@ -2952,6 +3054,9 @@ const Model = struct {
         bridge_streaming = true;
         bridge_stream_buf.clearRetainingCapacity();
         bridge_tool_lines.clearRetainingCapacity();
+        resetBridgeLive();
+        bridge_live_started_ns = std.Io.Timestamp.now(self.io, .awake).nanoseconds;
+        self.session_turns +|= 1;
         // A steering message typed against the turn that just ended must not
         // leak into this one, the composer-as-steer-box only queues while
         // streaming, but a message can land between the last poll and here.
@@ -4131,7 +4236,11 @@ const Model = struct {
             // The taller box must still leave a transcript worth reading.
             max.height >= mascot.inputBoxHeight(mascot_v) + 5;
         const box_h: u16 = if (mascot_in_box) mascot.inputBoxHeight(mascot_v) else 3;
-        const box_y = max.height -| box_h;
+        // Same session strip as the web UI's `#run-metrics`. One row under
+        // the composer once a turn has started; skipped when the terminal
+        // cannot hold status + box + this line without overlapping.
+        const metrics_h: u16 = if (self.session_turns > 0 and max.height > box_h + 1) 1 else 0;
+        const box_y = max.height -| box_h -| metrics_h;
         const top: u16 = 1;
         const frame_bottom = box_y -| 1;
         // Above-the-box modes claim the rows directly above the composer, so
@@ -4239,6 +4348,13 @@ const Model = struct {
         }
         if (self.session_id) |sid| {
             _ = writeStatusPairIfFits(surface, &scol, dot, dim, sid, dim);
+        }
+
+        if (metrics_h > 0) {
+            if (stats_mod.formatSession(&self.metrics_buf, self.sessionStrip())) |line| {
+                var mcol: u16 = 0;
+                writeRowAt(surface, max.height - 1, &mcol, line, dim);
+            }
         }
 
         drawBox(surface, 0, box_y, max.width, box_h, rule_style);
@@ -5707,56 +5823,6 @@ fn writeWrapped(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text:
         surface.writeCell(col, row.*, .{ .char = .{ .grapheme = c.bytes, .width = @intCast(c.width) }, .style = style });
         col += c.width;
     }
-}
-
-/// Like `writeWrapped`, but writes at most `budget` wrapped rows, where the
-/// final row may be fractional: its trailing `fraction * width` columns are
-/// left blank. Used to reveal a fold's body one smooth row at a time — each
-/// tick grows the budget, so the reply unrolls instead of snapping.
-fn writeWrappedPartial(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text: []const u8, style: vaxis.Style, budget: f32) void {
-    if (budget <= 0 or width == 0) return;
-    var rows_done: f32 = 0;
-    var col: u16 = 0;
-    var i: usize = 0;
-    while (nextCell(text, &i)) |c| {
-        if (row.* >= bottom) break;
-        if (std.mem.eql(u8, c.bytes, "\n")) {
-            rows_done += 1;
-            if (rows_done >= budget) break;
-            row.* += 1;
-            col = 0;
-            continue;
-        }
-        if (col + c.width > width) {
-            rows_done += 1;
-            if (rows_done >= budget) break;
-            row.* += 1;
-            col = 0;
-            if (row.* >= bottom) break;
-        }
-        // The fractional tail row stops mid-row after `frac * width` columns.
-        const frac = budget - rows_done;
-        if (frac < 1 and col + c.width > @as(u16, @round(frac * @as(f32, @floatFromInt(width))))) break;
-        surface.writeCell(col, row.*, .{ .char = .{ .grapheme = c.bytes, .width = @intCast(c.width) }, .style = style });
-        col += c.width;
-    }
-}
-
-/// Shorten `s` so its display width is at most `max_cols` columns, cutting at
-/// a cell boundary (never splitting a grapheme). Used to fit a fold header on
-/// one terminal row.
-fn truncateToCols(s: []const u8, max_cols: u16) []const u8 {
-    if (max_cols == 0) return s[0..0];
-    if (width_mod.displayWidth(s) <= max_cols) return s;
-    var cols: u16 = 0;
-    var i: usize = 0;
-    while (i < s.len) {
-        const cell_start = i;
-        const c = nextCell(s, &i) orelse break;
-        if (cols + c.width > max_cols) return s[0..cell_start];
-        cols += c.width;
-    }
-    return s;
 }
 
 /// Blanks the interior rows of a box before anything is written into them.

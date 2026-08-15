@@ -10,7 +10,19 @@
 
 const std = @import("std");
 
+/// Evaluator replies are a short JSON object; keep the completion small.
+pub const evaluator_max_tokens: u32 = 300;
+/// Cap when a surface logs or streams the evaluator reason.
+pub const reason_log_bytes: usize = 500;
+
 pub const Verdict = enum { continue_, achieved, blocked };
+
+const verdict_names = std.StaticStringMap(Verdict).initComptime(.{
+    .{ "achieved", .achieved },
+    .{ "blocked", .blocked },
+    // Operator-facing spelling; the tag is `continue_` because `continue` is reserved.
+    .{ "continue", .continue_ },
+});
 
 pub const Decision = struct {
     verdict: Verdict,
@@ -49,9 +61,9 @@ pub fn run(
     callbacks: Callbacks,
 ) !Outcome {
     const limit = @max(@as(u32, 1), max_turns);
-    var task: []const u8 = initial_task;
-    // Only continuationTask allocations are owned; initial_task belongs to the caller.
-    var owned = false;
+    var task = initial_task;
+    var owned_task: ?[]const u8 = null;
+    defer if (owned_task) |t| alloc.free(t);
     var turn: u32 = 1;
     while (turn <= limit) : (turn += 1) {
         const answer = try callbacks.run_turn(callbacks.context, turn, task);
@@ -59,17 +71,16 @@ pub fn run(
         if (callbacks.on_decision) |on_decision| on_decision(callbacks.context, turn, decision);
         switch (decision.verdict) {
             .achieved, .blocked => {
-                if (owned) alloc.free(task);
                 return .{ .verdict = decision.verdict, .turns = turn, .reason = decision.reason };
             },
             .continue_ => {},
         }
         if (turn == limit) break;
-        if (owned) alloc.free(task);
-        task = try continuationTask(alloc, condition, turn + 1, decision.reason);
-        owned = true;
+        const next = try continuationTask(alloc, condition, turn + 1, decision.reason);
+        if (owned_task) |t| alloc.free(t);
+        owned_task = next;
+        task = next;
     }
-    if (owned) alloc.free(task);
     return .{
         .verdict = .blocked,
         .turns = limit,
@@ -106,16 +117,16 @@ pub fn parseDecision(alloc: std.mem.Allocator, text: []const u8) Decision {
     const parsed = std.json.parseFromSliceLeaky(Parsed, alloc, text, .{ .ignore_unknown_fields = true }) catch
         return .{ .verdict = .continue_, .reason = "the evaluator returned unreadable output; verify the condition directly and continue working" };
     const reason = if (parsed.reason.len > 0) parsed.reason else "the evaluator did not provide a reason";
-    if (std.mem.eql(u8, parsed.status, "achieved")) return .{ .verdict = .achieved, .reason = reason };
-    if (std.mem.eql(u8, parsed.status, "blocked")) return .{ .verdict = .blocked, .reason = reason };
-    if (std.mem.eql(u8, parsed.status, "continue")) return .{ .verdict = .continue_, .reason = reason };
-    return .{ .verdict = .continue_, .reason = "the evaluator returned an unknown status; verify the condition directly and continue working" };
+    const verdict = verdict_names.get(parsed.status) orelse
+        return .{ .verdict = .continue_, .reason = "the evaluator returned an unknown status; verify the condition directly and continue working" };
+    return .{ .verdict = verdict, .reason = reason };
 }
 
 test "goal loop continues until the evaluator marks achieved" {
     const State = struct {
         ran: u32 = 0,
         fn runTurn(ctx: *anyopaque, turn: u32, _: []const u8) ![]const u8 {
+            // run() boxed this State as Callbacks.context.
             const self: *@This() = @ptrCast(@alignCast(ctx));
             self.ran = turn;
             return "turn answer";
@@ -163,4 +174,6 @@ test "evaluator parser is conservative for malformed output" {
     try std.testing.expectEqual(Verdict.continue_, bad.verdict);
     const done = parseDecision(std.testing.allocator, "{\"status\":\"achieved\",\"reason\":\"tests pass\"}");
     try std.testing.expectEqual(Verdict.achieved, done.verdict);
+    const cont = parseDecision(std.testing.allocator, "{\"status\":\"continue\",\"reason\":\"more work\"}");
+    try std.testing.expectEqual(Verdict.continue_, cont.verdict);
 }

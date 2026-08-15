@@ -13,6 +13,8 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -113,6 +115,7 @@ class CommandResult:
     log_path: Path
     stopped_after_failures: tuple[int, int] | None = None
     running_pid: int | None = None
+    timed_out: str | None = None
 
 
 @dataclass
@@ -123,7 +126,63 @@ class PendingRepair:
     stage: str
 
 
-def run_to_log(command: Sequence[str], *, cwd: Path, label: str) -> CommandResult:
+class Watchdog:
+    """Kills a child that runs too long, or goes quiet, and says which it was.
+
+    An unattended loop must never be able to wait forever on a child. Two
+    different failures need two different limits: a run that hangs stops
+    printing, and a run that livelocks keeps printing while getting nowhere.
+    A silence timeout only catches the first, so the wall-clock cap is what
+    bounds the second.
+    """
+
+    def __init__(self, process: subprocess.Popen[bytes], *, cap: float, silence: float) -> None:
+        self.process = process
+        self.cap = cap
+        self.silence = silence
+        self.reason: str | None = None
+        self._last_output = time.monotonic()
+        self._started = self._last_output
+        self._done = threading.Event()
+        self._thread: threading.Thread | None = None
+        if cap > 0 or silence > 0:
+            self._thread = threading.Thread(target=self._watch, daemon=True)
+            self._thread.start()
+
+    def saw_output(self) -> None:
+        self._last_output = time.monotonic()
+
+    def stop(self) -> None:
+        self._done.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    def _watch(self) -> None:
+        # One second is far finer than any timeout worth setting here, and it
+        # keeps the kill close to the deadline without polling in a spin.
+        while not self._done.wait(1.0):
+            now = time.monotonic()
+            if self.cap > 0 and now - self._started >= self.cap:
+                self._kill(f"ran for {self.cap:.0f}s without finishing")
+                return
+            if self.silence > 0 and now - self._last_output >= self.silence:
+                self._kill(f"printed nothing for {self.silence:.0f}s")
+                return
+
+    def _kill(self, reason: str) -> None:
+        self.reason = reason
+        print(f"==> watchdog: the run {reason}; stopping it", flush=True)
+        stop_process_group(self.process)
+
+
+def run_to_log(
+    command: Sequence[str],
+    *,
+    cwd: Path,
+    label: str,
+    cap: float = 0,
+    silence: float = 0,
+) -> CommandResult:
     """Run a command, mirror its combined output, and retain it for the caller."""
     log = tempfile.NamedTemporaryFile(
         mode="wb", prefix=f"clanker-{label}-", suffix=".log", delete=False
@@ -139,8 +198,10 @@ def run_to_log(command: Sequence[str], *, cwd: Path, label: str) -> CommandResul
             start_new_session=True,
         )
         assert process.stdout is not None
+        watchdog = Watchdog(process, cap=cap, silence=silence)
         try:
             for line in iter(process.stdout.readline, b""):
+                watchdog.saw_output()
                 log.write(line)
                 sys.stdout.buffer.write(line)
                 sys.stdout.buffer.flush()
@@ -148,7 +209,11 @@ def run_to_log(command: Sequence[str], *, cwd: Path, label: str) -> CommandResul
             stop_process_group(process)
             process.wait()
             raise
-        return CommandResult(process.wait(), log_path)
+        finally:
+            watchdog.stop()
+        # A killed child still has an exit status, and it is non-zero, so the
+        # caller's own failure path carries a timeout onward like any failure.
+        return CommandResult(process.wait(), log_path, timed_out=watchdog.reason)
     finally:
         log.close()
 
@@ -161,7 +226,9 @@ def stop_process_group(process: subprocess.Popen[bytes]) -> None:
         pass
 
 
-def run_improve_to_log(command: Sequence[str], *, cwd: Path) -> CommandResult:
+def run_improve_to_log(
+    command: Sequence[str], *, cwd: Path, cap: float = 0, silence: float = 0
+) -> CommandResult:
     """Stop an improve batch as soon as two adjacent iterations exhaust retries."""
     log = tempfile.NamedTemporaryFile(
         mode="wb", prefix="clanker-improve-", suffix=".log", delete=False
@@ -180,8 +247,10 @@ def run_improve_to_log(command: Sequence[str], *, cwd: Path) -> CommandResult:
             start_new_session=True,
         )
         assert process.stdout is not None
+        watchdog = Watchdog(process, cap=cap, silence=silence)
         try:
             for line in iter(process.stdout.readline, b""):
+                watchdog.saw_output()
                 log.write(line)
                 sys.stdout.buffer.write(line)
                 sys.stdout.buffer.flush()
@@ -204,7 +273,11 @@ def run_improve_to_log(command: Sequence[str], *, cwd: Path) -> CommandResult:
             stop_process_group(process)
             process.wait()
             raise
-        return CommandResult(process.wait(), log_path, stopped_after_failures, running_pid)
+        finally:
+            watchdog.stop()
+        return CommandResult(
+            process.wait(), log_path, stopped_after_failures, running_pid, watchdog.reason
+        )
     finally:
         log.close()
 
@@ -376,6 +449,37 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="consecutive failed clanker repair runs before giving up; 0 never gives up (default: 0)",
+    )
+    parser.add_argument(
+        "--repair-timeout",
+        type=float,
+        metavar="SECONDS",
+        default=DEFAULT_REPAIR_TIMEOUT,
+        help=(
+            "wall-clock cap on one repair, escalation or harness run, after "
+            f"which it is stopped and treated as failed; 0 disables it "
+            f"(default: {DEFAULT_REPAIR_TIMEOUT:.0f})"
+        ),
+    )
+    parser.add_argument(
+        "--batch-timeout",
+        type=float,
+        metavar="SECONDS",
+        default=0,
+        help=(
+            "wall-clock cap on one improve-self batch; 0 disables it, which is "
+            "the default because a batch is meant to run long (default: 0)"
+        ),
+    )
+    parser.add_argument(
+        "--stall-timeout",
+        type=float,
+        metavar="SECONDS",
+        default=DEFAULT_STALL_TIMEOUT,
+        help=(
+            "stop any run that prints nothing for this long; catches a hang, "
+            f"not a busy loop; 0 disables it (default: {DEFAULT_STALL_TIMEOUT:.0f})"
+        ),
     )
     parser.add_argument(
         "goal",

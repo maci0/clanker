@@ -4,7 +4,7 @@ const build_zon = @import("build.zig.zon");
 // Pure-logic modules under tools/zig/ that don't export the tool ABI (run/scratch/host_arena).
 // They are imported by other tools, not standalone guests, so the wasm build skips them
 // and `zig build test` runs their tests on the host target instead.
-const host_tested_helpers = [_][]const u8{ "alphaxiv_client", "arena_match", "cards", "commit_logic", "compare_logic", "doc_scaffold", "gh_url", "hashline", "kernel_magic", "manifest_scan", "memory_embed", "research_queries", "search_parse" };
+const host_tested_helpers = [_][]const u8{ "alphaxiv_client", "arena_match", "cards", "commit_logic", "compare_logic", "doc_scaffold", "gh_url", "goal_store", "hashline", "kernel_magic", "log_view", "manifest_scan", "memory_embed", "research_queries", "search_parse", "webui_addon_logic" };
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
@@ -184,6 +184,9 @@ pub fn build(b: *std.Build) void {
     const files_js_test = b.addSystemCommand(&.{ "node", "--test" });
     files_js_test.addFileArg(b.path("ui/plugins/files/files.test.mjs"));
     test_step.dependOn(&files_js_test.step);
+    const music_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    music_js_test.addFileArg(b.path("ui/plugins/music/music.test.mjs"));
+    test_step.dependOn(&music_js_test.step);
     const harden_js_test = b.addSystemCommand(&.{ "node", "--test" });
     harden_js_test.addFileArg(b.path("ui/app/core/harden.test.mjs"));
     test_step.dependOn(&harden_js_test.step);
@@ -196,6 +199,12 @@ pub fn build(b: *std.Build) void {
     const models_js_test = b.addSystemCommand(&.{ "node", "--test" });
     models_js_test.addFileArg(b.path("ui/app/features/models.test.mjs"));
     test_step.dependOn(&models_js_test.step);
+    const compare_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    compare_js_test.addFileArg(b.path("ui/app/features/compare.test.mjs"));
+    test_step.dependOn(&compare_js_test.step);
+    const arena_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    arena_js_test.addFileArg(b.path("ui/app/features/arena.test.mjs"));
+    test_step.dependOn(&arena_js_test.step);
 
     // Logic that lives in a tool rather than in src/ still needs its tests run.
     // `zig build test` compiled only src/main.zig, so every `test` block under

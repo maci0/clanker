@@ -568,6 +568,7 @@ Internal tools, never offered to the model:
 | `graph` | `state/runs/` | Render the latest execution graph |
 | `status` | none — reads clanker's own config through the host (ck_harness_config) | Show this instance and its peers |
 | `plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
+| `webui_addon` | `ui/plugins/`, `state/webui_plugins.json` | Create, update, list, and toggle ad-hoc web UI views from chat |
 | `autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`) |
 | `webui` | none | Serve the web UI at `GET /`. Same-origin only: every script, style and font comes from this server's own `/webui/*` routes, with no CDN and no third-party origin (`script-src 'self'`). Not a single file — the page is many small ES modules, each served on its own route |
 | `translate` | none | Transform plugin, off by default: translates tool results through `ck_llm` |
@@ -1032,7 +1033,7 @@ For the authoritative field list and defaults, see the doc comments on each stru
 
 `clanker serve` starts an HTTP server on `127.0.0.1:17921` (override the interface with `--host`, the port with `--webui-port`). It opens exactly one listening socket and serves every route below on it. Endpoints:
 
-Routes gated by a `modules.*` flag answer `404` with a body naming the flag when it is off. Those gates are `modules.webui` (the web UI and every `/webui/*` asset), `modules.a2a` (`/.well-known/agent.json`, `/api/a2a/message`), `modules.peers` (`/api/notify`, `/api/peers`), `modules.chatrooms` (all of `/api/chat/*`), `modules.token_stats` (`/api/stats`) and `modules.sessions` (all of `/api/sessions*`).
+Routes gated by a `modules.*` flag answer `404` with a body naming the flag when it is off. Those gates are `modules.webui` (the web UI and every `/webui/*` asset), `modules.a2a` (`/.well-known/agent.json`, `/api/a2a/message`), `modules.peers` (`/api/notify`, `/api/peers`), `modules.chatrooms` (all of `/api/chat/*`), `modules.token_stats` (`/api/stats`) and `modules.sessions` (all of `/api/sessions*` and `/api/workspaces*`).
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -1045,7 +1046,9 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/.well-known/agent.json` | GET | Agent card for A2A discovery |
 | `/api/status` | GET | Instance + peers status (JSON) |
 | `/api/peers` | GET | Every configured peer's live A2A agent card, via the sandboxed `peers` tool (JSON) |
-| `/api/sessions` | GET | Saved conversations, newest first (JSON) |
+| `/api/sessions` | GET, POST | List saved conversations, newest first; POST `{import_chat:true,title,messages}` imports one |
+| `/api/workspaces` | GET, POST | List workspaces (default cwd plus registered folders) or create one `{name,path}` |
+| `/api/workspaces/<id>` | POST, DELETE | Rename/repath a workspace, or remove it (chats move to the default; the folder stays) |
 | `/api/sessions/<id>` | GET, DELETE | Read or delete one saved conversation |
 | `/api/sessions/<id>/fork` | POST | Copy a conversation to a new id |
 | `/api/sessions/<id>/branch/<n>` | POST | Fork from message `n`, dropping everything after it |
@@ -1055,7 +1058,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/catalog` | GET | Local models.dev snapshot search (JSON). Only providers whose API+auth clanker implements. Downloads the snapshot only if `state/models-dev.json` is missing |
 | `/api/catalog/refresh` | POST | Replace `state/models-dev.json` from models.dev |
 | `/api/providers/models` | GET | Models for a configured provider (JSON) |
-| `/api/files?path=` | GET | List one directory of the workspace (JSON). `..` is clamped at the working directory, so no traversal escapes it |
+| `/api/files?path=` | GET | List one directory of the current workspace (JSON), or preview a file. `?workspace=` selects a registered folder. `..` is clamped at that folder; a missing directory is 404 |
 | `/api/knowledge` | GET, POST | Knowledge-graph entries |
 | `/api/prompts` | GET, POST | Stored prompts |
 | `/api/steer` | POST | Send steering text into a run already in flight |
@@ -1093,6 +1096,8 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/logs` | GET | Tail the instance's log output |
 | `/api/webui/plugins` | GET, POST | List web UI plugin assets, or toggle one |
 | `/webui/plugins/<name>` | GET | Serve a web UI plugin's static asset |
+
+Error bodies are `{"ok":false,"error":"<message>"}`. Tool-backed routes map a refusal that names a missing resource (`no such …`, `not found`) to 404 and every other refusal to 400. A query string is not part of a resource id: `GET /api/sessions/<id>?t=1` still loads `<id>`. Wrong method on a known resource is 405; a malformed body on an allowed method is 400, not 405. Chat edit/delete/react answer 404 for a missing message and 403 when the caller is not the sender.
 
 `GET /` loads the `webui` tool from the registry and renders its output as HTML. It is a real multi-turn chat, not a one-shot form: the page holds a `session` id in `localStorage` and sends it on every `/api/run` call, so replies stay in context (backed by the same `state/sessions/*.json` store as the CLI/REPL `--session`) until "New chat" starts a fresh id.
 

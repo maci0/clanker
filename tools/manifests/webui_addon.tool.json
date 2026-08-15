@@ -1,0 +1,31 @@
+{
+  "name": "webui_addon",
+  "description": "Create, update, list, and toggle ad-hoc web UI addons (views under ui/plugins/). Use when the operator asks to add a page, widget, or tool to the web UI (a music player, dashboard, timer, …). create writes plugin.json + app.js (+ optional app.css) and enables the addon. enable/disable flip System → Web UI plugins. The page loads new scripts after Refresh or a reload.",
+  "llm_description": "Web UI addon CRUD. Actions: list; create {name,title?,description?,group=Work|Watch|Set up,js,css?,enable?,overwrite?}; put {name,file=app.js|app.css|plugin.json,content}; show {name}; enable {name}; disable {name}. js must call clanker.registerView and must not use innerHTML/eval. After create, tell the operator to Refresh Web UI plugins or reload.",
+  "wasm": "zig-out/tools/webui_addon.wasm",
+  "enabled": true,
+  "category": "ui",
+  "fs_prefixes": [
+    "ui/plugins",
+    "state/webui_plugins.json"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["list", "create", "put", "show", "enable", "disable"]
+      },
+      "name": { "type": "string" },
+      "title": { "type": "string" },
+      "description": { "type": "string" },
+      "group": { "type": "string" },
+      "js": { "type": "string" },
+      "css": { "type": "string" },
+      "file": { "type": "string" },
+      "content": { "type": "string" },
+      "enable": { "type": "boolean" },
+      "overwrite": { "type": "boolean" }
+    }
+  }
+}

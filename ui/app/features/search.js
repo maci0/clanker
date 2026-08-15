@@ -124,7 +124,13 @@ function render() {
   if (state.error) {
     var failed = document.createElement("p");
     failed.className = "run-empty";
-    failed.textContent = "Search failed: " + state.error;
+    failed.textContent = "Search failed: " + state.error + " ";
+    var retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "secondary";
+    retry.textContent = "Try again";
+    retry.addEventListener("click", function () { runSearch(state.query); });
+    failed.appendChild(retry);
     list.appendChild(failed);
     if (status) status.textContent = "Search failed: " + state.error;
     return;
@@ -132,7 +138,22 @@ function render() {
   if (!state.hits.length) {
     var none = document.createElement("p");
     none.className = "run-empty";
-    none.textContent = "No conversation says “" + state.query + "”.";
+    none.appendChild(document.createTextNode("No conversation says “" + state.query + "”. Try another phrase, or filter titles in the sidebar. "));
+    var clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "secondary";
+    clear.textContent = "Clear search";
+    clear.addEventListener("click", function () {
+      var input = byId("search-q");
+      if (input) { input.value = ""; input.focus(); }
+      state.query = "";
+      state.hits = [];
+      state.error = "";
+      state.searching = false;
+      state.truncated = false;
+      render();
+    });
+    none.appendChild(clear);
     list.appendChild(none);
     if (status) status.textContent = "No matches.";
     return;
@@ -149,7 +170,13 @@ var seq = 0;
 function setSearchBusy(on) {
   var btn = byId("search-go");
   var input = byId("search-q");
-  if (btn) btn.disabled = on;
+  var tooShort = !input || input.value.trim().length < state.minLen;
+  if (btn) {
+    btn.disabled = on || tooShort;
+    btn.title = on ? "Searching…" : (tooShort
+      ? "Type at least " + state.minLen + " characters"
+      : "Search conversations");
+  }
   if (input) input.setAttribute("aria-busy", on ? "true" : "false");
 }
 
@@ -208,6 +235,7 @@ export function bindSearch() {
   var input = byId("search-q");
   var btn = byId("search-go");
   if (btn) btn.addEventListener("click", function () { runSearch(input ? input.value : ""); });
+  setSearchBusy(false);
   if (input) {
     input.addEventListener("keydown", function (e) {
       if (e.key === "Enter") { e.preventDefault(); runSearch(input.value); }
@@ -216,6 +244,7 @@ export function bindSearch() {
     // conversation off disk, so this waits for the typing to stop rather than
     // doing that per keystroke.
     input.addEventListener("input", function () {
+      setSearchBusy(false);
       if (timer) window.clearTimeout(timer);
       timer = window.setTimeout(function () { runSearch(input.value); }, 250);
     });
