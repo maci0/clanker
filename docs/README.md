@@ -77,7 +77,7 @@ header, the URL verb and the credential.
 - **deepseek**: OpenAI-compatible provider at `https://api.deepseek.com`.
 - **moonshotai**: OpenAI-compatible provider at `api.moonshot.ai/v1`. Kimi is a model family on it (`kimi-k3`, `kimi-k2.7-code`).
 - **meta**: OpenAI-compatible provider at `api.meta.ai/v1`. Muse Spark is a model family on it.
-- **openrouter**: OpenAI-compatible router at `openrouter.ai/api/v1`. Model ids are `vendor/model` (e.g. `meta/muse-spark-1.2`).
+- **google**: Gemini generateContent at `generativelanguage.googleapis.com`.
 - **ollama**: local OpenAI-compatible endpoint at `http://127.0.0.1:11434/v1`.
 - **vllm-local**: OpenAI-compatible endpoint for a local vLLM server.
 - **openai** / **anthropic**: first-party API endpoints.

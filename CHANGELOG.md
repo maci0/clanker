@@ -29,9 +29,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
-- Provider ids match the vendor, not a model name: `moonshotai` (Kimi
-  models), `meta` (Muse Spark models), `openrouter` (routed
-  `vendor/model` ids). `deepseek-v4` was not a catalog id and is gone.
+- Provider ids match the vendor, not a model name. Committed vendors:
+  `anthropic`, `deepseek`, `google`, `meta`, `moonshotai`, `openai`,
+  plus local `ollama` and `vllm-local`. Muse Spark is a Meta model.
+  The extra OpenRouter stanza that only re-hosted Muse is gone.
 - `clanker serve` greets a terminal with a startup card: robot badge,
   version, clickable Local URL, whether the network can reach it, the
   proxy mount when enabled, and how to stop. A piped stdout still gets
