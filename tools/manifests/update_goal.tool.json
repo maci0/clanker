@@ -1,0 +1,36 @@
+{
+  "name": "update_goal",
+  "description": "change or remove one persisted goal in state/goals.json",
+  "wasm": "zig-out/tools/update_goal.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string"
+      },
+      "max_iterations": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1000
+      },
+      "worktree": {
+        "type": "boolean"
+      },
+      "remove": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "fs_prefixes": [
+    "state/goals.json"
+  ],
+  "internal": true,
+  "confirm": false,
+  "category": "harness"
+}

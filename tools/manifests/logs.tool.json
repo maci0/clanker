@@ -1,0 +1,20 @@
+{
+  "name": "logs",
+  "description": "list and tail harness log files under state/logs/",
+  "wasm": "zig-out/tools/logs.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "log file name to tail; omit to list"
+      }
+    }
+  },
+  "fs_prefixes": [
+    "state/logs/"
+  ],
+  "internal": true,
+  "confirm": false,
+  "category": "harness"
+}

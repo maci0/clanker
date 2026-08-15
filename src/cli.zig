@@ -6138,7 +6138,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_files) {
             handleFiles(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (is_logs) {
-            handleLogs(io, gpa, target, acceptsGzip(headers_raw), stream);
+            handleLogs(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, path, "/api/knowledge")) {
             handleKnowledge(io, gpa, cfg, environ_map, method, target, body, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, path, "/api/prompts")) {
@@ -9975,10 +9975,11 @@ fn handleBoard(
 
 const goals_path = "state/goals.json";
 
-/// Creating a goal goes through the same sandboxed add_goal tool as the CLI
-/// and TUI. Status changes remain native because they update an existing
-/// record rather than adding one. The outer lock keeps the guest's append and
-/// a simultaneous web status update from overwriting each other.
+/// Creating a goal goes through the sandboxed `add_goal` tool; status,
+/// budget, worktree-flag, and delete go through `update_goal`. The outer
+/// lock keeps a guest append and a simultaneous web status update from
+/// overwriting each other. Worktree retirement stays native: the sandbox
+/// refuses `git worktree remove` against `.clanker-worktrees/`.
 fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, body: []const u8, stream: std.Io.net.Stream) void {
     var guard = file_lock.acquire(io, std.Io.Dir.cwd(), "state", "goals", gpa);
     defer guard.release();
@@ -10014,72 +10015,42 @@ fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
         respondStoredGoals(io, arena, stream);
         return;
     }
-    const raw = std.Io.Dir.cwd().readFileAlloc(io, goals_path, arena, .limited(1 << 20)) catch "[]";
-    var list: std.ArrayList(StoredGoal) = .empty;
-    if (std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true }) catch null) |existing| {
-        list.appendSlice(arena, existing) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
-            return;
-        };
-    }
-
-    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    if (req.id) |id| {
-        var kept: std.ArrayList(StoredGoal) = .empty;
-        var hit = false;
-        for (list.items) |g| {
-            if (!std.mem.eql(u8, g.id, id)) {
-                kept.append(arena, g) catch continue;
-                continue;
-            }
-            hit = true;
-            if (req.remove orelse false) continue;
-            var updated = g;
-            if (req.status) |s| {
-                if (!validGoalStatus(s)) {
-                    respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"status must be active, review, done, archived or abandoned\"}");
-                    return;
-                }
-                updated.status = s;
-            }
-            if (req.max_iterations) |n| {
-                updated.max_iterations = clampIterationBudget(n);
-            }
-            // Only when the request names it, so a POST carrying just a status
-            // cannot clear a flag it never mentioned. `false` clears the field
-            // rather than storing a falsy string: the goal card reads presence
-            // as the flag, so "not worktree-scoped" has to be absence. Clearing
-            // it also discards a branch/path the `goal` tool wrote, which is the
-            // point -- the goal is no longer worktree-scoped, so the branch it
-            // used to name is not either.
-            if (req.worktree) |w| {
-                updated.worktree = if (w) "true" else null;
-            }
-            updated.updated = now;
-            kept.append(arena, updated) catch continue;
-        }
-        if (!hit) {
-            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such goal\"}");
-            return;
-        }
-        list = kept;
-    } else {
+    if (req.id == null) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"need an objective or an id\"}");
         return;
     }
 
-    var enc: std.Io.Writer.Allocating = .init(arena);
-    // emit_null_optional_fields = false so an unset budget stays out of the
-    // file (a goal without one is not "budget 0", and a null key would just
-    // confuse readers of state/goals.json).
-    std.json.Stringify.value(list.items, .{ .emit_null_optional_fields = false }, &enc.writer) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+    var input: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &input.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("id") catch return;
+    s.write(req.id.?) catch return;
+    if (req.status) |st| {
+        s.objectField("status") catch return;
+        s.write(st) catch return;
+    }
+    if (req.max_iterations) |n| {
+        s.objectField("max_iterations") catch return;
+        s.print("{d}", .{clampIterationBudget(n)}) catch return;
+    }
+    if (req.worktree) |w| {
+        s.objectField("worktree") catch return;
+        s.write(w) catch return;
+    }
+    if (req.remove) |r| {
+        s.objectField("remove") catch return;
+        s.write(r) catch return;
+    }
+    s.endObject() catch return;
+
+    const out = toolJson(io, gpa, arena, cfg, environ_map, "update_goal", input.written()) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"update_goal tool unavailable\"}");
         return;
     };
-    atomic_write.writeFile(io, std.Io.Dir.cwd(), goals_path, enc.written()) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"write failed\"}");
+    if (toolResultFailed(out)) {
+        respondTool(stream, out);
         return;
-    };
+    }
 
     // Archiving a goal here is the point at which its run's worktree stops
     // being worth keeping, so act on it now rather than waiting for someone to
@@ -10087,13 +10058,13 @@ fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     // handler is only one of several writers of goals.json and the same
     // decision has to come out the same way whichever one moved the status.
     // Unmerged branches survive it; see src/improve/retire.zig.
-    _ = retire.reconcile(arena, io, std.Io.Dir.cwd(), true);
+    if (req.status) |st| {
+        if (std.mem.eql(u8, st, "archived") or std.mem.eql(u8, st, "abandoned")) {
+            _ = retire.reconcile(arena, io, std.Io.Dir.cwd(), true);
+        }
+    }
 
-    var out: std.Io.Writer.Allocating = .init(arena);
-    out.writer.writeAll("{\"ok\":true,\"goals\":") catch return;
-    std.json.Stringify.value(list.items, .{ .emit_null_optional_fields = false }, &out.writer) catch return;
-    out.writer.writeAll("}") catch return;
-    respond(stream, 200, "OK", out.written());
+    respond(stream, 200, "OK", out);
 }
 
 fn respondStoredGoals(io: std.Io, arena: std.mem.Allocator, stream: std.Io.net.Stream) void {
@@ -10106,88 +10077,51 @@ fn respondStoredGoals(io: std.Io, arena: std.mem.Allocator, stream: std.Io.net.S
 }
 
 /// `GET /api/logs` lists the log files; `GET /api/logs/<name>` returns the tail
-/// of one. Names are matched against the listing rather than sanitised, so a
-/// crafted name cannot describe a path at all.
-fn handleLogs(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+/// of one. Both live in the `logs` guest (`state/logs/` only). Names are
+/// matched against the listing rather than sanitised, so a crafted name
+/// cannot describe a path at all.
+fn handleLogs(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    target: []const u8,
+    accepts_gzip: bool,
+    stream: std.Io.net.Stream,
+) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
     const rest = requestPath(target)["/api/logs".len..];
-    var dir = std.Io.Dir.cwd().openDir(io, "state/logs", .{ .iterate = true }) catch {
-        respond(stream, 200, "OK", "{\"ok\":true,\"logs\":[]}");
-        return;
-    };
-    defer dir.close(io);
-
+    var input: []const u8 = "{}";
     if (rest.len > 1 and rest[0] == '/') {
         const want = percentDecode(arena, rest[1..]) catch {
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad log name\"}");
             return;
         };
-        var it = dir.iterate();
-        var found = false;
-        while (it.next(io) catch null) |entry| {
-            if (entry.kind != .file) continue;
-            if (std.mem.eql(u8, entry.name, want)) found = true;
-        }
-        if (!found) {
-            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such log\"}");
-            return;
-        }
-        const raw = dir.readFileAlloc(io, want, arena, .limited(log_tail_bytes * 8)) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"log read failed\"}");
-            return;
-        };
-        // Tail only, cut at a line boundary so the view never opens mid-line.
-        var tail = if (raw.len > log_tail_bytes) raw[raw.len - log_tail_bytes ..] else raw;
-        if (raw.len > log_tail_bytes) {
-            if (std.mem.findScalar(u8, tail, '\n')) |nl| tail = tail[nl + 1 ..];
-        }
-        var out: std.Io.Writer.Allocating = .init(arena);
-        var s = std.json.Stringify{ .writer = &out.writer };
+        var w: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &w.writer };
         s.beginObject() catch return;
-        s.objectField("ok") catch return;
-        s.write(true) catch return;
         s.objectField("name") catch return;
         s.write(want) catch return;
-        s.objectField("bytes") catch return;
-        s.write(raw.len) catch return;
-        s.objectField("text") catch return;
-        s.write(tail) catch return;
         s.endObject() catch return;
-        respondCompressible(arena, stream, accepts_gzip, out.written());
-        return;
-    }
-    if (rest.len != 0) {
+        input = w.written();
+    } else if (rest.len != 0) {
         respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such endpoint\"}");
         return;
     }
 
-    var out: std.Io.Writer.Allocating = .init(arena);
-    var s = std.json.Stringify{ .writer = &out.writer };
-    s.beginObject() catch return;
-    s.objectField("ok") catch return;
-    s.write(true) catch return;
-    s.objectField("logs") catch return;
-    s.beginArray() catch return;
-    var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
-        if (entry.kind != .file) continue;
-        const stat = dir.statFile(io, entry.name, .{}) catch continue;
-        s.beginObject() catch return;
-        s.objectField("name") catch return;
-        s.write(entry.name) catch return;
-        s.objectField("bytes") catch return;
-        s.write(stat.size) catch return;
-        s.endObject() catch return;
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "logs", input) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"logs tool unavailable\"}");
+        return;
+    };
+    if (toolResultFailed(raw)) {
+        respondTool(stream, raw);
+        return;
     }
-    s.endArray() catch return;
-    s.endObject() catch return;
-    respond(stream, 200, "OK", out.written());
+    respondCompressible(arena, stream, accepts_gzip, raw);
 }
-
-const log_tail_bytes = 64 * 1024;
 
 fn handleSessions(
     io: std.Io,
