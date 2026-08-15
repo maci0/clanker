@@ -49,19 +49,27 @@ pub fn run(
     callbacks: Callbacks,
 ) !Outcome {
     const limit = @max(@as(u32, 1), max_turns);
-    var task = initial_task;
+    var task: []const u8 = initial_task;
+    // Only continuationTask allocations are owned; initial_task belongs to the caller.
+    var owned = false;
     var turn: u32 = 1;
     while (turn <= limit) : (turn += 1) {
         const answer = try callbacks.run_turn(callbacks.context, turn, task);
         const decision = try callbacks.evaluate(callbacks.context, turn, answer);
         if (callbacks.on_decision) |on_decision| on_decision(callbacks.context, turn, decision);
         switch (decision.verdict) {
-            .achieved, .blocked => return .{ .verdict = decision.verdict, .turns = turn, .reason = decision.reason },
+            .achieved, .blocked => {
+                if (owned) alloc.free(task);
+                return .{ .verdict = decision.verdict, .turns = turn, .reason = decision.reason };
+            },
             .continue_ => {},
         }
         if (turn == limit) break;
+        if (owned) alloc.free(task);
         task = try continuationTask(alloc, condition, turn + 1, decision.reason);
+        owned = true;
     }
+    if (owned) alloc.free(task);
     return .{
         .verdict = .blocked,
         .turns = limit,
