@@ -181,7 +181,7 @@ through a gated loop. Follow these conventions when changing this codebase.
 
 ## Everything is a plugin
 
-The design pressure (adopted from DeepSeek Harness): whatever can be a
+The design pressure: whatever can be a
 drop-in unit with a declared surface, is one. Tools are guests plus a
 manifest; providers are one vtable file plus a registry row; web UI views
 are directories under `ui/plugins/`; skills and prompts are data. Before

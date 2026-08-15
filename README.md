@@ -10,9 +10,9 @@ clanker is a self-improving AI agent harness written in Zig 0.16. It runs its to
 
 ## Everything is a plugin
 
-Not a tagline — a design pressure, borrowed with admiration from
-DeepSeek Harness. Whatever can be a drop-in unit with a declared
-surface, is one; whatever isn't yet is expected to justify itself.
+Not a tagline — a design pressure. Whatever can be a drop-in unit with
+a declared surface, is one; whatever isn't yet is expected to justify
+itself.
 
 - **Tools?** Plugin. A WASM guest plus a `*.tool.json` manifest is the
   whole contract (`clanker plugins new <name>` scaffolds one).
