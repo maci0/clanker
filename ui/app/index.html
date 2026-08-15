@@ -1164,7 +1164,11 @@ lamps carry further). The seven named palettes ride the same tokens.
      one the first time something actually needs it. -->
 <!-- Order matters and is guaranteed: module scripts execute in document order
      once parsing is done. preact-boot puts Preact/htm/signals on window for
-     the plugin API; first-party modules import core/ui.js directly. -->
+     the plugin API; first-party modules import core/ui.js directly.
+     The feature views (features/board.js, goals, prompts, todos, models,
+     schedule, search) are deliberately NOT <script> tags here: each is
+     dynamically imported by app.js the first time its view is opened, so a
+     visit that never leaves chat downloads none of them. -->
 <script type="module" src="/webui/preact-boot.js"></script>
 <script type="module" src="/webui/core/utils.js"></script>
 <script type="module" src="/webui/core/icons.js"></script>
@@ -1192,14 +1196,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 <script type="module" src="/webui/lib/markdown.js"></script>
 <script type="module" src="/webui/lib/graph.js"></script>
 <script type="module" src="/webui/lib/board.js"></script>
-<script type="module" src="/webui/features/board.js"></script>
-<script type="module" src="/webui/features/goals.js"></script>
 <script type="module" src="/webui/features/knowledge.js"></script>
-<script type="module" src="/webui/features/prompts.js"></script>
-<script type="module" src="/webui/features/todos.js"></script>
-<script type="module" src="/webui/features/models.js"></script>
-<script type="module" src="/webui/features/schedule.js"></script>
-<script type="module" src="/webui/features/search.js"></script>
 <script type="module" src="/webui/app.js"></script>
 </body>
 </html>

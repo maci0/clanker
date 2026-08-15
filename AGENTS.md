@@ -182,6 +182,11 @@ through a gated loop. Follow these conventions when changing this codebase.
   edits to `ui/app/`. Plugin `app.js`/`app.css` changes are served from disk.
   Served HTML rewrites assets to `/webui/~<8hex>/...` (content tag from the wasm +
   vendor embeds) so browsers cannot keep a stale module graph across rebuilds.
+  Feature views stay off the eager `<script>` tag list in `index.html`: each is
+  dynamically imported by app.js (`load<View>Module`) on first open, so a visit
+  that stays in chat downloads none of them. A new view that needs app.js state
+  (board cards, goals) exposes it through the module-scope vars the loader fills
+  in, and call sites that can run before the module has loaded guard for null.
   `renderWebui` reads `zig-out/ui/app.wasm` with an 8 MiB cap (the guest embeds the
   whole `ui/app` tree and has already crossed 1 MiB). `showView` treats an unknown
   hash as Chat, so in-page jumps (System sections) scroll in JS rather than

@@ -22,14 +22,8 @@ import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugi
 import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle } from "./core/palette.js";
 import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind, openModelPicker as mpOpen, toggleModelPicker as mpToggle, setModelChipLabel as mpSetChip } from "./core/modelpicker.js";
 import { renderTools as toolsRenderTools, showToolDetail as toolsShowDetail, toggleTool as toolsToggle, loadTools as toolsLoadTools, loadWorkflows as toolsLoadWorkflows, loadSkills as toolsLoadSkills, bindTools as toolsBind } from "./core/tools.js";
-import { board, loadBoardRooms, renderBoard, setOpenCardId, cardById, cardModalKeyHandler, bindBoard } from "./features/board.js";
-import { goalState, loadGoals, bindGoals } from "./features/goals.js";
 import { goalStatusLabel } from "./core/goals.js";
 import { selectedKnowledge as kbSelected, loadKnowledge as kbLoad, bindKnowledge as kbBind } from "./features/knowledge.js";
-import { loadPromptsView as promptsLoadView, bindPrompts as promptsBind } from "./features/prompts.js";
-import { loadModelsView as modelsLoadView, bindModels as modelsBind } from "./features/models.js";
-import { loadScheduleView as scheduleLoadView, bindSchedule as scheduleBind } from "./features/schedule.js";
-import { loadSearchView as searchLoadView, bindSearch as searchBind, bindSearchDeps as searchDeps, runSearch as searchRun } from "./features/search.js";
 import { createAnswerHead, ANSWER_LABEL } from "./core/ai-disclosure.js";
 import { applyDoneStats, applyLiveUsage, beginLiveTurn, emptyRunMetrics, formatRunMetricsParts, liveElapsedMs, noteFirstToken, noteLiveChars } from "./core/run-metrics.js";
 
@@ -560,7 +554,9 @@ bind(el.railList, railState, function (s) {
           var input = document.getElementById("search-q");
           if (input) input.value = q;
           showView("search", true);
-          searchRun(q);
+          // The search view module is loaded on first open; run the query
+          // once it has arrived rather than referencing it eagerly.
+          loadSearchModule().then(function (m) { m.runSearch(q); }).catch(function () {});
         }
       }, "Search messages"),
       " or ",
@@ -2074,10 +2070,19 @@ function paintRunMetrics() {
 
 function setStatusGoal(goalId) {
   if (!el.statusGoal) return;
-  var g = (goalState.val || []).filter(function (x) { return x.id === goalId; })[0];
-  el.statusGoal.hidden = false;
-  el.statusGoal.textContent = "Goal " + (g ? goalStatusLabel(g, true) : "active");
-  el.statusGoal.title = g ? g.objective : goalId;
+  var apply = function () {
+    // goalState lives in the lazily loaded goals view module; before the
+    // Board/Goals view has been opened this session it is not loaded, so the
+    // chip falls back to a plain "active" label until the list has arrived.
+    var g = ((goalState && goalState.val) || []).filter(function (x) { return x.id === goalId; })[0];
+    el.statusGoal.hidden = false;
+    el.statusGoal.textContent = "Goal " + (g ? goalStatusLabel(g, true) : "active");
+    el.statusGoal.title = g ? g.objective : goalId;
+  };
+  apply();
+  // A goal can be running without the Board/Goals view ever having been
+  // opened; fetch its list so the label above can show the real status.
+  loadGoalsModule().then(function (m) { return m.loadGoals(); }).then(apply).catch(function () {});
 }
 
 function bumpStatusTools(calls) {
@@ -2180,7 +2185,11 @@ el.form.addEventListener("submit", function (e) {
       // The run's own private checklist (features/todos.js): pushed whenever a
       // todo_* call moved it, never fetched — the list is in-memory server-side
       // and dies with the run, so the turn card is the only place it can live.
-      else if (evt.type === "todos") { try { todosRenderTurn(turn, evt.todos); } catch (_t) {} setStatusTodos(evt.todos); }
+      // The module is lazy: the first todos event of the session pulls it in.
+      else if (evt.type === "todos") {
+        setStatusTodos(evt.todos);
+        loadTodosModule().then(function (m) { try { m.renderTurnTodos(turn, evt.todos); } catch (_t) {} }).catch(function () {});
+      }
       else if (evt.type === "goal") { setStatusGoal(evt.id); }
       // A status event is a run lifecycle note (contacting the provider, a
       // steering message being applied) rather than answer text: show it as a
@@ -4746,10 +4755,11 @@ function loadUsage() {
 
 // ---- goals: what runs are being steered toward -------------------------
 
-/* Extracted to features/goals.js; wired here with the app-level pieces it
-   needs: view switching and the conversation the chat composer is on (a
-   goal run joins that session). */
-bindGoals({ el: el, showView: showView, getSessionId: function () { return sessionId; }, switchSession: switchSession });
+/* Extracted to features/goals.js; wired from the board view loader with the
+   app-level pieces it needs: view switching and the conversation the chat
+   composer is on (a goal run joins that session). The goals module is loaded
+   lazily with the board, so the wiring happens on first open — the goal list
+   and its controls only matter once a goal exists. */
 
 // ---- tools: every WASM plugin, and a switch for the optional ones ------
 
@@ -4799,6 +4809,75 @@ function loadFleetModule() {
   }
   return fleetModulePromise;
 }
+var todosModulePromise = null;
+function loadTodosModule() {
+  if (!todosModulePromise) todosModulePromise = import("./features/todos.js");
+  return todosModulePromise;
+}
+/* The view modules below (board, goals, prompts, models, schedule, search)
+   are loaded on first open, not at page load: together they are ~190 KB that
+   a status-check-and-leave visit never executes. The promise is cached, so a
+   second open of the same view does not re-fetch. Module state these views
+   share with app.js (the board card list, the goal list, the card modal key
+   handler) is exposed through the module-scope vars here, which stay unset
+   until the module has loaded; call sites that can run before then guard. */
+var boardModule = null;
+var cardModalKeyHandler = null;
+var boardModulePromise = null;
+function loadBoardModule() {
+  if (!boardModulePromise) boardModulePromise = import("./features/board.js").then(function (m) {
+    boardModule = m;
+    cardModalKeyHandler = m.cardModalKeyHandler;
+    paletteRefs.board = m.board;
+    return m;
+  });
+  return boardModulePromise;
+}
+var goalState = null;
+var goalsModulePromise = null;
+function loadGoalsModule() {
+  if (!goalsModulePromise) goalsModulePromise = import("./features/goals.js").then(function (m) {
+    goalState = m.goalState;
+    paletteRefs.goalState = m.goalState;
+    return m;
+  });
+  return goalsModulePromise;
+}
+var promptsModulePromise = null;
+function loadPromptsModule() {
+  if (!promptsModulePromise) promptsModulePromise = import("./features/prompts.js");
+  return promptsModulePromise;
+}
+var modelsModulePromise = null;
+function loadModelsModule() {
+  if (!modelsModulePromise) modelsModulePromise = import("./features/models.js");
+  return modelsModulePromise;
+}
+var scheduleModulePromise = null;
+function loadScheduleModule() {
+  if (!scheduleModulePromise) scheduleModulePromise = import("./features/schedule.js");
+  return scheduleModulePromise;
+}
+var searchModulePromise = null;
+function loadSearchModule() {
+  if (!searchModulePromise) searchModulePromise = import("./features/search.js");
+  return searchModulePromise;
+}
+/* The command palette indexes board cards and goals, both of which live in
+   lazy modules. The refs start as empty stand-ins and are swapped for the
+   real module state the first time the board view loads — before any
+   board/goal was ever opened this session the lists are empty anyway. */
+var paletteRefs = {
+  knownSessionsHolder: null,
+  allRunsHolder: null,
+  board: { columns: [], cards: [] },
+  goalState: { val: [] },
+  allToolsHolder: null,
+  sessionLabel: null,
+  runLabel: null
+};
+var renderBoard = function (b) { loadBoardModule().then(function (m) { try { m.renderBoard(b); } catch (_) {} }).catch(function () {}); };
+var setOpenCardId = function (id) { loadBoardModule().then(function (m) { m.setOpenCardId(id); }).catch(function () {}); };
 /* Each view's data is fetched the first time it is opened rather than all of
    it at load. The page used to fire seven requests before showing anything,
    several of which execute a WASM tool. */
@@ -4836,22 +4915,48 @@ var viewLoaders = {
   rooms: function () { return loadStatus().then(loadChatRooms); },
   // Goals ride along with the board: the board->goal sync (moving a card
   // marks its goal) needs the goal list, and the goal->board mirror needs to
-  // run even when the Goals view was never opened.
-  board: function () { return loadBoardRooms().then(function () { return loadGoals(); }); },
-  models: function () { bindOnce("models", modelsBind); return modelsLoadView(); },
-  schedule: function () { bindOnce("schedule", scheduleBind); return scheduleLoadView(); },
+  // run even when the Goals view was never opened. Both modules load here on
+  // the board's first open; the wiring binds once for the life of the page.
+  board: function () {
+    return loadBoardModule().then(function (m) {
+      bindOnce("board", function () {
+        m.bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: function () { return knownPeers; } });
+      });
+      return m.loadBoardRooms().then(function () {
+        return loadGoalsModule().then(function (gm) {
+          bindOnce("goals", function () {
+            gm.bindGoals({ el: el, showView: showView, getSessionId: function () { return sessionId; }, switchSession: switchSession });
+          });
+          return gm.loadGoals();
+        });
+      });
+    });
+  },
+  models: function () {
+    bindOnce("models", function () { loadModelsModule().then(function (m) { m.bindModels(); }); });
+    return loadModelsModule().then(function (m) { return m.loadModelsView(); });
+  },
+  schedule: function () {
+    bindOnce("schedule", function () { loadScheduleModule().then(function (m) { m.bindSchedule(); }); });
+    return loadScheduleModule().then(function (m) { return m.loadScheduleView(); });
+  },
   search: function () {
     bindOnce("search", function () {
-      // Opening a hit is a conversation switch, which app.js owns: switchSession
-      // refuses mid-run and puts the rail back, and the search view has no
-      // business reimplementing that.
-      searchDeps({ openSession: function (id, jump) { switchSession(id, jump); showView("chat", true); } });
-      searchBind();
+      loadSearchModule().then(function (m) {
+        // Opening a hit is a conversation switch, which app.js owns: switchSession
+        // refuses mid-run and puts the rail back, and the search view has no
+        // business reimplementing that.
+        m.bindSearchDeps({ openSession: function (id, jump) { switchSession(id, jump); showView("chat", true); } });
+        m.bindSearch();
+      });
     });
-    return searchLoadView();
+    return loadSearchModule().then(function (m) { return m.loadSearchView(); });
   },
   knowledge: function(){ return kbLoad(); },
-  prompts: function () { return Promise.all([promptsLoadView(), toolsLoadWorkflows(), toolsLoadSkills()]); },
+  prompts: function () {
+    bindOnce("prompts", function () { loadPromptsModule().then(function (m) { m.bindPrompts(); }); });
+    return Promise.all([loadPromptsModule().then(function (m) { return m.loadPromptsView(); }), toolsLoadWorkflows(), toolsLoadSkills()]);
+  },
   tools: loadTools,
   system: function () { return Promise.all([loadUsage(), loadStatus(), loadLogList(), loadWebuiPlugins()]); }
 };
@@ -5035,11 +5140,12 @@ function showView(name, focusPanel) {
   if (pendingBoardCard) {
     // need board loaded first — defer until after viewLoaders[board] would have fired, then poll
     var tries = 0;
+    loadBoardModule();
     (function tryOpen(){
       tries++;
-      if (cardById(pendingBoardCard)) { setOpenCardId(pendingBoardCard); try{ renderBoard(board); }catch(_){} return; }
+      if (boardModule && boardModule.cardById(pendingBoardCard)) { boardModule.setOpenCardId(pendingBoardCard); try{ boardModule.renderBoard(boardModule.board); }catch(_){} return; }
       if (tries < 20) setTimeout(tryOpen, 250);
-      else { setOpenCardId(pendingBoardCard); try{ renderBoard(board); }catch(_){} }
+      else if (boardModule) { boardModule.setOpenCardId(pendingBoardCard); try{ boardModule.renderBoard(boardModule.board); }catch(_){} }
     })();
   }
 }
@@ -5833,21 +5939,26 @@ mpBind({ el: el, readJson: readJson, fmtInt: fmtInt, allUsage: allUsage, renderU
 // Header chip and composer pill mirror the hidden select.
 if (el.modelSelect) el.modelSelect.addEventListener("change", renderSessionChip);
 
+paletteRefs.knownSessionsHolder = knownSessionsHolder;
+paletteRefs.allRunsHolder = allRunsHolder;
+paletteRefs.allToolsHolder = allToolsHolder;
+paletteRefs.sessionLabel = sessionLabel;
+paletteRefs.runLabel = runLabel;
 paletteBind({
   VIEWS: VIEWS, showView: showView, el: el,
-  refs: { knownSessionsHolder: knownSessionsHolder, allRunsHolder: allRunsHolder, board: board, goalState: goalState, allToolsHolder: allToolsHolder, sessionLabel: sessionLabel, runLabel: runLabel },
+  refs: paletteRefs,
   setRailOpen: setRailOpen, switchSession: switchSession, openRun: openRun, renderBoard: renderBoard, showToolDetail: showToolDetail,
   setOpenCardId: setOpenCardId
 });
 document.addEventListener("keydown", function (e) {
   // Trello/Slack-style card modal owns focus while open — Esc closes, Tab
-  // traps. Lives in features/board.js with the rest of the modal.
-  if (cardModalKeyHandler(e)) return;
+  // traps. Lives in features/board.js with the rest of the modal; the
+  // handler is only wired once the board module has been loaded.
+  if (cardModalKeyHandler && cardModalKeyHandler(e)) return;
   if (paletteKeyHandle(e, { el: el, finishTextPrompt: finishTextPrompt, setRailOpen: setRailOpen })) return;
 });
 
 try { kbBind(); } catch(_){}
-try { promptsBind(); } catch(_){}
 
 // Settings surface wires the same header affordances (single source of truth)
 try {
