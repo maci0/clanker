@@ -376,28 +376,29 @@ run_agent_once() {
 
 	local prompt
 	prompt="$(cat <<PROMPT
-You are running as the repository's periodic commit-and-push agent.
+You are the repository's periodic commit-and-push agent. Do these four steps and
+nothing else:
 
-This repository uses a direct-push workflow: work on the current branch, commit
-path-scoped, and push to its upstream. Do not create a branch and do not open a
-pull request.
+1. List what changed:
+   git status --porcelain
+   git ls-files --others --exclude-standard
+   git diff --stat
+2. Stage every non-ignored path from step 1 by explicit path: git add -- PATH ...
+   Never git add -A, git add ., or git commit -a. Include modifications,
+   deletions, and untracked files, whoever made them.
+3. Commit once. Write the message by summarizing the file changes from step 1 --
+   which files changed and what each change is about, judging from the paths and
+   the diffstat. Describe only the change; no attribution or generated-by text.
+4. Push the current branch to its upstream. Also push any earlier commits that
+   were never pushed. If your git tool refuses push, say so and exit; the
+   wrapper will push what you committed.
 
-Task:
-1. Read the applicable AGENTS.md/CLAUDE.md instructions before acting.
-2. Check for committed work that is not pushed and push it.
-3. Check for uncommitted non-ignored work. If there is any, commit all of it as one commit:
-   - Do not use git add -A, git add ., or git commit -a.
-   - Stage explicit paths only, derived from git status --porcelain and git ls-files --others --exclude-standard.
-   - Include tracked modifications and untracked non-ignored files.
-   - Respect the repo's shared-agent rules. Treat TODO.md, docs/design.md, and docs/architecture.md as shared coordination files and stage the whole file when changed.
-   - Do not revert, stash, delete, or rewrite another agent's changes.
-   - Do not leave non-ignored work uncommitted just because it may be from another agent; this automation exists to preserve and publish shared work.
-   - Ignore files that are ignored by Git, such as .local/ periodic-agent logs.
-   - Use a commit message that describes only the change. Do not add attribution trailers or generated-by text.
-4. Run a reasonable verification command when the changed files make one available and it is safe to run now. If verification is skipped, say why.
-5. Push the committed work to the current branch's upstream. If your git tool refuses push, say so plainly and exit; the wrapper will push what you committed.
+Do NOT do anything else. No builds, tests, linters, or gates. No reading,
+reviewing, fixing, or improving code. No inspecting other agents. No branches,
+no pull requests. Never revert, stash, or delete another agent's work.
 
-If there is nothing non-ignored to commit or push, report that plainly and exit successfully.
+If nothing is uncommitted and nothing is unpushed, say so and exit successfully.
+Final message: a few lines at most -- what you committed, and whether it pushed.
 PROMPT
 )"
 
