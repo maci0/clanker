@@ -182,10 +182,14 @@ pub const AscPage = struct { msgs: []Message = &.{}, has_more: bool = false };
 pub fn readHistoryAsc(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, after: i64, limit: usize) !AscPage {
     const path = subPath(arena, state_dir, log_path) catch return .{};
     const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return .{};
-    var all: std.ArrayList(Message) = .empty;
-    try parseLog(arena, raw, &all);
     var out: std.ArrayList(Message) = .empty;
-    for (all.items) |m| {
+    // Keep only this room's page candidates. The log is shared across every
+    // room (board + chat + inbox), so materializing the whole file first
+    // allocated every foreign message on each board page.
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        const m = std.json.parseFromSliceLeaky(Message, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
         if (!std.mem.eql(u8, m.room, room)) continue;
         if (m.ts <= after) continue;
         try out.append(arena, m);
@@ -210,10 +214,11 @@ pub fn listRooms(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
     _ = gpa;
     const path = subPath(arena, state_dir, log_path) catch return &[_]RoomInfo{};
     const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return &[_]RoomInfo{};
-    var all: std.ArrayList(Message) = .empty;
-    try parseLog(arena, raw, &all);
     var by_room: std.StringArrayHashMapUnmanaged(RoomInfo) = .empty;
-    for (all.items) |m| {
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        const m = std.json.parseFromSliceLeaky(Message, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
         const gop = try by_room.getOrPut(arena, m.room);
         if (!gop.found_existing) {
             gop.value_ptr.* = .{ .room = m.room, .messages = 0 };

@@ -101,6 +101,17 @@ fn saveCollection(col: StoredCollection) !void {
     try s.write(col.created);
     try s.objectField("updated");
     try s.write(col.updated);
+    // Listing scalars sit in front of `docs` so a picker can score a row
+    // from the first few kilobytes. A full ck_fs_read of every collection
+    // both costs up to 1 MiB apiece and burns the host arena, so later
+    // collections vanished from GET /api/knowledge the same way sessions
+    // used to vanish from the conversation list.
+    var bytes: usize = 0;
+    for (col.docs) |d| bytes += d.content.len;
+    try s.objectField("doc_count");
+    try s.write(col.docs.len);
+    try s.objectField("bytes");
+    try s.write(bytes);
     try s.objectField("docs");
     try s.beginArray();
     for (col.docs) |d| {
@@ -120,6 +131,84 @@ fn saveCollection(col: StoredCollection) !void {
     try s.endArray();
     try s.endObject();
     try lib.fsWrite(colPath(col.id), buf.written());
+}
+
+/// Prefix a picker needs. Listing scalars sit in front of `docs` on newly
+/// written collections, so 4 KiB is enough for title, description, and the
+/// counts. A full ck_fs_read of each file used to exhaust the 1 MiB host
+/// arena mid-list once a few collections held real documents.
+const listing_prefix_bytes: usize = 4 * 1024;
+
+const CollectionListing = struct {
+    id: []const u8 = "",
+    title: []const u8 = "",
+    description: []const u8 = "",
+    created: i64 = 0,
+    updated: i64 = 0,
+    doc_count: usize = 0,
+    bytes: usize = 0,
+};
+
+const StoredListing = struct {
+    id: []const u8 = "",
+    title: []const u8 = "",
+    description: []const u8 = "",
+    created: i64 = 0,
+    updated: i64 = 0,
+    doc_count: ?usize = null,
+    bytes: ?usize = null,
+};
+
+fn closeJsonBeforeField(raw: []const u8, field: []const u8) ?[]const u8 {
+    var needle_buf: [32]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, ",\"{s}\":", .{field}) catch return null;
+    const at = std.mem.find(u8, raw, needle) orelse return null;
+    const prefix = std.mem.trimEnd(u8, raw[0..at], " \t\r\n");
+    if (prefix.len == 0 or prefix[0] != '{') return null;
+    return std.fmt.allocPrint(lib.alloc, "{s}}}", .{prefix}) catch null;
+}
+
+fn listingFromCollection(col: StoredCollection) CollectionListing {
+    var bytes: usize = 0;
+    for (col.docs) |d| bytes += d.content.len;
+    return .{
+        .id = col.id,
+        .title = col.title,
+        .description = col.description,
+        .created = col.created,
+        .updated = col.updated,
+        .doc_count = col.docs.len,
+        .bytes = bytes,
+    };
+}
+
+fn listingFromFull(path: []const u8) ?CollectionListing {
+    const raw = lib.fsRead(path) catch return null;
+    const col = std.json.parseFromSliceLeaky(StoredCollection, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch return null;
+    return listingFromCollection(col);
+}
+
+fn loadListing(path: []const u8) ?CollectionListing {
+    const content = lib.fsReadRange(path, 0, listing_prefix_bytes) catch return listingFromFull(path);
+    const trimmed = std.mem.trimEnd(u8, content, " \t\r\n");
+    if (trimmed.len > 0 and trimmed[trimmed.len - 1] == '}') {
+        const col = std.json.parseFromSliceLeaky(StoredCollection, lib.alloc, trimmed, .{ .ignore_unknown_fields = true }) catch
+            return listingFromFull(path);
+        return listingFromCollection(col);
+    }
+    const src = closeJsonBeforeField(content, "docs") orelse return listingFromFull(path);
+    const h = std.json.parseFromSliceLeaky(StoredListing, lib.alloc, src, .{ .ignore_unknown_fields = true }) catch
+        return listingFromFull(path);
+    const doc_count = h.doc_count orelse return listingFromFull(path);
+    return .{
+        .id = h.id,
+        .title = h.title,
+        .description = h.description,
+        .created = h.created,
+        .updated = h.updated,
+        .doc_count = doc_count,
+        .bytes = h.bytes orelse 0,
+    };
 }
 
 // ----------------------------------------------------------------- actions ---
@@ -156,10 +245,7 @@ fn actionList(out: *lib.Out) !void {
         }.lt);
         for (names.items) |name| {
             const path = std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ store_dir, name }) catch continue;
-            const raw = lib.fsRead(path) catch continue;
-            const col = std.json.parseFromSliceLeaky(StoredCollection, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch continue;
-            var bytes: usize = 0;
-            for (col.docs) |d| bytes += d.content.len;
+            const col = loadListing(path) orelse continue;
             try s.beginObject();
             try s.objectField("id");
             try s.write(col.id);
@@ -168,9 +254,9 @@ fn actionList(out: *lib.Out) !void {
             try s.objectField("description");
             try s.write(col.description);
             try s.objectField("doc_count");
-            try s.write(col.docs.len);
+            try s.write(col.doc_count);
             try s.objectField("bytes");
-            try s.write(bytes);
+            try s.write(col.bytes);
             try s.objectField("created");
             try s.write(col.created);
             try s.objectField("updated");
@@ -331,9 +417,6 @@ fn actionSearch(obj: std.json.Value, out: *lib.Out) !void {
         };
     }
 
-    const q_lower = lib.alloc.alloc(u8, query.len) catch return lib.fail(out, "alloc");
-    for (query, 0..) |c, i| q_lower[i] = std.ascii.toLower(c);
-
     var hits: std.ArrayList(SearchHit) = .empty;
 
     const listing = lib.fsList(store_dir) catch {
@@ -359,11 +442,11 @@ fn actionSearch(obj: std.json.Value, out: *lib.Out) !void {
         }
         const col = loadCollection(col_id) orelse continue;
         for (col.docs) |doc| {
-            const lower_buf = lib.alloc.alloc(u8, doc.content.len) catch continue;
-            for (doc.content, 0..) |c, i| lower_buf[i] = std.ascii.toLower(c);
-            if (std.mem.find(u8, lower_buf, q_lower)) |pos| {
+            // ASCII fold in place: a lowercase copy of a 500 KB document
+            // was a second full allocation on every collection search.
+            if (std.ascii.findIgnoreCase(doc.content, query)) |pos| {
                 const start = if (pos > 120) pos - 120 else 0;
-                const end = @min(doc.content.len, pos + q_lower.len + 120);
+                const end = @min(doc.content.len, pos + query.len + 120);
                 hits.append(lib.alloc, .{
                     .col_id = col.id,
                     .col_title = col.title,

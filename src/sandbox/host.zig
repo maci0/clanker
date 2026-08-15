@@ -2523,7 +2523,7 @@ const fs_find_max_results: u32 = 200;
 /// Directories a name search should never descend into. Without this, a search
 /// of the project answers mostly with copies of it: build caches, vendored
 /// dependencies, and the staging trees the improvement engine leaves behind.
-const fs_skip_dirs = [_][]const u8{ ".git", ".zig-cache", "zig-out", "zig-pkg", "node_modules", "vendor", "staging", "history" };
+const fs_skip_dirs = [_][]const u8{ ".git", ".zig-cache", ".venv", ".cache", "zig-out", "zig-pkg", "node_modules", "vendor", "staging", "history", "__pycache__" };
 
 fn skipDir(name: []const u8) bool {
     for (fs_skip_dirs) |d| {
@@ -2722,6 +2722,12 @@ const grep_skip_ext = std.StaticStringMap(void).initComptime(.{
     .{ ".class", {} },
     .{ ".jar", {} },
     .{ ".pyc", {} },
+    .{ ".map", {} },
+    .{ ".obj", {} },
+    .{ ".bin", {} },
+    .{ ".sqlite", {} },
+    .{ ".db", {} },
+    .{ ".pack", {} },
 });
 
 fn fsGrepFile(
@@ -4911,6 +4917,9 @@ test "skipDir names the cache and vendor trees a project-root walk must not ente
     try std.testing.expect(skipDir("staging"));
     try std.testing.expect(skipDir("history"));
     try std.testing.expect(skipDir(".zig-cache"));
+    try std.testing.expect(skipDir(".venv"));
+    try std.testing.expect(skipDir(".cache"));
+    try std.testing.expect(skipDir("__pycache__"));
     try std.testing.expect(!skipDir("src"));
     try std.testing.expect(!skipDir("tools"));
 }
@@ -4919,6 +4928,8 @@ test "skipGrepName skips binary artifacts and leaves source names alone" {
     try std.testing.expect(skipGrepName("app.wasm"));
     try std.testing.expect(skipGrepName("mascot.PNG"));
     try std.testing.expect(skipGrepName("libfoo.dylib"));
+    try std.testing.expect(skipGrepName("bundle.js.map"));
+    try std.testing.expect(skipGrepName("app.sqlite"));
     try std.testing.expect(!skipGrepName("loop.zig"));
     try std.testing.expect(!skipGrepName("README.md"));
     try std.testing.expect(!skipGrepName(".gitignore"));
