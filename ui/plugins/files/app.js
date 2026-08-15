@@ -272,8 +272,16 @@ clanker.registerView({
           show.addEventListener("click", function() { hiddenBtn.click(); });
           hidden.appendChild(show);
           list.appendChild(hidden);
-        } else {
+        } else if (cur.atRoot) {
           emptyMsg.hidden = false;
+        } else {
+          var empty = mk("p","files-empty");
+          empty.appendChild(document.createTextNode("This folder is empty. "));
+          var up = mk("button","files-clear-filter","Go up");
+          up.type = "button";
+          up.addEventListener("click", function() { upBtn.click(); });
+          empty.appendChild(up);
+          list.appendChild(empty);
         }
         return;
       }

@@ -81,7 +81,17 @@ function renderPrompts(prompts){
   listEl.textContent = "";
   if(!prompts.length){
     var empty=document.createElement("p"); empty.className="run-empty";
-    empty.textContent="No prompts yet. Save one from the chat composer or create it here.";
+    empty.appendChild(document.createTextNode("No prompts yet. Save one from the chat composer or create it here. "));
+    var start=document.createElement("button");
+    start.type="button"; start.className="primary"; start.textContent="Create a prompt";
+    start.addEventListener("click",function(){
+      var title=document.getElementById("prompts-title");
+      if(title){
+        try{ title.scrollIntoView({behavior:"smooth",block:"center"}); }catch(_){}
+        title.focus();
+      }
+    });
+    empty.appendChild(start);
     listEl.appendChild(empty); applyPromptFilter(); return;
   }
   prompts.forEach(function(p){

@@ -2091,6 +2091,16 @@ export function bindBoard(deps) {
   }
   var clearBtn = document.getElementById("board-filter-clear");
   if (clearBtn) clearBtn.addEventListener("click", function () { clearBoardFilters(); });
+  var emptyCreate = document.getElementById("board-empty-create");
+  if (emptyCreate) emptyCreate.addEventListener("click", function () {
+    var fold = document.getElementById("board-create-fold");
+    if (fold) fold.open = true;
+    var obj = document.getElementById("goal-objective");
+    if (obj) {
+      try { obj.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
+      obj.focus();
+    }
+  });
   ["board-filter-input","board-mine","board-filter-blocked","board-filter-priority","board-filter-assignee","board-filter-label"].forEach(function(id){
     var n=document.getElementById(id);
     if(!n) return;

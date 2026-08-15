@@ -2339,7 +2339,31 @@ function renderRunOptions(filterText) {
     closeNodeDetail();
     var none = document.createElement("p");
     none.className = "run-empty";
-    none.textContent = q ? "No recorded runs match “" + filterText.trim() + "”." : "No runs recorded yet. Run a task and it appears here.";
+    if (q) {
+      none.appendChild(document.createTextNode("No recorded runs match “" + filterText.trim() + "”. "));
+      var clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "secondary";
+      clear.textContent = "Clear filter";
+      clear.addEventListener("click", function () {
+        el.runFilter.value = "";
+        el.runFilter.dispatchEvent(new Event("input", { bubbles: true }));
+        el.runFilter.focus();
+      });
+      none.appendChild(clear);
+    } else {
+      none.appendChild(document.createTextNode("No runs recorded yet. Start a task in Chat and it appears here. "));
+      var go = document.createElement("button");
+      go.type = "button";
+      go.className = "primary";
+      go.textContent = "Open Chat";
+      go.addEventListener("click", function () {
+        var tab = document.getElementById("tab-chat");
+        if (tab) tab.click();
+        else showView("chat", true);
+      });
+      none.appendChild(go);
+    }
     el.runGraph.appendChild(none);
     announceRunMatches(q, 0);
     return null;
@@ -3541,7 +3565,13 @@ function loadChatRooms() {
         el.chatRoomsItems.textContent = "";
         var fail = document.createElement("p");
         fail.className = "meta";
-        fail.textContent = "Could not load channels.";
+        fail.appendChild(document.createTextNode("Could not load channels. "));
+        var retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "secondary";
+        retry.textContent = "Try again";
+        retry.addEventListener("click", function () { loadChatRooms(); });
+        fail.appendChild(retry);
         el.chatRoomsItems.appendChild(fail);
       }
       showRoomsComposerLocked("Could not load rooms: " + err.message, false);
@@ -4152,14 +4182,17 @@ function buildChatMessage(m) {
         body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
       }).then(function(r){ return r.json(); }).then(function(d){
         if(d.ok) pollChat(el.chatRoom.value);
-      }).catch(function(){});
+        else if (el.chatStatus) el.chatStatus.textContent = "Could not pin that message.";
+      }).catch(function(err){
+        if (el.chatStatus) el.chatStatus.textContent = "Could not pin: " + (err && err.message ? err.message : "request failed");
+      });
     });
     actions.appendChild(pinBtn);
   }
   // Edit + Delete only for own messages
   if (m.from === instanceName && canAct) {
     var editBtn = document.createElement("button");
-    editBtn.type = "button"; editBtn.className = "secondary"; editBtn.textContent = "✏️"; upgradePfButton(editBtn); editBtn.title = "Edit message";
+    editBtn.type = "button"; editBtn.className = "secondary"; editBtn.textContent = "Edit"; upgradePfButton(editBtn); editBtn.title = "Edit message";
     editBtn.setAttribute("aria-label", "Edit message");
     editBtn.addEventListener("click", function(e){ e.stopPropagation();
       var cur = text.childNodes[0] ? text.childNodes[0].textContent || text.textContent : m.text;
@@ -4173,8 +4206,14 @@ function buildChatMessage(m) {
           }).then(function(r){ return r.json(); }).then(function(d){
             if(d.ok){ m.text = v; m.edited = true; text.textContent = v;
               var ed = document.createElement("span"); ed.className="chat-edited"; ed.textContent=" (edited)"; text.appendChild(ed);
-            } else { text.textContent = m.text; }
-          }).catch(function(){ text.textContent = m.text; });
+            } else {
+              text.textContent = m.text;
+              if (el.chatStatus) el.chatStatus.textContent = "Could not save the edit.";
+            }
+          }).catch(function(err){
+            text.textContent = m.text;
+            if (el.chatStatus) el.chatStatus.textContent = "Could not save the edit: " + (err && err.message ? err.message : "request failed");
+          });
         } else { text.textContent = m.text; if(m.edited){
           var ed2 = document.createElement("span"); ed2.className="chat-edited"; ed2.textContent=" (edited)"; text.appendChild(ed2); }}
       }
@@ -4184,7 +4223,7 @@ function buildChatMessage(m) {
     });
     actions.appendChild(editBtn);
     var delBtn = document.createElement("button");
-    delBtn.type = "button"; delBtn.className = "secondary"; delBtn.textContent = "🗑️"; upgradePfButton(delBtn); delBtn.title = "Delete message";
+    delBtn.type = "button"; delBtn.className = "secondary danger"; delBtn.textContent = "Delete"; upgradePfButton(delBtn); delBtn.title = "Delete message";
     delBtn.setAttribute("aria-label", "Delete message");
     delBtn.addEventListener("click", function(e){ e.stopPropagation();
       uiConfirm("Delete this message?", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
@@ -4193,7 +4232,10 @@ function buildChatMessage(m) {
           body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
         }).then(function(r){ return r.json(); }).then(function(d){
           if(d.ok) { wrap.classList.add("chat-msg-deleted"); text.textContent = "[This message was deleted]"; text.classList.add("chat-deleted"); }
-        }).catch(function(){});
+          else if (el.chatStatus) el.chatStatus.textContent = "Could not delete that message.";
+        }).catch(function(err){
+          if (el.chatStatus) el.chatStatus.textContent = "Could not delete: " + (err && err.message ? err.message : "request failed");
+        });
       });
     });
     actions.appendChild(delBtn);

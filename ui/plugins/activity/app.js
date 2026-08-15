@@ -47,7 +47,7 @@ clanker.registerView({
       list.textContent = "";
       if (!entries.length) {
         var empty = api.el("p", "run-empty", "Nothing recorded yet. Move a card, or write a line in a card's activity box. ");
-        var go = api.el("button", "secondary", "Open board");
+        var go = api.el("button", "primary", "Open board");
         go.type = "button";
         go.addEventListener("click", function () { api.showView("board"); });
         empty.appendChild(go);

@@ -48,7 +48,7 @@ export function loadKnowledge(){
         var empty=document.createElement("div"); empty.className="knowledge-empty";
         var heading=document.createElement("h3"); heading.textContent="No collections on file"; empty.appendChild(heading);
         var copy=document.createElement("p"); copy.textContent="Collections hold notes and reference material for chat context."; empty.appendChild(copy);
-        var start=document.createElement("button"); start.type="button"; start.className="secondary"; start.textContent="Add collection";
+        var start=document.createElement("button"); start.type="button"; start.className="primary"; start.textContent="Add collection";
         start.addEventListener("click",function(){
           var title=document.getElementById("knowledge-title");
           if(title){ title.focus(); title.scrollIntoView({behavior:"smooth",block:"center"}); }

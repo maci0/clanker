@@ -377,7 +377,7 @@ function loadConfigured() {
         var none = empty(msg + " ");
         var start = document.createElement("button");
         start.type = "button";
-        start.className = "secondary";
+        start.className = "primary";
         start.textContent = "Add model…";
         start.addEventListener("click", function () {
           var add = document.getElementById("models-add");

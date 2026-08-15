@@ -101,7 +101,7 @@ function renderRoster(container, status, a2a, cards) {
   var peers = status.peers || [];
   if (!peers.length) {
     var empty = el("p", "run-empty", "No peers configured. Add a peer in System → Config to see its status and skills here. ");
-    var go = el("button", "secondary", "Open Config");
+    var go = el("button", "primary", "Open Config");
     go.type = "button";
     go.addEventListener("click", navToSystemConfig);
     empty.appendChild(go);
@@ -177,6 +177,14 @@ function navToSystemConfig() {
 }
 function isDmRoom(room) { return typeof room === "string" && room.indexOf("dm:") === 0; }
 function dmNames(room) { return isDmRoom(room) ? room.slice(3).split("|").join(" \u2194 ") : room; }
+function navToChat() {
+  try {
+    if (_navShowView) _navShowView("chat");
+    else if (typeof window.showView === "function") window.showView("chat");
+    else if (window.clankerApp && typeof window.clankerApp.showView === "function") window.clankerApp.showView("chat");
+    else window.location.hash = "#chat";
+  } catch (_) { window.location.hash = "#chat"; }
+}
 function navToRooms(room) {
   try {
     if (_navShowView) _navShowView("rooms");
@@ -223,7 +231,11 @@ function renderDMs(container, chatData) {
   var subs = norm.subscribed || [];
   var dmRooms = rooms.filter(function (r) { return isDmRoom(r.room); });
   if (!dmRooms.length) {
-    var empty = el("p", "run-empty", "No DM channels yet. Open a peer in Rooms and send the first message.");
+    var empty = el("p", "run-empty", "No DM channels yet. Open a peer in Rooms and send the first message. ");
+    var goRooms = el("button", "primary", "Open Rooms");
+    goRooms.type = "button";
+    goRooms.addEventListener("click", function () { navToRooms(); });
+    empty.appendChild(goRooms);
     container.appendChild(empty);
     if (rooms.length && !dmRooms.length) {
       var hint = el("p", "fleet-meta", rooms.length + " room(s), none are DMs.");
@@ -281,7 +293,12 @@ function renderDMs(container, chatData) {
 function renderRuns(container, detailNode, runs) {
   container.textContent = "";
   if (!runs.length) {
-    container.appendChild(el("p", "run-empty", "No runs recorded yet. Start a task in Chat to watch its agent tree here."));
+    var empty = el("p", "run-empty", "No runs recorded yet. Start a task in Chat to watch its agent tree here. ");
+    var goChat = el("button", "primary", "Open Chat");
+    goChat.type = "button";
+    goChat.addEventListener("click", navToChat);
+    empty.appendChild(goChat);
+    container.appendChild(empty);
     return;
   }
   var grouped = groupRuns(runs);
