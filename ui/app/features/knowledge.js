@@ -113,6 +113,15 @@ function showSyncRow(id){
    collection the server had just removed: "Sync changes" then POSTed to a dead
    id and reported the failure as if the path were wrong. Every place that puts
    the detail away goes through here instead. */
+function closeCollection(){
+  var detail = document.getElementById("knowledge-detail");
+  if(detail){ detail.hidden = true; detail.textContent = ""; }
+  var row = document.getElementById("knowledge-sync-row");
+  if(row) row.hidden = true;
+  // Not just the row: the id is what runFolderSync sends, and it must not
+  // outlive the collection either.
+  syncOpenId = null;
+}
 function fillPreview(row, text) {
   var full = text || "";
   var pre = document.createElement("pre");
@@ -135,15 +144,6 @@ function fillPreview(row, text) {
     more.remove();
   });
   row.appendChild(more);
-}
-function closeCollection(){
-  var detail = document.getElementById("knowledge-detail");
-  if(detail){ detail.hidden = true; detail.textContent = ""; }
-  var row = document.getElementById("knowledge-sync-row");
-  if(row) row.hidden = true;
-  // Not just the row: the id is what runFolderSync sends, and it must not
-  // outlive the collection either.
-  syncOpenId = null;
 }
 function runFolderSync(){
   var input = document.getElementById("knowledge-sync-path");
