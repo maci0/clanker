@@ -4547,7 +4547,11 @@ function showView(name, focusPanel) {
   viewSettled = true;
   if (el.railContext) el.railContext.hidden = false;
   syncRailFolds(name);
-  if (focusPanel) document.getElementById("view-" + name).focus();
+  closeRailOnNarrow();
+  if (focusPanel) {
+    var panel = document.getElementById("view-" + name);
+    if (panel && panel.focus) panel.focus({ preventScroll: true });
+  }
   if (!viewLoaded[name] && viewLoaders[name]) {
     // Marked loaded only once it has loaded: a view whose first fetch failed
     // used to stay broken for the life of the page, however many times you
