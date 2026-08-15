@@ -146,12 +146,6 @@ fn matchesSeed(join_id: []const u8, join_name: []const u8, seeds: []const PeerSe
     return false;
 }
 
-/// Keep the connection on which the lexicographically smaller id is the dialer.
-pub fn keepSimultaneous(our_id: []const u8, peer_id: []const u8, we_dialed: bool) bool {
-    const we_are_smaller = std.mem.lessThan(u8, our_id, peer_id);
-    return we_dialed == we_are_smaller;
-}
-
 /// One configured or admitted clanker for the Fleet map.
 pub const MapPeer = struct {
     name: []const u8,
@@ -338,25 +332,6 @@ pub fn writeMap(s: *std.json.Stringify, map: Map) !void {
     try s.endObject();
 }
 
-/// CHAT_SYNC / chat id-dedup: keep messages whose id is not already seen.
-pub fn unseenIds(seen: []const []const u8, incoming: []const []const u8, out: [][]const u8) usize {
-    var n: usize = 0;
-    for (incoming) |id| {
-        var have = false;
-        for (seen) |s| {
-            if (std.mem.eql(u8, s, id)) {
-                have = true;
-                break;
-            }
-        }
-        if (have) continue;
-        if (n >= out.len) break;
-        out[n] = id;
-        n += 1;
-    }
-    return n;
-}
-
 test "frame encode/decode is length-prefixed and rejects oversized" {
     const payload = "{\"kind\":\"PING\"}";
     const frame = try encodeFrame(std.testing.allocator, payload);
@@ -403,24 +378,6 @@ test "admission: allowlist / prompt / open / self / empty" {
     try std.testing.expectEqual(Decision.refuse, admit(.allowlist, "me", "zzz", "carol", &seeds));
     try std.testing.expectEqual(Decision.pending, admit(.prompt, "me", "zzz", "carol", &seeds));
     try std.testing.expectEqual(Decision.accept, admit(.open, "me", "zzz", "carol", &seeds));
-}
-
-test "simultaneous open keeps the smaller-id dialer" {
-    // "aaa" < "bbb": keep the connection where aaa dialed.
-    try std.testing.expect(keepSimultaneous("aaa", "bbb", true));
-    try std.testing.expect(!keepSimultaneous("aaa", "bbb", false));
-    try std.testing.expect(!keepSimultaneous("bbb", "aaa", true));
-    try std.testing.expect(keepSimultaneous("bbb", "aaa", false));
-}
-
-test "CHAT_SYNC id-dedup keeps only unseen ids" {
-    const seen = [_][]const u8{ "m1", "m2" };
-    const incoming = [_][]const u8{ "m2", "m3", "m1", "m4" };
-    var out: [4][]const u8 = undefined;
-    const n = unseenIds(&seen, &incoming, &out);
-    try std.testing.expectEqual(@as(usize, 2), n);
-    try std.testing.expectEqualStrings("m3", out[0]);
-    try std.testing.expectEqualStrings("m4", out[1]);
 }
 
 test "mesh map is self plus peers, wires from dm rooms, pulse when recent" {
