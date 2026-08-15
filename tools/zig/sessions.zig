@@ -16,6 +16,15 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
 
+fn closeJsonBeforeField(raw: []const u8, field: []const u8) ?[]const u8 {
+    var needle_buf: [32]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, ",\"{s}\":", .{field}) catch return null;
+    const at = std.mem.find(u8, raw, needle) orelse return null;
+    const prefix = std.mem.trimEnd(u8, raw[0..at], " \t\r\n");
+    if (prefix.len == 0 or prefix[0] != '{') return null;
+    return std.fmt.allocPrint(lib.alloc, "{s}}}", .{prefix}) catch null;
+}
+
 fn appendAge(buf: *std.ArrayList(u8), delta_s: i64) !void {
     if (delta_s < 0) {
         try buf.appendSlice(lib.alloc, "just now");
@@ -63,8 +72,16 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             const id = fname[0 .. fname.len - 5];
             const path = try std.fmt.allocPrint(lib.alloc, "state/sessions/{s}", .{fname});
             defer lib.alloc.free(path);
-            const content = lib.fsRead(path) catch continue;
-            const meta = std.json.parseFromSliceLeaky(SessionMeta, lib.alloc, content, .{ .ignore_unknown_fields = true }) catch continue;
+            // Title/updated sit in front of the transcript. A full ck_fs_read
+            // of every file both costs up to 16 MiB apiece and burns the 1 MiB
+            // host arena, so later sessions vanished from the list.
+            const content = lib.fsReadRange(path, 0, 4096) catch continue;
+            const trimmed = std.mem.trimEnd(u8, content, " \t\r\n");
+            const src = if (trimmed.len > 0 and trimmed[trimmed.len - 1] == '}')
+                trimmed
+            else
+                closeJsonBeforeField(content, "messages") orelse content;
+            const meta = std.json.parseFromSliceLeaky(SessionMeta, lib.alloc, src, .{ .ignore_unknown_fields = true }) catch continue;
             try metas.append(lib.alloc, .{
                 .id = try lib.alloc.dupe(u8, id),
                 .title = try lib.alloc.dupe(u8, meta.title),

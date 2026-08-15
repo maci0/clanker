@@ -65,6 +65,13 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
         try s.objectField("archived");
         try s.write(true);
     }
+    // Listing fields sit in front of the transcript so a picker can score a
+    // row from the first few kilobytes. Without them every GET /api/sessions
+    // parsed every message of every conversation (each file up to 16 MiB).
+    try s.objectField("message_count");
+    try s.write(session.messages.len);
+    try s.objectField("bytes");
+    try s.write(transcriptBytes(session.messages));
     try s.objectField("messages");
     try s.beginArray();
     for (session.messages) |m| {
@@ -465,13 +472,6 @@ pub const SessionMeta = struct {
 /// be dropped. Peak memory for a picker is then one conversation, not the
 /// sum of every saved one (each file may be up to 16 MiB).
 fn sessionMetaFromStored(arena: std.mem.Allocator, stored: StoredSession) !SessionMeta {
-    var bytes: usize = 0;
-    for (stored.messages) |sm| {
-        if (sm.content) |c| bytes += c.len;
-        if (sm.tool_calls) |calls| {
-            for (calls) |tc| bytes += tc.arguments.len;
-        }
-    }
     return .{
         .id = try arena.dupe(u8, stored.id),
         .title = try arena.dupe(u8, stored.title),
@@ -480,6 +480,94 @@ fn sessionMetaFromStored(arena: std.mem.Allocator, stored: StoredSession) !Sessi
         .workspace = try arena.dupe(u8, stored.workspace),
         .archived = stored.archived,
         .messages = stored.messages.len,
+        .bytes = storedTranscriptBytes(stored.messages),
+    };
+}
+
+fn transcriptBytes(messages: []const types.Message) usize {
+    var bytes: usize = 0;
+    for (messages) |m| {
+        if (m.content) |c| bytes += c.len;
+        if (m.tool_calls) |calls| {
+            for (calls) |tc| bytes += tc.arguments.len;
+        }
+    }
+    return bytes;
+}
+
+fn storedTranscriptBytes(messages: []const StoredMessage) usize {
+    var bytes: usize = 0;
+    for (messages) |sm| {
+        if (sm.content) |c| bytes += c.len;
+        if (sm.tool_calls) |calls| {
+            for (calls) |tc| bytes += tc.arguments.len;
+        }
+    }
+    return bytes;
+}
+
+/// Enough of the file to hold id/title/timestamps and the listing counters
+/// that sit in front of `messages`. A 4 KiB title would miss them and fall
+/// back to a full parse; real titles are a couple of words.
+const listing_header_bytes: usize = 4096;
+
+const StoredListing = struct {
+    id: []const u8 = "",
+    title: []const u8 = "",
+    created: i64 = 0,
+    updated: i64 = 0,
+    workspace: []const u8 = "",
+    archived: bool = false,
+    message_count: ?usize = null,
+    bytes: ?usize = null,
+};
+
+/// First `listing_header_bytes` of `path`, or null when the file cannot be
+/// opened. A short file returns whatever it contains.
+fn readListingPrefix(io: std.Io, base: std.Io.Dir, path: []const u8, buf: *[listing_header_bytes]u8) ?[]const u8 {
+    var file = base.openFile(io, path, .{}) catch return null;
+    defer file.close(io);
+    var reader = file.reader(io, &.{});
+    const n = reader.interface.readSliceShort(buf) catch return null;
+    if (n == 0) return null;
+    return buf[0..n];
+}
+
+/// Closes a JSON object just before a top-level `,"<field>":` so a prefix
+/// that still has the transcript (or a truncated tail) parses as the header
+/// fields alone.
+fn closeJsonBeforeField(arena: std.mem.Allocator, raw: []const u8, field: []const u8) ?[]const u8 {
+    var needle_buf: [32]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, ",\"{s}\":", .{field}) catch return null;
+    const at = std.mem.find(u8, raw, needle) orelse return null;
+    const prefix = std.mem.trimEnd(u8, raw[0..at], " \t\r\n");
+    if (prefix.len == 0 or prefix[0] != '{') return null;
+    return std.fmt.allocPrint(arena, "{s}}}", .{prefix}) catch null;
+}
+
+fn storedListingFromPrefix(scratch: std.mem.Allocator, prefix: []const u8) ?StoredListing {
+    const src = closeJsonBeforeField(scratch, prefix, "messages") orelse blk: {
+        const trimmed = std.mem.trimEnd(u8, prefix, " \t\r\n");
+        if (trimmed.len > 0 and trimmed[trimmed.len - 1] == '}') break :blk trimmed;
+        return null;
+    };
+    const h = json.parseFromSliceLeaky(StoredListing, scratch, src, .{ .ignore_unknown_fields = true }) catch return null;
+    if (h.id.len == 0) return null;
+    return h;
+}
+
+fn sessionMetaFromPrefix(arena: std.mem.Allocator, scratch: std.mem.Allocator, prefix: []const u8) ?SessionMeta {
+    const h = storedListingFromPrefix(scratch, prefix) orelse return null;
+    const count = h.message_count orelse return null;
+    const bytes = h.bytes orelse return null;
+    return .{
+        .id = arena.dupe(u8, h.id) catch return null,
+        .title = arena.dupe(u8, h.title) catch return null,
+        .created = h.created,
+        .updated = h.updated,
+        .workspace = arena.dupe(u8, h.workspace) catch return null,
+        .archived = h.archived,
+        .messages = count,
         .bytes = bytes,
     };
 }
@@ -497,6 +585,7 @@ pub fn listSessions(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]S
 
     var scratch_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer scratch_state.deinit();
+    var header_buf: [listing_header_bytes]u8 = undefined;
 
     var it = dir.iterate();
     while (it.next(io) catch null) |entry| {
@@ -505,6 +594,14 @@ pub fn listSessions(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]S
         if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
         const scratch = scratch_state.allocator();
         const path = std.fmt.allocPrint(scratch, "{s}/{s}", .{ store_dir, entry.name }) catch continue;
+        if (readListingPrefix(io, base, path, &header_buf)) |prefix| {
+            if (sessionMetaFromPrefix(arena, scratch, prefix)) |meta| {
+                out.append(arena, meta) catch continue;
+                continue;
+            }
+        }
+        // Pre-counter files (and a 4 KiB title that pushed the counters
+        // off the prefix) still need the transcript walk.
         const raw = base.readFileAlloc(io, path, scratch, .limited(1 << 24)) catch continue;
         const stored = json.parseFromSliceLeaky(StoredSession, scratch, raw, .{ .ignore_unknown_fields = true }) catch continue;
         out.append(arena, sessionMetaFromStored(arena, stored) catch continue) catch continue;
@@ -650,9 +747,34 @@ pub fn searchSessions(
 
 /// The most recently updated session's id, or null when none exist, what
 /// `--continue` means, for both `clanker run` and the REPL.
+///
+/// Only the listing header is read: `--continue` must not parse every
+/// transcript just to learn which file is newest.
 pub fn latestSessionId(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ?[]const u8 {
-    const metas = listSessions(io, arena, base) catch return null;
-    return if (metas.len > 0) metas[0].id else null;
+    var dir = base.openDir(io, store_dir, .{ .iterate = true }) catch return null;
+    defer dir.close(io);
+
+    var scratch_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer scratch_state.deinit();
+    var header_buf: [listing_header_bytes]u8 = undefined;
+
+    var best_id: ?[]const u8 = null;
+    var best_updated: i64 = std.math.minInt(i64);
+
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        defer _ = scratch_state.reset(.retain_capacity);
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
+        const scratch = scratch_state.allocator();
+        const path = std.fmt.allocPrint(scratch, "{s}/{s}", .{ store_dir, entry.name }) catch continue;
+        const prefix = readListingPrefix(io, base, path, &header_buf) orelse continue;
+        const h = storedListingFromPrefix(scratch, prefix) orelse continue;
+        if (h.updated < best_updated) continue;
+        best_updated = h.updated;
+        best_id = arena.dupe(u8, h.id) catch continue;
+    }
+    return best_id;
 }
 
 /// The compaction budget a session is trimmed to before every save.
@@ -862,6 +984,33 @@ test "latestSessionId picks the most recently updated session" {
         .updated = 200,
     });
     try std.testing.expectEqualStrings("newer", latestSessionId(io, arena, tmp.dir).?);
+}
+
+test "listSessions and latestSessionId use the listing header without the transcript" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "state/sessions");
+    // Deliberately not valid past `messages`: if listing walked the
+    // transcript this file would be skipped as corrupt.
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "state/sessions/hdr.json",
+        .data = "{\"id\":\"hdr\",\"title\":\"from-header\",\"created\":1,\"updated\":9,\"message_count\":3,\"bytes\":42,\"messages\":[THIS IS NOT JSON",
+    });
+
+    const list = try listSessions(io, arena, tmp.dir);
+    try std.testing.expectEqual(@as(usize, 1), list.len);
+    try std.testing.expectEqualStrings("hdr", list[0].id);
+    try std.testing.expectEqualStrings("from-header", list[0].title);
+    try std.testing.expectEqual(@as(usize, 3), list[0].messages);
+    try std.testing.expectEqual(@as(usize, 42), list[0].bytes);
+    try std.testing.expectEqualStrings("hdr", latestSessionId(io, arena, tmp.dir).?);
 }
 
 test "session save/load round trip" {

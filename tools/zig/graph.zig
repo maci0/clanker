@@ -53,6 +53,10 @@ const GraphFile = struct {
     duration_ms: u64 = 0,
     total_prompt_tokens: u64 = 0,
     total_completion_tokens: u64 = 0,
+    /// Written in front of `nodes` so a picker can score a run from a prefix
+    /// read. Absent on graphs recorded before the field; those fall back to
+    /// `nodes.len` when the whole file fit in the prefix.
+    node_count: u32 = 0,
     nodes: []const GraphNode = &.{},
 };
 
@@ -194,13 +198,12 @@ fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !voi
     var graphs: std.ArrayList(GraphFile) = .empty;
     for (files.items) |fname| {
         const path = try std.fmt.allocPrint(alloc, "state/runs/{s}", .{fname});
-        const content = lib.fsRead(path) catch continue;
-        const g = std.json.parseFromSliceLeaky(GraphFile, alloc, content, .{ .ignore_unknown_fields = true }) catch continue;
+        const g = loadGraphListing(alloc, path) orelse continue;
         id_w = @max(id_w, g.run_id.len);
         var dbuf: [16]u8 = undefined;
         if (std.fmt.bufPrint(&dbuf, "{d}ms", .{g.duration_ms})) |s| dur_w = @max(dur_w, s.len) else |_| {}
         var nbuf: [16]u8 = undefined;
-        if (std.fmt.bufPrint(&nbuf, "{d} nodes", .{g.nodes.len})) |s| node_w = @max(node_w, s.len) else |_| {}
+        if (std.fmt.bufPrint(&nbuf, "{d} nodes", .{listingNodeCount(g)})) |s| node_w = @max(node_w, s.len) else |_| {}
         try graphs.append(alloc, g);
     }
     var buf: std.ArrayList(u8) = .empty;
@@ -220,6 +223,38 @@ fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !voi
         try buf.append(alloc, '\n');
     }
     try lib.okText(out, buf.items);
+}
+
+/// Prefix a picker needs: every summary field lives in front of `nodes`.
+/// 48 KiB covers a long task without pulling node previews into the host
+/// arena (a full ck_fs_read of each graph used to exhaust it mid-list).
+const listing_prefix_bytes: usize = 48 * 1024;
+
+fn closeJsonBeforeField(alloc: std.mem.Allocator, raw: []const u8, field: []const u8) ?[]const u8 {
+    var needle_buf: [32]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, ",\"{s}\":", .{field}) catch return null;
+    const at = std.mem.find(u8, raw, needle) orelse return null;
+    const prefix = std.mem.trimEnd(u8, raw[0..at], " \t\r\n");
+    if (prefix.len == 0 or prefix[0] != '{') return null;
+    return std.fmt.allocPrint(alloc, "{s}}}", .{prefix}) catch null;
+}
+
+fn loadGraphListing(alloc: std.mem.Allocator, path: []const u8) ?GraphFile {
+    const content = lib.fsReadRange(path, 0, listing_prefix_bytes) catch return null;
+    const trimmed = std.mem.trimEnd(u8, content, " \t\r\n");
+    // A file that fit in the prefix is complete: keep `nodes` so older
+    // graphs without `node_count` still report a length. A truncated
+    // prefix is closed in front of the array.
+    const src = if (trimmed.len > 0 and trimmed[trimmed.len - 1] == '}')
+        trimmed
+    else
+        closeJsonBeforeField(alloc, content, "nodes") orelse content;
+    return std.json.parseFromSliceLeaky(GraphFile, alloc, src, .{ .ignore_unknown_fields = true }) catch null;
+}
+
+fn listingNodeCount(g: GraphFile) usize {
+    if (g.node_count > 0) return g.node_count;
+    return g.nodes.len;
 }
 
 /// The first line of a task, clipped to a picker-sized label on a UTF-8
@@ -293,8 +328,7 @@ fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) 
     while (i > 0 and shown < 50) {
         i -= 1;
         const path = try std.fmt.allocPrint(alloc, "state/runs/{s}", .{files.items[i]});
-        const content = lib.fsRead(path) catch continue;
-        const g = std.json.parseFromSliceLeaky(GraphFile, alloc, content, .{ .ignore_unknown_fields = true }) catch continue;
+        const g = loadGraphListing(alloc, path) orelse continue;
         shown += 1;
         try s.beginObject();
         try s.objectField("run_id");
@@ -308,7 +342,7 @@ fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) 
         try s.objectField("duration_ms");
         try s.write(g.duration_ms);
         try s.objectField("nodes");
-        try s.write(g.nodes.len);
+        try s.write(listingNodeCount(g));
         try s.objectField("prompt_tokens");
         try s.write(g.total_prompt_tokens);
         try s.objectField("completion_tokens");
@@ -355,9 +389,12 @@ fn writeGraph(out: *lib.Out, alloc: std.mem.Allocator, value: std.json.Value) !v
     if (g.run_id.len == 0 or std.mem.findAny(u8, g.run_id, "/\\") != null)
         return lib.fail(out, "run_id must be non-empty and contain no path separators");
 
+    var stored = g;
+    if (stored.node_count == 0) stored.node_count = std.math.cast(u32, stored.nodes.len) orelse std.math.maxInt(u32);
+
     var enc: std.Io.Writer.Allocating = .init(alloc);
     var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };
-    try s.write(g);
+    try s.write(stored);
 
     const path = try std.fmt.allocPrint(alloc, "state/runs/{s}.json", .{g.run_id});
     lib.fsWrite(path, enc.written()) catch |err| return lib.failErr(out, err, "writing the run graph");

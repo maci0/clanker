@@ -84,6 +84,11 @@ through a gated loop. Follow these conventions when changing this codebase.
   the serve cwd), execution graphs, sub-agents, autolearn, workflows. Session
   ids are path fragments; every CLI, TUI, and HTTP entry point uses
   `session.zig`'s `validSessionId` rather than restating its alphabet.
+  `listSessions` / `--continue` read only the listing header (`message_count`
+  and `bytes` sit in front of `messages`); a picker must not parse every
+  transcript. The `sessions` and `graph` guests use `ck_fs_read_range` the
+  same way: a full `ck_fs_read` per file burns the 1 MiB host arena and
+  drops later rows.
   `Agent.on_token` has no context argument, so streaming side-state
   (`stream_tally`, the TTSR guard, `run_stream_socket`) is threadlocal; a
   process-static pointer would splice concurrent `/api/run` streams.
