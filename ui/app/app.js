@@ -3551,12 +3551,38 @@ function showRoomsComposerLocked(message, offerCreate) {
   el.chatLog.appendChild(box);
 }
 
+function syncChatLogEmpty(room) {
+  if (!el.chatLog) return;
+  var existing = document.getElementById("chat-log-empty");
+  if (el.chatLog.querySelector(".chat-msg")) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (el.chatRoom && el.chatRoom.disabled) return;
+  var who = room || (el.chatRoom && el.chatRoom.value) || "";
+  var msg = isDm(who)
+    ? "No messages with " + dmPartner(who) + " yet. Write the first one below."
+    : (who ? "No messages in #" + who + " yet. Write the first one below."
+      : "No messages in this room yet. Write the first one below.");
+  if (existing) { existing.textContent = msg; return; }
+  var box = document.createElement("div");
+  box.id = "chat-log-empty";
+  box.className = "run-empty";
+  box.textContent = msg;
+  el.chatLog.appendChild(box);
+}
+
 var _chatUnreadCutoff = 0;   /* ts before which msgs are "read" (for divider) */
 function openChatRoom(room) {
   stopChatPoll();
   _chatUnreadCutoff = _chatReadTimestamps[room] || 0;
   _markRoomRead(room);
   el.chatLog.textContent = "";
+  var loading = document.createElement("p");
+  loading.id = "chat-log-empty";
+  loading.className = "run-empty";
+  loading.textContent = "Loading messages…";
+  el.chatLog.appendChild(loading);
   chatLastTs = 0;
   chatSeen = {};
   chatSeenOrder = [];
@@ -3667,6 +3693,7 @@ function ingestChatMessages(messages) {
   _chatUnreadCutoff = 0;
   announceChatArrival(fresh);
   if (fresh.length && following) el.chatLog.scrollTop = el.chatLog.scrollHeight;
+  syncChatLogEmpty(el.chatRoom && el.chatRoom.value);
 }
 function pollChat(room) {
   return fetch("/api/chat/messages?room=" + encodeURIComponent(room) + "&after=" + chatLastTs)
@@ -3713,6 +3740,7 @@ function pollChat(room) {
       // presence dot freshness handled via CSS only — timestamps already in lastSeenAt for future use
       announceChatArrival(fresh);
       if (fresh.length && following) el.chatLog.scrollTop = el.chatLog.scrollHeight;
+      syncChatLogEmpty(room);
     })
     .catch(function (err) {
       // Backs off rather than giving up. Stopping outright meant one
@@ -3723,6 +3751,10 @@ function pollChat(room) {
       chatBackoff = Math.min(chatBackoff * 3, chat_poll_max_ms);
       el.chatStatus.textContent = "Could not load messages: " + err.message +
         " — retrying in " + Math.round(chatBackoff / 1000) + "s.";
+      var empty = document.getElementById("chat-log-empty");
+      if (empty && !el.chatLog.querySelector(".chat-msg")) {
+        empty.textContent = "Could not load messages. Retrying…";
+      }
     });
 }
 
@@ -4065,7 +4097,7 @@ function buildChatMessage(m) {
   var copyBtn = document.createElement("button");
   copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy"; upgradePfButton(copyBtn);
   copyBtn.setAttribute("aria-label", "Copy message");
-  copyBtn.addEventListener("click", function(e){ e.stopPropagation(); try{ navigator.clipboard.writeText(m.text); }catch(_){} });
+  copyBtn.addEventListener("click", function(e){ e.stopPropagation(); copyText(m.text, copyBtn, "Copy", text); });
   actions.appendChild(copyBtn);
   if (canAct) EMOJIS.forEach(function(emoji){
     var b=document.createElement("button"); b.type="button"; b.className="secondary"; b.textContent=emoji; upgradePfButton(b); b.title="React "+emoji;
@@ -5662,6 +5694,12 @@ if (pinsTitle && !pinsTitle.querySelector(".icon")) {
 }
 el.helpOpen.addEventListener("click", function () { openOverlay(el.help, el.helpClose); });
 el.helpClose.addEventListener("click", function () { closeOverlay(el.help); });
+document.querySelectorAll("[data-system-jump]").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    var target = document.getElementById(btn.getAttribute("data-system-jump"));
+    if (target) target.scrollIntoView({ block: "start", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+  });
+});
 
 var providerCacheHolder = { list: providerCache };
 mpBind({ el: el, readJson: readJson, fmtInt: fmtInt, allUsage: allUsage, renderUsage: renderUsage, renderContextMeter: renderContextMeter, providerCacheHolder: providerCacheHolder, onModelChange: renderSessionChip });

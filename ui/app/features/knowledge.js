@@ -34,7 +34,7 @@ function updateHint(){
   var n = selectedKnowledge.length;
   hint.textContent = n
     ? n + (n === 1 ? " collection" : " collections") + " will be included in the next prompt."
-    : "No knowledge selected. Check collections to inject documents into the next chat.";
+    : "No knowledge selected. Tick a collection to include its documents in the next chat.";
 }
 export function loadKnowledge(){
   var status=document.getElementById("knowledge-status");

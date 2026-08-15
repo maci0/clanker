@@ -2044,6 +2044,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   width: 100%; text-align: left;
   transition: background 0.1s ease;
   position: relative;
+  min-height: 32px;
 }
 .slack-room-item:hover { background: var(--surface-hover); color: var(--fg); }
 .slack-room-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -2211,7 +2212,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
 }
 .slack-formatting-hint {
   font-size: 11px; color: var(--fg-muted); margin-top: 0.25rem;
-  padding-left: 2.25rem; /* align with text input */
+  padding-left: 0;
 }
 .slack-formatting-hint code { font-size: 11px; padding: 0.1rem 0.25rem; }
 
@@ -2335,7 +2336,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   display: flex; flex-direction: column; gap: 0.5rem;
 }
 .chat-log:empty::before {
-  content: "No messages in this room yet."; color: var(--fg-muted);
+  content: "Loading messages…"; color: var(--fg-muted);
   font-family: var(--sans); font-size: 13px;
 }
 /* Slack-style "New messages" divider */
@@ -2360,6 +2361,12 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
 .chat-msg:hover .chat-gutter-time, .chat-msg:focus-within .chat-gutter-time { opacity: 1; }
 .chat-actions { position: absolute; top: -10px; right: 0.6rem; display: none; align-items: center; gap: 0.2rem; padding: 0.15rem 0.25rem; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
 .chat-msg:hover .chat-actions, .chat-msg:focus-within .chat-actions { display: flex; }
+@media (hover: none) {
+  .chat-msg:not(.chat-msg-deleted) .chat-actions {
+    display: flex; position: static; top: auto; right: auto;
+    margin-top: 0.35rem; flex-wrap: wrap; box-shadow: none;
+  }
+}
 .chat-actions button { min-height: 24px; padding: 0 0.45rem; font-size: 11px; border-radius: 999px; }
 .chat-reactions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
 .chat-reactions:empty { display: none; }
@@ -2407,15 +2414,14 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
    something anyone typed. */
 .chat-text.chat-action { color: var(--fg-muted); font-style: italic; }
 .chat-unfurl { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--accent-text); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--rule)); border-radius: var(--radius); padding: 0.3rem 0.5rem; background: var(--surface-2); text-decoration: none; }
-.chat-composer { display: flex; gap: 0.5rem; margin-top: 0.75rem; align-items: center; }
+.chat-composer { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; align-items: stretch; }
 .chat-composer input {
-  flex: 1; min-width: 12rem; min-height: 40px; padding: 0.45rem 0.75rem 0.45rem 2.2rem;
+  flex: 1; min-width: 12rem; min-height: 40px; padding: 0.45rem 0.75rem;
   font-family: var(--sans); font-size: 13px;
   background: var(--surface); color: var(--fg);
   border: 1px solid var(--border); border-radius: 999px;
 }
 .chat-composer { position: relative; }
-.chat-composer::before { content: "#"; position: absolute; left: 0.85rem; top: 50%; transform: translateY(-50%); color: var(--fg-muted); font-size: 13px; pointer-events: none; }
 .chat-composer button { border-radius: 999px; min-height: 40px; }
 
 /* ---- usage: what the model calls actually cost ----
@@ -2729,7 +2735,7 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   .composer .toolbar #cancel { min-height: 44px; }
   .rail-item, .rail-new, .chat-actions button, .chat-thread-bar button,
   .board-empty-slot button, .board-quick-add .board-add-actions button,
-  .card-quick-actions button, .slack-btn-icon, .label-picker-item,
+  .card-quick-actions button, .slack-btn-icon, .slack-room-item, .label-picker-item,
   .rail-pin, button.rail-pin,
   .session-actions .secondary, .session-actions .more > summary,
   .session-actions button,
@@ -2777,6 +2783,9 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   .chat-thread-bar button {
     min-height: 44px;
     min-width: 44px;
+  }
+  .slack-room-item {
+    min-height: 44px;
   }
   .composer .toolbar #voice-btn,
   .composer .toolbar button.secondary {
@@ -3152,6 +3161,18 @@ mark {
   cursor: pointer; font-family: var(--mono); font-size: var(--step--1);
   font-weight: 600; letter-spacing: 0.04em; color: var(--fg-muted);
   min-height: 32px;
+}
+.board-create-fold { margin: 0 0 var(--space-3); }
+.board-create-fold > summary {
+  cursor: pointer; font-family: var(--sans); font-size: 14px; font-weight: 600;
+  color: var(--fg); min-height: 40px; display: flex; align-items: center;
+}
+.system-jump {
+  display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-4);
+}
+.system-jump button {
+  font-family: var(--sans); font-size: 12px; font-weight: 500;
+  min-height: 32px; padding: 0.25rem 0.7rem;
 }
 .board-create-note { grid-column: 1 / -1; margin: var(--space-2) 0 0; }
 .board-header-icon { font-size: 1.3rem; }

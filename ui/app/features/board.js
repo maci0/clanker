@@ -1963,6 +1963,8 @@ export function bindBoard(deps) {
     });
     _setTabCount("board", open);
     el.boardEmpty.hidden = s.cards.length > 0;
+    var createFold = document.getElementById("board-create-fold");
+    if (createFold && !s.cards.length) createFold.open = true;
     syncListControls();
 
     // The detail panel is rebuilt with the board because it shows one of these

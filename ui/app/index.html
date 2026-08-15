@@ -601,6 +601,8 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <!-- Creating a goal creates its durable Kanban card. The completion
            criterion travels with the card as its definition of done. -->
+      <details class="board-create-fold" id="board-create-fold">
+        <summary>New goal</summary>
       <form id="goal-form" class="goal-form board-goal-form">
         <label for="goal-objective">New goal</label>
         <input type="text" id="goal-objective" placeholder="What should clanker achieve?" maxlength="2000" autocomplete="off" required>
@@ -616,6 +618,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <button type="submit" class="primary" id="goal-add">Create goal card</button>
         <p class="meta board-create-note">Saves a Backlog card. It does not start a run.</p>
       </form>
+      </details>
       <!-- Kept for existing room boards and the board module's DOM contract;
            primary creation above always produces a structured goal. -->
       <form id="card-form" hidden>
@@ -655,7 +658,7 @@ lamps carry further). The seven named palettes ride the same tokens.
            opposite of what a first-run message is for. -->
       <div class="board-empty" id="board-empty" hidden>
         <strong>No goal cards yet</strong>
-        <span>Define the outcome and its completion criterion above. The new goal will enter Backlog and remain available to every clanker in this room.</span>
+        <span>Open New goal above to define the outcome and its completion criterion. The new goal will enter Backlog and remain available to every clanker in this room.</span>
       </div>
       <p class="sr-only" id="board-status" role="status" aria-live="polite"></p>
       <p class="sr-only" id="goals-status" role="status" aria-live="polite"></p>
@@ -797,7 +800,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <h2>Knowledge</h2>
         <button type="button" class="secondary" id="knowledge-refresh">Refresh</button>
       </div>
-      <p class="meta" id="knowledge-hint">No knowledge selected. Check collections to inject documents into the next chat.</p>
+      <p class="meta" id="knowledge-hint">No knowledge selected. Tick a collection to include its documents in the next chat.</p>
       <form class="goal-form" id="knowledge-create-form">
         <label for="knowledge-title">New collection</label>
         <input type="text" id="knowledge-title" placeholder="e.g. Project docs" maxlength="200" required>
@@ -887,7 +890,16 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
   </div>
   <div class="view" id="view-system" role="tabpanel" aria-labelledby="tab-system" tabindex="-1" hidden>
-    <section>
+    <nav class="system-jump" aria-label="On this page">
+      <button type="button" data-system-jump="system-progress">Progress</button>
+      <button type="button" data-system-jump="system-usage">Usage</button>
+      <button type="button" data-system-jump="system-status">Status</button>
+      <button type="button" data-system-jump="system-plugins">Plugins</button>
+      <button type="button" data-system-jump="config-editor-section">Config</button>
+      <button type="button" data-system-jump="settings-section">Settings</button>
+      <button type="button" data-system-jump="system-logs">Logs</button>
+    </nav>
+    <section id="system-progress">
       <div class="section-head">
         <h2>Progress</h2>
         <div class="toolbar-actions">
@@ -905,14 +917,14 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <div id="progress-history" class="section-output"></div>
     </section>
-    <section>
+    <section id="system-usage">
       <div class="section-head">
         <h2>Usage</h2>
         <button type="button" class="secondary" id="usage-refresh">Refresh</button>
       </div>
       <div id="usage"></div>
     </section>
-    <section>
+    <section id="system-status">
       <div class="section-head">
         <h2>Status</h2>
         <button type="button" class="secondary" id="refresh">Refresh</button>
@@ -924,7 +936,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <dd id="peers">…</dd>
       </dl>
     </section>
-    <section>
+    <section id="system-plugins">
       <div class="section-head">
         <h2>Web UI plugins</h2>
         <button type="button" class="secondary" id="webui-plugins-refresh">Refresh</button>
@@ -996,7 +1008,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <p class="sr-only" id="settings-status" role="status" aria-live="polite"></p>
     </section>
 
-    <section>
+    <section id="system-logs">
       <div class="section-head">
         <h2>Logs</h2>
         <button type="button" class="secondary" id="logs-refresh">Refresh</button>
