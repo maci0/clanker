@@ -5693,7 +5693,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
             return;
         }
-        const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
+        const is_webui = isWebuiIndexPath(path) or
             isWebuiAssetPath(path) or
             std.mem.eql(u8, path, "/webui/import-map.json") or
             std.mem.eql(u8, path, "/webui/vendor/preact.module.js") or std.mem.eql(u8, path, "/webui/vendor/htm.module.js") or std.mem.eql(u8, path, "/webui/vendor/signals-core.module.js") or
@@ -5767,7 +5767,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleReadiness(stream);
         } else if (is_metrics) {
             handleHttpMetrics(stream);
-        } else if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui"))) {
+        } else if (std.mem.eql(u8, method, "GET") and isWebuiIndexPath(path)) {
             handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), headers_raw, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/import-map.json")) {
             handleWebuiImportMap(io, gpa, cfg, stream);
@@ -7873,6 +7873,10 @@ fn renderWebuiCached(
         }
     }
     return body;
+}
+
+fn isWebuiIndexPath(path: []const u8) bool {
+    return std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or std.mem.eql(u8, path, "/webui/");
 }
 
 /// Every asset of the comptime-embedded page bundle, by request path. Vendored
@@ -15222,6 +15226,14 @@ test "no vendored JS file exists that the vendor routes have never heard of" {
         };
         f.close(io);
     }
+}
+
+test "isWebuiIndexPath accepts the slash variants browsers send" {
+    try std.testing.expect(isWebuiIndexPath("/"));
+    try std.testing.expect(isWebuiIndexPath("/webui"));
+    try std.testing.expect(isWebuiIndexPath("/webui/"));
+    try std.testing.expect(!isWebuiIndexPath("/webui/app.js"));
+    try std.testing.expect(!isWebuiIndexPath("/webui//"));
 }
 
 test "normalizeWebuiPath strips a well-formed cache-bust prefix" {

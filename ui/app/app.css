@@ -634,7 +634,7 @@ body {
 }
 @media (max-width: 40rem) {
   #app-masthead.pf-v6-c-masthead { padding-block: 0.35rem; padding-inline: 0.75rem; }
-  #app-masthead .pf-v6-c-masthead__content { gap: 0.35rem 0.45rem; }
+  #app-masthead .pf-v6-c-masthead__content { gap: 0.35rem 0.45rem; flex-wrap: nowrap; }
   /* Phone chrome is Menu, model, Jump, theme. Lamps and help live in
      System / the palette so they cannot wrap and clip here. */
   #instance-chip, #peers-chip, #session-chip, #help-open { display: none; }
@@ -1798,6 +1798,8 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   overflow-wrap: anywhere; white-space: pre-line;
 }
 .run-empty { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); line-height: 1.6; max-width: var(--measure); margin-left: auto; margin-right: auto; text-align: center; }
+#view-schedule .run-empty { text-align: left; }
+#view-schedule .run-empty code { display: block; margin-top: 0.35rem; overflow-wrap: anywhere; }
 .pixel-canvas {
   display: block; width: 100%; height: auto;
   image-rendering: pixelated;
@@ -2890,7 +2892,9 @@ button.header-model[aria-expanded="true"] .model-chip__chevron {
 }
 
 .model-picker {
-  position: fixed; inset: 0; z-index: 80; pointer-events: none;
+  /* PatternFly's main-container is a grid item at z-index 100, so 80
+     painted the panel under Chat (suggestions hit-tested on top). */
+  position: fixed; inset: 0; z-index: 200; pointer-events: none;
 }
 .model-picker[hidden] { display: none; }
 .model-picker__panel {
@@ -3245,7 +3249,10 @@ main.pf-v6-c-page__main {
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  overflow: hidden;
+  /* PatternFly's sidebar-body is overflow auto; that lets tab/filter
+     focus scroll Work (Chat/Board) off the top of the rail. Only
+     .rail-list is allowed to scroll. */
+  overflow: hidden !important;
 }
 .rail-head { display: flex; flex-direction: column; gap: var(--space-2); flex: none; }
 /* The rail is pinned: only the conversation list scrolls, not the whole

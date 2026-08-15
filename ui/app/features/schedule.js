@@ -153,7 +153,11 @@ function render() {
     if (!state.entries.length) {
       var empty = document.createElement("p");
       empty.className = "run-empty";
-      empty.textContent = "Nothing scheduled. Add one with: clanker schedule add \"*/30 * * * *\" \"<task>\"";
+      empty.appendChild(document.createTextNode("Nothing scheduled. Add one with"));
+      empty.appendChild(document.createElement("br"));
+      var cmd = document.createElement("code");
+      cmd.textContent = "clanker schedule add \"*/30 * * * *\" \"<task>\"";
+      empty.appendChild(cmd);
       list.appendChild(empty);
     } else state.entries.forEach(function (e) { list.appendChild(entryRow(e)); });
   }

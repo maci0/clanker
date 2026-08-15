@@ -566,7 +566,14 @@ function setRailOpen(open) {
   el.rail.setAttribute("data-open", String(open));
   el.railScrim.setAttribute("data-open", String(open));
   el.railToggle.setAttribute("aria-expanded", String(open));
-  if (open) el.sessionFilter.focus();
+  if (open) {
+    // Focus would otherwise scroll the drawer so Work (Chat/Board) sits
+    // above the fold and the first visible tab is Files.
+    el.rail.scrollTop = 0;
+    var body = el.rail.querySelector(".pf-v6-c-page__sidebar-body");
+    if (body) body.scrollTop = 0;
+    if (el.sessionFilter && el.sessionFilter.focus) el.sessionFilter.focus({ preventScroll: true });
+  }
 }
 
 function applyRailCollapsed(collapsed) {

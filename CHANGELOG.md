@@ -38,6 +38,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `./core/utils.js` under `/core/`; and the import map prefix `/webui/`
   also matched already-tagged URLs. `app.js` never ran, so the page was
   a rail with an empty main column.
+- The model picker sat under PatternFly's main column (`z-index: 100`)
+  so clicking the model chip opened a panel nobody could see.
+- `GET /webui/` (trailing slash) serves the same HTML as `/webui`.
+- Opening the phone rail no longer focus-scrolls Work (Chat/Board) off
+  the top of the drawer.
 - Isolated `clanker run` now provisions a checkout `state/` path that is a
   symlink to shared durable storage. Previously Zig reported `NotDir` before
   any shared paths were linked, leaving host-side state private to the
