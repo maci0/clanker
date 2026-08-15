@@ -238,7 +238,7 @@ export function bindKnowledge(){
     if(searchOut) searchOut.textContent="Searching…";
     fetch("/api/knowledge/search?q="+encodeURIComponent(q)).then(readJson).then(function(data){
       var hits=(data&&data.hits)||[]; if(!searchOut) return; searchOut.textContent="";
-      if(!hits.length){ searchOut.textContent="No matches."; return; }
+      if(!hits.length){ searchOut.textContent="No documents mention “"+q+"”."; return; }
       hits.forEach(function(h){
         var row=document.createElement("div"); row.className="knowledge-hit";
         var meta=document.createElement("div"); meta.className="meta"; meta.textContent=h.collection_title+" / "+h.doc_name; row.appendChild(meta);

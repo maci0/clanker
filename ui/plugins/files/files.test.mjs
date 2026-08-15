@@ -28,6 +28,13 @@ test("Files listing fills the column until a preview is open", function () {
   assert.match(css, /\.files-panes:has\(\.files-right:not\(\[hidden\]\)\)/);
 });
 
+test("Files filter empty state offers to clear the filter", function () {
+  const js = readFileSync(join(here, "app.js"), "utf8");
+  assert.match(js, /files-clear-filter/);
+  assert.match(js, /Clear filter/);
+  assert.match(css, /\.files-clear-filter\s*\{/);
+});
+
 test("Files buttons reset the host pill so filenames stay compact", function () {
   assert.match(css, /:where\(#view-files\)\s*button:where\(:not\(\.secondary\)\)/);
   assert.match(css, /\.files-open\s*\{[^}]*min-height:\s*28px/);

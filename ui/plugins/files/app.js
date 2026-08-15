@@ -247,7 +247,16 @@ clanker.registerView({
       if (!entries.length) {
         if (filterText) {
           var none = mk("p","files-empty");
-          none.textContent = "No matches for “" + filterText + "”.";
+          none.appendChild(document.createTextNode("No matches for “" + filterText + "”. "));
+          var clear = mk("button","files-clear-filter","Clear filter");
+          clear.type = "button";
+          clear.addEventListener("click", function() {
+            filterInput.value = "";
+            filterText = "";
+            renderEntries();
+            filterInput.focus();
+          });
+          none.appendChild(clear);
           list.appendChild(none);
         }
         return;

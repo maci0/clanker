@@ -188,6 +188,12 @@
   color: var(--fg-muted);
   font-size: var(--step--1);
 }
+.files-clear-filter {
+  display: inline; padding: 0; margin: 0;
+  color: var(--accent-text); font: inherit; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 0.15em;
+}
+.files-clear-filter:hover, .files-clear-filter:focus-visible { color: var(--accent); }
 
 /* ─── file viewer ─────────────────────────────────────────────────────────── */
 .files-right[hidden] { display: none; }

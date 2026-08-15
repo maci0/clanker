@@ -89,7 +89,7 @@ export function bind(node, st, render) {
 var pfButtonSkip = {
   "rail-tab": 1, "rail-item": 1, "tool-name": 1, "suggestion": 1,
   "palette-item": 1, "board-header-btn": 1, "rail-pin": 1, "label-picker-item": 1,
-  "rail-empty-action": 1,
+  "rail-empty-action": 1, "toast-dismiss": 1,
   /* Status lamps and model pills are labels, not actuators. Upgrading them to
      pf-m-primary painted the masthead solid PatternFly blue. */
   "chip": 1, "header-model": 1, "model-pill": 1,
@@ -349,6 +349,15 @@ export function toast(msg, kind) {
   title.className = "pf-v6-c-alert__title";
   title.textContent = msg;
   node.appendChild(title);
+  var dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.className = "toast-dismiss";
+  dismiss.textContent = "Dismiss";
+  dismiss.addEventListener("click", function (event) {
+    event.stopPropagation();
+    node.remove();
+  });
+  node.appendChild(dismiss);
   upgradePfToastNode(node);
   node.addEventListener("click", function () { node.remove(); });
   node.addEventListener("keydown", function (event) {
@@ -356,7 +365,7 @@ export function toast(msg, kind) {
     event.preventDefault();
     node.remove();
   });
-  node.setAttribute("aria-label", msg + ". Press Enter, Space, or Escape to dismiss.");
+  node.setAttribute("aria-label", msg + ". Dismiss, or press Enter, Space, or Escape.");
   var timer;
   var ms = node.hasAttribute("data-kind") ? 9000 : 5000;
   function schedule() { timer = window.setTimeout(function () { node.remove(); }, ms); }

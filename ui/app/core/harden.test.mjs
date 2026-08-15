@@ -105,6 +105,12 @@ test("Search sits in Work, not the folded Set up group", function () {
   assert.doesNotMatch(setup, /id="tab-search"/);
 });
 
+test("empty transcript names the new conversation, not Idle", function () {
+  const empty = html.slice(html.indexOf('id="transcript-empty"'), html.indexOf('id="transcript-empty"') + 280);
+  assert.match(empty, />New conversation</);
+  assert.doesNotMatch(empty, />Idle</);
+});
+
 test("conversation filter says it matches titles", function () {
   assert.match(html, /id="session-filter"[^>]*placeholder="Filter by title…"/);
 });
@@ -120,6 +126,12 @@ test("workspace plus minus hit 44px on coarse pointers", function () {
 
 test("config file picker has a visible label", function () {
   assert.match(html, /<label for="config-editor-file">File<\/label>/);
+});
+
+test("toasts expose a visible dismiss control", function () {
+  assert.match(uiSrc, /className = "toast-dismiss"/);
+  assert.match(uiSrc, /dismiss\.textContent = "Dismiss"/);
+  assert.match(css, /\.toast-dismiss\s*\{/);
 });
 
 test("required field labels are marked in CSS", function () {

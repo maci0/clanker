@@ -4316,7 +4316,7 @@ if (el.chatSearchInput) el.chatSearchInput.addEventListener("input", function ()
         el.chatSearchResults.textContent = "";
         if (!hits.length) {
           var empty = document.createElement("p");
-          empty.textContent = "No matches.";
+          empty.textContent = "No messages mention “" + q + "”.";
           el.chatSearchResults.appendChild(empty);
           return;
         }
