@@ -142,7 +142,8 @@ pub const Provider = struct {
     /// secret on the wrong header.
     auth: ?AuthStrategy = null,
     /// vertex / vertex_anthropic only: the GCP project and region that serve
-    /// the model, and the service account JSON used to mint access tokens.
+    /// the model, and an optional service account JSON. When the file is
+    /// omitted, minting falls through to gcloud ADC.
     project: []const u8 = "",
     location: []const u8 = "",
     service_account_file: []const u8 = "",
@@ -1252,18 +1253,13 @@ pub const Config = struct {
         }
 
         // vertex / vertex_anthropic address the model by project/location in
-        // the URL and authenticate from one of two credential sources;
-        // missing either currently only surfaces as error.VertexProjectMissing
-        // (or a bare MissingApiKey) on the first request, far from the config
-        // that caused it.
+        // the URL. Missing those only surfaces as error.VertexProjectMissing
+        // on the first request, far from the config that caused it. A
+        // credential file is optional at load: minting also reads gcloud ADC.
         if (p.kind == .vertex_anthropic or p.kind == .vertex) {
             if (p.project.len == 0 or p.location.len == 0) {
                 log.log(.error_, "provider '{s}': kind \"{s}\" requires \"project\" and \"location\"", .{ name, @tagName(p.kind) });
                 return error.VertexProjectMissing;
-            }
-            if (p.api_key_env == null and p.service_account_file.len == 0) {
-                log.log(.error_, "provider '{s}': kind \"{s}\" requires \"api_key_env\" or \"service_account_file\"", .{ name, @tagName(p.kind) });
-                return error.VertexCredentialMissing;
             }
         }
 
@@ -4095,7 +4091,7 @@ test "a vertex_anthropic provider missing project/location is rejected at load" 
     );
 }
 
-test "a vertex_anthropic provider missing both credential sources is rejected at load" {
+test "a vertex_anthropic provider without a credential file still loads" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
@@ -4112,10 +4108,11 @@ test "a vertex_anthropic provider missing both credential sources is rejected at
         \\models = { "v/m" = { provider = "v" } }
         ,
     });
-    try std.testing.expectError(
-        error.VertexCredentialMissing,
-        Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
-    );
+    // ADC / GAC are resolved at request time, not at load.
+    const cfg = try Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml");
+    const p = cfg.providers.get("v").?;
+    try std.testing.expectEqualStrings("", p.service_account_file);
+    try std.testing.expect(p.api_key_env == null);
 }
 
 test "an azure_openai provider keeps api_version" {

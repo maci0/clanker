@@ -81,7 +81,7 @@ header, the URL verb and the credential.
 - **ollama**: local OpenAI-compatible endpoint at `http://127.0.0.1:11434/v1`.
 - **vllm-local**: OpenAI-compatible endpoint for a local vLLM server.
 - **openai** / **anthropic**: first-party API endpoints.
-- **vertex_anthropic**: Anthropic models served by Google Vertex AI. The model name goes in the URL (`.../publishers/anthropic/models/<model>:rawPredict`, `:streamRawPredict` when streaming) and the body carries `anthropic_version` instead of `model`. Set `project`, `location`, and either an access token in `api_key_env` or a `service_account_file`; tokens are minted in-process and cached until they near expiry. `std.crypto.Certificate.rsa` only verifies signatures, so the RS256 assertion Google requires is signed in `src/llm/gcp_jwt.zig` on std primitives: `der` parses the PKCS#8 key, `std.crypto.ff` does the constant-time modular exponentiation, and the RSASSA-PKCS1-v1_5 padding is built by hand. No gcloud, no Python, no subprocess. Tokens renew automatically: the cache is checked on every request and re-mints five minutes before Google's stated expiry, so a long-running `serve` or REPL session never hits an expired token.
+- **vertex_anthropic**: Anthropic models served by Google Vertex AI. The model name goes in the URL (`.../publishers/anthropic/models/<model>:rawPredict`, `:streamRawPredict` when streaming) and the body carries `anthropic_version` instead of `model`. Set `project` and `location`. The credential is a service-account JSON, gcloud Application Default Credentials (`gcloud auth application-default login` or `GOOGLE_APPLICATION_CREDENTIALS`), or a pasted access token in `api_key_env`. Tokens are minted in-process and cached until they near expiry. Service-account minting signs the RS256 assertion Google requires in `src/llm/gcp_jwt.zig` (`der` parses the PKCS#8 key, `std.crypto.ff` does the constant-time modular exponentiation, RSASSA-PKCS1-v1_5 padding by hand). User ADC exchanges the refresh token at the same token endpoint. No gcloud subprocess. User ADC also sends `x-goog-user-project` from `project`. Tokens renew automatically: the cache is checked on every request and re-mints five minutes before Google's stated expiry, so a long-running `serve` or REPL session never hits an expired token.
 
 **Auth is a separate axis from the wire format**
 ([docs/adrs/0005](adrs/0005-auth-is-a-strategy-axis-separate-from-wire-kind.md)),
@@ -100,7 +100,7 @@ Anthropic stays zero-config that way: a token starting `sk-ant-oat` (an OAuth
 access token from `ant auth login`) is detected as `oauth_static` and sent as
 `Authorization: Bearer` with an `oauth-2025-04-20` beta header, while any other
 value is `api_key` and goes on `x-api-key`. Vertex is the one `oauth_refresh`
-today, minting a GCP token from `service_account_file` — an access token in
+today, minting a GCP token from a service-account JSON or gcloud ADC — an access token in
 `api_key_env` still wins over it. openai_compat is `api_key` by default and
 declares no shape detection, because an API key and an OAuth token are not
 distinguishable across the many vendors it serves.
@@ -902,7 +902,7 @@ arena_advisory = false
 
 Fields:
 - `providers`: map of provider name → connection settings.
-  - `kind`: `"openai_compat"`, `"anthropic"`, `"vertex_anthropic"` (Anthropic-only on Vertex), `"vertex"` (Vertex AI: Gemini plus Claude), `"azure_openai"` (Azure chat completions; `api-key` header; optional `api_version`), or `"gemini"` (Google AI Studio generateContent). Vertex kinds require `project` + `location`, and either `api_key_env` or `service_account_file`.
+  - `kind`: `"openai_compat"`, `"anthropic"`, `"vertex_anthropic"` (Anthropic-only on Vertex), `"vertex"` (Vertex AI: Gemini plus Claude), `"azure_openai"` (Azure chat completions; `api-key` header; optional `api_version`), or `"gemini"` (Google AI Studio generateContent). Vertex kinds require `project` + `location`, and a credential (`service_account_file`, gcloud ADC, or `api_key_env`).
   - `base_url`, `api_key_env`, `path` (endpoint path override; defaults per `kind`), `default_model` (only needed with more than one model).
   - `check_timeout_seconds`: how long `providers check` waits for this endpoint before reporting it as timed out, overriding `agent.provider_check_timeout_seconds` for this provider alone. Unset takes the global default; `0` means no ceiling. For a LAN endpoint that either answers instantly or is switched off, a second or two is plenty, while a hosted provider wants the longer global default.
   - Moonshot's `kimi-k3` model supports reasoning (returns a `reasoning` field).

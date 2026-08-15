@@ -35,9 +35,10 @@ default_provider = "moonshotai"
 # check_timeout_seconds = 3
 #
 # # vertex and vertex_anthropic: the GCP project and region serving the
-# # model, plus the service account json used to mint access tokens (or
-# # api_key_env instead of the file). kind = "vertex" is Gemini by default
-# # and Claude when the model id starts with claude.
+# # model. Credential is service_account_file, gcloud ADC
+# # (`gcloud auth application-default login`), or api_key_env.
+# # kind = "vertex" is Gemini by default and Claude when the model id
+# # starts with claude.
 # project = "my-gcp-project"
 # location = "us-east5"
 # service_account_file = "/path/to/sa.json"

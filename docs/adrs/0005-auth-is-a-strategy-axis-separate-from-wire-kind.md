@@ -15,8 +15,9 @@ A provider's auth is not one-per-`ProviderKind`. The code already proves it:
   `Authorization: Bearer` with an `anthropic-beta: oauth-...` header, a plain
   key goes on `x-api-key`. Same wire kind, two auth paths, chosen by inspecting
   the credential.
-- **Vertex mints a GCP OAuth token** from `service_account_file`
-  (`vertex_token.zig`), cached until it nears expiry, or takes an env override.
+- **Vertex mints a GCP OAuth token** from a service-account JSON or
+  gcloud ADC (`vertex_token.zig`), cached until it nears expiry, or takes
+  an env override.
 - **openai_compat is bearer-only** today.
 
 Many providers offer both an API key and OAuth. xAI is the example: the model
@@ -106,11 +107,11 @@ Two details differ from the sketch above:
   made structural.
 - **Vertex is already the `oauth_refresh` strategy, but only in name.** It
   selects `.oauth_refresh` and mints through the `Spec.mint` hook, which calls
-  the existing `vertex_token.zig` — the GCP-specific path is unchanged, and no
-  generic `clanker auth login` / refresh-token store was built. That remains
-  the "later cleanup, not a prerequisite" this ADR called it. A provider asking
-  for `oauth_refresh` with no `mint` hook is rejected rather than silently
-  downgraded.
+  `vertex_token.zig`. That file now accepts both a service-account JSON
+  (RS256 JWT) and an `authorized_user` ADC file (refresh-token grant). There
+  is still no generic `clanker auth login` / refresh-token store. A provider
+  asking for `oauth_refresh` with no `mint` hook is rejected rather than
+  silently downgraded.
 
 `oauth_static` on `openai_compat` is currently indistinguishable on the wire
 from `api_key` (both are `Bearer`), exactly as this ADR predicted for xAI. The

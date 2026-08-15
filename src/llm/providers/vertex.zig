@@ -8,11 +8,11 @@
 //!   - streaming is a different verb (`:streamRawPredict`), not a body flag
 //!     alone;
 //!   - the credential is a GCP OAuth access token minted from a service
-//!     account and renewed in-process, `oauth_refresh` in ADR 0005's terms.
+//!     account or gcloud ADC (`authorized_user`) and renewed in-process,
+//!     `oauth_refresh` in ADR 0005's terms.
 
 const std = @import("std");
 const api = @import("api.zig");
-const common = @import("common.zig");
 const anthropic = @import("anthropic.zig");
 const auth = @import("../auth.zig");
 const config = @import("../../config.zig");
@@ -26,7 +26,7 @@ pub const provider: api.Provider = .{
     .auth = .{
         // An access token in `api_key_env` still wins (handy for a
         // short-lived token pasted in by hand); otherwise it is minted from
-        // the service account and cached until it nears expiry.
+        // the service account or gcloud ADC and cached until it nears expiry.
         .default = .api_key,
         .mint = mint,
         .required = true,
@@ -38,7 +38,7 @@ pub const provider: api.Provider = .{
     .parseStreamEvent = anthropic.provider.parseStreamEvent,
     // A GCP access token is a bearer token, and the anthropic version lives in
     // the body, so none of Anthropic's header juggling applies.
-    .authHeaders = common.bearerAuthHeaders,
+    .authHeaders = authHeaders,
     .endpointUrl = endpointUrl,
 };
 
@@ -47,7 +47,20 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
 }
 
 fn mint(env: auth.Env, p: *const config.Provider) anyerror![]const u8 {
-    return vertex_token.get(env.io, env.gpa, p.service_account_file);
+    return vertex_token.get(env.io, env.gpa, env.environ_map, p.service_account_file);
+}
+
+/// Bearer plus `x-goog-user-project`. User ADC (and some org policies) bill
+/// against that project; `provider.project` is already required for the URL.
+pub fn authHeaders(
+    cred: auth.Credential,
+    headers: *std.http.Client.Request.Headers,
+    extra: *api.ExtraHeaders,
+) usize {
+    if (cred.bearer) |b| headers.authorization = .{ .override = b };
+    if (cred.quota_project.len == 0) return 0;
+    extra[0] = .{ .name = "x-goog-user-project", .value = cred.quota_project };
+    return 1;
 }
 
 /// Vertex addresses the model in the path, so the URL cannot be a constant:
@@ -150,25 +163,38 @@ test "vertex endpoint url carries project, location, model and verb" {
     try std.testing.expectError(error.VertexProjectMissing, endpointUrl(std.testing.allocator, &bare, true));
 }
 
-test "vertex mints from the service account only when no token is pasted in" {
+test "vertex mints when no token is pasted in" {
     var p = config.Provider{ .name = "v", .base_url = "", .default_model = "m" };
     p.kind = .vertex_anthropic;
-    p.service_account_file = "/tmp/sa.json";
 
     try std.testing.expectEqual(auth.Strategy.oauth_refresh, auth.selectStrategy(provider.auth, &p, null));
     try std.testing.expectEqual(auth.Strategy.api_key, auth.selectStrategy(provider.auth, &p, "ya29.pasted"));
 
-    // No service account and no token: the credential is required, so this
-    // must fail at resolve rather than send an unauthenticated request.
+    // No file, no GAC, no HOME: mint is selected but cannot resolve a
+    // credentials path, so resolve fails rather than send unauthenticated.
     var no_sa = config.Provider{ .name = "v2", .base_url = "", .default_model = "m" };
     no_sa.kind = .vertex_anthropic;
     var env_map = std.process.Environ.Map.init(std.testing.allocator);
     defer env_map.deinit();
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
-    try std.testing.expectError(error.MissingApiKey, auth.resolve(
+    try std.testing.expectError(error.VertexTokenFailed, auth.resolve(
         .{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env_map },
         provider.auth,
         &no_sa,
     ));
+}
+
+test "vertex auth headers carry the quota project" {
+    var headers: std.http.Client.Request.Headers = .{};
+    var extra: api.ExtraHeaders = undefined;
+    const n = authHeaders(.{
+        .value = "tok",
+        .bearer = "Bearer tok",
+        .quota_project = "my-gcp-project",
+    }, &headers, &extra);
+    try std.testing.expectEqual(@as(usize, 1), n);
+    try std.testing.expectEqualStrings("x-goog-user-project", extra[0].name);
+    try std.testing.expectEqualStrings("my-gcp-project", extra[0].value);
+    try std.testing.expectEqualStrings("Bearer tok", headers.authorization.override);
 }

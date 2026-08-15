@@ -78,7 +78,7 @@ unconfigured one.
 | `default_model` | string | Which of this provider's models is active by default. |
 | `path` | string | Override the endpoint path (rarely needed). |
 | `check_timeout_seconds` | int | How long `providers check` waits for this endpoint before giving up, overriding the global `agent.provider_check_timeout_seconds`. `0` = no ceiling. |
-| `project`, `location`, `service_account_file` | string | `vertex` and `vertex_anthropic` (see below). |
+| `project`, `location`, `service_account_file` | string | `vertex` and `vertex_anthropic` (see below). `service_account_file` is optional when gcloud ADC is present. |
 | `api_version` | string | `azure_openai` only. The `api-version` query. Empty uses `2024-10-21`. |
 
 ### `kind = "openai_compat"`
@@ -116,8 +116,17 @@ api_key_env = "ANTHROPIC_API_KEY"
 ### `kind = "vertex_anthropic"`
 
 Anthropic models served through Google Vertex AI. The model name goes in the
-URL and auth is a GCP OAuth token, minted in-process from a service account and
-refreshed automatically (no `gcloud`, no subprocess).
+URL and auth is a GCP OAuth token, minted in-process and refreshed
+automatically (no `gcloud` subprocess). Credential, first match:
+
+1. `service_account_file` (service-account JSON or an ADC `authorized_user` file)
+2. `GOOGLE_APPLICATION_CREDENTIALS`
+3. `gcloud auth application-default login`
+   (`$HOME/.config/gcloud/application_default_credentials.json`, or
+   `$CLOUDSDK_CONFIG/...`)
+4. a short-lived token in `api_key_env` (wins over minting when set)
+
+User ADC sends `x-goog-user-project` from `project`.
 
 ```toml
 [providers.vertex]
@@ -125,25 +134,27 @@ kind = "vertex_anthropic"
 base_url = "https://<location>-aiplatform.googleapis.com"
 project = "my-gcp-project"
 location = "us-east5"
-service_account_file = "/path/to/service-account.json"
-default_model = "claude-opus-5"
-# or, instead of service_account_file, paste a short-lived token:
+# service_account_file = "/path/to/service-account.json"
+# or omit the file and use: gcloud auth application-default login
+# or paste a short-lived token:
 # api_key_env = "VERTEX_ACCESS_TOKEN"
+default_model = "claude-opus-5"
 ```
 
 ### `kind = "vertex"`
 
-Google Vertex AI. Same GCP auth as `vertex_anthropic`. Gemini models use
-generateContent on `publishers/google`. A model id that starts with `claude`
-(or names the Anthropic publisher) uses the Anthropic Vertex wire instead, so
-one `[providers.vertex]` table can hold both families.
+Google Vertex AI. Same GCP auth as `vertex_anthropic` (service account, gcloud
+ADC, or a pasted token). Gemini models use generateContent on
+`publishers/google`. A model id that starts with `claude` (or names the
+Anthropic publisher) uses the Anthropic Vertex wire instead, so one
+`[providers.vertex]` table can hold both families.
 
 ```toml
 [providers.vertex]
 kind = "vertex"
 project = "my-gcp-project"
 location = "us-east5"
-service_account_file = "/path/to/service-account.json"
+# service_account_file = "/path/to/service-account.json"
 default_model = "gemini-3.6-flash"
 
 [models."vertex/gemini-3.6-flash"]
@@ -193,14 +204,15 @@ Auth is a separate axis from the wire format, so `kind` says how the request is
 |---|---|
 | `api_key` | Read `api_key_env` and present it the way the wire kind wants (`Bearer` for `openai_compat`/`vertex_anthropic`, `x-api-key` for `anthropic`, `api-key` for `azure_openai`, `x-goog-api-key` for `gemini`). |
 | `oauth_static` | A pasted OAuth access token in `api_key_env`, presented as `Authorization: Bearer` plus any provider beta header. |
-| `oauth_refresh` | A token minted and renewed in-process. `vertex` and `vertex_anthropic` support it (from `service_account_file`); other kinds reject it rather than downgrade silently. |
+| `oauth_refresh` | A token minted and renewed in-process. `vertex` and `vertex_anthropic` support it (service-account JWT or gcloud ADC refresh); other kinds reject it rather than downgrade silently. |
 
 Leave it unset unless you need it. Each kind auto-detects: `anthropic` reads an
 `sk-ant-oat` prefix as `oauth_static` and anything else as `api_key`;
-`vertex_anthropic` picks `oauth_refresh` when `service_account_file` is set and
-no token is in `api_key_env`; `openai_compat` defaults to `api_key` and does
-*not* guess, because an API key and an OAuth token are indistinguishable across
-the vendors it serves — set `auth = "oauth_static"` explicitly there.
+`vertex` and `vertex_anthropic` pick `oauth_refresh` when no token is in
+`api_key_env` (the credentials file is resolved at mint time);
+`openai_compat` defaults to `api_key` and does *not* guess, because an API
+key and an OAuth token are indistinguishable across the vendors it serves
+— set `auth = "oauth_static"` explicitly there.
 
 ```toml
 [providers.xai]

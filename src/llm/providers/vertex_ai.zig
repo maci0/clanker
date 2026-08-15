@@ -26,12 +26,12 @@ pub const provider: api.Provider = .{
     .parseResponse = parseResponse,
     .parseErrorDetail = parseErrorDetail,
     .parseStreamEvent = parseStreamEvent,
-    .authHeaders = common.bearerAuthHeaders,
+    .authHeaders = vertex.authHeaders,
     .endpointUrl = endpointUrl,
 };
 
 fn mint(env: auth.Env, p: *const config.Provider) anyerror![]const u8 {
-    return vertex_token.get(env.io, env.gpa, p.service_account_file);
+    return vertex_token.get(env.io, env.gpa, env.environ_map, p.service_account_file);
 }
 
 /// Claude (and any id that already names the Anthropic publisher) uses the

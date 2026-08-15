@@ -47,7 +47,8 @@ through a gated loop. Follow these conventions when changing this codebase.
   (`providers/api.zig`) implemented in its own `providers/<name>.zig` and
   listed in the `registry` table in `registry.zig`; `auth.zig` is the
   credential-acquisition axis, `gcp_jwt.zig`/`vertex_token.zig` the Vertex
-  minting behind it. Adding a provider is one file, one registry row, and one
+  minting behind it (service-account JWT or gcloud ADC `authorized_user`,
+  no subprocess). Adding a provider is one file, one registry row, and one
   `ProviderKind` tag in `config.zig` — never a new `switch (provider.kind)`.
 - `src/sandbox/`: zwasm runtime wrapper + `ck_*` host functions + policy.
   Privileged channels (`ck_docker`, `ck_kernel`, `ck_debug`, `ck_subagent`, `ck_swarm`, `ck_stats`,

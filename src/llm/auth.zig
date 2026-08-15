@@ -47,7 +47,7 @@ pub const Spec = struct {
     mint: ?*const fn (env: Env, provider: *const config.Provider) anyerror![]const u8 = null,
     /// The provider cannot work without a credential, even with no
     /// `api_key_env` configured (Vertex, which can be served by
-    /// `service_account_file` instead).
+    /// `service_account_file` or gcloud ADC instead).
     required: bool = false,
 };
 
@@ -65,6 +65,9 @@ pub const Credential = struct {
     /// True when `value` was minted here rather than borrowed from the
     /// environment, and so must be freed with the bearer.
     owns_value: bool = false,
+    /// Vertex user ADC needs a billing project on the request
+    /// (`x-goog-user-project`). Borrowed from `provider.project`; not owned.
+    quota_project: []const u8 = "",
 
     pub fn deinit(self: Credential, gpa: std.mem.Allocator) void {
         if (self.bearer) |b| gpa.free(b);
@@ -79,8 +82,10 @@ pub const Credential = struct {
 pub fn selectStrategy(spec: Spec, provider: *const config.Provider, raw: ?[]const u8) Strategy {
     if (provider.auth) |explicit| return explicit;
     // An env var still wins over minting: a short-lived token pasted in by
-    // hand is the documented way to bypass the service account.
-    if (raw == null and spec.mint != null and provider.service_account_file.len > 0) return .oauth_refresh;
+    // hand is the documented way to bypass the service account or ADC.
+    // The file itself is resolved at mint time (explicit path, then
+    // GOOGLE_APPLICATION_CREDENTIALS, then gcloud's well-known ADC).
+    if (raw == null and spec.mint != null) return .oauth_refresh;
     if (raw) |k| if (spec.detect) |detect| return detect(k);
     return spec.default;
 }
@@ -109,11 +114,12 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
             .bearer = try std.fmt.allocPrint(env.gpa, "Bearer {s}", .{tok}),
             .strategy = strategy,
             .owns_value = true,
+            .quota_project = quotaProject(provider),
         };
     }
 
     if (raw == null and (provider.api_key_env != null or spec.required)) {
-        log.log(.error_, "no credential for provider '{s}': set {s} or service_account_file", .{
+        log.log(.error_, "no credential for provider '{s}': set {s}, service_account_file, or gcloud ADC", .{
             provider.name,
             provider.api_key_env orelse "an API key env var",
         });
@@ -123,8 +129,16 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
         .value = k,
         .bearer = try std.fmt.allocPrint(env.gpa, "Bearer {s}", .{k}),
         .strategy = strategy,
+        .quota_project = quotaProject(provider),
     };
-    return .{ .strategy = strategy };
+    return .{ .strategy = strategy, .quota_project = quotaProject(provider) };
+}
+
+fn quotaProject(provider: *const config.Provider) []const u8 {
+    return switch (provider.kind) {
+        .vertex, .vertex_anthropic => provider.project,
+        else => "",
+    };
 }
 
 // ------------------------------------------------------------------- tests --
@@ -151,10 +165,9 @@ test "minting is selected only when no static credential is present" {
     };
     const spec = Spec{ .mint = &Mint.f, .required = true };
     var p = config.Provider{ .name = "v", .base_url = "", .default_model = "m" };
-    p.service_account_file = "/tmp/sa.json";
 
     try std.testing.expectEqual(Strategy.oauth_refresh, selectStrategy(spec, &p, null));
-    // A pasted token wins over the service account.
+    // A pasted token wins over minting (service account or ADC).
     try std.testing.expectEqual(Strategy.api_key, selectStrategy(spec, &p, "ya29.token"));
 }
 

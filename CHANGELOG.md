@@ -5,6 +5,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Added
+
+- Vertex (`vertex` and `vertex_anthropic`) accepts Application Default
+  Credentials from `gcloud auth application-default login` or
+  `GOOGLE_APPLICATION_CREDENTIALS`, in addition to a service-account JSON
+  or a pasted access token. The refresh token is exchanged in-process;
+  there is still no gcloud subprocess. User ADC sends
+  `x-goog-user-project` from the provider's `project`.
+
 ### Fixed
 
 - Isolated `clanker run` now provisions a checkout `state/` path that is a
@@ -61,8 +70,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   (deployment in the URL, optional `api_version`).
 - `kind = "vertex"` is Google Vertex AI: Gemini generateContent by
   default, Anthropic `:rawPredict` when the model id is Claude. Same GCP
-  project/location/service-account auth as `vertex_anthropic`, which
-  stays the Anthropic-only kind.
+  project/location/ADC auth as `vertex_anthropic`, which stays the
+  Anthropic-only kind.
 - Web UI shell follows a session-first layout: conversations stay in the
   left rail, Watch and Set up fold away, and Chat is a header / transcript
   / docked-composer column. PatternFly page chrome and cabinet colors stay.
