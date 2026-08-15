@@ -1,5 +1,5 @@
 // Prompts library — single-user. Browse / create / use / delete prompt templates backed by GET/POST/DELETE /api/prompts.
-import { uiConfirm } from "../core/ui.js";
+import { uiConfirm, toast } from "../core/ui.js";
 import { readJson } from "../core/utils.js";
 
 export function loadPromptsView() {
@@ -92,7 +92,7 @@ function renderPrompts(prompts){
         fetch("/api/prompts",{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:p.id})})
           .then(readJson)
           .then(function(){ loadPromptsView(); try{ refreshLocalPrompts(); }catch(_){} })
-          .catch(function(e){ uiConfirm(e.message); });
+          .catch(function(e){ toast(e.message); });
       });
     });
     head.appendChild(delBtn); card.appendChild(head);
@@ -133,13 +133,17 @@ export function bindPrompts(){
     e.preventDefault();
     var title=titleEl?titleEl.value.trim():"";
     var content=contentEl?contentEl.value.trim():"";
-    if(!title||!content){ uiConfirm("Title and content required."); return; }
-    if(title.length>200||content.length>20000){ uiConfirm("Title 1-200, content 1-20000."); return; }
+    if(!title||!content){
+      var missing = !title ? titleEl : contentEl;
+      if(missing){ missing.setCustomValidity(!title ? "Give the prompt a title." : "Write the prompt text."); missing.reportValidity(); missing.setCustomValidity(""); }
+      return;
+    }
+    if(title.length>200||content.length>20000){ toast("Title must be 1-200 characters and content 1-20000."); return; }
     if(createBtn) createBtn.disabled=true;
     fetch("/api/prompts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:title,content:content})})
       .then(readJson)
       .then(function(){ if(titleEl) titleEl.value=""; if(contentEl) contentEl.value=""; loadPromptsView(); refreshLocalPrompts(); })
-      .catch(function(e){ uiConfirm(e.message); }).finally(function(){ if(createBtn) createBtn.disabled=false; });
+      .catch(function(e){ toast(e.message); }).finally(function(){ if(createBtn) createBtn.disabled=false; });
   });
   if(refreshBtn) refreshBtn.addEventListener("click",function(){ loadPromptsView(); });
   if(filterEl) filterEl.addEventListener("input",applyPromptFilter);

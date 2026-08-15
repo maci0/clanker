@@ -3467,6 +3467,7 @@ function renderChatRooms(rooms) {
   el.chatSend.disabled = empty;
   if (empty) {
     el.chatStatus.textContent = "No rooms yet. Add [chat.rooms] in config.toml or use --serve-as to peer.";
+    showRoomsComposerLocked("No channels yet. Create one to start talking, or add rooms in config.toml.", true);
     return null;
   }
   var wanted = Array.prototype.some.call(options, function (o) { return o.value === previous; })
@@ -3499,7 +3500,34 @@ function loadChatRooms() {
       el.chatText.disabled = true;
       el.chatSend.disabled = true;
       el.chatStatus.textContent = "Could not load rooms: " + err.message;
+      showRoomsComposerLocked("Could not load rooms: " + err.message, false);
     });
+}
+
+function showRoomsComposerLocked(message, offerCreate) {
+  if (el.chatChannelTitle) el.chatChannelTitle.textContent = "No channels";
+  if (el.chatChannelTopic) {
+    el.chatChannelTopic.textContent = "";
+    el.chatChannelTopic.classList.remove("is-placeholder");
+    el.chatChannelTopic.onclick = null;
+  }
+  if (el.chatText) el.chatText.placeholder = "Create a channel to send a message";
+  if (!el.chatLog) return;
+  el.chatLog.textContent = "";
+  var box = document.createElement("div");
+  box.className = "run-empty";
+  var p = document.createElement("p");
+  p.textContent = message;
+  box.appendChild(p);
+  if (offerCreate && el.chatCreateRoomBtn) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "secondary";
+    btn.textContent = "Create a channel";
+    btn.addEventListener("click", function () { el.chatCreateRoomBtn.click(); });
+    box.appendChild(btn);
+  }
+  el.chatLog.appendChild(box);
 }
 
 var _chatUnreadCutoff = 0;   /* ts before which msgs are "read" (for divider) */
@@ -4338,12 +4366,21 @@ if (el.chatCreateRoomBtn && el.chatCreateDialog) {
     fetch("/api/chat/subscribe", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ room: name, on: true })
     }).then(function (r) { return r.json(); }).then(function (d) {
-      if (!d.ok) { el.chatStatus.textContent = "Could not create channel: " + (d.error || "unknown error"); return; }
+      if (!d.ok) {
+        var fail = "Could not create channel: " + (d.error || "unknown error");
+        el.chatStatus.textContent = fail;
+        uiToast(fail);
+        return;
+      }
       loadChatRooms().then(function () {
         el.chatRoom.value = name;
         openChatRoom(name);
       });
-    }).catch(function (err) { el.chatStatus.textContent = "Could not create channel: " + err.message; });
+    }).catch(function (err) {
+      var fail = "Could not create channel: " + err.message;
+      el.chatStatus.textContent = fail;
+      uiToast(fail);
+    });
   });
 }
 
@@ -5406,14 +5443,14 @@ bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: f
       var fr = new FileReader();
       fr.onload = function(){
         var text = String(fr.result || "");
-        var parsed = null; try { parsed = JSON.parse(text); } catch(e){ uiConfirm("Not valid JSON: "+e.message); return; }
+        var parsed = null; try { parsed = JSON.parse(text); } catch(e){ uiToast("Not valid JSON: "+e.message); return; }
         // Accept {messages:[{role,content}]} or {conversations:[...]} or bare array
         var msgs = null; var title = "";
         if (Array.isArray(parsed)) msgs = parsed;
         else if (parsed && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
         else if (parsed && Array.isArray(parsed.conversations) && parsed.conversations[0]) { var c = parsed.conversations[0]; msgs = c.messages || c.mapping && Object.values(c.mapping).map(function(v){ var m=v.message; return m?{role:m.author&&m.author.role,content:(m.content&&m.content.parts&&m.content.parts[0])||m.content} : null; }).filter(Boolean) || []; title = c.title || ""; }
         else if (parsed && parsed.id && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
-        if (!msgs || !msgs.length){ uiConfirm("No messages found in file. Expected {messages:[{role,content}]} or an array of messages."); return; }
+        if (!msgs || !msgs.length){ uiToast("No messages found in file. Expected {messages:[{role,content}]} or an array of messages."); return; }
         // Normalize to StoredMessage shape the server expects
         var norm = msgs.map(function(m){
           var role = (m.role==="assistant"||m.role==="assistant") ? "assistant" : (m.role==="user"?"user":String(m.role||"user"));
@@ -5421,14 +5458,14 @@ bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: f
           if (role!=="user" && role!=="assistant") role="user";
           return { role: role, content: content };
         }).filter(function(m){ return m.content && m.content.trim(); });
-        if (!norm.length){ uiConfirm("No importable messages."); return; }
+        if (!norm.length){ uiToast("No importable messages."); return; }
         fetch("/api/sessions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ import_chat: true, title: title || ("imported "+new Date().toLocaleString()), messages: norm }) })
           .then(function(r){ return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; }); })
           .then(function(d){
             el.sessionStatus.textContent = "Imported.";
             if (d.id){ sessionId = d.id; try{ window.localStorage.setItem("clanker.session", sessionId); }catch(_){} renderSessionChip(); }
             return loadSessions();
-          }).catch(function(err){ uiConfirm("Import failed: "+err.message); });
+          }).catch(function(err){ uiToast("Import failed: "+err.message); });
       };
       fr.readAsText(f);
     });

@@ -527,7 +527,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <div class="slack-channel-header" id="chat-channel-header">
           <div class="slack-channel-name">
             <button type="button" class="slack-sidebar-toggle" id="chat-sidebar-toggle" title="Toggle sidebar" aria-label="Toggle sidebar"></button>
-            <span id="chat-channel-title">#general</span>
+            <span id="chat-channel-title">…</span>
             <span class="slack-channel-topic" id="chat-channel-topic"></span>
           </div>
           <div class="slack-channel-actions">
@@ -797,7 +797,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <p class="meta" id="knowledge-hint"></p>
       <form class="goal-form" id="knowledge-create-form">
         <label for="knowledge-title">New collection</label>
-        <input type="text" id="knowledge-title" placeholder="e.g. Project docs" maxlength="200">
+        <input type="text" id="knowledge-title" placeholder="e.g. Project docs" maxlength="200" required>
         <label for="knowledge-desc">Description</label>
         <input type="text" id="knowledge-desc" placeholder="Optional description" maxlength="1000">
         <button type="submit" class="secondary" id="knowledge-create">Create</button>
@@ -835,9 +835,9 @@ lamps carry further). The seven named palettes ride the same tokens.
       <p class="meta">Saved snippets. Insert with <code>/</code> in the composer, or click Use.</p>
       <form class="goal-form" id="prompts-create-form">
         <label for="prompts-title">Title</label>
-        <input type="text" id="prompts-title" placeholder="e.g. Explain like I'm 5" maxlength="200">
+        <input type="text" id="prompts-title" placeholder="e.g. Explain like I'm 5" maxlength="200" required>
         <label for="prompts-content">Content</label>
-        <textarea id="prompts-content" rows="4" placeholder="Prompt content…" maxlength="20000"></textarea>
+        <textarea id="prompts-content" rows="4" placeholder="Prompt content…" maxlength="20000" required></textarea>
         <button type="submit" class="secondary" id="prompts-create">Create</button>
       </form>
       <div class="transcript-tools">

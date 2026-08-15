@@ -9573,7 +9573,7 @@ fn pluginEnabled(state: WebuiPluginState, name: []const u8) bool {
 /// including an empty one after the operator turned Files off.
 fn seedWebuiPluginState(had_file: bool, state: *WebuiPluginState, arena: std.mem.Allocator) void {
     if (had_file) return;
-    const seeded = arena.dupe([]const u8, &.{"files"}) catch return;
+    const seeded = arena.dupe([]const u8, &.{ "files", "music" }) catch return;
     state.enabled = seeded;
 }
 
@@ -9582,6 +9582,7 @@ test "missing webui plugin state enables files" {
     seedWebuiPluginState(false, &seeded, std.testing.allocator);
     defer if (seeded.enabled.len > 0) std.testing.allocator.free(seeded.enabled);
     try std.testing.expect(pluginEnabled(seeded, "files"));
+    try std.testing.expect(pluginEnabled(seeded, "music"));
     try std.testing.expect(!pluginEnabled(seeded, "office"));
     var written: WebuiPluginState = .{ .enabled = &.{} };
     seedWebuiPluginState(true, &written, std.testing.allocator);
