@@ -37,10 +37,31 @@ pub fn main(init: std.process.Init) !void {
     defer rate_limit.deinit(io, gpa);
     conn_gpa = gpa;
 
-    var host: []const u8 = init.environ_map.get("CLANKER_HOST") orelse default_host;
+    // Mirrors resolveListen's CLANKER_HOST handling: trimmed, and an empty
+    // value is skipped rather than sent to the address parser.
+    var host: []const u8 = blk: {
+        const raw = init.environ_map.get("CLANKER_HOST") orelse break :blk default_host;
+        const trimmed = std.mem.trim(u8, raw, " \t");
+        if (trimmed.len == 0) break :blk default_host;
+        break :blk trimmed;
+    };
+    // A malformed CLANKER_PROXY_PORT warns and is skipped rather than
+    // aborting: the default is still a usable answer, matching the full
+    // binary's resolveListen and the documented rule in docs/README.md
+    // ("A CLANKER_WEBUI_PORT or CLANKER_PROXY_PORT that is not a 16-bit
+    // number (or is 0) warns and is ignored").
     var port: u16 = blk: {
         const raw = init.environ_map.get("CLANKER_PROXY_PORT") orelse break :blk default_port;
-        break :blk std.fmt.parseInt(u16, raw, 10) catch default_port;
+        const trimmed = std.mem.trim(u8, raw, " \t");
+        const p = std.fmt.parseInt(u16, trimmed, 10) catch {
+            log.log(.warn, "CLANKER_PROXY_PORT '{s}' is not a 16-bit port number; ignoring", .{raw});
+            break :blk default_port;
+        };
+        if (p == 0) {
+            log.log(.warn, "CLANKER_PROXY_PORT '{s}' is not a usable port; ignoring", .{raw});
+            break :blk default_port;
+        }
+        break :blk p;
     };
 
     var args_it = init.minimal.args.iterate();
