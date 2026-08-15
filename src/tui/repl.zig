@@ -2274,24 +2274,6 @@ const Model = struct {
         return null;
     }
 
-    /// Index into `self.folds` of the fold whose region contains `line_idx`
-    /// (start <= idx < start+count), or null.
-    fn foldContaining(self: *const Model, line_idx: usize) ?usize {
-        for (self.folds.items, 0..) |f, k| {
-            if (line_idx >= f.start and line_idx < f.start + f.count) return k;
-        }
-        return null;
-    }
-
-    /// Wrapped terminal rows the fold's body occupies when fully open.
-    fn foldBodyRows(self: *const Model, fold: Fold, width: u16) usize {
-        var total: usize = 0;
-        for (self.lines.items[fold.start .. fold.start + fold.count]) |l| {
-            total += lineRows(l.text, width);
-        }
-        return total;
-    }
-
     /// The `▸ N lines` / `▾` header standing in for a collapsed reply. Arena
     /// allocated per draw; vaxis borrows the bytes only until the frame flushes.
     fn foldHeader(self: *const Model, arena: std.mem.Allocator, fold: Fold) []const u8 {
@@ -5837,56 +5819,6 @@ fn writeWrapped(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text:
         surface.writeCell(col, row.*, .{ .char = .{ .grapheme = c.bytes, .width = @intCast(c.width) }, .style = style });
         col += c.width;
     }
-}
-
-/// Like `writeWrapped`, but writes at most `budget` wrapped rows, where the
-/// final row may be fractional: its trailing `fraction * width` columns are
-/// left blank. Used to reveal a fold's body one smooth row at a time — each
-/// tick grows the budget, so the reply unrolls instead of snapping.
-fn writeWrappedPartial(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text: []const u8, style: vaxis.Style, budget: f32) void {
-    if (budget <= 0 or width == 0) return;
-    var rows_done: f32 = 0;
-    var col: u16 = 0;
-    var i: usize = 0;
-    while (nextCell(text, &i)) |c| {
-        if (row.* >= bottom) break;
-        if (std.mem.eql(u8, c.bytes, "\n")) {
-            rows_done += 1;
-            if (rows_done >= budget) break;
-            row.* += 1;
-            col = 0;
-            continue;
-        }
-        if (col + c.width > width) {
-            rows_done += 1;
-            if (rows_done >= budget) break;
-            row.* += 1;
-            col = 0;
-            if (row.* >= bottom) break;
-        }
-        // The fractional tail row stops mid-row after `frac * width` columns.
-        const frac = budget - rows_done;
-        if (frac < 1 and col + c.width > @as(u16, @round(frac * @as(f32, @floatFromInt(width))))) break;
-        surface.writeCell(col, row.*, .{ .char = .{ .grapheme = c.bytes, .width = @intCast(c.width) }, .style = style });
-        col += c.width;
-    }
-}
-
-/// Shorten `s` so its display width is at most `max_cols` columns, cutting at
-/// a cell boundary (never splitting a grapheme). Used to fit a fold header on
-/// one terminal row.
-fn truncateToCols(s: []const u8, max_cols: u16) []const u8 {
-    if (max_cols == 0) return s[0..0];
-    if (width_mod.displayWidth(s) <= max_cols) return s;
-    var cols: u16 = 0;
-    var i: usize = 0;
-    while (i < s.len) {
-        const cell_start = i;
-        const c = nextCell(s, &i) orelse break;
-        if (cols + c.width > max_cols) return s[0..cell_start];
-        cols += c.width;
-    }
-    return s;
 }
 
 /// Blanks the interior rows of a box before anything is written into them.
