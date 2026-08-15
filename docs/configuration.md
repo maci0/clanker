@@ -252,14 +252,13 @@ cost_per_1m_input = 0.435
 cost_per_1m_output = 0.87
 capabilities = ["thinking", "tool_use"]
 
-[models."kimi-k3/kimi-k3"]
-provider = "kimi-k3"
+[models."moonshotai/kimi-k3"]
+provider = "moonshotai"
 context_window = 1048576
 max_tokens = 16384
 reasoning_effort = "high"
 cost_per_1m_input = 3.0
 cost_per_1m_output = 15.0
-display = "moonshotai/kimi-k3"
 capabilities = ["thinking", "tool_use", "image_in", "video_in"]
 ```
 

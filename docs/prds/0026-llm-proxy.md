@@ -426,7 +426,7 @@ clanker serve --proxy
 ANTHROPIC_BASE_URL=http://127.0.0.1:17921/proxy ANTHROPIC_API_KEY=x claude
 ```
 
-Claude Code still sends `claude-…sonnet…` / haiku / opus. Map those with `[serve.proxy_aliases]` (`sonnet = "kimi-k3/kimi-k3"`, or `sonnet = "vertex/claude-sonnet-4"`). Stream comes back as Anthropic `event:` frames, not OpenAI chunks. `POST /v1/messages/count_tokens` is a local estimate.
+Claude Code still sends `claude-…sonnet…` / haiku / opus. Map those with `[serve.proxy_aliases]` (`sonnet = "moonshotai/kimi-k3"`, or `sonnet = "vertex/claude-sonnet-4"`). Stream comes back as Anthropic `event:` frames, not OpenAI chunks. `POST /v1/messages/count_tokens` is a local estimate.
 
 **Reuse from agave vs stay clanker-native.**
 
@@ -484,13 +484,13 @@ proxy = false
 # [serve.proxy_aliases]
 # "claude-4-sonnet" = "anthropic/claude-sonnet-4-20250514"
 
-[providers.kimi-k3]
+[providers.moonshotai]
 kind = "openai_compat"
 base_url = "https://api.moonshot.ai/v1"
 api_key_env = "MOONSHOT_API_KEY"
 
-[models."kimi-k3/kimi-k3"]
-provider = "kimi-k3"
+[models."moonshotai/kimi-k3"]
+provider = "moonshotai"
 ```
 
 **Module layout.** `src/serve/proxy.zig` (routes, lookup including Claude Code size fallback, 1:1 forward, envelopes, discovery, `authorize`, deadlines). `src/serve/proxy_transcode.zig` (OpenAI↔Anthropic request/response/SSE, Vertex body swap). Both are in `src/main.zig`'s `comptime` test import. `cli.zig` grows flags (including `--no-proxy`), `resolveListen` fields (`proxy_enabled`, `proxy_port` optional), a second listen/accept only when `proxy_port` differs from `webui_port`, `Connection.surface: enum { webui, proxy, both }`, the reserved-slot check in `serveConnection` (dedicated listener only), and the Host → `proxy.authorize` → CSRF → dispatch order in `handleConnection`. No `switch (provider.kind)` is added anywhere; kind checks go through `providers.forKind` and compare `impl.kind`.
@@ -741,7 +741,7 @@ Exposed on the existing `GET /api/metrics` of the web UI port, not on the proxy 
 | Two providers share a wire id and the client sent that bare id | `400 model_not_found` (not unique). Discovery advertised the composites. |
 | `anthropic` / `vertex_anthropic` model on `POST /v1/chat/completions` | Transcode to Anthropic/Vertex. OpenAI JSON or SSE comes back. |
 | `openai_compat` model on `POST /v1/messages` | Transcode to OpenAI chat/completions. Anthropic JSON or `event:` SSE comes back. |
-| Claude Code model `claude-3-5-sonnet-…` with `[serve.proxy_aliases] sonnet = "kimi-k3/kimi-k3"` | Routes to that backend. |
+| Claude Code model `claude-3-5-sonnet-…` with `[serve.proxy_aliases] sonnet = "moonshotai/kimi-k3"` | Routes to that backend. |
 | `POST /v1/messages/count_tokens` | Local `{input_tokens}` estimate. No upstream. |
 | `openai_compat` model on `POST /v1/messages` | `400 protocol_mismatch`. No upstream call. |
 | Unknown `model` | `400 model_not_found`. |

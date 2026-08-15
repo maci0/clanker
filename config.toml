@@ -1,4 +1,4 @@
-default_provider = "kimi-k3"
+default_provider = "moonshotai"
 
 # Every key a [providers.<name>] section takes. The four below are the ones
 # these entries use; the rest are commented out here rather than repeated on
@@ -83,7 +83,7 @@ kind = "openai_compat"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 
-[providers.kimi-k3]
+[providers.moonshotai]
 kind = "openai_compat"
 base_url = "https://api.moonshot.ai/v1"
 api_key_env = "KIMI_API_KEY"
@@ -200,19 +200,18 @@ cost_per_1m_input = 1.25
 cost_per_1m_output = 4.25
 capabilities = ["thinking", "tool_use", "image_in", "video_in", "audio_in"]
 
-[models."kimi-k3/kimi-k3"]
-provider = "kimi-k3"
+[models."moonshotai/kimi-k3"]
+provider = "moonshotai"
 context_window = 1048576
 max_tokens = 16384
 reasoning_effort = "high"
 cost_per_1m_input = 3.0
 cost_per_1m_output = 15.0
 temperature = 0.2
-display = "moonshotai/kimi-k3"
 capabilities = ["thinking", "tool_use", "image_in", "video_in"]
 
-[models."kimi-k3/kimi-k2.7-code"]
-provider = "kimi-k3"
+[models."moonshotai/kimi-k2.7-code"]
+provider = "moonshotai"
 context_window = 262144
 max_tokens = 16384
 cost_per_1m_input = 0.7
@@ -333,8 +332,8 @@ id = "main"
 # # proxy_idle_timeout_s = 60
 # # [serve.proxy_aliases]
 # # "claude-4-sonnet" = "anthropic/claude-sonnet-4-20250514"
-# # sonnet = "kimi-k3/kimi-k3"   # Claude Code "…sonnet…" → this backend
-# # haiku = "kimi-k3/kimi-k3"
+# # sonnet = "moonshotai/kimi-k3"   # Claude Code "…sonnet…" → this backend
+# # haiku = "moonshotai/kimi-k3"
 # # opus = "vertex/claude-opus-4-6"
 
 # Outbound only: a peer is a URL this instance connects to, never a port it

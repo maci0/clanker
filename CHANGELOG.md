@@ -29,6 +29,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- The Moonshot provider is named `moonshotai`. `kimi-k3` and
+  `kimi-k2.7-code` are models on it, not provider ids. Composite keys
+  are `moonshotai/kimi-k3`.
 - `clanker serve` greets a terminal with a startup card: robot badge,
   version, clickable Local URL, whether the network can reach it, the
   proxy mount when enabled, and how to stop. A piped stdout still gets
@@ -36,7 +39,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   parsed it keep working; colors honor NO_COLOR.
 - Provider defaults now point at the newest general-purpose catalog
   models: DeepSeek `deepseek-v4-pro`, OpenAI `gpt-5.6`, Anthropic
-  `claude-opus-5`, Muse Spark `muse-spark-1.2`. Kimi stays on `kimi-k3`.
+  `claude-opus-5`, Muse Spark `muse-spark-1.2`. Moonshot stays on
+  `kimi-k3`.
   Local ollama/vLLM ids are unchanged. Specs (context, cost, capabilities)
   come from the models.dev snapshot.
 - The models.dev catalog is a local snapshot (`state/models-dev.json`),

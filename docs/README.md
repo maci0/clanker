@@ -75,7 +75,7 @@ header, the URL verb and the credential.
 - **azure_openai** (`src/llm/providers/azure.zig`): Azure OpenAI chat completions. Same body as openai_compat; deployment in the URL; key on `api-key`.
 - **gemini** (`src/llm/providers/gemini.zig`): Google Gemini generateContent (AI Studio). Key on `x-goog-api-key`.
 - **deepseek**: OpenAI-compatible provider at `https://api.deepseek.com`.
-- **kimi-k3**: OpenAI-compatible provider at `api.moonshot.ai/v1`, supports reasoning.
+- **moonshotai**: OpenAI-compatible provider at `api.moonshot.ai/v1`. Kimi is a model family on it (`kimi-k3`, `kimi-k2.7-code`).
 - **muse-spark** / **muse-spark-1.1**: Anthropic-compatible providers for Muse Spark models.
 - **ollama**: local OpenAI-compatible endpoint at `http://127.0.0.1:11434/v1`.
 - **vllm-local**: OpenAI-compatible endpoint for a local vLLM server.
@@ -637,7 +637,7 @@ so a chained plugin knows which tool it is wrapping and which transforms already
 A descriptor with `"llm": true` may call `ck_llm(prompt)` and get completion text back. Without it the call is denied. By default the plugin borrows the provider the agent is running on; `config` can aim it elsewhere:
 
 ```json
-"config": { "provider": "kimi-k3", "model": "kimi-k2.7-code", "max_tokens": 2048 }
+"config": { "provider": "moonshotai", "model": "kimi-k2.7-code", "max_tokens": 2048 }
 ```
 
 The harness reads `provider`, `model`, and `max_tokens` to build that call; every other key is the plugin's own and reaches it verbatim through `ck_config`.
@@ -807,21 +807,21 @@ TOML corrections are in [Configuration errors](configuration.md#configuration-er
 A provider declares its backend once (`[providers.<name>]`); its models live in a separate, top-level `[models."<provider>/<model>"]` table, keyed by that composite id, each entry naming its own `provider` — inspired by Kimi Code's config.toml shape. Per-model settings (`context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`, `capabilities`) belong to the model rather than the provider, because they differ between models sharing one endpoint:
 
 ```toml
-[providers.kimi-k3]
+[providers.moonshotai]
 kind = "openai_compat"
 base_url = "https://api.moonshot.ai/v1"
 api_key_env = "KIMI_API_KEY"
 default_model = "kimi-k3"
 
-[models."kimi-k3/kimi-k3"]
-provider = "kimi-k3"
+[models."moonshotai/kimi-k3"]
+provider = "moonshotai"
 context_window = 1048576
 max_tokens = 16384
 reasoning_effort = "high"
 capabilities = ["thinking", "tool_use"]
 
-[models."kimi-k3/kimi-k2.7-code"]
-provider = "kimi-k3"
+[models."moonshotai/kimi-k2.7-code"]
+provider = "moonshotai"
 context_window = 1048576
 max_tokens = 16384
 ```
@@ -904,7 +904,7 @@ Fields:
   - `kind`: `"openai_compat"`, `"anthropic"`, `"vertex_anthropic"` (Anthropic-only on Vertex), `"vertex"` (Vertex AI: Gemini plus Claude), `"azure_openai"` (Azure chat completions; `api-key` header; optional `api_version`), or `"gemini"` (Google AI Studio generateContent). Vertex kinds require `project` + `location`, and either `api_key_env` or `service_account_file`.
   - `base_url`, `api_key_env`, `path` (endpoint path override; defaults per `kind`), `default_model` (only needed with more than one model).
   - `check_timeout_seconds`: how long `providers check` waits for this endpoint before reporting it as timed out, overriding `agent.provider_check_timeout_seconds` for this provider alone. Unset takes the global default; `0` means no ceiling. For a LAN endpoint that either answers instantly or is switched off, a second or two is plenty, while a hosted provider wants the longer global default.
-  - `kimi-k3` supports reasoning (returns `reasoning` field).
+  - Moonshot's `kimi-k3` model supports reasoning (returns a `reasoning` field).
 - `models`: top-level map of `"<provider>/<model>"` → model settings: `provider` (required — which entry under `providers` this belongs to), `context_window`, `max_tokens`, `temperature`, `top_p`, `reasoning_effort`, `display`, `cost_per_1m_input`, `cost_per_1m_output`, `capabilities`, `category`.
 - `agent`:
   - `max_iterations`: tool-call rounds per turn before the run stops (default 50). Hitting it errors the turn, so keep it generous for multi-file work.
