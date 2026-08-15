@@ -1379,7 +1379,7 @@ read-only: it hands over text to paste and never writes `config.toml`, matching
   exported, so the text a test asserts is the text the button shows. Provider
   and model ids arrive from a third-party fetch and land inside double-quoted
   TOML strings, so quotes and backslashes are escaped; a provider name that is
-  not a bare TOML key (`[providers."muse-spark-1.1"]`, which this repo's own
+  not a bare TOML key (`[providers."google-vertex-anthropic"]`, which this repo's own
   `config.toml` already needs) is quoted in the hint. When the catalog's
   provider has no `[providers.*]` table the block alone would be rejected at
   startup, so the snippet says what else is needed instead of looking complete;

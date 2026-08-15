@@ -75,8 +75,8 @@ var configuredProviders = [];
 var providersKnown = false;
 
 /* A bare TOML key is `[A-Za-z0-9_-]+`; anything else has to be quoted, and
-   `[providers."muse-spark-1.1"]` in this repo's own config.toml is the case
-   that proves it is not hypothetical. */
+   `[providers."google-vertex-anthropic"]` is a long id; a name with a
+   `.` in it still has to be quoted. */
 function tomlKey(name) {
   return /^[A-Za-z0-9_-]+$/.test(String(name)) ? String(name) : tomlStr(name);
 }
