@@ -111,7 +111,10 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
     }
     try s.endArray();
 
-    if (params.tools) |tools| {
+    if (params.tools != null and params.provider.effectiveToolSchema() == .none) {
+        // The endpoint rejects a tools array; the turn runs without tool
+        // calling rather than 400ing.
+    } else if (params.tools) |tools| {
         try s.objectField("tools");
         try s.beginArray();
         for (tools) |t| {
@@ -427,6 +430,48 @@ test "openai request body sends reasoning_effort and omits it when unset" {
     });
     defer arena.free(plain_body);
     try std.testing.expect(std.mem.find(u8, plain_body, "reasoning_effort") == null);
+}
+
+test "thinking_schema picks the reasoning wire shape" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+
+    const nested = try config.Provider.single(arena, "or", "https://or.test/v1", .openai_compat, "m", .{ .max_tokens = 64, .reasoning_effort = .high, .thinking_schema = .reasoning });
+    const nested_body = try buildRequest(arena, .{ .provider = &nested, .messages = &messages });
+    defer arena.free(nested_body);
+    try std.testing.expect(std.mem.find(u8, nested_body, "\"reasoning\":{\"effort\":\"high\"}") != null);
+    try std.testing.expect(std.mem.find(u8, nested_body, "reasoning_effort") == null);
+
+    const toggle = try config.Provider.single(arena, "zai", "https://zai.test/v1", .openai_compat, "m", .{ .max_tokens = 64, .reasoning_effort = .high, .thinking_schema = .thinking });
+    const toggle_body = try buildRequest(arena, .{ .provider = &toggle, .messages = &messages });
+    defer arena.free(toggle_body);
+    try std.testing.expect(std.mem.find(u8, toggle_body, "\"thinking\":{\"type\":\"enabled\"}") != null);
+
+    const off = try config.Provider.single(arena, "q", "https://q.test/v1", .openai_compat, "m", .{ .max_tokens = 64, .reasoning_effort = .high, .thinking_schema = .none });
+    const off_body = try buildRequest(arena, .{ .provider = &off, .messages = &messages });
+    defer arena.free(off_body);
+    try std.testing.expect(std.mem.find(u8, off_body, "reasoning") == null);
+    try std.testing.expect(std.mem.find(u8, off_body, "thinking") == null);
+}
+
+test "tool_schema none omits the tools array" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    const tools = [_]types.ToolDef{.{ .name = "read_file", .description = "read", .input_schema = .null }};
+
+    const bare = try config.Provider.single(arena, "q", "https://q.test/v1", .openai_compat, "m", .{ .max_tokens = 64, .tool_schema = .none });
+    const body = try buildRequest(arena, .{ .provider = &bare, .messages = &messages, .tools = &tools });
+    defer arena.free(body);
+    try std.testing.expect(std.mem.find(u8, body, "\"tools\"") == null);
+
+    const std_p = try config.Provider.single(arena, "q", "https://q.test/v1", .openai_compat, "m", .{ .max_tokens = 64 });
+    const std_body = try buildRequest(arena, .{ .provider = &std_p, .messages = &messages, .tools = &tools });
+    defer arena.free(std_body);
+    try std.testing.expect(std.mem.find(u8, std_body, "\"tools\"") != null);
 }
 
 test "openai response parse with tool call" {

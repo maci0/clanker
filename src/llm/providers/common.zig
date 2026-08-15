@@ -71,8 +71,30 @@ pub fn writeSamplingParams(s: *json.Stringify, params: api.RequestParams) !void 
     const model_effort: ?[]const u8 = if (model.reasoning_effort) |re| @tagName(re) else null;
     const effort = params.reasoning_effort orelse model_effort orelse rec.reasoning_effort;
     if (effort) |re| {
-        try s.objectField("reasoning_effort");
-        try s.write(re);
+        // The knob's wire shape is a per-model/provider choice: some
+        // endpoints want the flat OpenAI field, some the OpenRouter nest,
+        // some GLM's thinking toggle, and some 400 on any of them.
+        switch (params.provider.effectiveThinkingSchema()) {
+            .reasoning_effort => {
+                try s.objectField("reasoning_effort");
+                try s.write(re);
+            },
+            .reasoning => {
+                try s.objectField("reasoning");
+                try s.beginObject();
+                try s.objectField("effort");
+                try s.write(re);
+                try s.endObject();
+            },
+            .thinking => {
+                try s.objectField("thinking");
+                try s.beginObject();
+                try s.objectField("type");
+                try s.write(if (std.mem.eql(u8, re, "none")) "disabled" else "enabled");
+                try s.endObject();
+            },
+            .none => {},
+        }
     }
 }
 

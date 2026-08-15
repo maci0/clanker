@@ -7,6 +7,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `tool_schema` and `thinking_schema` on a provider or model override the
+  wire encoding for endpoints that deviate from the flat OpenAI shape:
+  tools can be the standard array or omitted entirely (`"none"`), and the
+  reasoning knob can go out as `reasoning_effort` (default), the
+  OpenRouter `"reasoning": {"effort": ...}` nest, the GLM
+  `"thinking": {"type": "enabled"}` toggle, or nothing. A model's setting
+  wins over its provider's.
 - A `[models."<provider>/<name>"]` entry can set `id` to the wire SKU so
   the table key is a local alias. Two names can share one SKU with
   different temperature (or other) settings:
@@ -50,6 +57,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   and mesh lamps read computed theme tokens only. `HEAD /webui` returns
   the same headers as GET with an empty body. Health tiles use a lamp
   dome instead of a left-edge tab.
+- System `#progress-log` is no longer a live region (status goes through
+  `#progress-status`). The header model chip is not live either. The
+  Runs graph flushes layout once, then reads node heights.
+- Chat run metrics tick every frame and update tokens, cache and tok/s
+  mid-turn from stream `usage` events plus a live output estimate.
 - Isolated `clanker run` now provisions a checkout `state/` path that is a
   symlink to shared durable storage. Previously Zig reported `NotDir` before
   any shared paths were linked, leaving host-side state private to the

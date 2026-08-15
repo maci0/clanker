@@ -252,6 +252,9 @@ pub const Agent = struct {
     /// an actual change (`List.rev`), so a run that never touches todo_* never
     /// pays for it.
     on_todos: ?*const fn ([]const u8) void = null,
+    /// Fired after each LLM usage fold so a live viewer can tick tokens
+    /// without waiting for the run's final `done` trailer.
+    on_usage: ?*const fn (RunStats) void = null,
     /// Cumulative session-level stats across multiple runs (e.g. REPL).
     /// Updated at the end of each run() call so callers can inspect totals.
     session_stats: RunStats = .{},
@@ -841,6 +844,7 @@ pub const Agent = struct {
             if (resp.ttft_ms) |t| {
                 self.stats.total_ttft_ms += t;
                 self.stats.ttft_samples += 1;
+                if (self.on_usage) |cb| cb(self.stats);
             }
 
             try messages.append(self.arena, resp.message);
@@ -1521,6 +1525,7 @@ pub const Agent = struct {
         const active = self.provider.activeModel();
         if (active.cost_per_1m_input) |ci| self.stats.cost += client.promptCost(u, ci);
         if (active.cost_per_1m_output) |co| self.stats.cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
+        if (self.on_usage) |cb| cb(self.stats);
     }
 
     /// Produces a concise summary of a slice of conversation messages by

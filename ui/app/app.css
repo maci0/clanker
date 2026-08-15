@@ -1718,8 +1718,13 @@ dialog.slack-dialog.pf-v6-c-modal-box {
   font-variant-numeric: tabular-nums; letter-spacing: 0.02em; line-height: 1.5;
   opacity: 1;
 }
-.run-metrics { margin: 0.3rem 0 0; overflow-wrap: anywhere; }
+.run-metrics {
+  display: flex; flex-wrap: wrap; gap: 0.1rem 0.7rem;
+  margin: 0.3rem 0 0; overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
 .run-metrics[hidden] { display: none; }
+.run-metrics-cell { white-space: nowrap; }
 .knowledge-badge {
   display: none; margin: 0.35rem 0 0; padding: 0.35rem 0.55rem;
   border: 1px dashed var(--rule); border-radius: 8px; background: var(--surface-2);

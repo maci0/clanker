@@ -214,8 +214,14 @@ export function layoutGraph(canvas, built, slowest, opts) {
     d.el.style.visibility = "hidden";
     canvas.appendChild(d.el);
   });
+  // One layout flush, then only reads. Interleaving offsetHeight with
+  // appendChild would reflow once per node on a large run.
+  void canvas.offsetHeight;
   var nodeH = 0;
-  data.forEach(function (d) { d.h = d.el.offsetHeight; nodeH = Math.max(nodeH, d.h); });
+  for (var i = 0; i < data.length; i++) {
+    data[i].h = data[i].el.offsetHeight;
+    if (data[i].h > nodeH) nodeH = data[i].h;
+  }
   return loadD3().then(function () {
     if (!canvas.isConnected) return;
     var dag;

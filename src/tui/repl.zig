@@ -2390,6 +2390,8 @@ const Model = struct {
         // freed when `submit` returns, so own a copy in the arena.
         if (self.arena.dupe(u8, task)) |owned| {
             self.history.append(self.arena, owned) catch {};
+            self.hist_idx = self.history.items.len;
+            self.hist_draft = "";
         } else |_| {}
         switch (pc.spec.action) {
             // A quit command has to set `ctx.quit`, rather than merely stop

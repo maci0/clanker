@@ -38,6 +38,14 @@ default_provider = "moonshotai"
 # # A model's own rpm is a separate cap, not an override of this one.
 # rpm = 40
 #
+# # Wire encoding for tools and the reasoning knob, for endpoints that
+# # deviate from the flat OpenAI shape. A model's own setting wins.
+# # tool_schema: "openai" (default) or "none" (omit the tools array).
+# # thinking_schema: "reasoning_effort" (default flat field), "reasoning"
+# # (OpenRouter nest), "thinking" (GLM toggle), or "none" (omit).
+# tool_schema = "openai"
+# thinking_schema = "reasoning_effort"
+#
 # # vertex and vertex_anthropic: the GCP project and region serving the
 # # model. Credential is service_account_file, gcloud ADC
 # # (`gcloud auth application-default login`), or api_key_env.
@@ -114,6 +122,8 @@ base_url = "http://127.0.0.1:8000/v1"
 # category = "fast"              # free-form grouping for the model pickers
 #                                # (flagship, fast, reasoning, cheap, ...)
 # rpm = 40                       # self-imposed requests per minute; omit = none
+# tool_schema = "openai"         # or "none": omit the tools array for this model
+# thinking_schema = "reasoning_effort"  # or "reasoning" / "thinking" / "none"
 #
 # One default model per provider. Extra SKUs go in config.local.toml.
 # Context, max output, cost, display, and capabilities are filled from

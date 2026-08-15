@@ -31,7 +31,7 @@ import { loadModelsView as modelsLoadView, bindModels as modelsBind } from "./fe
 import { loadScheduleView as scheduleLoadView, bindSchedule as scheduleBind } from "./features/schedule.js";
 import { loadSearchView as searchLoadView, bindSearch as searchBind, bindSearchDeps as searchDeps } from "./features/search.js";
 import { createAnswerHead, ANSWER_LABEL } from "./core/ai-disclosure.js";
-import { applyDoneStats, beginLiveTurn, emptyRunMetrics, formatRunMetrics, liveElapsedMs, noteFirstToken } from "./core/run-metrics.js";
+import { applyDoneStats, applyLiveUsage, beginLiveTurn, emptyRunMetrics, formatRunMetricsParts, liveElapsedMs, noteFirstToken, noteLiveChars } from "./core/run-metrics.js";
 
 /* CSP blocks inline onload handlers, so PatternFly stays media=print until
    this module runs. Flip to all as soon as the sheet is ready so first paint
@@ -1056,15 +1056,15 @@ function setBusy(next) {
 function startElapsed(startedAt) {
   stopElapsed();
   function tick() {
+    elapsedTimer = window.requestAnimationFrame(tick);
     el.hint.textContent = runWaitLabel + " · " + ((Date.now() - startedAt) / 1000).toFixed(1) + "s";
     paintRunMetrics();
   }
   tick();
-  elapsedTimer = window.setInterval(tick, 200);
 }
 
 function stopElapsed() {
-  if (elapsedTimer) { window.clearInterval(elapsedTimer); elapsedTimer = null; }
+  if (elapsedTimer) { window.cancelAnimationFrame(elapsedTimer); elapsedTimer = null; }
 }
 
 /* Mid-run steering for the chat composer (same POST /api/steer the goals
@@ -1810,10 +1810,28 @@ function resetSessionMetrics() {
 
 function paintRunMetrics() {
   if (!el.runMetrics) return;
-  var line = formatRunMetrics(sessionMetrics, Date.now());
-  el.runMetrics.textContent = line;
-  el.runMetrics.hidden = !line;
+  var parts = formatRunMetricsParts(sessionMetrics, Date.now());
+  el.runMetrics.hidden = !parts.length;
   el.runMetrics.setAttribute("aria-live", sessionMetrics.live ? "off" : "polite");
+  if (!parts.length) {
+    el.runMetrics.textContent = "";
+    return;
+  }
+  var kids = el.runMetrics.children;
+  if (kids.length !== parts.length) {
+    el.runMetrics.textContent = "";
+    parts.forEach(function (p) {
+      var s = document.createElement("span");
+      s.className = "run-metrics-cell";
+      s.setAttribute("data-m", p.key);
+      s.textContent = p.text;
+      el.runMetrics.appendChild(s);
+    });
+    return;
+  }
+  for (var i = 0; i < parts.length; i++) {
+    if (kids[i].textContent !== parts[i].text) kids[i].textContent = parts[i].text;
+  }
 }
 
 function setStatusGoal(goalId) {
@@ -1933,6 +1951,10 @@ el.form.addEventListener("submit", function (e) {
       else if (evt.type === "ask") { addAskEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "confirm") { addConfirmEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + errorRecoveryHint(evt.message) + "]\n", true); setTurnPhase(turn, ""); pushLiveNode("tool", evt.message, "error", 0); }
+      else if (evt.type === "usage") {
+        applyLiveUsage(sessionMetrics, evt);
+        paintRunMetrics();
+      }
       else if (evt.type === "done") {
         renderStats(turn, evt, task);
         applyDoneStats(sessionMetrics, evt);
@@ -1946,8 +1968,9 @@ el.form.addEventListener("submit", function (e) {
     var stick = nearBottom();
     if (sessionMetrics.live && sessionMetrics.liveTtftMs == null) {
       noteFirstToken(sessionMetrics, Date.now());
-      paintRunMetrics();
     }
+    if (sessionMetrics.live) noteLiveChars(sessionMetrics, line.length + 1);
+    paintRunMetrics();
     appendText(turn, line + "\n", false);
     // live markdown: throttled incremental render while streaming
     if (!turn._mdThrottle) { turn._mdThrottle = 0; turn._lastMD = ""; }

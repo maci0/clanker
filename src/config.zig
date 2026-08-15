@@ -74,6 +74,35 @@ pub const ReasoningEffort = enum {
     }
 };
 
+/// How tool definitions are encoded on the wire. Most OpenAI-compatible
+/// endpoints take the standard `tools` array; a few reject it outright, and
+/// `none` keeps the request clean for those (the agent then runs without
+/// tool calling on that model).
+pub const ToolSchema = enum {
+    openai,
+    none,
+
+    pub fn fromStr(s: []const u8) ?ToolSchema {
+        return std.meta.stringToEnum(ToolSchema, s);
+    }
+};
+
+/// How the reasoning knob is encoded on the wire. `reasoning_effort` is the
+/// flat OpenAI field (the default today); `reasoning` nests it OpenRouter
+/// style (`"reasoning":{"effort":...}`); `thinking` sends the GLM/Zhipu
+/// toggle (`"thinking":{"type":"enabled"}`); `none` omits every reasoning
+/// field for endpoints that 400 on unknown keys.
+pub const ThinkingSchema = enum {
+    reasoning_effort,
+    reasoning,
+    thinking,
+    none,
+
+    pub fn fromStr(s: []const u8) ?ThinkingSchema {
+        return std.meta.stringToEnum(ThinkingSchema, s);
+    }
+};
+
 /// How a provider's credential is acquired, a separate axis from the wire
 /// kind, because one wire format can accept several (docs/adrs/0005). Left
 /// unset, each kind auto-detects from the credential's shape where the two
@@ -144,6 +173,10 @@ pub const Model = struct {
     /// Self-imposed requests per minute for this local name. Null or 0 is
     /// unlimited. Independent of the provider's own `rpm` (both apply).
     rpm: ?u32 = null,
+    /// Wire encoding overrides for this model. Null falls back to the
+    /// provider's setting, then the kind default.
+    tool_schema: ?ToolSchema = null,
+    thinking_schema: ?ThinkingSchema = null,
 
     /// The name the provider API wants. `key` is the table-key name.
     pub fn wireName(self: Model, key: []const u8) []const u8 {
@@ -184,6 +217,10 @@ pub const Provider = struct {
     /// provider. Null or 0 is unlimited. A model's own `rpm` is a separate
     /// cap on that name, not an override of this one.
     rpm: ?u32 = null,
+
+    /// Endpoint-wide wire encoding defaults; a model's own setting wins.
+    tool_schema: ?ToolSchema = null,
+    thinking_schema: ?ThinkingSchema = null,
 
     /// How long `providers check` waits for this endpoint before giving up on
     /// it, overriding `agent.provider_check_timeout_seconds` for this provider
@@ -232,6 +269,18 @@ pub const Provider = struct {
     pub fn modelSku(self: *const Provider, key: []const u8) []const u8 {
         if (self.models.get(key)) |m| return m.wireName(key);
         return key;
+    }
+
+    /// Wire encoding for the active model's tools: model, then provider,
+    /// then the standard OpenAI array.
+    pub fn effectiveToolSchema(self: *const Provider) ToolSchema {
+        return self.activeModel().tool_schema orelse self.tool_schema orelse .openai;
+    }
+
+    /// Wire encoding for the active model's reasoning knob: model, then
+    /// provider, then the flat `reasoning_effort` field.
+    pub fn effectiveThinkingSchema(self: *const Provider) ThinkingSchema {
+        return self.activeModel().thinking_schema orelse self.thinking_schema orelse .reasoning_effort;
     }
 };
 
@@ -1218,6 +1267,8 @@ pub const Config = struct {
             "path",
             "default_model",
             "rpm",
+            "tool_schema",
+            "thinking_schema",
             "check_timeout_seconds",
             // Legacy names: flagged with a dedicated error below, not a warning.
             "model",
@@ -1283,6 +1334,20 @@ pub const Config = struct {
         }
         if (obj.get("rpm")) |k| {
             p.rpm = try jsonUnsigned(u32, k, "rpm");
+        }
+        if (obj.get("tool_schema")) |k| {
+            const s = try jsonStr(k, "tool_schema");
+            p.tool_schema = ToolSchema.fromStr(s) orelse {
+                log.log(.error_, "provider '{s}': tool_schema \"{s}\" is not one of \"openai\", \"none\"", .{ name, s });
+                return error.UnknownToolSchema;
+            };
+        }
+        if (obj.get("thinking_schema")) |k| {
+            const s = try jsonStr(k, "thinking_schema");
+            p.thinking_schema = ThinkingSchema.fromStr(s) orelse {
+                log.log(.error_, "provider '{s}': thinking_schema \"{s}\" is not one of \"reasoning_effort\", \"reasoning\", \"thinking\", \"none\"", .{ name, s });
+                return error.UnknownThinkingSchema;
+            };
         }
         if (obj.get("check_timeout_seconds")) |k| {
             const secs = try jsonInt(k, "check_timeout_seconds");
@@ -1457,6 +1522,8 @@ pub const Config = struct {
             "capabilities",
             "category",
             "rpm",
+            "tool_schema",
+            "thinking_schema",
         }, name);
         if (obj.get("id")) |k| m.id = try jsonStr(k, "id");
         if (obj.get("context_window")) |k| {
@@ -1474,6 +1541,20 @@ pub const Config = struct {
             m.reasoning_effort = ReasoningEffort.fromStr(s) orelse {
                 log.log(.error_, "models[\"{s}\"]: reasoning_effort \"{s}\" is not one of \"none\", \"low\", \"medium\", \"high\", \"max\"", .{ name, s });
                 return error.UnknownReasoningEffort;
+            };
+        }
+        if (obj.get("tool_schema")) |k| {
+            const s = try jsonStr(k, "tool_schema");
+            m.tool_schema = ToolSchema.fromStr(s) orelse {
+                log.log(.error_, "models[\"{s}\"]: tool_schema \"{s}\" is not one of \"openai\", \"none\"", .{ name, s });
+                return error.UnknownToolSchema;
+            };
+        }
+        if (obj.get("thinking_schema")) |k| {
+            const s = try jsonStr(k, "thinking_schema");
+            m.thinking_schema = ThinkingSchema.fromStr(s) orelse {
+                log.log(.error_, "models[\"{s}\"]: thinking_schema \"{s}\" is not one of \"reasoning_effort\", \"reasoning\", \"thinking\", \"none\"", .{ name, s });
+                return error.UnknownThinkingSchema;
             };
         }
         if (obj.get("display")) |k| m.display = try jsonStr(k, "display");
@@ -3589,6 +3670,65 @@ test "rpm is accepted on a provider and on a model" {
     try std.testing.expectEqual(@as(u32, 40), n.rpm.?);
     try std.testing.expectEqual(@as(u32, 10), n.models.get("fast").?.rpm.?);
     try std.testing.expect(n.models.get("slow").?.rpm == null);
+}
+
+test "tool_schema and thinking_schema parse on providers and models, model wins" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "n"
+        \\[providers.n]
+        \\base_url = "https://n.test/v1"
+        \\thinking_schema = "thinking"
+        \\[models."n/plain"]
+        \\provider = "n"
+        \\[models."n/bare"]
+        \\provider = "n"
+        \\tool_schema = "none"
+        \\thinking_schema = "none"
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    var n = cfg.providers.get("n").?;
+    n.default_model = "plain";
+    try std.testing.expectEqual(ToolSchema.openai, n.effectiveToolSchema());
+    try std.testing.expectEqual(ThinkingSchema.thinking, n.effectiveThinkingSchema());
+    n.default_model = "bare";
+    try std.testing.expectEqual(ToolSchema.none, n.effectiveToolSchema());
+    try std.testing.expectEqual(ThinkingSchema.none, n.effectiveThinkingSchema());
+}
+
+test "an unknown thinking_schema is rejected at load" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "n"
+        \\providers = { n = { base_url = "https://n.test/v1", thinking_schema = "cot" } }
+        \\models = { "n/m" = { provider = "n" } }
+        ,
+    });
+    try std.testing.expectError(
+        error.UnknownThinkingSchema,
+        Config.load(io, arena, tmp.dir, "config.toml", "missing.toml"),
+    );
 }
 
 test "a local override with only default_provider keeps the base providers" {

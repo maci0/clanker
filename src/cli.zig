@@ -7094,6 +7094,18 @@ fn runStreamToolResult(ms: u64) void {
     writeStreamEvent(fd, "tool_result", .{ .ms = ms });
 }
 
+fn runStreamUsage(stats: agent.RunStats) void {
+    const fd = run_stream_socket orelse return;
+    writeStreamEvent(fd, "usage", .{
+        .prompt_tokens = stats.total_prompt_tokens,
+        .completion_tokens = stats.total_completion_tokens,
+        .cache_hit_tokens = stats.total_cache_hit_tokens,
+        .cache_miss_tokens = stats.total_cache_miss_tokens,
+        .ttft_ms_total = stats.total_ttft_ms,
+        .ttft_samples = stats.ttft_samples,
+    });
+}
+
 /// The run's private todo list, pushed down its own stream whenever a `todo_*`
 /// call moves it (webui PRD 0006 phase 3.3). `todos_json` is already a JSON
 /// array from `private_todos.listJson`, so it is spliced in rather than
@@ -12356,6 +12368,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         a.on_tool_call = &runStreamToolCall;
         a.on_tool_result = &runStreamToolResult;
         a.on_todos = &runStreamTodos;
+        a.on_usage = &runStreamUsage;
         // The client would otherwise see nothing until the first token or tool
         // call arrives, which can be tens of seconds of "running…" while the
         // run reaches the provider and works its first turn. Emit a status

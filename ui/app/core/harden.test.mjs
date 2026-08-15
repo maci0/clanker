@@ -68,6 +68,24 @@ test("rooms log is not a live region; status is", function () {
   assert.match(html, /Loading channels/);
 });
 
+test("progress log is not a live region; status is", function () {
+  assert.match(html, /id="progress-log"[^>]*role="log"/);
+  assert.doesNotMatch(html, /id="progress-log"[^>]*aria-live=/);
+  assert.match(html, /id="progress-status"[^>]*aria-live="polite"/);
+});
+
+test("header model chip is not a live region", function () {
+  assert.match(html, /id="header-model"/);
+  assert.doesNotMatch(html, /id="header-model"[^>]*aria-live=/);
+});
+
+test("run graph measures node heights after one layout flush", function () {
+  const graphSrc = readFileSync(join(here, "..", "lib", "graph.js"), "utf8");
+  assert.match(graphSrc, /void canvas\.offsetHeight/);
+  const writeThenRead = graphSrc.indexOf("canvas.appendChild(d.el)") < graphSrc.indexOf("void canvas.offsetHeight");
+  assert.ok(writeThenRead, "append all nodes before reading offsetHeight");
+});
+
 test("theme toggle opens a list, not a cycle", function () {
   const themeSrc = readFileSync(join(here, "theme.js"), "utf8");
   assert.match(themeSrc, /export function bindThemeToggle/);
