@@ -197,12 +197,48 @@ var bridge_turn_done: std.atomic.Value(bool) = .init(false);
 /// of a bare "thinking".
 var bridge_active_tool: [64]u8 = undefined;
 var bridge_active_tool_len: usize = 0;
+/// Live session-strip counters for the in-flight turn. Folded into Model
+/// totals in finishTurn. Guarded by bridge_mutex.
+var bridge_live_started_ns: i128 = 0;
+var bridge_live_tool_ms: u64 = 0;
+var bridge_live_steps: u64 = 0;
+var bridge_live_prompt: u64 = 0;
+var bridge_live_completion: u64 = 0;
+var bridge_live_cache_hit: u64 = 0;
+var bridge_live_cache_miss: u64 = 0;
+var bridge_live_ttft_ms: ?u64 = null;
+var bridge_live_ttft_total: u64 = 0;
+var bridge_live_ttft_samples: u32 = 0;
+
+fn resetBridgeLive() void {
+    bridge_live_started_ns = 0;
+    bridge_live_tool_ms = 0;
+    bridge_live_steps = 0;
+    bridge_live_prompt = 0;
+    bridge_live_completion = 0;
+    bridge_live_cache_hit = 0;
+    bridge_live_cache_miss = 0;
+    bridge_live_ttft_ms = null;
+    bridge_live_ttft_total = 0;
+    bridge_live_ttft_samples = 0;
+}
+
+fn liveElapsedMs() u64 {
+    if (bridge_live_started_ns == 0) return 0;
+    const now = std.Io.Timestamp.now(bridge_io, .awake);
+    const d = now.nanoseconds - bridge_live_started_ns;
+    if (d <= 0) return 0;
+    return @intCast(@divTrunc(d, std.time.ns_per_ms));
+}
 
 fn onToken(delta: []const u8) void {
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
     const safe = clean(bridge_gpa, delta) orelse return;
     defer if (safe.ptr != delta.ptr) bridge_gpa.free(safe);
+    if (bridge_live_ttft_ms == null and bridge_live_started_ns != 0) {
+        bridge_live_ttft_ms = liveElapsedMs();
+    }
     bridge_stream_buf.appendSlice(bridge_gpa, safe) catch {};
 }
 
@@ -226,6 +262,7 @@ fn onToolCall(calls: []const types.ToolCall) void {
         const n = @min(name.len, bridge_active_tool.len);
         @memcpy(bridge_active_tool[0..n], name[0..n]);
         bridge_active_tool_len = n;
+        bridge_live_steps += 1;
     }
 }
 
@@ -233,8 +270,22 @@ fn onToolResult(elapsed_ms: u64) void {
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
     bridge_active_tool_len = 0;
+    bridge_live_tool_ms +|= elapsed_ms;
     const line = transcript_mod.toolCardFooter(bridge_gpa, elapsed_ms) catch return;
     bridge_tool_lines.append(bridge_gpa, line) catch bridge_gpa.free(line);
+}
+
+fn onUsage(stats: agent_loop.RunStats) void {
+    bridge_mutex.lockUncancelable(bridge_io);
+    defer bridge_mutex.unlock(bridge_io);
+    bridge_live_prompt = stats.total_prompt_tokens;
+    bridge_live_completion = stats.total_completion_tokens;
+    bridge_live_cache_hit = stats.total_cache_hit_tokens;
+    bridge_live_cache_miss = stats.total_cache_miss_tokens;
+    if (stats.ttft_samples > 0) {
+        bridge_live_ttft_total = stats.total_ttft_ms;
+        bridge_live_ttft_samples = stats.ttft_samples;
+    }
 }
 
 /// Frees and empties the mid-run steering queue. Called at turn start (so a
@@ -450,6 +501,7 @@ fn runThreadMain(args: RunThreadArgs) void {
     a.on_token = onToken;
     a.on_tool_call = onToolCall;
     a.on_tool_result = onToolResult;
+    a.on_usage = onUsage;
     a.stop_flag = &bridge_stop_flag;
     // Mid-run steering: messages typed into the composer while this turn
     // runs are drained between iterations, exactly as POST /api/steer feeds
@@ -1938,6 +1990,17 @@ const Model = struct {
     /// this is everything the session has ever sent and received, that is how
     /// much of it the model can still see.
     session_tokens: u64 = 0,
+    session_turns: u64 = 0,
+    session_steps: u64 = 0,
+    session_llm_ms: u64 = 0,
+    session_tool_ms: u64 = 0,
+    session_ttft_ms: u64 = 0,
+    session_ttft_n: u32 = 0,
+    session_prompt: u64 = 0,
+    session_completion: u64 = 0,
+    session_cache_hit: u64 = 0,
+    session_cache_miss: u64 = 0,
+    metrics_buf: [256]u8 = undefined,
     /// Null until a turn on a priced model lands, so an unpriced session
     /// shows no cost at all rather than a running $0.00.
     session_cost: ?f64 = null,
@@ -2121,6 +2184,20 @@ const Model = struct {
             if (t.accounted()) {
                 self.session_tokens +|= t.prompt_tokens +| t.completion_tokens;
                 if (t.cost_usd) |c| self.session_cost = (self.session_cost orelse 0) + c;
+                self.session_steps +|= bridge_live_steps +| 1;
+                self.session_tool_ms +|= bridge_live_tool_ms;
+                self.session_llm_ms +|= t.wall_ms -| bridge_live_tool_ms;
+                self.session_prompt +|= t.prompt_tokens;
+                self.session_completion +|= t.completion_tokens;
+                self.session_cache_hit +|= t.cache_hit_tokens;
+                self.session_cache_miss +|= t.cache_miss_tokens;
+                if (bridge_live_ttft_samples > 0) {
+                    self.session_ttft_ms +|= bridge_live_ttft_total;
+                    self.session_ttft_n +|= bridge_live_ttft_samples;
+                } else if (bridge_live_ttft_ms) |ttft| {
+                    self.session_ttft_ms +|= ttft;
+                    self.session_ttft_n +|= 1;
+                }
                 if (stats_mod.formatTurn(self.arena, t)) |line| {
                     self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
                 } else |_| {}
@@ -2953,6 +3030,9 @@ const Model = struct {
         bridge_streaming = true;
         bridge_stream_buf.clearRetainingCapacity();
         bridge_tool_lines.clearRetainingCapacity();
+        resetBridgeLive();
+        bridge_live_started_ns = std.Io.Timestamp.now(self.io, .awake).nanoseconds;
+        self.session_turns +|= 1;
         // A steering message typed against the turn that just ended must not
         // leak into this one, the composer-as-steer-box only queues while
         // streaming, but a message can land between the last poll and here.
