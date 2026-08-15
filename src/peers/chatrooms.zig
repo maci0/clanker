@@ -608,10 +608,9 @@ pub fn togglePin(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
     const gop = try meta.map.getOrPut(arena, room);
     if (!gop.found_existing) gop.value_ptr.* = .{};
 
+    var new_pins: std.ArrayList([]const u8) = .empty;
+    var was_pinned = false;
     if (gop.value_ptr.pins) |existing| {
-        // Check if already pinned, if so, remove
-        var new_pins: std.ArrayList([]const u8) = .empty;
-        var was_pinned = false;
         for (existing) |p| {
             if (std.mem.eql(u8, p, msg_id)) {
                 was_pinned = true;
@@ -619,18 +618,14 @@ pub fn togglePin(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
             }
             try new_pins.append(arena, p);
         }
-        if (was_pinned) {
-            gop.value_ptr.pins = if (new_pins.items.len > 0) new_pins.items else null;
-            try saveMeta(base, io, gpa, arena, state_dir, meta);
-            return false; // unpinned
-        }
-        try new_pins.append(arena, msg_id);
-        gop.value_ptr.pins = new_pins.items;
-    } else {
-        var new_pins: std.ArrayList([]const u8) = .empty;
-        try new_pins.append(arena, msg_id);
-        gop.value_ptr.pins = new_pins.items;
     }
+    if (was_pinned) {
+        gop.value_ptr.pins = if (new_pins.items.len > 0) new_pins.items else null;
+        try saveMeta(base, io, gpa, arena, state_dir, meta);
+        return false; // unpinned
+    }
+    try new_pins.append(arena, msg_id);
+    gop.value_ptr.pins = new_pins.items;
     try saveMeta(base, io, gpa, arena, state_dir, meta);
     return true; // pinned
 }

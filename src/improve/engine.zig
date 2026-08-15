@@ -656,7 +656,7 @@ pub const Engine = struct {
                 self.arena,
                 "You asked for files instead of a patch, but none could be added: {s}{s}{s}Everything else you asked for is already in the context above. Propose the patch now, or answer that no changes are needed.",
                 .{
-                    if (refused) |bad| bad else "",
+                    refused orelse "",
                     if (refused != null) " is outside the readable surface. " else "",
                     if (missing.items.len > 0) "Some of those paths do not exist in this repository. " else "",
                 },

@@ -10534,9 +10534,9 @@ fn handleSessions(
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
             return;
         };
-        if (import_req.import_chat != null and import_req.import_chat.? == true) {
+        if (import_req.import_chat orelse false) {
             const msgs = import_req.messages orelse &[_]session.StoredMessage{};
-            const title = if (import_req.title) |t| t else "imported chat";
+            const title = import_req.title orelse "imported chat";
             const new_id = session.importChat(io, gpa, arena, std.Io.Dir.cwd(), title, msgs) catch {
                 respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"import failed: need at least one user/assistant message with content\"}");
                 return;
@@ -12777,7 +12777,7 @@ fn providerVisionModel(p: *const config.Provider) ?[]const u8 {
 /// configured provider with one. Returns null when nothing can take the image.
 /// The copy's `default_model` is set to a vision-capable model of that provider.
 fn visionFallbackProvider(cfg: *const config.Config, current_name: []const u8, prefer: ?[]const u8) ?config.Provider {
-    const prefer_name = if (prefer) |p| p else config.firstFallbackProvider(cfg.agent.fallback_providers);
+    const prefer_name = prefer orelse config.firstFallbackProvider(cfg.agent.fallback_providers);
     if (prefer_name.len > 0 and !std.mem.eql(u8, prefer_name, current_name)) {
         if (cfg.providers.getPtr(prefer_name)) |p| {
             if (providerVisionModel(p)) |m| {

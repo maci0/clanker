@@ -4391,11 +4391,14 @@ if (roomsSidebarIsPhone()) setRoomsSidebarOpen(false, true);
 else setRoomsSidebarOpen(true, false);
 
 // Group headers (Channels / Direct Messages) fold their own items away —
-// .slack-room-group.is-collapsed hides .slack-room-items via CSS.
+// .slack-room-group.is-collapsed hides .slack-room-items via CSS. The head
+// is a real button (keyboard-operable); aria-expanded tracks the fold.
 Array.prototype.forEach.call(document.querySelectorAll(".slack-room-group-head"), function (head) {
   head.addEventListener("click", function () {
     var group = head.closest(".slack-room-group");
-    if (group) group.classList.toggle("is-collapsed");
+    if (!group) return;
+    var collapsed = group.classList.toggle("is-collapsed");
+    head.setAttribute("aria-expanded", String(!collapsed));
   });
 });
 

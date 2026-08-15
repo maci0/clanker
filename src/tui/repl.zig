@@ -5960,7 +5960,7 @@ fn singleLinePaste(alloc: std.mem.Allocator, text: []const u8) []const u8 {
         }
         out.?[i] = ' ';
     }
-    return if (out) |o| o else text;
+    return out orelse text;
 }
 
 /// The subset of `cli.Options` the REPL honors. `--provider`/`--model` pick

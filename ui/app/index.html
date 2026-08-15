@@ -505,22 +505,22 @@ lamps carry further). The seven named palettes ride the same tokens.
         <div class="slack-search-box">
           <input type="search" id="chat-room-filter" placeholder="Find a channel…" autocomplete="off" aria-label="Filter channels">
         </div>
-        <div class="slack-room-list" id="chat-room-list" role="listbox" aria-label="Channels">
+        <div class="slack-room-list" id="chat-room-list" role="group" aria-label="Channels">
           <div class="slack-room-group" id="chat-rooms-group">
-            <div class="slack-room-group-head" data-group="rooms">
-              <span class="slack-caret">▸</span> Channels
-            </div>
+            <button type="button" class="slack-room-group-head" data-group="rooms" aria-expanded="true" aria-controls="chat-rooms-items">
+              <span class="slack-caret" aria-hidden="true">▸</span> Channels
+            </button>
             <div class="slack-room-items" id="chat-rooms-items"><p class="meta slack-room-loading">Loading channels…</p></div>
           </div>
           <div class="slack-room-group" id="chat-dms-group">
-            <div class="slack-room-group-head" data-group="dms">
-              <span class="slack-caret">▸</span> Direct Messages
-            </div>
+            <button type="button" class="slack-room-group-head" data-group="dms" aria-expanded="true" aria-controls="chat-dms-items">
+              <span class="slack-caret" aria-hidden="true">▸</span> Direct Messages
+            </button>
             <div class="slack-room-items" id="chat-dms-items"></div>
           </div>
         </div>
         <!-- Hidden select for backwards compat -->
-        <select id="chat-room" class="sr-only" aria-hidden="true"></select>
+        <select id="chat-room" class="sr-only" aria-hidden="true" tabindex="-1"></select>
       </aside>
       <!-- Mobile only: tap the dimmed chat to close the channel drawer.
            The header toggle sits under the drawer while it is open. -->

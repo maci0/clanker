@@ -35,7 +35,7 @@
   /* Goals and jumps are operator action: same blue as the actuators. */
   --violet: var(--accent);
   --violet-text: var(--accent-text);
-  --danger: #dc2626;
+  --danger: #b91c1c;
   --on-danger: #ffffff;
   --scrim: rgba(27, 28, 24, 0.32);
   --warn: #b45309;
@@ -48,12 +48,12 @@
      dark blocks redefine them brighter so they stay legible on graphite. */
   --chat-hue-0: #0b57d0;
   --chat-hue-1: #7c3aed;
-  --chat-hue-2: #059669;
-  --chat-hue-3: #d97706;
-  --chat-hue-4: #dc2626;
-  --chat-hue-5: #0891b2;
+  --chat-hue-2: #047857;
+  --chat-hue-3: #92400e;
+  --chat-hue-4: #b91c1c;
+  --chat-hue-5: #0f6f8f;
   --chat-hue-6: #9333ea;
-  --chat-hue-7: #65a30d;
+  --chat-hue-7: #3f6212;
 
   /* Prose in the text face; every measurement and every legend plate in
      mono, because a panel's engraving is fixed-pitch and its readings align. */
@@ -196,7 +196,7 @@
   --ok-fill: #16a34a;
   --violet: var(--accent);
   --violet-text: var(--accent-text);
-  --danger: #dc2626;
+  --danger: #b91c1c;
   --on-danger: #ffffff;
   --scrim: rgba(27, 28, 24, 0.32);
   --warn: #b45309;
@@ -2041,7 +2041,12 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   padding: 0.25rem 0.75rem; font-size: 12px; font-weight: 600;
   color: var(--fg-muted); cursor: pointer; user-select: none;
   text-transform: uppercase; letter-spacing: 0.03em;
+  /* A real button now, so it needs the button reset a row of slack-room-item
+     buttons already has: full width, no UA border/background, text left. */
+  width: 100%; text-align: left; border: 0; background: none;
+  font-family: inherit;
 }
+.slack-room-group-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 .slack-room-group-head:hover { color: var(--fg); }
 .slack-caret {
   display: inline-block; font-size: 10px;
@@ -2201,7 +2206,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   display: flex; gap: 0.5rem; align-items: flex-start;
 }
 .slack-pin-item:last-child { border-bottom: none; }
-.slack-pin-sender { font-weight: 600; font-size: 11px; color: var(--accent); flex-shrink: 0; }
+.slack-pin-sender { font-weight: 600; font-size: 11px; color: var(--accent-text); flex-shrink: 0; }
 .slack-pin-text { flex: 1; overflow-wrap: anywhere; }
 
 /* ── Composer ── */
