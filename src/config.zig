@@ -4114,6 +4114,29 @@ test "a vertex_anthropic provider missing both credential sources is rejected at
     );
 }
 
+test "an azure_openai provider keeps api_version" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "azure"
+        \\providers = { azure = { kind = "azure_openai", base_url = "https://contoso.openai.azure.com", api_key_env = "AZURE_API_KEY", api_version = "2024-12-01-preview" } }
+        \\models = { "azure/gpt-4o" = { provider = "azure" } }
+        ,
+    });
+    const cfg = try Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml");
+    const p = cfg.providers.get("azure").?;
+    try std.testing.expectEqual(ProviderKind.azure_openai, p.kind);
+    try std.testing.expectEqualStrings("2024-12-01-preview", p.api_version);
+}
+
 test "a provider with no models is rejected at load" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

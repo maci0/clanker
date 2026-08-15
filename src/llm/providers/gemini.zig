@@ -474,7 +474,8 @@ test "gemini response parse reads text, functionCall, cache, and thought" {
     try std.testing.expectEqualStrings("hmm", resp.reasoning.?);
     try std.testing.expectEqual(@as(usize, 1), resp.message.tool_calls.?.len);
     try std.testing.expectEqualStrings("history", resp.message.tool_calls.?[0].name);
-    try std.testing.expectEqualStrings("{\"n\":3}", resp.message.tool_calls.?[0].arguments);
+    const args = try json.parseFromSliceLeaky(json.Value, arena, resp.message.tool_calls.?[0].arguments, .{});
+    try std.testing.expectEqual(@as(i64, 3), args.object.get("n").?.integer);
     try std.testing.expectEqualStrings("stop", resp.finish_reason.?);
     try std.testing.expectEqual(@as(u32, 8), resp.usage.?.prompt_cache_hit_tokens);
     try std.testing.expectEqual(@as(u32, 2), resp.usage.?.prompt_cache_miss_tokens);

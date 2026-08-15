@@ -5,7 +5,7 @@
 //! default we know for the official host) and an auth strategy we already
 //! implement. A new vendor on `@ai-sdk/openai-compatible` with an `api` URL
 //! is supported without a new row. Gemini-native, Bedrock, Azure, and
-//! similar need a new `ProviderKind` before they belong here.
+//! Vertex Gemini and Bedrock need a new `ProviderKind` before they belong here.
 
 const std = @import("std");
 const config = @import("../config.zig");
