@@ -153,17 +153,33 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     load(next, true);
   }
 
+  /* Some desktops report "" as the MIME type for .ogg/.oga/.opus (and
+     occasionally mp3), which used to reject them; a few type ogg as
+     application/*. Fall back to the file extension when the type is
+     empty, and accept the application/ogg aliases. Local files stay
+     object URLs in this browser — nothing is uploaded. */
+  var AUDIO_EXTS = { mp3: 1, wav: 1, ogg: 1, oga: 1, opus: 1, flac: 1, m4a: 1, aac: 1, weba: 1, webm: 1 };
+
+  function audioExt(name) {
+    var m = /\.([a-z0-9]+)$/i.exec(name || "");
+    return !!(m && AUDIO_EXTS[m[1].toLowerCase()]);
+  }
+
+  function typedAudio(type) {
+    return type.indexOf("audio/") === 0 || type === "application/ogg" || type === "application/opus";
+  }
+
   function addFiles(files) {
     var added = 0;
     var skipped = 0;
     Array.prototype.forEach.call(files || [], function (f) {
-      if (!f || !f.type || f.type.indexOf("audio/") !== 0) { skipped += 1; return; }
+      if (!f || (f.type ? !typedAudio(f.type) : !audioExt(f.name))) { skipped += 1; return; }
       tracks.push({ title: f.name, src: URL.createObjectURL(f), kind: "file" });
       added += 1;
     });
     if (index < 0 && tracks.length) load(0, false);
     else draw();
-    if (!added && skipped) setLastError("Those files are not audio. Pick mp3, wav, or another audio type.");
+    if (!added && skipped) setLastError("Those files are not audio. Pick mp3, ogg, or another audio type.");
     else if (added) setLastError("");
   }
 
@@ -345,7 +361,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     fileLab.textContent = "Add files";
     var file = document.createElement("input");
     file.type = "file";
-    file.accept = "audio/*";
+    file.accept = "audio/*,.mp3,.wav,.ogg,.oga,.opus,.flac,.m4a,.aac,.webm";
     file.multiple = true;
     file.setAttribute("aria-label", "Add audio files");
     file.addEventListener("change", function () {
