@@ -630,7 +630,7 @@ pub const Improve = struct {
     /// Reject a proposal whose only effect is to add code nothing can reach.
     /// Every other gate asks whether a change is safe; a change that does
     /// nothing is maximally safe, so without this the loop is rewarded for
-    /// producing it. `src/util/json.zig` still carries three such promotions.
+    /// producing it.
     inert_gate: bool = true,
     /// How many accepted improvements in a row may be test-only before the
     /// next test-only proposal is refused. Tests are worth promoting; a run

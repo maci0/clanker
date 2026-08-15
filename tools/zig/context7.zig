@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const utf8 = @import("utf8");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -37,5 +38,5 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     defer lib.alloc.free(url);
 
     const body = lib.httpGet(url) catch |err| return lib.failErr(out, err, "querying context7");
-    return lib.okText(out, lib.utf8Prefix(body, max_chars));
+    return lib.okText(out, utf8.cap(body, max_chars));
 }

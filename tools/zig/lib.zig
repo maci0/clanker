@@ -46,7 +46,6 @@ extern fn ck_subagent(json_ptr: u32, json_len: u32) u32;
 extern fn ck_swarm(json_ptr: u32, json_len: u32) u32;
 extern fn ck_ask(json_ptr: u32, json_len: u32) u32;
 extern fn ck_random() u64;
-extern fn ck_fs_write_range(path_ptr: u32, path_len: u32, offset: u32, data_ptr: u32, data_len: u32) u32;
 
 const root = @import("root");
 /// Most tools only need a small request buffer. A tool that transports one
@@ -214,21 +213,6 @@ pub fn okText(out: *Out, text: []const u8) !void {
     try s.write(text);
     try s.endObject();
     commit(out, &w);
-}
-
-/// First `max` bytes of `s`, snapped down to a UTF-8 code-point boundary.
-/// A byte cap that lands mid-sequence produces invalid UTF-8; putting that
-/// in a JSON string makes the whole tool reply unparsable.
-pub fn utf8Prefix(s: []const u8, max: usize) []const u8 {
-    var n = @min(s.len, max);
-    if (n == s.len) return s;
-    while (n > 0 and s[n - 1] & 0xC0 == 0x80) n -= 1;
-    if (n == 0) return s[0..0];
-    const b = s[n - 1];
-    if (b & 0x80 == 0) return s[0..n];
-    const need: usize = if (b & 0xE0 == 0xC0) 2 else if (b & 0xF0 == 0xE0) 3 else if (b & 0xF8 == 0xF0) 4 else 1;
-    if (n - 1 + need > @min(s.len, max)) n -= 1;
-    return s[0..n];
 }
 
 // ----------------------------------------------------------------- input --
@@ -978,17 +962,8 @@ pub const HarnessConfig = struct {
     debug: HarnessDebug = .{},
 };
 
-/// The first configured manifest directory (scaffold destination), or the
-/// in-tree default when the host denies ck_harness_config or the key is absent.
-pub fn toolsDir() []const u8 {
-    const cfg = parseHarnessConfig();
-    if (cfg.agent.tools_dir.len > 0) return cfg.agent.tools_dir;
-    if (cfg.agent.tools_dirs.len > 0) return cfg.agent.tools_dirs[0];
-    return "tools/manifests";
-}
-
-/// Every configured manifest directory, last-listed last. Falls back to
-/// `toolsDir()` so a host that only emitted the singular key still works.
+/// Every configured manifest directory, last-listed last. Falls back to the
+/// singular `tools_dir` key so a host that only emitted that still works.
 pub fn toolsDirs() []const []const u8 {
     const cfg = parseHarnessConfig();
     if (cfg.agent.tools_dirs.len > 0) return cfg.agent.tools_dirs;
@@ -1014,75 +989,7 @@ pub fn parseHarnessConfig() HarnessConfig {
     return std.json.parseFromSliceLeaky(HarnessConfig, alloc, harnessConfig(), .{ .ignore_unknown_fields = true }) catch HarnessConfig{};
 }
 
-/// Strips a fenced code block (```json ... ```), returning just the inner
-/// content. Models asked for JSON commonly wrap it in fences.
-pub fn stripFence(raw: []const u8) []const u8 {
-    var s = std.mem.trim(u8, raw, " \t\r\n");
-    if (!std.mem.startsWith(u8, s, "```")) return s;
-    s = s[3..];
-    if (std.mem.findScalar(u8, s, '\n')) |nl| s = s[nl + 1 ..];
-    if (std.mem.findLast(u8, s, "```")) |close| s = s[0..close];
-    return std.mem.trim(u8, s, " \t\r\n");
-}
-
-/// Finds the outermost `{...}` span, honouring strings and escapes so a brace
-/// inside `"text"` does not end the object early. Returns null when there is
-/// no balanced object.
-pub fn objectSpan(s: []const u8) ?[]const u8 {
-    const start = std.mem.findScalar(u8, s, '{') orelse return null;
-    var depth: usize = 0;
-    var in_string = false;
-    var escaped = false;
-    var i = start;
-    while (i < s.len) : (i += 1) {
-        const c = s[i];
-        if (escaped) {
-            escaped = false;
-            continue;
-        }
-        if (in_string) {
-            switch (c) {
-                '\\' => escaped = true,
-                '"' => in_string = false,
-                else => {},
-            }
-            continue;
-        }
-        switch (c) {
-            '"' => in_string = true,
-            '{' => depth += 1,
-            '}' => {
-                if (depth == 0) return null;
-                depth -= 1;
-                if (depth == 0) return s[start .. i + 1];
-            },
-            else => {},
-        }
-    }
-    return null;
-}
-
-/// Returns true when `id` contains only safe path characters (alphanumeric,
-/// dash, underscore) and is 1..64 bytes. Used for ids that land in a file path.
-pub fn isSafeId(id: []const u8) bool {
-    if (id.len == 0 or id.len > 64) return false;
-    for (id) |c| {
-        const ok = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or
-            (c >= '0' and c <= '9') or c == '-' or c == '_';
-        if (!ok) return false;
-    }
-    return true;
-}
-
 /// Host-provided random u64.
 pub fn random() u64 {
     return ck_random();
-}
-
-/// Overwrites [offset, offset+data.len) of a file. The file must exist and
-/// the range must be within its current size (no implicit extend).
-pub fn fsWriteRange(path: []const u8, offset: usize, data: []const u8) FsError!void {
-    const p = sliceToMem(path);
-    const d = sliceToMem(data);
-    return fsPathOp(ck_fs_write_range(p.ptr, p.len, @intCast(offset), d.ptr, d.len));
 }

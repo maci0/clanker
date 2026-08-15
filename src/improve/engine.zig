@@ -1310,7 +1310,7 @@ pub const Engine = struct {
                     .feedback = try std.fmt.allocPrint(
                         self.arena,
                         "Your patch adds {s} and nothing in the tree calls it, so promoting it would change nothing about how clanker behaves. " ++
-                            "A function plus a unit test for that function is not an improvement; src/util/json.zig already carries three of them. " ++
+                            "A function plus a unit test for that function is not an improvement. " ++
                             "Either wire it into the code that should be using it, in the same patch, or propose a change to code that already runs.",
                         .{names.items},
                     ),
