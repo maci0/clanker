@@ -46,7 +46,12 @@ clanker.registerView({
     function draw(entries) {
       list.textContent = "";
       if (!entries.length) {
-        list.appendChild(api.el("p", "run-empty", "Nothing recorded yet. Move a card, or write a line in a card's activity box."));
+        var empty = api.el("p", "run-empty", "Nothing recorded yet. Move a card, or write a line in a card's activity box. ");
+        var go = api.el("button", "secondary", "Open board");
+        go.type = "button";
+        go.addEventListener("click", function () { api.showView("board"); });
+        empty.appendChild(go);
+        list.appendChild(empty);
         return;
       }
       entries.forEach(function (e) {

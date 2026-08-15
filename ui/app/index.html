@@ -585,7 +585,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <p class="meta" id="chat-new-room-hint">Letters, numbers, _ and - only. No spaces.</p>
         <div class="slack-dialog-actions">
           <button type="button" class="secondary" id="chat-create-cancel">Cancel</button>
-          <button type="submit" id="chat-create-confirm" value="ok">Create</button>
+          <button type="submit" class="primary" id="chat-create-confirm" value="ok">Create channel</button>
         </div>
       </form>
     </dialog>
@@ -688,7 +688,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <div class="transcript-tools">
         <label for="search-q">Search conversations</label>
         <input type="search" id="search-q" placeholder="e.g. cron spec, provider refused, safeJoin…" autocomplete="off" spellcheck="false">
-        <button type="button" class="secondary" id="search-go">Search</button>
+        <button type="button" class="primary" id="search-go">Search conversations</button>
       </div>
       <p class="sr-only" id="search-status" role="status" aria-live="polite"></p>
       <div id="search-results"></div>
@@ -1005,7 +1005,7 @@ lamps carry further). The seven named palettes ride the same tokens.
             <option value="config.toml">config.toml</option>
           </select>
           <button type="button" class="secondary" id="config-editor-reload" title="Discard the editor and re-read the file">Reload</button>
-          <button type="button" class="secondary" id="config-editor-save">Save</button>
+          <button type="button" class="primary" id="config-editor-save">Save file</button>
         </div>
       </div>
       <p class="meta">Saves validate first: a config that does not load is refused with the reason, and the running server keeps its last known good config. A valid save hot-restarts the server into it. <code>config.local.toml</code> is this machine's overlay; <code>config.toml</code> is shared.</p>

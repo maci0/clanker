@@ -73,6 +73,16 @@
      on a pointer; on a phone those 28px crumbs and rows miss the tap. */
   .files-crumb, .files-sort-btn, .files-open { min-height: 44px; }
   .files-row:not(.files-header) { min-height: 44px; }
+  /* Size + Modified need 16.5rem on their own. A 20rem phone then
+     scrolls sideways to read a name. Name stays; those two hide. */
+  .files-row,
+  .files-row.files-header {
+    grid-template-columns: 1.5rem minmax(0, 1fr);
+  }
+  .files-header .files-sort-btn:nth-child(3),
+  .files-header .files-sort-btn:nth-child(4),
+  .files-size,
+  .files-when { display: none; }
 }
 .files-filter:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .files-toggle-btn { font-family: var(--mono); letter-spacing: .05em; }

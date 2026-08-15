@@ -54,3 +54,10 @@
   border-color: var(--accent);
   color: var(--accent);
 }
+
+@media (pointer: coarse) {
+  .activity-card { min-height: 44px; }
+}
+@media (max-width: 40rem) {
+  .activity-card { min-height: 44px; }
+}

@@ -409,3 +409,35 @@ test("accent pill is primary/#submit only, not every unmarked button", function 
   const primary = ruleBody("button.primary:where(:not(.pf-v6-c-button)),\n#submit:where(:not(.pf-v6-c-button))");
   assert.match(primary, /background:\s*var\(--accent\)/);
 });
+
+test("Search and Create channel use a primary CTA", function () {
+  assert.match(html, /id="search-go"[^>]*class="primary"|class="primary"[^>]*id="search-go"/);
+  assert.match(html, /id="search-go"[^>]*>Search conversations</);
+  assert.match(html, /id="chat-create-confirm"[^>]*class="primary"|class="primary"[^>]*id="chat-create-confirm"/);
+  assert.match(html, /id="chat-create-confirm"[^>]*>Create channel</);
+  assert.match(html, /id="config-editor-save"[^>]*class="primary"|class="primary"[^>]*id="config-editor-save"/);
+});
+
+test("Fleet empty roster points at System Config instead of the phonebook", function () {
+  const src = readFileSync(join(here, "../features/fleet.js"), "utf8");
+  assert.match(src, /Add a peer in System → Config/);
+  assert.match(src, /Open Config/);
+  assert.match(src, /function navToSystemConfig/);
+  assert.doesNotMatch(src, /phonebook/);
+  assert.doesNotMatch(src, /\[\[peers\]\]/);
+});
+
+test("Activity empty state offers to open the board", function () {
+  const src = readFileSync(join(here, "../../plugins/activity/app.js"), "utf8");
+  assert.match(src, /Nothing recorded yet/);
+  assert.match(src, /Open board/);
+  assert.match(src, /api\.showView\("board"\)/);
+  const css = readFileSync(join(here, "../../plugins/activity/app.css"), "utf8");
+  assert.match(css, /@media \(max-width: 40rem\) \{\s*\.activity-card \{ min-height: 44px; \}/);
+});
+
+test("Knowledge add-document is a primary CTA", function () {
+  const src = readFileSync(join(here, "../features/knowledge.js"), "utf8");
+  assert.match(src, /submit\.className="primary"/);
+  assert.match(src, /submit\.textContent="Add document"/);
+});

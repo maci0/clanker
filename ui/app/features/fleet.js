@@ -100,7 +100,12 @@ function renderRoster(container, status, a2a, cards) {
   }
   var peers = status.peers || [];
   if (!peers.length) {
-    container.appendChild(el("p", "run-empty", "No peers configured. Add one to the phonebook to see its status and skills here."));
+    var empty = el("p", "run-empty", "No peers configured. Add a peer in System → Config to see its status and skills here. ");
+    var go = el("button", "secondary", "Open Config");
+    go.type = "button";
+    go.addEventListener("click", navToSystemConfig);
+    empty.appendChild(go);
+    container.appendChild(empty);
   } else {
     var ul = el("ul", "fleet-roster-list");
     ul.setAttribute("role", "list");
@@ -158,6 +163,18 @@ function renderA2ACard(container, card) {
   container.appendChild(wrap);
 }
 
+function navToSystemConfig() {
+  try {
+    if (_navShowView) _navShowView("system");
+    else if (typeof window.showView === "function") window.showView("system");
+    else if (window.clankerApp && typeof window.clankerApp.showView === "function") window.clankerApp.showView("system");
+    else window.location.hash = "#system";
+  } catch (_) { window.location.hash = "#system"; }
+  var target = document.getElementById("config-editor-section");
+  if (!target || !target.scrollIntoView) return;
+  var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  try { target.scrollIntoView({ block: "start", behavior: reduced ? "auto" : "smooth" }); } catch (_) {}
+}
 function isDmRoom(room) { return typeof room === "string" && room.indexOf("dm:") === 0; }
 function dmNames(room) { return isDmRoom(room) ? room.slice(3).split("|").join(" \u2194 ") : room; }
 function navToRooms(room) {
@@ -591,7 +608,7 @@ function meshStatusText(data) {
   var pulses = data.pulses || [];
   var working = nodes.filter(function (n) { return n.working; }).length;
   if (nodes.length <= 1 && !links.length) {
-    return "This clanker only. Add a [[peers]] entry to see others on the map.";
+    return "This clanker only. Add a peer in System → Config to see others on the map.";
   }
   return nodes.length + " node" + (nodes.length === 1 ? "" : "s") +
     (links.length ? ", " + links.length + " link" + (links.length === 1 ? "" : "s") : "") +

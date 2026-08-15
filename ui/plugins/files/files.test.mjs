@@ -70,3 +70,8 @@ test("Files buttons reset the host pill so filenames stay compact", function () 
 test("Files crumbs and rows are 44px on a phone", function () {
   assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*\.files-crumb, \.files-sort-btn, \.files-open \{ min-height: 44px; \}/);
 });
+
+test("Files listing drops Size and Modified on a phone so names stay on-screen", function () {
+  assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*\.files-size,\s*\.files-when \{ display: none; \}/);
+  assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*grid-template-columns:\s*1\.5rem minmax\(0,\s*1fr\)/);
+});

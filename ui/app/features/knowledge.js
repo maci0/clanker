@@ -194,7 +194,7 @@ function openCollection(id, docId){
       var fr=new FileReader(); fr.onload=function(){ cInput.value=String(fr.result||""); if(!nInput.value) nInput.value=f.name; }; fr.readAsText(f);
     });
     addForm.appendChild(fileInput);
-    var submit=document.createElement("button"); submit.type="submit"; submit.className="secondary"; submit.textContent="Add document"; addForm.appendChild(submit);
+    var submit=document.createElement("button"); submit.type="submit"; submit.className="primary"; submit.textContent="Add document"; addForm.appendChild(submit);
     addForm.addEventListener("submit",function(e){
       e.preventDefault(); var name=nInput.value.trim(); var content=cInput.value;
       if(!name||!content.trim()){ toast("Name and content are both required."); return; }
