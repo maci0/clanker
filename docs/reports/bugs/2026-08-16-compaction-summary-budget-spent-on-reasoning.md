@@ -62,6 +62,14 @@ usage: completion_tokens 512, reasoning_tokens 438
 74 tokens of summary, cut mid-word — and Clanker accepts that as a good summary,
 because nothing inspects `finish_reason`.
 
+**How much of the budget goes to reasoning varies between replays, so the
+severity does too.** A later replay of the same 512-token request against the
+same model and transcript spent only 57 tokens on reasoning and returned 1,891
+characters — still `finish_reason: length`, so still truncated, just not empty.
+Under the old budget every replay was degraded, in one of those two ways; which
+one is not predictable. The affected production run got the empty variant on
+every compaction across 170+ iterations.
+
 ## Root cause
 
 `summarizeMessages` (src/agent/loop.zig:1531) requests `max_tokens = 512`
@@ -87,27 +95,46 @@ Three smaller gaps sit on the same path:
 
 ## Resolution
 
-Not yet implemented. The changes that address the root cause:
+Fixed in `d2628464` (`src/agent/loop.zig`), in four parts.
 
-1. **Budget the summary call for the model it runs on.** Either raise
-   `max_tokens` for this call well above the reasoning allowance, or send an
-   explicit low/none `reasoning_effort` for it — the request is a mechanical
-   distillation and does not need chain-of-thought. Sending both is fine.
-2. **Use the reasoning text when content is empty.** It is the same model
-   answering the same prompt; falling back to `resp.reasoning` beats falling back
-   to a clipped transcript.
-3. **Treat truncation as a failure.** `finish_reason == "length"` with short or
-   empty content should be a distinct error that names the cause, instead of a
-   generic `EmptyResponse` or a silently accepted half-summary.
-4. **Stop retrying a summarizer that has failed.** After a small number of
-   failures in one run, go straight to the extractive summary and log the reason
-   once.
+1. **The summary call is budgeted for the model it runs on.**
+   `summarizeMessages` asks `sampling.hasThinking` about the active model and
+   requests `summary_thinking_max_tokens` (4096) instead of `summary_max_tokens`
+   (512) when the model reasons, and sends `reasoning_effort: "low"` for this
+   call specifically. Distilling a transcript into bullets does not need
+   deliberation, and the per-call override beats the model's configured effort
+   in `writeSamplingParams`, so this cannot be undone by configuration.
+2. **Reasoning stands in for empty content.** When content is empty and
+   `resp.reasoning` is not, the reasoning text is used as the summary (capped at
+   `summary_reasoning_cap`) with a warning. It is the same model working the same
+   prompt; it beats dropping to the extractive clip.
+3. **Truncation is named.** `finish_reason == "length"` with empty content is
+   `error.SummaryTruncated` rather than a generic `EmptyResponse`, and a
+   truncated-but-present summary is used with a warning instead of being accepted
+   silently.
+4. **A failed summarizer is not retried all run.** `compactionSummary` counts
+   failures; after `max_summary_failures` (2) it goes straight to the extractive
+   summary and says so once:
+   `compaction summary failed (SummaryTruncated), trying local extractive summary; further compactions in this run summarize locally`.
 
 ## Verification
 
-Pending. The fix must show, against the reproduction above, a non-empty summary
-with `finish_reason` other than `length`; and, on a run with a thinking model, at
-most one `compaction summary failed` line instead of one per compaction.
+The same request, replayed against `api.deepseek.com` with
+`deepseek-v4-flash` and 12,000 characters of real source, old shape against new:
+
+| request | finish_reason | content | reasoning tokens |
+|---|---|---|---|
+| old: `max_tokens 512`, effort from model config | `length` | 1,891 chars, truncated | 57 |
+| new: `max_tokens 4096`, effort `low` for this call | `stop` | 951 chars, complete | 289 |
+
+The new shape completes; the old one was still truncating on the same input.
+An earlier replay of the old shape returned empty content with all 512 tokens
+spent on reasoning, which is the variant the production run hit.
+
+In the mock-provider reproduction (a provider that always answers the summary
+request with empty content and `finish_reason: length`), the failure is now
+reported as `SummaryTruncated` rather than `EmptyResponse`, and the third
+compaction onward summarizes locally without a round trip.
 
 ## Follow-up
 
@@ -119,6 +146,7 @@ request path share this failure mode.
 
 - Investigation: [`2026-08-16-run-livelock-compaction-thrash.md`](../investigations/2026-08-16-run-livelock-compaction-thrash.md)
 - Related bug: [`2026-08-16-compaction-cannot-shrink-immovable-history.md`](2026-08-16-compaction-cannot-shrink-immovable-history.md)
-- Code: `src/agent/loop.zig` (1425, 1531, 1573, 1575), `src/llm/providers/common.zig` (46, 54),
-  `src/llm/providers/openai.zig` (265, 267)
-- Fix: none yet
+- Code: `src/agent/loop.zig` (`summarizeMessages`, `compactionSummary`, `localSummary`),
+  `src/llm/providers/common.zig` (`clampedMaxTokens`, `writeSamplingParams`),
+  `src/llm/providers/openai.zig` (`parseResponse`), `src/llm/sampling_profiles.zig` (`hasThinking`)
+- Fix: `d2628464`

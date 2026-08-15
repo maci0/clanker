@@ -10,12 +10,16 @@
   every iteration forever; and the compaction summary call fails deterministically
   on a thinking model because its 512-token budget is spent entirely on reasoning.
   Both reproduced.
-- **Resolution:** handoff. Two bug reports opened; no fix committed yet.
+- **Resolution:** resolved in `d2628464`. Both defects fixed and verified against
+  this investigation's reproduction; the wrapper that stalled behind the run now
+  has a watchdog of its own.
 
 ## Status
 
-Investigating. Moves to Resolved when the two linked bugs are fixed and a run
-with the same configuration reaches a final answer instead of the iteration cap.
+Resolved. Both linked bugs are fixed: on the reproduction, a run that compacted
+on 12 of 14 iterations now compacts once, and a run that genuinely cannot fit its
+history stops with a named error and a non-zero exit instead of spinning to the
+iteration cap.
 
 ## Trigger and scope
 
@@ -161,25 +165,37 @@ livelock — the extractive fallback keeps compaction working — but it pays a 
 LLM round trip per iteration for nothing, and it discards the `reasoning_content`
 that actually holds the summary.
 
-## Resolution or handoff
+## Resolution
 
-Two bugs, fixable independently:
+Both bugs are fixed in `d2628464`; each report carries its own resolution and
+verification:
 
 - [Compaction cannot shrink an immovable history](../bugs/2026-08-16-compaction-cannot-shrink-immovable-history.md)
+  — the threshold now answers to what compaction can deliver, one measure is used
+  everywhere, and five consecutive compactions end the run with
+  `error.CompactionStalled`.
 - [Compaction summary budget is spent on reasoning](../bugs/2026-08-16-compaction-summary-budget-spent-on-reasoning.md)
+  — the summary call is budgeted for a thinking model, falls back to its
+  reasoning text, names truncation, and is abandoned after two failures per run.
 
-Smallest next change for the livelock: make compaction compare its own result
-against its input and refuse to retry when it did not help — an explicit
-`compaction made no progress` warning naming the immovable floor, plus a
-growth-based cooldown so the next attempt waits until the history has actually
-grown. Regression test: the pure `compactionKeepStart` / `compactMiddle` pair
-against a message list whose system message alone exceeds the threshold, asserting
-the second attempt is suppressed.
+Two things the fix taught that the original analysis had wrong, both caught by
+re-running the reproduction rather than by reading:
 
-Separately, an unattended wrapper must not be able to wait forever on a child;
-`scripts/imp-autorecover-loop/loop.py` has no timeout on the repair run it starts.
-That is wrapper work, not a Clanker defect, but this incident is the argument for
-it.
+- Sizing the immovable floor from raw tokens while the threshold test uses
+  pruning-discounted tokens overstates the floor by a factor of two. One measure
+  (`historyTokens`) is now used by every part of the decision.
+- "Did this compaction free a meaningful share?" is the wrong stop condition. With
+  a threshold barely above the floor, every compaction frees ~6% and dips just
+  under, then one iteration puts the history back over — so each compaction
+  succeeds while the run still compacts on every iteration. The condition that
+  matches the symptom is consecutive iterations that each needed a compaction.
+
+The wrapper that stalled behind the run,
+`scripts/imp-autorecover-loop/loop.py`, now has a watchdog: a wall-clock cap on
+repair-level runs and a silence timeout on every run, with a stopped run treated
+as a failed run. That is wrapper work rather than a Clanker defect, but this
+incident is why it exists — and note that a silence timeout alone would not have
+caught this failure, because the livelocked run never stopped printing.
 
 ## References
 
