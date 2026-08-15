@@ -50,6 +50,8 @@ pub fn run(
 ) !Outcome {
     const limit = @max(@as(u32, 1), max_turns);
     var task = initial_task;
+    var owned_task: ?[]const u8 = null;
+    defer if (owned_task) |t| alloc.free(t);
     var turn: u32 = 1;
     while (turn <= limit) : (turn += 1) {
         const answer = try callbacks.run_turn(callbacks.context, turn, task);
@@ -60,7 +62,10 @@ pub fn run(
             .continue_ => {},
         }
         if (turn == limit) break;
-        task = try continuationTask(alloc, condition, turn + 1, decision.reason);
+        const next = try continuationTask(alloc, condition, turn + 1, decision.reason);
+        if (owned_task) |t| alloc.free(t);
+        owned_task = next;
+        task = next;
     }
     return .{
         .verdict = .blocked,
