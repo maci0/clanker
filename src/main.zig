@@ -36,6 +36,7 @@ comptime {
     _ = @import("llm/types.zig");
     _ = @import("llm/registry.zig");
     _ = @import("llm/catalog.zig");
+    _ = @import("llm/models_dev.zig");
     _ = @import("llm/providers/api.zig");
     _ = @import("llm/providers/common.zig");
     _ = @import("llm/sampling_profiles.zig");

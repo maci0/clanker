@@ -17,6 +17,7 @@ const json = std.json;
 const log = @import("util/log.zig");
 const toml_bridge = @import("util/toml_bridge.zig");
 const atomic_write = @import("util/atomic_write.zig");
+const models_dev = @import("llm/models_dev.zig");
 
 /// A schema failure is reported before it reaches the command dispatcher.
 /// Keeping the original TOML source here is intentional: the intermediate
@@ -98,10 +99,16 @@ pub const Model = struct {
     /// (`grok4.6-coding` and `grok4.6-general` both `id = "grok-4.6"`).
     id: []const u8 = "",
     /// Total model context window in tokens (input + output). Used to size
-    /// conversation compaction and the improve context budget.
+    /// conversation compaction and the improve context budget. Unset in the
+    /// file is filled from the models.dev snapshot when one exists.
     context_window: u32 = 131072,
-    /// Per-request max output tokens (completion cap).
+    /// True when the file named `context_window`. Catalog fill skips those.
+    context_window_set: bool = false,
+    /// Per-request max output tokens (completion cap). Unset in the file is
+    /// filled from the models.dev `limit.output` when one exists.
     max_tokens: u32 = 1024,
+    /// True when the file named `max_tokens`. Catalog fill skips those.
+    max_tokens_set: bool = false,
     temperature: ?f64 = null,
     /// Nucleus sampling cutoff. Left null by default and generally best set
     /// *instead of* temperature rather than alongside it: both narrow the same
@@ -911,6 +918,7 @@ pub const Config = struct {
         // that only sets, say, `default_provider` has no "providers" section by
         // design, and warning about it points at a config that is in fact fine.
         if (cfg.providers.count() > 0) try validateProviderModels(&cfg);
+        applyCatalogSpecs(io, arena, dir, &cfg);
         if (cfg.providers.count() == 0) {
             log.log(.warn, "config {s}: no providers defined", .{base.path});
         } else if (cfg.providers.get(cfg.default_provider) == null) {
@@ -1353,6 +1361,37 @@ pub const Config = struct {
         }
     }
 
+    /// Fill unset model specs from the models.dev snapshot in `dir`. A
+    /// written `context_window` / `max_tokens` / cost / capabilities /
+    /// display wins. Missing snapshot is a no-op: load never downloads.
+    fn applyCatalogSpecs(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, cfg: *Config) void {
+        const body = models_dev.readLocal(io, dir, arena) orelse return;
+        const catalog = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true }) catch return;
+        var it = cfg.providers.iterator();
+        while (it.next()) |pkv| {
+            const p = pkv.value_ptr;
+            const cat_p = models_dev.findProvider(catalog, p.name, p.base_url, p.api_key_env) orelse continue;
+            var mit = p.models.iterator();
+            while (mit.next()) |mkv| {
+                const key = mkv.key_ptr.*;
+                const m = mkv.value_ptr;
+                const sku = m.wireName(key);
+                const cat_m = models_dev.findModel(cat_p, sku) orelse models_dev.findModel(cat_p, key) orelse continue;
+                const spec = models_dev.specs(arena, cat_m) catch continue;
+                if (!m.context_window_set) {
+                    if (spec.context_window) |c| m.context_window = c;
+                }
+                if (!m.max_tokens_set) {
+                    if (spec.max_tokens) |t| m.max_tokens = t;
+                }
+                if (m.cost_per_1m_input == null) m.cost_per_1m_input = spec.cost_per_1m_input;
+                if (m.cost_per_1m_output == null) m.cost_per_1m_output = spec.cost_per_1m_output;
+                if (m.display == null) m.display = spec.display;
+                if (m.capabilities.len == 0 and spec.capabilities.len > 0) m.capabilities = spec.capabilities;
+            }
+        }
+    }
+
     fn validateModelParams(provider_name: []const u8, model_name: []const u8, m: Model) !void {
         if (m.temperature) |t| {
             if (t < 0 or t > 2) {
@@ -1407,8 +1446,14 @@ pub const Config = struct {
             "category",
         }, name);
         if (obj.get("id")) |k| m.id = try jsonStr(k, "id");
-        if (obj.get("context_window")) |k| m.context_window = try jsonUnsigned(u32, k, "context_window");
-        if (obj.get("max_tokens")) |k| m.max_tokens = try jsonUnsigned(u32, k, "max_tokens");
+        if (obj.get("context_window")) |k| {
+            m.context_window = try jsonUnsigned(u32, k, "context_window");
+            m.context_window_set = true;
+        }
+        if (obj.get("max_tokens")) |k| {
+            m.max_tokens = try jsonUnsigned(u32, k, "max_tokens");
+            m.max_tokens_set = true;
+        }
         if (obj.get("temperature")) |k| m.temperature = try jsonFloat(k, "temperature");
         if (obj.get("top_p")) |k| m.top_p = try jsonFloat(k, "top_p");
         if (obj.get("reasoning_effort")) |k| {
@@ -3438,6 +3483,69 @@ test "a model id is the wire SKU; the table key is the local name" {
     try std.testing.expectEqual(@as(f64, 0.7), picked.activeModel().temperature.?);
 }
 
+test "unset model specs fill from the models.dev snapshot; written values win" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "state/models-dev.json",
+        .data =
+        \\{
+        \\  "xai": {
+        \\    "api": "https://api.x.ai/v1",
+        \\    "models": {
+        \\      "grok-4.6": {
+        \\        "name": "Grok 4.6",
+        \\        "limit": {"context": 500000, "output": 250000},
+        \\        "cost": {"input": 2, "output": 6},
+        \\        "reasoning": true,
+        \\        "tool_call": true
+        \\      }
+        \\    }
+        \\  }
+        \\}
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "xai"
+        \\[providers.xai]
+        \\base_url = "https://api.x.ai/v1"
+        \\default_model = "grok4.6-coding"
+        \\[models."xai/grok4.6-coding"]
+        \\provider = "xai"
+        \\id = "grok-4.6"
+        \\temperature = 0.2
+        \\[models."xai/grok4.6-capped"]
+        \\provider = "xai"
+        \\id = "grok-4.6"
+        \\max_tokens = 8192
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    const coding = cfg.providers.getPtr("xai").?.models.get("grok4.6-coding").?;
+    try std.testing.expectEqual(@as(u32, 500000), coding.context_window);
+    try std.testing.expectEqual(@as(u32, 250000), coding.max_tokens);
+    try std.testing.expectEqual(@as(f64, 2), coding.cost_per_1m_input.?);
+    try std.testing.expectEqual(@as(f64, 6), coding.cost_per_1m_output.?);
+    try std.testing.expectEqualStrings("Grok 4.6", coding.display.?);
+    try std.testing.expectEqual(@as(usize, 2), coding.capabilities.len);
+    try std.testing.expectEqual(@as(f64, 0.2), coding.temperature.?);
+
+    const capped = cfg.providers.getPtr("xai").?.models.get("grok4.6-capped").?;
+    try std.testing.expectEqual(@as(u32, 500000), capped.context_window);
+    try std.testing.expectEqual(@as(u32, 8192), capped.max_tokens);
+    try std.testing.expect(capped.max_tokens_set);
+}
+
 test "a local override with only default_provider keeps the base providers" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -4459,7 +4567,7 @@ test "config.toml documents every key the loader accepts" {
     // Fields that are not config keys. `shared_root` is set by `run
     // --worktree` at runtime and deliberately unreadable from a file; the
     // rest are the parsed *results* of keys rather than keys themselves.
-    const not_keys = [_][]const u8{ "shared_root", "name", "models" };
+    const not_keys = [_][]const u8{ "shared_root", "name", "models", "context_window_set", "max_tokens_set" };
     inline for (.{ Agent, Improve, Modules, Web, Notify, Chatrooms, Kernel, Debug, Mesh, Ttsr, TtsrRule, Advisor, Instance, Tui, Serve, Model, Provider }) |T| {
         inline for (@typeInfo(T).@"struct".fields) |f| {
             comptime var skip = false;

@@ -241,19 +241,24 @@ is the local id (`--model xai/grok4.6-coding`, the picker). It is also the
 API `model` field unless `id` names a different wire SKU. `display` only
 changes how it is shown, never what is sent.
 
+Context window, max output, cost, display, and capabilities are filled from
+the local models.dev snapshot (`state/models-dev.json`) when omitted. Load
+never downloads that file. A value written in the table always wins, so an
+alias can keep its own `max_tokens` while inheriting the SKU's window.
+
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `provider` | string | required | Which provider serves this model. |
 | `id` | string | unset | Wire SKU. Omit to send the table-key name. Set this to give one SKU two local names with different sampling (`grok4.6-coding` and `grok4.6-general` both `id = "grok-4.6"`). |
-| `context_window` | int | 131072 | Total context in tokens; sizes compaction and the improve context budget. |
-| `max_tokens` | int | 1024 | Per-request output-token cap. |
+| `context_window` | int | models.dev `limit.context`, else 131072 | Total context in tokens; sizes compaction and the improve context budget. Omit to take the snapshot; a written value wins. |
+| `max_tokens` | int | models.dev `limit.output`, else 1024 | Per-request output-token cap. Omit to take the snapshot; a written value wins. |
 | `temperature` | float | unset | Sampling temperature. |
 | `top_p` | float | unset | Nucleus cutoff; best set *instead of* temperature, not alongside. |
 | `reasoning_effort` | string | unset | For reasoning models, sent as `reasoning_effort` on the OpenAI-compatible wire (Ollama, DeepSeek, OpenAI, …). One of `"none"`/`"low"`/`"medium"`/`"high"`/`"max"`; keeps chain-of-thought short so `content` stays populated. Unset omits the field; `"none"` disables reasoning explicitly. Invalid values are rejected at load. |
-| `display` | string | unset | UI label when the wire id is not what a person calls it (e.g. `kimi-k3` shown as `moonshotai/kimi-k3`). Display only. |
-| `cost_per_1m_input` | float | unset | USD per 1M input tokens, for run cost accounting. |
-| `cost_per_1m_output` | float | unset | USD per 1M output tokens. |
-| `capabilities` | string[] | `[]` | `"tool_use"`, `"image_in"`, `"video_in"`, `"audio_in"`, `"thinking"`, `"always_thinking"`. Self-documents what the model supports. A model that declares its capabilities but omits `image_in` is treated as non-vision: the webui refuses image attachments to it up front (instead of sending `image_url` blocks that a text-only endpoint such as DeepSeek v4-flash rejects), so declare `image_in` on any model that accepts images. A model with no `capabilities` declared is left unknown and the attachment is attempted. |
+| `display` | string | models.dev `name` | UI label when the wire id is not what a person calls it (e.g. `kimi-k3` shown as `moonshotai/kimi-k3`). Display only. Omit to take the snapshot. |
+| `cost_per_1m_input` | float | models.dev `cost.input` | USD per 1M input tokens, for run cost accounting. Omit to take the snapshot. |
+| `cost_per_1m_output` | float | models.dev `cost.output` | USD per 1M output tokens. Omit to take the snapshot. |
+| `capabilities` | string[] | models.dev reasoning/tool_call/modalities | `"tool_use"`, `"image_in"`, `"video_in"`, `"audio_in"`, `"thinking"`, `"always_thinking"`. Self-documents what the model supports. A model that declares its capabilities but omits `image_in` is treated as non-vision: the webui refuses image attachments to it up front (instead of sending `image_url` blocks that a text-only endpoint such as DeepSeek v4-flash rejects), so declare `image_in` on any model that accepts images. An empty list is filled from the snapshot; a written list is kept as-is. |
 | `category` | string | `""` | Free-form grouping (`"flagship"`, `"fast"`, `"reasoning"`, `"cheap"`, ...) used to sort/group the model list in the webui picker, the TUI's `/model` picker, and the CLI. Purely presentational, never sent to a provider. Empty sorts last within its provider. |
 
 ```toml

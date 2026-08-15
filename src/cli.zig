@@ -7,6 +7,7 @@ const config = @import("config.zig");
 const client = @import("llm/client.zig");
 const providers = @import("llm/registry.zig");
 const catalog_mod = @import("llm/catalog.zig");
+const models_dev = @import("llm/models_dev.zig");
 const types = @import("llm/types.zig");
 const agent = @import("agent/loop.zig");
 const registry = @import("toolhost/registry.zig");
@@ -2653,7 +2654,7 @@ fn cmdProvidersFill(init: std.process.Init, opts: Options) !void {
 
     const body = try loadModelsDev(io, gpa, arena, false);
     const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
-    const cat_provider = findCatalogProvider(catalog, p) orelse {
+    const cat_provider = models_dev.findProvider(catalog, p.name, p.base_url, p.api_key_env) orelse {
         log.log(.warn, "{s}: no models.dev entry matches base_url {s}", .{ provider_name, p.base_url });
         return;
     };
@@ -2662,7 +2663,8 @@ fn cmdProvidersFill(init: std.process.Init, opts: Options) !void {
     var it = p.models.iterator();
     while (it.next()) |kv| {
         const model_name = kv.key_ptr.*;
-        const cat_model = findCatalogModel(cat_provider, model_name) orelse {
+        const sku = kv.value_ptr.wireName(model_name);
+        const cat_model = models_dev.findModel(cat_provider, sku) orelse models_dev.findModel(cat_provider, model_name) orelse {
             try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "# {s}: no catalog match\n", .{model_name}));
             continue;
         };
@@ -2670,88 +2672,16 @@ fn cmdProvidersFill(init: std.process.Init, opts: Options) !void {
     }
 }
 
-/// The models.dev provider entry whose API this clanker provider talks to:
-/// an exact `base_url` match first (most precise), then same host, then (for
-/// providers with no fixed public host, e.g. a local relay) a shared
-/// `api_key_env` name. Ambiguous on env alone, several models.dev entries
-/// can share one vendor's env var name, so it is only the last resort.
 fn findCatalogProvider(catalog: std.json.Value, p: *const config.Provider) ?std.json.Value {
-    if (catalog != .object) return null;
-    const want_base = std.mem.trimEnd(u8, p.base_url, "/");
-    const want_host = config.hostOf(p.base_url);
-    var host_fallback: ?std.json.Value = null;
-    var env_fallback: ?std.json.Value = null;
-    var it = catalog.object.iterator();
-    while (it.next()) |kv| {
-        const entry = kv.value_ptr.*;
-        if (entry != .object) continue;
-        const api = fieldStr(entry.object, "api") orelse "";
-        if (api.len > 0 and std.mem.eql(u8, std.mem.trimEnd(u8, api, "/"), want_base)) return entry;
-        if (host_fallback == null) if (want_host) |wh| {
-            if (config.hostOf(api)) |eh| {
-                if (std.mem.eql(u8, eh, wh)) host_fallback = entry;
-            }
-        };
-        if (env_fallback == null) {
-            if (p.api_key_env) |want_env| {
-                if (entry.object.get("env")) |envs| {
-                    if (envs == .array) {
-                        for (envs.array.items) |e| {
-                            if (e == .string and std.mem.eql(u8, e.string, want_env)) {
-                                env_fallback = entry;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    return host_fallback orelse env_fallback;
+    return models_dev.findProvider(catalog, p.name, p.base_url, p.api_key_env);
 }
 
-/// A catalog provider's model matching `model_name`, trying the exact key
-/// first and then the part after the last `/`, config model names are
-/// sometimes written OpenRouter-style (`moonshotai/kimi-k3`) even against a
-/// vendor's own API, which the catalog keys bare (`kimi-k3`).
 fn findCatalogModel(provider_entry: std.json.Value, model_name: []const u8) ?std.json.Value {
-    if (provider_entry != .object) return null;
-    const models_v = provider_entry.object.get("models") orelse return null;
-    if (models_v != .object) return null;
-    if (models_v.object.get(model_name)) |m| return m;
-    if (std.mem.findScalarLast(u8, model_name, '/')) |slash| {
-        return models_v.object.get(model_name[slash + 1 ..]);
-    }
-    return null;
+    return models_dev.findModel(provider_entry, model_name);
 }
 
-/// A pastable `[models."<provider>/<name>"]` TOML table, built from a
-/// models.dev model entry. `capabilities` mirrors Kimi Code's config.toml
-/// shape: models.dev's own `reasoning`/`tool_call`/`modalities` fields,
-/// translated to the same tag vocabulary ("thinking", "tool_use", "image_in",
-/// "video_in", "audio_in") clanker's own Model.capabilities expects.
-///
-/// models.dev's `reasoning` / `tool_call` / `modalities.input`, as the tags
-/// `config.Model.capabilities` accepts. Extracted so the snippet
-/// `providers fill` prints and the one `/api/catalog` hands the web UI read one
-/// definition and cannot drift apart. Unquoted: TOML wants `"thinking"`, JSON
-/// wants a plain array element, so quoting stays with the caller.
 fn catalogCapabilities(arena: std.mem.Allocator, m: std.json.Value) ![]const []const u8 {
-    var caps: std.ArrayList([]const u8) = .empty;
-    if (m != .object) return caps.toOwnedSlice(arena);
-    if (m.object.get("reasoning")) |r| if (r == .bool and r.bool) try caps.append(arena, "thinking");
-    if (m.object.get("tool_call")) |t| if (t == .bool and t.bool) try caps.append(arena, "tool_use");
-    if (m.object.get("modalities")) |mo| if (mo == .object) {
-        if (mo.object.get("input")) |in| if (in == .array) {
-            for (in.array.items) |item| {
-                if (item != .string) continue;
-                if (std.mem.eql(u8, item.string, "image")) try caps.append(arena, "image_in");
-                if (std.mem.eql(u8, item.string, "video")) try caps.append(arena, "video_in");
-                if (std.mem.eql(u8, item.string, "audio")) try caps.append(arena, "audio_in");
-            }
-        };
-    };
-    return caps.toOwnedSlice(arena);
+    return models_dev.capabilities(arena, m);
 }
 
 fn tomlQuoted(arena: std.mem.Allocator, value: []const u8) ![]const u8 {

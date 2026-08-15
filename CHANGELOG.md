@@ -11,6 +11,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   the table key is a local alias. Two names can share one SKU with
   different temperature (or other) settings:
   `grok4.6-coding` and `grok4.6-general` both `id = "grok-4.6"`.
+- Omitted `context_window`, `max_tokens`, cost, display, and capabilities
+  are filled from the models.dev snapshot at load. A written value always
+  wins. Load does not download the snapshot.
 - `zig build proxy` builds `clanker-proxy`, the OpenAI/Anthropic
   compatibility proxy as a standalone binary: same `config.toml` /
   `config.local.toml`, `/v1` at the root, `[serve] proxy_token_env`
