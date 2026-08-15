@@ -47,7 +47,9 @@ export function setListMode(on) {
     toggleBtn.setAttribute("aria-pressed", listMode ? "true" : "false");
     toggleBtn.textContent = "";
     toggleBtn.appendChild(icon(listMode ? "grid" : "list", 16));
-    toggleBtn.title = listMode ? "Switch to board view" : "Switch to list view";
+    var next = listMode ? "Switch to board view" : "Switch to list view";
+    toggleBtn.title = next;
+    toggleBtn.setAttribute("aria-label", next);
   }
   syncListControls();
 }
@@ -1526,14 +1528,14 @@ function showCardDetail(id) {
   // placeholder with the mirrored goal's stored default, like the Goals view.
   var goalRow = document.createElement("div");
   goalRow.className = "goal-row";
-  var goalIters = input("card-f-goal-iters", "number", "", "max iters (default)");
+  var goalIters = input("card-f-goal-iters", "number", "", "steps (default)");
   goalIters.min = "1"; goalIters.step = "1";
-  goalIters.title = "Optional per-run max iterations. Blank uses the goal's stored default, then the global agent.max_iterations.";
+  goalIters.title = "Optional per-run step limit. Leave blank to use this goal's saved default, then the configured default (usually 50).";
   var gid = goalIdForCard(c.id);
   var gl = goalState.val || [];
   for (var gi = 0; gi < gl.length; gi++) {
     if (gl[gi].id === gid && gl[gi].max_iterations) {
-      goalIters.placeholder = "\u2264 " + gl[gi].max_iterations + " iters (default)";
+      goalIters.placeholder = "\u2264 " + gl[gi].max_iterations + " steps";
       break;
     }
   }

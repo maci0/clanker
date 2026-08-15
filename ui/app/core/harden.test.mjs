@@ -118,6 +118,10 @@ test("workspace plus minus hit 44px on coarse pointers", function () {
   assert.match(css, /@media \(pointer: coarse\) \{\s*\.rail-ws-btn \{ min-width: 44px; min-height: 44px; \}/);
 });
 
+test("config file picker has a visible label", function () {
+  assert.match(html, /<label for="config-editor-file">File<\/label>/);
+});
+
 test("required field labels are marked in CSS", function () {
   assert.match(css, /label:has\(\+ input\[required\]\)::after/);
 });

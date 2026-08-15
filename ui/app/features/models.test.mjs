@@ -50,6 +50,11 @@ test("catalog refresh posts to /api/catalog/refresh", function () {
   assert.match(js, /getElementById\("models-catalog-refresh"\)[\s\S]*refreshCatalog/);
 });
 
+test("model save copy does not tell the operator to restart by hand", function () {
+  assert.doesNotMatch(js, /Restart clanker serve for this to take effect/);
+  assert.match(js, /The server reloads into it/);
+});
+
 test("Configured table folds alias variants behind a group toggle", function () {
   assert.match(js, /models-group-toggle/);
   assert.match(js, /data-group/);

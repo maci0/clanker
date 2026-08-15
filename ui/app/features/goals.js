@@ -147,8 +147,8 @@ function goalCard(g) {
         T.input({
           type: "number", min: "1", max: "1000", step: "1",
           "data-goal-budget": g.id,
-          placeholder: g.max_iterations ? ("≤ " + g.max_iterations + " iters (default)") : "max iters (default)",
-          title: "Optional per-run max iterations. Blank uses the goal's stored default, then the global agent.max_iterations."
+          placeholder: g.max_iterations ? ("≤ " + g.max_iterations + " steps") : "steps (default)",
+          title: "Optional per-run step limit. Leave blank to use this goal's saved default, then the configured default (usually 50)."
         }),
         UI.button("Work on this", function () { workOnGoal(g); },
           { label: "Work on goal: " + (g.objective || g.id) })));
@@ -203,7 +203,7 @@ function goalCard(g) {
         : null),
     T.div({ class: "goal-meta" },
       T.span({ class: "goal-status" }, shown),
-      g.max_iterations ? T.span("budget ≤ " + g.max_iterations + " iters") : null,
+      g.max_iterations ? T.span("≤ " + g.max_iterations + " steps") : null,
       g.id ? T.span("id " + String(g.id).slice(0, 10)) : null),
     /* A well-specified goal runs to several paragraphs and there are usually
        several of them; expanded by default they push the rest of the page off

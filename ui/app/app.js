@@ -1905,6 +1905,7 @@ window.addEventListener("beforeunload", flushDraft);
     btn.appendChild(icon(on ? "minus" : "mic", 16));
     btn.setAttribute("aria-pressed", String(on));
     btn.title = on ? "Listening (click to stop)" : "Voice input (click to start)";
+    btn.setAttribute("aria-label", btn.title);
     el.task.placeholder = on ? "Listening…" : "Describe the task, / for prompts";
   }
   btn.addEventListener("click", function(){

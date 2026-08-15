@@ -198,7 +198,7 @@ function postConfig(path, payload, btn, confirmLabel, doneLabel) {
     .then(function (d) {
       if (!d.ok) throw new Error(d.error || "write failed");
       if (btn) btn.textContent = doneLabel;
-      setSnippetNote("Saved to config.local.toml. Restart clanker serve for this to take effect.");
+      setSnippetNote("Saved to config.local.toml. " + (d.applied || "The server reloads into it."));
       status("Wrote " + (d.path || "config.local.toml") + ".");
     })
     .catch(function (err) {
@@ -606,7 +606,7 @@ function saveEdit() {
     .then(readJson)
     .then(function (d) {
       if (!d.ok) throw new Error(d.error || "write failed");
-      setEditNote("Saved to config.local.toml. Restart clanker serve for this to take effect.");
+      setEditNote("Saved to config.local.toml. " + (d.applied || "The server reloads into it."));
       status("Wrote " + (d.path || "config.local.toml") + " for " + payload.provider + "/" + payload.model + ".");
       if (btn) btn.disabled = false;
       loadConfigured();
@@ -638,7 +638,7 @@ function removeEdit() {
       if (!d.ok) throw new Error(d.error || "remove failed");
       if (btn) { btn.disabled = false; btn.textContent = "Remove"; }
       if (d.removed) {
-        setEditNote("Removed from config.local.toml. Restart clanker serve for this to take effect.");
+        setEditNote("Removed from config.local.toml. " + (d.applied || "The server reloads into it."));
         status("Removed " + editEntry.provider + "/" + editEntry.model + ".");
         loadConfigured();
       } else {
