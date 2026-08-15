@@ -4347,8 +4347,12 @@ test "config.toml documents every key the loader accepts" {
     // down at all: a key added to the schema and not to the file is one
     // nobody outside this source file will ever find. Reflection over the
     // structs rather than a hand-kept list, so the guard cannot go stale the
-    // same way the file did.
-    const text = @embedFile("config_toml");
+    // same way the file did. Resolved relative to this source file (src/),
+    // so it reaches the committed config.toml at the repo root. Plain
+    // @embedFile of a repo-root path keeps the file out of the exe: test
+    // blocks are only evaluated when the test artifact is built, never when
+    // the harness is.
+    const text = @embedFile("../config.toml");
 
     // Fields that are not config keys. `shared_root` is set by `run
     // --worktree` at runtime and deliberately unreadable from a file; the
@@ -4365,6 +4369,8 @@ test "config.toml documents every key the loader accepts" {
             if (comptime std.mem.eql(u8, f.name, "name") and (T == Instance or T == TtsrRule)) skip = false;
             if (!skip and !documentsKey(text, f.name)) {
                 std.debug.print("config.toml does not document {s}.{s}\n", .{ @typeName(T), f.name });
+                const probe = std.fmt.allocPrint(std.heap.page_allocator, "{s}.{s}\n", .{ @typeName(T), f.name }) catch "?";
+                std.fs.cwd().writeFile(.{ .sub_path = "state/probe_undoc.txt", .data = probe }) catch {};
                 return error.UndocumentedConfigKey;
             }
         }

@@ -22,6 +22,47 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 /// the tools build produces the .wasm artifacts the tests load.
 const default_gates = [_][]const u8{ "build", "tools", "test" };
 
+/// Choose the slice of a failed gate's output that actually diagnoses it.
+///
+/// zig prints the real compile errors (`file.zig:line:col: error: ...` and bare
+/// `error: ...` message lines) *before* the closing summary and the trailing
+/// `error: the following build command failed with exit code N:` plus its
+/// command dump. A fixed last-N-chars tail can therefore land entirely on that
+/// trailing command line and hide the very errors it is meant to show — which
+/// is how the improvement engine once burned two full iterations failing blind.
+///
+/// Anchor the window on the last diagnostic error line instead, and drop any
+/// trailing build-command dump that slips into the window.
+fn failureWindow(res: []const u8) []const u8 {
+    const max_window: usize = 20000;
+    const fallback_tail: usize = 1500;
+
+    // Walk backwards over lines looking for the last real diagnostic: a line
+    // mentioning "error:" that is not the closing build-command banner.
+    var start: ?usize = null;
+    var i: usize = res.len;
+    while (i > 0) {
+        var line_start = i;
+        while (line_start > 0 and res[line_start - 1] != '\n') line_start -= 1;
+        const line = res[line_start..i];
+        i = line_start;
+        if (line_start > 0) i -= 1;
+        if (std.mem.indexOf(u8, line, "error:") != null and
+            !std.mem.startsWith(u8, std.mem.trim(u8, line, " \t\r"), "error: the following build command"))
+        {
+            start = line_start;
+            break;
+        }
+    }
+
+    const from = start orelse @max(0, res.len - fallback_tail);
+    const to = @min(res.len, from + max_window);
+    // Trim a trailing build-command dump that landed inside the window.
+    var end = to;
+    if (std.mem.indexOf(u8, res[from..to], "error: the following build command")) |p| end = from + p;
+    return res[from..end];
+}
+
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const alloc = lib.alloc;
     var gates: []const []const u8 = &default_gates;
@@ -87,10 +128,22 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             lib.exec("zig", args) catch |err| return lib.failErr(out, err, "running zig");
         const failed = std.mem.find(u8, res, "\"code\":0") == null;
         if (failed) {
-            var buf: [4096]u8 = undefined;
-            const tail = res[res.len -| 1500..];
-            const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s} failed\",\"text\":{f}}}", .{ gate, std.json.fmt(tail, .{}) });
-            return out.writeAll(body);
+            // Emit a compact JSON object. A growable buffer, not a fixed one:
+            // the diagnostic window is unbounded and JSON escaping can roughly
+            // double it, and truncating here would recreate the very blindness
+            // failureWindow exists to fix.
+            report.clearRetainingCapacity();
+            var w: std.Io.Writer = .{ .context = &report, .writeFn = appendWriteFn };
+            var s = std.json.Stringify{ .writer = &w, .options = .{} };
+            try s.beginObject();
+            try s.objectField("ok");
+            try s.write(false);
+            try s.objectField("error");
+            try s.write(std.fmt.allocPrint(alloc, "{s} failed", .{gate}) catch gate);
+            try s.objectField("text");
+            try s.write(failureWindow(res));
+            try s.endObject();
+            return out.writeAll(report.items);
         }
         try report.appendSlice(alloc, gate);
         try report.appendSlice(alloc, " ok; ");
