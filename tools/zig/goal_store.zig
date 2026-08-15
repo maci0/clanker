@@ -29,12 +29,6 @@ pub const Patch = struct {
     remove: bool = false,
 };
 
-pub const Error = error{
-    NoSuchGoal,
-    BadStatus,
-    BadBudget,
-};
-
 /// Workflow words a goal may hold. Anything else is refused rather than
 /// written, so the file cannot grow states nothing knows how to read.
 pub fn validStatus(s: []const u8) bool {

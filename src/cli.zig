@@ -10058,11 +10058,7 @@ fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     // handler is only one of several writers of goals.json and the same
     // decision has to come out the same way whichever one moved the status.
     // Unmerged branches survive it; see src/improve/retire.zig.
-    if (req.status) |st| {
-        if (std.mem.eql(u8, st, "archived") or std.mem.eql(u8, st, "abandoned")) {
-            _ = retire.reconcile(arena, io, std.Io.Dir.cwd(), true);
-        }
-    }
+    _ = retire.reconcile(arena, io, std.Io.Dir.cwd(), true);
 
     respond(stream, 200, "OK", out);
 }
