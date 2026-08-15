@@ -77,14 +77,25 @@ fn waitKey(io: std.Io, gpa: std.mem.Allocator, key: []const u8, rpm: u32) !void 
     }
 }
 
-/// Wait for every cap that applies: the active model's `rpm` (own bucket)
-/// then the provider's `rpm` (shared across that provider's models).
+/// The model bucket's key: provider plus the WIRE SKU, not the local table
+/// name, so every alias of one SKU (`grok4.6-coding` / `grok4.6-general`,
+/// both `id = "grok-4.6"`) draws from the same budget — the upstream limit
+/// is on the SKU, whatever the config calls it locally.
+pub fn modelKey(buf: []u8, provider: *const config.Provider) ![]const u8 {
+    return std.fmt.bufPrint(buf, "m:{s}/{s}", .{ provider.name, provider.wireModelName() }) catch
+        error.RateLimitKeyTooLong;
+}
+
+/// Wait for every cap that applies: the active model's `rpm` (bucket shared
+/// by every request for that SKU, across serve connections, goal turns, and
+/// the proxy alike) then the provider's `rpm` (shared across all of that
+/// provider's models). Both windows live in one process-wide table, so all
+/// concurrent requests contribute to and honor the same counts.
 pub fn waitFor(io: std.Io, gpa: std.mem.Allocator, provider: *const config.Provider) !void {
     if (provider.activeModel().rpm) |r| {
         if (r > 0) {
             var buf: [256]u8 = undefined;
-            const key = std.fmt.bufPrint(&buf, "m:{s}/{s}", .{ provider.name, provider.activeModelName() }) catch
-                return error.RateLimitKeyTooLong;
+            const key = try modelKey(&buf, provider);
             try waitKey(io, gpa, key, r);
         }
     }
@@ -130,4 +141,28 @@ test "waitNs ignores stamps older than the window when counting" {
     const t0: i64 = 2 * window_ns;
     // One live stamp at t0, plus an expired one: at cap, wait a full window.
     try std.testing.expectEqual(@as(u64, window_ns), waitNs(t0, &.{ t0 - window_ns - 1, t0 }, rpm));
+}
+
+test "aliases of one wire SKU share a model bucket; distinct SKUs do not" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var coding = try config.Provider.single(arena, "xai", "https://api.x.ai/v1", .openai_compat, "grok4.6-coding", .{ .max_tokens = 64, .id = "grok-4.6", .rpm = 10 });
+    var general = coding;
+    try coding.models.put(arena, "grok4.6-general", .{ .id = "grok-4.6", .rpm = 10 });
+    general.models = coding.models;
+    general.default_model = "grok4.6-general";
+
+    var a_buf: [256]u8 = undefined;
+    var b_buf: [256]u8 = undefined;
+    const a = try modelKey(&a_buf, &coding);
+    const b = try modelKey(&b_buf, &general);
+    try std.testing.expectEqualStrings(a, b);
+    try std.testing.expectEqualStrings("m:xai/grok-4.6", a);
+
+    var plain = try config.Provider.single(arena, "xai", "https://api.x.ai/v1", .openai_compat, "grok-3", .{ .max_tokens = 64, .rpm = 10 });
+    var p_buf: [256]u8 = undefined;
+    const p = try modelKey(&p_buf, &plain);
+    try std.testing.expectEqualStrings("m:xai/grok-3", p);
 }
