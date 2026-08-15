@@ -2,7 +2,9 @@
 
 When asked to improve the codebase, fix a failing eval, or run `clanker improve-self`:
 1. Read the failing eval output and the relevant source first.
-2. Propose the smallest exact-match patch that fixes the root cause (`patch_apply` for multi-file JSON proposals, `edit_file` for one edit).
+2. Propose the smallest exact-match patch that fixes the root cause,
+   applying it with `edit_file` per file. `patch_apply` is internal to the
+   engine, never a model-callable tool — do not reach for it from a turn.
 3. Cover the fix with a test or eval that reproduces the issue — alongside the
    fix, not instead of it. A patch that only adds test blocks is rejected once
    the last few accepted changes were also test-only (`improve.max_consecutive_test_only`),

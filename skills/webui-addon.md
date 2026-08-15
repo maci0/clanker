@@ -34,9 +34,10 @@ clanker.registerView({
 });
 ```
 
-Rules the tool enforces: must call `clanker.registerView`; no `innerHTML`,
-`eval(`, `new Function`, or `document.write`. CSP is `script-src 'self'`.
-No CDN. Controls need a visible label or `aria-label` and a 32px target.
+The tool rejects app.js that skips `clanker.registerView` or uses
+`innerHTML`, `eval(`, `new Function`, or `document.write`. The page's CSP
+is `script-src 'self'`, so no CDNs. Follow in the app.js you ship: every
+control needs a visible label or `aria-label` and a 32px target.
 
 `api`: `el`, `getJSON`, `status`, `fmt`, `showView`, `van`, `preact`, `html`,
 `signals`, `render.markdown` / `render.code`.
