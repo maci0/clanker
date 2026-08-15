@@ -20,6 +20,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Phone Chat header keeps More only so empty-state suggestions sit above
   the docked composer instead of under it. More holds the same Fork/Rename/
   Delete nodes and find-in-transcript on a phone.
+- Operator web UI pages (Runs, Fleet, Models, Board, Rooms, and the rest)
+  fill the main column instead of sitting in Chat's ~46rem centered
+  measure. Chat keeps that reading width.
 
 ### Added
 

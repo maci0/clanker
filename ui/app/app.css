@@ -548,13 +548,22 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
-  /* PF page chrome paints a glass frame on main-container; cabinet shell owns the look. */
+  /* PF page chrome paints a glass card (align-self:start + page inset).
+     Cabinet shell owns the column: stretch it, drop the end inset. The
+     15rem start inset below 75rem stays so the overlay rail cannot cover
+     the heading. */
   --pf-v6-c-page__main-container--BorderColor: transparent;
   --pf-v6-c-page__main-container--BorderBlockStartWidth: 0;
   --pf-v6-c-page__main-container--BorderBlockEndWidth: 0;
   --pf-v6-c-page__main-container--BorderInlineStartWidth: 0;
   --pf-v6-c-page__main-container--BorderInlineEndWidth: 0;
   --pf-v6-c-page__main-container--BackgroundColor: transparent;
+  --pf-v6-c-page__main-container--AlignSelf: stretch;
+  --pf-v6-c-page__main-container--MarginInlineEnd: 0;
+  --pf-v6-c-page__main-container--MarginBlockStart: 0;
+  --pf-v6-c-page__main-container--MaxHeight: 100%;
+  --pf-v6-c-page__main-container--BorderRadius: 0;
+  --pf-v6-c-page__main-container--BoxShadow: none;
 }
 /* PF parks the sidebar off-canvas below 75rem. We keep it visible down to
    40rem, so the main column has to leave that 15rem track empty. */
@@ -598,8 +607,13 @@ body {
 .pf-v6-c-page__main-container.shell {
   display: flex;
   flex-direction: column;
+  align-self: stretch;
+  min-width: 0;
   min-height: 0;
   height: 100%;
+  max-height: 100%;
+  margin-inline-end: 0;
+  margin-block-start: 0;
   --pf-v6-c-page__main-container--BorderColor: transparent;
   --pf-v6-c-page__main-container--BorderBlockStartWidth: 0;
   --pf-v6-c-page__main-container--BorderBlockEndWidth: 0;
@@ -607,6 +621,7 @@ body {
   --pf-v6-c-page__main-container--BorderInlineEndWidth: 0;
   --pf-v6-c-page__main-container--BackgroundColor: transparent;
   border: 0;
+  border-radius: 0;
   background: transparent;
   backdrop-filter: none;
   box-shadow: none;
@@ -709,17 +724,17 @@ button.chip-btn:hover { color: var(--fg); background: var(--surface-2); border-c
 
 main,
 main.pf-v6-c-page__main {
-  flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto;
+  flex: 1 1 auto; min-width: 0; width: 100%; max-width: none; margin: 0;
   padding: var(--space-4) clamp(0.75rem, 2.5vw, 2rem) var(--space-5);
   display: flex; flex-direction: column;
   overflow: hidden;
 }
-.view > section { max-width: 46rem; margin-left: auto; margin-right: auto; }
-#view-board > section { max-width: none; }
-#view-runs > section, #view-fleet > section { max-width: 62rem; }
+/* Operator pages fill the main column. Chat's 46rem / ~70ch measure lives
+   only on #view-chat header / transcript / composer, not on every section. */
+.view > section { max-width: none; width: 100%; }
 
-/* Conversation column: header / scrollport / docked composer. Other views
-   keep the same measure and scroll inside the main column. */
+/* Conversation column: header / scrollport / docked composer. The 46rem
+   reading measure is Chat-only; operator views fill the main column. */
 #view-chat {
   display: flex; flex-direction: column;
   flex: 1 1 auto; min-height: 0; width: 100%;
@@ -750,7 +765,7 @@ main.pf-v6-c-page__main {
   width: 100%; max-width: 46rem; margin: var(--space-2) auto 0;
 }
 .view:not(#view-chat):not([hidden]) {
-  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  flex: 1 1 auto; min-height: 0; width: 100%; overflow-y: auto; overscroll-behavior: contain;
 }
 
 /* ---- tabs: one view at a time ----
@@ -1866,6 +1881,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   display: flex; height: calc(100vh - 56px); overflow: hidden;
   /* dvh tracks mobile browsers' collapsing URL bar; vh above is the fallback. */
   height: calc(100dvh - 56px);
+  width: 100%; min-width: 0;
   border: 1px solid var(--rule); border-radius: var(--radius-lg);
   background: var(--surface);
 }

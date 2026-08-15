@@ -282,7 +282,10 @@ CSS steps: `--step--1` 0.6875rem, `--step-0` 0.8125rem, `--step-1` 0.9375rem,
 - Chat is a three-part column: session header, scrolling transcript,
   docked composer. Other views replace the conversation column; the
   session list stays
-- Chat measure capped (~46rem); other views keep their own max-width
+- Chat measure capped (~46rem / ~70ch) on the conversation header,
+  transcript, and composer. Operator views fill the main column; they
+  do not share that reading cap. The PF main-container stretches (no
+  glass end-inset) so a dashboard is not a centered card.
 - Breakpoints in rem (40rem phone drawer, 48rem rooms sidebar)
 - Coarse pointer and narrow viewports: 44px minimum for rail tabs, New chat,
   pins, session actions, chat message actions, chips, and composer submit/voice
