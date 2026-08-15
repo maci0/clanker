@@ -246,35 +246,35 @@ pub const Registry = struct {
     }
 };
 
-var g_mu: SpinMutex = .{};
-var g_reg: ?Registry = null;
+var process_mu: SpinMutex = .{};
+var process_reg: ?Registry = null;
 
 /// Process-wide registry so a REPL (new Agent per turn) keeps kernel/DAP
 /// processes across turns. Tests should construct a local Registry instead.
 pub fn processRegistry(gpa: std.mem.Allocator, io: std.Io) !*Registry {
-    g_mu.lock();
-    defer g_mu.unlock();
-    if (g_reg == null) g_reg = Registry.init(gpa, io);
-    return &g_reg.?;
+    process_mu.lock();
+    defer process_mu.unlock();
+    if (process_reg == null) process_reg = Registry.init(gpa, io);
+    return &process_reg.?;
 }
 
 /// Ends a session only when a privileged kernel or DAP call actually created
 /// the process registry. Ordinary runs must not allocate a process-global
 /// registry merely to discover there is nothing to clean up.
 pub fn endSession(session_id: []const u8) void {
-    g_mu.lock();
-    defer g_mu.unlock();
-    if (g_reg) |*reg| reg.terminateSession(session_id);
+    process_mu.lock();
+    defer process_mu.unlock();
+    if (process_reg) |*reg| reg.terminateSession(session_id);
 }
 
 /// Releases the process-global registry before its backing allocator exits.
 /// This also SIGTERMs any process that survived a caller forgetting to close
 /// its session, rather than reporting the registry itself as a debug leak.
 pub fn deinitProcessRegistry() void {
-    g_mu.lock();
-    defer g_mu.unlock();
-    if (g_reg) |*reg| reg.deinit();
-    g_reg = null;
+    process_mu.lock();
+    defer process_mu.unlock();
+    if (process_reg) |*reg| reg.deinit();
+    process_reg = null;
 }
 
 fn testIo() std.Io.Threaded {

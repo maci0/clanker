@@ -60,7 +60,7 @@ fn jsonNum(obj: std.json.ObjectMap, key: []const u8) ?f64 {
 fn jsonU32(obj: std.json.ObjectMap, key: []const u8) ?u32 {
     const n = jsonNum(obj, key) orelse return null;
     if (n <= 0 or n > @as(f64, @floatFromInt(std.math.maxInt(u32)))) return null;
-    return @intFromFloat(@trunc(n));
+    return @as(u32, @trunc(n));
 }
 
 /// The catalog provider for this clanker provider: exact name, then exact

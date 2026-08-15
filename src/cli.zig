@@ -4207,6 +4207,7 @@ const CliGoalLoopContext = struct {
 };
 
 fn cliGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]const u8 {
+    // goal_loop.run boxed this CliGoalLoopContext as Callbacks.context.
     const loop_ctx: *CliGoalLoopContext = @ptrCast(@alignCast(context));
     const out = run_out orelse return error.NoRunOutput;
     var err_detail: ?[]const u8 = null;
@@ -4232,6 +4233,7 @@ fn cliGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]
 }
 
 fn cliGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror!goal_loop.Decision {
+    // goal_loop.run boxed this CliGoalLoopContext as Callbacks.context.
     const loop_ctx: *CliGoalLoopContext = @ptrCast(@alignCast(context));
     const prompt = try goal_loop.evaluatorTask(loop_ctx.arena, loop_ctx.condition, answer);
     const messages = [_]types.Message{
@@ -4242,13 +4244,13 @@ fn cliGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror
     const resp = try client.chat(loop_ctx.ctx, loop_ctx.arena, .{
         .provider = loop_ctx.provider,
         .messages = &messages,
-        .max_tokens = 300,
+        .max_tokens = goal_loop.evaluator_max_tokens,
     }, &err_detail);
     return goal_loop.parseDecision(loop_ctx.arena, resp.message.content orelse "");
 }
 
 fn cliGoalLoopDecision(_: *anyopaque, turn: u32, decision: goal_loop.Decision) void {
-    const capped = decision.reason[0..@min(decision.reason.len, 500)];
+    const capped = decision.reason[0..@min(decision.reason.len, goal_loop.reason_log_bytes)];
     log.log(.info, "goal loop turn {d}: {s}: {s}", .{ turn, @tagName(decision.verdict), capped });
 }
 
@@ -4267,6 +4269,7 @@ const ServerGoalLoopContext = struct {
 };
 
 fn serverGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]const u8 {
+    // goal_loop.run boxed this ServerGoalLoopContext as Callbacks.context.
     const loop_ctx: *ServerGoalLoopContext = @ptrCast(@alignCast(context));
     const resp = loop_ctx.a.run(loop_ctx.messages, task, &loop_ctx.last_err_detail) catch |err| return err;
     const answer = resp.message.content orelse "";
@@ -4276,6 +4279,7 @@ fn serverGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror
 }
 
 fn serverGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror!goal_loop.Decision {
+    // goal_loop.run boxed this ServerGoalLoopContext as Callbacks.context.
     const loop_ctx: *ServerGoalLoopContext = @ptrCast(@alignCast(context));
     const prompt = try goal_loop.evaluatorTask(loop_ctx.arena, loop_ctx.condition, answer);
     const messages = [_]types.Message{
@@ -4286,7 +4290,7 @@ fn serverGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyer
     const resp = try client.chat(loop_ctx.ctx, loop_ctx.arena, .{
         .provider = loop_ctx.provider,
         .messages = &messages,
-        .max_tokens = 300,
+        .max_tokens = goal_loop.evaluator_max_tokens,
     }, &err_detail);
     return goal_loop.parseDecision(loop_ctx.arena, resp.message.content orelse "");
 }
@@ -4297,7 +4301,7 @@ fn serverGoalLoopDecision(context: *anyopaque, turn: u32, decision: goal_loop.De
         writeStreamEvent(fd, "goal", .{
             .turn = turn,
             .status = @tagName(decision.verdict),
-            .reason = decision.reason[0..@min(decision.reason.len, 500)],
+            .reason = decision.reason[0..@min(decision.reason.len, goal_loop.reason_log_bytes)],
         });
     }
 }
@@ -9175,9 +9179,9 @@ fn handleConfigDefault(io: std.Io, gpa: std.mem.Allocator, body: []const u8, str
 fn renderModelConfigBlock(arena: std.mem.Allocator, provider_name: []const u8, name: []const u8, obj: std.json.ObjectMap) ![]const u8 {
     var fields: std.ArrayList([]const u8) = .empty;
     if (fieldStr(obj, "id")) |sku| try fields.append(arena, try std.fmt.allocPrint(arena, "id = {s}", .{try tomlQuoted(arena, sku)}));
-    if (jsonNum(obj, "rpm")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "rpm = {d}", .{@as(i64, @intFromFloat(v))}));
-    if (jsonNum(obj, "context_window")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "context_window = {d}", .{@as(i64, @intFromFloat(v))}));
-    if (jsonNum(obj, "max_tokens")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "max_tokens = {d}", .{@as(i64, @intFromFloat(v))}));
+    if (jsonNum(obj, "rpm")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "rpm = {d}", .{@as(i64, @trunc(v))}));
+    if (jsonNum(obj, "context_window")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "context_window = {d}", .{@as(i64, @trunc(v))}));
+    if (jsonNum(obj, "max_tokens")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "max_tokens = {d}", .{@as(i64, @trunc(v))}));
     if (jsonNum(obj, "temperature")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "temperature = {d}", .{v}));
     if (jsonNum(obj, "top_p")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "top_p = {d}", .{v}));
     if (fieldStr(obj, "reasoning_effort")) |re| try fields.append(arena, try std.fmt.allocPrint(arena, "reasoning_effort = {s}", .{try tomlQuoted(arena, re)}));

@@ -6,6 +6,7 @@ const std = @import("std");
 
 pub fn lineHash(line: []const u8) u16 {
     const body = trimEnding(line);
+    // 4 hex digits; the high 16 bits of xxHash32 are discarded on purpose.
     return @truncate(std.hash.XxHash32.hash(0, body));
 }
 

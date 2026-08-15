@@ -448,6 +448,7 @@ const TuiGoalLoopContext = struct {
 };
 
 fn tuiGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]const u8 {
+    // goal_loop.run boxed this TuiGoalLoopContext as Callbacks.context.
     const loop_ctx: *TuiGoalLoopContext = @ptrCast(@alignCast(context));
     const self = loop_ctx.model;
     const started = std.Io.Timestamp.now(self.io, .awake);
@@ -458,6 +459,7 @@ fn tuiGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]
 }
 
 fn tuiGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror!goal_loop.Decision {
+    // goal_loop.run boxed this TuiGoalLoopContext as Callbacks.context.
     const loop_ctx: *TuiGoalLoopContext = @ptrCast(@alignCast(context));
     const self = loop_ctx.model;
     const prompt = try goal_loop.evaluatorTask(self.arena, loop_ctx.condition, answer);
@@ -469,18 +471,19 @@ fn tuiGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror
     const resp = try client.chat(&self.ctx, self.arena, .{
         .provider = &self.provider,
         .messages = &messages,
-        .max_tokens = 300,
+        .max_tokens = goal_loop.evaluator_max_tokens,
     }, &err_detail);
     return goal_loop.parseDecision(self.arena, resp.message.content orelse "");
 }
 
 fn tuiGoalLoopDecision(context: *anyopaque, turn: u32, decision: goal_loop.Decision) void {
+    // goal_loop.run boxed this TuiGoalLoopContext as Callbacks.context.
     const loop_ctx: *TuiGoalLoopContext = @ptrCast(@alignCast(context));
     const self = loop_ctx.model;
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
-    const reason = decision.reason[0..@min(decision.reason.len, 500)];
-    const line = std.fmt.allocPrint(self.arena, "goal loop turn {d}: {s} — {s}", .{ turn, @tagName(decision.verdict), reason }) catch return;
+    const reason = decision.reason[0..@min(decision.reason.len, goal_loop.reason_log_bytes)];
+    const line = std.fmt.allocPrint(self.arena, "goal loop turn {d}: {s}: {s}", .{ turn, @tagName(decision.verdict), reason }) catch return;
     self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
 }
 

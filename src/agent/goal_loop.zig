@@ -10,7 +10,19 @@
 
 const std = @import("std");
 
+/// Evaluator replies are a short JSON object; keep the completion small.
+pub const evaluator_max_tokens: u32 = 300;
+/// Cap when a surface logs or streams the evaluator reason.
+pub const reason_log_bytes: usize = 500;
+
 pub const Verdict = enum { continue_, achieved, blocked };
+
+const verdict_names = std.StaticStringMap(Verdict).initComptime(.{
+    .{ "achieved", .achieved },
+    .{ "blocked", .blocked },
+    // Operator-facing spelling; the tag is `continue_` because `continue` is reserved.
+    .{ "continue", .continue_ },
+});
 
 pub const Decision = struct {
     verdict: Verdict,
@@ -103,16 +115,16 @@ pub fn parseDecision(alloc: std.mem.Allocator, text: []const u8) Decision {
     const parsed = std.json.parseFromSliceLeaky(Parsed, alloc, text, .{ .ignore_unknown_fields = true }) catch
         return .{ .verdict = .continue_, .reason = "the evaluator returned unreadable output; verify the condition directly and continue working" };
     const reason = if (parsed.reason.len > 0) parsed.reason else "the evaluator did not provide a reason";
-    if (std.mem.eql(u8, parsed.status, "achieved")) return .{ .verdict = .achieved, .reason = reason };
-    if (std.mem.eql(u8, parsed.status, "blocked")) return .{ .verdict = .blocked, .reason = reason };
-    if (std.mem.eql(u8, parsed.status, "continue")) return .{ .verdict = .continue_, .reason = reason };
-    return .{ .verdict = .continue_, .reason = "the evaluator returned an unknown status; verify the condition directly and continue working" };
+    const verdict = verdict_names.get(parsed.status) orelse
+        return .{ .verdict = .continue_, .reason = "the evaluator returned an unknown status; verify the condition directly and continue working" };
+    return .{ .verdict = verdict, .reason = reason };
 }
 
 test "goal loop continues until the evaluator marks achieved" {
     const State = struct {
         ran: u32 = 0,
         fn runTurn(ctx: *anyopaque, turn: u32, _: []const u8) ![]const u8 {
+            // run() boxed this State as Callbacks.context.
             const self: *@This() = @ptrCast(@alignCast(ctx));
             self.ran = turn;
             return "turn answer";
@@ -160,4 +172,6 @@ test "evaluator parser is conservative for malformed output" {
     try std.testing.expectEqual(Verdict.continue_, bad.verdict);
     const done = parseDecision(std.testing.allocator, "{\"status\":\"achieved\",\"reason\":\"tests pass\"}");
     try std.testing.expectEqual(Verdict.achieved, done.verdict);
+    const cont = parseDecision(std.testing.allocator, "{\"status\":\"continue\",\"reason\":\"more work\"}");
+    try std.testing.expectEqual(Verdict.continue_, cont.verdict);
 }

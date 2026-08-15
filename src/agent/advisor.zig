@@ -42,7 +42,12 @@ pub fn parseNote(arena: std.mem.Allocator, raw: []const u8) ?Note {
         .string => |s| s,
         else => return null,
     };
-    const sev = std.meta.stringToEnum(Severity, sev_s) orelse return null;
+    const names = std.StaticStringMap(Severity).initComptime(.{
+        .{ "note", .note },
+        .{ "concern", .concern },
+        .{ "blocker", .blocker },
+    });
+    const sev = names.get(sev_s) orelse return null;
     const text = switch (parsed.object.get("text") orelse return null) {
         .string => |s| s,
         else => return null,
