@@ -256,7 +256,9 @@ rather than stacking a new one beside it.
 Before diagnosing a failure, search [docs/reports/](docs/reports/) and
 [docs/runbooks/](docs/runbooks/) for its error text, command, subsystem, or
 symptom. Use the `reports` tool's `search` action when it is available; it
-searches both stores together and avoids a broad repository scan. Runbooks give
+searches both stores together and avoids a broad repository scan. The same
+records are on the CLI as `clanker reports` (`list`, `search`, `open`,
+`create`, `append`, `update`), through that same tool. Runbooks give
 the current recovery path; reports preserve the evidence behind it. A resolved
 record is evidence to verify against the current tree, not a substitute for
 verification; reuse its reproduction and checks instead of rediscovering the

@@ -3632,6 +3632,57 @@ test "compactionKeepStart returns null when the history fits the threshold" {
     try std.testing.expect(Agent.compactionKeepStart(&msgs, 4, 1_000) == null);
 }
 
+test "a threshold below what compaction can deliver is raised, with headroom" {
+    // The livelock this prevents: the system prompt plus the kept tail survive
+    // every compaction, so a threshold under their size is a compaction on
+    // every iteration that frees nothing. See
+    // docs/reports/bugs/2026-08-16-compaction-cannot-shrink-immovable-history.md.
+    const immovable: usize = 19_000;
+    const raised = Agent.raisedThreshold(16_000, immovable, 524_288);
+    try std.testing.expect(raised > immovable);
+    // Headroom, not just "one token more than the floor": compacting down to
+    // the floor and being over the threshold again is the same livelock.
+    try std.testing.expectEqual(immovable + immovable / compaction_headroom_divisor, raised);
+    // The model's own budget still binds: a window that cannot hold the floor
+    // is not made bigger by wishing.
+    try std.testing.expectEqual(@as(usize, 20_000), Agent.raisedThreshold(16_000, immovable, 20_000));
+    // The ordinary case is untouched: a threshold compaction can already
+    // satisfy is returned exactly as configured.
+    try std.testing.expectEqual(@as(usize, 16_000), Agent.raisedThreshold(16_000, 4_000, 524_288));
+}
+
+test "immovableTokens counts the system message, the kept tail and the summary" {
+    const msgs = [_]types.Message{
+        .{ .role = .system, .content = "0123456789" ** 40 }, // 400 chars -> 100 tokens + 4
+        .{ .role = .user, .content = "dropped" },
+        .{ .role = .assistant, .content = "dropped" },
+        .{ .role = .user, .content = "0123" }, // tail starts here
+        .{ .role = .assistant, .content = "0123" },
+        .{ .role = .user, .content = "0123" },
+        .{ .role = .assistant, .content = "0123" },
+        .{ .role = .user, .content = "0123" },
+        .{ .role = .assistant, .content = "0123" },
+    };
+    const keep_start = Agent.tailStart(&msgs);
+    try std.testing.expectEqual(@as(usize, 3), keep_start);
+    const immovable = Agent.immovableTokens(&msgs, keep_start);
+    // system (104) + six tail messages (5 each) + the summary reserve.
+    try std.testing.expectEqual(104 + 30 + compaction_summary_reserve_tokens, immovable);
+    // The dropped middle is not counted: that is the part compaction can free.
+    try std.testing.expect(immovable < Agent.estimateMessageTokens(&msgs) + compaction_summary_reserve_tokens);
+}
+
+test "madeProgress rejects a compaction that freed nothing worth counting" {
+    try std.testing.expect(Agent.madeProgress(20_000, 10_000));
+    // The observed steady state: identical before and after, every iteration.
+    try std.testing.expect(!Agent.madeProgress(19_496, 19_496));
+    // Growth is never progress.
+    try std.testing.expect(!Agent.madeProgress(18_364, 18_891));
+    // A rounding-error saving is not progress either (1/16 of 16000 = 1000).
+    try std.testing.expect(!Agent.madeProgress(16_000, 15_500));
+    try std.testing.expect(Agent.madeProgress(16_000, 15_000));
+}
+
 test "compactionKeepStart returns null when the history is too short to compact" {
     const msgs = [_]types.Message{
         .{ .role = .system, .content = "sys" },
