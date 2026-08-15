@@ -225,6 +225,21 @@ test("empty Run control explains the disabled state", function () {
   assert.match(src, /Write a task first/);
 });
 
+test("empty Rooms Send control explains the disabled state", function () {
+  const send = html.slice(html.indexOf('id="chat-send"'), html.indexOf('id="chat-send"') + 220);
+  assert.match(send, /title="Write a message first"/);
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  assert.match(app, /function syncChatSend/);
+  assert.match(app, /Write a message first/);
+  assert.match(app, /Pick a channel first/);
+});
+
+test("required marker covers a required input nested in its label", function () {
+  assert.match(css, /label:has\(> input\[required\]\)::after/);
+  assert.match(html, /id="models-edit-provider"[^>]*required/);
+  assert.match(html, /id="models-edit-model"[^>]*required/);
+});
+
 test("Search field names conversations, not Find", function () {
   assert.match(html, /<label for="search-q">Search conversations<\/label>/);
 });
@@ -316,9 +331,12 @@ test("failed list loads keep a visible retry in the panel", function () {
   const kb = readFileSync(join(here, "../features/knowledge.js"), "utf8");
   assert.match(kb, /Could not open this collection/);
   assert.match(kb, /openCollection\(id, docId\)/);
+  assert.match(kb, /Search failed: /);
+  assert.match(kb, /retry\.addEventListener\("click",doSearch\)/);
   const activity = readFileSync(join(here, "../../plugins/activity/app.js"), "utf8");
   assert.match(activity, /function drawFailure/);
   assert.match(activity, /Try again/);
+  assert.match(activity, /api\.el\("button", "activity-card", label\)/);
 });
 
 test("templates and skills say when none are on file", function () {

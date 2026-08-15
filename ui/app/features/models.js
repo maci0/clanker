@@ -3,7 +3,6 @@
 // only (never the shared config.toml), after an explicit confirm.
 import { readJson, fmtInt } from "../core/utils.js";
 import { loadHljs } from "../core/vendor.js";
-import { showLoadError } from "../core/ui.js";
 
 function askConfirm(message, opts) {
   return import("../core/ui.js").then(function (mod) { return mod.uiConfirm(message, opts); });
@@ -55,6 +54,19 @@ function empty(text) {
   p.className = "usage-empty";
   p.textContent = text;
   return p;
+}
+
+function failWithRetry(host, message, retryFn) {
+  if (!host) return;
+  host.textContent = "";
+  var p = empty(message + " ");
+  var btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "secondary";
+  btn.textContent = "Try again";
+  btn.addEventListener("click", retryFn);
+  p.appendChild(btn);
+  host.appendChild(p);
 }
 
 function status(msg) {
@@ -375,7 +387,7 @@ function loadConfigured() {
       });
     })
     .catch(function (err) {
-      showLoadError(box, "Could not load providers: " + err.message, loadConfigured);
+      failWithRetry(box, "Could not load providers: " + err.message, loadConfigured);
     });
 }
 
@@ -670,7 +682,7 @@ function loadLive() {
       status(rows.length + " models from " + sel.value + ".");
     })
     .catch(function (err) {
-      showLoadError(out, "Could not list: " + err.message, loadLive);
+      failWithRetry(out, "Could not list: " + err.message, loadLive);
     })
     .finally(function () { btn.disabled = false; });
 }
@@ -719,7 +731,7 @@ function searchCatalog() {
       }
     })
     .catch(function (err) {
-      showLoadError(out, "Catalog search failed: " + err.message, searchCatalog);
+      failWithRetry(out, "Catalog search failed: " + err.message, searchCatalog);
     })
     .finally(function () { btn.disabled = false; });
 }
@@ -744,10 +756,7 @@ function refreshCatalog() {
     })
     .catch(function (err) {
       status("Catalog refresh failed.");
-      if (out) {
-        out.textContent = "";
-        out.appendChild(empty("Catalog refresh failed: " + err.message));
-      }
+      failWithRetry(out, "Catalog refresh failed: " + err.message, refreshCatalog);
     })
     .finally(function () { if (btn) btn.disabled = false; });
 }

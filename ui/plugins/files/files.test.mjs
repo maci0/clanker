@@ -28,6 +28,18 @@ test("Files listing fills the column until a preview is open", function () {
   assert.match(css, /\.files-panes:has\(\.files-right:not\(\[hidden\]\)\)/);
 });
 
+test("Files hidden-only folder offers to show hidden items", function () {
+  const js = readFileSync(join(here, "app.js"), "utf8");
+  assert.match(js, /This folder has /);
+  assert.match(js, /hidden item/);
+  assert.match(js, /Show hidden/);
+  assert.match(js, /hiddenBtn\.click\(\)/);
+});
+
+test("Files filter is 16px on a phone so iOS does not zoom", function () {
+  assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*\.files-filter \{ font-size: 16px; \}/);
+});
+
 test("Files filter empty state offers to clear the filter", function () {
   const js = readFileSync(join(here, "app.js"), "utf8");
   assert.match(js, /files-clear-filter/);

@@ -43,6 +43,14 @@ test("Models edit form has a wire id field for aliases", function () {
   assert.match(js, /payload\.id = sku/);
 });
 
+test("Models list and catalog failures offer to try again", function () {
+  assert.match(js, /function failWithRetry/);
+  assert.match(js, /failWithRetry\(box, "Could not load providers/);
+  assert.match(js, /failWithRetry\(out, "Could not list/);
+  assert.match(js, /failWithRetry\(out, "Catalog search failed/);
+  assert.match(js, /failWithRetry\(out, "Catalog refresh failed/);
+});
+
 test("catalog refresh posts to /api/catalog/refresh", function () {
   assert.match(js, /function refreshCatalog\(/);
   assert.match(js, /\/api\/catalog\/refresh/);
