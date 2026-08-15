@@ -1342,6 +1342,7 @@ pub const Config = struct {
             "auth",
             "service_account_file",
             "path",
+            "api_version",
             "default_model",
             "rpm",
             "tool_schema",

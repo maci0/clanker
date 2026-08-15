@@ -5,6 +5,36 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Breaking
+
+- The committed `config.toml` renames the Moonshot provider table
+  `[providers.kimi-k3]` → `[providers.moonshotai]`, and the shipped
+  `default_provider` value changes from `"kimi-k3"` to `"moonshotai"`.
+  A `default_provider = "kimi-k3"` pinned in `config.local.toml` stops
+  resolving after upgrade (`UnknownProvider`) unless a
+  `[providers.kimi-k3]` table is still defined there. Migration: rename
+  the pin to `"moonshotai"`; the `kimi-k3` model is unchanged.
+- Provider default models move to the newest general-purpose catalog
+  models: DeepSeek `deepseek-v4-flash` → `deepseek-v4-pro`, OpenAI
+  `gpt-4o-mini` → `gpt-5.6`, Anthropic `claude-sonnet-5` →
+  `claude-opus-5`, Muse Spark `muse-spark-1.2-contributor` →
+  `muse-spark-1.2`. Local ollama/vLLM ids are unchanged. An upgrade that
+  did not pin a model now talks to a different model, with different
+  behavior and cost. Migration: pin the previous default in
+  `config.local.toml` before upgrading, e.g.
+
+  ```toml
+  [providers.deepseek]
+  default_model = "deepseek-v4-flash"
+
+  [models."deepseek/deepseek-v4-flash"]
+  provider = "deepseek"
+  ```
+
+  One `default_model` + `[models."<provider>/<old-model>"]` pair per
+  provider reproduces the 0.1.0 behavior exactly. Specs (context, cost,
+  capabilities) come from the models.dev snapshot.
+
 ### Added
 
 - `clanker reports` puts the operational reports and runbooks on the CLI:
@@ -130,6 +160,49 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   or a pasted access token. The refresh token is exchanged in-process;
   there is still no gcloud subprocess. User ADC sends
   `x-goog-user-project` from the provider's `project`.
+- A run-metrics line under the composer, DeepSeek-harness style: turns,
+  steps, LLM time vs tool-call time, average time-to-first-token,
+  completion tok/s, cache hit rate, and input/output token counts. The
+  strip ticks every animation frame while a turn is running (wall clock,
+  steps, live tokens from mid-run `usage` events plus a chars/4 estimate
+  until the next official snapshot) and accumulates across turns until
+  New chat, a session switch, or reload. The vaxis REPL paints the same
+  strip on its last row, under the composer, and redraws it on the
+  stream tick (~33ms). TTFT is also measured server-side
+  (`types.ChatResponse.ttft_ms`, streaming only) and folded into
+  `RunStats` when that event arrives.
+- The Models view can add, edit, and remove a configured model, not only
+  save a catalog snippet: `POST /api/config/model/set` table-replaces a
+  full field set (temperature, cost overrides, capabilities, etc.) into
+  `config.local.toml`, and `POST /api/config/model/remove` deletes a
+  model's table there. Both are surgical `config.local.toml` edits, same
+  as the existing catalog-save path; a model only declared in the shared
+  `config.toml` cannot be removed from the page. A catalog entry that
+  supports a temperature parameter (models.dev only signals the
+  capability, not a value) now fills in clanker's own chat default
+  (0.7) instead of leaving the field for the provider's own default.
+- `clanker add-goal` and `/add-goal` save a structured goal without starting
+  work. The Goals board uses the same `add_goal` writer and tells the operator
+  that a saved goal has not started.
+- Persistent Python eval kernel (PRD 0016): a session-scoped `python3`
+  supervisor keeps `__main__` across cells. `reset: true` restarts it;
+  session end SIGTERMs via the shared subprocess registry. Still off
+  unless `kernel.enabled = true`.
+- DAP debug tool (PRD 0017): `debug` guest + `ck_debug` + `[debug]`
+  adapters. Off unless `debug.enabled = true`. Host tests speak DAP
+  to a stdio fake adapter (launch, breakpoints, continue, stack,
+  variables, evaluate, disconnect).
+- The `kernel` tool's Python path also has a WASI one-shot sandbox
+  (`./scripts/setup-python-wasi.sh`) that is not the persist path.
+- Fleet Mesh map: each clanker is a lamp on `/#fleet`. Wires appear
+  after a talk; a live talk sends a directed glow along the wire.
+  `GET /api/mesh/map` feeds it (even when `modules.mesh` is off).
+- Web UI live bus: `GET /api/events` (SSE). Chat, mesh talk, and run
+  working push to the page. HTTP `/api/*` stays the command API; polls
+  are the fallback when the stream is down.
+- Mesh chat pipe: `fanOut` writes a `CHAT` frame on a live mesh link
+  when `modules.mesh` is on and the peer is connected, else HTTP. Serve
+  listens when the module is on. `POST /api/mesh/join` dials.
 
 ### Fixed
 
@@ -198,12 +271,6 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   proxy mount when enabled, and how to stop. A piped stdout still gets
   the original bare `http://host:port/webui` line, so scripts that
   parsed it keep working; colors honor NO_COLOR.
-- Provider defaults now point at the newest general-purpose catalog
-  models: DeepSeek `deepseek-v4-pro`, OpenAI `gpt-5.6`, Anthropic
-  `claude-opus-5`, Muse Spark `muse-spark-1.2`. Moonshot stays on
-  `kimi-k3`.
-  Local ollama/vLLM ids are unchanged. Specs (context, cost, capabilities)
-  come from the models.dev snapshot.
 - The models.dev catalog is a local snapshot (`state/models-dev.json`),
   not a 24-hour cache. Serve start and catalog search do not hit the
   network when that file exists. First use (or a missing file) downloads
@@ -254,52 +321,6 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   first turn docks the composer back to the bottom. Turn actions (Copy
   answer, Run again, Edit & resend, Branch, Apply plan) already matched
   the convention and are unchanged.
-
-### Added
-
-- A run-metrics line under the composer, DeepSeek-harness style: turns,
-  steps, LLM time vs tool-call time, average time-to-first-token,
-  completion tok/s, cache hit rate, and input/output token counts. The
-  strip ticks every animation frame while a turn is running (wall clock,
-  steps, live tokens from mid-run `usage` events plus a chars/4 estimate
-  until the next official snapshot) and accumulates across turns until
-  New chat, a session switch, or reload. The vaxis REPL paints the same
-  strip on its last row, under the composer, and redraws it on the
-  stream tick (~33ms). TTFT is also measured server-side
-  (`types.ChatResponse.ttft_ms`, streaming only) and folded into
-  `RunStats` when that event arrives.
-- The Models view can add, edit, and remove a configured model, not only
-  save a catalog snippet: `POST /api/config/model/set` table-replaces a
-  full field set (temperature, cost overrides, capabilities, etc.) into
-  `config.local.toml`, and `POST /api/config/model/remove` deletes a
-  model's table there. Both are surgical `config.local.toml` edits, same
-  as the existing catalog-save path; a model only declared in the shared
-  `config.toml` cannot be removed from the page. A catalog entry that
-  supports a temperature parameter (models.dev only signals the
-  capability, not a value) now fills in clanker's own chat default
-  (0.7) instead of leaving the field for the provider's own default.
-- `clanker add-goal` and `/add-goal` save a structured goal without starting
-  work. The Goals board uses the same `add_goal` writer and tells the operator
-  that a saved goal has not started.
-- Persistent Python eval kernel (PRD 0016): a session-scoped `python3`
-  supervisor keeps `__main__` across cells. `reset: true` restarts it;
-  session end SIGTERMs via the shared subprocess registry. Still off
-  unless `kernel.enabled = true`.
-- DAP debug tool (PRD 0017): `debug` guest + `ck_debug` + `[debug]`
-  adapters. Off unless `debug.enabled = true`. Host tests speak DAP
-  to a stdio fake adapter (launch, breakpoints, continue, stack,
-  variables, evaluate, disconnect).
-- The `kernel` tool's Python path also has a WASI one-shot sandbox
-  (`./scripts/setup-python-wasi.sh`) that is not the persist path.
-- Fleet Mesh map: each clanker is a lamp on `/#fleet`. Wires appear
-  after a talk; a live talk sends a directed glow along the wire.
-  `GET /api/mesh/map` feeds it (even when `modules.mesh` is off).
-- Web UI live bus: `GET /api/events` (SSE). Chat, mesh talk, and run
-  working push to the page. HTTP `/api/*` stays the command API; polls
-  are the fallback when the stream is down.
-- Mesh chat pipe: `fanOut` writes a `CHAT` frame on a live mesh link
-  when `modules.mesh` is on and the peer is connected, else HTTP. Serve
-  listens when the module is on. `POST /api/mesh/join` dials.
 
 ## [0.1.0] - 2026-08-14
 

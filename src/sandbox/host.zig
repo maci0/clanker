@@ -1197,6 +1197,22 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
         try s.write(cfg.kernel);
         try s.objectField("debug");
         try s.write(cfg.debug);
+        try s.objectField("mesh");
+        try s.write(cfg.mesh);
+        try s.objectField("ttsr");
+        try s.write(cfg.ttsr);
+        try s.objectField("advisor");
+        try s.write(cfg.advisor);
+        try s.objectField("hooks");
+        try s.write(cfg.hooks);
+        try s.objectField("mcp_servers");
+        try s.beginObject();
+        var msit = cfg.mcp_servers.iterator();
+        while (msit.next()) |mskv| {
+            try s.objectField(mskv.key_ptr.*);
+            try s.write(mskv.value_ptr.*);
+        }
+        try s.endObject();
     }
     if (access == .kernel) {
         try s.objectField("kernel");
