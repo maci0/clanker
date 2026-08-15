@@ -2520,7 +2520,7 @@ const fs_find_max_depth: u32 = 12;
 /// Directories a name search should never descend into. Without this, a search
 /// of the project answers mostly with copies of it: build caches, vendored
 /// dependencies, and the staging trees the improvement engine leaves behind.
-const fs_skip_dirs = [_][]const u8{ ".git", ".zig-cache", "zig-out", "zig-pkg", "node_modules", "staging", "history" };
+const fs_skip_dirs = [_][]const u8{ ".git", ".zig-cache", "zig-out", "zig-pkg", "node_modules", "vendor", "staging", "history" };
 
 fn skipDir(name: []const u8) bool {
     for (fs_skip_dirs) |d| {
@@ -2662,10 +2662,60 @@ fn fsGrepRecurse(
             defer sub.close(h.sandbox.io);
             try fsGrepRecurse(h, s, sub, rel, pattern, depth + 1, count);
         } else if (entry.kind == .file) {
+            if (skipGrepName(entry.name)) continue;
             fsGrepFile(h, s, dir, entry.name, rel, pattern, count) catch continue;
         }
     }
 }
+
+/// File-name extensions a content search will never match usefully. Opening
+/// them still costs a 1 MiB cap-read apiece, and a project-root walk hits
+/// hundreds of `.wasm` / image / archive files before it reaches source.
+fn skipGrepName(name: []const u8) bool {
+    const dot = std.mem.findScalarLast(u8, name, '.') orelse return false;
+    if (dot == 0) return false;
+    const ext = name[dot..];
+    if (ext.len < 2 or ext.len > 7) return false;
+    var buf: [7]u8 = undefined;
+    for (ext, 0..) |c, i| buf[i] = std.ascii.toLower(c);
+    return grep_skip_ext.get(buf[0..ext.len]) != null;
+}
+
+const grep_skip_ext = std.StaticStringMap(void).initComptime(.{
+    .{ ".wasm", {} },
+    .{ ".png", {} },
+    .{ ".jpg", {} },
+    .{ ".jpeg", {} },
+    .{ ".gif", {} },
+    .{ ".webp", {} },
+    .{ ".ico", {} },
+    .{ ".bmp", {} },
+    .{ ".zip", {} },
+    .{ ".gz", {} },
+    .{ ".tgz", {} },
+    .{ ".bz2", {} },
+    .{ ".xz", {} },
+    .{ ".7z", {} },
+    .{ ".tar", {} },
+    .{ ".o", {} },
+    .{ ".a", {} },
+    .{ ".so", {} },
+    .{ ".dll", {} },
+    .{ ".dylib", {} },
+    .{ ".exe", {} },
+    .{ ".woff", {} },
+    .{ ".woff2", {} },
+    .{ ".ttf", {} },
+    .{ ".otf", {} },
+    .{ ".mp3", {} },
+    .{ ".mp4", {} },
+    .{ ".webm", {} },
+    .{ ".wav", {} },
+    .{ ".pdf", {} },
+    .{ ".class", {} },
+    .{ ".jar", {} },
+    .{ ".pyc", {} },
+});
 
 fn fsGrepFile(
     h: *Host,
@@ -2676,6 +2726,9 @@ fn fsGrepFile(
     pattern: []const u8,
     count: *u32,
 ) !void {
+    const st = dir.statFile(h.sandbox.io, name, .{}) catch return;
+    if (st.size == 0 or pattern.len > st.size) return;
+
     // Read the file (up to max_fs_bytes).
     const data = dir.readFileAlloc(h.sandbox.io, name, h.sandbox.gpa, .limited(h.sandbox.max_fs_bytes)) catch return;
     defer h.sandbox.gpa.free(data);
@@ -2683,9 +2736,7 @@ fn fsGrepFile(
 
     // Skip binary files: check first 512 bytes for null.
     const check_len = @min(data.len, 512);
-    for (data[0..check_len]) |b| {
-        if (b == 0) return;
-    }
+    if (std.mem.indexOfScalar(u8, data[0..check_len], 0) != null) return;
 
     // Scan line by line.
     var line_no: u32 = 1;
@@ -4849,11 +4900,21 @@ test "skipDir names the cache and vendor trees a project-root walk must not ente
     try std.testing.expect(skipDir("node_modules"));
     try std.testing.expect(skipDir("zig-pkg"));
     try std.testing.expect(skipDir("zig-out"));
+    try std.testing.expect(skipDir("vendor"));
     try std.testing.expect(skipDir("staging"));
     try std.testing.expect(skipDir("history"));
     try std.testing.expect(skipDir(".zig-cache"));
     try std.testing.expect(!skipDir("src"));
     try std.testing.expect(!skipDir("tools"));
+}
+
+test "skipGrepName skips binary artifacts and leaves source names alone" {
+    try std.testing.expect(skipGrepName("app.wasm"));
+    try std.testing.expect(skipGrepName("mascot.PNG"));
+    try std.testing.expect(skipGrepName("libfoo.dylib"));
+    try std.testing.expect(!skipGrepName("loop.zig"));
+    try std.testing.expect(!skipGrepName("README.md"));
+    try std.testing.expect(!skipGrepName(".gitignore"));
 }
 
 test "globMatch handles basic patterns" {

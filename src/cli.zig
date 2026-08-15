@@ -4532,11 +4532,7 @@ const retrieval_untrusted_preamble =
 
 fn indexOfIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
     if (needle.len == 0 or needle.len > haystack.len) return null;
-    var i: usize = 0;
-    while (i + needle.len <= haystack.len) : (i += 1) {
-        if (std.ascii.eqlIgnoreCase(haystack[i .. i + needle.len], needle)) return i;
-    }
-    return null;
+    return std.ascii.findIgnoreCase(haystack, needle);
 }
 
 /// Replace the leading `<` of each fence marker with U+FF1C so the bytes

@@ -36,6 +36,17 @@ pub fn trimEnding(line: []const u8) []const u8 {
 /// is the 1-based number of the first line in `text`.
 pub fn annotate(alloc: std.mem.Allocator, text: []const u8, start_line: usize) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
+    // Prefix is 11 bytes at 4-digit line numbers ("0001 abcd  "); grow
+    // the estimate a little so a 5-digit file still fits in one alloc.
+    var lines: usize = 0;
+    if (text.len > 0) {
+        lines = 1;
+        for (text) |c| {
+            if (c == '\n') lines += 1;
+        }
+        if (text[text.len - 1] == '\n') lines -= 1;
+    }
+    try out.ensureTotalCapacity(alloc, text.len + lines * 16);
     var line_no: usize = if (start_line == 0) 1 else start_line;
     var i: usize = 0;
     while (i < text.len) {
