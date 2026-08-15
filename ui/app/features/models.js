@@ -4,6 +4,10 @@
 import { readJson, fmtInt } from "../core/utils.js";
 import { loadHljs } from "../core/vendor.js";
 
+function askConfirm(message, opts) {
+  return import("../core/ui.js").then(function (mod) { return mod.uiConfirm(message, opts); });
+}
+
 /* Generic grid builder. Shares only the .usage-wrap/.usage presentation classes
    with core/usage.js — whose renderUsageTable is a fixed-column token-stat
    renderer with a totals footer, built on the T factory. It cannot express these
@@ -139,7 +143,6 @@ export function configSnippet(m, configured, known) {
 }
 
 var snippetModel = null;
-var pendingSave = null;
 
 function hideSnippet() {
   var host = document.getElementById("models-snippet");
@@ -152,7 +155,6 @@ function showSnippet(m) {
   if (!host || !body) return;
   hideEditPanel();
   snippetModel = m;
-  pendingSave = null;
   var title = document.getElementById("models-snippet-title");
   if (title) title.textContent = m.provider + "/" + m.id;
   body.textContent = configSnippet(m, configuredProviders, providersKnown);
@@ -179,32 +181,28 @@ function setSnippetNote(text) {
   note.hidden = !text;
 }
 
-function postConfig(path, payload, btn, confirmLabel, doneLabel) {
+function postConfig(path, payload, btn, confirmMessage, doneLabel) {
   if (!snippetModel) return;
-  if (pendingSave !== path) {
-    pendingSave = path;
-    if (btn) btn.textContent = confirmLabel;
-    setSnippetNote("Click again to write this exact block to config.local.toml.");
-    return;
-  }
-  pendingSave = null;
-  if (btn) btn.disabled = true;
-  fetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
-  })
-    .then(readJson)
-    .then(function (d) {
-      if (!d.ok) throw new Error(d.error || "write failed");
-      if (btn) btn.textContent = doneLabel;
-      setSnippetNote("Saved to config.local.toml. " + (d.applied || "The server reloads into it."));
-      status("Wrote " + (d.path || "config.local.toml") + ".");
+  askConfirm(confirmMessage, { confirmLabel: "Save", title: "Write config.local.toml" }).then(function (yes) {
+    if (!yes) return;
+    if (btn) btn.disabled = true;
+    fetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
     })
-    .catch(function (err) {
-      if (btn) { btn.disabled = false; btn.textContent = "Retry"; }
-      setSnippetNote("Could not save: " + err.message);
-    });
+      .then(readJson)
+      .then(function (d) {
+        if (!d.ok) throw new Error(d.error || "write failed");
+        if (btn) btn.textContent = doneLabel;
+        setSnippetNote("Saved to config.local.toml. " + (d.applied || "The server reloads into it."));
+        status("Wrote " + (d.path || "config.local.toml") + ".");
+      })
+      .catch(function (err) {
+        if (btn) { btn.disabled = false; btn.textContent = "Retry"; }
+        setSnippetNote("Could not save: " + err.message);
+      });
+  });
 }
 
 function saveSnippet() {
@@ -213,7 +211,7 @@ function saveSnippet() {
     "/api/config/model",
     { provider: snippetModel.provider, model: snippetModel.id },
     document.getElementById("models-snippet-save"),
-    "Confirm save",
+    "Save " + snippetModel.provider + "/" + snippetModel.id + " to config.local.toml?",
     "Saved"
   );
 }
@@ -224,7 +222,7 @@ function saveDefault() {
     "/api/config/default",
     { provider: snippetModel.provider, model: snippetModel.id },
     document.getElementById("models-snippet-default"),
-    "Confirm default",
+    "Set " + snippetModel.provider + "/" + snippetModel.id + " as the default model in config.local.toml?",
     "Default set"
   );
 }
@@ -421,7 +419,6 @@ function editButton(entry) {
 
 var editEntry = null;
 var editIsNew = false;
-var pendingRemove = false;
 
 function editField(id) { return document.getElementById(id); }
 
@@ -431,7 +428,6 @@ function showEditPanel(entry, isNew) {
   hideSnippet();
   editEntry = entry;
   editIsNew = !!isNew;
-  pendingRemove = false;
   var title = document.getElementById("models-edit-title");
   if (title) title.textContent = isNew ? "Add a model" : entry.provider + "/" + entry.model;
   editField("models-edit-provider").value = entry.provider || "";
@@ -464,7 +460,6 @@ function hideEditPanel() {
   var host = document.getElementById("models-edit");
   if (host) host.hidden = true;
   editEntry = null;
-  pendingRemove = false;
 }
 
 function setEditNote(text) {
@@ -620,35 +615,36 @@ function saveEdit() {
 function removeEdit() {
   if (!editEntry || editIsNew) return;
   var btn = document.getElementById("models-edit-remove");
-  if (!pendingRemove) {
-    pendingRemove = true;
-    if (btn) btn.textContent = "Confirm remove";
-    setEditNote("Click again to delete this model from config.local.toml. A model only declared in the shared config.toml cannot be removed here.");
-    return;
-  }
-  pendingRemove = false;
-  if (btn) btn.disabled = true;
-  fetch("/api/config/model/remove", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ provider: editEntry.provider, model: editEntry.model })
-  })
-    .then(readJson)
-    .then(function (d) {
-      if (!d.ok) throw new Error(d.error || "remove failed");
-      if (btn) { btn.disabled = false; btn.textContent = "Remove"; }
-      if (d.removed) {
-        setEditNote("Removed from config.local.toml. " + (d.applied || "The server reloads into it."));
-        status("Removed " + editEntry.provider + "/" + editEntry.model + ".");
-        loadConfigured();
-      } else {
-        setEditNote("Not in config.local.toml — it must be declared in the shared config.toml, which this page never edits.");
-      }
+  var name = editEntry.provider + "/" + editEntry.model;
+  askConfirm("Remove \"" + name + "\" from config.local.toml? A model only declared in the shared config.toml cannot be removed here.", {
+    danger: true,
+    confirmLabel: "Remove",
+    title: "Remove model"
+  }).then(function (yes) {
+    if (!yes) return;
+    if (btn) btn.disabled = true;
+    fetch("/api/config/model/remove", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: editEntry.provider, model: editEntry.model })
     })
-    .catch(function (err) {
-      if (btn) { btn.disabled = false; btn.textContent = "Remove"; }
-      setEditNote("Could not remove: " + err.message);
-    });
+      .then(readJson)
+      .then(function (d) {
+        if (!d.ok) throw new Error(d.error || "remove failed");
+        if (btn) { btn.disabled = false; btn.textContent = "Remove"; }
+        if (d.removed) {
+          setEditNote("Removed from config.local.toml. " + (d.applied || "The server reloads into it."));
+          status("Removed " + name + ".");
+          loadConfigured();
+        } else {
+          setEditNote("Not in config.local.toml — it must be declared in the shared config.toml, which this page never edits.");
+        }
+      })
+      .catch(function (err) {
+        if (btn) { btn.disabled = false; btn.textContent = "Remove"; }
+        setEditNote("Could not remove: " + err.message);
+      });
+  });
 }
 
 function loadLive() {

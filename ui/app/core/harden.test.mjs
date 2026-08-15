@@ -179,6 +179,33 @@ test("prompts filter empty offers to clear the query", function () {
   assert.match(src, /Clear filter/);
 });
 
+test("rail title-filter empty offers to clear the query", function () {
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  assert.match(app, /No title matches/);
+  assert.match(app, /clear the filter/);
+});
+
+test("board filter empty offers to clear the filters", function () {
+  assert.match(html, /id="board-filter-empty"/);
+  assert.match(html, /id="board-filter-clear"/);
+  const src = readFileSync(join(here, "../features/board.js"), "utf8");
+  assert.match(src, /function clearBoardFilters/);
+  assert.match(src, /No cards in this lane match the filters/);
+});
+
+test("knowledge search empty offers to clear the query", function () {
+  const src = readFileSync(join(here, "../features/knowledge.js"), "utf8");
+  assert.match(src, /No documents mention/);
+  assert.match(src, /Clear search/);
+});
+
+test("compare and arena empty lists sit in the picker, not only the status line", function () {
+  const compare = readFileSync(join(here, "../features/compare.js"), "utf8");
+  const arena = readFileSync(join(here, "../features/arena.js"), "utf8");
+  assert.match(compare, /No comparisons yet\. Run one with /);
+  assert.match(arena, /No matches yet\. Run one with /);
+});
+
 test("rooms filter and message search are search inputs", function () {
   assert.match(html, /type="search" id="chat-room-filter"/);
   assert.match(html, /type="search" id="chat-search-input"/);

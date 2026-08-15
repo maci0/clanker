@@ -63,6 +63,16 @@ function renderPicker(rows) {
   var host = byId("compare-list");
   if (!host) return;
   host.textContent = "";
+  if (!rows.length) {
+    var empty = document.createElement("p");
+    empty.className = "run-empty";
+    empty.appendChild(document.createTextNode("No comparisons yet. Run one with "));
+    var cmd = document.createElement("code");
+    cmd.textContent = "clanker compare \"<prompt>\" --with a --with b";
+    empty.appendChild(cmd);
+    host.appendChild(empty);
+    return;
+  }
   rows.forEach(function (c) {
     var row = document.createElement("button");
     row.type = "button";

@@ -559,7 +559,19 @@ bind(el.railList, railState, function (s) {
           showView("search", true);
           searchRun(q);
         }
-      }, "Search messages")));
+      }, "Search messages"),
+      " or ",
+      T.button({
+        type: "button",
+        class: "rail-empty-action",
+        onclick: function () {
+          if (el.sessionFilter) {
+            el.sessionFilter.value = "";
+            el.sessionFilter.focus();
+          }
+          renderSessionOptions(null);
+        }
+      }, "clear the filter")));
   }
   return out;
 });

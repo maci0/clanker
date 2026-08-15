@@ -64,6 +64,40 @@ function syncListControls() {
 function doneColumn() { return doneColumnOf(board); }
 function blockers(card) { return blockersOf(card, board, cardById); }
 
+function boardHasActiveFilters(s) {
+  return !!(s.mine || s.text || s.blockedOnly || s.priority || s.assignee || s.label);
+}
+
+function cardMatchesBoardFilter(c, s) {
+  if (s.mine && c.assignee !== s.me) return false;
+  if (s.assignee) {
+    if (s.assignee === "(unassigned)") { if (c.assignee) return false; }
+    else if (c.assignee !== s.assignee) return false;
+  }
+  if (s.blockedOnly && blockers(c).length === 0) return false;
+  if (s.priority && (c.priority || "normal") !== s.priority) return false;
+  if (s.label && !(c.labels || []).some(function (l) { return l.color === s.label; })) return false;
+  var hay = c.title + " " + (c.body || "") + " " + (c.assignee || "") + " " +
+    (c.labels || []).map(function (l) { return l.text || l.color || ""; }).join(" ");
+  if (s.text && hay.toLowerCase().indexOf(s.text) === -1) return false;
+  return true;
+}
+
+function clearBoardFilters() {
+  var input = document.getElementById("board-filter-input");
+  if (input) input.value = "";
+  if (el && el.boardMine) el.boardMine.checked = false;
+  var blocked = document.getElementById("board-filter-blocked");
+  if (blocked) blocked.checked = false;
+  var prio = document.getElementById("board-filter-priority");
+  if (prio) prio.value = "";
+  var who = document.getElementById("board-filter-assignee");
+  if (who) who.value = "";
+  var label = document.getElementById("board-filter-label");
+  if (label) label.value = "";
+  renderBoard();
+}
+
 /* A board belongs to a chatroom, because a card *is* a message in that room's
    log. The picker is the room list, so joining a room is what gives you its
    board; there is no separate "create a board" step and no board that exists
@@ -230,9 +264,7 @@ export function renderBoard(next) {
 
 function boardColumn(col, s) {
   var shown = s.cards
-    .filter(function (c) { return c.column === col.id; })
-    .filter(function (c) { return !s.mine || c.assignee === s.me; })
-    .filter(function (c) { if (s.assignee) { if (s.assignee === "(unassigned)") { if (c.assignee) return false; } else if (c.assignee !== s.assignee) return false; } if (s.blockedOnly && blockers(c).length === 0) return false; if (s.priority && (c.priority || "normal") !== s.priority) return false; if (s.label && !(c.labels || []).some(function (l) { return l.color === s.label; })) return false; if (s.text && (c.title + " " + (c.body || "") + " " + (c.assignee || "") + " " + (c.labels || []).map(function(l){ return l.text || l.color || ""; }).join(" ")).toLowerCase().indexOf(s.text) === -1) return false; return true; })
+    .filter(function (c) { return c.column === col.id && cardMatchesBoardFilter(c, s); })
     .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
 
   var over = col.wip && shown.length > col.wip;
@@ -249,12 +281,16 @@ function boardColumn(col, s) {
   if (!shown.length) {
     var emptySlot = document.createElement("li");
     emptySlot.className = "board-empty-slot";
-    emptySlot.textContent = "Drop here — or ";
-    var addLink = document.createElement("button");
-    addLink.type = "button"; addLink.className = "secondary";
-    addLink.textContent = "Add goal";
-    addLink.addEventListener("click", function(e){ e.stopPropagation(); openQuickAdd(); });
-    emptySlot.appendChild(addLink);
+    if (boardHasActiveFilters(s)) {
+      emptySlot.textContent = "No cards in this lane match the filters";
+    } else {
+      emptySlot.textContent = "Drop here — or ";
+      var addLink = document.createElement("button");
+      addLink.type = "button"; addLink.className = "secondary";
+      addLink.textContent = "Add goal";
+      addLink.addEventListener("click", function(e){ e.stopPropagation(); openQuickAdd(); });
+      emptySlot.appendChild(addLink);
+    }
     items.push(emptySlot);
   }
   var list = T.ul({
@@ -1963,6 +1999,12 @@ export function bindBoard(deps) {
     });
     _setTabCount("board", open);
     el.boardEmpty.hidden = s.cards.length > 0;
+    var filterEmpty = document.getElementById("board-filter-empty");
+    if (filterEmpty) {
+      var shownN = 0;
+      s.cards.forEach(function (c) { if (cardMatchesBoardFilter(c, s)) shownN += 1; });
+      filterEmpty.hidden = !(s.cards.length && boardHasActiveFilters(s) && shownN === 0);
+    }
     var createFold = document.getElementById("board-create-fold");
     if (createFold && !s.cards.length) createFold.open = true;
     syncListControls();
@@ -2044,6 +2086,8 @@ export function bindBoard(deps) {
     if (filterRaf) return;
     filterRaf = window.requestAnimationFrame(run);
   }
+  var clearBtn = document.getElementById("board-filter-clear");
+  if (clearBtn) clearBtn.addEventListener("click", function () { clearBoardFilters(); });
   ["board-filter-input","board-mine","board-filter-blocked","board-filter-priority","board-filter-assignee","board-filter-label"].forEach(function(id){
     var n=document.getElementById(id);
     if(!n) return;
@@ -2140,16 +2184,7 @@ export function bindBoard(deps) {
     function boardListRows(){
       var s=boardState.val;
       var rows=[].concat(s.cards||[]);
-      // reuse same filters as columns
-      rows=rows.filter(function(c){
-        if(s.assignee) { if(s.assignee==="(unassigned)"){ if(c.assignee) return false; } else if(c.assignee!==s.assignee) return false; }
-        if(s.mine && c.assignee!==s.me) return false;
-        if(s.blockedOnly && blockers(c).length===0) return false;
-        if(s.priority && (c.priority||"normal")!==s.priority) return false;
-        if(s.label && !(c.labels||[]).some(function(l){ return l.color===s.label; })) return false;
-        if(s.text && (c.title+" "+(c.body||"")+" "+(c.assignee||"")).toLowerCase().indexOf(s.text)===-1) return false;
-        return true;
-      });
+      rows=rows.filter(function(c){ return cardMatchesBoardFilter(c, s); });
       var how=(sortSel && sortSel.value) || "updated";
       rows.sort(function(a,b){
         if(how==="priority"){
@@ -2173,11 +2208,7 @@ export function bindBoard(deps) {
         // The board-level first-use message already explains how cards get
         // here. Reserve this list message for the genuinely different case
         // where cards exist but the active filters hide all of them.
-        if(!(boardState.val.cards||[]).length) return;
-        var empty=document.createElement("p");
-        empty.className="run-empty";
-        empty.textContent="No cards match the current filters.";
-        listView.appendChild(empty);
+        // #board-filter-empty already explains a filter miss for both views.
         return;
       }
       var table=document.createElement("table");

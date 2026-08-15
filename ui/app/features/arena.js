@@ -179,6 +179,16 @@ function renderPicker(matches) {
   var host = byId("arena-list");
   if (!host) return;
   host.textContent = "";
+  if (!matches.length) {
+    var empty = document.createElement("p");
+    empty.className = "run-empty";
+    empty.appendChild(document.createTextNode("No matches yet. Run one with "));
+    var cmd = document.createElement("code");
+    cmd.textContent = "clanker arena \"<question>\" --for X --against Y";
+    empty.appendChild(cmd);
+    host.appendChild(empty);
+    return;
+  }
   matches.forEach(function (m) {
     var row = document.createElement("button");
     row.type = "button";

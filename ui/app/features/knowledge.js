@@ -252,7 +252,21 @@ export function bindKnowledge(){
     fetch("/api/knowledge/search?q="+encodeURIComponent(q)).then(readJson).then(function(data){
       var hits=(data&&data.hits)||[]; if(!searchOut) return; searchOut.textContent="";
       if(!hits.length){
-        searchOut.textContent="No documents mention “"+q+"”.";
+        searchOut.textContent="";
+        var none=document.createElement("p");
+        none.className="run-empty";
+        none.appendChild(document.createTextNode("No documents mention “"+q+"”. "));
+        var clear=document.createElement("button");
+        clear.type="button";
+        clear.className="secondary";
+        clear.textContent="Clear search";
+        clear.addEventListener("click",function(){
+          if(searchInput){ searchInput.value=""; searchInput.focus(); }
+          searchOut.textContent="";
+          if(status) status.textContent="";
+        });
+        none.appendChild(clear);
+        searchOut.appendChild(none);
         if(status) status.textContent="No documents mention “"+q+"”.";
         return;
       }

@@ -55,6 +55,14 @@ test("model save copy does not tell the operator to restart by hand", function (
   assert.match(js, /The server reloads into it/);
 });
 
+test("model write and remove use a confirm dialog, not click-again", function () {
+  assert.match(js, /function askConfirm/);
+  assert.match(js, /mod\.uiConfirm/);
+  assert.match(js, /from config.local.toml\? A model only declared/);
+  assert.doesNotMatch(js, /Click again/);
+  assert.doesNotMatch(js, /pendingRemove|pendingSave/);
+});
+
 test("Configured table folds alias variants behind a group toggle", function () {
   assert.match(js, /models-group-toggle/);
   assert.match(js, /data-group/);
