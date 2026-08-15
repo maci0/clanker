@@ -290,7 +290,9 @@
   --border: #9ca0b0;
   --rule: #bcc0cc;
   --fg: #4c4f69;
-  --fg-muted: #63667a;
+  /* One step darker than Latte's subtext row: #63667a read 3.66:1 on the
+     #ccd0da surface-2; this holds 4.64:1 there and 6.3:1 on paper. */
+  --fg-muted: #535670;
   --accent: #8839ef;
   --accent-dim: #8839ef1f;
   --accent-text: #8534ef;
@@ -322,7 +324,9 @@
   --border: #737994;
   --rule: #51576d;
   --fg: #c6d0f5;
-  --fg-muted: #a5adce;
+  /* Frappé subtext1: subtext0 (#a5adce) read 4.26:1 on the #414559
+     surface-2; subtext1 holds 5.19:1 there. */
+  --fg-muted: #b5bfe2;
   --accent: #ca9ee6;
   --accent-dim: #ca9ee626;
   --accent-text: #ca9ee6;
@@ -447,7 +451,9 @@
   --border: #8990b3;
   --rule: #a8aecb;
   --fg: #3760bf;
-  --fg-muted: #47568d;
+  /* Darkened from #47568d, which read 4.23:1 on the #c4c8da surface-2;
+     this holds 5.02:1 there. */
+  --fg-muted: #3d4c7a;
   --accent: #7847bd;
   --accent-dim: #7847bd1f;
   --accent-text: #6e3fb0;
@@ -2144,7 +2150,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
 .slack-btn-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* ── Create channel dialog ── */
-.slack-dialog { border: 1px solid var(--rule); border-radius: var(--radius-lg, 8px); padding: 0; background: var(--surface); box-shadow: 0 8px 32px rgba(0,0,0,.3); max-width: 400px; width: 90vw; }
+.slack-dialog { border: 1px solid var(--rule); border-radius: var(--radius-lg, 8px); padding: 0; background: var(--surface); box-shadow: var(--lift); max-width: 400px; width: 90vw; }
 .slack-dialog::backdrop { background: rgba(0,0,0,.5); }
 .slack-dialog-form { padding: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
 .slack-dialog-form h3 { margin: 0; font-size: 16px; }
@@ -4464,3 +4470,19 @@ h2#session-title {
 .goal-heading .goal-objective { min-width: 0; }
 .goal-worktree-badge { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 1.7rem; height: 1.7rem; margin-top: 0.05rem; border: 1px solid var(--accent); border-radius: var(--radius-sm); color: var(--accent-text); background: var(--surface-raised); }
 .goal-worktree-badge svg { display: block; }
+
+/* ── touch targets ─────────────────────────────────────────────────────────
+   40px is fine under a mouse but under the 44px floor for fingers. Last in
+   the file so it outranks the equal-specificity 40px rules above; coarse
+   pointer only, so desktop density is untouched. Plugin sheets load after
+   this one and may still opt controls out (Files' compact filenames). */
+@media (pointer: coarse) {
+  button:where(:not(.pf-v6-c-button)),
+  button.pf-v6-c-button,
+  .chat-composer button,
+  #view-chat .suggestion,
+  input:where([type="text"], [type="search"], [type="number"], [type="url"]),
+  select {
+    min-height: 44px;
+  }
+}

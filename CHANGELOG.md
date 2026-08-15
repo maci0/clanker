@@ -26,6 +26,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Files view uses the full main column when no preview is open, and
   filename / crumb / sort controls are no longer painted as 40px accent
   pills by the host button rule.
+- Muted text meets 4.5:1 contrast on every theme's raised surface: Latte,
+  Frappé, and Tokyo Night Day each read under the WCAG AA floor on
+  surface-2 and got a palette-native `--fg-muted` step.
+- Touch targets grow to a 44px minimum on coarse-pointer (touch) devices;
+  desktop keeps the 40px density.
+- Vendored PatternFly CSS is subset to the twelve components the UI
+  actually uses (1.8MB to 625KB); `scripts/subset-patternfly.py`
+  regenerates it from a stock release file after an upgrade.
 
 ### Added
 
