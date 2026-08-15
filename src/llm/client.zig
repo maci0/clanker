@@ -31,6 +31,12 @@ const user_agent = "clanker/" ++ build_options.version;
 /// number rather than an actual block count.
 const max_tool_call_slots: usize = 256;
 
+/// Stack scratch handed to std.http: the redirect header buffer, the
+/// decompress transfer buffers, and the SSE read chunk all share this size.
+/// A chunk size, not a cap: any value works, 8 KiB keeps per-frame copies
+/// small. Shared with the proxy, which drives the same reader shapes.
+pub const http_scratch_buf_bytes: usize = 8192;
+
 /// Lets a caller on another thread rescue a `chat` that is blocked reading a
 /// response which is never going to arrive.
 ///
@@ -671,7 +677,7 @@ pub fn chatStream(
     // a new one; the successful request is deferred to the function end.
     var req_slot: ?std.http.Client.Request = null;
     defer if (req_slot) |*r| r.deinit();
-    var redirect_buffer: [8192]u8 = undefined;
+    var redirect_buffer: [http_scratch_buf_bytes]u8 = undefined;
     var response: std.http.Client.Response = undefined;
     var attempt: u32 = 0;
     while (true) {
@@ -757,7 +763,7 @@ pub fn chatStream(
         // the raw reader hands back binary, so the one line that says what is
         // wrong with the request arrives as garbage. Decompress it like the
         // success path does (a no-op on identity-encoded bodies).
-        var err_transfer_buffer: [8192]u8 = undefined;
+        var err_transfer_buffer: [http_scratch_buf_bytes]u8 = undefined;
         var err_decompress_buffer: [std.compress.flate.max_window_len]u8 = undefined;
         var err_decompress: std.http.Decompress = undefined;
         const reader = response.readerDecompressing(&err_transfer_buffer, &err_decompress, &err_decompress_buffer);
@@ -800,11 +806,11 @@ pub fn chatStream(
     // stream: a raw reader would hand back compressed bytes and every frame
     // would silently fail to parse. The decompressing reader is a no-op when
     // the response is identity-encoded, so it is correct for both.
-    var transfer_buffer: [8192]u8 = undefined;
+    var transfer_buffer: [http_scratch_buf_bytes]u8 = undefined;
     var decompress_buffer: [std.compress.flate.max_window_len]u8 = undefined;
     var decompress: std.http.Decompress = undefined;
     const reader = response.readerDecompressing(&transfer_buffer, &decompress, &decompress_buffer);
-    var buf: [8192]u8 = undefined;
+    var buf: [http_scratch_buf_bytes]u8 = undefined;
     var sse: std.ArrayList(u8) = .empty;
     defer sse.deinit(ctx.gpa);
     var sse_done = false;
@@ -1570,7 +1576,7 @@ fn capturedAnthropicHeaders(gpa: std.mem.Allocator, key: []const u8, out: []u8) 
 }
 
 test "anthropic api key goes on x-api-key" {
-    var buf: [8192]u8 = undefined;
+    var buf: [http_scratch_buf_bytes]u8 = undefined;
     const headers = try capturedAnthropicHeaders(std.testing.allocator, "sk-ant-api03-secret", &buf);
 
     try std.testing.expect(std.mem.find(u8, headers, "x-api-key: sk-ant-api03-secret") != null);
@@ -1584,7 +1590,7 @@ test "anthropic api key goes on x-api-key" {
 test "anthropic oauth token goes on Authorization with the oauth beta" {
     // `/v1/messages` rejects an `sk-ant-oat…` token presented on x-api-key, so
     // it has to switch to bearer auth plus the beta header.
-    var buf: [8192]u8 = undefined;
+    var buf: [http_scratch_buf_bytes]u8 = undefined;
     const headers = try capturedAnthropicHeaders(std.testing.allocator, "sk-ant-oat01-secret", &buf);
 
     try std.testing.expect(std.mem.find(u8, headers, "authorization: Bearer sk-ant-oat01-secret") != null);

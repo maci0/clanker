@@ -350,7 +350,7 @@ fn pipe(
     }
     try req.connection.?.flush();
 
-    var redirect_buffer: [8192]u8 = undefined;
+    var redirect_buffer: [client.http_scratch_buf_bytes]u8 = undefined;
     var response = req.receiveHead(&redirect_buffer) catch return error.Timeout;
     watch.markByte();
 
@@ -365,8 +365,8 @@ fn pipe(
             return status;
         }
         writeStreamHead(ctx.stream, status, reason, ctype);
-        var buf: [8192]u8 = undefined;
-        var transfer: [8192]u8 = undefined;
+        var buf: [client.http_scratch_buf_bytes]u8 = undefined;
+        var transfer: [client.http_scratch_buf_bytes]u8 = undefined;
         const reader = response.reader(&transfer);
         var total: usize = 0;
         while (true) {
@@ -382,8 +382,8 @@ fn pipe(
 
     var body_buf: std.ArrayList(u8) = .empty;
     defer body_buf.deinit(ctx.gpa);
-    var buf: [8192]u8 = undefined;
-    var transfer: [8192]u8 = undefined;
+    var buf: [client.http_scratch_buf_bytes]u8 = undefined;
+    var transfer: [client.http_scratch_buf_bytes]u8 = undefined;
     const reader = response.reader(&transfer);
     while (true) {
         const nread = reader.readSliceShort(&buf) catch break;
@@ -428,7 +428,7 @@ fn xcodeStream(
     response: anytype,
     watch: *Watch,
 ) !void {
-    var transfer: [8192]u8 = undefined;
+    var transfer: [client.http_scratch_buf_bytes]u8 = undefined;
     const reader = response.reader(&transfer);
     var sse: std.ArrayList(u8) = .empty;
     defer sse.deinit(ctx.gpa);
@@ -438,7 +438,7 @@ fn xcodeStream(
     var anth_st = xcode.AnthropicStream{ .model = provider.activeModelName() };
     var chunk_arena_state = std.heap.ArenaAllocator.init(ctx.gpa);
     defer chunk_arena_state.deinit();
-    var buf: [8192]u8 = undefined;
+    var buf: [client.http_scratch_buf_bytes]u8 = undefined;
     var total: usize = 0;
     var at_eof = false;
     while (true) {
