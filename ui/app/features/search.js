@@ -138,7 +138,22 @@ function render() {
   if (!state.hits.length) {
     var none = document.createElement("p");
     none.className = "run-empty";
-    none.textContent = "No conversation says “" + state.query + "”. Try another phrase, or filter titles in the sidebar.";
+    none.appendChild(document.createTextNode("No conversation says “" + state.query + "”. Try another phrase, or filter titles in the sidebar. "));
+    var clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "secondary";
+    clear.textContent = "Clear search";
+    clear.addEventListener("click", function () {
+      var input = byId("search-q");
+      if (input) { input.value = ""; input.focus(); }
+      state.query = "";
+      state.hits = [];
+      state.error = "";
+      state.searching = false;
+      state.truncated = false;
+      render();
+    });
+    none.appendChild(clear);
     list.appendChild(none);
     if (status) status.textContent = "No matches.";
     return;

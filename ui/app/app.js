@@ -5650,7 +5650,16 @@ el.logsRefresh.addEventListener("click", function () { loadLogList(); });
       fetch("/api/providers").then(function(r){ return r.json(); }).catch(function(){ return null; })
     ]).then(function(vals){
       var runs=vals[0]||[]; progHist.textContent="";
-      if(!runs.length){ var p=document.createElement("p"); p.className="run-empty"; p.textContent="No runs yet — start a task in Chat and it appears here and in the gate history."; progHist.appendChild(p); return; }
+      if(!runs.length){
+        var p=document.createElement("p"); p.className="run-empty";
+        p.appendChild(document.createTextNode("No runs yet. Start a task in Chat and it appears here and in the gate history. "));
+        var go=document.createElement("button"); go.type="button"; go.className="primary"; go.textContent="Open Chat";
+        go.addEventListener("click", function(){
+          var tab=document.getElementById("tab-chat");
+          if(tab) tab.click(); else showView("chat", true);
+        });
+        p.appendChild(go); progHist.appendChild(p); return;
+      }
       var recent=runs.slice(0, 8);
       var ul=document.createElement("ul"); ul.className="fleet-roster-list";
       recent.forEach(function(r){

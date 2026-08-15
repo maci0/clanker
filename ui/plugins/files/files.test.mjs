@@ -40,6 +40,14 @@ test("Files filter is 16px on a phone so iOS does not zoom", function () {
   assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*\.files-filter \{ font-size: 16px; \}/);
 });
 
+test("Files empty nested folder offers to go up", function () {
+  const js = readFileSync(join(here, "app.js"), "utf8");
+  assert.match(js, /This folder is empty\./);
+  assert.match(js, /Go up/);
+  assert.match(js, /cur\.atRoot/);
+  assert.match(js, /upBtn\.click\(\)/);
+});
+
 test("Files filter empty state offers to clear the filter", function () {
   const js = readFileSync(join(here, "app.js"), "utf8");
   assert.match(js, /files-clear-filter/);
