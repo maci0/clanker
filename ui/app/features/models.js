@@ -2,6 +2,7 @@
 // /models listing, and models.dev discovery. Save writes config.local.toml
 // only (never the shared config.toml), after an explicit confirm.
 import { readJson, fmtInt } from "../core/utils.js";
+import { loadHljs } from "../core/vendor.js";
 
 /* Generic grid builder. Shares only the .usage-wrap/.usage presentation classes
    with core/usage.js — whose renderUsageTable is a fixed-column token-stat
@@ -453,6 +454,7 @@ function showEditPanel(entry, isNew) {
   if (removeBtn) removeBtn.hidden = isNew;
   var save = document.getElementById("models-edit-save");
   if (save) { save.disabled = false; save.textContent = isNew ? "Add model" : "Save changes"; }
+  setTomlMode(false);
   setEditNote("");
   host.hidden = false;
   try { host.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_) {}
@@ -510,7 +512,85 @@ function editPayload() {
   return payload;
 }
 
+/* ---- raw table mode (the OpenShift YAML-tab pattern, in TOML) ----------- */
+
+var tomlMode = false;
+
+/** The `[models."p/m"]` block the form currently describes. */
+function editToml() {
+  var p = editPayload();
+  var lines = ["[models." + tomlStr(p.provider + "/" + p.model) + "]"];
+  lines.push("provider = " + tomlStr(p.provider));
+  if (p.id) lines.push("id = " + tomlStr(p.id));
+  if (p.context_window != null) lines.push("context_window = " + p.context_window);
+  if (p.max_tokens != null) lines.push("max_tokens = " + p.max_tokens);
+  if (p.temperature != null) lines.push("temperature = " + p.temperature);
+  if (p.top_p != null) lines.push("top_p = " + p.top_p);
+  if (p.reasoning_effort) lines.push("reasoning_effort = " + tomlStr(p.reasoning_effort));
+  if (p.display) lines.push("display = " + tomlStr(p.display));
+  if (p.category) lines.push("category = " + tomlStr(p.category));
+  if (p.cost_per_1m_input != null) lines.push("cost_per_1m_input = " + p.cost_per_1m_input);
+  if (p.cost_per_1m_output != null) lines.push("cost_per_1m_output = " + p.cost_per_1m_output);
+  if (p.rpm != null) lines.push("rpm = " + p.rpm);
+  if (p.capabilities && p.capabilities.length) lines.push("capabilities = [" + p.capabilities.map(tomlStr).join(", ") + "]");
+  return lines.join("\n") + "\n";
+}
+
+function paintEditToml() {
+  var text = document.getElementById("models-edit-toml-text");
+  var code = document.getElementById("models-edit-toml-code");
+  if (!text || !code) return;
+  loadHljs().then(function () {
+    var out = window.hljs.highlight(text.value, { language: "toml", ignoreIllegals: true });
+    code.innerHTML = out.value;
+    code.appendChild(document.createTextNode("\n"));
+  }).catch(function () { code.textContent = text.value; });
+}
+
+function setTomlMode(on) {
+  tomlMode = on;
+  var form = document.getElementById("models-edit-form");
+  var editor = document.getElementById("models-edit-toml-editor");
+  var toggle = document.getElementById("models-edit-toml");
+  var save = document.getElementById("models-edit-save");
+  if (!form || !editor) return;
+  form.hidden = on;
+  editor.hidden = !on;
+  if (toggle) toggle.setAttribute("aria-pressed", String(on));
+  if (save) save.textContent = on ? "Save TOML" : (editIsNew ? "Add model" : "Save changes");
+  if (on) {
+    var text = document.getElementById("models-edit-toml-text");
+    if (text) { text.value = editToml(); paintEditToml(); }
+    setEditNote("Editing the raw table. Saving validates the whole config first; an invalid table is refused and nothing is written.");
+  } else {
+    setEditNote("");
+  }
+}
+
+function saveTomlEdit() {
+  var text = document.getElementById("models-edit-toml-text");
+  var btn = document.getElementById("models-edit-save");
+  if (!text) return;
+  if (btn) btn.disabled = true;
+  fetch("/api/config/table/set", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ block: text.value })
+  })
+    .then(readJson)
+    .then(function (d) {
+      if (!d.ok) throw new Error(d.error || "write failed");
+      setEditNote("Saved to config.local.toml. " + (d.applied || "Hot reload applies it."));
+      loadConfigured();
+    })
+    .catch(function (err) {
+      setEditNote("Refused: " + err.message + " — the running config is unchanged.");
+    })
+    .finally(function () { if (btn) btn.disabled = false; });
+}
+
 function saveEdit() {
+  if (tomlMode) return saveTomlEdit();
   var payload = editPayload();
   if (!payload.provider || !payload.model) {
     setEditNote("Provider and model ID are both required.");
@@ -721,4 +801,14 @@ export function bindModels() {
   if (editRemove) editRemove.addEventListener("click", removeEdit);
   var editClose = document.getElementById("models-edit-close");
   if (editClose) editClose.addEventListener("click", hideEditPanel);
+  var tomlToggle = document.getElementById("models-edit-toml");
+  if (tomlToggle) tomlToggle.addEventListener("click", function () { setTomlMode(!tomlMode); });
+  var tomlText = document.getElementById("models-edit-toml-text");
+  if (tomlText) {
+    tomlText.addEventListener("input", paintEditToml);
+    tomlText.addEventListener("scroll", function () {
+      var pre = tomlText.previousElementSibling;
+      if (pre) { pre.scrollTop = tomlText.scrollTop; pre.scrollLeft = tomlText.scrollLeft; }
+    });
+  }
 }

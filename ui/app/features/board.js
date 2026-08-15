@@ -691,10 +691,10 @@ function cardNode(c) {
     gf.appendChild(icon("goal", 14));
     gf.title = "Mirrors a goal — kept in step with the Goals view";
     badges.appendChild(gf);
-    // The same rocket that the "Start work" button shows on the open card,
+    // The same start actuator the "Start work" button shows on the open card,
     // surfaced on the closed card so goal runs are visible at a glance. While
     // a run for this goal is in flight (streaming here or on another client)
-    // the rocket lights up, so the closed card shows the live run state.
+    // the actuator lights up, so the closed card shows the live run state.
     var sw = document.createElement("span");
     sw.className = "card-badge";
     sw.appendChild(icon("rocket", 14));

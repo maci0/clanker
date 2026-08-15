@@ -5860,6 +5860,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_config_raw_get = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/config/raw");
         const is_config_raw_set = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/raw");
         const is_config_status = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/config/status");
+        const is_config_table_set = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/table/set");
         if (is_webui and isWebuiRead(method) and cfg.modules.webui) {
             const conn_val = headerValue(headers_raw, "connection") orelse "";
             if (!std.ascii.eqlIgnoreCase(conn_val, "close")) request_keep_alive = true;
@@ -5985,6 +5986,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleConfigRawSet(io, gpa, body, stream);
         } else if (is_config_status) {
             handleConfigStatus(stream);
+        } else if (is_config_table_set) {
+            handleConfigTableSet(io, gpa, body, stream);
         } else if (is_plugins) {
             handlePlugins(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_skills) {
@@ -8989,6 +8992,43 @@ fn handleConfigRawSet(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stre
     };
     setConfigCheck(io, true, "");
     respond(stream, 200, "OK", "{\"ok\":true,\"applied\":\"hot reload restarts the server into the new config\"}");
+}
+
+/// `POST /api/config/table/set` `{block}` — the OpenShift-console pattern
+/// for one resource: `block` is a complete TOML table (header line
+/// included) spliced into config.local.toml by `toml_edit.replaceTable`,
+/// then validated as a whole pair exactly like a raw save. A block that
+/// would break the config is refused and nothing is written.
+fn handleConfigTableSet(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const Req = struct { block: []const u8 = "" };
+    const req = std.json.parseFromSliceLeaky(Req, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"body must be {block}\"}");
+        return;
+    };
+    if (req.block.len == 0 or req.block.len > (1 << 18)) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"block must be a non-empty TOML table under 256KB\"}");
+        return;
+    }
+    const cwd = std.Io.Dir.cwd();
+    const current = cwd.readFileAlloc(io, "config.local.toml", arena, .limited(1 << 20)) catch "";
+    const next = toml_edit.replaceTable(arena, current, req.block) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"block must start with a [table.header] line\"}");
+        return;
+    };
+    // Re-encoded as a raw-save body so the validate/refuse/write pipeline
+    // and its responses stay in exactly one place.
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("file") catch return;
+    s.write("config.local.toml") catch return;
+    s.objectField("content") catch return;
+    s.write(next) catch return;
+    s.endObject() catch return;
+    handleConfigRawSet(io, gpa, out.written(), stream);
 }
 
 /// `GET /api/config/status` — the last revalidation verdict, so the editor

@@ -259,7 +259,8 @@ lamps carry further). The seven named palettes ride the same tokens.
     <div class="conversation-scroll">
     <div class="transcript" id="transcript"></div>
     <div class="run-empty" id="transcript-empty" hidden>
-      <p>What are we working on?</p>
+      <p>Idle</p>
+      <p>Write a task or pick one below.</p>
     </div>
     </div>
 
@@ -341,8 +342,8 @@ lamps carry further). The seven named palettes ride the same tokens.
     </form>
     <!-- Suggestions are the shortest path from an empty page to seeing what
          this thing does; each one is a real task against this repo. They sit
-         under the composer (the centered empty-state convention) and leave
-         with the empty state once the first turn lands. -->
+         under the composer and leave with the empty state once the first
+         turn lands. -->
     <div class="suggestions" id="suggestions"></div>
 
   </div>
@@ -746,6 +747,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <div class="models-snippet-head">
           <code id="models-edit-title"></code>
           <button type="button" class="primary" id="models-edit-save">Save changes</button>
+          <button type="button" class="secondary" id="models-edit-toml" aria-pressed="false" title="Edit this model's TOML table directly">TOML</button>
           <button type="button" class="secondary danger" id="models-edit-remove">Remove</button>
           <button type="button" class="secondary" id="models-edit-close">Close</button>
         </div>
@@ -774,6 +776,13 @@ lamps carry further). The seven named palettes ride the same tokens.
           <label>RPM<input type="number" id="models-edit-rpm" min="0" step="1" placeholder="(unset)"></label>
           <label class="models-edit-wide">Capabilities (comma-separated)<input type="text" id="models-edit-capabilities" autocomplete="off" placeholder="tools, vision, reasoning"></label>
         </form>
+        <!-- The OpenShift-console pattern: the same resource, editable as its
+             raw table. Saved through /api/config/table/set, which validates
+             the whole candidate config before writing anything. -->
+        <div class="config-editor models-edit-toml-editor" id="models-edit-toml-editor" hidden>
+          <pre class="config-editor-highlight" aria-hidden="true"><code id="models-edit-toml-code" class="language-toml"></code></pre>
+          <textarea id="models-edit-toml-text" spellcheck="false" autocomplete="off" aria-label="Model TOML table"></textarea>
+        </div>
         <p class="models-snippet-note" id="models-edit-note" hidden></p>
       </div>
       <p class="sr-only" id="models-status" role="status" aria-live="polite"></p>

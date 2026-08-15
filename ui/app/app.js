@@ -724,8 +724,8 @@ el.newChat.addEventListener("click", closeRailOnNarrow);
 function syncTranscriptEmpty() {
   var empty = el.transcript.querySelector(".turn") === null;
   el.transcriptEmpty.hidden = !empty;
-  // Empty conversations center the greeting + composer mid-screen with the
-  // suggestions underneath; the first turn docks the composer to the bottom.
+  // Empty conversations keep the idle plate, composer and jobs stacked from
+  // the top; the first turn docks the composer to the bottom.
   document.getElementById("view-chat").classList.toggle("chat-empty", empty);
 }
 

@@ -60,8 +60,8 @@ export var ICON_PATHS = {
   more: ["M5.5 12h1", "M11.5 12h1", "M17.5 12h1"],
   // Disclosure, pointing at what it closes.
   chevronLeft: ["M15 6l-6 6 6 6"],
-  // A rocket: start work on a goal.
-  rocket: ["M12 4l3 7H9l3-7z", "M9.5 11h5v5h-5z", "M9.5 16l-2 3.5", "M14.5 16l2 3.5"],
+  // A start actuator: press to run the goal. Key stays `rocket` for callers.
+  rocket: ["M7.5 5h9v14h-9z", "M10.5 9.5l5 2.5-5 2.5z"],
   // A person: members and assign-to-me.
   person: ["M12 5a3 3 0 100 6 3 3 0 000-6z", "M6 19c0-3.2 2.7-5 6-5s6 1.8 6 5"],
   // A microphone: voice input.

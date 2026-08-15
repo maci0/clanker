@@ -22,6 +22,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `POST /api/config/raw`: a config that does not load is refused with
   the reason and nothing is written, so a save can never take the
   server from good to broken.
+- The Models edit panel gains a TOML mode (the OpenShift-console
+  YAML-tab pattern): the same model, editable as its raw
+  `[models."..."]` table with highlighting. `POST /api/config/table/set`
+  splices the block into `config.local.toml` and validates the whole
+  candidate before writing, through the same refuse-or-write pipeline
+  as the raw editor.
 - Workspaces are first-class: create any number of them, each a folder on
   disk with its own chat history. The rail picker switches folder and
   conversation list; New chat and `/api/run` inherit the current workspace;

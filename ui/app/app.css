@@ -13,16 +13,18 @@
 :root {
   color-scheme: light dark;
 
-  --paper: #ffffff;
-  --bg: #f7f7f8;
-  --surface: #ffffff;
-  --surface-2: #f4f4f5;
+  /* Day-shift cabinet: warm RAL greys, not zinc-on-white. Backplane is
+     pebble grey; panel faces are a lighter grey-white. */
+  --paper: #eeebe4;
+  --bg: #dcd9d1;
+  --surface: #eeebe4;
+  --surface-2: #e2dfd6;
   --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
   --surface-raised: var(--surface-2);
-  --border: #e5e5e5;
-  --rule: #ececec;
-  --fg: #0d0d0d;
-  --fg-muted: #555c67;
+  --border: #b9b5aa;
+  --rule: #cdc9bf;
+  --fg: #1b1c18;
+  --fg-muted: #4f534b;
 
   --accent: #0b57d0;
   --accent-dim: #0b57d014;
@@ -30,11 +32,12 @@
   --on-accent: #ffffff;
   --ok: #117a3a;
   --ok-fill: #16a34a;
-  --violet: #7c3aed;
-  --violet-text: #6d28d9;
+  /* Goals and jumps are operator action: same blue as the actuators. */
+  --violet: var(--accent);
+  --violet-text: var(--accent-text);
   --danger: #dc2626;
   --on-danger: #ffffff;
-  --scrim: rgba(13, 13, 13, 0.32);
+  --scrim: rgba(27, 28, 24, 0.32);
   --warn: #b45309;
   --warn-text: #92400e;
   --code-bg: #0d1117;
@@ -72,9 +75,10 @@
 
   --measure: 70ch;
 
-  --radius-sm: 6px;
-  --radius: 10px;
-  --radius-lg: 14px;
+  /* Machined plate edges, not SaaS cards. Pills stay for lamp housings. */
+  --radius-sm: 2px;
+  --radius: 3px;
+  --radius-lg: 4px;
   --radius-pill: 999px;
 
   /* The margin column the transcript's job numbers are stamped into. */
@@ -137,26 +141,26 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     color-scheme: dark;
-    --paper: #212121;
-    --bg: #171717;
-    --surface: #212121;
-    --surface-2: #2f2f2f;
+    --paper: #232622;
+    --bg: #171916;
+    --surface: #232622;
+    --surface-2: #2e322d;
     --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
     --surface-raised: var(--surface-2);
-    --border: #3a3a3a;
-    --rule: #333333;
-    --fg: #ececec;
-    --fg-muted: #9ca3af;
+    --border: #454a44;
+    --rule: #353934;
+    --fg: #e8eae5;
+    --fg-muted: #a3aaa1;
     --accent: #7aa7ff;
     --accent-dim: #7aa7ff1f;
     --accent-text: #8fb5ff;
-    --on-accent: #0d0d0d;
+    --on-accent: #171916;
     --ok: #4ade80;
     --ok-fill: #22c55e;
-    --violet: #c4b5fd;
-    --violet-text: #ddd6fe;
+    --violet: var(--accent);
+    --violet-text: var(--accent-text);
     --danger: #f87171;
-    --on-danger: #171717;
+    --on-danger: #171916;
     --scrim: rgba(0, 0, 0, 0.56);
     --warn: #fbbf24;
     --warn-text: #fcd34d;
@@ -174,56 +178,56 @@
 }
 :root[data-theme="light"] {
   color-scheme: light;
-  --paper: #ffffff;
-  --bg: #f7f7f8;
-  --surface: #ffffff;
-  --surface-2: #f4f4f5;
+  --paper: #eeebe4;
+  --bg: #dcd9d1;
+  --surface: #eeebe4;
+  --surface-2: #e2dfd6;
   --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
   --surface-raised: var(--surface-2);
-  --border: #e5e5e5;
-  --rule: #ececec;
-  --fg: #0d0d0d;
-  --fg-muted: #555c67;
+  --border: #b9b5aa;
+  --rule: #cdc9bf;
+  --fg: #1b1c18;
+  --fg-muted: #4f534b;
   --accent: #0b57d0;
   --accent-dim: #0b57d014;
   --accent-text: #0b57d0;
   --on-accent: #ffffff;
   --ok: #117a3a;
   --ok-fill: #16a34a;
-  --violet: #7c3aed;
-  --violet-text: #6d28d9;
+  --violet: var(--accent);
+  --violet-text: var(--accent-text);
   --danger: #dc2626;
   --on-danger: #ffffff;
-  --scrim: rgba(13, 13, 13, 0.32);
+  --scrim: rgba(27, 28, 24, 0.32);
   --warn: #b45309;
   --warn-text: #92400e;
   --code-bg: #0d1117;
   --code-fg: #e6edf3;
-  --lift: 0 1px 3px rgba(0,0,0,0.06), 0 8px 24px -12px rgba(0,0,0,0.08);
-  --lift-high: 0 2px 8px rgba(0,0,0,0.08), 0 16px 40px -16px rgba(0,0,0,0.12);
+  --lift: 0 1px 2px rgba(24, 29, 26, 0.12), 0 6px 18px -8px rgba(24, 29, 26, 0.35);
+  --lift-high: 0 2px 4px rgba(24, 29, 26, 0.15), 0 20px 44px -16px rgba(24, 29, 26, 0.45);
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --paper: #212121;
-  --bg: #171717;
-  --surface: #212121;
-  --surface-2: #2f2f2f;
+  --paper: #232622;
+  --bg: #171916;
+  --surface: #232622;
+  --surface-2: #2e322d;
   --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
   --surface-raised: var(--surface-2);
-  --border: #3a3a3a;
-  --rule: #333333;
-  --fg: #ececec;
-  --fg-muted: #9ca3af;
+  --border: #454a44;
+  --rule: #353934;
+  --fg: #e8eae5;
+  --fg-muted: #a3aaa1;
   --accent: #7aa7ff;
   --accent-dim: #7aa7ff1f;
   --accent-text: #8fb5ff;
-  --on-accent: #0d0d0d;
+  --on-accent: #171916;
   --ok: #4ade80;
   --ok-fill: #22c55e;
-  --violet: #c4b5fd;
-  --violet-text: #ddd6fe;
+  --violet: var(--accent);
+  --violet-text: var(--accent-text);
   --danger: #f87171;
-  --on-danger: #171717;
+  --on-danger: #171916;
   --scrim: rgba(0, 0, 0, 0.56);
   --warn: #fbbf24;
   --warn-text: #fcd34d;
@@ -780,27 +784,13 @@ main.pf-v6-c-page__main {
 /* Suggestions belong to the empty state only; once a turn exists the column
    is transcript over docked composer with nothing beneath it. */
 #view-chat:not(.chat-empty) .suggestions { display: none; }
-/* ── centered empty state ──────────────────────────────────────────────────
-   Before the first turn the conversation is a greeting over the composer,
-   centered in the free space, suggestions underneath — the empty-state
-   convention of mainstream chat UIs. The header keeps the top (order -1);
-   the two pseudo-element spacers split the leftover height 3:4 so the
-   group sits a touch above true center. */
-#view-chat.chat-empty::before { content: ""; flex: 3 1 0; order: 0; }
-#view-chat.chat-empty::after { content: ""; flex: 4 1 0; order: 5; }
-#view-chat.chat-empty .conversation-header { order: -1; }
+/* Idle Chat is a work-order stack, not a centered chat-product hero:
+   legend plate, composer, jobs. Session verbs and find wait until a
+   turn exists (they stay in the palette). */
 #view-chat.chat-empty .conversation-scroll {
-  flex: none; min-height: 0; order: 1; overflow: visible;
+  flex: none; min-height: 0; overflow: visible;
 }
-#view-chat.chat-empty .composer { order: 2; }
-#view-chat.chat-empty .suggestions { order: 3; margin-top: var(--space-4); }
-#view-chat.chat-empty .run-empty p {
-  font-family: var(--sans); font-size: var(--step-2); font-weight: 600;
-  letter-spacing: -0.02em; text-transform: none;
-  color: var(--fg); margin: 0 0 var(--space-3);
-}
-/* Empty Chat is one task: greeting, composer, suggestions. Session verbs
-   and find wait until a turn exists (they stay in the palette). */
+#view-chat.chat-empty .suggestions { margin-top: var(--space-4); }
 #view-chat.chat-empty #session-acts-body,
 #view-chat.chat-empty #session-more,
 #view-chat.chat-empty #transcript-tools { display: none; }
@@ -1834,7 +1824,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
 .run-crumbs button { font-size: 12px; }
 .run-crumbs button[aria-current="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .run-canvas:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
-.run-minimap { position: absolute; right: 8px; bottom: 8px; width: 148px; height: 90px; border: 1px solid var(--border); border-radius: var(--radius); background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(6px); box-shadow: var(--lift); opacity: 0.98; overflow: hidden; cursor: pointer; }
+.run-minimap { position: absolute; right: 8px; bottom: 8px; width: 148px; height: 90px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--lift); overflow: hidden; cursor: pointer; }
 .run-minimap[hidden] { display: none; }
 .run-minimap:hover { border-color: var(--accent); }
 .run-minimap-viewport { position: absolute; border: 1.5px solid var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); border-radius: 3px; cursor: grab; pointer-events: auto; }
@@ -3700,23 +3690,17 @@ h2#session-title {
 /* A card is a small plate mounted in its column's channel. */
 .card {
   text-align: left; width: 100%; cursor: pointer;
-  padding: 0; border: 1px solid var(--rule); border-radius: 8px;
+  padding: 0; border: 1px solid var(--rule); border-radius: var(--radius);
   background: var(--surface); color: var(--fg);
   font-family: var(--sans); font-size: 13px; line-height: 1.45;
   display: flex; flex-direction: column;
-  box-shadow: 0 1px 1px rgba(9,30,66,0.25);
-  transition: border-color 140ms ease, box-shadow 180ms ease, transform 180ms ease, opacity 180ms ease;
+  box-shadow: var(--lift);
+  transition: border-color 140ms ease, box-shadow 180ms ease, opacity 180ms ease;
   position: relative; overflow: hidden;
-  animation: card-enter 180ms ease;
 }
-@keyframes card-enter {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@media (prefers-reduced-motion: reduce) { .card { animation: none; } }
 .card:hover {
   border-color: var(--border);
-  box-shadow: 0 4px 12px rgba(9,30,66,0.15), 0 0 1px rgba(9,30,66,0.2);
+  box-shadow: var(--lift-high);
   z-index: 1;
 }
 .card:hover .card-title, .card:focus-visible .card-title { color: var(--accent-text); }
@@ -3747,10 +3731,10 @@ h2#session-title {
    deliberately theme-constant (like Trello's own label colors): saturated
    mid-tones carrying white text, legible on light and dark alike, so a
    card's color means the same thing whichever theme a browser picked. */
-.card-cover { height: 4px; border-radius: 8px 8px 0 0; margin: 0; background: var(--rule); flex-shrink: 0; }
+.card-cover { height: 4px; border-radius: var(--radius) var(--radius) 0 0; margin: 0; background: var(--rule); flex-shrink: 0; }
 .card-cover[data-priority="high"] { background: var(--danger); height: 4px; }
 .card-cover[data-priority="low"] { background: var(--surface-2); height: 3px; }
-.card-cover[data-color] { height: 40px; border-radius: 8px 8px 0 0; }
+.card-cover[data-color] { height: 40px; border-radius: var(--radius) var(--radius) 0 0; }
 .card-cover[data-color="green"] { background: #0a7a2e; }
 .card-cover[data-color="yellow"] { background: #9a7a0a; }
 .card-cover[data-color="orange"] { background: #c45a0a; }
@@ -3759,7 +3743,7 @@ h2#session-title {
 .card-cover[data-color="blue"] { background: #0b5ab8; }
 .card-cover[data-color="sky"] { background: #2a8ecc; }
 .card-cover[data-color="pink"] { background: #c23a7a; }
-.card-cover-img { display: block; width: 100%; height: 140px; object-fit: cover; border-radius: 8px 8px 0 0; }
+.card-cover-img { display: block; width: 100%; height: 140px; object-fit: cover; border-radius: var(--radius) var(--radius) 0 0; }
 .card-cover--img { height: auto; background: transparent; }
 
 /* Trello-style labels: pill chips on card face — compact bars that expand on hover */
@@ -3885,23 +3869,17 @@ h2#session-title {
   max-width: 20rem; transition: none;
 }
 
-/* Trello-style card detail: centered modal with cover and sidebar */
+/* Card detail: a plate on the backplane, not a sliding Trello modal. */
 .card-detail-panel {
-  background: var(--surface); border-radius: 12px;
+  background: var(--surface); border-radius: var(--radius-lg);
   max-width: 768px; width: calc(100% - 2rem); margin: 3rem auto;
   max-height: calc(100vh - 6rem); overflow-y: auto; overflow-x: hidden;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.22), 0 2px 8px rgba(0,0,0,0.08);
-  animation: card-detail-enter 220ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  box-shadow: var(--lift-high);
   position: relative;
 }
-@keyframes card-detail-enter {
-  from { opacity: 0; transform: translateY(32px) scale(0.96); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-@media (prefers-reduced-motion: reduce) { #card-detail { animation: none; } }
 /* Cover image/color at the top of card detail */
 .card-detail-cover {
-  width: 100%; min-height: 80px; max-height: 160px; border-radius: 12px 12px 0 0;
+  width: 100%; min-height: 80px; max-height: 160px; border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   display: flex; align-items: flex-end; justify-content: flex-end; padding: var(--space-2);
   background-size: cover; background-position: center;
   position: relative;
@@ -3923,7 +3901,7 @@ h2#session-title {
 .card-detail-header {
   display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-4) var(--space-4) 0;
   position: sticky; top: 0; background: var(--surface); z-index: 2;
-  border-radius: 12px 12px 0 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 .card-detail-header .card-detail-icon { flex: none; font-size: 20px; opacity: 0.5; margin-top: 0.15rem; }
 .card-detail-header h3 { flex: 1; margin: 0; font-size: 20px; line-height: 1.3; font-weight: 600; }
@@ -4014,13 +3992,13 @@ h2#session-title {
 .label-picker { display: flex; flex-wrap: wrap; gap: 4px; padding: var(--space-2) 0; }
 .label-picker-item {
   width: 48px; height: 32px; min-width: 32px; min-height: 32px; border-radius: 6px; cursor: pointer; border: 2px solid transparent;
-  transition: transform 100ms ease, border-color 100ms ease;
+  transition: border-color 100ms ease;
   position: relative;
 }
 @media (pointer: coarse) {
   .label-picker-item { height: 44px; min-width: 44px; min-height: 44px; }
 }
-.label-picker-item:hover { transform: scale(1.12); }
+.label-picker-item:hover { border-color: var(--fg); }
 .label-picker-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .label-picker-item[data-selected="true"] { border-color: var(--fg); box-shadow: inset 0 0 0 2px var(--surface); }
 .label-picker-item[data-color="green"] { background: #22a24a; }
@@ -4268,9 +4246,7 @@ h2#session-title {
   min-height: 22rem;
   border: 1px solid var(--rule);
   border-radius: var(--radius-lg);
-  background:
-    radial-gradient(ellipse at 50% 48%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 58%),
-    var(--surface);
+  background: var(--surface);
   overflow: hidden;
 }
 .mesh-map svg { display: block; width: 100%; height: 22rem; }
@@ -4401,7 +4377,7 @@ h2#session-title {
   .turn[data-phase="llm"]::before { animation: none; }
   .card-badge[data-due="late"],
   .card-badge[data-goal-run="true"] { animation: none; }
-  .card:hover { transform: none; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.15); }
+  .card:hover { transform: none; box-shadow: var(--lift); }
   .card[data-dragging="true"] { transform: none; }
 }
 @media (max-width: 900px) {
@@ -4631,3 +4607,5 @@ h2#session-title {
 }
 .config-editor textarea::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); color: transparent; }
 .config-editor textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.models-edit-toml-editor { min-height: 12rem; margin-top: var(--space-2); }
+.models-edit-toml-editor[hidden] { display: none; }
