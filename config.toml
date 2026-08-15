@@ -63,6 +63,20 @@ default_provider = "moonshotai"
 # # azure_openai only. The api-version query. Empty uses 2024-10-21.
 # api_version = "2024-10-21"
 
+
+# NVIDIA build (integrate.api.nvidia.com) — OpenAI-compatible wire
+[providers.nvidia]
+kind = "openai_compat"
+base_url = "https://integrate.api.nvidia.com/v1"
+api_key_env = "NVIDIA_API_KEY"
+
+[models."nvidia/z-ai/glm-5.2"]
+provider = "nvidia"
+context_window = 131072
+max_tokens = 16384
+capabilities = ["thinking", "tool_use"]
+
+
 # Vendors. Name is the catalog vendor id, never a model family.
 [providers.anthropic]
 kind = "anthropic"
