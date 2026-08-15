@@ -7,6 +7,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- The REPL mascot renders as a SIXEL raster on terminals that support SIXEL
+  but not kitty graphics, at the same cell footprint and in every existing
+  mode, size, facing and speed. The renderer is chosen automatically from the
+  terminal's own capability answer — kitty graphics, then SIXEL, then unicode
+  half-blocks — never from `$TERM` or a terminal name, and a SIXEL failure
+  falls back to half-blocks for the rest of the session. Requires
+  `patches/vaxis-sixel-graphics.patch`; an unpatched build keeps the previous
+  two renderers.
+
 - A `[models."<provider>/<name>"]` entry can set `id` to the wire SKU so
   the table key is a local alias. Two names can share one SKU with
   different temperature (or other) settings:

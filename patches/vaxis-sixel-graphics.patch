@@ -1,0 +1,1416 @@
+diff --git a/src/Cell.zig b/src/Cell.zig
+index b496a0e..102dd40 100644
+--- a/src/Cell.zig
++++ b/src/Cell.zig
+@@ -1,10 +1,17 @@
+ const std = @import("std");
+ const Image = @import("Image.zig");
++const sixel_mod = @import("sixel.zig");
+ 
+ char: Character = .{},
+ style: Style = .{},
+ link: Hyperlink = .{},
+ image: ?Image.Placement = null,
++/// A sixel raster to display with this cell as its top-left corner.
++///
++/// Separate from `image`, which is a kitty placement: kitty places retained
++/// media by id, while sixel streams the payload itself. A cell carrying this
++/// is always re-rendered, because the terminal keeps no copy to re-place.
++sixel: ?sixel_mod.Placement = null,
+ default: bool = false,
+ /// Set to true if this cell is the last cell printed in a row before wrap. Vaxis will determine if
+ /// it should rely on the terminal's autowrap feature which can help with primary screen resizes
+diff --git a/src/Loop.zig b/src/Loop.zig
+index 7906358..35a35dd 100644
+--- a/src/Loop.zig
++++ b/src/Loop.zig
+@@ -269,7 +269,8 @@ pub fn handleEventGeneric(self: anytype, vx: *Vaxis, cache: *GraphemeCache, Even
+                         return self.postEvent(.{ .key_release = mut_key });
+                     }
+                 },
+-                .cap_da1 => {
++                .cap_da1 => |da1| {
++                    vx.applyDa1(da1);
+                     std.Io.futexWake(vx.io, std.atomic.Value(u32), &vx.query_futex, 10);
+                     vx.queries_done.store(true, .unordered);
+                 },
+@@ -406,6 +407,17 @@ pub fn handleEventGeneric(self: anytype, vx: *Vaxis, cache: *GraphemeCache, Even
+                     log.info("pixel mouse capability detected", .{});
+                     vx.caps.sgr_pixels = true;
+                 },
++                .cap_sixel_geometry => |geometry| {
++                    // Retained, not acted on: the geometry report says the
++                    // terminal understood a graphics query, but sixel is only
++                    // enabled if the device attributes claim it too. `applyDa1`
++                    // makes that decision once the DA1 arrives.
++                    log.info(
++                        "sixel geometry reported: {d}x{d}",
++                        .{ geometry.width, geometry.height },
++                    );
++                    vx.sixel_geometry = geometry;
++                },
+                 .cap_color_scheme_updates => {
+                     log.info("color_scheme_updates capability detected", .{});
+                     vx.caps.color_scheme_updates = true;
+@@ -414,7 +426,8 @@ pub fn handleEventGeneric(self: anytype, vx: *Vaxis, cache: *GraphemeCache, Even
+                     log.info("multi cursor capability detected", .{});
+                     vx.caps.multi_cursor = true;
+                 },
+-                .cap_da1 => {
++                .cap_da1 => |da1| {
++                    vx.applyDa1(da1);
+                     std.Io.futexWake(vx.io, std.atomic.Value(u32), &vx.query_futex, 10);
+                     vx.queries_done.store(true, .unordered);
+                 },
+diff --git a/src/Parser.zig b/src/Parser.zig
+index d16f1a2..aea5865 100644
+--- a/src/Parser.zig
++++ b/src/Parser.zig
+@@ -2,6 +2,7 @@ const std = @import("std");
+ const testing = std.testing;
+ const Color = @import("Cell.zig").Color;
+ const Event = @import("event.zig").Event;
++const Da1 = @import("event.zig").Da1;
+ const Key = @import("Key.zig");
+ const Mouse = @import("Mouse.zig");
+ const uucode = @import("uucode");
+@@ -356,6 +357,26 @@ inline fn parseCsi(input: []const u8, text_buf: []u8) Result {
+     const null_event: Result = .{ .event = null, .n = sequence.len };
+ 
+     const final = sequence[sequence.len - 1];
++
++    // XTSMGRAPHICS report (CSI ? Pi ; Ps ; Pv S), which shares its final byte
++    // with the legacy F4 key. The leading '?' is what separates them, so this
++    // has to be decided before the key branch below claims the 'S'.
++    if (final == 'S' and sequence.len > 3 and sequence[2] == '?') {
++        var iter = std.mem.splitScalar(u8, sequence[3 .. sequence.len - 1], ';');
++        const item = std.fmt.parseUnsigned(u16, iter.next() orelse return null_event, 10) catch return null_event;
++        const status = std.fmt.parseUnsigned(u16, iter.next() orelse return null_event, 10) catch return null_event;
++        // Item 2 is the graphics geometry; status 0 is success. Anything else
++        // is a terminal declining the query, which is not support.
++        if (item != 2 or status != 0) return null_event;
++        const width = std.fmt.parseUnsigned(u16, iter.next() orelse return null_event, 10) catch return null_event;
++        const height = std.fmt.parseUnsigned(u16, iter.next() orelse return null_event, 10) catch return null_event;
++        if (width == 0 or height == 0) return null_event;
++        return .{
++            .event = .{ .cap_sixel_geometry = .{ .width = width, .height = height } },
++            .n = sequence.len,
++        };
++    }
++
+     switch (final) {
+         'A', 'B', 'C', 'D', 'E', 'F', 'H', 'P', 'Q', 'R', 'S' => {
+             // Legacy keys
+@@ -504,7 +525,19 @@ inline fn parseCsi(input: []const u8, text_buf: []u8) Result {
+             // Primary DA (CSI ? Pm c)
+             std.debug.assert(sequence.len >= 4); // ESC [ ? c == 4 bytes
+             switch (input[2]) {
+-                '?' => return .{ .event = .cap_da1, .n = sequence.len },
++                '?' => {
++                    // The attributes are a ';'-separated list after the '?'.
++                    // Attribute 4 is sixel graphics. Unparseable or unknown
++                    // attributes are ignored rather than failing the whole
++                    // report: the report is also what ends the query phase.
++                    var da1: Da1 = .{};
++                    var iter = std.mem.splitScalar(u8, sequence[3 .. sequence.len - 1], ';');
++                    while (iter.next()) |attr| {
++                        const n = std.fmt.parseUnsigned(u16, attr, 10) catch continue;
++                        if (n == 4) da1.sixel = true;
++                    }
++                    return .{ .event = .{ .cap_da1 = da1 }, .n = sequence.len };
++                },
+                 else => return null_event,
+             }
+         },
+@@ -1221,7 +1254,7 @@ test "parse(csi): primary da" {
+     const input = "\x1b[?c";
+     const result = parseCsi(input, &buf);
+     const expected: Result = .{
+-        .event = .cap_da1,
++        .event = .{ .cap_da1 = .{} },
+         .n = input.len,
+     };
+ 
+@@ -1229,6 +1262,63 @@ test "parse(csi): primary da" {
+     try testing.expectEqual(expected.event, result.event);
+ }
+ 
++test "parse(csi): primary da reports the sixel attribute" {
++    var buf: [1]u8 = undefined;
++    // xterm with sixel compiled in: attribute 4 among the others.
++    {
++        const input = "\x1b[?62;4;6;9;22c";
++        const result = parseCsi(input, &buf);
++        try testing.expectEqual(input.len, result.n);
++        try testing.expect(result.event.?.cap_da1.sixel);
++    }
++    // A terminal with no sixel attribute. 14 and 40 must not be mistaken for
++    // a 4: the attributes are whole numbers, not digits.
++    {
++        const input = "\x1b[?62;14;40;22c";
++        const result = parseCsi(input, &buf);
++        try testing.expectEqual(input.len, result.n);
++        try testing.expect(!result.event.?.cap_da1.sixel);
++    }
++    // A single bare attribute.
++    {
++        const input = "\x1b[?4c";
++        const result = parseCsi(input, &buf);
++        try testing.expect(result.event.?.cap_da1.sixel);
++    }
++}
++
++test "parse(csi): sixel geometry report" {
++    var buf: [1]u8 = undefined;
++    {
++        const input = "\x1b[?2;0;800;480S";
++        const result = parseCsi(input, &buf);
++        const expected: Result = .{
++            .event = .{ .cap_sixel_geometry = .{ .width = 800, .height = 480 } },
++            .n = input.len,
++        };
++        try testing.expectEqual(expected.n, result.n);
++        try testing.expectEqual(expected.event, result.event);
++    }
++    // A terminal declining the query (nonzero status) is not support, and
++    // neither is a zero geometry or a report about some other item.
++    for ([_][]const u8{
++        "\x1b[?2;1;800;480S",
++        "\x1b[?2;0;0;0S",
++        "\x1b[?1;0;800;480S",
++        "\x1b[?2;0S",
++    }) |input| {
++        const result = parseCsi(input, &buf);
++        try testing.expectEqual(input.len, result.n);
++        try testing.expectEqual(@as(?Event, null), result.event);
++    }
++    // The plain F4 key shares the final byte and must still parse as a key.
++    {
++        const input = "\x1b[1;2S";
++        const result = parseCsi(input, &buf);
++        try testing.expectEqual(Key.f4, result.event.?.key_press.codepoint);
++    }
++}
++
+ test "parse(csi): dsr" {
+     var buf: [1]u8 = undefined;
+     {
+diff --git a/src/Vaxis.zig b/src/Vaxis.zig
+index 47aa49b..df25fac 100644
+--- a/src/Vaxis.zig
++++ b/src/Vaxis.zig
+@@ -13,6 +13,7 @@ const Screen = @import("Screen.zig");
+ const Cursor = Screen.Cursor;
+ const unicode = @import("unicode.zig");
+ const Window = @import("Window.zig");
++const sixel = @import("sixel.zig");
+ 
+ const Hyperlink = Cell.Hyperlink;
+ const KittyFlags = Key.KittyFlags;
+@@ -32,6 +33,12 @@ const log = std.log.scoped(.vaxis);
+ pub const Capabilities = struct {
+     kitty_keyboard: bool = false,
+     kitty_graphics: bool = false,
++    /// Sixel raster graphics. Set only when the primary device attributes
++    /// claim attribute 4 *and* the terminal answered the XTSMGRAPHICS geometry
++    /// query. Never inferred from `TERM`, `TERM_PROGRAM`, or an emulator name:
++    /// multiplexers and ssh routinely change what actually reaches this
++    /// process, and a name is not a protocol answer.
++    sixel_graphics: bool = false,
+     no_color: bool = false,
+     rgb: bool = false,
+     unicode: gwidth.Method = .wcwidth,
+@@ -42,6 +49,18 @@ pub const Capabilities = struct {
+     multi_cursor: bool = false,
+ };
+ 
++/// A cell rectangle occupied by a sixel raster.
++pub const Rect = struct {
++    col: u16,
++    row: u16,
++    cols: u16,
++    rows: u16,
++
++    pub fn eql(a: Rect, b: Rect) bool {
++        return a.col == b.col and a.row == b.row and a.cols == b.cols and a.rows == b.rows;
++    }
++};
++
+ pub const Options = struct {
+     kitty_keyboard_flags: KittyFlags = .{},
+     /// When supplied, this allocator will be used for system clipboard
+@@ -78,6 +97,27 @@ queries_done: atomic.Value(bool) = atomic.Value(bool).init(true),
+ // images
+ next_img_id: u32 = 1,
+ 
++/// The maximum sixel raster the terminal reported, or null if it never
++/// answered the geometry query. Retained from the query phase; a terminal that
++/// never answers this does not get sixel even if its device attributes claim
++/// it.
++sixel_geometry: ?@import("event.zig").SixelGeometry = null,
++
++/// Loaded sixel rasters, owned by Vaxis. Sixel has no retained-media contract
++/// on the terminal side, so "loaded" means decoded and quantized here, ready
++/// to encode; nothing has been sent.
++sixel_images: std.ArrayList(sixel.Image) = .empty,
++next_sixel_id: u32 = 1,
++/// The allocator the sixel rasters were loaded with. Remembered because
++/// `render` takes no allocator and payloads are encoded there, at the moment
++/// the frame they belong to is drawn.
++sixel_gpa: ?std.mem.Allocator = null,
++/// The cell rectangle the last rendered sixel occupied, so the next render can
++/// erase it. Without this a frame that moves or disappears leaves its pixels
++/// behind, because erasing is the terminal's job only for cells it repaints.
++/// The invariant is that this describes exactly what is on screen.
++sixel_last_rect: ?Rect = null,
++
+ sgr: enum {
+     standard,
+     legacy,
+@@ -124,6 +164,7 @@ pub fn deinit(self: *Vaxis, alloc: ?std.mem.Allocator, tty: *std.Io.Writer) void
+     self.resetState(tty) catch {};
+ 
+     if (alloc) |a| {
++        self.clearSixelImages(a);
+         if (self.state.prev_cursor_secondary.ptr != self.screen.cursor_secondary.ptr)
+             a.free(self.state.prev_cursor_secondary);
+         a.free(self.screen.cursor_secondary);
+@@ -164,6 +205,9 @@ pub fn resetState(self: *Vaxis, tty: *std.Io.Writer) !void {
+         }
+         try tty.writeAll(ctlseqs.erase_below_cursor);
+     }
++    // Whatever raster was on screen is gone with the erase above (or with the
++    // alternate screen itself), so nothing is left to clean up later.
++    self.sixel_last_rect = null;
+     if (self.state.color_scheme_updates) {
+         try tty.writeAll(ctlseqs.color_scheme_reset);
+         self.state.color_scheme_updates = false;
+@@ -199,6 +243,10 @@ pub fn resize(
+     winsize: Winsize,
+ ) !void {
+     log.debug("resizing screen: width={d} height={d}", .{ winsize.cols, winsize.rows });
++    // Rasters are encoded for one cell geometry. A resize can change the pixel
++    // size of a cell (a font change arrives the same way), so every loaded
++    // sixel is stale here and the application re-loads at the new geometry.
++    self.clearSixelImages(alloc);
+     self.screen.deinit(alloc);
+     self.screen = try Screen.init(alloc, winsize);
+     self.screen.width_method = self.caps.unicode;
+@@ -319,6 +367,9 @@ pub fn queryTerminalSend(vx: *Vaxis, tty: *std.Io.Writer) !void {
+         ctlseqs.xtversion ++
+         ctlseqs.csi_u_query ++
+         ctlseqs.kitty_graphics_query ++
++        // Before the device attributes on purpose: DA1 is what ends the query
++        // phase, and the sixel decision needs this answer already in hand.
++        ctlseqs.sixel_geometry_query ++
+         ctlseqs.primary_device_attrs);
+ 
+     try tty.flush();
+@@ -457,6 +508,31 @@ pub fn render(self: *Vaxis, tty: *std.Io.Writer) !void {
+         try startRender.run(self, tty, &cursor_pos, &reposition, &started, &sync_active);
+     }
+ 
++    // Sixel bookkeeping, before anything is drawn.
++    //
++    // A sixel owns its cell rectangle: the pixels live in the terminal's cell
++    // buffer, so they are removed by erasing cells and they are covered by
++    // whatever text is drawn over those cells afterwards. Both rectangles --
++    // where the raster was and where it is going -- are marked for repaint
++    // here so that anything underneath is redrawn in this same pass rather
++    // than silently erased.
++    const sixel_rect: ?Rect = if (self.caps.sixel_graphics) self.findSixelPlacement() else null;
++    if (self.caps.sixel_graphics) {
++        if (self.sixel_last_rect) |last| {
++            const moved = if (sixel_rect) |now| !now.eql(last) else true;
++            if (moved) {
++                if (!started)
++                    try startRender.run(self, tty, &cursor_pos, &reposition, &started, &sync_active);
++                try eraseSixelRect(tty, last.col, last.row, last.cols, last.rows);
++                self.markSixelRectDirty(last);
++                self.sixel_last_rect = null;
++                reposition = true;
++            }
++        }
++        if (sixel_rect) |now| self.markSixelRectDirty(now);
++    }
++    var sixel_drawn = false;
++
+     var i: usize = 0;
+     while (i < self.screen.buf.len) {
+         const cell = self.screen.buf[i];
+@@ -491,7 +567,10 @@ pub fn render(self: *Vaxis, tty: *std.Io.Writer) !void {
+         if ((!self.refresh and
+             last.eql(cell) and
+             !last.skipped and
+-            cell.image == null) or
++            cell.image == null and
++            // A sixel is streamed, not retained: the terminal has no copy to
++            // re-place, so an unchanged cell still has to resend its frame.
++            cell.sixel == null) or
+             last.skip)
+         {
+             reposition = true;
+@@ -554,6 +633,54 @@ pub fn render(self: *Vaxis, tty: *std.Io.Writer) !void {
+             }
+         }
+ 
++        if (cell.sixel) |placement| sixel_blk: {
++            if (!self.caps.sixel_graphics) break :sixel_blk;
++            const gpa = self.sixel_gpa orelse break :sixel_blk;
++            const img = self.findSixelImage(placement.img_id) orelse break :sixel_blk;
++
++            // Clear the rectangle every frame, not only when the raster moves.
++            // A sixel with a transparent background leaves untouched pixels
++            // alone, so without this the previous frame shows through every
++            // hole in the one replacing it.
++            try eraseSixelRect(tty, col, row, placement.cols, placement.rows);
++
++            const payload: []const u8 = payload: {
++                if (placement.clip) |clip| {
++                    // Clipped frames happen only while the raster crosses a
++                    // screen edge, so they are encoded on demand rather than
++                    // held: caching them would key a cache on the animation's
++                    // position rather than on its geometry.
++                    break :payload sixel.encodeAlloc(gpa, img.*, clip) catch |err| {
++                        log.debug("sixel encode failed: {t}", .{err});
++                        break :sixel_blk;
++                    };
++                }
++                if (img.payload == null) {
++                    img.payload = sixel.encodeAlloc(gpa, img.*, null) catch |err| {
++                        log.debug("sixel encode failed: {t}", .{err});
++                        break :sixel_blk;
++                    };
++                }
++                break :payload img.payload.?;
++            };
++            defer if (placement.clip != null) gpa.free(payload);
++
++            // The cursor is saved and restored around the payload: a sixel
++            // leaves the cursor wherever the terminal decides, and the diff
++            // below is still counting on knowing where it is.
++            try tty.writeAll(ctlseqs.save_cursor);
++            try tty.print(ctlseqs.cup, .{ row + 1, col + 1 });
++            try tty.writeAll(payload);
++            try tty.writeAll(ctlseqs.restore_cursor);
++            self.sixel_last_rect = .{
++                .col = col,
++                .row = row,
++                .cols = placement.cols,
++                .rows = placement.rows,
++            };
++            sixel_drawn = true;
++        }
++
+         if (cell.image) |img| {
+             try tty.print(
+                 ctlseqs.kitty_graphics_preamble,
+@@ -788,6 +915,18 @@ pub fn render(self: *Vaxis, tty: *std.Io.Writer) !void {
+         cursor_pos.col = col + w;
+         cursor_pos.row = row;
+     }
++
++    // A placement that was never drawn -- an encode that failed, or an image
++    // that is no longer loaded -- must not leave the last frame's pixels on
++    // screen claiming to be current.
++    if (!sixel_drawn) {
++        if (self.sixel_last_rect) |last| {
++            try eraseSixelRect(tty, last.col, last.row, last.cols, last.rows);
++            self.markSixelRectDirty(last);
++            self.sixel_last_rect = null;
++        }
++    }
++
+     if (!started) return;
+     if (self.screen.cursor_vis) {
+         if (self.state.alt_screen) {
+@@ -1102,6 +1241,156 @@ pub fn loadImage(
+     return self.transmitImage(alloc, tty, &img, .png);
+ }
+ 
++/// Applies the primary device attributes.
++///
++/// Sixel needs both halves: the attribute bit says the terminal claims the
++/// protocol, and the geometry report says it actually answered a graphics
++/// query. A multiplexer that forwards the attribute bit but swallows the query
++/// fails the second half, which is the case a name-based check gets wrong.
++pub fn applyDa1(self: *Vaxis, da1: @import("event.zig").Da1) void {
++    if (da1.sixel and self.sixel_geometry != null) {
++        log.info("sixel graphics capability detected", .{});
++        self.caps.sixel_graphics = true;
++    } else if (da1.sixel) {
++        log.info("sixel claimed in device attributes but no geometry reported; not enabling", .{});
++    }
++}
++
++/// The measured pixel size of one cell, or null when the terminal reported no
++/// usable pixel geometry.
++///
++/// Null is a real answer, not a reason to guess: a raster sized from a guessed
++/// font size cannot honour a cell-footprint contract, and every caller here
++/// falls back to a cell renderer instead.
++pub fn cellPixelSize(self: Vaxis) ?struct { width: u16, height: u16 } {
++    if (self.screen.width == 0 or self.screen.height == 0) return null;
++    if (self.screen.width_pix == 0 or self.screen.height_pix == 0) return null;
++    const w = self.screen.width_pix / self.screen.width;
++    const h = self.screen.height_pix / self.screen.height;
++    if (w == 0 or h == 0) return null;
++    return .{ .width = w, .height = h };
++}
++
++/// Decodes an image and holds it at the pixel size of a `cols` x `rows` cell
++/// rectangle, ready to be placed.
++///
++/// Nothing is written to the terminal here: sixel payloads travel at render
++/// time, with the frame they belong to. The returned id stays valid until
++/// `clearSixelImages`, which resize and teardown both call -- a raster is only
++/// correct for the geometry it was encoded at.
++pub fn loadSixelImage(
++    self: *Vaxis,
++    gpa: std.mem.Allocator,
++    bytes: []const u8,
++    cols: u16,
++    rows: u16,
++) !u32 {
++    if (!self.caps.sixel_graphics) return error.NoGraphicsCapability;
++    const cell = self.cellPixelSize() orelse return sixel.Error.SixelGeometryUnusable;
++    const width = std.math.mul(u16, cols, cell.width) catch return sixel.Error.SixelRasterTooLarge;
++    const height = std.math.mul(u16, rows, cell.height) catch return sixel.Error.SixelRasterTooLarge;
++    if (self.sixel_geometry) |max| {
++        // The terminal told us what it will accept; asking for more is a
++        // fallback, not something to discover from a half-drawn frame.
++        if (width > max.width or height > max.height) return sixel.Error.SixelRasterTooLarge;
++    }
++
++    const id = self.next_sixel_id;
++    var img = try sixel.decode(gpa, id, bytes, width, height);
++    errdefer img.deinit(gpa);
++    try self.sixel_images.append(gpa, img);
++    self.sixel_gpa = gpa;
++    self.next_sixel_id += 1;
++    return id;
++}
++
++/// Whether a raster is still loaded.
++///
++/// Applications hold ids across frames, and a resize drops every raster
++/// because the payloads were encoded for the old cell geometry. This is how a
++/// caller notices that its ids went stale and re-loads at the new geometry
++/// rather than placing ids the renderer will silently skip.
++pub fn hasSixelImage(self: *Vaxis, id: u32) bool {
++    return self.findSixelImage(id) != null;
++}
++
++fn findSixelImage(self: *Vaxis, id: u32) ?*sixel.Image {
++    for (self.sixel_images.items) |*img| {
++        if (img.id == id) return img;
++    }
++    return null;
++}
++
++/// The cell rectangle a sixel placement claims this frame, if any.
++///
++/// One placement per frame is the contract: sixel is streamed, and a screen
++/// with several rasters would multiply the per-frame byte cost by however many
++/// of them changed. The first placement in scan order wins.
++fn findSixelPlacement(self: *Vaxis) ?Rect {
++    for (self.screen.buf, 0..) |cell, i| {
++        const placement = cell.sixel orelse continue;
++        return .{
++            .col = @intCast(i % self.screen.width),
++            .row = @intCast(i / self.screen.width),
++            .cols = placement.cols,
++            .rows = placement.rows,
++        };
++    }
++    return null;
++}
++
++/// Marks every cell under `rect` for repaint in this render pass.
++///
++/// Erasing the rectangle removes whatever the terminal had there, including
++/// text the diff still believes is on screen. Marking the cells skipped makes
++/// the pass redraw them, so a sixel cannot silently blank the transcript
++/// underneath it.
++fn markSixelRectDirty(self: *Vaxis, rect: Rect) void {
++    var r: u16 = 0;
++    while (r < rect.rows) : (r += 1) {
++        const y = rect.row + r;
++        if (y >= self.screen_last.height) break;
++        var c: u16 = 0;
++        while (c < rect.cols) : (c += 1) {
++            const x = rect.col + c;
++            if (x >= self.screen_last.width) break;
++            self.screen_last.buf[@as(usize, y) * self.screen_last.width + x].skipped = true;
++        }
++    }
++}
++
++/// Drops every loaded sixel raster and forgets what was on screen.
++///
++/// Called on resize, on a full refresh, and at teardown: the payloads are only
++/// valid for the cell geometry they were encoded at, and a stale raster is
++/// worse than no raster.
++pub fn clearSixelImages(self: *Vaxis, gpa: std.mem.Allocator) void {
++    for (self.sixel_images.items) |*img| img.deinit(gpa);
++    self.sixel_images.clearAndFree(gpa);
++    self.sixel_last_rect = null;
++    self.sixel_gpa = null;
++}
++
++/// Erases the cell rectangle a sixel occupied.
++///
++/// Sixel pixels live in the terminal's cell buffer, so erasing the cells is
++/// what removes them. This runs before every placement, which is what lets a
++/// transparent frame replace an opaque one without the old pixels showing
++/// through the holes.
++fn eraseSixelRect(
++    tty: *std.Io.Writer,
++    col: u16,
++    row: u16,
++    cols: u16,
++    rows: u16,
++) !void {
++    var r: u16 = 0;
++    while (r < rows) : (r += 1) {
++        try tty.print(ctlseqs.cup, .{ row + r + 1, col + 1 });
++        try tty.print(ctlseqs.erase_chars, .{cols});
++    }
++}
++
+ /// deletes an image from the terminal's memory
+ pub fn freeImage(_: Vaxis, tty: *std.Io.Writer, id: u32) void {
+     tty.print("\x1b_Ga=d,d=I,i={d};\x1b\\", .{id}) catch |err| {
+@@ -1530,3 +1819,224 @@ test "render: no output when no changes" {
+     defer std.testing.allocator.free(output);
+     try std.testing.expectEqual(@as(usize, 0), output.len);
+ }
++
++/// A Vaxis with a screen of `cols` x `rows` cells and 10x20 pixel cells,
++/// already claiming sixel support. Every sixel test needs the same three
++/// things: a screen, a measured cell geometry, and a capability that was not
++/// guessed from an environment variable.
++fn testVaxisSixel(
++    gpa: std.mem.Allocator,
++    env_map: *std.process.Environ.Map,
++    tty: *std.Io.Writer,
++    cols: u16,
++    rows: u16,
++) !Vaxis {
++    var vx = try Vaxis.init(std.testing.io, gpa, env_map, .{});
++    errdefer vx.deinit(gpa, tty);
++    vx.caps.sixel_graphics = true;
++    vx.sixel_geometry = .{ .width = 1000, .height = 1000 };
++    try vx.resize(gpa, tty, .{
++        .cols = cols,
++        .rows = rows,
++        .x_pixel = cols * 10,
++        .y_pixel = rows * 20,
++    });
++    return vx;
++}
++
++/// Registers a solid 2x1-cell raster directly, so a render test does not
++/// depend on an image asset or on the decoder.
++fn testLoadSolidSixel(vx: *Vaxis, gpa: std.mem.Allocator) !u32 {
++    const w: u16 = 20;
++    const h: u16 = 20;
++    const indexed = try gpa.alloc(u8, @as(usize, w) * h);
++    @memset(indexed, sixel.quantize(255, 0, 0));
++    const id = vx.next_sixel_id;
++    try vx.sixel_images.append(gpa, .{
++        .id = id,
++        .width = w,
++        .height = h,
++        .indexed = indexed,
++    });
++    vx.next_sixel_id += 1;
++    vx.sixel_gpa = gpa;
++    return id;
++}
++
++test "applyDa1 needs both the attribute and a geometry report" {
++    const gpa = std.testing.allocator;
++    var env_map = try std.testing.environ.createMap(gpa);
++    defer env_map.deinit();
++    var w: std.Io.Writer.Allocating = .init(gpa);
++    defer w.deinit();
++
++    // The attribute alone is not support: a multiplexer can forward it while
++    // swallowing the protocol.
++    {
++        var vx = try Vaxis.init(std.testing.io, gpa, &env_map, .{});
++        defer vx.deinit(gpa, &w.writer);
++        vx.applyDa1(.{ .sixel = true });
++        try std.testing.expect(!vx.caps.sixel_graphics);
++    }
++    // A geometry report alone is not support either.
++    {
++        var vx = try Vaxis.init(std.testing.io, gpa, &env_map, .{});
++        defer vx.deinit(gpa, &w.writer);
++        vx.sixel_geometry = .{ .width = 800, .height = 480 };
++        vx.applyDa1(.{});
++        try std.testing.expect(!vx.caps.sixel_graphics);
++    }
++    // Both halves, from the terminal's own answers.
++    {
++        var vx = try Vaxis.init(std.testing.io, gpa, &env_map, .{});
++        defer vx.deinit(gpa, &w.writer);
++        vx.sixel_geometry = .{ .width = 800, .height = 480 };
++        vx.applyDa1(.{ .sixel = true });
++        try std.testing.expect(vx.caps.sixel_graphics);
++    }
++}
++
++test "cellPixelSize refuses to guess when the terminal reports no pixels" {
++    const gpa = std.testing.allocator;
++    var env_map = try std.testing.environ.createMap(gpa);
++    defer env_map.deinit();
++    var w: std.Io.Writer.Allocating = .init(gpa);
++    defer w.deinit();
++    var vx = try Vaxis.init(std.testing.io, gpa, &env_map, .{});
++    defer vx.deinit(gpa, &w.writer);
++
++    try vx.resize(gpa, &w.writer, .{ .cols = 80, .rows = 24, .x_pixel = 0, .y_pixel = 0 });
++    try std.testing.expectEqual(@as(?@TypeOf(vx.cellPixelSize().?), null), vx.cellPixelSize());
++
++    try vx.resize(gpa, &w.writer, .{ .cols = 80, .rows = 24, .x_pixel = 800, .y_pixel = 480 });
++    const cell = vx.cellPixelSize().?;
++    try std.testing.expectEqual(@as(u16, 10), cell.width);
++    try std.testing.expectEqual(@as(u16, 20), cell.height);
++}
++
++test "render places a sixel payload bracketed by a cursor save and restore" {
++    const gpa = std.testing.allocator;
++    var env_map = try std.testing.environ.createMap(gpa);
++    defer env_map.deinit();
++    var w: std.Io.Writer.Allocating = .init(gpa);
++    defer w.deinit();
++    var vx = try testVaxisSixel(gpa, &env_map, &w.writer, 20, 6);
++    defer vx.deinit(gpa, &w.writer);
++    const id = try testLoadSolidSixel(&vx, gpa);
++
++    vx.screen.writeCell(3, 2, .{ .sixel = .{ .img_id = id, .cols = 2, .rows = 1 } });
++    w.clearRetainingCapacity();
++    try vx.render(&w.writer);
++    const out = w.written();
++
++    const dcs = std.mem.indexOf(u8, out, "\x1bP0;1;0q").?;
++    const save = std.mem.indexOf(u8, out, ctlseqs.save_cursor).?;
++    const restore = std.mem.lastIndexOf(u8, out, ctlseqs.restore_cursor).?;
++    try std.testing.expect(save < dcs);
++    try std.testing.expect(dcs < restore);
++    // Positioned at the placement cell, 1-indexed.
++    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[3;4H") != null);
++    // The rectangle is erased before the payload, so a transparent frame
++    // cannot reveal the frame it replaces.
++    const erase = std.mem.indexOf(u8, out, "\x1b[2X").?;
++    try std.testing.expect(erase < dcs);
++    // Exactly one payload: a raster is streamed once per frame, never queued.
++    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, out, "\x1bP0;1;0q"));
++}
++
++test "render sends nothing when the terminal never earned the capability" {
++    const gpa = std.testing.allocator;
++    var env_map = try std.testing.environ.createMap(gpa);
++    defer env_map.deinit();
++    var w: std.Io.Writer.Allocating = .init(gpa);
++    defer w.deinit();
++    var vx = try testVaxisSixel(gpa, &env_map, &w.writer, 20, 6);
++    defer vx.deinit(gpa, &w.writer);
++    const id = try testLoadSolidSixel(&vx, gpa);
++
++    // The application asked for a raster; the terminal is not sixel-capable.
++    // Not one byte of image control data may reach it.
++    vx.caps.sixel_graphics = false;
++    vx.screen.writeCell(3, 2, .{ .sixel = .{ .img_id = id, .cols = 2, .rows = 1 } });
++    w.clearRetainingCapacity();
++    try vx.render(&w.writer);
++    const out = w.written();
++    try std.testing.expect(std.mem.indexOf(u8, out, "\x1bP") == null);
++    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[2X") == null);
++}
++
++test "a raster that moves erases the rectangle it left behind" {
++    const gpa = std.testing.allocator;
++    var env_map = try std.testing.environ.createMap(gpa);
++    defer env_map.deinit();
++    var w: std.Io.Writer.Allocating = .init(gpa);
++    defer w.deinit();
++    var vx = try testVaxisSixel(gpa, &env_map, &w.writer, 20, 6);
++    defer vx.deinit(gpa, &w.writer);
++    const id = try testLoadSolidSixel(&vx, gpa);
++
++    vx.screen.writeCell(3, 2, .{ .sixel = .{ .img_id = id, .cols = 2, .rows = 1 } });
++    try vx.render(&w.writer);
++    try std.testing.expect(vx.sixel_last_rect != null);
++
++    // One cell to the right on the next frame.
++    vx.screen.clear();
++    vx.screen.writeCell(4, 2, .{ .sixel = .{ .img_id = id, .cols = 2, .rows = 1 } });
++    w.clearRetainingCapacity();
++    try vx.render(&w.writer);
++    const out = w.written();
++    // The old rectangle is erased at its own position...
++    const old_erase = std.mem.indexOf(u8, out, "\x1b[3;4H\x1b[2X").?;
++    // ...before the new frame is drawn at the new one.
++    const new_pos = std.mem.indexOf(u8, out, "\x1b[3;5H").?;
++    try std.testing.expect(old_erase < new_pos);
++    try std.testing.expectEqual(@as(u16, 4), vx.sixel_last_rect.?.col);
++
++    // And when the placement disappears entirely, so do the pixels.
++    vx.screen.clear();
++    w.clearRetainingCapacity();
++    try vx.render(&w.writer);
++    try std.testing.expect(std.mem.indexOf(u8, w.written(), "\x1b[3;5H\x1b[2X") != null);
++    try std.testing.expectEqual(@as(?Rect, null), vx.sixel_last_rect);
++}
++
++test "resize drops every loaded raster" {
++    const gpa = std.testing.allocator;
++    var env_map = try std.testing.environ.createMap(gpa);
++    defer env_map.deinit();
++    var w: std.Io.Writer.Allocating = .init(gpa);
++    defer w.deinit();
++    var vx = try testVaxisSixel(gpa, &env_map, &w.writer, 20, 6);
++    defer vx.deinit(gpa, &w.writer);
++    _ = try testLoadSolidSixel(&vx, gpa);
++    vx.sixel_last_rect = .{ .col = 1, .row = 1, .cols = 2, .rows = 1 };
++
++    // A resize can change the pixel size of a cell, so a raster encoded for
++    // the old geometry is stale rather than merely misplaced.
++    try vx.resize(gpa, &w.writer, .{ .cols = 40, .rows = 10, .x_pixel = 320, .y_pixel = 170 });
++    try std.testing.expectEqual(@as(usize, 0), vx.sixel_images.items.len);
++    try std.testing.expectEqual(@as(?Rect, null), vx.sixel_last_rect);
++}
++
++test "loadSixelImage refuses geometry it cannot size a raster from" {
++    const gpa = std.testing.allocator;
++    var env_map = try std.testing.environ.createMap(gpa);
++    defer env_map.deinit();
++    var w: std.Io.Writer.Allocating = .init(gpa);
++    defer w.deinit();
++    var vx = try Vaxis.init(std.testing.io, gpa, &env_map, .{});
++    defer vx.deinit(gpa, &w.writer);
++
++    // No capability: not even a decode is attempted.
++    try std.testing.expectError(error.NoGraphicsCapability, vx.loadSixelImage(gpa, "", 2, 1));
++
++    // Capability, but the terminal reports no pixel geometry.
++    vx.caps.sixel_graphics = true;
++    try vx.resize(gpa, &w.writer, .{ .cols = 20, .rows = 6, .x_pixel = 0, .y_pixel = 0 });
++    try std.testing.expectError(sixel.Error.SixelGeometryUnusable, vx.loadSixelImage(gpa, "", 2, 1));
++
++    // Geometry, but larger than the terminal said it would accept.
++    try vx.resize(gpa, &w.writer, .{ .cols = 20, .rows = 6, .x_pixel = 200, .y_pixel = 120 });
++    vx.sixel_geometry = .{ .width = 16, .height = 16 };
++    try std.testing.expectError(sixel.Error.SixelRasterTooLarge, vx.loadSixelImage(gpa, "", 4, 4));
++}
+diff --git a/src/ctlseqs.zig b/src/ctlseqs.zig
+index 4f97567..d8704d9 100644
+--- a/src/ctlseqs.zig
++++ b/src/ctlseqs.zig
+@@ -10,6 +10,10 @@ pub const decrqm_unicode = "\x1b[?2027$p";
+ pub const decrqm_color_scheme = "\x1b[?2031$p";
+ pub const csi_u_query = "\x1b[?u";
+ pub const kitty_graphics_query = "\x1b_Gi=1,a=q\x1b\\";
++// XTSMGRAPHICS: read the maximum sixel raster geometry. A terminal that claims
++// sixel in its primary device attributes but cannot answer this is not treated
++// as sixel-capable -- the attribute bit alone has been wrong often enough
++// (multiplexers pass it through without implementing the protocol).
+ pub const sixel_geometry_query = "\x1b[?2;1;0S";
+ pub const cursor_position_request = "\x1b[6n";
+ pub const explicit_width_query = "\x1b]66;w=1; \x1b\\";
+@@ -72,6 +76,16 @@ pub const show_secondary_cursor = "\x1b[>29;2:{d}:{d} q";
+ 
+ // Erase
+ pub const erase_below_cursor = "\x1b[J";
++// ECH: erase n characters from the cursor. Used to clear the cell rectangle a
++// sixel raster occupied -- sixel pixels live in the cell buffer, so erasing the
++// cells is what removes them.
++pub const erase_chars = "\x1b[{d}X";
++
++// Sixel. The cursor is saved and restored around a payload because a sixel
++// leaves the cursor wherever the terminal decides, which would desynchronize
++// the renderer's own idea of where it is.
++pub const save_cursor = "\x1b7";
++pub const restore_cursor = "\x1b8";
+ 
+ // alt screen
+ pub const smcup = "\x1b[?1049h";
+diff --git a/src/event.zig b/src/event.zig
+index 38e5cf3..b713fc3 100644
+--- a/src/event.zig
++++ b/src/event.zig
+@@ -3,6 +3,18 @@ pub const Mouse = @import("Mouse.zig");
+ pub const Color = @import("Cell.zig").Color;
+ pub const Winsize = @import("main.zig").Winsize;
+ 
++/// Primary device attributes, reduced to the bits Vaxis acts on.
++pub const Da1 = struct {
++    /// Attribute 4: sixel graphics.
++    sixel: bool = false,
++};
++
++/// The largest sixel raster the terminal reported, in pixels.
++pub const SixelGeometry = struct {
++    width: u16,
++    height: u16,
++};
++
+ /// The events that Vaxis emits internally
+ pub const Event = union(enum) {
+     key_press: Key,
+@@ -24,7 +36,14 @@ pub const Event = union(enum) {
+     cap_rgb,
+     cap_sgr_pixels,
+     cap_unicode,
+-    cap_da1,
++    /// The maximum sixel raster the terminal will accept, from XTSMGRAPHICS.
++    /// Retained but not sufficient on its own: sixel support is only enabled
++    /// once the primary device attributes also claim it.
++    cap_sixel_geometry: SixelGeometry,
++    /// Primary device attributes. Carries the attribute bits Vaxis interprets
++    /// rather than being a bare "the queries are done" marker, because sixel
++    /// support is one of those bits.
++    cap_da1: Da1,
+     cap_color_scheme_updates,
+     cap_multi_cursor,
+ };
+diff --git a/src/main.zig b/src/main.zig
+index 535b94a..cf9b89d 100644
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -18,6 +18,7 @@ pub const PrintOptions = Window.PrintOptions;
+ pub const Style = Cell.Style;
+ pub const Color = Cell.Color;
+ pub const Image = @import("Image.zig");
++pub const sixel = @import("sixel.zig");
+ pub const Mouse = @import("Mouse.zig");
+ pub const Screen = @import("Screen.zig");
+ pub const AllocatingScreen = @import("InternalScreen.zig");
+diff --git a/src/sixel.zig b/src/sixel.zig
+new file mode 100644
+index 0000000..437e4d2
+--- /dev/null
++++ b/src/sixel.zig
+@@ -0,0 +1,519 @@
++//! SIXEL raster graphics.
++//!
++//! SIXEL is a streamed protocol, not retained media: there is no portable
++//! image-id/placement contract like kitty's, so every displayed frame travels
++//! as its own DCS payload. This module owns that payload -- decoding, palette
++//! quantization, encoding and byte bounds -- while `Vaxis.render` owns when the
++//! bytes reach the terminal. Application widgets never write DCS themselves:
++//! they place a `Placement` on a cell and the renderer does the rest, which is
++//! what keeps the cursor, the alternate screen, resize and teardown in one
++//! place.
++//!
++//! Everything here is bounded before anything is written. A corrupt or hostile
++//! asset must be a fallback event, not an allocation or output amplifier, so
++//! decoded dimensions, palette size and encoded bytes all have hard ceilings
++//! and the encoder fails rather than truncating a half-written sequence.
++
++const std = @import("std");
++const zigimg = @import("zigimg");
++
++const log = std.log.scoped(.vaxis);
++
++/// Levels per channel in the fixed RGB cube the quantizer maps into.
++///
++/// A fixed cube rather than an adaptive palette (median cut, octree) on
++/// purpose: it is deterministic, so the same asset at the same geometry encodes
++/// to the same bytes on every run and can be pinned by a golden test, and its
++/// size is known before a single pixel is read. 6 levels is 216 registers, well
++/// inside the 256 a conforming terminal must provide, and leaves index 0 unused
++/// (some terminals treat register 0 as special).
++pub const cube_levels: u8 = 6;
++
++/// Palette entries the cube spans. Registers are emitted as `cube_index + 1`.
++pub const max_palette: u16 = @as(u16, cube_levels) * cube_levels * cube_levels;
++
++/// Sentinel index for a pixel that is not drawn at all. Distinct from every
++/// cube index, and never emitted as a register.
++pub const transparent: u8 = 0xFF;
++
++/// Alpha at or above which a pixel is drawn. Below it the pixel is skipped
++/// entirely and whatever is on the terminal shows through, which is what keeps
++/// the mascot from being boxed out by a rectangle of presumed background.
++pub const alpha_threshold: u8 = 128;
++
++/// Hard ceiling on a decoded raster, in pixels. A raster this large is already
++/// far past anything that fits a terminal, so it is a corrupt asset rather than
++/// a legitimate request.
++pub const max_raster_pixels: usize = 1 << 20;
++
++/// Hard ceiling on one encoded payload. Exceeding it fails the encode instead
++/// of writing a partial sequence: an oversized frame would stall typing and
++/// model streaming, which decorative animation never outranks.
++pub const max_payload_bytes: usize = 64 * 1024;
++
++pub const Error = error{
++    /// The decoded image is larger than `max_raster_pixels`.
++    SixelRasterTooLarge,
++    /// The encoded payload would exceed `max_payload_bytes`.
++    SixelPayloadTooLarge,
++    /// A zero-width or zero-height raster was requested, which usually means
++    /// the caller had no usable cell geometry to size it from.
++    SixelGeometryUnusable,
++    /// The referenced image id is not loaded.
++    SixelNoSuchImage,
++};
++
++/// A column-wise clip of the raster, in raster pixels. Rows are never clipped:
++/// callers clip against the screen's left and right edges, and a mascot that
++/// does not fit vertically is not drawn at all.
++pub const Clip = struct {
++    x: u16 = 0,
++    width: u16,
++};
++
++/// A request to display one image in a cell rectangle. Placed on a cell by the
++/// application; consumed by `Vaxis.render`.
++pub const Placement = struct {
++    img_id: u32,
++    /// Cell rectangle the raster occupies. The renderer erases exactly this
++    /// rectangle before writing, so a transparent frame cannot reveal the
++    /// pixels of the frame it replaces.
++    cols: u16,
++    rows: u16,
++    clip: ?Clip = null,
++
++    pub fn eql(a: Placement, b: Placement) bool {
++        if (a.img_id != b.img_id or a.cols != b.cols or a.rows != b.rows) return false;
++        if (a.clip == null and b.clip == null) return true;
++        const ac = a.clip orelse return false;
++        const bc = b.clip orelse return false;
++        return ac.x == bc.x and ac.width == bc.width;
++    }
++};
++
++/// A decoded, quantized raster held at its final display size.
++///
++/// The pixels are stored already quantized to palette indices rather than as
++/// RGBA: quantization happens once at load, so encoding a frame -- which
++/// happens again every time the visible frame changes -- is a scan and nothing
++/// more. The full-raster payload is encoded on first use and then reused; a
++/// clipped placement is encoded on demand, because clipping only happens while
++/// the image is crossing a screen edge.
++pub const Image = struct {
++    id: u32,
++    /// Raster size in pixels, already multiplied out from cells.
++    width: u16,
++    height: u16,
++    /// One palette index per pixel, row-major, `transparent` where nothing is
++    /// drawn. Owned.
++    indexed: []u8,
++    /// Encoded full-raster payload, or null until something places it. Owned.
++    payload: ?[]u8 = null,
++
++    pub fn deinit(self: *Image, gpa: std.mem.Allocator) void {
++        gpa.free(self.indexed);
++        if (self.payload) |p| gpa.free(p);
++        self.* = undefined;
++    }
++};
++
++/// Decodes `bytes` and scales it to exactly `width` x `height` pixels,
++/// quantizing into the fixed cube as it goes.
++///
++/// The scale is a box filter rather than nearest-neighbour: the mascot art is
++/// downscaled by a factor of two or more, where dropping samples loses whole
++/// features (an eye is a handful of pixels) while averaging keeps them.
++pub fn decode(
++    gpa: std.mem.Allocator,
++    id: u32,
++    bytes: []const u8,
++    width: u16,
++    height: u16,
++) !Image {
++    if (width == 0 or height == 0) return Error.SixelGeometryUnusable;
++    const dst_pixels = @as(usize, width) * height;
++    if (dst_pixels > max_raster_pixels) return Error.SixelRasterTooLarge;
++
++    var img = try zigimg.Image.fromMemory(gpa, bytes);
++    defer img.deinit(gpa);
++    if (img.width == 0 or img.height == 0) return Error.SixelGeometryUnusable;
++    if (img.width * img.height > max_raster_pixels) return Error.SixelRasterTooLarge;
++    try img.convertNoFree(gpa, .rgba32);
++
++    const src = img.rawBytes();
++    const src_w: usize = img.width;
++    const src_h: usize = img.height;
++
++    const indexed = try gpa.alloc(u8, dst_pixels);
++    errdefer gpa.free(indexed);
++
++    for (0..height) |dy| {
++        // Source band this destination row averages over. Computed from the
++        // row edges so every source pixel lands in exactly one band, with no
++        // gap or overlap at the seams.
++        const y0 = dy * src_h / height;
++        const y1 = @max(y0 + 1, (dy + 1) * src_h / height);
++        for (0..width) |dx| {
++            const x0 = dx * src_w / width;
++            const x1 = @max(x0 + 1, (dx + 1) * src_w / width);
++
++            // Alpha-weighted average: a transparent source pixel must not drag
++            // the colour of its neighbours toward black, which is what an
++            // unweighted average of premultiplied-looking RGBA does to an
++            // anti-aliased edge.
++            var r: usize = 0;
++            var g: usize = 0;
++            var b: usize = 0;
++            var a_sum: usize = 0;
++            var n: usize = 0;
++            for (y0..y1) |sy| {
++                for (x0..x1) |sx| {
++                    const i = (sy * src_w + sx) * 4;
++                    const a: usize = src[i + 3];
++                    r += @as(usize, src[i]) * a;
++                    g += @as(usize, src[i + 1]) * a;
++                    b += @as(usize, src[i + 2]) * a;
++                    a_sum += a;
++                    n += 1;
++                }
++            }
++            const di = dy * @as(usize, width) + dx;
++            if (n == 0 or a_sum == 0 or a_sum / n < alpha_threshold) {
++                indexed[di] = transparent;
++                continue;
++            }
++            indexed[di] = quantize(
++                @intCast(r / a_sum),
++                @intCast(g / a_sum),
++                @intCast(b / a_sum),
++            );
++        }
++    }
++
++    return .{
++        .id = id,
++        .width = width,
++        .height = height,
++        .indexed = indexed,
++    };
++}
++
++/// Maps one opaque colour into the fixed cube.
++pub fn quantize(r: u8, g: u8, b: u8) u8 {
++    const level = struct {
++        fn f(c: u8) usize {
++            // Round to nearest level rather than truncating: truncation biases
++            // every channel dark, which on a mostly mid-tone sprite reads as a
++            // muddy silhouette.
++            return (@as(usize, c) * (cube_levels - 1) + 127) / 255;
++        }
++    }.f;
++    const ri = level(r);
++    const gi = level(g);
++    const bi = level(b);
++    return @intCast((ri * cube_levels + gi) * cube_levels + bi);
++}
++
++/// The RGB a cube index stands for, as the 0..100 percentages SIXEL registers
++/// are defined in.
++pub fn registerColor(index: u8) struct { r: u8, g: u8, b: u8 } {
++    const i: usize = index;
++    const bi = i % cube_levels;
++    const gi = (i / cube_levels) % cube_levels;
++    const ri = i / (cube_levels * cube_levels);
++    const pct = struct {
++        fn f(v: usize) u8 {
++            return @intCast(v * 100 / (cube_levels - 1));
++        }
++    }.f;
++    return .{ .r = pct(ri), .g = pct(gi), .b = pct(bi) };
++}
++
++/// Encodes `img` (optionally clipped) as a complete DCS sequence.
++///
++/// The result is a standalone payload: introducer, raster attributes, only the
++/// registers this raster actually uses, the data, and the string terminator.
++/// It defines nothing outside its own colour registers, so it cannot disturb
++/// the user's ANSI palette or default fore/background.
++pub fn encodeAlloc(gpa: std.mem.Allocator, img: Image, clip: ?Clip) ![]u8 {
++    const x0: usize = if (clip) |c| @min(c.x, img.width) else 0;
++    const w: usize = if (clip) |c| @min(c.width, img.width - x0) else img.width;
++    const h: usize = img.height;
++    if (w == 0 or h == 0) return Error.SixelGeometryUnusable;
++
++    var out: std.ArrayList(u8) = .empty;
++    errdefer out.deinit(gpa);
++
++    // P1=0 (1:1 aspect), P2=1 (zero bits leave the pixel untouched, which is
++    // how transparency survives), P3=0 (no horizontal grid).
++    try out.appendSlice(gpa, "\x1bP0;1;0q");
++    try out.print(gpa, "\"1;1;{d};{d}", .{ w, h });
++
++    // Which registers this raster uses, so a payload only ever defines its own
++    // colours. `used` is indexed by cube index; the register written is one
++    // higher, leaving register 0 alone.
++    var used: [max_palette]bool = @splat(false);
++    for (0..h) |y| {
++        const row = img.indexed[y * img.width ..][x0..][0..w];
++        for (row) |idx| {
++            if (idx != transparent) used[idx] = true;
++        }
++    }
++    for (used, 0..) |on, idx| {
++        if (!on) continue;
++        const c = registerColor(@intCast(idx));
++        try out.print(gpa, "#{d};2;{d};{d};{d}", .{ idx + 1, c.r, c.g, c.b });
++        if (out.items.len > max_payload_bytes) return Error.SixelPayloadTooLarge;
++    }
++
++    // One band per six pixel rows, one pass per colour present in the band.
++    var band: usize = 0;
++    while (band * 6 < h) : (band += 1) {
++        var in_band: [max_palette]bool = @splat(false);
++        const rows = @min(6, h - band * 6);
++        for (0..rows) |k| {
++            const y = band * 6 + k;
++            const row = img.indexed[y * img.width ..][x0..][0..w];
++            for (row) |idx| {
++                if (idx != transparent) in_band[idx] = true;
++            }
++        }
++
++        var first = true;
++        for (in_band, 0..) |on, idx| {
++            if (!on) continue;
++            // `$` returns to the left edge for the next colour pass; the first
++            // pass of a band is already there.
++            if (!first) try out.append(gpa, '$');
++            first = false;
++            try out.print(gpa, "#{d}", .{idx + 1});
++
++            var run_char: u8 = 0;
++            var run_len: usize = 0;
++            var pending: usize = 0; // trailing empty sixels, dropped at row end
++            for (0..w) |x| {
++                var bits: u8 = 0;
++                for (0..rows) |k| {
++                    const y = band * 6 + k;
++                    if (img.indexed[y * img.width + x0 + x] == idx)
++                        bits |= @as(u8, 1) << @intCast(k);
++                }
++                const ch: u8 = 0x3F + bits;
++                if (run_len > 0 and ch == run_char) {
++                    run_len += 1;
++                    continue;
++                }
++                if (run_len > 0) {
++                    if (run_char == 0x3F) {
++                        // Empty run: hold it back. If the row ends here it is
++                        // dropped entirely, and a payload that stops at the
++                        // last drawn pixel is materially smaller on sprites
++                        // that are mostly transparent.
++                        pending += run_len;
++                    } else {
++                        try flushPending(gpa, &out, &pending);
++                        try flushRun(gpa, &out, run_char, run_len);
++                    }
++                }
++                run_char = ch;
++                run_len = 1;
++                if (out.items.len > max_payload_bytes) return Error.SixelPayloadTooLarge;
++            }
++            if (run_len > 0 and run_char != 0x3F) {
++                try flushPending(gpa, &out, &pending);
++                try flushRun(gpa, &out, run_char, run_len);
++            }
++        }
++        // Graphics newline. Emitted after every band including the last: a
++        // trailing `-` is harmless and keeps the loop free of a special case.
++        try out.append(gpa, '-');
++        if (out.items.len > max_payload_bytes) return Error.SixelPayloadTooLarge;
++    }
++
++    try out.appendSlice(gpa, "\x1b\\");
++    if (out.items.len > max_payload_bytes) return Error.SixelPayloadTooLarge;
++    return out.toOwnedSlice(gpa);
++}
++
++fn flushPending(gpa: std.mem.Allocator, out: *std.ArrayList(u8), pending: *usize) !void {
++    if (pending.* == 0) return;
++    try flushRun(gpa, out, 0x3F, pending.*);
++    pending.* = 0;
++}
++
++fn flushRun(gpa: std.mem.Allocator, out: *std.ArrayList(u8), ch: u8, len: usize) !void {
++    // The RLE introducer costs three bytes at minimum (`!` plus at least one
++    // digit plus the character), so runs of three or fewer are cheaper literal.
++    if (len > 3) {
++        try out.print(gpa, "!{d}{c}", .{ len, ch });
++    } else {
++        try out.appendNTimes(gpa, ch, len);
++    }
++}
++
++const testing = std.testing;
++
++test "quantize maps the cube corners to the cube corners" {
++    try testing.expectEqual(@as(u8, 0), quantize(0, 0, 0));
++    const white = quantize(255, 255, 255);
++    try testing.expectEqual(max_palette - 1, @as(u16, white));
++    const c = registerColor(white);
++    try testing.expectEqual(@as(u8, 100), c.r);
++    try testing.expectEqual(@as(u8, 100), c.g);
++    try testing.expectEqual(@as(u8, 100), c.b);
++    // Every index the quantizer can produce is a real register.
++    for ([_][3]u8{ .{ 1, 2, 3 }, .{ 128, 64, 200 }, .{ 254, 1, 127 } }) |rgb| {
++        try testing.expect(quantize(rgb[0], rgb[1], rgb[2]) < max_palette);
++    }
++}
++
++test "registerColor round-trips the channel order" {
++    // Index arithmetic is (r * L + g) * L + b, and getting it backwards swaps
++    // red and blue on every sprite -- a bug that looks like a palette problem.
++    const idx = quantize(255, 0, 0);
++    const c = registerColor(idx);
++    try testing.expectEqual(@as(u8, 100), c.r);
++    try testing.expectEqual(@as(u8, 0), c.g);
++    try testing.expectEqual(@as(u8, 0), c.b);
++}
++
++/// A 4x8 raster: a solid red left half, transparent right half.
++fn testImage(gpa: std.mem.Allocator) !Image {
++    const w: u16 = 4;
++    const h: u16 = 8;
++    const indexed = try gpa.alloc(u8, w * h);
++    const red = quantize(255, 0, 0);
++    for (0..h) |y| {
++        for (0..w) |x| {
++            indexed[y * w + x] = if (x < 2) red else transparent;
++        }
++    }
++    return .{ .id = 1, .width = w, .height = h, .indexed = indexed };
++}
++
++test "encode wraps the payload in one complete DCS sequence" {
++    const gpa = testing.allocator;
++    var img = try testImage(gpa);
++    defer img.deinit(gpa);
++    const payload = try encodeAlloc(gpa, img, null);
++    defer gpa.free(payload);
++
++    // Transparent background (P2=1) is the whole reason the mascot does not
++    // paint a rectangle of presumed background around itself.
++    try testing.expect(std.mem.startsWith(u8, payload, "\x1bP0;1;0q"));
++    try testing.expect(std.mem.endsWith(u8, payload, "\x1b\\"));
++    try testing.expect(std.mem.indexOf(u8, payload, "\"1;1;4;8") != null);
++    // Two bands of six rows cover eight rows.
++    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, payload, "-"));
++}
++
++/// Counts `#N;2;r;g;b` register definitions in a payload.
++///
++/// Not a plain substring count of `;2;`: the raster attributes (`"1;1;2;8`)
++/// can contain that too, which makes the naive count depend on the raster's
++/// width.
++fn countRegisters(payload: []const u8) usize {
++    var n: usize = 0;
++    var i: usize = 0;
++    while (std.mem.indexOfPos(u8, payload, i, ";2;")) |at| {
++        i = at + 3;
++        var j = at;
++        while (j > 0 and std.ascii.isDigit(payload[j - 1])) j -= 1;
++        if (j == at) continue; // no digits before the marker
++        if (j > 0 and payload[j - 1] == '#') n += 1;
++    }
++    return n;
++}
++
++test "encode defines only the registers the raster uses" {
++    const gpa = testing.allocator;
++    var img = try testImage(gpa);
++    defer img.deinit(gpa);
++    const payload = try encodeAlloc(gpa, img, null);
++    defer gpa.free(payload);
++
++    // Exactly one colour is present, so exactly one register is defined. A
++    // payload that dumped the whole cube would still render correctly and
++    // would be ~30x larger on every frame.
++    try testing.expectEqual(@as(usize, 1), countRegisters(payload));
++    const red = quantize(255, 0, 0);
++    var buf: [16]u8 = undefined;
++    const want = try std.fmt.bufPrint(&buf, "#{d};2;100;0;0", .{red + 1});
++    try testing.expect(std.mem.indexOf(u8, payload, want) != null);
++}
++
++test "encode honours a column clip" {
++    const gpa = testing.allocator;
++    var img = try testImage(gpa);
++    defer img.deinit(gpa);
++
++    // The right half is transparent, so clipping to it leaves nothing drawn
++    // and no register defined -- but still a well-formed sequence.
++    const empty = try encodeAlloc(gpa, img, .{ .x = 2, .width = 2 });
++    defer gpa.free(empty);
++    try testing.expect(std.mem.indexOf(u8, empty, "\"1;1;2;8") != null);
++    try testing.expectEqual(@as(usize, 0), countRegisters(empty));
++
++    // Clipping to the drawn half keeps the colour and narrows the raster.
++    const drawn = try encodeAlloc(gpa, img, .{ .x = 0, .width = 2 });
++    defer gpa.free(drawn);
++    try testing.expect(std.mem.indexOf(u8, drawn, "\"1;1;2;8") != null);
++    try testing.expectEqual(@as(usize, 1), countRegisters(drawn));
++
++    // A clip wider than the raster is clamped, not an error or a read past
++    // the end of the row.
++    const clamped = try encodeAlloc(gpa, img, .{ .x = 0, .width = 999 });
++    defer gpa.free(clamped);
++    try testing.expect(std.mem.indexOf(u8, clamped, "\"1;1;4;8") != null);
++}
++
++test "encode refuses a zero-width raster" {
++    const gpa = testing.allocator;
++    var img = try testImage(gpa);
++    defer img.deinit(gpa);
++    try testing.expectError(Error.SixelGeometryUnusable, encodeAlloc(gpa, img, .{ .x = 4, .width = 4 }));
++}
++
++test "decode refuses geometry it cannot size a raster from" {
++    const gpa = testing.allocator;
++    // No pixel geometry means no raster: the caller must fall back rather than
++    // guess a font size.
++    try testing.expectError(Error.SixelGeometryUnusable, decode(gpa, 1, "", 0, 10));
++    try testing.expectError(Error.SixelGeometryUnusable, decode(gpa, 1, "", 10, 0));
++}
++
++test "decode refuses a raster past the pixel ceiling" {
++    const gpa = testing.allocator;
++    try testing.expectError(Error.SixelRasterTooLarge, decode(gpa, 1, "", 4096, 4096));
++}
++
++test "decode rejects a malformed asset without allocating a raster" {
++    const gpa = testing.allocator;
++    // Not a png. Which error the image decoder picks is its business; what
++    // matters here is that a corrupt asset fails cleanly, with nothing leaked
++    // (the testing allocator fails the test if anything is), so the caller can
++    // treat it as a fallback event.
++    for ([_][]const u8{ "not a png at all", "", "\x89PNG\r\n\x1a\n" }) |junk| {
++        if (decode(gpa, 1, junk, 16, 16)) |_| {
++            return error.TestExpectedError;
++        } else |_| {}
++    }
++}
++
++test "a payload past the byte ceiling fails instead of writing a partial sequence" {
++    const gpa = testing.allocator;
++    // Alternating colours defeat the run-length encoder, so a modest raster
++    // produces a very large payload -- exactly the shape of frame that would
++    // stall a tty if it were allowed through.
++    const w: u16 = 512;
++    const h: u16 = 512;
++    const indexed = try gpa.alloc(u8, @as(usize, w) * h);
++    for (indexed, 0..) |*p, i| p.* = @intCast((i * 7) % max_palette);
++    var img: Image = .{ .id = 1, .width = w, .height = h, .indexed = indexed };
++    defer img.deinit(gpa);
++    try testing.expectError(Error.SixelPayloadTooLarge, encodeAlloc(gpa, img, null));
++}
++
++test {
++    testing.refAllDecls(@This());
++}

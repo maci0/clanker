@@ -95,8 +95,12 @@ through a gated loop. Follow these conventions when changing this codebase.
   terminal width tracking, and the optional mascot (`mascot.zig`, off by
   default). The mascot's frames are generated, not hand-written:
   `src/tui/mascot/gen_frames.py` turns the source gif into
-  `mascot_frames.zig` (three cell grids) plus the pngs the kitty-graphics path
-  transmits, and only needs rerunning when the artwork changes.
+  `mascot_frames.zig` (three cell grids) plus the pngs the kitty and sixel
+  paths use, and only needs rerunning when the artwork changes. Renderer order
+  is kitty, sixel, cells, decided from a capability answer only; the sixel
+  lifecycle lives in libvaxis and reaches a build through
+  `patches/vaxis-sixel-graphics.patch`, so `sixel_supported` in `mascot.zig`
+  compiles the whole path out on an unpatched dependency.
 - `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook.
   Fleet's lamp map is `GET /api/mesh/map` (`mesh.buildMap`): self + `[[peers]]`
   + chat wires. Served even when `modules.mesh` is off so HTTP peers still

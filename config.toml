@@ -487,9 +487,14 @@ python_wasi_max_memory_bytes = 268435456
 # on mascot_size. `--mascot` overrides this key for one session, and
 # `--mascot=off` forces it off again.
 #
-# Rendered with kitty graphics where the terminal supports it (Ghostty, kitty,
-# iTerm2) and with unicode half-blocks everywhere else. Skipped, not clipped,
-# on a terminal too small for the chosen size.
+# The renderer is picked automatically from what the terminal answers to a
+# capability query, never from $TERM or a terminal name: kitty graphics first,
+# then sixel, then unicode half-blocks. Kitty and sixel both show the original
+# artwork in the same number of cells; half-blocks are a two-samples-per-cell
+# approximation of it. There is no setting to force one -- a terminal that
+# claims a protocol it cannot do would leave the mascot invisible.
+#
+# Skipped, not clipped, on a terminal too small for the chosen size.
 # mascot = "off"
 
 # Canonical values: mini, xsmall, small, medium or large. `tiny`/`xxs` are

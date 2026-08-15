@@ -2,11 +2,21 @@
 
 ## Status
 
-Draft. The source of truth today is `src/tui/mascot.zig`: it uploads embedded
-PNG frames through libvaxis when Kitty graphics are confirmed, otherwise it
-draws generated Unicode half-block frames. The surface is the optional mascot
-in `clanker repl`. [ADR 0013](../adrs/0013-sixel-precedes-unicode-mascot-fallback.md)
-sets the renderer precedence this PRD delivers.
+Implemented, except the manual terminal matrix (step 5), which needs real
+terminals and is not something the test suite can stand in for.
+
+`src/tui/mascot.zig` resolves Kitty, then SIXEL, then cells. The libvaxis half
+— capability, encoder, and image lifecycle — is written and lives on the
+`sixel-graphics` branch of `github.com/ywy50/libvaxis`; it reaches a build
+through `patches/vaxis-sixel-graphics.patch` rather than a pin move, because
+upstream has not merged it. `mascot.zig` gates every SIXEL path behind
+`sixel_supported`, so an unpatched dependency compiles the path out and the
+mascot behaves exactly as it did before. The pin in `build.zig.zon` moves once
+the API is released upstream, as the design below requires; the patch is the
+interim, documented in `patches/README.md`.
+
+[ADR 0013](../adrs/0013-sixel-precedes-unicode-mascot-fallback.md) sets the
+renderer precedence this PRD delivers.
 
 ## Problem
 
@@ -174,24 +184,26 @@ dependency.
 
 ## Acceptance criteria
 
-- [ ] A terminal with verified Kitty graphics uses the existing Kitty renderer.
-- [ ] A terminal with verified SIXEL and no Kitty graphics renders the mascot
+- [x] A terminal with verified Kitty graphics uses the existing Kitty renderer.
+- [x] A terminal with verified SIXEL and no Kitty graphics renders the mascot
       as the existing raster at the chosen cell dimensions.
-- [ ] A terminal with neither protocol uses the existing Unicode fallback.
-- [ ] `mini`, `xsmall`, `small`, `medium`, and `large` retain their existing
+- [x] A terminal with neither protocol uses the existing Unicode fallback.
+- [x] `mini`, `xsmall`, `small`, `medium`, and `large` retain their existing
       grid footprint and all four mascot modes retain their current movement.
-- [ ] Renderer selection is based on a terminal capability response, not
+- [x] Renderer selection is based on a terminal capability response, not
       `$TERM`, `TERM_PROGRAM`, or an emulator-name allowlist.
-- [ ] The SIXEL frame uses measured cell-pixel geometry, preserves transparent
+- [x] The SIXEL frame uses measured cell-pixel geometry, preserves transparent
       background pixels, and does not change the user's terminal palette.
-- [ ] SIXEL output is bounded, cached per current geometry, and presented no
+- [x] SIXEL output is bounded, cached per current geometry, and presented no
       faster than 10 fps without changing mascot state or buffering frames.
-- [ ] A SIXEL failure produces at most one setup attempt, clears partial state,
+- [x] A SIXEL failure produces at most one setup attempt, clears partial state,
       and leaves a working cell mascot for the rest of the session.
-- [ ] Resize and REPL exit clear SIXEL images without corrupting the vaxis
+- [x] Resize and REPL exit clear SIXEL images without corrupting the vaxis
       alternate screen or leaving stale pixels behind.
 - [ ] Unit, encoder, integration, and manual-terminal tests cover renderer
       precedence, transparency, geometry, budget, and all listed failure modes.
+      *(Unit, encoder and lifecycle tests are written and passing; the manual
+      terminal matrix is outstanding.)*
 
 ## Open questions / future work
 
