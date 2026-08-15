@@ -184,9 +184,11 @@ through a gated loop. Follow these conventions when changing this codebase.
 The design pressure: whatever can be a
 drop-in unit with a declared surface, is one. Tools are guests plus a
 manifest; providers are one vtable file plus a registry row; web UI views
-are directories under `ui/plugins/`; skills and prompts are data. Before
-hardcoding a capability into the harness, ask what its plugin shape would
-be — the sections below are that question asked of specific surfaces.
+are directories under `ui/plugins/`; skills and prompts are data. Most of
+those units are sandboxed WASM modules, so the plugin boundary doubles as
+the security boundary. Before hardcoding a capability into the harness,
+ask what its plugin shape would be — the sections below are that question
+asked of specific surfaces.
 
 ## WASM by default
 

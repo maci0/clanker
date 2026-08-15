@@ -12,7 +12,10 @@ clanker is a self-improving AI agent harness written in Zig 0.16. It runs its to
 
 Not a tagline — a design pressure. Whatever can be a drop-in unit with
 a declared surface, is one; whatever isn't yet is expected to justify
-itself.
+itself. And most plugins here ship as sandboxed WASM modules, so the
+plugin boundary is also the security boundary: a plugin runs under a
+descriptor naming exactly which paths, hosts, and environment it may
+touch, not with the process's authority.
 
 - **Tools?** Plugin. A WASM guest plus a `*.tool.json` manifest is the
   whole contract (`clanker plugins new <name>` scaffolds one).
