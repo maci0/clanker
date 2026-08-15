@@ -144,6 +144,12 @@ lamps carry further). The seven named palettes ride the same tokens.
 
   <div class="rail-context" id="rail-context">
     <div class="rail-head">
+      <div class="rail-workspace-bar">
+        <label class="sr-only" for="workspace-pick">Workspace</label>
+        <select id="workspace-pick" title="Workspace"></select>
+        <button type="button" class="rail-ws-btn" id="workspace-new" title="New workspace">+</button>
+        <button type="button" class="rail-ws-btn" id="workspace-remove" title="Remove this workspace" hidden>−</button>
+      </div>
       <button type="button" class="rail-new" id="new-chat">New chat</button>
       <label class="sr-only" for="session-filter">Filter conversations</label>
       <input type="search" id="session-filter" placeholder="Filter conversations…" autocomplete="off">
@@ -918,6 +924,29 @@ lamps carry further). The seven named palettes ride the same tokens.
       <p class="sr-only" id="webui-plugins-status" role="status" aria-live="polite"></p>
     </section>
 
+    <section id="config-editor-section">
+      <div class="section-head">
+        <h2>Config files</h2>
+        <div class="toolbar-actions">
+          <select id="config-editor-file" class="model-select" title="Which config file to edit">
+            <option value="config.local.toml">config.local.toml</option>
+            <option value="config.toml">config.toml</option>
+          </select>
+          <button type="button" class="secondary" id="config-editor-reload" title="Discard the editor and re-read the file">Reload</button>
+          <button type="button" class="secondary" id="config-editor-save">Save</button>
+        </div>
+      </div>
+      <p class="meta">Saves validate first: a config that does not load is refused with the reason, and the running server keeps its last known good config. A valid save hot-restarts the server into it. <code>config.local.toml</code> is this machine's overlay; <code>config.toml</code> is shared.</p>
+      <!-- Overlay editor: the textarea holds the truth and stays focusable;
+           the pre behind it carries the syntax colors. Same trick as every
+           lightweight in-browser code editor. -->
+      <div class="config-editor" id="config-editor">
+        <pre class="config-editor-highlight" aria-hidden="true"><code id="config-editor-code" class="language-toml"></code></pre>
+        <textarea id="config-editor-text" spellcheck="false" autocomplete="off" aria-label="Config file contents"></textarea>
+      </div>
+      <p class="meta" id="config-editor-note" role="status" aria-live="polite"></p>
+    </section>
+
     <section id="settings-section">
       <div class="section-head">
         <h2>Settings</h2>
@@ -1003,6 +1032,26 @@ lamps carry further). The seven named palettes ride the same tokens.
      that quietly forks a new workspace. -->
 <div class="overlay" id="card-detail" role="dialog" aria-modal="true" aria-labelledby="card-detail-title" hidden>
   <div class="overlay-box overlay-box-wide"></div>
+</div>
+
+<div class="overlay" id="workspace-new-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-new-title" hidden>
+  <div class="overlay-box">
+    <form id="workspace-new-form" class="goal-form">
+      <div class="run-detail-head">
+        <span class="run-detail-title" id="workspace-new-title">New workspace</span>
+      </div>
+      <label for="workspace-new-name">Name</label>
+      <input type="text" id="workspace-new-name" maxlength="64" autocomplete="off" required>
+      <label for="workspace-new-path">Folder</label>
+      <input type="text" id="workspace-new-path" autocomplete="off" required
+             placeholder="/path/to/project">
+      <p class="meta" id="workspace-new-hint">Each workspace is a folder on this machine and keeps its own chat history. The folder must already exist.</p>
+      <div class="goal-actions">
+        <button type="submit" class="secondary" id="workspace-new-save">Create</button>
+        <button type="button" class="secondary" id="workspace-new-cancel">Cancel</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <div class="overlay" id="text-prompt" role="dialog" aria-modal="true" aria-labelledby="text-prompt-title" hidden>

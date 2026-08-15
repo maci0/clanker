@@ -1005,7 +1005,7 @@ For the authoritative field list and defaults, see the doc comments on each stru
 
 `clanker serve` starts an HTTP server on `127.0.0.1:17921` (override the interface with `--host`, the port with `--webui-port`). It opens exactly one listening socket and serves every route below on it. Endpoints:
 
-Routes gated by a `modules.*` flag answer `404` with a body naming the flag when it is off. Those gates are `modules.webui` (the web UI and every `/webui/*` asset), `modules.a2a` (`/.well-known/agent.json`, `/api/a2a/message`), `modules.peers` (`/api/notify`, `/api/peers`), `modules.chatrooms` (all of `/api/chat/*`), `modules.token_stats` (`/api/stats`) and `modules.sessions` (all of `/api/sessions*`).
+Routes gated by a `modules.*` flag answer `404` with a body naming the flag when it is off. Those gates are `modules.webui` (the web UI and every `/webui/*` asset), `modules.a2a` (`/.well-known/agent.json`, `/api/a2a/message`), `modules.peers` (`/api/notify`, `/api/peers`), `modules.chatrooms` (all of `/api/chat/*`), `modules.token_stats` (`/api/stats`) and `modules.sessions` (all of `/api/sessions*` and `/api/workspaces*`).
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -1019,6 +1019,8 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/status` | GET | Instance + peers status (JSON) |
 | `/api/peers` | GET | Every configured peer's live A2A agent card, via the sandboxed `peers` tool (JSON) |
 | `/api/sessions` | GET | Saved conversations, newest first (JSON) |
+| `/api/workspaces` | GET, POST | List workspaces (default cwd plus registered folders) or create one `{name,path}` |
+| `/api/workspaces/<id>` | POST, DELETE | Rename/repath a workspace, or remove it (chats move to the default; the folder stays) |
 | `/api/sessions/<id>` | GET, DELETE | Read or delete one saved conversation |
 | `/api/sessions/<id>/fork` | POST | Copy a conversation to a new id |
 | `/api/sessions/<id>/branch/<n>` | POST | Fork from message `n`, dropping everything after it |
@@ -1028,7 +1030,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/catalog` | GET | Local models.dev snapshot search (JSON). Only providers whose API+auth clanker implements. Downloads the snapshot only if `state/models-dev.json` is missing |
 | `/api/catalog/refresh` | POST | Replace `state/models-dev.json` from models.dev |
 | `/api/providers/models` | GET | Models for a configured provider (JSON) |
-| `/api/files?path=` | GET | List one directory of the workspace (JSON). `..` is clamped at the working directory, so no traversal escapes it |
+| `/api/files?path=` | GET | List one directory of the current workspace (JSON). `?workspace=` selects a registered folder. `..` is clamped at that folder |
 | `/api/knowledge` | GET, POST | Knowledge-graph entries |
 | `/api/prompts` | GET, POST | Stored prompts |
 | `/api/steer` | POST | Send steering text into a run already in flight |

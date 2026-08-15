@@ -7,6 +7,21 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- Config hot reload: `clanker serve` watches `config.toml` /
+  `config.local.toml`. A change that loads cleanly restarts the server
+  into it (the same idle-aware exec a binary rebuild uses); a broken
+  edit logs a warning and the server keeps running on its last known
+  good config. `GET /api/config/status` reports the last verdict.
+- The System view gains a raw config editor with TOML syntax
+  highlighting for both files. Saving validates first via
+  `POST /api/config/raw`: a config that does not load is refused with
+  the reason and nothing is written, so a save can never take the
+  server from good to broken.
+- Workspaces are first-class: create any number of them, each a folder on
+  disk with its own chat history. The rail picker switches folder and
+  conversation list; New chat and `/api/run` inherit the current workspace;
+  the files browser and the agent sandbox root at that folder. Registry is
+  `state/workspaces.json`. The serve cwd remains the default workspace.
 - `reasoning_format` on a provider or model overrides how reasoning is
   read out of a response: `auto` (the kind's native field), `think_tag`
   (pull a leading `<think>...</think>` out of the content — the local

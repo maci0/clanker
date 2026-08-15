@@ -27,6 +27,9 @@ export function paletteEntries() {
     out.push({ kind: "view", label: v.charAt(0).toUpperCase() + v.slice(1) + digit, run: function () { _showView(v, true); } });
   });
   out.push({ kind: "action", label: "New chat", run: function () { _el.newChat.click(); } });
+  out.push({ kind: "action", label: "New workspace", run: function () {
+    if (_el.workspaceNew) _el.workspaceNew.click();
+  } });
   out.push({ kind: "action", label: "Fork this conversation", run: function () { _el.sessionFork.click(); } });
   out.push({ kind: "action", label: "Compact this conversation", run: function () { _el.sessionCompact.click(); } });
   out.push({ kind: "action", label: "Export this conversation as Markdown", run: function () { _el.sessionExport.click(); } });
@@ -161,12 +164,14 @@ export function paletteKeyHandler(e, ctx) {
   var textPromptEl = ctx.el ? ctx.el.textPrompt : _el.textPrompt;
   var finishTextPrompt = ctx.finishTextPrompt;
   if (e.key === "Tab") {
+    if (_el.workspaceNewDialog && !_el.workspaceNewDialog.hidden) { overlayTrapTab(e, _el.workspaceNewDialog); return true; }
     if (!textPromptEl.hidden) { overlayTrapTab(e, textPromptEl); return true; }
     if (!_el.palette.hidden) { overlayTrapTab(e, _el.palette); return true; }
     if (!_el.help.hidden) { overlayTrapTab(e, _el.help); return true; }
     return false;
   }
   if (e.key === "Escape") {
+    if (_el.workspaceNewDialog && !_el.workspaceNewDialog.hidden) { overlayClose(_el.workspaceNewDialog); e.preventDefault(); return true; }
     if (!textPromptEl.hidden) { finishTextPrompt(null); e.preventDefault(); return true; }
     if (!_el.palette.hidden) { overlayClose(_el.palette); e.preventDefault(); return true; }
     if (rail.getAttribute("data-open") === "true") { ctx.setRailOpen(false); ctx.el.railToggle.focus(); e.preventDefault(); return true; }

@@ -13,9 +13,9 @@ pub const Session = struct {
     messages: []const types.Message,
     created: i64,
     updated: i64,
-    /// Which workspace this conversation belongs to. A folder, not a tag: a
-    /// conversation is in exactly one, and "" means the default one, so a
-    /// session written before workspaces existed needs no migration.
+    /// Which workspace this conversation belongs to. The id of a row in
+    /// `state/workspaces.json`, or a leftover label from before folders were
+    /// registered. "" is the default workspace (the serve cwd).
     workspace: []const u8 = "",
     /// Whether this chat is archived / hidden from the default listing.
     /// False absences still decode as false, so pre-archive sessions need no migration.

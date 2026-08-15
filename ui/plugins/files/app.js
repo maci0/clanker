@@ -363,7 +363,7 @@ clanker.registerView({
     function openFile(path, name) {
       var mine = ++generation;
       api.status("Loading "+name+"…");
-      return api.getJSON("/api/files?path="+encodeURIComponent(path))
+      return api.getJSON("/api/files?path="+encodeURIComponent(path)+(window.clankerWorkspace ? "&workspace="+encodeURIComponent(window.clankerWorkspace) : ""))
         .then(function(d) {
           if (mine !== generation) return;
           openPath = path;
@@ -441,7 +441,7 @@ clanker.registerView({
       refreshBtn.disabled = true;
       filterInput.value = "";
       filterText = "";
-      return api.getJSON("/api/files?path="+encodeURIComponent(want))
+      return api.getJSON("/api/files?path="+encodeURIComponent(want)+(window.clankerWorkspace ? "&workspace="+encodeURIComponent(window.clankerWorkspace) : ""))
         .then(function(d) {
           if (mine !== generation) return;
           cur.path = d.path || "";
@@ -480,6 +480,7 @@ clanker.registerView({
     refreshSort();
 
     this.reload = load;
+    window.addEventListener("clanker-workspace", function () { load(""); });
     return load();
   },
 

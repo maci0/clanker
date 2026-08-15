@@ -21,6 +21,7 @@ const history = @import("improve/history.zig");
 const mcp = @import("mcp/server.zig");
 const acp = @import("acp/server.zig");
 const session = @import("agent/session.zig");
+const workspace_mod = @import("agent/workspace.zig");
 const subprocess = @import("agent/subprocess.zig");
 const dap = @import("debug/dap.zig");
 const autolearn = @import("agent/auto_learn.zig");
@@ -3534,6 +3535,7 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
     var messages: std.ArrayList(types.Message) = .empty;
     var created: i64 = 0;
     var prev_title: []const u8 = "";
+    var prev_workspace: []const u8 = "";
     var opts_session = opts.session;
     if (opts_session == null and opts.continue_last) {
         opts_session = latestSessionId(io, arena);
@@ -3552,6 +3554,7 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
         if (maybe_s) |s| {
             created = s.created;
             prev_title = s.title;
+            prev_workspace = s.workspace;
             for (s.messages) |m| {
                 if (m.role == .system) continue;
                 try messages.append(arena, m);
@@ -3718,6 +3721,7 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
         try session.saveSession(io, init.gpa, arena, std.Io.Dir.cwd(), .{
             .id = sid,
             .title = title,
+            .workspace = prev_workspace,
             .messages = messages.items,
             .created = created,
             .updated = updated,
@@ -3892,6 +3896,10 @@ const HotReload = struct {
     /// Set by the watcher when a rebuild lands mid-turn; `end()` checks it so a
     /// rebuild is never missed, only deferred to the end of the turn.
     pending: std.atomic.Value(bool) = .init(false),
+    /// Set by the config watcher after a change to config.toml /
+    /// config.local.toml revalidated cleanly: restart into the new config
+    /// even though the binary is unchanged.
+    config_restart: std.atomic.Value(bool) = .init(false),
 
     fn begin(self: *HotReload) void {
         self.turn.lockSharedUncancelable(self.io);
@@ -3911,10 +3919,28 @@ const HotReload = struct {
     }
 
     fn restartIfUpdated(self: *HotReload) void {
+        if (self.config_restart.swap(false, .acq_rel)) {
+            std.debug.print("\n\x1b[33m[hot-reload]\x1b[0m config changed, restarting with the new config\n", .{});
+            execSelf(self.gpa, self.exe_path, self.argv_tail);
+            std.debug.print("[hot-reload] exec failed, continuing with the current config\n", .{});
+            return;
+        }
         if (!binaryUpdated(self.io, self.exe_path, self.start_mtime)) return;
         std.debug.print("\n\x1b[33m[hot-reload]\x1b[0m binary updated, restarting with the new build\n", .{});
         execSelf(self.gpa, self.exe_path, self.argv_tail);
         std.debug.print("[hot-reload] exec failed, continuing with the current build\n", .{});
+    }
+
+    /// A validated config change wants a restart: taken immediately when the
+    /// server is idle, otherwise deferred to the end of the last in-flight
+    /// request exactly like a binary rebuild.
+    fn requestConfigRestart(self: *HotReload) void {
+        self.config_restart.store(true, .release);
+        self.pending.store(true, .release);
+        if (self.turn.tryLock(self.io)) {
+            defer self.turn.unlock(self.io);
+            if (self.pending.swap(false, .acq_rel)) self.restartIfUpdated();
+        }
     }
 
     /// Blocks forever watching the binary for a rebuild. Run on its own
@@ -4032,6 +4058,82 @@ const HotReload = struct {
 /// runs per process), matching the `repl_out`/`repl_io`-style globals
 /// already used for other REPL cross-cutting state.
 var hot_reload_active: ?*HotReload = null;
+
+/// Last config revalidation, for `GET /api/config/status`. A hand edit that
+/// fails to load never restarts the server; the running process IS the last
+/// known good config, and this records why the edit was refused.
+var config_check_mutex: std.c.pthread_mutex_t = .{};
+var config_check_ok: bool = true;
+var config_check_error_buf: [256]u8 = undefined;
+var config_check_error_len: usize = 0;
+var config_check_ts_ms: i64 = 0;
+
+fn setConfigCheck(io: std.Io, ok: bool, detail: []const u8) void {
+    _ = std.c.pthread_mutex_lock(&config_check_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&config_check_mutex);
+    config_check_ok = ok;
+    const n = @min(detail.len, config_check_error_buf.len);
+    @memcpy(config_check_error_buf[0..n], detail[0..n]);
+    config_check_error_len = n;
+    config_check_ts_ms = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_ms));
+}
+
+/// Loads the on-disk config pair into a throwaway arena purely to find out
+/// whether it parses and validates. The loader logs the precise diagnostic.
+fn configLoads(io: std.Io, gpa: std.mem.Allocator) ?[]const u8 {
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+    _ = config.Config.load(io, scratch.allocator(), std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch |err| {
+        return @errorName(err);
+    };
+    return null;
+}
+
+/// Watches config.toml / config.local.toml by mtime. A change revalidates:
+/// clean → graceful restart into the new config (the same idle-aware exec a
+/// binary rebuild uses); broken → warn and keep serving on the config this
+/// process already loaded, which is the last known good one.
+const ConfigWatch = struct {
+    io: std.Io,
+    gpa: std.mem.Allocator,
+
+    fn mtimes(io: std.Io) [2]i128 {
+        var out: [2]i128 = .{ 0, 0 };
+        for ([_][]const u8{ "config.toml", "config.local.toml" }, 0..) |p, i| {
+            const st = std.Io.Dir.cwd().statFile(io, p, .{}) catch continue;
+            out[i] = st.mtime.nanoseconds;
+        }
+        return out;
+    }
+
+    fn watch(self: *ConfigWatch) void {
+        var last = mtimes(self.io);
+        while (true) {
+            std.Io.sleep(self.io, .{ .nanoseconds = 2 * std.time.ns_per_s }, .awake) catch {};
+            const now = mtimes(self.io);
+            if (now[0] == last[0] and now[1] == last[1]) continue;
+            last = now;
+            if (configLoads(self.io, self.gpa)) |err_name| {
+                log.log(.warn, "config changed but does not load ({s}); keeping the last known good config (see the diagnostics above)", .{err_name});
+                setConfigCheck(self.io, false, err_name);
+                continue;
+            }
+            setConfigCheck(self.io, true, "");
+            if (hot_reload_active) |hot| {
+                hot.requestConfigRestart();
+            } else {
+                log.log(.warn, "config changed and loads cleanly, but hot reload is off (modules.hot_reload); restart clanker serve to apply it", .{});
+            }
+        }
+    }
+
+    fn start(arena: std.mem.Allocator, io: std.Io, gpa: std.mem.Allocator) void {
+        const self = arena.create(ConfigWatch) catch return;
+        self.* = .{ .io = io, .gpa = gpa };
+        const thread = std.Thread.spawn(.{}, ConfigWatch.watch, .{self}) catch return;
+        thread.detach();
+    }
+};
 
 /// Every flag that shapes what the listener is and who it answers to has to be
 /// repeated here, or a hot-reload re-exec silently narrows the policy the
@@ -5402,6 +5504,10 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
         // edited or the env changed underneath it.
         hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, listen));
     }
+    // Config hot reload is unconditional: a clean edit restarts (when the
+    // reload machinery above is on), a broken one warns and the process
+    // keeps serving the config it already validated.
+    ConfigWatch.start(arena, io, gpa);
 
     if (cfg.modules.mesh) {
         mesh_net.start(io, gpa, &cfg, &mesh_net.publishLive) catch |err| {
@@ -5751,6 +5857,9 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_config_model_set = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/model/set");
         const is_config_model_remove = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/model/remove");
         const is_config_default = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/default");
+        const is_config_raw_get = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/config/raw");
+        const is_config_raw_set = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/raw");
+        const is_config_status = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/config/status");
         if (is_webui and isWebuiRead(method) and cfg.modules.webui) {
             const conn_val = headerValue(headers_raw, "connection") orelse "";
             if (!std.ascii.eqlIgnoreCase(conn_val, "close")) request_keep_alive = true;
@@ -5821,6 +5930,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleMeshJoin(gpa, cfg, body, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/runs")) {
             handleRuns(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), stream);
+        } else if (std.mem.startsWith(u8, path, "/api/workspaces") and
+            (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "DELETE")))
+        {
+            handleWorkspaces(io, gpa, cfg, method, path, body, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, path, "/api/sessions") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "DELETE")))
         {
@@ -5866,6 +5979,12 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleConfigModelRemove(io, gpa, body, stream);
         } else if (is_config_default) {
             handleConfigDefault(io, gpa, body, stream);
+        } else if (is_config_raw_get) {
+            handleConfigRawGet(io, gpa, target, stream);
+        } else if (is_config_raw_set) {
+            handleConfigRawSet(io, gpa, body, stream);
+        } else if (is_config_status) {
+            handleConfigStatus(stream);
         } else if (is_plugins) {
             handlePlugins(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_skills) {
@@ -6987,6 +7106,9 @@ const RunRequestBody = struct {
     /// Knowledge context: collection ids whose documents are injected into the
     /// task context (#<collection> / @doc pattern).
     knowledge: []const []const u8 = &.{},
+    /// Workspace id for a new session (existing sessions keep the tag they
+    /// already have). Also selects the folder the run's sandbox is rooted in.
+    workspace: []const u8 = "",
 };
 
 /// The composer refuses images over 4 MB; the server enforces the same cap on
@@ -8771,6 +8893,122 @@ fn handleConfigModel(io: std.Io, gpa: std.mem.Allocator, body: []const u8, strea
 
 /// `POST /api/config/default {"provider":…,"model":…}` — set the top-level
 /// default_provider / default_model keys in `config.local.toml`.
+/// The two files the raw config editor may read and write. Anything else
+/// (dotfiles, paths with separators) is refused before touching the disk.
+fn configRawAllowed(name: []const u8) bool {
+    return std.mem.eql(u8, name, "config.toml") or std.mem.eql(u8, name, "config.local.toml");
+}
+
+/// `GET /api/config/raw?file=<name>` — the file's current bytes, for the
+/// web UI's editor. A missing file is an empty editor, not an error.
+fn handleConfigRawGet(io: std.Io, gpa: std.mem.Allocator, target: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const file = queryParam(arena, target, "file") orelse "";
+    if (!configRawAllowed(file)) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"file must be config.toml or config.local.toml\"}");
+        return;
+    }
+    const content = std.Io.Dir.cwd().readFileAlloc(io, file, arena, .limited(1 << 20)) catch "";
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("file") catch return;
+    s.write(file) catch return;
+    s.objectField("content") catch return;
+    s.write(content) catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
+}
+
+/// `POST /api/config/raw` `{file, content}` — validate-then-write. The
+/// candidate pair (this content plus the other file's current bytes) is
+/// loaded from a scratch directory first; only a pair that parses and
+/// validates reaches the real file, so a save can never take the server's
+/// config from good to broken. The watcher then hot-restarts into it.
+fn handleConfigRawSet(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const Req = struct { file: []const u8 = "", content: []const u8 = "" };
+    const req = std.json.parseFromSliceLeaky(Req, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"body must be {file, content}\"}");
+        return;
+    };
+    if (!configRawAllowed(req.file)) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"file must be config.toml or config.local.toml\"}");
+        return;
+    }
+
+    const check_dir_path = "state/cache/config-check";
+    const cwd = std.Io.Dir.cwd();
+    ensure_dir.ensureDir(cwd, io, "state") catch {};
+    ensure_dir.ensureDir(cwd, io, "state/cache") catch {};
+    ensure_dir.ensureDir(cwd, io, check_dir_path) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not create the validation directory\"}");
+        return;
+    };
+    for ([_][]const u8{ "config.toml", "config.local.toml" }) |name| {
+        const bytes = if (std.mem.eql(u8, name, req.file))
+            req.content
+        else
+            cwd.readFileAlloc(io, name, arena, .limited(1 << 20)) catch "";
+        const scratch_path = std.fmt.allocPrint(arena, "{s}/{s}", .{ check_dir_path, name }) catch return;
+        atomic_write.writeFile(io, cwd, scratch_path, bytes) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not stage the candidate config\"}");
+            return;
+        };
+    }
+    var check_dir = cwd.openDir(io, check_dir_path, .{}) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not open the validation directory\"}");
+        return;
+    };
+    defer check_dir.close(io);
+    _ = config.Config.load(io, arena, check_dir, "config.toml", "config.local.toml") catch |err| {
+        setConfigCheck(io, false, @errorName(err));
+        var out: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &out.writer };
+        s.beginObject() catch return;
+        s.objectField("ok") catch return;
+        s.write(false) catch return;
+        s.objectField("error") catch return;
+        s.write(@errorName(err)) catch return;
+        s.objectField("detail") catch return;
+        s.write("the candidate config does not load; the exact diagnostic is in the server log, and the running config is unchanged") catch return;
+        s.endObject() catch return;
+        respond(stream, 400, "Bad Request", out.written());
+        return;
+    };
+
+    atomic_write.writeFile(io, cwd, req.file, req.content) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"validated, but writing the file failed\"}");
+        return;
+    };
+    setConfigCheck(io, true, "");
+    respond(stream, 200, "OK", "{\"ok\":true,\"applied\":\"hot reload restarts the server into the new config\"}");
+}
+
+/// `GET /api/config/status` — the last revalidation verdict, so the editor
+/// can say "your hand edit was refused" without tailing the server log.
+fn handleConfigStatus(stream: std.Io.net.Stream) void {
+    var buf: [512]u8 = undefined;
+    _ = std.c.pthread_mutex_lock(&config_check_mutex);
+    const ok = config_check_ok;
+    const err_text = config_check_error_buf[0..config_check_error_len];
+    const ts = config_check_ts_ms;
+    var body_buf: [768]u8 = undefined;
+    const body = std.fmt.bufPrint(&body_buf, "{{\"ok\":{},\"error\":\"{s}\",\"checked_ts_ms\":{d}}}", .{ ok, std.fmt.bufPrint(&buf, "{s}", .{err_text}) catch "", ts }) catch {
+        _ = std.c.pthread_mutex_unlock(&config_check_mutex);
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    _ = std.c.pthread_mutex_unlock(&config_check_mutex);
+    respond(stream, 200, "OK", body);
+}
+
 fn handleConfigDefault(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -10100,6 +10338,7 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
     const arena = arena_state.allocator();
 
     var requested: []const u8 = "";
+    var ws_id: []const u8 = "";
     if (std.mem.findScalar(u8, target, '?')) |q| {
         var params = std.mem.splitScalar(u8, target[q + 1 ..], '&');
         while (params.next()) |pair| {
@@ -10107,6 +10346,7 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
                 const k = pair[0..eq];
                 const v = pair[eq + 1 ..];
                 if (std.mem.eql(u8, k, "path")) requested = percentDecode(arena, v) catch v;
+                if (std.mem.eql(u8, k, "workspace")) ws_id = percentDecode(arena, v) catch v;
             }
         }
     }
@@ -10114,6 +10354,15 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
         respond(stream, 413, "Content Too Large", "{\"ok\":false,\"error\":\"path too long\"}");
         return;
     }
+    if (ws_id.len > 0 and !validWorkspace(ws_id)) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid workspace\"}");
+        return;
+    }
+    var root_dir = openWorkspaceRoot(io, arena, ws_id) catch {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"workspace folder missing\"}");
+        return;
+    };
+    defer if (root_dir.owned) root_dir.dir.close(io);
 
     // Normalize: skip empty and `.` components, and clamp `..` at the root so
     // no amount of traversal reaches outside the workspace.
@@ -10134,21 +10383,21 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
     // indistinguishable from "does not exist" and would otherwise silently
     // clamp back to the workspace root instead of serving it.
     if (path.len > 0) {
-        if (std.Io.Dir.cwd().statFile(io, path, .{}) catch null) |st| {
-            if (st.kind == .file) return handleFileContent(io, arena, path, workspaceName(io, arena), st, accepts_gzip, stream);
+        if (root_dir.dir.statFile(io, path, .{}) catch null) |st| {
+            if (st.kind == .file) return handleFileContent(io, arena, root_dir.dir, path, root_dir.label, st, accepts_gzip, stream);
         }
     }
 
     // Open the resolved directory; a path that cannot be opened (nonexistent
     // after normalization) is clamped back to the workspace root.
-    var dir = std.Io.Dir.cwd().openDir(io, if (path.len > 0) path else ".", .{ .iterate = true }) catch
-        std.Io.Dir.cwd().openDir(io, ".", .{ .iterate = true }) catch {
+    var dir = root_dir.dir.openDir(io, if (path.len > 0) path else ".", .{ .iterate = true }) catch
+        root_dir.dir.openDir(io, ".", .{ .iterate = true }) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"open failed\"}");
         return;
     };
     defer dir.close(io);
 
-    const root = workspaceName(io, arena);
+    const root = root_dir.label;
 
     // Parent breadcrumb: the directory one level up, or empty at the root.
     var parent_buf: []const u8 = "";
@@ -10214,7 +10463,7 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
 /// `file_preview_cap`; a NUL byte anywhere in what was read marks the file
 /// binary and withholds `content` rather than shipping a preview no browser
 /// could usefully render.
-fn handleFileContent(io: std.Io, arena: std.mem.Allocator, path: []const u8, root: []const u8, st: std.Io.Dir.Stat, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+fn handleFileContent(io: std.Io, arena: std.mem.Allocator, root_dir: std.Io.Dir, path: []const u8, root: []const u8, st: std.Io.Dir.Stat, accepts_gzip: bool, stream: std.Io.net.Stream) void {
     // `readFileAlloc`'s own limit errors (`error.StreamTooLong`) rather than
     // truncating, which is right for a hard ceiling but wrong for a preview
     // that wants the first `file_preview_cap` bytes of a bigger file instead
@@ -10222,7 +10471,7 @@ fn handleFileContent(io: std.Io, arena: std.mem.Allocator, path: []const u8, roo
     // call already has, and read exactly that many bytes.
     const want: usize = @intCast(@min(st.size, file_preview_cap));
     const truncated = st.size > file_preview_cap;
-    var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch {
+    var file = root_dir.openFile(io, path, .{}) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"read failed\"}");
         return;
     };
@@ -10628,6 +10877,244 @@ test validWorkspace {
     try std.testing.expect(!validWorkspace("a\\b"));
     try std.testing.expect(!validWorkspace("a\nb"));
     try std.testing.expect(!validWorkspace("x" ** 65));
+}
+
+const WorkspaceRoot = struct {
+    dir: std.Io.Dir,
+    owned: bool,
+    label: []const u8,
+};
+
+fn workspaceSandboxPath(io: std.Io, arena: std.mem.Allocator, id: []const u8) ?[]const u8 {
+    if (id.len == 0) return null;
+    const list = workspace_mod.load(io, arena, std.Io.Dir.cwd()) catch return null;
+    return workspace_mod.pathFor(list, id);
+}
+
+fn openWorkspaceRoot(io: std.Io, arena: std.mem.Allocator, id: []const u8) !WorkspaceRoot {
+    if (id.len == 0) {
+        return .{ .dir = std.Io.Dir.cwd(), .owned = false, .label = workspaceName(io, arena) };
+    }
+    if (!validWorkspace(id)) return error.BadName;
+    const list = workspace_mod.load(io, arena, std.Io.Dir.cwd()) catch return error.NotFound;
+    if (workspace_mod.pathFor(list, id)) |p| {
+        const dir = std.Io.Dir.cwd().openDir(io, p, .{ .iterate = true }) catch return error.NotFound;
+        const ws = workspace_mod.find(list, id) orelse return error.NotFound;
+        return .{ .dir = dir, .owned = true, .label = ws.name };
+    }
+    return .{ .dir = std.Io.Dir.cwd(), .owned = false, .label = id };
+}
+
+const WorkspaceBody = struct {
+    name: []const u8 = "",
+    path: []const u8 = "",
+};
+
+fn handleWorkspaces(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    method: []const u8,
+    path: []const u8,
+    body: []const u8,
+    accepts_gzip: bool,
+    stream: std.Io.net.Stream,
+) void {
+    if (!cfg.modules.sessions) {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"sessions module disabled\"}");
+        return;
+    }
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const rest = path["/api/workspaces".len..];
+
+    if (rest.len > 1 and rest[0] == '/') {
+        const id = rest[1..];
+        if (!validWorkspace(id) or id.len == 0) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid workspace\"}");
+            return;
+        }
+        if (std.mem.eql(u8, method, "DELETE")) {
+            workspace_mod.remove(io, gpa, arena, std.Io.Dir.cwd(), id) catch |err| switch (err) {
+                error.NoSuchWorkspace => {
+                    respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such workspace\"}");
+                    return;
+                },
+                else => {
+                    respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not remove workspace\"}");
+                    return;
+                },
+            };
+            if (session.listSessions(io, arena, std.Io.Dir.cwd())) |list| {
+                for (list) |m| {
+                    if (std.mem.eql(u8, m.workspace, id)) {
+                        session.setWorkspace(io, gpa, arena, std.Io.Dir.cwd(), m.id, "") catch {};
+                    }
+                }
+            } else |_| {}
+            respond(stream, 200, "OK", "{\"ok\":true}");
+            return;
+        }
+        if (std.mem.eql(u8, method, "POST")) {
+            const req = std.json.parseFromSliceLeaky(WorkspaceBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+                return;
+            };
+            const name: ?[]const u8 = if (req.name.len > 0) req.name else null;
+            const folder: ?[]const u8 = if (req.path.len > 0) req.path else null;
+            if (name == null and folder == null) {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing name or path\"}");
+                return;
+            }
+            const updated = workspace_mod.update(io, gpa, arena, std.Io.Dir.cwd(), id, name, folder) catch |err| switch (err) {
+                error.NoSuchWorkspace => {
+                    respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such workspace\"}");
+                    return;
+                },
+                error.BadName => {
+                    respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid workspace name\"}");
+                    return;
+                },
+                error.BadPath, error.NotADirectory => {
+                    respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"path must be an existing directory\"}");
+                    return;
+                },
+                else => {
+                    respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not update workspace\"}");
+                    return;
+                },
+            };
+            writeWorkspaceCreated(arena, stream, updated);
+            return;
+        }
+        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        return;
+    }
+    if (rest.len != 0) {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such endpoint\"}");
+        return;
+    }
+
+    if (std.mem.eql(u8, method, "POST")) {
+        const req = std.json.parseFromSliceLeaky(WorkspaceBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+            return;
+        };
+        const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+        const created = workspace_mod.add(io, gpa, arena, std.Io.Dir.cwd(), req.name, req.path, now) catch |err| switch (err) {
+            error.BadName => {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"workspace name must be 1-64 characters and contain no separators\"}");
+                return;
+            },
+            error.BadPath, error.NotADirectory => {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"path must be an existing directory\"}");
+                return;
+            },
+            error.Duplicate => {
+                respond(stream, 409, "Conflict", "{\"ok\":false,\"error\":\"a workspace with that name already exists\"}");
+                return;
+            },
+            else => {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not create workspace\"}");
+                return;
+            },
+        };
+        writeWorkspaceCreated(arena, stream, created);
+        return;
+    }
+    if (!std.mem.eql(u8, method, "GET")) {
+        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        return;
+    }
+
+    const registered = workspace_mod.load(io, arena, std.Io.Dir.cwd()) catch &.{};
+    const sessions = session.listSessions(io, arena, std.Io.Dir.cwd()) catch &.{};
+    const cwd_abs = workspace_mod.cwdPath(io, arena);
+    const cwd_name = workspace_mod.basenameOf(cwd_abs);
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("workspaces") catch return;
+    s.beginArray() catch return;
+
+    writeWorkspaceJson(&s, "", cwd_name, cwd_abs, true, false, countChats(sessions, "")) catch return;
+    for (registered) |w| {
+        writeWorkspaceJson(&s, w.id, w.name, w.path, false, false, countChats(sessions, w.id)) catch return;
+    }
+    // Label-only folders that predate the registry still appear so their
+    // chats stay reachable until a path is attached.
+    var seen_orphans: std.ArrayList([]const u8) = .empty;
+    for (sessions) |m| {
+        if (m.workspace.len == 0) continue;
+        if (workspace_mod.find(registered, m.workspace) != null) continue;
+        var already = false;
+        for (seen_orphans.items) |o| {
+            if (std.mem.eql(u8, o, m.workspace)) {
+                already = true;
+                break;
+            }
+        }
+        if (already) continue;
+        seen_orphans.append(arena, m.workspace) catch continue;
+        writeWorkspaceJson(&s, m.workspace, m.workspace, "", false, true, countChats(sessions, m.workspace)) catch continue;
+    }
+
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respondCompressible(arena, stream, accepts_gzip, out.written());
+}
+
+fn countChats(sessions: []const session.SessionMeta, id: []const u8) usize {
+    var n: usize = 0;
+    for (sessions) |m| {
+        if (std.mem.eql(u8, m.workspace, id)) n += 1;
+    }
+    return n;
+}
+
+fn writeWorkspaceJson(
+    s: *std.json.Stringify,
+    id: []const u8,
+    name: []const u8,
+    path: []const u8,
+    is_builtin: bool,
+    orphan: bool,
+    chats: usize,
+) !void {
+    try s.beginObject();
+    try s.objectField("id");
+    try s.write(id);
+    try s.objectField("name");
+    try s.write(name);
+    try s.objectField("path");
+    try s.write(path);
+    try s.objectField("builtin");
+    try s.write(is_builtin);
+    try s.objectField("orphan");
+    try s.write(orphan);
+    try s.objectField("chats");
+    try s.write(chats);
+    try s.endObject();
+}
+
+fn writeWorkspaceCreated(arena: std.mem.Allocator, stream: std.Io.net.Stream, w: workspace_mod.Workspace) void {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("id") catch return;
+    s.write(w.id) catch return;
+    s.objectField("name") catch return;
+    s.write(w.name) catch return;
+    s.objectField("path") catch return;
+    s.write(w.path) catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
 }
 
 const SessionPatchBody = struct {
@@ -12127,9 +12614,20 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     // checkout. That is the same tracked/private versus untracked/shared
     // split as cmdRun, without a global chdir race.
     var run_cfg = cfg.*;
+    var run_workspace: []const u8 = req.workspace;
+    if (run_workspace.len == 0 and cfg.modules.sessions and req.session.len > 0) {
+        if (session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), req.session)) |s| {
+            run_workspace = s.workspace;
+        } else |_| {}
+    }
+    if (run_workspace.len > 0 and !validWorkspace(run_workspace)) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid workspace\"}");
+        return;
+    }
+    const ws_root = workspaceSandboxPath(io, arena, run_workspace);
     var wt: ?worktree_mod.Worktree = null;
     defer if (wt) |*w| w.deinit(gpa);
-    if (shouldWebuiIsolate(req, cfg)) {
+    if (shouldWebuiIsolate(req, cfg) and ws_root == null) {
         const root_z = std.process.currentPathAlloc(io, arena) catch {
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not read checkout path for worktree\"}");
             return;
@@ -12166,6 +12664,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             \\
             \\{s}
         , .{ created.branch, created.path, created.base_branch, final_task }) catch final_task;
+    } else if (ws_root) |p| {
+        run_cfg.agent.sandbox_root = p;
     }
 
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = &run_cfg };
@@ -12307,6 +12807,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     const has_session = cfg.modules.sessions and req.session.len > 0;
     var created: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     var prev_title: []const u8 = "";
+    var session_workspace: []const u8 = if (run_workspace.len > 0) run_workspace else req.workspace;
     // Held from the load below through both saveSession calls further down:
     // serve runs one thread per connection, so two requests naming the same
     // session (a double-submit, two tabs) would otherwise both load the same
@@ -12322,11 +12823,16 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         if (session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), req.session)) |s| {
             created = s.created;
             prev_title = s.title;
+            session_workspace = s.workspace;
             for (s.messages) |m| {
                 if (m.role == .system) continue;
                 messages.append(arena, m) catch {};
             }
         } else |_| {}
+    }
+    if (session_workspace.len > 0 and !validWorkspace(session_workspace)) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid workspace\"}");
+        return;
     }
 
     _ = live_runs.fetchAdd(1, .monotonic);
@@ -12441,6 +12947,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), .{
                 .id = req.session,
                 .title = title,
+                .workspace = session_workspace,
                 .messages = messages.items,
                 .created = created,
                 .updated = updated,
@@ -12539,6 +13046,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), .{
             .id = req.session,
             .title = title,
+            .workspace = session_workspace,
             .messages = messages.items,
             .created = created,
             .updated = updated,

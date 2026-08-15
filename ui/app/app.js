@@ -157,6 +157,14 @@ var el = {
   runGraph: document.getElementById("run-graph"),
   runDetail: document.getElementById("run-detail"),
   sessionFilter: document.getElementById("session-filter"),
+  workspacePick: document.getElementById("workspace-pick"),
+  workspaceNew: document.getElementById("workspace-new"),
+  workspaceRemove: document.getElementById("workspace-remove"),
+  workspaceNewDialog: document.getElementById("workspace-new-dialog"),
+  workspaceNewForm: document.getElementById("workspace-new-form"),
+  workspaceNewName: document.getElementById("workspace-new-name"),
+  workspaceNewPath: document.getElementById("workspace-new-path"),
+  workspaceNewCancel: document.getElementById("workspace-new-cancel"),
   sessionCompact: document.getElementById("session-compact"),
   sessionExport: document.getElementById("session-export"),
   sessionCopy: document.getElementById("session-copy"),
@@ -247,6 +255,12 @@ var controller = null;
 var elapsedTimer = null;
 var runWaitLabel = "thinking";
 var sessionId = loadSession();
+function loadCurrentWorkspace() {
+  try { return window.localStorage.getItem("clanker.workspace") || ""; } catch (e) { return ""; }
+}
+var currentWorkspace = loadCurrentWorkspace();
+window.clankerWorkspace = currentWorkspace;
+var knownWorkspaces = [];
 
 function loadSession() {
   var id = null;
@@ -424,7 +438,8 @@ function renderSessionOptions(sessions) {
     filter: el.sessionFilter ? el.sessionFilter.value.trim().toLowerCase() : "",
     pins: pins.slice(),
     current: sessionId,
-    collapsed: collapsedGroups.slice()
+    collapsed: collapsedGroups.slice(),
+    workspace: currentWorkspace
   };
   renderSessionTitle();
 }
@@ -482,57 +497,40 @@ bind(el.railList, railState, function (s) {
     var pa = isPinned(a.id) ? 1 : 0, pb = isPinned(b.id) ? 1 : 0;
     return pa === pb ? 0 : pb - pa;
   });
-  var seen = ordered.some(function (item) { return item.id === s.current; });
+  var scoped = ordered.filter(function (item) {
+    return (item.workspace || "") === (s.workspace || "");
+  });
+  var seen = scoped.some(function (item) { return item.id === s.current; });
   var matched = 0;
+  var inWorkspace = scoped.filter(function (item) {
+    return !s.filter || sessionLabel(item).toLowerCase().indexOf(s.filter) !== -1;
+  });
 
-  var wsList = workspacesOf(ordered);
-  wsList.forEach(function (ws) {
-    var inWorkspace = ordered.filter(function (item) {
-      if ((item.workspace || "") !== ws) return false;
-      return !s.filter || sessionLabel(item).toLowerCase().indexOf(s.filter) !== -1;
+  var groups = [];
+  var lastGroup = "";
+  inWorkspace.forEach(function (item) {
+    var group = isPinned(item.id) ? "Pinned" : recencyGroup(item.updated);
+    if (group !== lastGroup) { groups.push({ name: group, items: [] }); lastGroup = group; }
+    groups[groups.length - 1].items.push(item);
+  });
+  groups.forEach(function (g) {
+    var collapsed = isCollapsedGroup(g.name);
+    var head = T.button({
+      type: "button",
+      class: "rail-group",
+      "aria-expanded": String(!collapsed),
+      "aria-label": (collapsed ? "Expand " : "Collapse ") + g.name,
+      title: (collapsed ? "Show " : "Hide ") + g.items.length + (g.items.length === 1 ? " conversation" : " conversations") + " in " + g.name,
+      onclick: function () { toggleCollapsedGroup(g.name); }
+    }, T.span({ class: "rail-group-caret" }, collapsed ? "▸" : "▾"),
+      T.span({ class: "rail-group-name" }, g.name),
+      T.span({ class: "rail-group-count" }, String(g.items.length)));
+    out.push(T.li({ class: "rail-group-row", role: "presentation" }, head));
+    if (collapsed) { matched += g.items.length; return; }
+    g.items.forEach(function (item) {
+      out.push(railRowFor(item, s.current));
     });
-    // A folder with nothing to show under the current filter is not drawn:
-    // an empty heading says a folder is empty when it is only filtered out.
-    if (!inWorkspace.length) return;
-
-    // The default folder needs no name when it is the only one there is.
-    var onlyDefault = ws === "" && wsList.length === 1;
-    if (!onlyDefault) {
-      out.push(T.li({ class: "rail-workspace", role: "presentation" },
-        ws === "" ? "Conversations" : ws,
-        T.span({ class: "rail-workspace-count" }, String(inWorkspace.length))));
-    }
-
-    // Bucket the folder's conversations into day-groups (in order), then
-    // render each group as a collapsible header plus its rows.
-    var groups = [];
-    var lastGroup = "";
-    inWorkspace.forEach(function (item) {
-      var group = isPinned(item.id) ? "Pinned" : recencyGroup(item.updated);
-      if (group !== lastGroup) { groups.push({ name: group, items: [] }); lastGroup = group; }
-      groups[groups.length - 1].items.push(item);
-    });
-    groups.forEach(function (g) {
-      var collapsed = isCollapsedGroup(g.name);
-      var head = T.button({
-        type: "button",
-        class: "rail-group",
-        "aria-expanded": String(!collapsed),
-        "aria-label": (collapsed ? "Expand " : "Collapse ") + g.name,
-        title: (collapsed ? "Show " : "Hide ") + g.items.length + (g.items.length === 1 ? " conversation" : " conversations") + " in " + g.name,
-        onclick: function () { toggleCollapsedGroup(g.name); }
-      }, T.span({ class: "rail-group-caret" }, collapsed ? "▸" : "▾"),
-        T.span({ class: "rail-group-name" }, g.name),
-        T.span({ class: "rail-group-count" }, String(g.items.length)));
-      out.push(T.li({ class: "rail-group-row", role: "presentation" }, head));
-      if (collapsed) { matched += g.items.length; return; }
-      g.items.forEach(function (item) {
-        var row = railRowFor(item, s.current);
-        if (!onlyDefault) row.classList.add("rail-folder");
-        out.push(row);
-      });
-      matched += g.items.length;
-    });
+    matched += g.items.length;
   });
 
   /* A brand new chat has no file on disk until its first turn completes;
@@ -744,6 +742,88 @@ function loadSessions() {
     });
 }
 
+function workspaceLabel(w) {
+  if (!w) return "This folder";
+  var name = w.name || w.id || "This folder";
+  if (w.builtin) return name + " (this folder)";
+  if (w.orphan) return name + " (no folder)";
+  return name;
+}
+
+function renderWorkspacePick() {
+  if (!el.workspacePick) return;
+  var pick = el.workspacePick;
+  var keep = currentWorkspace;
+  pick.textContent = "";
+  if (!knownWorkspaces.length) {
+    var fallback = document.createElement("option");
+    fallback.value = "";
+    fallback.textContent = "This folder";
+    pick.appendChild(fallback);
+  } else {
+    knownWorkspaces.forEach(function (w) {
+      var opt = document.createElement("option");
+      opt.value = w.id || "";
+      opt.textContent = workspaceLabel(w);
+      pick.appendChild(opt);
+    });
+  }
+  pick.value = keep;
+  if (pick.value !== keep) {
+    var missing = document.createElement("option");
+    missing.value = keep;
+    missing.textContent = keep || "This folder";
+    pick.appendChild(missing);
+    pick.value = keep;
+  }
+  if (el.workspaceRemove) {
+    var cur = knownWorkspaces.filter(function (w) { return (w.id || "") === keep; })[0];
+    el.workspaceRemove.hidden = !cur || !!cur.builtin;
+  }
+}
+
+function loadWorkspaces() {
+  return fetch("/api/workspaces")
+    .then(readJson)
+    .then(function (data) {
+      knownWorkspaces = data.workspaces || [];
+      renderWorkspacePick();
+    })
+    .catch(function () {
+      knownWorkspaces = [];
+      renderWorkspacePick();
+    });
+}
+
+function setCurrentWorkspace(id, opts) {
+  opts = opts || {};
+  currentWorkspace = id || "";
+  window.clankerWorkspace = currentWorkspace;
+  try { window.localStorage.setItem("clanker.workspace", currentWorkspace); } catch (e) {}
+  try { window.dispatchEvent(new CustomEvent("clanker-workspace", { detail: currentWorkspace })); } catch (e) {}
+  renderWorkspacePick();
+  if (opts.silent) {
+    renderSessionOptions(null);
+    return;
+  }
+  var meta = currentSessionMeta();
+  if (meta && (meta.workspace || "") !== currentWorkspace) {
+    var next = null;
+    for (var i = 0; i < knownSessions.length; i++) {
+      var s = knownSessions[i];
+      if ((s.workspace || "") === currentWorkspace && (showArchived() || !s.archived)) {
+        next = s;
+        break;
+      }
+    }
+    if (next) switchSession(next.id);
+    else if (el.newChat) el.newChat.click();
+    else renderSessionOptions(null);
+  } else {
+    renderSessionOptions(null);
+  }
+}
+
 /* Which message indices each rendered turn covers, in render order. Written
    by renderSessionHistory, read by jumpToMessage: a search hit names a message
    and the transcript is drawn in turns, so this is the only place that knows
@@ -858,6 +938,10 @@ function switchSession(id, jump) {
   resetSessionMetrics();
   el.task.value = "";
   try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+  var opened = currentSessionMeta();
+  if (opened && (opened.workspace || "") !== currentWorkspace) {
+    setCurrentWorkspace(opened.workspace || "", { silent: true });
+  }
   renderSessionChip();
   renderSessionOptions(null);
   el.transcript.textContent = "";
@@ -890,14 +974,89 @@ function switchSession(id, jump) {
 
 /* Workspaces are created by naming one: there is no separate "new folder"
    step, because a folder with nothing in it is not yet a folder. */
+if (el.workspacePick) {
+  el.workspacePick.addEventListener("change", function () {
+    setCurrentWorkspace(el.workspacePick.value || "");
+  });
+}
+if (el.workspaceNew) {
+  el.workspaceNew.addEventListener("click", function () {
+    if (!el.workspaceNewDialog) return;
+    if (el.workspaceNewName) el.workspaceNewName.value = "";
+    if (el.workspaceNewPath) el.workspaceNewPath.value = "";
+    overlayOpen(el.workspaceNewDialog, el.workspaceNewName);
+  });
+}
+if (el.workspaceNewCancel) {
+  el.workspaceNewCancel.addEventListener("click", function () {
+    if (el.workspaceNewDialog) overlayClose(el.workspaceNewDialog);
+  });
+}
+if (el.workspaceNewDialog) {
+  el.workspaceNewDialog.addEventListener("mousedown", function (e) {
+    if (e.target === el.workspaceNewDialog) overlayClose(el.workspaceNewDialog);
+  });
+}
+if (el.workspaceNewForm) {
+  el.workspaceNewForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var name = el.workspaceNewName ? el.workspaceNewName.value.trim() : "";
+    var path = el.workspaceNewPath ? el.workspaceNewPath.value.trim() : "";
+    if (!name || !path) return;
+    fetch("/api/workspaces", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name, path: path })
+    })
+      .then(readJson)
+      .then(function (data) {
+        if (el.workspaceNewDialog) overlayClose(el.workspaceNewDialog);
+        return loadWorkspaces().then(function () {
+          setCurrentWorkspace(data.id || name);
+          el.sessionStatus.textContent = "Workspace " + (data.name || name) + " ready.";
+        });
+      })
+      .catch(function (err) {
+        el.sessionStatus.textContent = "Could not create workspace: " + err.message;
+      });
+  });
+}
+if (el.workspaceRemove) {
+  el.workspaceRemove.addEventListener("click", function () {
+    var id = currentWorkspace;
+    if (!id) return;
+    var cur = knownWorkspaces.filter(function (w) { return (w.id || "") === id; })[0];
+    var label = cur ? (cur.name || id) : id;
+    uiConfirm("Remove workspace \"" + label + "\"? Its chats move back to this folder. The directory on disk is not deleted.", { confirmLabel: "Remove" }).then(function (yes) {
+      if (!yes) return;
+      fetch("/api/workspaces/" + encodeURIComponent(id), { method: "DELETE" })
+        .then(readJson)
+        .then(function () {
+          return Promise.all([loadWorkspaces(), loadSessions()]).then(function () {
+            setCurrentWorkspace("");
+            el.sessionStatus.textContent = "Removed " + label + ".";
+          });
+        })
+        .catch(function (err) {
+          el.sessionStatus.textContent = "Could not remove workspace: " + err.message;
+        });
+    });
+  });
+}
+
 el.sessionMove.addEventListener("click", function () {
   var meta = currentSessionMeta();
   if (!meta) {
     el.sessionStatus.textContent = "This conversation has no saved turns yet.";
     return;
   }
-  var existing = workspacesOf(knownSessions).filter(function (w) { return w !== ""; });
-  var hint = existing.length ? "Pick an existing one or type a new name. Leave empty for the default." : "Leave empty for the default. This will be the first workspace.";
+  var existing = knownWorkspaces.map(function (w) { return w.id || ""; }).filter(function (w) { return w !== ""; });
+  workspacesOf(knownSessions).forEach(function (w) {
+    if (w && existing.indexOf(w) === -1) existing.push(w);
+  });
+  var hint = existing.length
+    ? "Pick a workspace or type a new name. Leave empty for this folder."
+    : "Leave empty for this folder, or type a name. Use + to attach a directory.";
   textPrompt({
     title: "Move to workspace", label: "Workspace", value: meta.workspace || "",
     hint: hint, suggestions: existing
@@ -913,8 +1072,10 @@ el.sessionMove.addEventListener("click", function () {
       .then(function () {
         el.sessionStatus.textContent = next.trim()
           ? "Moved to " + next.trim() + "."
-          : "Moved to the default workspace.";
-        return loadSessions();
+          : "Moved to this folder.";
+        return Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
+          if (next.trim()) setCurrentWorkspace(next.trim(), { silent: true });
+        });
       })
       .catch(function (err) { el.sessionStatus.textContent = "Move failed: " + err.message; })
       .then(function () { el.sessionMove.disabled = false; });
@@ -2013,7 +2174,8 @@ el.form.addEventListener("submit", function (e) {
       research: isResearch,
       max_iterations: noLimit ? 1000 : null,
       worktree: !!(el.worktreeMode && el.worktreeMode.checked),
-      knowledge: (typeof kbSelected !== "undefined" ? kbSelected.slice() : [])
+      knowledge: (typeof kbSelected !== "undefined" ? kbSelected.slice() : []),
+      workspace: currentWorkspace || ""
     }),
     signal: controller.signal
   }).then(function (resp) {
@@ -5620,7 +5782,9 @@ showView(openingView, false);
    said the conversation had nine messages: nothing ever fetched them. The
    conversation you were last in is replayed, so a reload resumes rather
    than restarts. */
-loadSessions().then(function () {
+Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
+  var meta = currentSessionMeta();
+  if (meta) setCurrentWorkspace(meta.workspace || "", { silent: true });
   if (!currentSessionMeta()) {
     syncTranscriptEmpty();
     return;
@@ -5636,3 +5800,82 @@ loadSessions().then(function () {
     .catch(function () { syncTranscriptEmpty(); });
 });
 });
+
+/* ---- config editor (System view) ----------------------------------------
+   Raw TOML editing with validate-before-write: POST /api/config/raw refuses
+   a config that does not load, so the server never leaves its last known
+   good state; a valid save hot-restarts serve into the new config. The
+   highlight is the overlay trick: the textarea owns the text and the caret,
+   the <pre> behind it owns the colors. */
+(function bindConfigEditor() {
+  var fileSel = document.getElementById("config-editor-file");
+  var text = document.getElementById("config-editor-text");
+  var code = document.getElementById("config-editor-code");
+  var note = document.getElementById("config-editor-note");
+  var saveBtn = document.getElementById("config-editor-save");
+  var reloadBtn = document.getElementById("config-editor-reload");
+  if (!fileSel || !text || !code) return;
+
+  function setNote(msg) { if (note) note.textContent = msg; }
+
+  function paint() {
+    loadHljs().then(function () {
+      var out = window.hljs.highlight(text.value, { language: "toml", ignoreIllegals: true });
+      code.innerHTML = out.value;
+      // Trailing newline keeps the pre as tall as the textarea's last line.
+      code.appendChild(document.createTextNode("\n"));
+    }).catch(function () { code.textContent = text.value; });
+  }
+
+  function syncScroll() {
+    var pre = code.parentElement;
+    pre.scrollTop = text.scrollTop;
+    pre.scrollLeft = text.scrollLeft;
+  }
+
+  function load() {
+    setNote("");
+    fetch("/api/config/raw?file=" + encodeURIComponent(fileSel.value))
+      .then(readJson)
+      .then(function (d) {
+        text.value = d.content || "";
+        paint();
+        syncScroll();
+      })
+      .catch(function (err) { setNote("Could not read " + fileSel.value + ": " + err.message); });
+  }
+
+  function save() {
+    saveBtn.disabled = true;
+    setNote("Validating…");
+    fetch("/api/config/raw", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file: fileSel.value, content: text.value }),
+    })
+      .then(readJson)
+      .then(function (d) {
+        setNote("Saved. " + (d.applied || "Hot reload applies it."));
+      })
+      .catch(function (err) {
+        // readJson surfaces the server's {error} message on a 400.
+        setNote("Refused: " + err.message + " — the running config is unchanged.");
+      })
+      .finally(function () { saveBtn.disabled = false; });
+  }
+
+  text.addEventListener("input", paint);
+  text.addEventListener("scroll", syncScroll);
+  fileSel.addEventListener("change", load);
+  if (reloadBtn) reloadBtn.addEventListener("click", load);
+  if (saveBtn) saveBtn.addEventListener("click", save);
+  // Tab inserts two spaces instead of leaving the editor.
+  text.addEventListener("keydown", function (e) {
+    if (e.key !== "Tab") return;
+    e.preventDefault();
+    var s = text.selectionStart;
+    text.setRangeText("  ", s, text.selectionEnd, "end");
+    paint();
+  });
+  load();
+})();
