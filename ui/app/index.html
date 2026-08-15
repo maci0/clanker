@@ -501,7 +501,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <h2>Channels</h2>
           <button type="button" class="slack-btn-icon" id="chat-create-room" title="Create channel" aria-label="Create channel">+</button>
         </div>
-        <!-- Quick room switcher (Cmd+K / Ctrl+K) -->
+        <!-- Filter the channel list. Ctrl+K stays the page Jump palette. -->
         <div class="slack-search-box">
           <input type="search" id="chat-room-filter" placeholder="Find a channel…" autocomplete="off" aria-label="Filter channels">
         </div>
@@ -982,13 +982,13 @@ lamps carry further). The seven named palettes ride the same tokens.
               <option value="http">http (streamable HTTP)</option>
             </select>
           </label>
-          <label>Command<input type="text" id="mcp-edit-command" autocomplete="off" placeholder="github-mcp-server"></label>
-          <label>Args (comma-separated)<input type="text" id="mcp-edit-args" autocomplete="off" placeholder="stdio"></label>
-          <label>Working dir<input type="text" id="mcp-edit-cwd" autocomplete="off" placeholder="(inherit)"></label>
-          <label>URL<input type="url" id="mcp-edit-url" autocomplete="off" placeholder="https://mcp.example.com/stream"></label>
+          <label data-mcp-for="stdio">Command<input type="text" id="mcp-edit-command" autocomplete="off" placeholder="github-mcp-server"></label>
+          <label data-mcp-for="stdio">Args (comma-separated)<input type="text" id="mcp-edit-args" autocomplete="off" placeholder="stdio"></label>
+          <label data-mcp-for="stdio">Working dir<input type="text" id="mcp-edit-cwd" autocomplete="off" placeholder="(inherit)"></label>
+          <label data-mcp-for="http">URL<input type="url" id="mcp-edit-url" autocomplete="off" placeholder="https://mcp.example.com/stream"></label>
           <label>Timeout ms<input type="number" id="mcp-edit-timeout" min="0" step="1" placeholder="60000"></label>
           <label class="models-edit-wide">Env (KEY=value, comma-separated)<input type="text" id="mcp-edit-env" autocomplete="off" placeholder="GITHUB_TOKEN=..."></label>
-          <label class="models-edit-wide">Headers (Name: value, comma-separated)<input type="text" id="mcp-edit-headers" autocomplete="off" placeholder="Authorization: Bearer ..."></label>
+          <label class="models-edit-wide" data-mcp-for="http">Headers (Name: value, comma-separated)<input type="text" id="mcp-edit-headers" autocomplete="off" placeholder="Authorization: Bearer ..."></label>
         </form>
         <p class="models-snippet-note" id="mcp-edit-note" hidden></p>
       </div>

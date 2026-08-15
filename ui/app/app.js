@@ -4550,63 +4550,9 @@ el.chatText.addEventListener("input", function(){
   syncChatSend();
 });
 
-/* ── Ctrl+K / Cmd+K: Quick channel switcher (Slack-style) ── */
-document.addEventListener("keydown", function(e){
-  if ((e.ctrlKey || e.metaKey) && e.key === "k") {
-    /* Only intercept when the chat view is visible */
-    var chatView = document.getElementById("view-rooms");
-    if (!chatView || chatView.hidden) return;
-    e.preventDefault();
-    var existing = document.getElementById("slack-quick-switch");
-    if (existing) { existing.remove(); return; }
-    var overlay = document.createElement("div");
-    overlay.id = "slack-quick-switch";
-    overlay.style.cssText = "position:fixed;inset:0;z-index:100;display:flex;align-items:flex-start;justify-content:center;padding-top:20vh;background:rgba(0,0,0,.5);";
-    var box = document.createElement("div");
-    box.style.cssText = "background:var(--surface);border:1px solid var(--rule);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.3);width:480px;max-width:90vw;overflow:hidden;";
-    var input = document.createElement("input");
-    input.type = "text"; input.placeholder = "Switch to channel or DM…";
-    input.style.cssText = "width:100%;padding:0.75rem 1rem;border:none;background:transparent;color:var(--fg);font-size:15px;outline:none;";
-    var results = document.createElement("div");
-    results.style.cssText = "max-height:300px;overflow-y:auto;";
-    box.appendChild(input);
-    box.appendChild(results);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-    input.focus();
-
-    function renderResults(filter) {
-      results.textContent = "";
-      var opts = Array.from(el.chatRoom.options);
-      var filtered = opts.filter(function(o){ return !filter || o.value.toLowerCase().indexOf(filter.toLowerCase()) !== -1; });
-      filtered.forEach(function(o){
-        var btn = document.createElement("button");
-        btn.type = "button";
-        btn.style.cssText = "display:block;width:100%;text-align:left;padding:0.5rem 1rem;border:none;background:none;color:var(--fg);font-size:14px;cursor:pointer;";
-        var isDM = o.value.indexOf("dm:") === 0;
-        btn.textContent = (isDM ? "@ " : "# ") + chatRoomLabel(o.value);
-        btn.addEventListener("mouseenter", function(){ btn.style.background = "var(--surface-hover)"; });
-        btn.addEventListener("mouseleave", function(){ btn.style.background = "none"; });
-        btn.addEventListener("click", function(){
-          el.chatRoom.value = o.value;
-          openChatRoom(o.value);
-          overlay.remove();
-        });
-        results.appendChild(btn);
-      });
-    }
-    renderResults("");
-    input.addEventListener("input", function(){ renderResults(input.value); });
-    input.addEventListener("keydown", function(ev){
-      if (ev.key === "Escape") { overlay.remove(); ev.stopPropagation(); }
-      if (ev.key === "Enter") {
-        var first = results.querySelector("button");
-        if (first) first.click();
-      }
-    });
-    overlay.addEventListener("click", function(ev){ if (ev.target === overlay) overlay.remove(); });
-  }
-});
+/* Ctrl+K is the Jump palette on every view. Rooms used to spawn a second
+   overlay here; both listeners fired, so the switcher stacked on Jump.
+   Filter channels in #chat-room-filter instead. */
 el.chatText.addEventListener("keydown", function(e){
   if (e.key === "@" || (e.key.length === 1 && el.chatText.value.slice(-1) === "@")) {
     var peers = (knownPeers || []).map(function(p){ return p.name || p; }).join(", ");
@@ -6120,6 +6066,14 @@ Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
     if (n) { n.textContent = msg; n.hidden = !msg; }
     if (statusEl && msg) statusEl.textContent = msg;
   }
+  function syncMcpTransportFields() {
+    var transport = f("mcp-edit-transport") ? f("mcp-edit-transport").value : "stdio";
+    var form = f("mcp-edit-form");
+    if (!form) return;
+    form.querySelectorAll("[data-mcp-for]").forEach(function (row) {
+      row.hidden = row.getAttribute("data-mcp-for") !== transport;
+    });
+  }
   function tomlStr(v) {
     return '"' + String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
   }
@@ -6151,6 +6105,7 @@ Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
       : "Authorization: Bearer ...";
     f("mcp-edit-remove").hidden = isNew;
     note("");
+    syncMcpTransportFields();
     host.hidden = false;
     try { host.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_) {}
   }
@@ -6179,6 +6134,17 @@ Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
   function save() {
     var name = f("mcp-edit-name").value.trim();
     if (!name) { note("Name is required."); return; }
+    var transport = f("mcp-edit-transport").value;
+    if (transport === "stdio" && !f("mcp-edit-command").value.trim()) {
+      note("stdio needs a command to spawn.");
+      f("mcp-edit-command").focus();
+      return;
+    }
+    if (transport === "http" && !f("mcp-edit-url").value.trim()) {
+      note("http needs a stream URL.");
+      f("mcp-edit-url").focus();
+      return;
+    }
     var btn = f("mcp-edit-save");
     btn.disabled = true;
     fetch("/api/config/table/set", {
@@ -6229,7 +6195,15 @@ Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
         if (!servers.length) {
           var p = document.createElement("p");
           p.className = "run-empty";
-          p.textContent = "No MCP servers configured. Add one to make its tools available once the client bridge is on.";
+          p.appendChild(document.createTextNode("No MCP servers configured. "));
+          var add = document.createElement("button");
+          add.type = "button";
+          add.className = "secondary";
+          add.textContent = "Add server";
+          add.addEventListener("click", function () { openEdit(null); });
+          upgradePfButton(add);
+          p.appendChild(add);
+          p.appendChild(document.createTextNode(" to record one in config.local.toml. The client bridge that connects is not on yet."));
           list.appendChild(p);
           return;
         }
@@ -6258,12 +6232,16 @@ Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
         });
       })
       .catch(function (err) {
-        if (statusEl) statusEl.textContent = "Could not load MCP servers: " + err.message;
+        var msg = "Could not load MCP servers: " + err.message;
+        if (statusEl) statusEl.textContent = msg;
+        showLoadError(list, msg, load);
       });
   }
 
   var addBtn = f("mcp-add");
   if (addBtn) addBtn.addEventListener("click", function () { openEdit(null); });
+  var transportSel = f("mcp-edit-transport");
+  if (transportSel) transportSel.addEventListener("change", syncMcpTransportFields);
   var refreshBtn = f("mcp-refresh");
   if (refreshBtn) refreshBtn.addEventListener("click", load);
   f("mcp-edit-save").addEventListener("click", save);

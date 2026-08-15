@@ -371,7 +371,20 @@ function loadConfigured() {
       // models still fills the select, and the choice still has to survive.
       if (providerSel) restoreProvider(providerSel, chosen);
       if (!rows.length) {
-        box.appendChild(empty("No providers configured. Add [providers.<name>] in config.toml."));
+        var msg = configuredProviders.length
+          ? "Providers are configured, but none list a model here. Use Add model… or Discover below."
+          : "No models configured yet. Use Add model… above, or search Discover below.";
+        var none = empty(msg + " ");
+        var start = document.createElement("button");
+        start.type = "button";
+        start.className = "secondary";
+        start.textContent = "Add model…";
+        start.addEventListener("click", function () {
+          var add = document.getElementById("models-add");
+          if (add) add.click();
+        });
+        none.appendChild(start);
+        box.appendChild(none);
         return;
       }
       box.appendChild(table(["provider", "model", "category", "ctx", "in $/1M", "out $/1M", "", ""], rows));

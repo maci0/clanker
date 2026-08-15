@@ -206,6 +206,15 @@ test("compare and arena empty lists sit in the picker, not only the status line"
   assert.match(arena, /No matches yet\. Run one with /);
 });
 
+test("Rooms does not steal Ctrl+K from the Jump palette", function () {
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  assert.doesNotMatch(app, /slack-quick-switch/);
+  assert.doesNotMatch(app, /Switch to channel or DM/);
+  const pal = readFileSync(join(here, "palette.js"), "utf8");
+  assert.match(pal, /e\.key === "k" \|\| e\.key === "K"/);
+  assert.match(html, /id="palette-open"[^>]*title="Jump to anything \(Ctrl\+K\)"/);
+});
+
 test("rooms filter and message search are search inputs", function () {
   assert.match(html, /type="search" id="chat-room-filter"/);
   assert.match(html, /type="search" id="chat-search-input"/);
@@ -322,6 +331,12 @@ test("failed list loads keep a visible retry in the panel", function () {
   assert.match(compare, /showLoadError\(byId\("compare-list"\)/);
   assert.match(arena, /showLoadError\(byId\("arena-list"\)/);
   assert.match(app, /showLoadError\(el\.usage/);
+  assert.match(app, /showLoadError\(list, msg, load\)/);
+  assert.match(app, /function syncMcpTransportFields/);
+  assert.match(app, /stdio needs a command to spawn/);
+  assert.match(html, /data-mcp-for="stdio"/);
+  assert.match(html, /data-mcp-for="http"/);
+  assert.match(css, /\.models-edit-form label\[hidden\] \{ display: none; \}/);
   assert.match(logs, /els\.logView\.textContent = msg/);
   assert.match(app, /Could not load rooms: /);
   assert.match(app, /Try again/);

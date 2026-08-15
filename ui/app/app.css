@@ -2503,6 +2503,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
 /* upgradePfButton adds .pf-v6-c-button, whose `display: flex` outranks the
    UA [hidden] default the same way .rail-context's own override exists for. */
 #models-edit-remove[hidden] { display: none; }
+.models-edit-form label[hidden] { display: none; }
 
 /* ---- tools: every WASM plugin, and a switch for the optional ones ---- */
 .tool-group {

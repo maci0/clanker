@@ -71,6 +71,13 @@ test("model write and remove use a confirm dialog, not click-again", function ()
   assert.doesNotMatch(js, /pendingRemove|pendingSave/);
 });
 
+test("configured empty state offers Add model instead of only config.toml", function () {
+  assert.match(js, /No models configured yet\. Use Add model/);
+  assert.match(js, /Providers are configured, but none list a model here/);
+  assert.match(js, /start\.textContent = "Add model…"/);
+  assert.doesNotMatch(js, /No providers configured\. Add \[providers\.<name>\] in config\.toml/);
+});
+
 test("Configured table folds alias variants behind a group toggle", function () {
   assert.match(js, /models-group-toggle/);
   assert.match(js, /data-group/);
