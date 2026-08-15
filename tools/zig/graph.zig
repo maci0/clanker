@@ -47,16 +47,18 @@ const GraphFile = struct {
     /// The run that spawned this one; empty for top-level runs. Carried so a
     /// nested (subagent) run's graph links back to its caller's.
     parent_run_id: []const u8 = "",
-    task: []const u8 = "",
     provider: []const u8 = "",
     started_at: i64 = 0,
     duration_ms: u64 = 0,
     total_prompt_tokens: u64 = 0,
     total_completion_tokens: u64 = 0,
-    /// Written in front of `nodes` so a picker can score a run from a prefix
-    /// read. Absent on graphs recorded before the field; those fall back to
-    /// `nodes.len` when the whole file fit in the prefix.
+    /// Written in front of `task`/`nodes` so a picker can score a run from a
+    /// 4 KiB prefix. Absent on graphs recorded before the field; those fall
+    /// back to `nodes.len` when the whole file fit in the prefix.
     node_count: u32 = 0,
+    /// After the listing scalars: a pasted prompt can be tens of kilobytes
+    /// and used to push `node_count` out of the prefix window.
+    task: []const u8 = "",
     nodes: []const GraphNode = &.{},
 };
 
@@ -178,8 +180,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     return lib.okText(out, buf.items);
 }
 
-/// `list`: one line per recorded run, oldest first, with the task and shape of
-/// each so a run id can be picked out and rendered.
+/// `list`: one line per recorded run, oldest first within the newest page,
+/// with the task and shape of each so a run id can be picked out and rendered.
 fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !void {
     if (names != .array or names.array.items.len == 0)
         return lib.okText(out, "(no runs yet; clanker run creates one)");
@@ -192,13 +194,18 @@ fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !voi
     }
     std.mem.sort([]const u8, files.items, {}, lessThanStr);
 
+    // Same 50-run page as `json`: a 48 KiB prefix per file used to exhaust
+    // the 1 MiB host arena after ~21 rows and drop the rest.
+    const start = if (files.items.len > list_cap) files.items.len - list_cap else 0;
+    const page = files.items[start..];
+
     var id_w: usize = 0;
     var dur_w: usize = 0;
     var node_w: usize = 0;
     var graphs: std.ArrayList(GraphFile) = .empty;
-    for (files.items) |fname| {
+    for (page) |fname| {
         const path = try std.fmt.allocPrint(alloc, "state/runs/{s}", .{fname});
-        const g = loadGraphListing(alloc, path) orelse continue;
+        const g = loadGraphListing(alloc, path, fname);
         id_w = @max(id_w, g.run_id.len);
         var dbuf: [16]u8 = undefined;
         if (std.fmt.bufPrint(&dbuf, "{d}ms", .{g.duration_ms})) |s| dur_w = @max(dur_w, s.len) else |_| {}
@@ -207,6 +214,9 @@ fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !voi
         try graphs.append(alloc, g);
     }
     var buf: std.ArrayList(u8) = .empty;
+    if (start > 0) {
+        try buf.appendSlice(alloc, try std.fmt.allocPrint(alloc, "(newest {d} of {d})\n", .{ list_cap, files.items.len }));
+    }
     for (graphs.items) |g| {
         try buf.appendSlice(alloc, g.run_id);
         var col: usize = g.run_id.len;
@@ -215,7 +225,7 @@ fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !voi
         try buf.appendSlice(alloc, dur_str);
         col = dur_str.len;
         while (col < dur_w + 2) : (col += 1) try buf.append(alloc, ' ');
-        const node_str = try std.fmt.allocPrint(alloc, "{d} nodes", .{g.nodes.len});
+        const node_str = try std.fmt.allocPrint(alloc, "{d} nodes", .{listingNodeCount(g)});
         try buf.appendSlice(alloc, node_str);
         col = node_str.len;
         while (col < node_w + 2) : (col += 1) try buf.append(alloc, ' ');
@@ -225,10 +235,13 @@ fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !voi
     try lib.okText(out, buf.items);
 }
 
-/// Prefix a picker needs: every summary field lives in front of `nodes`.
-/// 48 KiB covers a long task without pulling node previews into the host
-/// arena (a full ck_fs_read of each graph used to exhaust it mid-list).
-const listing_prefix_bytes: usize = 48 * 1024;
+/// Prefix a picker needs. Listing scalars sit in front of `task`/`nodes` on
+/// newly written graphs, so 4 KiB is enough for a label and the counts. A
+/// 48 KiB window times a few dozen files exhausted the 1 MiB host arena
+/// mid-list (a full ck_fs_read of each graph used to do the same sooner).
+const listing_prefix_bytes: usize = 4 * 1024;
+/// Newest runs shown by `list` and `json`. Matches the web picker's page.
+const list_cap: usize = 50;
 
 fn closeJsonBeforeField(alloc: std.mem.Allocator, raw: []const u8, field: []const u8) ?[]const u8 {
     var needle_buf: [32]u8 = undefined;
@@ -239,17 +252,29 @@ fn closeJsonBeforeField(alloc: std.mem.Allocator, raw: []const u8, field: []cons
     return std.fmt.allocPrint(alloc, "{s}}}", .{prefix}) catch null;
 }
 
-fn loadGraphListing(alloc: std.mem.Allocator, path: []const u8) ?GraphFile {
-    const content = lib.fsReadRange(path, 0, listing_prefix_bytes) catch return null;
+fn stemOfJson(name: []const u8) []const u8 {
+    return if (std.mem.endsWith(u8, name, ".json")) name[0 .. name.len - ".json".len] else name;
+}
+
+fn listingFromName(fname: []const u8) GraphFile {
+    return .{ .run_id = stemOfJson(fname) };
+}
+
+fn loadGraphListing(alloc: std.mem.Allocator, path: []const u8, fname: []const u8) GraphFile {
+    const fallback = listingFromName(fname);
+    const content = lib.fsReadRange(path, 0, listing_prefix_bytes) catch return fallback;
     const trimmed = std.mem.trimEnd(u8, content, " \t\r\n");
     // A file that fit in the prefix is complete: keep `nodes` so older
     // graphs without `node_count` still report a length. A truncated
-    // prefix is closed in front of the array.
+    // prefix is closed in front of `nodes`, or in front of `task` when a
+    // long prompt pushed the array out of the window (new files write
+    // listing scalars before `task`, so that cut still keeps the counts).
     const src = if (trimmed.len > 0 and trimmed[trimmed.len - 1] == '}')
         trimmed
     else
-        closeJsonBeforeField(alloc, content, "nodes") orelse content;
-    return std.json.parseFromSliceLeaky(GraphFile, alloc, src, .{ .ignore_unknown_fields = true }) catch null;
+        closeJsonBeforeField(alloc, content, "nodes") orelse
+            closeJsonBeforeField(alloc, content, "task") orelse content;
+    return std.json.parseFromSliceLeaky(GraphFile, alloc, src, .{ .ignore_unknown_fields = true }) catch fallback;
 }
 
 fn listingNodeCount(g: GraphFile) usize {
@@ -279,6 +304,12 @@ test labelOf {
     const cut = labelOf(wide);
     try std.testing.expect(cut.len <= label_max);
     try std.testing.expect(std.unicode.utf8ValidateSlice(cut));
+}
+
+test stemOfJson {
+    try std.testing.expectEqualStrings("run-1", stemOfJson("run-1.json"));
+    try std.testing.expectEqualStrings("run-1", stemOfJson("run-1"));
+    try std.testing.expectEqualStrings("run-1", listingFromName("run-1.json").run_id);
 }
 
 test "GraphFile carries tool arguments for the web UI" {
@@ -325,10 +356,11 @@ fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) 
     // Newest first, and capped: the picker shows recent runs, not the archive.
     var shown: usize = 0;
     var i: usize = files.items.len;
-    while (i > 0 and shown < 50) {
+    while (i > 0 and shown < list_cap) {
         i -= 1;
-        const path = try std.fmt.allocPrint(alloc, "state/runs/{s}", .{files.items[i]});
-        const g = loadGraphListing(alloc, path) orelse continue;
+        const fname = files.items[i];
+        const path = try std.fmt.allocPrint(alloc, "state/runs/{s}", .{fname});
+        const g = loadGraphListing(alloc, path, fname);
         shown += 1;
         try s.beginObject();
         try s.objectField("run_id");

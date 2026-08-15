@@ -2487,6 +2487,9 @@ pub fn ckFsList(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
 /// '*' (matches any sequence of non-'/' chars) and '?' (matches exactly one
 /// non-'/' char); everything else is a literal match. Returns a JSON string
 /// array of relative paths (relative to the sandbox root) in the host arena.
+/// Stops after `fs_find_max_results` matches, the same bound grep uses on
+/// lines: a `*` walk of a large tree used to serialize every path (or fail
+/// the whole call with too_large) instead of returning a useful page.
 /// Enforces the same fs_prefixes policy as ck_fs_read.
 /// Returns Err.not_found when the directory does not exist.
 pub fn ckFsFind(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32 {
@@ -2507,13 +2510,15 @@ pub fn ckFsFind(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32,
     var s = std.json.Stringify{ .writer = &w, .options = .{} };
     s.beginArray() catch return Err.too_large;
 
-    fsFindRecurse(h, &s, dir, dir_path, pattern, 0) catch return Err.too_large;
+    var count: u32 = 0;
+    fsFindRecurse(h, &s, dir, dir_path, pattern, 0, &count) catch return Err.too_large;
 
     s.endArray() catch return Err.too_large;
     return h.writeResult(bytes, buf[0..w.end]);
 }
 
 const fs_find_max_depth: u32 = 12;
+const fs_find_max_results: u32 = 200;
 
 /// Directories a name search should never descend into. Without this, a search
 /// of the project answers mostly with copies of it: build caches, vendored
@@ -2535,10 +2540,12 @@ fn joinRel(gpa: std.mem.Allocator, prefix: []const u8, name: []const u8) ![]u8 {
     });
 }
 
-fn fsFindRecurse(h: *Host, s: *std.json.Stringify, dir: std.Io.Dir, prefix: []const u8, pattern: []const u8, depth: u32) !void {
+fn fsFindRecurse(h: *Host, s: *std.json.Stringify, dir: std.Io.Dir, prefix: []const u8, pattern: []const u8, depth: u32, count: *u32) !void {
     if (depth > fs_find_max_depth) return;
+    if (count.* >= fs_find_max_results) return;
     var it = dir.iterate();
     while (it.next(h.sandbox.io) catch null) |entry| {
+        if (count.* >= fs_find_max_results) return;
         if (entry.name.len == 0) continue;
         if (entry.kind == .directory) {
             if (skipDir(entry.name)) continue;
@@ -2546,12 +2553,13 @@ fn fsFindRecurse(h: *Host, s: *std.json.Stringify, dir: std.Io.Dir, prefix: []co
             defer h.sandbox.gpa.free(rel);
             var sub = dir.openDir(h.sandbox.io, entry.name, .{ .iterate = true }) catch continue;
             defer sub.close(h.sandbox.io);
-            try fsFindRecurse(h, s, sub, rel, pattern, depth + 1);
+            try fsFindRecurse(h, s, sub, rel, pattern, depth + 1, count);
         } else if (entry.kind == .file) {
             if (!globMatch(pattern, entry.name)) continue;
             const rel = joinRel(h.sandbox.gpa, prefix, entry.name) catch return error.OutOfMemory;
             defer h.sandbox.gpa.free(rel);
             try s.write(rel);
+            count.* += 1;
         }
     }
 }
@@ -4914,6 +4922,10 @@ test "skipGrepName skips binary artifacts and leaves source names alone" {
     try std.testing.expect(!skipGrepName("loop.zig"));
     try std.testing.expect(!skipGrepName("README.md"));
     try std.testing.expect(!skipGrepName(".gitignore"));
+}
+
+test "find and grep share the same result cap" {
+    try std.testing.expectEqual(fs_grep_max_results, fs_find_max_results);
 }
 
 test "globMatch handles basic patterns" {

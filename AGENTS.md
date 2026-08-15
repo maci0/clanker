@@ -78,7 +78,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   most args as patterns: `..` is checked only on the last argument.
   `ck_fs_find` and `ck_fs_grep` skip the same cache/vendor directory names
   (`zig-pkg`, `zig-out`, `node_modules`, `staging`, `history`), so a
-  project-root walk does not scan copies of the tree.
+  project-root walk does not scan copies of the tree. Both also stop at 200
+  hits (`ck_fs_find` paths, `ck_fs_grep` lines): a `*` walk used to
+  serialize every path or fail the call with `too_large`.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   workspace registry (`workspace.zig`: folder + chat-history set; empty id is
   the serve cwd), execution graphs, sub-agents, autolearn, workflows. Session
@@ -88,7 +90,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   and `bytes` sit in front of `messages`); a picker must not parse every
   transcript. The `sessions` and `graph` guests use `ck_fs_read_range` the
   same way: a full `ck_fs_read` per file burns the 1 MiB host arena and
-  drops later rows.
+  drops later rows. Graph listing reads a 4 KiB prefix (scalars sit in front
+  of `task`/`nodes`) and caps the picker at 50 newest runs; 48 KiB times a
+  few dozen files used to exhaust that arena mid-list.
   `Agent.on_token` has no context argument, so streaming side-state
   (`stream_tally`, the TTSR guard, `run_stream_socket`) is threadlocal; a
   process-static pointer would splice concurrent `/api/run` streams.
