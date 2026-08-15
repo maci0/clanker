@@ -8,8 +8,8 @@
     "properties": {
       "action": {
         "type": "string",
-        "enum": ["search", "list", "open", "create"],
-        "description": "search is the default; list returns both indexes; open reads one record; create scaffolds and indexes a new record."
+        "enum": ["search", "list", "open", "create", "append", "update"],
+        "description": "search is the default; list returns both indexes; open reads one record; create scaffolds and indexes a new record; append adds evidence to a record; update replaces one exact passage."
       },
       "query": {
         "type": "string",
