@@ -135,7 +135,7 @@ pub const readable_roots = [_][]const u8{
 /// Extensions that are text a model can act on. The prefix list alone would
 /// admit `tools/manifests/x.wasm` and every other build artifact under an
 /// allowed directory.
-const readable_extensions = [_][]const u8{ ".zig", ".zon", ".json", ".toml", ".md", ".html", ".js", ".css", ".sh", ".yml" };
+const readable_extensions = [_][]const u8{ ".zig", ".zon", ".json", ".toml", ".md", ".html", ".js", ".mjs", ".css", ".sh", ".yml" };
 
 /// True when `path` may be read into the improve prompt. Reading is not
 /// writing: `validatePath` governs what a patch may change, this governs what
@@ -450,6 +450,14 @@ test "the readable surface is wider than the writable one, and still closed" {
     try std.testing.expect(validateReadPath("RELEASES.md"));
     try std.testing.expect(validateReadPath("src/cli.zig"));
     try std.testing.expect(validateReadPath("ui/app/index.html"));
+    // ES module (.mjs) sources live under ui/ and are writable (ui/ is an
+    // allowed_prefix), so the readable surface must admit them too or the
+    // model cannot be shown a file it is allowed to patch.
+    try std.testing.expect(validateReadPath("ui/app/core/scroll.test.mjs"));
+    try std.testing.expect(validateReadPath("ui/app/features/models.test.mjs"));
+    try std.testing.expect(validateReadPath("ui/plugins/music/music.test.mjs"));
+    try std.testing.expect(validatePath("ui/app/core/scroll.test.mjs"));
+    try std.testing.expect(validatePath("ui/app/core/scroll.mjs"));
     try std.testing.expect(validateReadPath("config.toml"));
 
     // A granted path is read and echoed straight back into a model request, so

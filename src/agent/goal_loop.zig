@@ -70,7 +70,9 @@ pub fn run(
         const decision = try callbacks.evaluate(callbacks.context, turn, answer);
         if (callbacks.on_decision) |on_decision| on_decision(callbacks.context, turn, decision);
         switch (decision.verdict) {
-            .achieved, .blocked => return .{ .verdict = decision.verdict, .turns = turn, .reason = decision.reason },
+            .achieved, .blocked => {
+                return .{ .verdict = decision.verdict, .turns = turn, .reason = decision.reason };
+            },
             .continue_ => {},
         }
         if (turn == limit) break;

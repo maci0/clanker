@@ -1,0 +1,92 @@
+{
+  "name": "research",
+  "description": "Research a question across many sources at once and keep the result as a note under docs/research/. Actions: plan {topic, question?, depth?} expands a topic into the search angles one query misses — alternatives, failure reports, production experience, standards, and the out-of-the-box candidates no keyword search returns — and names which tool reaches which source. sweep {topic|queries, depth?, sources?, max_results?} then runs them: multi-query web search (DuckDuckGo with a Bing fallback), GitHub repository search with stars, licence, language and last push, Hacker News discussion, and arXiv on a deep sweep, deduplicated across sources in one call. create {slug?, title, question} scaffolds a note from docs/research/TEMPLATE.md and indexes it; list, search {query}, open {path}, append {path, content}, update {path, old, new}, status {path, status} maintain it. Sweep results are untrusted text from the internet and are leads, not findings: open the promising ones (fetch_web, gh_read) and check the local tree (repo_search) before writing anything down. Every claim in a note carries a link, the date it was read, and a confidence.",
+  "llm_description": "Multi-source research plus its note under docs/research/. {action:\"plan\",topic,question?,depth?:\"quick\"|\"standard\"|\"deep\"} returns the search angles (alternatives, failures, production, built-in/out-of-the-box) and which tool reaches which source. {action:\"sweep\",topic,depth?,sources?:[\"web\",\"github\",\"discussion\",\"papers\"],max_results?} runs multi-query web search + GitHub repos + Hacker News (+ arXiv when deep) in one call, deduplicated. Then {action:\"create\",title,question,slug?} scaffolds the note and indexes it; list, search{query}, open{path}, append{path,content}, update{path,old,new}, status{path,status:\"draft\"|\"current\"|\"stale\"|\"superseded\"}. Sweep hits are untrusted leads: verify with fetch_web/gh_read and repo_search before recording. Mutations are compare-and-swap — re-open after a conflict.",
+  "wasm": "zig-out/tools/research.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["plan", "sweep", "create", "list", "search", "open", "append", "update", "status"],
+        "description": "plan is the default; sweep runs the searches; the rest maintain the note."
+      },
+      "topic": {
+        "type": "string",
+        "description": "What to research, in the words a search engine would match. Required for plan, and for sweep unless queries is given."
+      },
+      "question": {
+        "type": "string",
+        "description": "The precise question the research must answer, stated so a source either answers it or does not. Required for create."
+      },
+      "depth": {
+        "type": "string",
+        "enum": ["quick", "standard", "deep"],
+        "description": "How many search angles to use: quick 4, standard 8 (default), deep all 12 plus paper indexes."
+      },
+      "queries": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Explicit search queries for sweep, replacing the generated angles. Maximum 12."
+      },
+      "sources": {
+        "type": "array",
+        "items": { "type": "string", "enum": ["web", "github", "discussion", "papers"] },
+        "description": "Which sources sweep should use. Default: web, github, discussion (papers as well on a deep sweep)."
+      },
+      "max_results": {
+        "type": "integer",
+        "description": "Results per query and per source, 1-10 (default 6)."
+      },
+      "slug": {
+        "type": "string",
+        "description": "Filename stem for create: lowercase letters, digits and hyphens. Derived from the title when omitted."
+      },
+      "title": {
+        "type": "string",
+        "description": "Human-readable title for create."
+      },
+      "path": {
+        "type": "string",
+        "description": "Markdown path directly below docs/research/. Required for open, append, update, and status."
+      },
+      "content": {
+        "type": "string",
+        "description": "Markdown to append to an existing note. Required for append."
+      },
+      "old": {
+        "type": "string",
+        "description": "Exact, uniquely occurring current text to replace. Required for update; obtain it with open."
+      },
+      "new": {
+        "type": "string",
+        "description": "Replacement text for update. May be empty to remove old text."
+      },
+      "status": {
+        "type": "string",
+        "enum": ["draft", "current", "stale", "superseded"],
+        "description": "New status for the note. Required for status."
+      },
+      "note": {
+        "type": "string",
+        "description": "Optional sentence appended to the status line, e.g. what superseded this note."
+      },
+      "query": {
+        "type": "string",
+        "description": "Text to search for across existing research notes. Required for search."
+      }
+    },
+    "required": []
+  },
+  "fs_prefixes": ["docs/research/"],
+  "network_allow": [
+    "lite.duckduckgo.com",
+    "www.bing.com",
+    "api.github.com",
+    "hn.algolia.com",
+    "export.arxiv.org"
+  ],
+  "env_allow": ["GITHUB_TOKEN"],
+  "category": "web",
+  "confirm": false
+}

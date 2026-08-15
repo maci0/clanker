@@ -522,8 +522,12 @@ chatrooms = false
   moving it would change behaviour rather than just add a key.
 
   `mascot` is an opt-in easter egg: a small robot animated from an eleven-frame
-  run cycle, drawn with kitty graphics where the terminal supports it (Ghostty,
-  kitty, iTerm2) and unicode half-blocks everywhere else.
+  run cycle. The renderer is chosen from the terminal's own answer to a
+  capability query — kitty graphics first, then sixel, then unicode
+  half-blocks — and never from `$TERM` or a terminal name, because ssh and
+  multiplexers change what reaches the process. There is no key to force one:
+  a terminal that claims a protocol it cannot do would leave the mascot
+  invisible.
 
   | Key | Default | Values |
   | --- | --- | --- |

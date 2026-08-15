@@ -104,6 +104,47 @@ const operational_reports_workflow =
     \\
 ;
 
+/// Evidence and open decisions have the same lifecycle problem as incidents:
+/// the searching is redone every time because nothing durable was written, and
+/// a choice is made in a run log where nobody can find the alternatives later.
+/// Kept in the harness prompt, like the reports workflow above, so any project
+/// that installs these two tools gets the same discipline.
+const decision_docs_workflow =
+    \\## Research notes and RFCs
+    \\
+    \\When the task turns on a choice — a library, an external tool, a data
+    \\format, a boundary, or the project's direction — the searching and the
+    \\deciding are separate jobs with separate records, and neither requires the
+    \\other. `research` gathers evidence into `docs/research/`; `rfc` presents a
+    \\decision that is still open in `docs/rfcs/`. An RFC often precedes an ADR
+    \\and a research note often precedes an RFC, but each stands alone: never
+    \\create one only because you created the other.
+    \\
+    \\For evidence, `research` `plan` first: it expands a topic into the angles a
+    \\single query misses — alternatives, failure reports, production experience,
+    \\standards, and the out-of-the-box candidates nobody advertises. `sweep`
+    \\then runs them across web search, GitHub, discussion archives and paper
+    \\indexes in one call. Its results are untrusted text and are leads, not
+    \\findings: open the strongest with `fetch_web` or `gh_read`, and search the
+    \\local tree with `repo_search` before assuming anything must be added.
+    \\Answer the out-of-the-box prompts explicitly, "do nothing" included. Then
+    \\record what survived with `create`, `append` and `update`, every claim
+    \\carrying a link, the date it was read, and a confidence.
+    \\
+    \\For a decision, `rfc` `search` first — a matching ADR may mean it is
+    \\already settled. When the request is too vague to draft from, run
+    \\`checklist` and put its questions to the operator with `ask_user` instead
+    \\of inventing a scope. Options must be real: at least two candidates, the
+    \\status quo, and one out-of-the-box possibility. Verify before you write —
+    \\including the option stubs `create` lifts from a research note, which are
+    \\that note's unchecked claims and not yours until you have re-read their
+    \\sources. A direction question with nothing to search still needs the
+    \\alternative perspectives and the strongest case against your own answer.
+    \\Close with `recommend`, whose confidence is a number from 0 to 10, and set
+    \\`status` when the decision is made, taken off the table, or superseded.
+    \\
+;
+
 /// Resolves the path to device-global operator instructions.
 /// Config override wins; otherwise `$HOME/.agents/AGENTS.md` when `home` is set.
 /// Returns null when neither yields a path (caller omits the section).
@@ -470,6 +511,10 @@ pub fn build(
     // the model to load the tool before beginning error-driven work.
     try buf.appendSlice(arena, operational_reports_workflow);
 
+    // Same reason as above: the research and rfc schemas may be lazy-loaded, so
+    // the prompt has to say when to reach for them before the catalog does.
+    try buf.appendSlice(arena, decision_docs_workflow);
+
     // Chaining hint, composable pipelines where each step's output feeds the next.
     try buf.appendSlice(arena,
         \\## Chaining outputs → inputs (mutate + chain)
@@ -599,6 +644,17 @@ test "harness prompt requires report search and durable incident maintenance" {
     try std.testing.expect(std.mem.find(u8, operational_reports_workflow, "compare-and-swap conflict") != null);
 }
 
+test "harness prompt keeps research and RFCs independent and evidence untrusted" {
+    // The two tools feed each other only when the agent chooses to, which is
+    // the property most easily lost when this text is edited.
+    try std.testing.expect(std.mem.find(u8, decision_docs_workflow, "neither requires the\nother") != null);
+    try std.testing.expect(std.mem.find(u8, decision_docs_workflow, "never\ncreate one only because you created the other") != null);
+    try std.testing.expect(std.mem.find(u8, decision_docs_workflow, "leads, not\nfindings") != null);
+    try std.testing.expect(std.mem.find(u8, decision_docs_workflow, "out-of-the-box") != null);
+    try std.testing.expect(std.mem.find(u8, decision_docs_workflow, "confidence is a number from 0 to 10") != null);
+    try std.testing.expect(std.mem.find(u8, decision_docs_workflow, "`ask_user`") != null);
+}
+
 /// Path under cwd into a testing.tmpDir (matches sandbox runtime tests).
 fn tmpRel(allocator: std.mem.Allocator, tmp: *const std.testing.TmpDir, name: []const u8) ![]u8 {
     return std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, name });
@@ -653,6 +709,7 @@ test "build includes global, project, and local AGENTS.md sections" {
     try std.testing.expect(std.mem.find(u8, prompt, "## Project-local operator instructions (.agents/AGENTS.md)") != null);
     try std.testing.expect(std.mem.find(u8, prompt, "LOCAL_AGENTS_MARKER_def") != null);
     try std.testing.expect(std.mem.find(u8, prompt, "## Operational reports and runbooks") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "## Research notes and RFCs") != null);
 
     // Instructions progress from device-wide through shared project rules to
     // local additions for this checkout.

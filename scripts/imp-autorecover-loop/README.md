@@ -5,7 +5,8 @@ fails.
 
 ## Quick start
 
-Select the improve-self model and the repair harness from menus, then run:
+Select the improve-self model, the escalation model and the repair harness from
+menus, then run:
 
 ```bash
 ./run.sh
@@ -28,21 +29,24 @@ Before each batch it randomly selects an improvement goal, without immediately
 repeating the previous one. A successful batch starts the next randomly
 selected goal, and the loop never ends on its own.
 
-Two levels of repair sit under that loop, and the rest of this file uses these
+Three levels of repair sit under that loop, and the rest of this file uses these
 names for them:
 
 | term | what it is |
 |---|---|
 | improve-self batch | `clanker improve-self --iters N <goal>` |
 | clanker repair run | `clanker run`, which repairs a failed batch |
-| repair harness | `--fix-repairs-with`, which repairs a failed clanker repair run |
+| clanker escalation run | a second `clanker run`, optionally on a better model, which repairs a failed clanker repair run |
+| repair harness | `--fix-repairs-with`, which repairs a failed clanker escalation run |
 
-When a batch fails, a clanker repair run fixes it from that batch's error
-lines. When that repair run fails too, the repair harness fixes it — if one is
-configured. Then the loop returns to `improve-self` and keeps going.
+When a batch fails, a clanker repair run fixes it from that batch's error lines.
+When that repair run fails too, Clanker gets one more attempt at it as an
+escalation run, which is where `--escalate-model` switches to a stronger
+provider/model. Only when that fails as well does the repair harness take over —
+if one is configured. Then the loop returns to `improve-self` and keeps going.
 
-`run.sh` resolves the checkout and the `clanker` binary, asks which
-model and repair harness to use, and hands everything to the loop.
+`run.sh` resolves the checkout and the `clanker` binary, asks which model,
+escalation model and repair harness to use, and hands everything to the loop.
 
 ## Choosing a model
 
@@ -56,6 +60,8 @@ override that:
 
 The model reaches `improve-self` batches only. Clanker repair runs are
 `clanker run` with no `--model`, so they always use Clanker's configured model.
+Escalation runs take their own model from `--escalate-model`; see
+[Repairing a failed clanker repair run](#repairing-a-failed-clanker-repair-run).
 
 Add entries to the menu by editing the `MODELS` array at the top of
 `run.sh`. The literal entry `default` passes no `--model` at all.
@@ -89,18 +95,39 @@ non-zero `improve-self` exit also starts a repair.
 
 The repair is `clanker run --no-worktree` with the Clanker checkout as its
 working directory, so its changes are made directly on Clanker's `main`
-checkout rather than on an automatic goal worktree.
+checkout rather than on an automatic goal worktree. The escalation run below is
+the same command, with `--escalate-model` added when one is given.
 
 Every clanker repair run works from the **latest** `improve-self` log. A failed
-repair run is never retried against the log that triggered it: the loop returns
-to `improve-self`, and if the batch fails again, the next repair run works from
-that new batch's errors. The previous run's exit status is carried into the next
-prompt as a sentence, so Clanker knows an attempt was already made.
+repair run is never retried against the log that triggered it: it is handed one
+level down instead, and once that level is done the loop returns to
+`improve-self`. If the batch fails again, the next repair run works from that new
+batch's errors, never from the previous attempt's. Each earlier attempt's exit
+status is carried into the next prompt as a sentence, so Clanker knows what has
+already been tried.
 
 ## Repairing a failed clanker repair run
 
-This level is off unless you ask for it. Hand the failed clanker repair run to
-a harness, ideally a different one from the harness that just failed:
+A failed clanker repair run always goes to a clanker escalation run first: a
+second `clanker run --no-worktree`, built from the repair run's error lines.
+This level is always on, since it needs nothing that is not already resolved.
+
+Without a flag it runs on the same configured model the repair run just failed
+on, which is a second attempt rather than an escalation. Name a stronger
+provider/model to make it one:
+
+```bash
+./loop.py --escalate-model zai/glm-5.2
+```
+
+The value is passed straight to `clanker run --model`, so it takes either a
+model name or `<provider>/<model>`, exactly as `--model` does for batches.
+
+## Repairing a failed clanker escalation run
+
+Once Clanker has failed twice, the next level leaves Clanker entirely. It is off
+unless you ask for it. Hand the failed escalation run to a harness, ideally one
+built on a different model from the two that just failed:
 
 ```bash
 ./loop.py --fix-repairs-with "claude -p --permission-mode acceptEdits"
@@ -118,22 +145,57 @@ chosen here:
 ./loop.py --fix-repairs-with "dsh --profile headless"
 ```
 
-Without this flag a failed clanker repair run is simply dropped and the next
-`improve-self` batch resurfaces the problem. With it, the named harness gets
-the clanker repair run's error lines and fixes it. Either way the loop then
-returns to `improve-self` and continues indefinitely. It triggers only on a
-non-zero exit from the clanker repair run.
+Without this flag a failed clanker escalation run is simply dropped and the next
+`improve-self` batch resurfaces the problem. With it, the named harness gets the
+escalation run's error lines and fixes it. Either way the loop then returns to
+`improve-self` and continues indefinitely. It triggers only on a non-zero exit
+from the clanker escalation run.
 
 Both harnesses are resolved before the first `improve-self` batch, so a missing
 one fails immediately rather than hours later when a repair finally needs it.
 
 Use a finite repair limit when supervising an experiment. It counts
-*consecutive* failed clanker repair runs, and resets whenever a repair run or an
-`improve-self` batch succeeds. `0` is the default and never gives up:
+*consecutive* failed clanker repair runs, and resets whenever a repair run, an
+escalation run or an `improve-self` batch succeeds. Reaching the limit stops the
+loop where the repair run failed, before that failure is escalated. `0` is the
+default and never gives up:
 
 ```bash
 ./loop.py --max-repairs 3
 ```
+
+## When a run is stopped
+
+No child may hang the loop, so every run the loop starts has two limits. A run
+that hits either is stopped and counts as a failed run, which means the level
+below it repairs it exactly as it would any other failure.
+
+A repair, escalation or harness run is capped at one hour of wall clock:
+
+```bash
+./loop.py --repair-timeout 1800
+```
+
+Any run that prints nothing for fifteen minutes is stopped as hung:
+
+```bash
+./loop.py --stall-timeout 300
+```
+
+`improve-self` batches have no wall-clock cap by default, because a batch is
+meant to run long. Give them one when you want the loop to stay on a schedule:
+
+```bash
+./loop.py --batch-timeout 14400
+```
+
+`0` disables any of the three.
+
+The two limits catch different failures, and the difference matters. A hung run
+goes quiet, so the silence timeout finds it. A livelocked run keeps printing —
+the failure that motivated this was a `clanker run` that compacted its context
+on every iteration for hours, logging all the while — so only the wall-clock cap
+catches that one.
 
 ## Finding the clanker binary
 
@@ -172,16 +234,17 @@ CLANKER_BIN=/opt/clanker/bin/clanker ./run.sh
 
 There is no dependency on a personal `clank` shim. `clank.sh` is
 `env -C $CLANKER_DIR clanker "$@"`, and the loop already runs every subprocess
-with the checkout as its working directory, so one `clanker` binary covers both
-`improve-self` batches and clanker repair runs.
+with the checkout as its working directory, so one `clanker` binary covers
+`improve-self` batches, clanker repair runs and clanker escalation runs alike.
 
 ## The menus
 
-`CLANKER MODEL` is the model `improve-self` batches run on; `REPAIR HARNESS` is
-what repairs a failed clanker repair run. They are the `MODELS` and `FIXERS`
+`CLANKER MODEL` is the model `improve-self` batches run on; `ESCALATION MODEL`
+is the model the clanker escalation run uses; `REPAIR HARNESS` is what repairs a
+failed escalation run. They are the `MODELS`, `ESCALATE_MODELS` and `FIXERS`
 arrays at the top of `run.sh`. The sentinel entries `default` and `none`
-mean "pass no flag", and Enter selects the first entry. Passing `--model` or
-`--fix-repairs-with` yourself skips the matching menu:
+mean "pass no flag", and Enter selects the first entry. Passing `--model`,
+`--escalate-model` or `--fix-repairs-with` yourself skips the matching menu:
 
 ```bash
 ./run.sh --fix-repairs-with "codex exec"

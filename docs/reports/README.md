@@ -22,6 +22,32 @@ behavior; a report explains an observed failure and the work that resolved it.
   companion [runbook](../runbooks/) as well. Keep the report's history here and
   the concise current procedure in the runbook.
 
+## From a terminal
+
+`clanker reports` is the same store from a shell. It calls the same `reports`
+tool, so the inventory below, the templates and the compare-and-swap writes are
+shared rather than reimplemented.
+
+List every report and runbook:
+
+```bash
+clanker reports
+```
+
+Search both stores before diagnosing a failure:
+
+```bash
+clanker reports search "NotDir"
+```
+
+Read one record:
+
+```bash
+clanker reports open docs/reports/bugs/2026-08-14-worktree-state-symlink-notdir.md
+```
+
+`clanker reports --help` covers `create`, `append` and `update`.
+
 ## Agent workflow
 
 Before diagnosing a failure, use the `reports` tool's `search` action with the
@@ -44,6 +70,10 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [Compaction repeats forever when the history it cannot move exceeds the threshold](bugs/2026-08-16-compaction-cannot-shrink-immovable-history.md) — Resolved
+
+- [The compaction summary always fails on a thinking model](bugs/2026-08-16-compaction-summary-budget-spent-on-reasoning.md) — Resolved
+
 - [Unknown goal id runs unscoped task](bugs/2026-08-15-unknown-goal-id-runs-unscoped.md) — Open
 
 - [Goal lifecycle capabilities were conflated](bugs/2026-08-15-goal-lifecycle-capabilities-conflated.md) — Open
@@ -57,6 +87,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [`clanker run` never finishes, compacting on every iteration](investigations/2026-08-16-run-livelock-compaction-thrash.md) — Resolved
+
 - [improve-self gate tool build failure (appendWriteFn) and follow-up](investigations/2026-04-15-improve-self-gate-build.md) — Investigating
 
 - [improve-self iterations exhaust attempts on config.toml documentation test](investigations/2026-06-13-improve-staging-config-doc.md) — Investigating

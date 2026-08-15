@@ -26,13 +26,31 @@ explicit flag, and the loop re-derives the same answers when run directly.
                                │      ┌──────┴───────┐   │
                                │   exit 0        non-zero│
                                │      │             │    │
-                               └──────┘             ▼    │
-                                          ┌──────────────┴──┐
-                                          │ --fix-repairs-  │
-                                          │ with harness    │
-                                          │ (optional)      │
-                                          └─────────────────┘
+                               ├──────┘             ▼    │
+                               │        ┌────────────────┴───┐
+                               │        │ clanker run        │
+                               │        │ --no-worktree      │
+                               │        │ --model <escalate> │
+                               │        └──────┬─────────────┘
+                               │               │
+                               │       ┌───────┴──────┐
+                               │    exit 0       non-zero
+                               │       │              │
+                               └───────┘              ▼
+                                            ┌─────────────────┐
+                                            │ --fix-repairs-  │
+                                            │ with harness    │
+                                            │ (optional)      │
+                                            └────────┬────────┘
+                                                     │
+                                                     ▼
+                                              back to improve-self
 ```
+
+The boxes are the commands the loop actually runs, so `<escalate>` is the value
+of the loop's own `--escalate-model`, handed to Clanker as its `--model`. When
+that value is empty the flag is left off and the escalation run is a plain
+`clanker run --no-worktree`, exactly like the repair run above it.
 
 A batch is "failed" when either of two things happens:
 
@@ -51,13 +69,15 @@ except `--max-repairs` being exceeded, or the operator interrupting.
 A repair prompt always describes the **most recent** failed run, never an
 accumulated history:
 
-| repair of | prompt built from |
-|---|---|
-| a failed `improve-self` batch | that batch's log |
-| a failed clanker repair run | that repair run's log |
+| repair of | run by | prompt built from |
+|---|---|---|
+| a failed `improve-self` batch | clanker repair run | that batch's log |
+| a failed clanker repair run | clanker escalation run | that repair run's log |
+| a failed clanker escalation run | `--fix-repairs-with` harness | that escalation run's log |
 
-The previous attempt survives only as one sentence of context (`The clanker
-repair run exited with status 1.`), not as embedded log text.
+Earlier attempts survive only as one sentence of context each (`A clanker repair
+run already tried to fix this and exited with status 1.`), not as embedded log
+text.
 
 A log becomes prompt text through three steps, in `loop.py`:
 
@@ -95,6 +115,14 @@ process group. That is what makes `stop_process_group` able to kill
 `improve-self` *and* the model and gate processes it spawned — killing only the
 direct child would leave those orphaned and still holding the run lock.
 
+Each child also gets a `Watchdog`: a daemon thread that checks, once a second,
+how long the run has taken and how long since its last line, and calls the same
+`stop_process_group` when either limit is passed. It is a thread rather than a
+timeout on the read, so the streaming reader and the two-failed-iterations
+detector stay exactly as they are — the killed child closes its pipe, the reader
+ends naturally, and `CommandResult.timed_out` carries the reason into the
+failure sentence the next repair level is given.
+
 Temporary logs are unlinked on every path, including the exception path.
 
 ## Binary resolution
@@ -109,6 +137,20 @@ The launcher resolves it, prints it, and passes it down as `--clanker`, so the
 loop's own copy never runs in that path. The loop's copy exists for direct
 invocation. Both harnesses — the clanker binary and any `--fix-repairs-with`
 command — are resolved before the first batch starts.
+
+## Which model each level runs on
+
+| level | model |
+|---|---|
+| improve-self batch | `--model`, or Clanker's configured model when it is empty |
+| clanker repair run | Clanker's configured model, always |
+| clanker escalation run | `--escalate-model`, or Clanker's configured model when it is empty |
+| repair harness | whatever the harness command itself selects |
+
+`--escalate-model` is passed through as `clanker run --model`, so it accepts a
+model name or `<provider>/<model>` and switches provider with it. Left empty,
+the escalation run is a second attempt on the model that just failed, which is
+still worth having — the two runs see different prompts.
 
 ## What the loop assumes about a harness
 

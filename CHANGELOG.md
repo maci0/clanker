@@ -7,6 +7,41 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker reports` puts the operational reports and runbooks on the CLI:
+  `list` (the default) prints the whole index with each record's status and
+  path, `search <query>` runs one literal search across `docs/reports/` and
+  `docs/runbooks/` with `--kind` to narrow it to one store, `open <path>`
+  prints a record, and `create`, `append` and `update` write one. It calls the
+  same sandboxed `reports` tool the agent uses, so there is one store, one
+  inventory and one set of compare-and-swap writes rather than a second
+  implementation beside them — a refused write exits 1 and says which record to
+  reopen. Until now the records were reachable only from inside an agent run.
+
+- Two tools for the work that precedes a decision, independent of each other.
+  `research` plans a search (the angles a single query misses: alternatives,
+  failure reports, production experience, standards, and the out-of-the-box
+  candidates nobody advertises), sweeps web search, GitHub repositories,
+  Hacker News, and arXiv in one deduplicated call, and keeps what survives as
+  a note under `docs/research/`. `rfc` opens a numbered request for comment
+  under `docs/rfcs/`: options with short, medium, and long term implications,
+  a recommendation whose confidence is a bounded 0–10 score, open questions,
+  next steps, references, and an appendix. Both render a committed template
+  (`docs/research/TEMPLATE.md`, `docs/rfcs/TEMPLATE.md`), keep their index
+  current, and write compare-and-swap. `rfc create` optionally links a
+  research note and lifts its option headings in as stubs marked unverified;
+  nothing else couples the two, and neither is required for the other.
+  Hosts named in `web.allow` extend the research sweep as they already do
+  `fetch_web` and `web_search`.
+
+- The REPL mascot renders as a SIXEL raster on terminals that support SIXEL
+  but not kitty graphics, at the same cell footprint and in every existing
+  mode, size, facing and speed. The renderer is chosen automatically from the
+  terminal's own capability answer — kitty graphics, then SIXEL, then unicode
+  half-blocks — never from `$TERM` or a terminal name, and a SIXEL failure
+  falls back to half-blocks for the rest of the session. Requires
+  `patches/vaxis-sixel-graphics.patch`; an unpatched build keeps the previous
+  two renderers.
+
 - MCP integrations are configurable: `[mcp_servers.<name>]` stanzas
   (stdio: command/args/env/cwd; http: url/headers; timeout) parse and
   validate at load, System -> MCP servers in the web UI adds, edits,

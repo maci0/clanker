@@ -107,6 +107,7 @@ fn clean(gpa: std.mem.Allocator, bytes: []const u8) ?[]const u8 {
 fn errorRecoveryHint(err: anyerror, detail: ?[]const u8) []const u8 {
     if (err == error.MaxIterationsExceeded) return " (hit iteration limit; try a simpler task or raise agent.max_iterations)";
     if (err == error.SessionTokenBudgetExceeded) return " (ran out of token budget)";
+    if (err == error.CompactionStalled) return " (history cannot be compacted below agent.max_history_tokens; raise it or trim the system prompt)";
     if (detail) |d| {
         const find = std.ascii.findIgnoreCase;
         if (find(d, "401") != null or find(d, "unauthorized") != null or find(d, "authentication") != null)

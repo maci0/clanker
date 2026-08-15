@@ -14,7 +14,7 @@ usage() {
 		"Run an agent every interval to commit and push all non-ignored work." \
 		"" \
 		"OPTIONS" \
-		"  --agent NAME          Agent CLI to run: grok, codex, claude, or clanker." \
+		"  --agent NAME          Agent CLI to run: grok, codex, claude, clanker, or dsh." \
 		"  --once                Run one agent pass and exit." \
 		"  --interval DURATION   Wait time between passes. Default: ${DEFAULT_INTERVAL_DISPLAY} (${DEFAULT_INTERVAL_SECONDS}s)." \
 		"                        Accepts Ns/Nm/Nh/Nd (e.g. 5s, 10m, 3h, 1d) or bare seconds." \
@@ -32,16 +32,20 @@ usage() {
 		"ENVIRONMENT" \
 		"  AUTOCOMMIT_AGENT            Same as --agent; skips the interactive prompt." \
 		"  AUTOCOMMIT_INTERVAL         Same as --interval; skips the interactive prompt." \
-		"  AUTOCOMMIT_AGENT_MODEL      Optional model passed as --model." \
+		"  AUTOCOMMIT_AGENT_MODEL      Optional model passed as --model (ignored by dsh;" \
+		"                              the headless run uses the harness default model)." \
 		"  AUTOCOMMIT_AGENT_PROVIDER   Optional provider passed as --provider (clanker)." \
 		"  CLANKER_BIN                 Path to the clanker binary (clanker only). Defaults" \
 		"                              to 'clanker' on PATH, then <root>/zig-out/bin/clanker." \
+		"  DSH_BIN                     Path to the dsh launcher (dsh only). Defaults to" \
+		"                              'dsh' on PATH." \
 		"" \
 		"EXAMPLES" \
 		"  .local/scripts/agent-autocommit-push.sh --once" \
 		"  .local/scripts/agent-autocommit-push.sh --agent grok" \
 		"  .local/scripts/agent-autocommit-push.sh --agent claude" \
 		"  .local/scripts/agent-autocommit-push.sh --agent clanker" \
+		"  .local/scripts/agent-autocommit-push.sh --agent dsh" \
 		"  .local/scripts/agent-autocommit-push.sh --interval 5m" \
 		"  .local/scripts/agent-autocommit-push.sh --interval 300"
 }
@@ -112,7 +116,7 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--agent)
 			if [[ $# -lt 2 ]]; then
-				printf 'ERROR: --agent requires grok, codex, claude, or clanker.\n' >&2
+				printf 'ERROR: --agent requires grok, codex, claude, clanker, or dsh.\n' >&2
 				exit 2
 			fi
 			agent="$2"
@@ -159,8 +163,9 @@ ask_for_agent() {
 			"  1  grok" \
 			"  2  codex" \
 			"  3  claude" \
-			"  4  clanker"
-		printf 'Agent [1-4]: '
+			"  4  clanker" \
+			"  5  dsh"
+		printf 'Agent [1-5]: '
 		read -r choice
 		case "$choice" in
 			1|grok)
@@ -179,8 +184,12 @@ ask_for_agent() {
 				agent="clanker"
 				return
 				;;
+			5|dsh)
+				agent="dsh"
+				return
+				;;
 			*)
-				printf 'ERROR: enter 1, 2, 3, 4, grok, codex, claude, or clanker.\n' >&2
+				printf 'ERROR: enter 1-5, grok, codex, claude, clanker, or dsh.\n' >&2
 				;;
 		esac
 	done
@@ -219,17 +228,17 @@ if [[ "$once" != true && "$interval_set" != true ]]; then
 fi
 
 case "$agent" in
-	grok|codex|claude|clanker)
+	grok|codex|claude|clanker|dsh)
 		;;
 	*)
-		printf 'ERROR: --agent must be grok, codex, claude, or clanker.\n' >&2
+		printf 'ERROR: --agent must be grok, codex, claude, clanker, or dsh.\n' >&2
 		exit 2
 		;;
 esac
 
-# clanker's binary is resolved relative to the repo root (zig-out/bin), so
-# check it after root is known, below. Non-clanker agents come off PATH.
-if [[ "$agent" != "clanker" ]] && ! command -v "$agent" >/dev/null 2>&1; then
+# clanker's and dsh's launchers are resolved separately below (relative to the
+# repo root, with env overrides). Other agents come off PATH.
+if [[ "$agent" != "clanker" && "$agent" != "dsh" ]] && ! command -v "$agent" >/dev/null 2>&1; then
 	printf 'ERROR: selected agent CLI not found on PATH: %s\n' "$agent" >&2
 	exit 1
 fi
@@ -274,6 +283,38 @@ resolve_clanker_bin() {
 clanker_bin=""
 if [[ "$agent" == "clanker" ]]; then
 	clanker_bin="$(resolve_clanker_bin)"
+fi
+
+# Locate the dsh launcher: DSH_BIN, then 'dsh' on PATH.
+resolve_dsh_bin() {
+	local candidate
+	if [[ -n "${DSH_BIN:-}" ]]; then
+		candidate="$DSH_BIN"
+		if [[ "$candidate" != /* && -x "$root/$candidate" ]]; then
+			candidate="$root/$candidate"
+		fi
+		if [[ -x "$candidate" ]]; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+		printf 'ERROR: DSH_BIN not executable: %s\n' "$DSH_BIN" >&2
+		return 1
+	fi
+	if candidate="$(command -v dsh 2>/dev/null)" && [[ -n "$candidate" && -x "$candidate" ]]; then
+		printf '%s\n' "$candidate"
+		return 0
+	fi
+	printf 'ERROR: dsh not found on PATH.\n' >&2
+	printf '       Or: DSH_BIN=/path/to/dsh %s\n' "$(basename "${BASH_SOURCE[0]}")" >&2
+	return 1
+}
+
+dsh_bin=""
+if [[ "$agent" == "dsh" ]]; then
+	dsh_bin="$(resolve_dsh_bin)"
+	if [[ -n "${AUTOCOMMIT_AGENT_MODEL:-}" ]]; then
+		printf 'WARNING: AUTOCOMMIT_AGENT_MODEL is ignored by dsh; the headless run uses the harness default model.\n' >&2
+	fi
 fi
 
 # Streaming claude's log needs jq to render the JSON events. Without jq, fall
@@ -354,6 +395,16 @@ build_agent_command() {
 			if [[ -n "${AUTOCOMMIT_AGENT_PROVIDER:-}" ]]; then
 				out+=(--provider "$AUTOCOMMIT_AGENT_PROVIDER")
 			fi
+			out+=("$prompt")
+			;;
+		dsh)
+			# dsh headless is one-shot: the task is the positional argument,
+			# the agent's workspace is the launch cwd (already $root), the
+			# final assistant message goes to stdout, and the exit code is 0
+			# when the turn completes, non-zero otherwise. The model comes
+			# from the harness default (agent-default-model settings); the
+			# headless app takes no --model/--provider flags.
+			out=("$dsh_bin" --profile headless)
 			out+=("$prompt")
 			;;
 	esac

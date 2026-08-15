@@ -3,14 +3,24 @@
 //! Off unless asked for (`--mascot`, or `tui.mascot` in config) -- it is an
 //! easter egg, not a status indicator, and it costs real transcript rows.
 //!
-//! Two renderers for the same artwork:
+//! Three renderers for the same artwork, in this order:
 //!
 //!   - **kitty graphics**, when the terminal answered the capability query.
 //!     The actual drawing, transmitted once as pngs and then placed by id, so a
 //!     frame change costs one escape sequence.
+//!   - **sixel**, when the terminal proved sixel support and not kitty. The
+//!     same pngs, decoded by libvaxis into rasters sized from the measured cell
+//!     geometry. Kitty wins when both are available: its ids, placements,
+//!     clipping and cleanup are already integrated, while sixel has to stream
+//!     the payload again on every visible frame change.
 //!   - **half-blocks**, everywhere else. `mascot_frames.zig` holds the same
 //!     eleven frames quantized to a grid of upper/lower half cells, at three
 //!     sizes.
+//!
+//! The order is fixed by [ADR 0013](../../docs/adrs/0013-sixel-precedes-unicode-mascot-fallback.md)
+//! and comes from a capability answer, never from `$TERM`, `TERM_PROGRAM`, or
+//! an emulator name: ssh and multiplexers change what actually reaches this
+//! process.
 //!
 //! Both paths share all the position, size and mirroring arithmetic below,
 //! which is deliberately free of any vaxis types so it can be tested without a
@@ -213,6 +223,36 @@ pub const Mode = enum {
     }
 };
 
+/// Whether the libvaxis in use has the sixel capability and image lifecycle.
+///
+/// The dependency is pinned to an upstream release that does not, and the
+/// implementation reaches a build through `patches/vaxis-sixel-graphics.patch`
+/// (see `patches/README.md`). A fresh clone or CI therefore builds against a
+/// pristine libvaxis, where every sixel path below is compiled out and the
+/// mascot has exactly the two renderers it always had.
+const sixel_supported = @hasField(vaxis.Vaxis.Capabilities, "sixel_graphics");
+
+/// Fastest rate sixel frames are presented at.
+///
+/// A sixel payload is substantially larger than a kitty placement and has to
+/// travel again whenever the visible frame changes, so the mascot's own
+/// cadence (~20fps in `loop`) is more than the tty should spend on decoration.
+/// The mascot state still advances at its normal rate; only what reaches the
+/// terminal is thinned, by showing the newest eligible frame and dropping the
+/// ones in between. Typing and model streaming outrank the robot.
+pub const sixel_min_interval_ms: i64 = 100;
+
+/// Milliseconds on a monotonic clock, for the presentation rate.
+///
+/// Monotonic rather than wall time: a clock step (ntp, a suspend) must not be
+/// able to hold the mascot still for hours or fire a burst of frames.
+fn nowMs() i64 {
+    var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i64, @intCast(ts.sec)) * std.time.ms_per_s +
+        @divTrunc(@as(i64, @intCast(ts.nsec)), std.time.ns_per_ms);
+}
+
 /// What the terminal turned out to support. Resolved once, on the first draw
 /// that has a live vaxis handle to ask, because the capability query is still
 /// in flight while the model is being built.
@@ -221,10 +261,22 @@ const Graphics = union(enum) {
     unknown,
     /// Transmitted image ids, one row per `Flip` and one column per frame.
     kitty: [3][frame_count]u32,
-    /// Either no kitty support or a transmit that failed. Half-blocks from
-    /// here on; never retried, so a broken terminal cannot make every frame
-    /// re-attempt a megabyte of base64.
+    /// Loaded sixel raster ids, laid out like the kitty ids, together with the
+    /// cell geometry they were sized for. Both are needed to place a frame: the
+    /// id says which raster, and the cell width converts a column clip into the
+    /// raster pixels libvaxis clips on.
+    sixel: Sixel,
+    /// No image protocol the terminal proved it has, or a setup that failed.
+    /// Half-blocks from here on; never retried, so a broken terminal cannot
+    /// make every frame re-attempt a megabyte of base64.
     cells,
+};
+
+pub const Sixel = struct {
+    ids: [3][frame_count]u32,
+    /// Measured pixel size of one cell at the time the rasters were built.
+    cell_w: u16,
+    cell_h: u16,
 };
 
 /// The embedded pngs, `[orientation][frame]`, ordered to match `Flip`.
@@ -278,6 +330,16 @@ pub const State = struct {
     /// backward (horizontal) mirror while backspacing.
     deleting: bool = false,
     graphics: Graphics = .unknown,
+    /// The frame and mirror actually on screen as a sixel, and when it was
+    /// sent. Distinct from `frame`/`flip`, which keep advancing at the mascot's
+    /// own cadence while the presentation rate holds this back.
+    sixel_frame: u8 = 0,
+    sixel_flip: Flip = .none,
+    sixel_ms: i64 = 0,
+    /// Set once a sixel setup has failed. The fallback is permanent for the
+    /// session: a terminal that failed to take a raster will fail again, and
+    /// retrying every frame is how a decoration turns into a stall.
+    sixel_failed: bool = false,
 
     pub fn enabled(self: State) bool {
         return self.mode != .off;
@@ -389,8 +451,15 @@ pub const State = struct {
         vx: *vaxis.Vaxis,
         tty: *std.Io.Writer,
     ) void {
+        if (self.graphics == .sixel) {
+            self.refreshSixel(gpa, vx);
+            return;
+        }
         if (self.graphics != .unknown) return;
         if (!vx.caps.kitty_graphics) {
+            // Sixel is the next renderer down, not a peer of kitty: it only
+            // gets a look when kitty is absent.
+            if (self.ensureSixel(gpa, vx)) return;
             self.graphics = .cells;
             return;
         }
@@ -413,12 +482,99 @@ pub const State = struct {
         self.graphics = .{ .kitty = ids };
     }
 
+    /// Builds the sixel rasters, once, if this terminal proved it can show
+    /// them. Returns whether the sixel renderer is now in use.
+    ///
+    /// Every refusal here is quiet and permanent: no capability, no measured
+    /// cell geometry (a raster sized from a guessed font cannot honour the
+    /// configured cell footprint), a decode that failed, or a raster the
+    /// terminal said it will not accept. The caller falls back to cells, which
+    /// is a working mascot rather than a missing one.
+    fn ensureSixel(self: *State, gpa: std.mem.Allocator, vx: *vaxis.Vaxis) bool {
+        if (!sixel_supported) return false;
+        if (sixel_supported) {
+            if (self.sixel_failed) return false;
+            if (!vx.caps.sixel_graphics) return false;
+            const cell = vx.cellPixelSize() orelse {
+                log.log(.debug, "mascot: sixel has no cell pixel geometry, using half-blocks", .{});
+                self.sixel_failed = true;
+                return false;
+            };
+            const v = self.variant();
+            var ids: [3][frame_count]u32 = undefined;
+            for (png_frames, 0..) |orientation, o| {
+                for (orientation, 0..) |bytes, i| {
+                    ids[o][i] = vx.loadSixelImage(gpa, bytes, v.cols, v.rows) catch |err| {
+                        // Partial setup is handed back through the lifecycle
+                        // rather than abandoned: unlike kitty ids, these
+                        // rasters are held in this process and would otherwise
+                        // stay allocated for a renderer nothing will use.
+                        log.log(.debug, "mascot: sixel setup failed ({t}), using half-blocks", .{err});
+                        vx.clearSixelImages(gpa);
+                        self.sixel_failed = true;
+                        return false;
+                    };
+                }
+            }
+            self.graphics = .{ .sixel = .{
+                .ids = ids,
+                .cell_w = cell.width,
+                .cell_h = cell.height,
+            } };
+            return true;
+        }
+        return false;
+    }
+
+    /// Re-builds the rasters when libvaxis has dropped them.
+    ///
+    /// A resize -- or a font change, which arrives the same way -- invalidates
+    /// every raster, because a payload is only valid for the cell geometry it
+    /// was encoded at. That is one re-encode at the new geometry, not a retry
+    /// of a failure: if the rebuild fails, the session drops to cells for good.
+    fn refreshSixel(self: *State, gpa: std.mem.Allocator, vx: *vaxis.Vaxis) void {
+        if (!sixel_supported) return;
+        if (sixel_supported) {
+            const current = switch (self.graphics) {
+                .sixel => |s| s,
+                else => return,
+            };
+            if (vx.hasSixelImage(current.ids[0][0])) return;
+            self.graphics = .unknown;
+            if (!self.ensureSixel(gpa, vx)) self.graphics = .cells;
+        }
+    }
+
+    /// The frame to present as a sixel now, holding the presentation rate to
+    /// `sixel_min_interval_ms`.
+    ///
+    /// Returning the *previously* presented frame is what makes this a dropped
+    /// frame rather than a queued one: the mascot's own state has already moved
+    /// on, and when the next presentation is due it shows wherever the animation
+    /// has got to, not the backlog it skipped.
+    pub fn presentSixel(self: *State, now_ms: i64) struct { frame: u8, flip: Flip } {
+        const want = self.flip();
+        const due = now_ms -| self.sixel_ms >= sixel_min_interval_ms;
+        // The first presentation is always due: `sixel_ms` starts at zero and
+        // a mascot that waited for a tick boundary would flash in late.
+        if (due or self.sixel_ms == 0) {
+            self.sixel_ms = now_ms;
+            self.sixel_frame = self.frame;
+            self.sixel_flip = want;
+        }
+        return .{ .frame = self.sixel_frame, .flip = self.sixel_flip };
+    }
+
     /// Draws the mascot with whichever renderer the terminal earned.
-    pub fn draw(self: State, surface: vxfw.Surface, col0: i32, row0: u16) void {
+    pub fn draw(self: *State, surface: vxfw.Surface, col0: i32, row0: u16) void {
         const v = self.variant();
         const f = self.flip();
         switch (self.graphics) {
             .kitty => |ids| drawKitty(v, surface, ids[f.idx()], self.frame, col0, row0),
+            .sixel => |s| {
+                const shown = self.presentSixel(nowMs());
+                drawSixel(v, surface, s, shown.frame, shown.flip, col0, row0);
+            },
             // `.unknown` should have been resolved by `ensureGraphics` before
             // the first draw, but half-blocks are the safe answer if not.
             .cells, .unknown => drawCells(v, surface, self.frame, col0, row0, f),
@@ -621,6 +777,44 @@ pub fn drawKitty(
             },
         },
     });
+}
+
+/// Places one loaded raster. The placement lands on the mascot's top-left cell
+/// and claims exactly the configured cell rectangle, so the footprint matches
+/// the kitty and half-block paths at every size.
+///
+/// Mirroring is baked into which id is passed, as with kitty: a placement has
+/// no mirror operation, so each orientation is its own raster.
+///
+/// A partly-off-screen robot is clipped in *raster pixels*, which is why the
+/// measured cell width is carried alongside the ids -- a column clip means
+/// nothing to a raster until it is multiplied out.
+pub fn drawSixel(
+    v: Variant,
+    surface: vxfw.Surface,
+    s: Sixel,
+    frame: u8,
+    f: Flip,
+    col0: i32,
+    row0: u16,
+) void {
+    if (!sixel_supported) return;
+    if (sixel_supported) {
+        const c = clip(v, col0, surface.size.width) orelse return;
+        if (row0 >= surface.size.height) return;
+        const full = c.skip_cols == 0 and c.width == v.cols;
+        surface.writeCell(c.screen_col, row0, .{
+            .sixel = .{
+                .img_id = s.ids[f.idx()][frame % frame_count],
+                .cols = c.width,
+                .rows = v.rows,
+                .clip = if (full) null else .{
+                    .x = c.skip_cols * s.cell_w,
+                    .width = c.width * s.cell_w,
+                },
+            },
+        });
+    }
 }
 
 const testing = std.testing;
@@ -1141,7 +1335,7 @@ test "draw falls back to half-blocks when graphics are unresolved or refused" {
     for ([_]Graphics{ .unknown, .cells }) |g| {
         const surface = try testSurface(gpa, .{ .width = 40, .height = 14 });
         defer gpa.free(surface.buffer);
-        const st: State = .{ .mode = .loop, .graphics = g };
+        var st: State = .{ .mode = .loop, .graphics = g };
         st.draw(surface, 4, 1);
         var painted: usize = 0;
         for (surface.buffer) |cell| {
@@ -1162,7 +1356,7 @@ test "draw picks the kitty id set matching the current flip" {
     {
         const surface = try testSurface(gpa, .{ .width = 40, .height = 14 });
         defer gpa.free(surface.buffer);
-        const st: State = .{ .mode = .loop, .facing = .default, .graphics = .{ .kitty = ids } };
+        var st: State = .{ .mode = .loop, .facing = .default, .graphics = .{ .kitty = ids } };
         st.draw(surface, 4, 1);
         try testing.expectEqual(@as(u32, 10), surface.readCell(4, 1).image.?.img_id);
     }
@@ -1170,7 +1364,7 @@ test "draw picks the kitty id set matching the current flip" {
     {
         const surface = try testSurface(gpa, .{ .width = 40, .height = 14 });
         defer gpa.free(surface.buffer);
-        const st: State = .{ .mode = .loop, .facing = .inverted, .graphics = .{ .kitty = ids } };
+        var st: State = .{ .mode = .loop, .facing = .inverted, .graphics = .{ .kitty = ids } };
         st.draw(surface, 4, 1);
         try testing.expectEqual(@as(u32, 20), surface.readCell(4, 1).image.?.img_id);
     }
@@ -1178,7 +1372,7 @@ test "draw picks the kitty id set matching the current flip" {
     {
         const surface = try testSurface(gpa, .{ .width = 40, .height = 14 });
         defer gpa.free(surface.buffer);
-        const st: State = .{ .mode = .typing, .deleting = true, .graphics = .{ .kitty = ids } };
+        var st: State = .{ .mode = .typing, .deleting = true, .graphics = .{ .kitty = ids } };
         st.draw(surface, 4, 1);
         try testing.expectEqual(@as(u32, 20), surface.readCell(4, 1).image.?.img_id);
     }
@@ -1203,6 +1397,202 @@ test "every size draws without escaping its box" {
                 }
             }
             try testing.expect(painted > 0);
+        }
+    }
+}
+
+test "the sixel renderer is compiled out when libvaxis has no sixel lifecycle" {
+    // The pin in build.zig.zon is an upstream libvaxis without sixel; the
+    // implementation arrives through patches/vaxis-sixel-graphics.patch. This
+    // pins the detection itself, so the file cannot start assuming a
+    // capability a fresh clone does not have.
+    try testing.expectEqual(
+        @hasField(vaxis.Vaxis.Capabilities, "sixel_graphics"),
+        sixel_supported,
+    );
+    try testing.expectEqual(sixel_supported, @hasField(vaxis.Cell, "sixel"));
+}
+
+test "presentSixel holds the frame rate without holding the animation back" {
+    var st: State = .{ .mode = .loop };
+    // The first frame is presented immediately: waiting for a tick boundary
+    // would make the mascot appear late on a fresh screen.
+    st.frame = 3;
+    const first = st.presentSixel(1_000);
+    try testing.expectEqual(@as(u8, 3), first.frame);
+
+    // Inside the interval the mascot keeps animating, but the terminal keeps
+    // the frame it already has. This is a dropped frame, not a queued one.
+    st.frame = 4;
+    try testing.expectEqual(@as(u8, 3), st.presentSixel(1_050).frame);
+    st.frame = 5;
+    try testing.expectEqual(@as(u8, 3), st.presentSixel(1_099).frame);
+
+    // Once the interval is up, the newest frame is shown -- 6, not the 4 and 5
+    // that were skipped over.
+    st.frame = 6;
+    try testing.expectEqual(@as(u8, 6), st.presentSixel(1_100).frame);
+    // ...and mascot state was never touched by any of it.
+    try testing.expectEqual(@as(u8, 6), st.frame);
+}
+
+test "presentSixel presents at most ten frames a second" {
+    var st: State = .{ .mode = .loop };
+    var now: i64 = 5_000;
+    var presented: usize = 0;
+    var last: u8 = 255;
+    // One mascot tick every 50ms for a second: twenty state advances.
+    for (0..20) |_| {
+        st.advance(0);
+        const shown = st.presentSixel(now);
+        if (shown.frame != last) presented += 1;
+        last = shown.frame;
+        now += 50;
+    }
+    try testing.expect(presented <= 10);
+}
+
+test "presentSixel follows the mirror as well as the frame" {
+    // A backspace changes the mirror without necessarily changing the frame.
+    // Presenting the new frame with the old mirror would face the robot the
+    // wrong way for up to a tenth of a second.
+    var st: State = .{ .mode = .typing };
+    _ = st.presentSixel(2_000);
+    st.deleting = true;
+    try testing.expectEqual(Flip.horizontal, st.presentSixel(2_100).flip);
+}
+
+test "drawSixel places one raster at the configured cell rectangle" {
+    if (!sixel_supported) return error.SkipZigTest;
+    if (sixel_supported) {
+        const gpa = testing.allocator;
+        const surface = try testSurface(gpa, .{ .width = 40, .height = 14 });
+        defer gpa.free(surface.buffer);
+        var ids: [3][frame_count]u32 = undefined;
+        for (&ids, 0..) |*set, o| {
+            for (set, 0..) |*id, i| id.* = @intCast(100 * (o + 1) + i);
+        }
+        const s: Sixel = .{ .ids = ids, .cell_w = 10, .cell_h = 20 };
+
+        drawSixel(med, surface, s, 3, .none, 5, 1);
+        const placement = surface.readCell(5, 1).sixel.?;
+        try testing.expectEqual(@as(u32, 103), placement.img_id);
+        try testing.expectEqual(med.cols, placement.cols);
+        try testing.expectEqual(med.rows, placement.rows);
+        // Nothing is clipped when the whole robot is on screen: a clip would
+        // make libvaxis re-encode a payload it can otherwise reuse.
+        try testing.expectEqual(@as(?vaxis.sixel.Clip, null), placement.clip);
+
+        var placements: usize = 0;
+        for (surface.buffer) |c| placements += @intFromBool(c.sixel != null);
+        try testing.expectEqual(@as(usize, 1), placements);
+    }
+}
+
+test "drawSixel clips in raster pixels, in proportion to the hidden columns" {
+    if (!sixel_supported) return error.SkipZigTest;
+    if (sixel_supported) {
+        const gpa = testing.allocator;
+        const surface = try testSurface(gpa, .{ .width = 40, .height = 14 });
+        defer gpa.free(surface.buffer);
+        const s: Sixel = .{
+            .ids = @splat(@splat(7)),
+            .cell_w = 10,
+            .cell_h = 20,
+        };
+
+        // Five of ten columns hidden off the left edge. The clip is in raster
+        // pixels, so it is the hidden columns times the measured cell width --
+        // a column count handed to libvaxis would clip almost nothing.
+        drawSixel(med, surface, s, 0, .none, -5, 0);
+        const placement = surface.readCell(0, 0).sixel.?;
+        try testing.expectEqual(@as(u16, 50), placement.clip.?.x);
+        try testing.expectEqual(@as(u16, 50), placement.clip.?.width);
+        try testing.expectEqual(med.cols - 5, placement.cols);
+        try testing.expectEqual(med.rows, placement.rows);
+    }
+}
+
+test "drawSixel off screen places nothing" {
+    if (!sixel_supported) return error.SkipZigTest;
+    if (sixel_supported) {
+        const gpa = testing.allocator;
+        const surface = try testSurface(gpa, .{ .width = 30, .height = 12 });
+        defer gpa.free(surface.buffer);
+        const s: Sixel = .{ .ids = @splat(@splat(7)), .cell_w = 10, .cell_h = 20 };
+        drawSixel(med, surface, s, 0, .none, 30, 0);
+        drawSixel(med, surface, s, 0, .none, -@as(i32, med.cols), 0);
+        // Below the surface, too: the mascot is skipped rather than clipped
+        // into the composer.
+        drawSixel(med, surface, s, 0, .none, 4, 12);
+        for (surface.buffer) |cell| try testing.expect(cell.sixel == null);
+    }
+}
+
+test "draw picks the sixel id set matching the current flip" {
+    if (!sixel_supported) return error.SkipZigTest;
+    if (sixel_supported) {
+        const gpa = testing.allocator;
+        var ids: [3][frame_count]u32 = undefined;
+        for (&ids, 0..) |*set, o| {
+            for (set) |*id| id.* = @intCast(10 * (o + 1));
+        }
+        const s: Sixel = .{ .ids = ids, .cell_w = 8, .cell_h = 16 };
+        {
+            const surface = try testSurface(gpa, .{ .width = 40, .height = 14 });
+            defer gpa.free(surface.buffer);
+            var st: State = .{ .mode = .loop, .facing = .default, .graphics = .{ .sixel = s } };
+            st.draw(surface, 4, 1);
+            try testing.expectEqual(@as(u32, 10), surface.readCell(4, 1).sixel.?.img_id);
+            // And no half-blocks underneath it: one renderer draws, not two.
+            var painted: usize = 0;
+            for (surface.buffer) |cell| painted += @intFromBool(!cell.default);
+            try testing.expectEqual(@as(usize, 1), painted);
+        }
+        {
+            const surface = try testSurface(gpa, .{ .width = 40, .height = 14 });
+            defer gpa.free(surface.buffer);
+            var st: State = .{ .mode = .loop, .facing = .inverted, .graphics = .{ .sixel = s } };
+            st.draw(surface, 4, 1);
+            try testing.expectEqual(@as(u32, 20), surface.readCell(4, 1).sixel.?.img_id);
+        }
+    }
+}
+
+test "the cell fallback never emits image control data" {
+    // The point of the fallback is that a terminal which cannot show a raster
+    // is sent none: not a kitty placement, not a sixel payload.
+    const gpa = testing.allocator;
+    for ([_]Graphics{ .unknown, .cells }) |g| {
+        const surface = try testSurface(gpa, .{ .width = 40, .height = 14 });
+        defer gpa.free(surface.buffer);
+        var st: State = .{ .mode = .loop, .graphics = g };
+        st.draw(surface, 4, 1);
+        for (surface.buffer) |cell| {
+            try testing.expect(cell.image == null);
+            if (sixel_supported) try testing.expect(cell.sixel == null);
+        }
+    }
+}
+
+test "every size places a sixel inside its own box, at every mirror" {
+    if (!sixel_supported) return error.SkipZigTest;
+    if (sixel_supported) {
+        const gpa = testing.allocator;
+        for (std.enums.values(Size)) |size| {
+            const v = size.variant();
+            const s: Sixel = .{ .ids = @splat(@splat(1)), .cell_w = 9, .cell_h = 18 };
+            for ([_]Flip{ .none, .horizontal, .vertical }) |f| {
+                const surface = try testSurface(gpa, .{ .width = v.cols + 10, .height = v.rows + 4 });
+                defer gpa.free(surface.buffer);
+                drawSixel(v, surface, s, 2, f, 3, 1);
+                const placement = surface.readCell(3, 1).sixel.?;
+                // The configured footprint, unchanged by the renderer: this is
+                // the whole reason sixel exists here rather than a bigger
+                // half-block grid.
+                try testing.expectEqual(v.cols, placement.cols);
+                try testing.expectEqual(v.rows, placement.rows);
+            }
         }
     }
 }
