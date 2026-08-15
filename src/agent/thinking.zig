@@ -61,14 +61,39 @@ pub fn cheapestProvider(cfg: *const config.Config) ?*const config.Provider {
     return best;
 }
 
-pub fn resolveClassifier(cfg: *const config.Config) ?*const config.Provider {
+/// `thinking_classifier_model` is documented (config.zig) as accepting a
+/// bare provider name or a `provider/model` pair, mirroring `--model`'s
+/// dual form — but unlike `--model`, a bare spec here names a *provider*,
+/// not a model on the default one, so this cannot just delegate to
+/// `Config.resolveProvider`. It still borrows that function's existence
+/// check: a spec that contains a `/` only splits into provider/model when
+/// the head actually names a configured provider (config.zig:4226 tests
+/// the same case for `--model`), since a model id can itself contain a
+/// `/` (e.g. `moonshotai/kimi-k3`). Returns a copy, not a pointer into
+/// `cfg.providers`, so the model override never mutates the live config.
+pub fn resolveClassifier(cfg: *const config.Config) ?config.Provider {
     const spec = cfg.agent.thinking_classifier_model;
-    if (spec.len > 0) {
-        const slash = std.mem.findScalar(u8, spec, '/');
-        const name = if (slash) |i| spec[0..i] else spec;
-        return cfg.providers.getPtr(name);
+    if (spec.len == 0) {
+        if (cheapestProvider(cfg)) |p| return p.*;
+        return null;
     }
-    return cheapestProvider(cfg);
+    if (std.mem.findScalar(u8, spec, '/')) |slash| {
+        const head = spec[0..slash];
+        const tail = spec[slash + 1 ..];
+        if (head.len > 0 and tail.len > 0) {
+            if (cfg.providers.getPtr(head)) |p| {
+                var picked = p.*;
+                picked.default_model = tail;
+                return picked;
+            }
+        }
+        // The slash did not split off a known provider, so it belongs to
+        // the model id itself — the whole spec is not a valid provider
+        // name either. Fail open rather than guess.
+        return null;
+    }
+    if (cfg.providers.getPtr(spec)) |p| return p.*;
+    return null;
 }
 
 /// Fail-open classifier. Returns null when disabled or on any error.
@@ -98,7 +123,7 @@ pub fn classify(
     var err_detail: ?[]const u8 = null;
     const started = std.Io.Timestamp.now(io, .awake);
     const resp = client.chatWithTimeout(&ctx, arena, .{
-        .provider = provider,
+        .provider = &provider,
         .messages = &msgs,
         .max_tokens = 5,
         .temperature = 0,
@@ -128,4 +153,50 @@ test "effortFor maps xhigh onto high" {
 
 test "auto_thinking is off by default" {
     try std.testing.expect(!(config.Agent{}).auto_thinking);
+}
+
+test "resolveClassifier: bare spec is a provider name, not a model on the default" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var cfg = config.Config{ .default_provider = "zai" };
+    var zai = config.Provider{ .name = "zai", .base_url = "https://zai.test", .default_model = "glm-5.2" };
+    try zai.models.put(arena, "glm-5.2", .{});
+    try cfg.providers.put(arena, "zai", zai);
+    var kimi = config.Provider{ .name = "kimi-k3", .base_url = "https://api.moonshot.ai/v1", .default_model = "kimi-k3" };
+    try kimi.models.put(arena, "kimi-k3", .{});
+    try cfg.providers.put(arena, "kimi-k3", kimi);
+    cfg.agent.thinking_classifier_model = "kimi-k3";
+
+    const p = resolveClassifier(&cfg) orelse return error.NoProvider;
+    try std.testing.expectEqualStrings("kimi-k3", p.name);
+    try std.testing.expectEqualStrings("kimi-k3", p.default_model);
+}
+
+test "resolveClassifier: provider/model only splits when the head is a real provider" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var cfg = config.Config{ .default_provider = "zai" };
+    var zai = config.Provider{ .name = "zai", .base_url = "https://zai.test", .default_model = "glm-5.2" };
+    try zai.models.put(arena, "glm-5.2", .{});
+    try cfg.providers.put(arena, "zai", zai);
+    var kimi = config.Provider{ .name = "kimi-k3", .base_url = "https://api.moonshot.ai/v1", .default_model = "kimi-k3" };
+    try kimi.models.put(arena, "moonshotai/kimi-k3", .{});
+    try cfg.providers.put(arena, "kimi-k3", kimi);
+
+    // "provider/model", where the model id itself contains a slash
+    // (config.zig's own documented example). The first slash still splits
+    // correctly because "kimi-k3" names a real provider.
+    cfg.agent.thinking_classifier_model = "kimi-k3/moonshotai/kimi-k3";
+    const p = resolveClassifier(&cfg) orelse return error.NoProvider;
+    try std.testing.expectEqualStrings("kimi-k3", p.name);
+    try std.testing.expectEqualStrings("moonshotai/kimi-k3", p.default_model);
+
+    // A spec whose slash-prefix names no configured provider (the model id
+    // is the whole spec) fails open rather than guessing.
+    cfg.agent.thinking_classifier_model = "moonshotai/kimi-k3";
+    try std.testing.expect(resolveClassifier(&cfg) == null);
 }
