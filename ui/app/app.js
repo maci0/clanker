@@ -5693,10 +5693,11 @@ el.runCopy.addEventListener("click", function () {
 
 /* ---------- board ---------- */
 
-/* Extracted to features/board.js; wired here with the app-level pieces it
-   needs: tab counts, opening a recorded run, and the peer roster for the
-   quick-add @ mention hint. */
-bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: function () { return knownPeers; } });
+/* The board is wired on its first open, not here: features/board.js is
+   lazy-loaded (see the `board:` view loader) so opening the chat view never
+   pulls the board module. A stale top-level `bindBoard(...)` call that
+   survived that extraction threw `bindBoard is not defined` and killed the
+   whole boot chain before sessions, prompts, and the transcript ever wired. */
 
 // Archive + Import (history parity) — reuses existing session API, no invented state
 (function(){

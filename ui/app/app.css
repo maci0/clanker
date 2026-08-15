@@ -3143,6 +3143,20 @@ mark {
 .suggestion:hover { border-color: var(--border); background: var(--surface-2); }
 .suggestion:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+/* The four suggestions arrive in a quick stagger so the empty state reads as
+   alive rather than a wall that popped in. Motion-gated with everything else;
+   reduced-motion users get the plain instant grid. */
+@media (prefers-reduced-motion: no-preference) {
+  .suggestion { animation: suggestion-in 0.32s ease-out both; }
+  .suggestion:nth-child(2) { animation-delay: 0.05s; }
+  .suggestion:nth-child(3) { animation-delay: 0.1s; }
+  .suggestion:nth-child(4) { animation-delay: 0.15s; }
+}
+@keyframes suggestion-in {
+  from { opacity: 0; transform: translateY(0.3rem); }
+  to { opacity: 1; transform: none; }
+}
+
 .toasts {
   position: fixed; left: 50%; transform: translateX(-50%);
   bottom: var(--space-5); z-index: 30;
