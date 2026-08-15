@@ -217,6 +217,7 @@ export function upgradePfLabel(el) {
 
 export function upgradePfForm(el) {
   if (!el || el.tagName !== "FORM") return el;
+  if (el.hidden || el.hasAttribute("hidden")) return el;
   if (!el.classList.contains("pf-v6-c-form")) el.classList.add("pf-v6-c-form");
   return el;
 }

@@ -93,7 +93,6 @@ Constraints, which are the page's constraints:
 - Build DOM with `createElement` and `textContent`. Never assign `innerHTML`
   from data.
 - Every control needs a visible label or an `aria-label`, and a target at least
-  32px high. The host styles a bare `button` as a 40px accent pill
-  (`button:where(:not(.pf-v6-c-button))`); a plugin that wants a filename
-  or a crumb has to reset min-height, padding, and fill in its own CSS.
+  32px high. The host accent pill is `button.primary` and `#submit` only;
+  a bare `button` is not a Run control.
 - No build step and no dependencies: the file that ships is the file that runs.

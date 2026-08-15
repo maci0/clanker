@@ -22,10 +22,11 @@ cabinet UI uses system stacks (`--sans` / `--mono`), and the Red Hat webfont
 files are not vendored. Re-copying from npm must strip `@font-face` again (or
 vendor the fonts under `ui/vendor/assets/fonts/` and keep CSP `font-src 'self'`).
 
-Measured 2026-08-15: 1.8MB, ~1000 class tokens. clanker uses ten families
-(page, masthead, nav, button, form, check, label, alert, backdrop, modal).
-Table/wizard/drawer/menu are unused. Do not hand-carve a subset; generate
-one from this inventory if the payload has to shrink.
+Measured 2026-08-15: the committed file is a generated subset (~625KB)
+of the 1.8MB upstream sheet. clanker uses ten families (page, masthead,
+nav, button, form, check, label, alert, backdrop, modal).
+Table/wizard/drawer/menu are unused. Regenerate from the full upstream
+copy (`scripts/subset-patternfly.py`); do not re-subset this file.
 
 `patternfly-addons.css` stays in the tree for optional utility classes but is
 not linked from `index.html` (unused `pf-v6-u-*` would add ~180KB for no gain).
