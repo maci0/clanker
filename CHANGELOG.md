@@ -29,9 +29,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
-- The Moonshot provider is named `moonshotai`. `kimi-k3` and
-  `kimi-k2.7-code` are models on it, not provider ids. Composite keys
-  are `moonshotai/kimi-k3`.
+- Provider ids match the vendor, not a model name: `moonshotai` (Kimi
+  models), `meta` (Muse Spark models), `openrouter` (routed
+  `vendor/model` ids). `deepseek-v4` was not a catalog id and is gone.
 - `clanker serve` greets a terminal with a startup card: robot badge,
   version, clickable Local URL, whether the network can reach it, the
   proxy mount when enabled, and how to stop. A piped stdout still gets

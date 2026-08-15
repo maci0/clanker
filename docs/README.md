@@ -76,7 +76,8 @@ header, the URL verb and the credential.
 - **gemini** (`src/llm/providers/gemini.zig`): Google Gemini generateContent (AI Studio). Key on `x-goog-api-key`.
 - **deepseek**: OpenAI-compatible provider at `https://api.deepseek.com`.
 - **moonshotai**: OpenAI-compatible provider at `api.moonshot.ai/v1`. Kimi is a model family on it (`kimi-k3`, `kimi-k2.7-code`).
-- **muse-spark** / **muse-spark-1.1**: Anthropic-compatible providers for Muse Spark models.
+- **meta**: OpenAI-compatible provider at `api.meta.ai/v1`. Muse Spark is a model family on it.
+- **openrouter**: OpenAI-compatible router at `openrouter.ai/api/v1`. Model ids are `vendor/model` (e.g. `meta/muse-spark-1.2`).
 - **ollama**: local OpenAI-compatible endpoint at `http://127.0.0.1:11434/v1`.
 - **vllm-local**: OpenAI-compatible endpoint for a local vLLM server.
 - **openai** / **anthropic**: first-party API endpoints.
@@ -860,18 +861,18 @@ base_url = "https://api.deepseek.com"
 api_key_env = "DEEPSEEK_API_KEY"
 default_model = "deepseek-chat"
 
-[providers.muse-spark]
-kind = "anthropic"
-base_url = "https://api.musespark.ai/v1"
-api_key_env = "MUSE_SPARK_API_KEY"
-default_model = "spark-v3"
+[providers.meta]
+kind = "openai_compat"
+base_url = "https://api.meta.ai/v1"
+api_key_env = "META_AI_API_KEY"
+default_model = "muse-spark-1.2"
 
 [models."deepseek/deepseek-chat"]
 provider = "deepseek"
 max_tokens = 2048
 
-[models."muse-spark/spark-v3"]
-provider = "muse-spark"
+[models."meta/muse-spark-1.2"]
+provider = "meta"
 
 [agent]
 max_iterations = 50
