@@ -305,6 +305,11 @@ function loadConfigured() {
       configuredProviders = (d.providers || []).map(function (p) { return p.name; });
       providersKnown = true;
       var rows = [];
+      // Parallel to `rows`: null for an ordinary row, or {group, variant}
+      // so the post-render pass can fold alias variants (several local
+      // names sharing one wire SKU, e.g. grok4.6-coding / grok4.6-general)
+      // behind one toggle row.
+      var rowMeta = [];
       (d.providers || []).forEach(function (prov) {
         if (providerSel) {
           var opt = document.createElement("option");
@@ -312,6 +317,11 @@ function loadConfigured() {
           opt.textContent = prov.name;
           providerSel.appendChild(opt);
         }
+        var bySku = {};
+        (prov.models || []).forEach(function (m) {
+          var sku = m.id || m.name;
+          (bySku[sku] = bySku[sku] || []).push(m);
+        });
         (prov.models || []).forEach(function (m) {
           var entry = {
             provider: prov.name, model: m.name, id: m.id || "", display: m.display || "", category: m.category || "",
@@ -320,6 +330,18 @@ function loadConfigured() {
             cost_per_1m_input: m.cost_per_1m_input, cost_per_1m_output: m.cost_per_1m_output,
             capabilities: m.capabilities || []
           };
+          var sku = m.id || m.name;
+          var variants = bySku[sku];
+          var groupKey = prov.name + "/" + sku;
+          if (variants.length > 1 && variants[0] === m) {
+            // First variant carries the fold row for the whole group.
+            rows.push([
+              prov.name,
+              groupToggle(m.display || sku, variants.length, groupKey),
+              "", "", "", "", "", ""
+            ]);
+            rowMeta.push({ group: groupKey, head: true });
+          }
           rows.push([
             prov.name,
             m.display || m.name,
@@ -330,6 +352,7 @@ function loadConfigured() {
             m.name === prov.default_model ? "default" : "",
             editButton(entry)
           ]);
+          rowMeta.push(variants.length > 1 ? { group: groupKey, variant: true } : null);
         });
       });
       // Before the early return below: a config with providers but no declared
@@ -340,11 +363,42 @@ function loadConfigured() {
         return;
       }
       box.appendChild(table(["provider", "model", "category", "ctx", "in $/1M", "out $/1M", "", ""], rows));
+      // Fold pass: hide variant rows behind their group's toggle row.
+      var trs = box.querySelectorAll("tbody tr");
+      trs.forEach(function (tr, i) {
+        var meta = rowMeta[i];
+        if (meta && meta.variant) {
+          tr.hidden = true;
+          tr.className = "models-variant-row";
+          tr.setAttribute("data-group", meta.group);
+        }
+      });
     })
     .catch(function (err) {
       box.textContent = "";
       box.appendChild(empty("Could not load providers: " + err.message));
     });
+}
+
+/* One SKU under several local names folds behind this row: the chevron
+   toggle shows/hides every tr carrying the group's data-group. */
+function groupToggle(label, count, groupKey) {
+  var btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "secondary models-group-toggle";
+  btn.setAttribute("aria-expanded", "false");
+  btn.textContent = "▸ " + label + " · " + count + " variants";
+  btn.addEventListener("click", function () {
+    var open = btn.getAttribute("aria-expanded") === "true";
+    btn.setAttribute("aria-expanded", String(!open));
+    btn.textContent = (open ? "▸ " : "▾ ") + label + " · " + count + " variants";
+    // Attribute-value comparison instead of a selector: the key is data,
+    // not selector syntax, so no escaping questions.
+    document.querySelectorAll("tr[data-group]").forEach(function (tr) {
+      if (tr.getAttribute("data-group") === groupKey) tr.hidden = open;
+    });
+  });
+  return btn;
 }
 
 function editButton(entry) {

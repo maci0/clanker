@@ -49,3 +49,9 @@ test("catalog refresh posts to /api/catalog/refresh", function () {
   assert.match(js, /method:\s*"POST"/);
   assert.match(js, /getElementById\("models-catalog-refresh"\)[\s\S]*refreshCatalog/);
 });
+
+test("Configured table folds alias variants behind a group toggle", function () {
+  assert.match(js, /models-group-toggle/);
+  assert.match(js, /data-group/);
+  assert.match(js, /variants\.length > 1/);
+});
