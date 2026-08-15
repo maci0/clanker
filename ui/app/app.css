@@ -802,6 +802,7 @@ main.pf-v6-c-page__main {
   min-height: 32px; padding: 0.25rem 0.55rem;
   border: 1px solid var(--rule); border-radius: 999px;
   background: var(--surface);
+  max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .run-shape > summary::-webkit-details-marker { display: none; }
 .run-shape[open] > summary,
