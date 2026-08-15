@@ -153,8 +153,16 @@ pub fn trySendChat(gpa: std.mem.Allocator, peer_id: []const u8, peer_name: []con
     var to_buf: [64]u8 = undefined;
     const to_len: usize = if (m) |row| row.id_len else 0;
     if (m) |row| @memcpy(to_buf[0..to_len], row.id[0..to_len]);
+    // Residual posix: the member fd is owned by the connection thread, which
+    // can close it (and the number be recycled by a newly accepted peer) as
+    // soon as this lock drops. dup under the lock so the write below targets
+    // this socket even if the connection dies mid-send: the duplicate keeps
+    // the open file description alive and cannot be redirected by fd reuse.
+    const send_fd = if (fd >= 0) std.c.dup(fd) else -1;
     rt.mu.unlock();
-    if (fd < 0 or to_len == 0) return false;
+    if (send_fd < 0) return false;
+    defer _ = std.c.close(send_fd);
+    if (to_len == 0) return false;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     var out: std.Io.Writer.Allocating = .init(arena_state.allocator());
@@ -173,7 +181,7 @@ pub fn trySendChat(gpa: std.mem.Allocator, peer_id: []const u8, peer_name: []con
     s.objectField("payload") catch return false;
     s.write(.{ .room = msg.room, .from = msg.from, .text = msg.text, .id = msg.id, .ts = msg.ts }) catch return false;
     s.endObject() catch return false;
-    return writeFrame(fd, gpa, out.written());
+    return writeFrame(send_fd, gpa, out.written());
 }
 
 fn handleInbound(rt: *Runtime, raw: []const u8) void {
