@@ -18,3 +18,17 @@ test("music plugin registers a view and a dock", () => {
   assert.doesNotMatch(js, /eval\(/);
   assert.match(css, /--surface/);
 });
+
+test("playback ticks update chrome in place instead of rebuilding the tree", () => {
+  assert.match(js, /function syncChrome/);
+  assert.match(js, /addEventListener\("timeupdate", syncChrome\)/);
+  assert.doesNotMatch(js, /addEventListener\("timeupdate", draw\)/);
+  assert.match(js, /var scrubbing = false/);
+});
+
+test("empty playlist and bad URL say what to do next", () => {
+  assert.match(js, /No tracks yet\. Add audio files or a URL above to start\./);
+  assert.match(js, /Need a full http\(s\) URL/);
+  assert.match(js, /Those files are not audio/);
+  assert.match(css, /\.music-note/);
+});

@@ -2325,9 +2325,17 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
     width: 260px; min-width: 260px; max-width: 260px;
   }
   .slack-sidebar-toggle { display: inline-flex; }
+  .slack-sidebar-scrim {
+    display: block; position: absolute; inset: 0; z-index: 25;
+    background: color-mix(in srgb, var(--fg) 28%, transparent);
+  }
+  .slack-sidebar.is-collapsed + .slack-sidebar-scrim { display: none; }
   .slack-channel-header { padding: 0.4rem 0.75rem; }
   .chat-composer { padding: 0.4rem 0.75rem 0.5rem; }
   .slack-formatting-hint { display: none; }
+}
+@media (min-width: 48.01rem) {
+  .slack-sidebar-scrim { display: none; }
 }
 .chat-log {
   margin-top: 1rem; border: 1px solid var(--rule); border-radius: var(--radius-lg);
@@ -3417,8 +3425,12 @@ button.rail-group:hover { color: var(--fg); }
 .rail-empty-action:hover, .rail-empty-action:focus-visible { color: var(--accent); }
 label:has(+ input[required])::after,
 label:has(+ textarea[required])::after,
+label:has(> input[required])::after,
+label:has(> textarea[required])::after,
 label.pf-v6-c-form__label:has(+ input[required])::after,
-label.pf-v6-c-form__label:has(+ textarea[required])::after {
+label.pf-v6-c-form__label:has(+ textarea[required])::after,
+label.pf-v6-c-form__label:has(> input[required])::after,
+label.pf-v6-c-form__label:has(> textarea[required])::after {
   content: " (required)";
   color: var(--fg-muted);
   font-weight: 400;
@@ -3464,6 +3476,9 @@ h2#session-title {
      open and close as a whole, so the collapse toggle would describe a state
      the drawer does not have. */
   #rail-collapse { display: none; }
+  /* Later `.rail input` sets 12px for the desktop column. That rule sits
+     after the page-wide 16px phone guard and would zoom iOS Safari on focus. */
+  .rail input[type="search"] { font-size: 16px; }
 }
 @media (min-width: 40.01rem) {
   .rail[data-collapsed="true"],
@@ -4479,6 +4494,9 @@ h2#session-title {
   .board-filter > input[type="search"] { flex: 1 1 14rem; min-height: 44px; }
   .board-filter select { min-height: 44px; }
   .board-empty { margin: var(--space-4) auto; align-items: flex-start; text-align: left; }
+  /* Same iOS zoom contract as the page-wide phone-field guard: this
+     textarea's 13px rule is declared after that guard. */
+  .board-quick-add .board-add-form textarea { font-size: 16px; }
 }
 
 /* Arena: the match picker rows. The stage reuses .fleet-floor, and the
@@ -4681,3 +4699,6 @@ h2#session-title {
 .config-editor textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 .models-edit-toml-editor { min-height: 12rem; margin-top: var(--space-2); }
 .models-edit-toml-editor[hidden] { display: none; }
+/* Same [hidden]-vs-author-display trap as #cancel and #models-edit-remove. */
+#mcp-edit-remove[hidden] { display: none; }
+#mcp-edit[hidden] { display: none; }

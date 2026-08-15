@@ -330,6 +330,22 @@ max_history = 500
 # on = true
 # topic = "clanker"
 
+# External MCP servers this clanker may consume tools from. Configuration is
+# live now (validated at load, managed from System -> MCP servers in the web
+# UI); the client bridge that actually connects is PRD 0032 and stays behind
+# modules.mcp_client until it lands. transport "stdio" spawns `command` with
+# `args`/`env` ("KEY=value" pairs) in `cwd`; transport "http" speaks
+# streamable HTTP at `url` with `headers` ("Name: value" lines).
+# [mcp_servers.github]
+# transport = "stdio"
+# command = "github-mcp-server"
+# args = ["stdio"]
+# env = ["GITHUB_TOKEN=..."]
+# cwd = ""
+# url = ""
+# headers = []
+# tool_call_timeout_ms = 60000
+
 # Hosts the research tools may reach. The sandbox denies a tool the network
 # unless its own descriptor names the host, so this is the config-side channel
 # for that: every name here is added to fetch_web's and web_search's allowlists

@@ -122,6 +122,19 @@
 }
 .music-track.is-current .music-track-name { color: var(--accent); font-weight: 600; }
 .music-empty { color: var(--fg-muted); padding: var(--space-3) 0; }
+.music-note { color: var(--danger); margin: var(--space-2) 0 0; }
+.music-note[hidden] { display: none; }
+
+@media (pointer: coarse) {
+  .music-btn, .music-file, .music-track-name {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .music-btn-play, .music-fab {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
 
 @media (max-width: 40rem) {
   .music-dock {
@@ -129,5 +142,10 @@
     right: var(--space-3);
     bottom: 5.5rem;
     max-width: none;
+  }
+  /* The dock is position:fixed; without this the last lines of Chat or
+     a plugin sit under the transport. Collapsed fab is small enough. */
+  body:has(#music-dock:not([data-collapsed="true"])) {
+    padding-bottom: 8rem;
   }
 }

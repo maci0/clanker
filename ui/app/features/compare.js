@@ -118,7 +118,17 @@ function fetchComparison(id) {
     renderPicker(state.list);
     return data;
   }).catch(function (err) {
-    if (status) status.textContent = "Could not load comparison: " + err.message;
+    var msg = "Could not load comparison: " + err.message;
+    if (status) status.textContent = msg;
+    // A failed open used to leave the previous comparison on screen under a
+    // status line, so the click looked like it had switched answers.
+    var head = byId("compare-prompt");
+    var foot = byId("compare-verdict");
+    var key = byId("compare-key");
+    if (head) head.textContent = "";
+    if (foot) foot.textContent = "";
+    if (key) { key.textContent = ""; key.hidden = true; }
+    showLoadError(byId("compare-answers"), msg, function () { return fetchComparison(id); });
     return null;
   });
 }

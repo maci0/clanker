@@ -43,6 +43,13 @@ test("Files folder load error offers to try again", function () {
   assert.doesNotMatch(js, /"Error: "\s*\+\s*err\.message/);
 });
 
+test("Files file open error shows in the preview with retry", function () {
+  const js = readFileSync(join(here, "app.js"), "utf8");
+  assert.match(js, /Could not open this file/);
+  assert.match(js, /openFile\(path, name\)/);
+  assert.match(js, /rightPane\.hidden = false/);
+});
+
 test("Files buttons reset the host pill so filenames stay compact", function () {
   assert.match(css, /:where\(#view-files\)\s*button:where\(:not\(\.secondary\)\)/);
   assert.match(css, /\.files-open\s*\{[^}]*min-height:\s*28px/);

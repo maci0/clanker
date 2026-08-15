@@ -139,7 +139,17 @@ function fetchMatch(id, quiet) {
       return null;
     }
     stopPolling();
-    if (status) status.textContent = "Could not load match: " + err.message;
+    var msg = "Could not load match: " + err.message;
+    if (status) status.textContent = msg;
+    // Same trap as Compare: a failed open used to leave the last match's
+    // transcript and stage up, so the picker click looked like it worked.
+    var chips = byId("arena-combatants");
+    if (chips) chips.textContent = "";
+    var stage = byId("arena-stage");
+    if (stage) stage.hidden = true;
+    var graph = byId("arena-graph");
+    if (graph) graph.hidden = true;
+    showLoadError(byId("arena-transcript"), msg, function () { return fetchMatch(id, false); });
     return null;
   });
 }

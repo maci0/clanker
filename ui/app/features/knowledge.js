@@ -207,7 +207,21 @@ function openCollection(id, docId){
     if(!docId){
       try{ detail.scrollIntoView({behavior:"smooth",block:"nearest"}); }catch(_){}
     }
-  }).catch(function(err){ toast(err.message); });
+  }).catch(function(err){
+    var detail=document.getElementById("knowledge-detail");
+    if(detail){
+      detail.hidden=false; detail.textContent="";
+      var failed=document.createElement("p");
+      failed.className="run-empty";
+      failed.appendChild(document.createTextNode("Could not open this collection. "+err.message+" "));
+      var retry=document.createElement("button");
+      retry.type="button"; retry.className="secondary"; retry.textContent="Try again";
+      retry.addEventListener("click",function(){ openCollection(id, docId); });
+      failed.appendChild(retry);
+      detail.appendChild(failed);
+    }
+    toast(err.message);
+  });
 }
 function deleteCollection(id,title){
   uiConfirm("Delete collection \""+title+"\" and all its documents?", { danger: true, confirmLabel: "Delete" }).then(function(yes){

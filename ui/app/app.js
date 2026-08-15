@@ -3497,7 +3497,7 @@ function renderChatRooms(rooms) {
   var empty = options.length === 0;
   el.chatRoom.disabled = empty;
   el.chatText.disabled = empty;
-  el.chatSend.disabled = empty;
+  syncChatSend();
   if (empty) {
     el.chatStatus.textContent = "No rooms yet. Add [chat.rooms] in config.toml or use --serve-as to peer.";
     showRoomsComposerLocked("No channels yet. Create one to start talking, or add rooms in config.toml.", true);
@@ -3531,20 +3531,29 @@ function loadChatRooms() {
     .catch(function (err) {
       el.chatRoom.disabled = true;
       el.chatText.disabled = true;
-      el.chatSend.disabled = true;
+      syncChatSend();
       el.chatStatus.textContent = "Could not load rooms: " + err.message;
+      if (el.chatRoomsItems && !el.chatRoomsItems.querySelector(".slack-room-item")) {
+        el.chatRoomsItems.textContent = "";
+        var fail = document.createElement("p");
+        fail.className = "meta";
+        fail.textContent = "Could not load channels.";
+        el.chatRoomsItems.appendChild(fail);
+      }
       showRoomsComposerLocked("Could not load rooms: " + err.message, false);
     });
 }
 
 function showRoomsComposerLocked(message, offerCreate) {
-  if (el.chatChannelTitle) el.chatChannelTitle.textContent = "No channels";
+  if (el.chatChannelTitle) el.chatChannelTitle.textContent = offerCreate ? "No channels" : "Channels unavailable";
   if (el.chatChannelTopic) {
     el.chatChannelTopic.textContent = "";
     el.chatChannelTopic.classList.remove("is-placeholder");
     el.chatChannelTopic.onclick = null;
   }
-  if (el.chatText) el.chatText.placeholder = "Create a channel to send a message";
+  if (el.chatText) el.chatText.placeholder = offerCreate
+    ? "Create a channel to send a message"
+    : "Retry loading channels to send a message";
   if (!el.chatLog) return;
   el.chatLog.textContent = "";
   var box = document.createElement("div");
@@ -3559,6 +3568,13 @@ function showRoomsComposerLocked(message, offerCreate) {
     btn.textContent = "Create a channel";
     btn.addEventListener("click", function () { el.chatCreateRoomBtn.click(); });
     box.appendChild(btn);
+  } else {
+    var retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "secondary";
+    retry.textContent = "Try again";
+    retry.addEventListener("click", function () { loadChatRooms(); });
+    box.appendChild(retry);
   }
   el.chatLog.appendChild(box);
 }
@@ -3602,7 +3618,7 @@ function openChatRoom(room) {
   _lastChatFrom = null; _lastChatTs = 0; _lastChatDay = "";
   chatBackoff = chat_poll_base_ms;
   el.chatText.disabled = false;
-  el.chatSend.disabled = false;
+  syncChatSend();
   el.chatText.placeholder = isDm(room) ? "Message " + dmPartner(room) + "…" : "Message " + room + "…";
   // Channel header: title + topic (click to set/change). DMs get no topic —
   // it is a per-channel concept, and a DM has nothing to name.
@@ -3637,6 +3653,9 @@ function openChatRoom(room) {
   // A room switch invalidates whatever the pins/search panels were showing.
   if (el.chatPinsPanel && !el.chatPinsPanel.hidden) loadChatPins(room);
   if (el.chatSearchBar && !el.chatSearchBar.hidden) el.chatSearchResults.textContent = "";
+  // Phone: the channel drawer sits over the transcript and covers the
+  // header toggle. Picking a room has to put the messages in front.
+  setRoomsSidebarOpen(false, true);
   // History must not dump into a live region. Announce only arrivals after
   // the backlog is on screen, and only through #chat-status.
   _chatAnnounce = false;
@@ -4254,9 +4273,33 @@ el.chatRefresh.addEventListener("click", function () {
 //      emoji picker, create-channel. All thin wrappers over state and
 //      endpoints the message-level code above already uses. ----
 
+function roomsSidebarIsPhone() {
+  return !!(window.matchMedia && window.matchMedia("(max-width: 48rem)").matches);
+}
+
+function setRoomsSidebarOpen(open, phoneOnly) {
+  if (!el.chatSidebar) return;
+  if (phoneOnly && !roomsSidebarIsPhone()) return;
+  el.chatSidebar.classList.toggle("is-collapsed", !open);
+  if (el.chatSidebarToggle) {
+    el.chatSidebarToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    el.chatSidebarToggle.setAttribute("aria-label", open ? "Hide channels" : "Show channels");
+  }
+}
+
 if (el.chatSidebarToggle) el.chatSidebarToggle.addEventListener("click", function () {
-  el.chatSidebar.classList.toggle("is-collapsed");
+  setRoomsSidebarOpen(el.chatSidebar.classList.contains("is-collapsed"), false);
 });
+
+var chatSidebarScrim = document.getElementById("chat-sidebar-scrim");
+if (chatSidebarScrim) chatSidebarScrim.addEventListener("click", function () {
+  setRoomsSidebarOpen(false, true);
+});
+
+// First paint on a phone: start closed so the transcript is not under the
+// drawer. Opening the view then picking a channel still closes it.
+if (roomsSidebarIsPhone()) setRoomsSidebarOpen(false, true);
+else setRoomsSidebarOpen(true, false);
 
 // Group headers (Channels / Direct Messages) fold their own items away —
 // .slack-room-group.is-collapsed hides .slack-room-items via CSS.
@@ -4288,7 +4331,18 @@ if (el.chatRoomFilter) el.chatRoomFilter.addEventListener("input", function () {
       host.appendChild(note);
     }
     if (note) {
-      note.textContent = "No channel matches “" + el.chatRoomFilter.value.trim() + "”.";
+      note.textContent = "";
+      note.appendChild(document.createTextNode("No channel matches “" + el.chatRoomFilter.value.trim() + "”. "));
+      var clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "secondary";
+      clear.textContent = "Clear filter";
+      clear.addEventListener("click", function () {
+        el.chatRoomFilter.value = "";
+        el.chatRoomFilter.dispatchEvent(new Event("input", { bubbles: true }));
+        el.chatRoomFilter.focus();
+      });
+      note.appendChild(clear);
       note.hidden = false;
     }
   } else if (note) note.hidden = true;
@@ -4422,6 +4476,7 @@ if (el.chatEmojiBtn && el.chatEmojiPicker) {
         el.chatText.focus();
         el.chatText.selectionStart = el.chatText.selectionEnd = start + emoji.length;
         el.chatEmojiPicker.hidden = true;
+        syncChatSend();
       });
       el.chatEmojiPicker.appendChild(b);
     });
@@ -4492,6 +4547,7 @@ el.chatText.addEventListener("input", function(){
   setTyping(true);
   if(typingTimer) clearTimeout(typingTimer);
   typingTimer = setTimeout(function(){ if(Date.now()-typingAt >= 1800) setTyping(false); }, 2000);
+  syncChatSend();
 });
 
 /* ── Ctrl+K / Cmd+K: Quick channel switcher (Slack-style) ── */
@@ -4557,6 +4613,17 @@ el.chatText.addEventListener("keydown", function(e){
     if (peers) el.chatStatus.textContent = "Mention: @" + (peers.split(",")[0].trim()) + (peers.indexOf(",") !== -1 ? " — also: " + peers.split(",").slice(1,2).join("") + "…" : "");
   }
 });
+var chatSending = false;
+function syncChatSend() {
+  if (!el.chatSend || !el.chatText) return;
+  var noRoom = !el.chatRoom || el.chatRoom.disabled || !el.chatRoom.value;
+  var empty = !el.chatText.value.trim();
+  el.chatSend.disabled = chatSending || noRoom || el.chatText.disabled || empty;
+  var hint = noRoom ? "Pick a channel first" : (empty ? "Write a message first" : "Send");
+  el.chatSend.title = hint;
+  el.chatSend.setAttribute("aria-label", hint);
+}
+
 el.chatForm.addEventListener("submit", function (e) {
   e.preventDefault();
   var text = el.chatText.value.trim();
@@ -6031,5 +6098,174 @@ Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
     text.setRangeText("  ", s, text.selectionEnd, "end");
     paint();
   });
+  load();
+})();
+
+/* ---- MCP servers (System view) -------------------------------------------
+   CRUD over [mcp_servers.<name>] stanzas in config.local.toml, through the
+   same validated table/set + table/remove pipeline every config write uses.
+   Config is live now; the client bridge that connects ships behind
+   modules.mcp_client (PRD 0032). */
+(function bindMcpServers() {
+  var list = document.getElementById("mcp-list");
+  var host = document.getElementById("mcp-edit");
+  if (!list || !host) return;
+  var statusEl = document.getElementById("mcp-status");
+
+  function f(id) { return document.getElementById(id); }
+  function note(msg) {
+    var n = f("mcp-edit-note");
+    if (n) { n.textContent = msg; n.hidden = !msg; }
+    if (statusEl && msg) statusEl.textContent = msg;
+  }
+  function tomlStr(v) {
+    return '"' + String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+  }
+  function splitList(v) {
+    return String(v || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
+  function openEdit(s) {
+    var isNew = !s;
+    s = s || {};
+    f("mcp-edit-title").textContent = isNew ? "Add an MCP server" : "mcp_servers." + s.name;
+    f("mcp-edit-name").value = s.name || "";
+    f("mcp-edit-name").disabled = !isNew;
+    f("mcp-edit-transport").value = s.transport || "stdio";
+    f("mcp-edit-command").value = s.command || "";
+    f("mcp-edit-args").value = (s.args || []).join(", ");
+    f("mcp-edit-cwd").value = s.cwd || "";
+    f("mcp-edit-url").value = s.url || "";
+    f("mcp-edit-timeout").value = s.tool_call_timeout_ms || "";
+    // Values never round-trip (the listing withholds them); editing an
+    // existing server keeps its env/headers unless new ones are typed.
+    f("mcp-edit-env").value = "";
+    f("mcp-edit-env").placeholder = (s.env_names || []).length
+      ? "keeps: " + s.env_names.join(", ") + " (type to replace)"
+      : "GITHUB_TOKEN=...";
+    f("mcp-edit-headers").value = "";
+    f("mcp-edit-headers").placeholder = (s.header_names || []).length
+      ? "keeps: " + s.header_names.join(", ") + " (type to replace)"
+      : "Authorization: Bearer ...";
+    f("mcp-edit-remove").hidden = isNew;
+    note("");
+    host.hidden = false;
+    try { host.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_) {}
+  }
+
+  function buildBlock(name) {
+    var lines = ['[mcp_servers.' + (/^[A-Za-z0-9_-]+$/.test(name) ? name : tomlStr(name)) + "]"];
+    var transport = f("mcp-edit-transport").value;
+    lines.push("transport = " + tomlStr(transport));
+    var command = f("mcp-edit-command").value.trim();
+    if (command) lines.push("command = " + tomlStr(command));
+    var args = splitList(f("mcp-edit-args").value);
+    if (args.length) lines.push("args = [" + args.map(tomlStr).join(", ") + "]");
+    var env = splitList(f("mcp-edit-env").value);
+    if (env.length) lines.push("env = [" + env.map(tomlStr).join(", ") + "]");
+    var cwd = f("mcp-edit-cwd").value.trim();
+    if (cwd) lines.push("cwd = " + tomlStr(cwd));
+    var url = f("mcp-edit-url").value.trim();
+    if (url) lines.push("url = " + tomlStr(url));
+    var headers = splitList(f("mcp-edit-headers").value);
+    if (headers.length) lines.push("headers = [" + headers.map(tomlStr).join(", ") + "]");
+    var timeout = f("mcp-edit-timeout").value;
+    if (timeout) lines.push("tool_call_timeout_ms = " + Number(timeout));
+    return lines.join("\n") + "\n";
+  }
+
+  function save() {
+    var name = f("mcp-edit-name").value.trim();
+    if (!name) { note("Name is required."); return; }
+    var btn = f("mcp-edit-save");
+    btn.disabled = true;
+    fetch("/api/config/table/set", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ block: buildBlock(name) })
+    })
+      .then(readJson)
+      .then(function (d) {
+        if (!d.ok) throw new Error(d.error || "write failed");
+        note("Saved. " + (d.applied || "The server reloads into it."));
+        load();
+      })
+      .catch(function (err) { note("Refused: " + err.message + " — nothing was written."); })
+      .finally(function () { btn.disabled = false; });
+  }
+
+  function removeServer() {
+    var name = f("mcp-edit-name").value.trim();
+    if (!name) return;
+    import("./core/ui.js").then(function (mod) {
+      return mod.uiConfirm("Remove MCP server " + name + " from config.local.toml?", { danger: true, confirmLabel: "Remove" });
+    }).then(function (yes) {
+      if (!yes) return;
+      var header = "mcp_servers." + (/^[A-Za-z0-9_-]+$/.test(name) ? name : tomlStr(name));
+      fetch("/api/config/table/remove", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ header: header })
+      })
+        .then(readJson)
+        .then(function (d) {
+          if (!d.ok) throw new Error(d.error || "remove failed");
+          note(d.removed === false ? "Nothing by that name in config.local.toml (a server declared in the shared config.toml cannot be removed here)." : "Removed.");
+          host.hidden = true;
+          load();
+        })
+        .catch(function (err) { note("Refused: " + err.message); });
+    });
+  }
+
+  function load() {
+    fetch("/api/mcp/servers")
+      .then(readJson)
+      .then(function (d) {
+        var servers = (d && d.servers) || [];
+        list.textContent = "";
+        if (!servers.length) {
+          var p = document.createElement("p");
+          p.className = "run-empty";
+          p.textContent = "No MCP servers configured. Add one to make its tools available once the client bridge is on.";
+          list.appendChild(p);
+          return;
+        }
+        servers.forEach(function (s) {
+          var row = document.createElement("div");
+          row.className = "settings-panel";
+          var head = document.createElement("div");
+          head.className = "subsection-head-row";
+          var title = document.createElement("code");
+          title.textContent = s.name;
+          head.appendChild(title);
+          var edit = document.createElement("button");
+          edit.type = "button";
+          edit.className = "secondary";
+          edit.textContent = "Edit";
+          edit.addEventListener("click", function () { openEdit(s); });
+          head.appendChild(edit);
+          row.appendChild(head);
+          var meta = document.createElement("p");
+          meta.className = "meta";
+          meta.textContent = s.transport === "http"
+            ? "http · " + s.url
+            : "stdio · " + s.command + (s.args && s.args.length ? " " + s.args.join(" ") : "");
+          row.appendChild(meta);
+          list.appendChild(row);
+        });
+      })
+      .catch(function (err) {
+        if (statusEl) statusEl.textContent = "Could not load MCP servers: " + err.message;
+      });
+  }
+
+  var addBtn = f("mcp-add");
+  if (addBtn) addBtn.addEventListener("click", function () { openEdit(null); });
+  var refreshBtn = f("mcp-refresh");
+  if (refreshBtn) refreshBtn.addEventListener("click", load);
+  f("mcp-edit-save").addEventListener("click", save);
+  f("mcp-edit-remove").addEventListener("click", removeServer);
+  f("mcp-edit-close").addEventListener("click", function () { host.hidden = true; });
   load();
 })();

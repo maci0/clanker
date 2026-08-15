@@ -308,6 +308,17 @@ test("failed list loads keep a visible retry in the panel", function () {
   assert.match(arena, /showLoadError\(byId\("arena-list"\)/);
   assert.match(app, /showLoadError\(el\.usage/);
   assert.match(logs, /els\.logView\.textContent = msg/);
+  assert.match(app, /Could not load rooms: /);
+  assert.match(app, /Try again/);
+  assert.match(app, /Channels unavailable/);
+  const roomsCatch = app.slice(app.indexOf("Could not load rooms: "));
+  assert.match(roomsCatch, /loadChatRooms/);
+  const kb = readFileSync(join(here, "../features/knowledge.js"), "utf8");
+  assert.match(kb, /Could not open this collection/);
+  assert.match(kb, /openCollection\(id, docId\)/);
+  const activity = readFileSync(join(here, "../../plugins/activity/app.js"), "utf8");
+  assert.match(activity, /function drawFailure/);
+  assert.match(activity, /Try again/);
 });
 
 test("templates and skills say when none are on file", function () {
@@ -320,6 +331,14 @@ test("templates and skills say when none are on file", function () {
 test("phone fields stay at 16px so iOS does not zoom on focus", function () {
   assert.match(css, /iOS Safari zooms the page when a focused field is under 16px/);
   assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*?\.composer textarea \{\s*font-size:\s*16px/);
+  // These selectors set a smaller size after the page-wide guard. A later
+  // 40rem block has to put 16px back or iOS Safari zooms the page on focus.
+  const rail = css.lastIndexOf(".rail input[type=\"search\"] { font-size: 16px; }");
+  const railDesktop = css.indexOf(".rail input[type=\"search\"] { width: 100%");
+  assert.ok(rail > railDesktop, "phone rail search must override the 12px desktop size");
+  const add = css.lastIndexOf(".board-quick-add .board-add-form textarea { font-size: 16px; }");
+  const addDesktop = css.indexOf(".board-quick-add .board-add-form textarea {\n  width: 100%");
+  assert.ok(add > addDesktop, "phone quick-add must override the 13px desktop size");
 });
 
 test("accent pill is primary/#submit only, not every unmarked button", function () {

@@ -5985,6 +5985,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_config_raw_set = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/raw");
         const is_config_status = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/config/status");
         const is_config_table_set = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/table/set");
+        const is_config_table_remove = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/table/remove");
+        const is_mcp_servers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/mcp/servers");
         if (is_webui and isWebuiRead(method) and cfg.modules.webui) {
             const conn_val = headerValue(headers_raw, "connection") orelse "";
             if (!std.ascii.eqlIgnoreCase(conn_val, "close")) request_keep_alive = true;
@@ -6107,6 +6109,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleConfigStatus(stream);
         } else if (is_config_table_set) {
             handleConfigTableSet(io, gpa, body, stream);
+        } else if (is_config_table_remove) {
+            handleConfigTableRemove(io, gpa, body, stream);
+        } else if (is_mcp_servers) {
+            handleMcpServers(gpa, cfg, stream);
         } else if (is_plugins) {
             handlePlugins(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_skills) {
@@ -9194,6 +9200,102 @@ fn handleConfigTableSet(io: std.Io, gpa: std.mem.Allocator, body: []const u8, st
     s.write(next) catch return;
     s.endObject() catch return;
     handleConfigRawSet(io, gpa, out.written(), stream);
+}
+
+/// `POST /api/config/table/remove` `{header}` — deletes one table
+/// (`mcp_servers."github"`, a model entry, ...) from config.local.toml,
+/// through the same validate-refuse-or-write pipeline as every other
+/// config write: the file with the table gone must still load, or nothing
+/// is written. A header not present in the file is a no-op success.
+fn handleConfigTableRemove(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const Req = struct { header: []const u8 = "" };
+    const req = std.json.parseFromSliceLeaky(Req, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"body must be {header}\"}");
+        return;
+    };
+    if (req.header.len == 0 or req.header.len > 256) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"header must name a [table] to remove\"}");
+        return;
+    }
+    const cwd = std.Io.Dir.cwd();
+    const current = cwd.readFileAlloc(io, "config.local.toml", arena, .limited(1 << 20)) catch "";
+    const header_line = std.fmt.allocPrint(arena, "[{s}]", .{req.header}) catch return;
+    const next = toml_edit.removeTable(arena, current, header_line) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not edit config.local.toml\"}");
+        return;
+    };
+    if (next.len == current.len) {
+        respond(stream, 200, "OK", "{\"ok\":true,\"removed\":false}");
+        return;
+    }
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("file") catch return;
+    s.write("config.local.toml") catch return;
+    s.objectField("content") catch return;
+    s.write(next) catch return;
+    s.endObject() catch return;
+    handleConfigRawSet(io, gpa, out.written(), stream);
+}
+
+/// `GET /api/mcp/servers` — the configured `[mcp_servers.*]` stanzas, for
+/// the System view's MCP section. Env/header VALUES are withheld (they
+/// carry tokens); only the variable names are listed.
+fn handleMcpServers(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("servers") catch return;
+    s.beginArray() catch return;
+    var it = cfg.mcp_servers.iterator();
+    while (it.next()) |kv| {
+        const srv = kv.value_ptr;
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(kv.key_ptr.*) catch return;
+        s.objectField("transport") catch return;
+        s.write(srv.transport) catch return;
+        s.objectField("command") catch return;
+        s.write(srv.command) catch return;
+        s.objectField("args") catch return;
+        s.write(srv.args) catch return;
+        s.objectField("cwd") catch return;
+        s.write(srv.cwd) catch return;
+        s.objectField("url") catch return;
+        s.write(srv.url) catch return;
+        s.objectField("tool_call_timeout_ms") catch return;
+        s.write(srv.tool_call_timeout_ms) catch return;
+        // Names only: "GITHUB_TOKEN=ghp_..." lists as "GITHUB_TOKEN".
+        s.objectField("env_names") catch return;
+        s.beginArray() catch return;
+        for (srv.env) |e| {
+            const eq = std.mem.findScalar(u8, e, '=') orelse e.len;
+            s.write(e[0..eq]) catch return;
+        }
+        s.endArray() catch return;
+        s.objectField("header_names") catch return;
+        s.beginArray() catch return;
+        for (srv.headers) |h| {
+            const colon = std.mem.findScalar(u8, h, ':') orelse h.len;
+            s.write(h[0..colon]) catch return;
+        }
+        s.endArray() catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.objectField("client_active") catch return;
+    s.write(false) catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
 }
 
 /// `GET /api/config/status` — the last revalidation verdict, so the editor

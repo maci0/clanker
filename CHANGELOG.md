@@ -7,6 +7,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- MCP integrations are configurable: `[mcp_servers.<name>]` stanzas
+  (stdio: command/args/env/cwd; http: url/headers; timeout) parse and
+  validate at load, System -> MCP servers in the web UI adds, edits,
+  and removes them through the validated config pipeline (secret env
+  and header values never round-trip to the page), and the `mcp` skill
+  teaches the agent to manage them by editing `config.local.toml`. The
+  client bridge that actually connects is PRD 0032 and stays behind
+  `modules.mcp_client`. `POST /api/config/table/remove` deletes any
+  table from `config.local.toml` with the same refuse-or-write
+  validation as every other config write.
+
 - Hitting the iteration budget lands the run instead of erroring it: a
   wrap-up warning is injected three iterations out, and the final
   iteration goes to the model with tools disabled so it must answer in

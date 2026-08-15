@@ -411,7 +411,20 @@ clanker.registerView({
         })
         .catch(function(err) {
           if (mine !== generation) return;
-          api.status("Files: "+err.message);
+          openPath = path;
+          vName.textContent = name;
+          vMeta.textContent = "";
+          vNote.hidden = true;
+          vBody.textContent = "";
+          var fail = mk("p", "files-empty");
+          fail.appendChild(document.createTextNode("Could not open this file. " + err.message + " "));
+          var retry = mk("button", "secondary", "Try again");
+          retry.type = "button";
+          retry.addEventListener("click", function () { openFile(path, name); });
+          fail.appendChild(retry);
+          vBody.appendChild(fail);
+          rightPane.hidden = false;
+          api.status("Could not open this file. " + err.message);
         });
     }
 

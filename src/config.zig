@@ -917,6 +917,23 @@ pub const Hooks = struct {
     default_timeout_ms: u32 = 60_000,
 };
 
+/// One external MCP server this clanker may consume tools from
+/// (`[mcp_servers.<name>]`). Parsed and validated now so the web UI and
+/// the agent can manage integrations; the client bridge that actually
+/// connects is PRD 0032 and stays behind `modules.mcp_client` until it
+/// lands. Shape matches that PRD exactly, so nothing re-migrates later.
+pub const McpServer = struct {
+    /// "stdio" (spawn `command`) or "http" (streamable-HTTP at `url`).
+    transport: []const u8 = "stdio",
+    command: []const u8 = "",
+    args: []const []const u8 = &.{},
+    env: []const []const u8 = &.{},
+    cwd: []const u8 = "",
+    url: []const u8 = "",
+    headers: []const []const u8 = &.{},
+    tool_call_timeout_ms: u32 = 60_000,
+};
+
 pub const Config = struct {
     agent_present: bool = false,
     /// Which keys inside `"agent"` were set when this Config was parsed.
@@ -924,6 +941,7 @@ pub const Config = struct {
     improve_present: bool = false,
     default_provider: []const u8 = "deepseek",
     providers: std.StringArrayHashMapUnmanaged(Provider) = .empty,
+    mcp_servers: std.StringArrayHashMapUnmanaged(McpServer) = .empty,
     agent: Agent = .{},
     improve: Improve = .{},
     peers: []const Peer = &.{},
@@ -1191,6 +1209,7 @@ pub const Config = struct {
             "chatrooms",        "modules",  "web",     "memory",
             "serve",            "tui",      "advisor", "hooks",
             "ttsr",             "kernel",   "debug",   "mesh",
+            "mcp_servers",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -1230,6 +1249,17 @@ pub const Config = struct {
         if (obj.get("mesh")) |v| {
             cfg.mesh = try parseMesh(v);
             cfg.mesh_present = true;
+        }
+        if (obj.get("mcp_servers")) |v| {
+            const mobj = switch (v) {
+                .object => |o| o,
+                else => return error.McpServersNotObject,
+            };
+            var it = mobj.iterator();
+            while (it.next()) |kv| {
+                const s = try parseMcpServer(arena, kv.key_ptr.*, kv.value_ptr.*);
+                try cfg.mcp_servers.put(arena, kv.key_ptr.*, s);
+            }
         }
         if (obj.get("providers")) |v| {
             const pobj = switch (v) {
@@ -2272,6 +2302,50 @@ pub const Config = struct {
         return d;
     }
 
+    fn parseMcpServer(arena: std.mem.Allocator, name: []const u8, v: json.Value) !McpServer {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.McpServerNotObject,
+        };
+        warnUnknownKeys(obj, &.{
+            "transport", "command", "args", "env", "cwd", "url", "headers", "tool_call_timeout_ms",
+        }, name);
+        var s = McpServer{};
+        if (obj.get("transport")) |k| s.transport = try jsonStr(k, "transport");
+        if (obj.get("command")) |k| s.command = try jsonStr(k, "command");
+        if (obj.get("cwd")) |k| s.cwd = try jsonStr(k, "cwd");
+        if (obj.get("url")) |k| s.url = try jsonStr(k, "url");
+        if (obj.get("tool_call_timeout_ms")) |k| s.tool_call_timeout_ms = try jsonUnsigned(u32, k, "tool_call_timeout_ms");
+        inline for (.{ "args", "env", "headers" }) |field| {
+            if (obj.get(field)) |k| {
+                const arr = switch (k) {
+                    .array => |a| a,
+                    else => return error.McpServerFieldNotArray,
+                };
+                var list: std.ArrayList([]const u8) = .empty;
+                for (arr.items) |item| try list.append(arena, try jsonStr(item, field ++ "[]"));
+                @field(s, field) = try list.toOwnedSlice(arena);
+            }
+        }
+        // Misconfiguration surfaces at load, next to the file, not on the
+        // first tool call after the client bridge lands.
+        if (std.mem.eql(u8, s.transport, "stdio")) {
+            if (s.command.len == 0) {
+                log.log(.error_, "mcp_servers '{s}': transport \"stdio\" requires \"command\"", .{name});
+                return error.McpServerCommandMissing;
+            }
+        } else if (std.mem.eql(u8, s.transport, "http")) {
+            if (s.url.len == 0 or (!std.mem.startsWith(u8, s.url, "http://") and !std.mem.startsWith(u8, s.url, "https://"))) {
+                log.log(.error_, "mcp_servers '{s}': transport \"http\" requires an http(s) \"url\"", .{name});
+                return error.McpServerUrlMissing;
+            }
+        } else {
+            log.log(.error_, "mcp_servers '{s}': transport \"{s}\" is not one of \"stdio\", \"http\"", .{ name, s.transport });
+            return error.UnknownMcpTransport;
+        }
+        return s;
+    }
+
     fn parseMesh(v: json.Value) !Mesh {
         const obj = switch (v) {
             .object => |o| o,
@@ -2437,6 +2511,12 @@ pub const Config = struct {
         var it = src.providers.iterator();
         while (it.next()) |kv| {
             try dst.providers.put(arena, kv.key_ptr.*, kv.value_ptr.*);
+        }
+        // Same table-by-table overlay as providers: a local
+        // [mcp_servers.<name>] adds or replaces that one server.
+        var mcp_it = src.mcp_servers.iterator();
+        while (mcp_it.next()) |kv| {
+            try dst.mcp_servers.put(arena, kv.key_ptr.*, kv.value_ptr.*);
         }
         // Agent is field-merged: a local file that only sets e.g. sandbox_root
         // must not reset tools_dir (and the rest) to Agent{} defaults, that
@@ -3781,6 +3861,76 @@ test "an unknown thinking_schema is rejected at load" {
     });
     try std.testing.expectError(
         error.UnknownThinkingSchema,
+        Config.load(io, arena, tmp.dir, "config.toml", "missing.toml"),
+    );
+}
+
+test "mcp_servers stanzas parse and validate per transport" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "n"
+        \\providers = { n = { base_url = "https://n.test/v1" } }
+        \\models = { "n/m" = { provider = "n" } }
+        \\[mcp_servers.github]
+        \\transport = "stdio"
+        \\command = "github-mcp-server"
+        \\args = ["stdio"]
+        \\env = ["GITHUB_TOKEN=x"]
+        \\[mcp_servers.remote]
+        \\transport = "http"
+        \\url = "https://mcp.example.com/stream"
+        \\headers = ["Authorization: Bearer x"]
+        ,
+    });
+    // Loaded as the LOCAL overlay too: merge() must carry mcp_servers
+    // through, or a stanza in config.local.toml validates and then vanishes.
+    try tmp.dir.writeFile(io, .{ .sub_path = "base.toml", .data =
+        \\default_provider = "n"
+        \\providers = { n = { base_url = "https://n.test/v1" } }
+        \\models = { "n/m" = { provider = "n" } }
+    });
+    const merged = try Config.load(io, arena, tmp.dir, "base.toml", "config.toml");
+    try std.testing.expect(merged.mcp_servers.get("github") != null);
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    const gh = cfg.mcp_servers.get("github").?;
+    try std.testing.expectEqualStrings("github-mcp-server", gh.command);
+    try std.testing.expectEqual(@as(usize, 1), gh.args.len);
+    const remote = cfg.mcp_servers.get("remote").?;
+    try std.testing.expectEqualStrings("https://mcp.example.com/stream", remote.url);
+    try std.testing.expectEqual(@as(u32, 60_000), remote.tool_call_timeout_ms);
+}
+
+test "an mcp server with a bad transport or missing endpoint is rejected" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "n"
+        \\providers = { n = { base_url = "https://n.test/v1" } }
+        \\models = { "n/m" = { provider = "n" } }
+        \\mcp_servers = { bad = { transport = "stdio" } }
+        ,
+    });
+    try std.testing.expectError(
+        error.McpServerCommandMissing,
         Config.load(io, arena, tmp.dir, "config.toml", "missing.toml"),
     );
 }

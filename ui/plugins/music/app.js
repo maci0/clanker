@@ -69,9 +69,69 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
 
   function current() { return index >= 0 ? tracks[index] : null; }
 
+  /* timeupdate used to call draw(), which wiped the dock and the Music view
+     several times a second. Seeking snapped back, a half-typed URL vanished,
+     and the volume slider rebuilt under the pointer. Live chrome is patched
+     in place; only add/remove/load/collapse rebuilds the tree. */
+  var scrubbing = false;
+  var lastError = "";
+
+  function setLastError(msg) {
+    lastError = msg || "";
+    var notes = document.querySelectorAll(".music-note");
+    for (var i = 0; i < notes.length; i++) {
+      notes[i].textContent = lastError;
+      notes[i].hidden = !lastError;
+    }
+  }
+
+  function seekRatio() {
+    var dur = audio.duration;
+    if (!isFinite(dur) || dur <= 0) return 0;
+    return audio.currentTime / dur;
+  }
+
+  function syncChrome() {
+    var paused = audio.paused;
+    document.querySelectorAll(".music-btn-play").forEach(function (b) {
+      b.textContent = paused ? "▶" : "❚❚";
+      b.setAttribute("aria-label", paused ? "Play" : "Pause");
+    });
+    var muted = audio.muted || audio.volume === 0;
+    document.querySelectorAll(".music-mute").forEach(function (b) {
+      b.textContent = muted ? "🔇" : "🔊";
+      b.setAttribute("aria-label", audio.muted ? "Unmute" : "Mute");
+    });
+    var title = current() ? current().title : "No track";
+    document.querySelectorAll(".music-dock-title").forEach(function (el) {
+      el.textContent = title;
+    });
+    var now = current() ? ("Now playing: " + current().title) : "Add a file or a URL to start.";
+    document.querySelectorAll(".music-now").forEach(function (el) {
+      el.textContent = now;
+    });
+    if (!scrubbing) {
+      var ratio = seekRatio();
+      var nowTxt = fmtTime(audio.currentTime);
+      var endTxt = fmtTime(isFinite(audio.duration) ? audio.duration : 0);
+      document.querySelectorAll(".music-seek").forEach(function (wrap) {
+        var bar = wrap.querySelector("input[type=range]");
+        var times = wrap.querySelectorAll(".music-time");
+        if (bar) bar.value = String(Math.round(ratio * 1000));
+        if (times[0]) times[0].textContent = nowTxt;
+        if (times[1]) times[1].textContent = endTxt;
+      });
+    }
+    document.querySelectorAll(".music-vol input[type=range]").forEach(function (vol) {
+      if (document.activeElement === vol) return;
+      vol.value = String(Math.round((audio.muted ? 0 : audio.volume) * 100));
+    });
+  }
+
   function load(i, play) {
     if (i < 0 || i >= tracks.length) return;
     index = i;
+    lastError = "";
     audio.src = tracks[i].src;
     if (play) audio.play().catch(function () {});
     draw();
@@ -84,7 +144,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     }
     if (audio.paused) audio.play().catch(function () {});
     else audio.pause();
-    draw();
+    syncChrome();
   }
 
   function step(delta) {
@@ -94,21 +154,32 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
   }
 
   function addFiles(files) {
+    var added = 0;
+    var skipped = 0;
     Array.prototype.forEach.call(files || [], function (f) {
-      if (!f || !f.type || f.type.indexOf("audio/") !== 0) return;
+      if (!f || !f.type || f.type.indexOf("audio/") !== 0) { skipped += 1; return; }
       tracks.push({ title: f.name, src: URL.createObjectURL(f), kind: "file" });
+      added += 1;
     });
     if (index < 0 && tracks.length) load(0, false);
-    draw();
+    else draw();
+    if (!added && skipped) setLastError("Those files are not audio. Pick mp3, wav, or another audio type.");
+    else if (added) setLastError("");
   }
 
   function addUrl(raw) {
     var u = (raw || "").trim();
-    if (!u) return;
+    if (!u) return false;
+    if (!/^https?:\/\//i.test(u)) {
+      setLastError("Need a full http(s) URL, for example https://example.com/track.mp3");
+      return false;
+    }
+    lastError = "";
     tracks.push({ title: titleFromUrl(u), src: u, kind: "url" });
     persistUrls();
     if (index < 0) load(tracks.length - 1, false);
-    draw();
+    else draw();
+    return true;
   }
 
   function removeAt(i) {
@@ -166,10 +237,15 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     bar.setAttribute("aria-label", "Seek");
     var dur = audio.duration;
     if (isFinite(dur) && dur > 0) bar.value = String(Math.round((audio.currentTime / dur) * 1000));
+    bar.addEventListener("pointerdown", function () { scrubbing = true; });
+    bar.addEventListener("pointerup", function () { scrubbing = false; });
+    bar.addEventListener("pointercancel", function () { scrubbing = false; });
     bar.addEventListener("input", function () {
+      scrubbing = true;
       if (!isFinite(audio.duration) || audio.duration <= 0) return;
       audio.currentTime = (Number(bar.value) / 1000) * audio.duration;
     });
+    bar.addEventListener("change", function () { scrubbing = false; syncChrome(); });
     var end = document.createElement("span");
     end.className = "music-time";
     end.textContent = fmtTime(isFinite(dur) ? dur : 0);
@@ -184,8 +260,9 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     wrap.className = "music-vol";
     var mute = btn(audio.muted || audio.volume === 0 ? "🔇" : "🔊", audio.muted ? "Unmute" : "Mute", function () {
       audio.muted = !audio.muted;
-      draw();
+      syncChrome();
     });
+    mute.className += " music-mute";
     var vol = document.createElement("input");
     vol.type = "range";
     vol.min = "0";
@@ -195,7 +272,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     vol.addEventListener("input", function () {
       audio.muted = false;
       audio.volume = Number(vol.value) / 100;
-      draw();
+      syncChrome();
     });
     wrap.appendChild(mute);
     wrap.appendChild(vol);
@@ -293,7 +370,12 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     go.textContent = "Add URL";
     form.addEventListener("submit", function (e) {
       e.preventDefault();
-      addUrl(url.value);
+      if (!addUrl(url.value)) {
+        url.setCustomValidity("Need a full http(s) URL.");
+        url.reportValidity();
+        url.setCustomValidity("");
+        return;
+      }
       url.value = "";
     });
     form.appendChild(urlLab);
@@ -309,7 +391,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     if (!tracks.length) {
       var empty = document.createElement("li");
       empty.className = "music-empty";
-      empty.textContent = "Playlist is empty.";
+      empty.textContent = "No tracks yet. Add audio files or a URL above to start.";
       list.appendChild(empty);
     }
     tracks.forEach(function (t, i) {
@@ -327,6 +409,13 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     });
     viewRoot.appendChild(list);
 
+    var note = document.createElement("p");
+    note.className = "music-note";
+    note.setAttribute("role", "status");
+    note.hidden = !lastError;
+    note.textContent = lastError;
+    viewRoot.appendChild(note);
+
     var hint = document.createElement("p");
     hint.className = "meta";
     hint.textContent = "Turn the player off in System → Web UI plugins. Files never leave this browser.";
@@ -338,11 +427,17 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     drawView();
   }
 
-  audio.addEventListener("timeupdate", draw);
-  audio.addEventListener("play", draw);
-  audio.addEventListener("pause", draw);
+  audio.addEventListener("timeupdate", syncChrome);
+  audio.addEventListener("play", syncChrome);
+  audio.addEventListener("pause", syncChrome);
   audio.addEventListener("ended", function () { step(1); });
-  audio.addEventListener("loadedmetadata", draw);
+  audio.addEventListener("loadedmetadata", syncChrome);
+  audio.addEventListener("error", function () {
+    var t = current();
+    setLastError(t
+      ? ("Could not play “" + t.title + "”. Check the file or URL.")
+      : "Could not play this track.");
+  });
 
   return {
     ensure: function (nextApi) {
