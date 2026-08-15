@@ -103,6 +103,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   appended at the LLM client choke point to `state/token_stats.jsonl`.
   Failed completions are recorded too (`ok:false`, `http_status`, `err`);
   a log of only successes cannot answer "is the provider down?".
+  `ck_stats` returns the host-side aggregate, not the raw log: shipping every
+  record through the 1 MiB guest arena fails once the log has a few thousand
+  lines. `history` / `reasoning` guests tail their jsonl the same way.
 - `src/toolhost/` — the native tool infrastructure: `registry.zig` (loads
   `*.tool.json` descriptors), `manifest.zig` (validates them),
   `builder.zig` (compiles WASM tools), `usage.zig` (tool call accounting).

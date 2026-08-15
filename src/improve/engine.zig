@@ -200,7 +200,7 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     // patch dropping the sync (or the guard acting on it) would let it
     // re-land work a person already undid, with every other gate green.
     .{ .file = "src/improve/engine.zig", .needle = "self.syncReverts(" },
-    .{ .file = "src/improve/engine.zig", .needle = "self.hist.revertedByHuman(" },
+    .{ .file = "src/improve/engine.zig", .needle = "self.hist.fingerprintHit(" },
     .{ .file = "src/improve/engine.zig", .needle = "self.contentReverts(" },
     .{ .file = "src/improve/worktree.zig", .needle = "\".env\", \"config.local.toml\"" },
     .{ .file = "src/improve/worktree.zig", .needle = "\"state/improvements.jsonl\", \"state/history\"" },
@@ -779,7 +779,8 @@ pub const Engine = struct {
         {
             var dup_arena = std.heap.ArenaAllocator.init(self.ctx.gpa);
             defer dup_arena.deinit();
-            if (self.hist.alreadyAccepted(dup_arena.allocator(), fingerprints) catch false) {
+            const hit = self.hist.fingerprintHit(dup_arena.allocator(), fingerprints) catch history_mod.History.FingerprintHit{};
+            if (hit.accepted) {
                 log.log(.warn, "proposal repeats an improvement already accepted; skipping", .{});
                 // Not a failure: nothing went wrong and nothing changed, so
                 // retrying the same attempt would only spend tokens repeating
@@ -789,7 +790,7 @@ pub const Engine = struct {
             // A failure, unlike the accepted case above: the model reached
             // for work a person deliberately undid, and the next attempt
             // should hear that and pick something else.
-            if (self.hist.revertedByHuman(dup_arena.allocator(), fingerprints) catch false) {
+            if (hit.reverted) {
                 log.log(.warn, "proposal repeats an improvement a human reverted; refusing", .{});
                 const revert_id = self.newId() catch null;
                 if (revert_id) |owned_id| {

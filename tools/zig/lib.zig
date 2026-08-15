@@ -608,13 +608,46 @@ pub fn fsList(path: []const u8) FsError![]const u8 {
     return fsPathQuery(rc);
 }
 
-/// Reads [offset, offset+len) of a file. The host writes results into a 64 KiB
-/// arena, so this is the only way to see a file bigger than that: ask for it a
-/// window at a time.
+/// Reads [offset, offset+len) of a file. The host writes results into the
+/// guest arena (1 MiB here), so this is the only way to see a file bigger
+/// than that: ask for it a window at a time.
 pub fn fsReadRange(path: []const u8, offset: usize, len: usize) FsError![]const u8 {
     const p = sliceToMem(path);
     const rc = ck_fs_read_range(p.ptr, p.len, @intCast(offset), @intCast(len));
     return fsPathQuery(rc);
+}
+
+/// Last `max_bytes` of `path`, cut forward to the first newline so a jsonl
+/// consumer never opens mid-line. `fsRead` of a growing log returns TooLarge
+/// once the file exceeds the 1 MiB host arena; a picker that only wants the
+/// newest lines must not pull the rest.
+pub fn fsReadTail(path: []const u8, max_bytes: usize) FsError![]const u8 {
+    const want: usize = @min(max_bytes, host_arena_cap);
+    if (want == 0) return "";
+    const st_raw = fsStat(path) catch |err| switch (err) {
+        error.NotFound => return error.NotFound,
+        else => return fsRead(path),
+    };
+    const size = statSize(st_raw) orelse return fsRead(path);
+    if (size == 0) return "";
+    if (size <= want) return fsRead(path);
+    const offset: u64 = size - want;
+    if (offset > std.math.maxInt(u32) or want > std.math.maxInt(u32))
+        return fsRead(path);
+    const raw = try fsReadRange(path, @intCast(offset), @intCast(want));
+    if (std.mem.findScalar(u8, raw, '\n')) |nl| return raw[nl + 1 ..];
+    return raw;
+}
+
+fn statSize(st: []const u8) ?u64 {
+    const v = std.json.parseFromSliceLeaky(std.json.Value, alloc, st, .{}) catch return null;
+    if (v != .object) return null;
+    const s = v.object.get("size") orelse return null;
+    return switch (s) {
+        .integer => |i| if (i < 0) null else @intCast(i),
+        .number_string => |n| std.fmt.parseInt(u64, n, 10) catch null,
+        else => null,
+    };
 }
 
 /// Writes a file relative to the sandbox root.

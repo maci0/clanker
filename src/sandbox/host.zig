@@ -2227,10 +2227,11 @@ fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
     return false;
 }
 
-/// ck_stats() exposes the authorized global token-usage records to the
-/// model_stats guest. Parsing and aggregation are application logic and live
-/// in tools/zig/stats.zig; the native boundary only resolves the configured
-/// state directory, enforces the module switch, and reads the protected log.
+/// ck_stats() returns the host-side aggregate of token_stats.jsonl to the
+/// model_stats guest. Shipping every raw record through the 1 MiB guest arena
+/// fails once the log has a few thousand lines; the table itself is a handful
+/// of (provider, model) rows. The native side resolves the state directory,
+/// enforces the module switch, and aggregates. The guest renders.
 pub fn ckStats(caller: *zwasm.Caller) u32 {
     const h = getHost(caller);
     if (!std.mem.eql(u8, h.sandbox.tool_self_name, "model_stats")) return Err.denied;
@@ -2248,15 +2249,12 @@ pub fn ckStats(caller: *zwasm.Caller) u32 {
     const base = h.sandbox.state_base_dir orelse std.Io.Dir.cwd();
     const state_dir = h.sandbox.state_dir;
 
-    const records = token_stats.loadAll(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir) catch |err| {
+    const stats = token_stats.aggregate(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir) catch |err| {
         log.log(.warn, "[stats] read failed: {s}", .{@errorName(err)});
         return Err.invalid;
     };
-    var out: std.Io.Writer.Allocating = .init(arena);
-    defer out.deinit();
-    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
-    s.write(records) catch return Err.too_large;
-    return h.writeResult(bytes, out.written());
+    const json = token_stats.statsJSON(arena, stats, token_stats.totals(stats)) catch return Err.too_large;
+    return h.writeResult(bytes, json);
 }
 
 /// Maximum number of custom headers a tool may send per request.
@@ -2529,27 +2527,31 @@ fn skipDir(name: []const u8) bool {
     return false;
 }
 
+fn joinRel(gpa: std.mem.Allocator, prefix: []const u8, name: []const u8) ![]u8 {
+    return std.fmt.allocPrint(gpa, "{s}{s}{s}", .{
+        prefix,
+        if (prefix.len > 0) "/" else "",
+        name,
+    });
+}
+
 fn fsFindRecurse(h: *Host, s: *std.json.Stringify, dir: std.Io.Dir, prefix: []const u8, pattern: []const u8, depth: u32) !void {
     if (depth > fs_find_max_depth) return;
     var it = dir.iterate();
     while (it.next(h.sandbox.io) catch null) |entry| {
         if (entry.name.len == 0) continue;
-        const rel = std.fmt.allocPrint(h.sandbox.gpa, "{s}{s}{s}", .{
-            prefix,
-            if (prefix.len > 0) "/" else "",
-            entry.name,
-        }) catch return error.OutOfMemory;
-        defer h.sandbox.gpa.free(rel);
-
         if (entry.kind == .directory) {
             if (skipDir(entry.name)) continue;
+            const rel = joinRel(h.sandbox.gpa, prefix, entry.name) catch return error.OutOfMemory;
+            defer h.sandbox.gpa.free(rel);
             var sub = dir.openDir(h.sandbox.io, entry.name, .{ .iterate = true }) catch continue;
             defer sub.close(h.sandbox.io);
             try fsFindRecurse(h, s, sub, rel, pattern, depth + 1);
         } else if (entry.kind == .file) {
-            if (globMatch(pattern, entry.name)) {
-                try s.write(rel);
-            }
+            if (!globMatch(pattern, entry.name)) continue;
+            const rel = joinRel(h.sandbox.gpa, prefix, entry.name) catch return error.OutOfMemory;
+            defer h.sandbox.gpa.free(rel);
+            try s.write(rel);
         }
     }
 }
@@ -2643,13 +2645,6 @@ fn fsGrepRecurse(
     while (it.next(h.sandbox.io) catch null) |entry| {
         if (count.* >= fs_grep_max_results) return;
         if (entry.name.len == 0) continue;
-        const rel = std.fmt.allocPrint(h.sandbox.gpa, "{s}{s}{s}", .{
-            prefix,
-            if (prefix.len > 0) "/" else "",
-            entry.name,
-        }) catch return error.OutOfMemory;
-        defer h.sandbox.gpa.free(rel);
-
         if (entry.kind == .directory) {
             // Hidden names (.git, .zig-cache) plus the same cache/vendor
             // trees find already skips. Without that, a project-root grep
@@ -2658,11 +2653,15 @@ fn fsGrepRecurse(
             // copies before it ever reaches source.
             if (entry.name[0] == '.') continue;
             if (skipDir(entry.name)) continue;
+            const rel = joinRel(h.sandbox.gpa, prefix, entry.name) catch return error.OutOfMemory;
+            defer h.sandbox.gpa.free(rel);
             var sub = dir.openDir(h.sandbox.io, entry.name, .{ .iterate = true }) catch continue;
             defer sub.close(h.sandbox.io);
             try fsGrepRecurse(h, s, sub, rel, pattern, depth + 1, count);
         } else if (entry.kind == .file) {
             if (skipGrepName(entry.name)) continue;
+            const rel = joinRel(h.sandbox.gpa, prefix, entry.name) catch return error.OutOfMemory;
+            defer h.sandbox.gpa.free(rel);
             fsGrepFile(h, s, dir, entry.name, rel, pattern, count) catch continue;
         }
     }

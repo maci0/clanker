@@ -82,7 +82,7 @@ pub const History = struct {
     /// lints. Without this the loop re-promoted the same one-line insertion
     /// three times.
     pub fn alreadyAccepted(self: *History, arena: std.mem.Allocator, fingerprints: []const u64) !bool {
-        return self.anyWithStatus(arena, "accepted", fingerprints);
+        return (try self.fingerprintHit(arena, fingerprints)).accepted;
     }
 
     /// True when a human reverted an improvement that made exactly this
@@ -90,7 +90,25 @@ pub const History = struct {
     /// merged, and was still undone in review, proposing it again is the
     /// one outcome that review already refused.
     pub fn revertedByHuman(self: *History, arena: std.mem.Allocator, fingerprints: []const u64) !bool {
-        return self.anyWithStatus(arena, "reverted", fingerprints);
+        return (try self.fingerprintHit(arena, fingerprints)).reverted;
+    }
+
+    /// One pass over the log for both statuses the proposal gate checks.
+    /// Calling alreadyAccepted then revertedByHuman used to parse the whole
+    /// file twice (up to 16 MiB) on every improve proposal.
+    pub const FingerprintHit = struct { accepted: bool = false, reverted: bool = false };
+
+    pub fn fingerprintHit(self: *History, arena: std.mem.Allocator, fingerprints: []const u64) !FingerprintHit {
+        if (fingerprints.len == 0) return .{};
+        const entries = try self.loadAll(arena);
+        var hit = FingerprintHit{};
+        for (entries) |e| {
+            if (!changesMatch(e.changes, fingerprints)) continue;
+            if (std.mem.eql(u8, e.status, "accepted")) hit.accepted = true;
+            if (std.mem.eql(u8, e.status, "reverted")) hit.reverted = true;
+            if (hit.accepted and hit.reverted) break;
+        }
+        return hit;
     }
 
     /// Ids of every improvement the log still records as accepted, the set
@@ -106,30 +124,19 @@ pub const History = struct {
         return try out.toOwnedSlice(arena);
     }
 
-    fn anyWithStatus(self: *History, arena: std.mem.Allocator, status: []const u8, fingerprints: []const u64) !bool {
-        if (fingerprints.len == 0) return false;
-        const entries = try self.loadAll(arena);
-        for (entries) |e| {
-            if (!std.mem.eql(u8, e.status, status)) continue;
-            if (e.changes.len == 0) continue;
-            if (e.changes.len != fingerprints.len) continue;
-            var all = true;
-            for (fingerprints) |fp| {
-                var found = false;
-                for (e.changes) |seen| {
-                    if (seen == fp) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    all = false;
+    fn changesMatch(seen: []const u64, fingerprints: []const u64) bool {
+        if (seen.len == 0 or seen.len != fingerprints.len) return false;
+        for (fingerprints) |fp| {
+            var found = false;
+            for (seen) |s| {
+                if (s == fp) {
+                    found = true;
                     break;
                 }
             }
-            if (all) return true;
+            if (!found) return false;
         }
-        return false;
+        return true;
     }
 
     /// One improvement the revert sync convicted, and why.
@@ -715,6 +722,12 @@ test "an edit already accepted is recognised, a different one is not" {
     const refused = History.changeFingerprint("src/a.zig", "x", "y");
     try hist.append("imp-2", .rejected, "i", "s", &.{"src/a.zig"}, 0.0, 0.0, "", &.{refused}, null);
     try std.testing.expect(!try hist.alreadyAccepted(arena, &.{refused}));
+
+    // One scan reports both statuses so the proposal gate does not parse
+    // the log twice.
+    const both = try hist.fingerprintHit(arena, &.{fp});
+    try std.testing.expect(both.accepted);
+    try std.testing.expect(!both.reverted);
 }
 
 test "snapshot silently skips a file that does not exist yet" {
