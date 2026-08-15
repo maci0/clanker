@@ -706,13 +706,21 @@ pub fn searchSessions(
     limit: usize,
 ) ![]SearchHit {
     var out: std.ArrayList(SearchHit) = .empty;
-    if (query.len == 0) return out.toOwnedSlice(arena);
+    if (query.len == 0 or limit == 0) return out.toOwnedSlice(arena);
 
     var dir = base.openDir(io, store_dir, .{ .iterate = true }) catch return out.toOwnedSlice(arena);
     defer dir.close(io);
 
     var scratch_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer scratch_state.deinit();
+    var header_buf: [listing_header_bytes]u8 = undefined;
+
+    // Score files from the listing header (4 KiB), then open transcripts
+    // newest-first and stop once `limit` conversations match. Opening every
+    // file first (each up to 16 MiB) then sorting was the same work as a
+    // miss even when the newest 50 already filled the page.
+    const Candidate = struct { name: []const u8, updated: i64 };
+    var candidates: std.ArrayList(Candidate) = .empty;
 
     var it = dir.iterate();
     while (it.next(io) catch null) |entry| {
@@ -721,6 +729,32 @@ pub fn searchSessions(
         if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
         const scratch = scratch_state.allocator();
         const path = std.fmt.allocPrint(scratch, "{s}/{s}", .{ store_dir, entry.name }) catch continue;
+        const updated: i64 = blk: {
+            if (readListingPrefix(io, base, path, &header_buf)) |prefix| {
+                if (storedListingFromPrefix(scratch, prefix)) |h| break :blk h.updated;
+            }
+            // Prefix missed updated (a 4 KiB title pushed the header off
+            // the window). Parse only then, never for a file that already
+            // named its timestamp in the first kilobytes.
+            const raw = base.readFileAlloc(io, path, scratch, .limited(1 << 24)) catch continue;
+            const stored = json.parseFromSliceLeaky(StoredSession, scratch, raw, .{ .ignore_unknown_fields = true }) catch continue;
+            break :blk stored.updated;
+        };
+        const name = arena.dupe(u8, entry.name) catch continue;
+        candidates.append(arena, .{ .name = name, .updated = updated }) catch continue;
+    }
+
+    std.mem.sort(Candidate, candidates.items, {}, struct {
+        fn newestFirst(_: void, a: Candidate, b: Candidate) bool {
+            return a.updated > b.updated;
+        }
+    }.newestFirst);
+
+    for (candidates.items) |c| {
+        if (out.items.len >= limit) break;
+        defer _ = scratch_state.reset(.retain_capacity);
+        const scratch = scratch_state.allocator();
+        const path = std.fmt.allocPrint(scratch, "{s}/{s}", .{ store_dir, c.name }) catch continue;
         const raw = base.readFileAlloc(io, path, scratch, .limited(1 << 24)) catch continue;
         // A query that cannot appear escaped in JSON (`"` / `\` / controls)
         // is stored verbatim. If the raw file does not contain it, skip the
@@ -753,12 +787,6 @@ pub fn searchSessions(
         }
     }
 
-    std.mem.sort(SearchHit, out.items, {}, struct {
-        fn newestFirst(_: void, a: SearchHit, b: SearchHit) bool {
-            return a.updated > b.updated;
-        }
-    }.newestFirst);
-    if (out.items.len > limit) out.shrinkRetainingCapacity(limit);
     return out.toOwnedSlice(arena);
 }
 
