@@ -307,7 +307,10 @@ was started, not something the agent can opt into mid-run.
 1. Collect relevant source files as context. With `improve.plan_phase` on
    (default) the model first proposes a short plan of ideas for the run and
    each iteration implements one, with ideas deduplicated against the run's
-   own plan and against past history (`plan.zig`).
+   own plan and against past history (`plan.zig`). Parsing tolerates prose
+   wrapped around the JSON, a bare single-idea object, and an array of plain
+   strings; an idea whose named files are all outside the writable surface is
+   skipped up front instead of dying in `validateWritePath`.
 2. Ask the model for a patch proposal (JSON with `summary`, `rationale`, `changes`).
    The context is a byte-budgeted slice of a much larger tree, so the model may
    instead answer `{"need": ["src/cli.zig", "docs/ROADMAP.md"], "reason": "..."}`
