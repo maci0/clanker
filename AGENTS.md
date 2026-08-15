@@ -10,8 +10,11 @@ through a gated loop. Follow these conventions when changing this codebase.
   Cross-compile with `-Dtarget=`, e.g. `-Dtarget=x86_64-linux-musl`.
 - `zig build tools` — compile `tools/zig/*.zig` to `zig-out/tools/*.wasm`.
 - `zig build test` — run unit + integration tests. All tests must pass before
-  any change is accepted. Tests live in `test` blocks inside the source files;
-  new files must be referenced from the `comptime` block in `src/main.zig`.
+  any change is accepted. Tests live in `test` blocks inside the source files.
+  New `src/` modules must be referenced from the `comptime` block in
+  `src/main.zig` or their tests never run. Pure-logic `tools/zig/` helpers
+  (no guest ABI) go in `host_tested_helpers` in `build.zig` instead; wasm
+  guests cannot run their own `test` blocks.
 - `zig build e2e` — black-box end-to-end tests, driving the built binary
   against a mock LLM server. Not part of `zig build test`; run it separately.
 - `zig build run` — build and run the harness in one step.
@@ -56,21 +59,23 @@ through a gated loop. Follow these conventions when changing this codebase.
   no subprocess). Adding a provider is one file, one registry row, and one
   `ProviderKind` tag in `config.zig` — never a new `switch (provider.kind)`.
 - `src/sandbox/`: zwasm runtime wrapper + `ck_*` host functions + policy.
-  Privileged channels (`ck_docker`, `ck_kernel`, `ck_debug`, `ck_subagent`, `ck_swarm`, `ck_stats`,
-  `ck_ask`, `ck_std_api`, `ck_harness_config`) check `tool_self_name`; the
-  import existing is not a grant. `ck_kernel` also requires `kernel.enabled`;
-  `ck_debug` also requires `debug.enabled`. The agent loop attaches a subagent runner
-  to every tool sandbox, so `ck_subagent`/`ck_swarm` would otherwise be
-  callable by any guest. Structured harness config goes through
-  `ck_harness_config`; `config_view`'s whole-file dump still reads
-  `config.toml` / `config.local.toml` as raw bytes, so those two names must
-  stay on its `fs_prefixes` (emptying them makes every dump fail as
-  "config.toml unreadable"). Empty `env_allow` is the safe defaults (PWD,
-  HOME, PATH, ...), never API keys; a tool that reads a secret via
-  `ck_getenv` must name it. `.env` is refused by `safeJoin` (the keys live
-  on disk too). `ck_exec` allowlists git/zig/uv verbs and refuses
-  host-absolute or `..` path args, so a guest cannot bypass `network_allow`
-  or `fs_prefixes` through a subprocess.
+  Privileged channels (`ck_docker`, `ck_kernel`, `ck_debug`, `ck_subagent`,
+  `ck_swarm`, `ck_stats`, `ck_ask`, `ck_std_api`, `ck_harness_config`,
+  `ck_chat`) check `tool_self_name`; the import existing is not a grant.
+  `ck_kernel` also requires `kernel.enabled`; `ck_debug` also requires
+  `debug.enabled`. The agent loop attaches a subagent runner to every tool
+  sandbox, so `ck_subagent`/`ck_swarm` would otherwise be callable by any
+  guest. Structured harness config goes through `ck_harness_config`;
+  `config_view`'s whole-file dump still reads `config.toml` /
+  `config.local.toml` as raw bytes, so those two names must stay on its
+  `fs_prefixes` (emptying them makes every dump fail as "config.toml
+  unreadable"). Empty `env_allow` is the safe defaults (PWD, HOME, PATH,
+  ...), never API keys; a tool that reads a secret via `ck_getenv` must
+  name it. `.env` is refused by `safeJoin` (the keys live on disk too).
+  `ck_exec` allowlists git/zig/uv verbs and refuses host-absolute or `..`
+  path args, so a guest cannot bypass `network_allow` or `fs_prefixes`
+  through a subprocess. Search tools (`rg`, `ast-grep`, `semcode`) treat
+  most args as patterns: `..` is checked only on the last argument.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   workspace registry (`workspace.zig`: folder + chat-history set; empty id is
   the serve cwd), execution graphs, sub-agents, autolearn, workflows. Session ids are path
@@ -81,15 +86,11 @@ through a gated loop. Follow these conventions when changing this codebase.
   process-static pointer would splice concurrent `/api/run` streams.
   `ttsr.buffer_bytes` is clamped to `ttsr_buffer_bytes_max` because that
   window is allocated from the run arena each LLM turn.
-- `src/schedule/` — `clanker schedule`: the cron dialect and next-fire
-  arithmetic (`cron.zig`, pure — no allocator, clock or `std.Io`, so it is
-  fully host-testable), `state/schedule.json` + the fire ledger (`store.zig`),
-  the due/claim/fire logic (`runner.zig`, driven by a `Fire` callback so its
-  tests need no provider), and the operator surface (`command.zig`). Nothing
-  here fires on its own; the system's cron calls `clanker schedule run-due`.
-- `src/research/` — the autonomous research engine (`engine.zig`, `harness.zig`,
-  `ledger.zig`) and autoresearch tool driver. Outside the protected surface so
-  clanker can improve its own research capabilities.
+- `src/schedule/` — `clanker schedule`. Cron arithmetic is pure (no allocator,
+  clock, or `std.Io`). Nothing fires on its own; the system's cron calls
+  `clanker schedule run-due`.
+- `src/research/` — research engine + autoresearch driver. Outside the
+  protected surface so clanker can improve its own research capabilities.
 - `src/stats/` — per-(provider, model) token usage tracking (`tokens.zig`),
   appended at the LLM client choke point to `state/token_stats.jsonl`.
   Failed completions are recorded too (`ok:false`, `http_status`, `err`);
@@ -98,25 +99,23 @@ through a gated loop. Follow these conventions when changing this codebase.
   `*.tool.json` descriptors), `manifest.zig` (validates them),
   `builder.zig` (compiles WASM tools), `usage.zig` (tool call accounting).
   `builder.zig` is part of the anti-cheat boundary.
-- `src/tui/` — libvaxis-backed REPL (`clanker repl`), syntax highlighting,
-  theme, transcript rendering, control-character sanitizing, per-turn stats
-  plus a last-row session strip (`turn_stats.writeSession`, same fields as
-  the web `#run-metrics`), terminal width tracking, and the optional mascot
-  (`mascot.zig`, off by default). The mascot's frames are generated, not hand-written:
-  `src/tui/mascot/gen_frames.py` turns the source gif into
-  `mascot_frames.zig` (three cell grids) plus the pngs the kitty-graphics path
-  transmits, and only needs rerunning when the artwork changes.
-- `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook.
-  Fleet's lamp map is `GET /api/mesh/map` (`mesh.buildMap`): self + `[[peers]]`
-  + chat wires. Served even when `modules.mesh` is off so HTTP peers still
-  draw; chat `last_ts` is unix seconds, so the pulse clock must be too.
-  The page watches `GET /api/events` (SSE in `src/serve/live.zig`); HTTP
-  `POST /api/*` stays the command path. `chatrooms.fanOut` prefers a live
-  mesh `CHAT` frame (`src/peers/mesh_runtime.zig`) and falls back to HTTP.
-  logging, dotenv, `ensureDir` (the one way to create `state/` when it may be
-  a `--worktree` symlink; `createDirPath` reports NotDir), and the one UTF-8
-  byte-cap (`util/utf8.zig` `cap`, exposed to Zig guests as `@import("utf8")`). Peer notify/phonebook, patch application,
-  knowledge store, and prompts store moved to sandboxed WASM tools (`tools/zig/`).
+- `src/tui/` — libvaxis REPL (`clanker repl`). Mascot frames are generated
+  (`src/tui/mascot/gen_frames.py`); do not hand-edit `mascot_frames.zig` or
+  the pngs. `turn_stats.writeSession` matches the web `#run-metrics` fields.
+- `src/mcp/` — MCP server. `src/acp/` — ACP v1 stdio. `src/hooks/` —
+  Claude-compatible lifecycle hooks. `src/debug/` — DAP.
+- `src/peers/` — mesh + chatrooms. Fleet's lamp map is `GET /api/mesh/map`
+  (`mesh.buildMap`): self + `[[peers]]` + chat wires. Served even when
+  `modules.mesh` is off so HTTP peers still draw; chat `last_ts` is unix
+  seconds, so the pulse clock must be too. The page watches `GET /api/events`
+  (SSE in `src/serve/live.zig`); HTTP `POST /api/*` stays the command path.
+  `chatrooms.fanOut` POSTs each message to every peer's `/api/chat/message`
+  (per-peer backoff on failure). Mesh `CHAT` / `CHAT_SYNC` frames are
+  received on the wire; they are not the fan-out path.
+- `src/util/` — logging, dotenv, `ensureDir` (the one way to create `state/`
+  when it may be a `--worktree` symlink; `createDirPath` reports NotDir),
+  and the one UTF-8 byte-cap (`util/utf8.zig` `cap`, `@import("utf8")` in
+  Zig guests).
 - `ui/vendor/` — vendored JS dependencies for the web UI (preact, htm,
   @preact/signals-core, d3-dag, highlight.js, mermaid, three.js). Committed,
   not generated; inventory in `ui/vendor/README.md`.
@@ -127,18 +126,20 @@ through a gated loop. Follow these conventions when changing this codebase.
   can run is `src/llm/catalog.zig`: models.dev's `npm` package plus a base
   URL maps to `ProviderKind` and `AuthStrategy`. Bedrock is absent until
   it has a kind.
-- `src/serve/` — the OpenAI/Anthropic compatibility proxy (`clanker serve --proxy`).
-  Native because it attaches provider credentials. It forwards `/v1/*` 1:1 and
-  must not go through `client.chat` / `buildRequest`.
+- `src/serve/` — HTTP live bus (`live.zig`), mesh networking, and the
+  OpenAI/Anthropic compatibility proxy (`clanker serve --proxy`; also
+  `src/proxy_main.zig` via `zig build proxy`). The proxy is native because
+  it attaches provider credentials. It forwards `/v1/*` 1:1 and must not
+  go through `client.chat` / `buildRequest`.
 - Every `.zig` file lives under a subsystem directory; only `main.zig`,
-  `cli.zig`, `config.zig`, and `doctor.zig` sit directly in
-  `src/`. A new module with tests must be added to the `comptime` block in
-  `src/main.zig` or its tests never run.
+  `cli.zig`, `config.zig`, `doctor.zig`, and `proxy_main.zig` sit directly
+  in `src/`.
 - `src/evals/` + `src/gate/` — the eval harness and deterministic gates
   (build/test/tools/fmt/lint). These verify every promoted change.
-- `src/improve/` — the self-improvement engine. It is deliberately protected:
-  clanker cannot modify `src/improve/`, `src/evals/`, `src/toolhost/builder.zig`,
-  or `evals/` in a single pass (anti-cheat boundary).
+- `src/improve/` — the self-improvement engine. A single pass cannot write
+  `src/improve/`, `src/evals/`, `src/toolhost/builder.zig`, `tools/ts/dist/`,
+  or `ui/vendor/`. `evals/` is append-only `*.task.json`. `tools/manifests/`
+  accepts only `*.tool.json`.
 - `tools/zig/` — LLM-callable WASM guest sources (Zig); `tools/ts/` — AssemblyScript
   sources; `tools/manifests/` — descriptors; `tools/ts/dist/` — committed AS build output
   (built via `npm run build:all` in `tools/ts/`; guest ABI: exports
