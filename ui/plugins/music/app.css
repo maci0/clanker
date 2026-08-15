@@ -137,6 +137,8 @@
 }
 
 @media (max-width: 40rem) {
+  /* Plugin sheets load after the host 16px phone guard. */
+  .music-url input { font-size: 16px; }
   .music-dock {
     left: var(--space-3);
     right: var(--space-3);

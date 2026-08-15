@@ -143,6 +143,15 @@ test("config file picker has a visible label", function () {
   assert.match(html, /<label for="config-editor-file">File<\/label>/);
 });
 
+test("attaching an image does not wipe the plan/research hint", function () {
+  const attach = readFileSync(join(here, "attachments.js"), "utf8");
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  assert.doesNotMatch(attach, /els\.hint\.textContent/);
+  assert.match(attach, /onAttachmentsChange/);
+  assert.match(app, /image attached/);
+  assert.match(app, /onAttachmentsChange = updateComposerModeHint/);
+});
+
 test("toasts expose a visible dismiss control", function () {
   assert.match(uiSrc, /className = "toast-dismiss"/);
   assert.match(uiSrc, /dismiss\.textContent = "Dismiss"/);
@@ -255,6 +264,18 @@ test("Search field names conversations, not Find", function () {
 
 test("Board create goal is the primary action", function () {
   assert.match(html, /id="goal-add"[^>]*class="primary"|class="primary"[^>]*id="goal-add"/);
+});
+
+test("create and save forms use a primary CTA", function () {
+  assert.match(html, /id="knowledge-create"[^>]*class="primary"|class="primary"[^>]*id="knowledge-create"/);
+  assert.match(html, /id="prompts-create"[^>]*class="primary"|class="primary"[^>]*id="prompts-create"/);
+  assert.match(html, /id="workspace-new-save"[^>]*class="primary"|class="primary"[^>]*id="workspace-new-save"/);
+  assert.match(html, /id="text-prompt-save"[^>]*class="primary"|class="primary"[^>]*id="text-prompt-save"/);
+});
+
+test("Settings surfaces the Enter-sends composer preference", function () {
+  assert.match(html, /id="settings-enter-sends"/);
+  assert.match(html, /Enter sends, Shift\+Enter makes a new line/);
 });
 
 test("empty log picker names the empty state", function () {
@@ -372,6 +393,12 @@ test("phone fields stay at 16px so iOS does not zoom on focus", function () {
   const add = css.lastIndexOf(".board-quick-add .board-add-form textarea { font-size: 16px; }");
   const addDesktop = css.indexOf(".board-quick-add .board-add-form textarea {\n  width: 100%");
   assert.ok(add > addDesktop, "phone quick-add must override the 13px desktop size");
+  const roomsDesktop = css.indexOf(".slack-composer-row input[type=\"text\"] {\n");
+  const roomsPhone = css.lastIndexOf(".slack-composer-row input[type=\"text\"],");
+  assert.ok(roomsDesktop >= 0 && roomsPhone > roomsDesktop, "phone Rooms composer must override the 13px desktop size");
+  const wsDesktop = css.indexOf(".rail-workspace-bar select {\n");
+  const wsPhone = css.lastIndexOf(".rail-workspace-bar select,");
+  assert.ok(wsDesktop >= 0 && wsPhone > wsDesktop, "phone workspace picker must override the 12px desktop size");
 });
 
 test("accent pill is primary/#submit only, not every unmarked button", function () {

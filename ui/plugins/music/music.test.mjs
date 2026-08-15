@@ -32,3 +32,7 @@ test("empty playlist and bad URL say what to do next", () => {
   assert.match(js, /Those files are not audio/);
   assert.match(css, /\.music-note/);
 });
+
+test("music URL field is 16px on a phone so iOS does not zoom", () => {
+  assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*?\.music-url input \{ font-size: 16px; \}/);
+});

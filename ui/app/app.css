@@ -4703,3 +4703,18 @@ h2#session-title {
 /* Same [hidden]-vs-author-display trap as #cancel and #models-edit-remove. */
 #mcp-edit-remove[hidden] { display: none; }
 #mcp-edit[hidden] { display: none; }
+
+/* Rooms, workspace, run-picker, and the config overlay all set a desktop
+   field size after (or more specifically than) the page-wide 16px phone
+   guard. iOS Safari zooms the page when a focused field is under 16px. */
+@media (max-width: 40rem) {
+  .slack-search-box input,
+  .slack-search-bar input,
+  .slack-composer-row input[type="text"],
+  .run-picker input[type="search"],
+  .rail-workspace-bar select,
+  .config-editor textarea,
+  .models-edit-toml-editor textarea {
+    font-size: 16px;
+  }
+}

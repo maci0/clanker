@@ -1236,6 +1236,9 @@ function updateComposerModeHint() {
   var parts = [];
   if (el.planMode && el.planMode.checked) parts.push("Plan mode · write tools refused");
   if (el.researchMode && el.researchMode.checked) parts.push("Research mode · web search preferred");
+  if (attachImages.length) {
+    parts.push(attachImages.length + (attachImages.length === 1 ? " image attached" : " images attached"));
+  }
   el.hint.textContent = parts.join(" · ");
 }
 
@@ -1873,6 +1876,7 @@ function loadStatus() {
 var pendingImages = attachImages;
 var max_image_bytes = attachMaxBytes;
 function renderAttachments() { attachRender(el, icon, fmtBytes); }
+el.onAttachmentsChange = updateComposerModeHint;
 /* A dropped or pasted file may be an image or a video (Kimi Code parity:
    drop a screen recording and the agent watches it). Videos are sampled to
    JPEG frames by the attachments module and ride the same image path. */
@@ -5783,6 +5787,17 @@ try {
     if (sFork && document.getElementById("session-fork")) sFork.addEventListener("click", function(){ document.getElementById("session-fork").click(); });
     if (sRename && document.getElementById("session-rename")) sRename.addEventListener("click", function(){ document.getElementById("session-rename").click(); });
     if (sMove && document.getElementById("session-move")) sMove.addEventListener("click", function(){ document.getElementById("session-move").click(); });
+    var settingsEnter = document.getElementById("settings-enter-sends");
+    if (settingsEnter && el.enterSends) {
+      settingsEnter.checked = el.enterSends.checked;
+      settingsEnter.addEventListener("change", function () {
+        el.enterSends.checked = settingsEnter.checked;
+        el.enterSends.dispatchEvent(new Event("change"));
+      });
+      el.enterSends.addEventListener("change", function () {
+        settingsEnter.checked = el.enterSends.checked;
+      });
+    }
   })();
 } catch(_){}
 

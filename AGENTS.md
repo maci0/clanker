@@ -179,10 +179,11 @@ through a gated loop. Follow these conventions when changing this codebase.
   hash as Chat, so in-page jumps (System sections) scroll in JS rather than
   linking to `#section-id`. Ctrl+K is the Jump palette on every view; Rooms
   filters channels in its own sidebar instead of stealing that shortcut.
-  Phone fields stay at 16px under 40rem (iOS Safari)
-  zooms a focused field smaller than that); a later rule that sets 12px on an
-  input has to put 16px back in a later 40rem block. Plugin sheets load after
-  the host guard, so a plugin input under 16px needs its own 40rem override.
+  Phone fields stay at 16px under 40rem (iOS Safari
+  zooms a focused field smaller than that); a later or more-specific rule that
+  sets 12px on an input has to put 16px back in a later 40rem block. Plugin
+  sheets load after the host guard, so a plugin input under 16px needs its own
+  40rem override.
 
 ## Everything is a plugin
 
