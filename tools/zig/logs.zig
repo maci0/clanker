@@ -66,24 +66,23 @@ fn listAll(out: *lib.Out) !void {
 fn tailOne(out: *lib.Out, name: []const u8) !void {
     if (!view.validName(name)) return lib.fail(out, "no such log");
 
-    const listing = lib.fsList(logs_dir) catch |err| switch (err) {
-        error.NotFound => return lib.fail(out, "no such log"),
-        else => return lib.failErr(out, err, "listing state/logs"),
-    };
-    const names = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, listing, .{});
-    var found = false;
-    if (names == .array) {
-        for (names.array.items) |item| {
-            if (item != .string) continue;
-            if (std.mem.eql(u8, item.string, name)) found = true;
-        }
-    }
-    if (!found) return lib.fail(out, "no such log");
-
+    // validName already refuses separators and `..`. Stat is enough to
+    // tell a missing or non-file name from a log: listing every name in
+    // state/logs/ just to confirm this one exists was a full directory
+    // walk on every tail (the web log view).
     const path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ logs_dir, name });
-    const st_raw = lib.fsStat(path) catch |err| return lib.failErr(out, err, "reading the log");
+    const st_raw = lib.fsStat(path) catch |err| switch (err) {
+        error.NotFound => return lib.fail(out, "no such log"),
+        else => return lib.failErr(out, err, "reading the log"),
+    };
     const st = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, st_raw, .{}) catch
         return lib.fail(out, "reading the log");
+    if (st == .object) {
+        if (st.object.get("kind")) |k| {
+            if (k == .string and !std.mem.eql(u8, k.string, "file"))
+                return lib.fail(out, "no such log");
+        }
+    }
     const size = statSize(st) orelse return lib.fail(out, "reading the log");
 
     const raw = try readTailWindow(path, size);

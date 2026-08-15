@@ -147,14 +147,19 @@ pub fn readHistory(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: 
     _ = gpa;
     const path = subPath(arena, state_dir, log_path) catch return &[_]Message{};
     const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return &[_]Message{};
-    var all: std.ArrayList(Message) = .empty;
-    try parseLog(arena, raw, &all);
     var out: std.ArrayList(Message) = .empty;
-    // Iterate newest-first so `limit` keeps the most recent messages.
-    var i = all.items.len;
-    while (i > 0) {
-        i -= 1;
-        const m = all.items[i];
+    if (limit == 0) return out.toOwnedSlice(arena);
+    // Walk lines from the end and stop at `limit`. Parsing every record
+    // first then discarding all but the last page was O(log) allocations
+    // for a 50-message inbox read.
+    var end = raw.len;
+    while (end > 0) {
+        var start = end;
+        while (start > 0 and raw[start - 1] != '\n') start -= 1;
+        const line = raw[start..end];
+        end = if (start > 0) start - 1 else 0;
+        if (line.len == 0) continue;
+        const m = std.json.parseFromSliceLeaky(Message, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
         if (!std.mem.eql(u8, m.room, room)) continue;
         if (m.ts <= after) continue;
         try out.append(arena, m);
@@ -304,14 +309,48 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     try s.write(msg);
     const line = line_buf[0..w.end];
 
+    const max = cfg.chatrooms.max_history;
+    // Under the cap, seek-append the new line. Rewriting the whole log on
+    // every send used to copy up to 1 MiB per message even when nothing
+    // needed dropping. Trim still rewrites, that is the only path that
+    // must replace the file.
+    if (max > 0 and jsonlLineCount(existing) + 1 <= max) {
+        try appendLogLine(base, io, path, existing, line);
+        return;
+    }
+
     var out_list = std.ArrayList(u8).empty;
     defer out_list.deinit(gpa);
     try out_list.appendSlice(gpa, existing);
     if (existing.len > 0 and existing[existing.len - 1] != '\n') try out_list.append(gpa, '\n');
     try out_list.appendSlice(gpa, line);
     try out_list.append(gpa, '\n');
-    try trimLog(gpa, arena, &out_list, cfg.chatrooms.max_history);
+    try trimLog(gpa, arena, &out_list, max);
     try atomic_write.writeFile(io, base, path, out_list.items);
+}
+
+fn jsonlLineCount(raw: []const u8) usize {
+    var n: usize = 0;
+    var it = std.mem.splitScalar(u8, raw, '\n');
+    while (it.next()) |ln| {
+        if (ln.len > 0) n += 1;
+    }
+    return n;
+}
+
+fn appendLogLine(base: std.Io.Dir, io: std.Io, path: []const u8, existing: []const u8, line: []const u8) !void {
+    const file = try base.createFile(io, path, .{ .truncate = false });
+    defer file.close(io);
+    const size = (try file.stat(io)).size;
+    var wbuf: [512]u8 = undefined;
+    var fw = file.writer(io, &wbuf);
+    try fw.seekToUnbuffered(size);
+    if (existing.len > 0 and existing[existing.len - 1] != '\n') {
+        try fw.interface.writeAll("\n");
+    }
+    try fw.interface.writeAll(line);
+    try fw.interface.writeAll("\n");
+    try fw.flush();
 }
 
 /// Keeps only the last `max` lines of the JSONL log.
@@ -920,6 +959,14 @@ fn makeId(arena: std.mem.Allocator, ts: i64) ![]const u8 {
 }
 
 // ------------------------------------------------------------------- tests --
+
+test "jsonlLineCount ignores blank lines" {
+    try std.testing.expectEqual(@as(usize, 0), jsonlLineCount(""));
+    try std.testing.expectEqual(@as(usize, 0), jsonlLineCount("\n\n"));
+    try std.testing.expectEqual(@as(usize, 1), jsonlLineCount("a\n"));
+    try std.testing.expectEqual(@as(usize, 2), jsonlLineCount("a\n\nb\n"));
+    try std.testing.expectEqual(@as(usize, 2), jsonlLineCount("a\nb"));
+}
 
 test "append + readHistory + listRooms round-trip" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
