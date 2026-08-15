@@ -97,6 +97,7 @@ comptime {
     _ = @import("improve/inert_check.zig");
     _ = @import("improve/engine.zig");
     _ = @import("improve/retire.zig");
+    _ = @import("improve/worktree.zig");
     _ = @import("gate/checks.zig");
     _ = @import("mcp/server.zig");
     _ = @import("acp/server.zig");

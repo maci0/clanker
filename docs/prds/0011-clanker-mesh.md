@@ -308,7 +308,7 @@ Allowed `tool_self_name` values: `mesh_join`, `mesh_leave`,
 the internal multiplexed `mesh` name if the web UI wants one
 descriptor). Import existing is not a grant.
 
-One WASM module (`tools/zig/mesh.zig`), one op per descriptor in
+One WASM module (built as `tools/zig/peers.zig`), one op per descriptor in
 `config`, sequential, the `chat.zig` shape.
 
 **Guest `mesh_join` cannot widen the world.** A model-initiated join
