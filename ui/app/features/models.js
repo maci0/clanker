@@ -315,7 +315,7 @@ function loadConfigured() {
         (prov.models || []).forEach(function (m) {
           var entry = {
             provider: prov.name, model: m.name, id: m.id || "", display: m.display || "", category: m.category || "",
-            context_window: m.context_window, max_tokens: m.max_tokens,
+            context_window: m.context_window, max_tokens: m.max_tokens, rpm: m.rpm,
             temperature: m.temperature, top_p: m.top_p, reasoning_effort: m.reasoning_effort,
             cost_per_1m_input: m.cost_per_1m_input, cost_per_1m_output: m.cost_per_1m_output,
             capabilities: m.capabilities || []
@@ -393,6 +393,7 @@ function showEditPanel(entry, isNew) {
   editField("models-edit-reasoning").value = entry.reasoning_effort || "";
   editField("models-edit-cost-in").value = entry.cost_per_1m_input != null ? entry.cost_per_1m_input : "";
   editField("models-edit-cost-out").value = entry.cost_per_1m_output != null ? entry.cost_per_1m_output : "";
+  editField("models-edit-rpm").value = entry.rpm != null ? entry.rpm : "";
   editField("models-edit-capabilities").value = (entry.capabilities || []).join(", ");
   var removeBtn = document.getElementById("models-edit-remove");
   if (removeBtn) removeBtn.hidden = isNew;
@@ -447,6 +448,8 @@ function editPayload() {
   var costIn = numOrNull("models-edit-cost-in");
   if (costIn != null) payload.cost_per_1m_input = costIn;
   var costOut = numOrNull("models-edit-cost-out");
+  var rpm = numOrNull("models-edit-rpm");
+  if (rpm != null) payload.rpm = rpm;
   if (costOut != null) payload.cost_per_1m_output = costOut;
   var caps = editField("models-edit-capabilities").value.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
   if (caps.length) payload.capabilities = caps;
@@ -653,7 +656,7 @@ export function bindModels() {
   if (add) add.addEventListener("click", function () {
     showEditPanel({
       provider: "", model: "", id: "", display: "", category: "",
-      context_window: 131072, max_tokens: 1024,
+      context_window: 131072, max_tokens: 1024, rpm: null,
       temperature: null, top_p: null, reasoning_effort: "",
       cost_per_1m_input: null, cost_per_1m_output: null, capabilities: []
     }, true);

@@ -3560,6 +3560,37 @@ test "unset model specs fill from the models.dev snapshot; written values win" {
     try std.testing.expect(capped.max_tokens_set);
 }
 
+test "rpm is accepted on a provider and on a model" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "n"
+        \\[providers.n]
+        \\base_url = "https://n.test/v1"
+        \\rpm = 40
+        \\[models."n/fast"]
+        \\provider = "n"
+        \\rpm = 10
+        \\[models."n/slow"]
+        \\provider = "n"
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    const n = cfg.providers.getPtr("n").?;
+    try std.testing.expectEqual(@as(u32, 40), n.rpm.?);
+    try std.testing.expectEqual(@as(u32, 10), n.models.get("fast").?.rpm.?);
+    try std.testing.expect(n.models.get("slow").?.rpm == null);
+}
+
 test "a local override with only default_provider keeps the base providers" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

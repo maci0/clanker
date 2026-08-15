@@ -33,6 +33,11 @@ test("configSnippet writes a provider table from the catalog mapping", function 
   assert.match(text, /\[models\."deepseek\/deepseek-chat"\]/);
 });
 
+test("Models edit form has an rpm field", function () {
+  assert.match(html, /id="models-edit-rpm"/);
+  assert.match(js, /payload\.rpm = rpm/);
+});
+
 test("Models edit form has a wire id field for aliases", function () {
   assert.match(html, /id="models-edit-id"/);
   assert.match(js, /payload\.id = sku/);
