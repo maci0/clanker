@@ -29,10 +29,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
-- Provider ids match the vendor, not a model name. Committed vendors:
-  `anthropic`, `deepseek`, `google`, `meta`, `moonshotai`, `openai`,
-  plus local `ollama` and `vllm-local`. Muse Spark is a Meta model.
-  The extra OpenRouter stanza that only re-hosted Muse is gone.
+- The committed `config.toml` ships one default model per provider, not
+  a catalog. Extra SKUs belong in `config.local.toml` or Discover.
 - `clanker serve` greets a terminal with a startup card: robot badge,
   version, clickable Local URL, whether the network can reach it, the
   proxy mount when enabled, and how to stop. A piped stdout still gets
