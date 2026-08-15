@@ -191,6 +191,9 @@ fn forward(ctx: Ctx, family: Family) u16 {
     if (!chat_route and resolved.provider.kind == .vertex_anthropic) {
         return writeEnvelope(ctx, 400, "unknown_endpoint", "vertex_anthropic only serves chat / messages");
     }
+    if (resolved.provider.kind == .gemini) {
+        return writeEnvelope(ctx, 400, "protocol_mismatch", "gemini is not available on the OpenAI/Anthropic proxy");
+    }
 
     var upstream_body = ctx.body;
     if (need_xcode) {
@@ -506,6 +509,7 @@ fn upstreamUrl(
     const use_vtable = force_vtable or
         (provider.kind == .vertex_anthropic and isMessagesCreate(path)) or
         (provider.kind == .openai_compat and isChatCompletions(path)) or
+        (provider.kind == .azure_openai and isChatCompletions(path)) or
         (provider.kind == .anthropic and isMessagesCreate(path));
     if (use_vtable) {
         const base = try impl.endpointUrl(gpa, provider, streaming);
@@ -893,7 +897,7 @@ fn uniqueProvider(cfg: *const config.Config, family: ?Family) LookupError!Resolv
 
 fn speaks(kind: config.ProviderKind, family: Family) bool {
     return switch (family) {
-        .openai => kind == .openai_compat,
+        .openai => kind == .openai_compat or kind == .azure_openai,
         .anthropic => kind == .anthropic or kind == .vertex_anthropic,
     };
 }

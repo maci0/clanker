@@ -112,8 +112,8 @@ through a gated loop. Follow these conventions when changing this codebase.
   `POST /api/catalog/refresh` is asked. Serve start and catalog search do
   not hit the network if the file is present. Which catalog providers we
   can run is `src/llm/catalog.zig`: models.dev's `npm` package plus a base
-  URL maps to `ProviderKind` and `AuthStrategy`. Gemini-native, Bedrock,
-  and Azure are absent until they have a kind.
+  URL maps to `ProviderKind` and `AuthStrategy`. Vertex Gemini and Bedrock
+  are absent until they have a kind.
 - `src/serve/` — the OpenAI/Anthropic compatibility proxy (`clanker serve --proxy`).
   Native because it attaches provider credentials. It forwards `/v1/*` 1:1 and
   must not go through `client.chat` / `buildRequest`.

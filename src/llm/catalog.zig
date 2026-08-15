@@ -44,6 +44,8 @@ const npm_rows = std.StaticStringMap(NpmRow).initComptime(.{
     .{ "@openrouter/ai-sdk-provider", NpmRow{ .kind = .openai_compat, .auth = .api_key, .default_base = "https://openrouter.ai/api/v1" } },
     .{ "@ai-sdk/anthropic", NpmRow{ .kind = .anthropic, .auth = .api_key, .default_base = "https://api.anthropic.com" } },
     .{ "@ai-sdk/google-vertex/anthropic", NpmRow{ .kind = .vertex_anthropic, .auth = .oauth_refresh } },
+    .{ "@ai-sdk/google", NpmRow{ .kind = .gemini, .auth = .api_key, .default_base = "https://generativelanguage.googleapis.com/v1beta" } },
+    .{ "@ai-sdk/azure", NpmRow{ .kind = .azure_openai, .auth = .api_key } },
 });
 
 /// Classify a models.dev provider from its npm package, catalog `api` URL,
@@ -51,7 +53,9 @@ const npm_rows = std.StaticStringMap(NpmRow).initComptime(.{
 pub fn classify(npm: []const u8, api: []const u8, env0: []const u8) ?Support {
     const row = npm_rows.get(npm) orelse return null;
     const base = if (api.len > 0) api else row.default_base;
-    if (base.len == 0 and row.kind != .vertex_anthropic) return null;
+    // Vertex builds the URL from project/location. Azure needs the
+    // resource host from the operator (`https://<name>.openai.azure.com`).
+    if (base.len == 0 and row.kind != .vertex_anthropic and row.kind != .azure_openai) return null;
 
     var path: ?[]const u8 = null;
     if (row.kind == .anthropic and api.len > 0) {
@@ -131,11 +135,23 @@ test "Vertex Anthropic is vertex_anthropic + oauth_refresh without a base URL" {
     try std.testing.expectEqualStrings("", s.base_url);
 }
 
-test "Gemini-native, Bedrock, and Azure are not supported" {
-    try std.testing.expect(classify("@ai-sdk/google", "", "GOOGLE_API_KEY") == null);
+test "Gemini AI Studio is gemini + api_key with the public base URL" {
+    const s = classify("@ai-sdk/google", "", "GOOGLE_API_KEY").?;
+    try std.testing.expectEqual(config.ProviderKind.gemini, s.kind);
+    try std.testing.expectEqual(config.AuthStrategy.api_key, s.auth);
+    try std.testing.expectEqualStrings("https://generativelanguage.googleapis.com/v1beta", s.base_url);
+}
+
+test "Azure OpenAI is azure_openai + api_key without a default host" {
+    const s = classify("@ai-sdk/azure", "", "AZURE_API_KEY").?;
+    try std.testing.expectEqual(config.ProviderKind.azure_openai, s.kind);
+    try std.testing.expectEqualStrings("", s.base_url);
+    try std.testing.expectEqualStrings("AZURE_API_KEY", s.api_key_env);
+}
+
+test "Vertex Gemini and Bedrock stay unsupported" {
     try std.testing.expect(classify("@ai-sdk/google-vertex", "", "") == null);
     try std.testing.expect(classify("@ai-sdk/amazon-bedrock", "", "") == null);
-    try std.testing.expect(classify("@ai-sdk/azure", "", "AZURE_API_KEY") == null);
 }
 
 test "classifyEntry reads npm, api, and the first env var" {

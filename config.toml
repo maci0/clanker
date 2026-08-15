@@ -5,6 +5,7 @@ default_provider = "kimi-k3"
 # each provider, since most configs never need them.
 #
 #   kind             openai_compat (default) | anthropic | vertex_anthropic
+#                    | azure_openai | gemini
 #   base_url         required
 #   api_key_env      name of the env var holding the key, never the key itself
 #   default_model    which [models."<name>/..."] entry is active; with exactly
@@ -39,6 +40,9 @@ default_provider = "kimi-k3"
 # project = "my-gcp-project"
 # location = "us-east5"
 # service_account_file = "/path/to/sa.json"
+#
+# # azure_openai only. The api-version query. Empty uses 2024-10-21.
+# api_version = "2024-10-21"
 
 [providers.deepseek]
 kind = "openai_compat"

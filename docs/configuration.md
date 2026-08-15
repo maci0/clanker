@@ -71,14 +71,15 @@ unconfigured one.
 
 | Key | Type | Meaning |
 |---|---|---|
-| `kind` | string | Wire format: `openai_compat` (default), `anthropic`, or `vertex_anthropic`. See below. |
-| `base_url` | string | Endpoint base. `openai_compat` appends `/chat/completions`, `anthropic` appends `/v1/messages`, unless `path` overrides. |
+| `kind` | string | Wire format: `openai_compat` (default), `anthropic`, `vertex_anthropic`, `azure_openai`, or `gemini`. See below. |
+| `base_url` | string | Endpoint base. `openai_compat` appends `/chat/completions`, `anthropic` appends `/v1/messages`, `azure_openai` builds `/openai/deployments/<model>/chat/completions`, `gemini` builds `/models/<model>:generateContent`, unless `path` overrides. |
 | `api_key_env` | string | Name of the `.env` variable holding the credential. Omit for a keyless local endpoint (ollama, vLLM). |
 | `auth` | string | Credential-acquisition strategy: `api_key`, `oauth_static` or `oauth_refresh`. Optional — each `kind` auto-detects where the credential types are distinguishable. See below. |
 | `default_model` | string | Which of this provider's models is active by default. |
 | `path` | string | Override the endpoint path (rarely needed). |
 | `check_timeout_seconds` | int | How long `providers check` waits for this endpoint before giving up, overriding the global `agent.provider_check_timeout_seconds`. `0` = no ceiling. |
 | `project`, `location`, `service_account_file` | string | `vertex_anthropic` only (see below). |
+| `api_version` | string | `azure_openai` only. The `api-version` query. Empty uses `2024-10-21`. |
 
 ### `kind = "openai_compat"`
 
@@ -130,6 +131,34 @@ default_model = "claude-sonnet-5"
 # api_key_env = "VERTEX_ACCESS_TOKEN"
 ```
 
+### `kind = "azure_openai"`
+
+Azure OpenAI chat completions. Same body as `openai_compat`. The deployment is
+the model name in the URL, and the credential rides `api-key` (not Bearer).
+`base_url` is the resource host.
+
+```toml
+[providers.azure]
+kind = "azure_openai"
+base_url = "https://contoso.openai.azure.com"
+api_key_env = "AZURE_API_KEY"
+default_model = "gpt-4o"
+# api_version = "2024-12-01-preview"   # optional; default 2024-10-21
+```
+
+### `kind = "gemini"`
+
+Google Gemini generateContent (AI Studio). The key rides `x-goog-api-key`.
+`base_url` defaults in the adapter if you paste the public host.
+
+```toml
+[providers.google]
+kind = "gemini"
+base_url = "https://generativelanguage.googleapis.com/v1beta"
+api_key_env = "GOOGLE_API_KEY"
+default_model = "gemini-2.5-flash"
+```
+
 ### `auth` — the credential axis
 
 Auth is a separate axis from the wire format, so `kind` says how the request is
@@ -137,7 +166,7 @@ Auth is a separate axis from the wire format, so `kind` says how the request is
 
 | Value | Meaning |
 |---|---|
-| `api_key` | Read `api_key_env` and present it the way the wire kind wants (`Bearer` for `openai_compat`/`vertex_anthropic`, `x-api-key` for `anthropic`). |
+| `api_key` | Read `api_key_env` and present it the way the wire kind wants (`Bearer` for `openai_compat`/`vertex_anthropic`, `x-api-key` for `anthropic`, `api-key` for `azure_openai`, `x-goog-api-key` for `gemini`). |
 | `oauth_static` | A pasted OAuth access token in `api_key_env`, presented as `Authorization: Bearer` plus any provider beta header. |
 | `oauth_refresh` | A token minted and renewed in-process. Only `vertex_anthropic` supports it today (from `service_account_file`); other kinds reject it rather than downgrade silently. |
 
@@ -221,12 +250,11 @@ hand-typed. The snapshot is downloaded the first time something needs it,
 then only when `clanker providers refresh` (or Refresh catalog in the
 Models view) is asked. Serve start does not contact models.dev.
 Only providers whose API and auth clanker implements appear in catalog
-search: OpenAI-compatible (`@ai-sdk/openai-compatible` and the official
-OpenAI / xAI / Groq / … packages, Bearer API key), Anthropic Messages
-(`@ai-sdk/anthropic`, API key or OAuth by token shape), and Vertex
-Anthropic (`@ai-sdk/google-vertex/anthropic`, GCP `oauth_refresh`).
-Gemini-native, Amazon Bedrock, and Azure are not in that map. The table
-is `src/llm/catalog.zig`.
+search: OpenAI-compatible (Bearer API key), Anthropic Messages (API key
+or OAuth by token shape), Vertex Anthropic (GCP `oauth_refresh`), Gemini
+AI Studio (`x-goog-api-key`), and Azure OpenAI (`api-key` plus a
+resource host). Vertex Gemini and Amazon Bedrock are not in that map.
+The table is `src/llm/catalog.zig`.
 `clanker providers check` pings every configured provider and reports
 latency/cost; `clanker providers models <name>` lists a provider's models.
 

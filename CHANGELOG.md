@@ -38,10 +38,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Discover and `providers catalog` only list models.dev providers
   clanker can run. Support is the catalog `npm` package plus a base URL,
   mapped in `src/llm/catalog.zig` to `openai_compat` (Bearer API key),
-  `anthropic` (API key or OAuth by token shape), or `vertex_anthropic`
-  (GCP `oauth_refresh`). Gemini-native, Bedrock, and Azure stay out.
+  `anthropic` (API key or OAuth by token shape), `vertex_anthropic`
+  (GCP `oauth_refresh`), `gemini` (`x-goog-api-key`), or `azure_openai`
+  (`api-key` plus a resource host). Vertex Gemini and Bedrock stay out.
   A missing `[providers.*]` table in a snippet is now filled from that
   mapping (kind, base_url, api_key_env) instead of a comment.
+- `kind = "gemini"` talks to Google Gemini generateContent (AI Studio).
+  `kind = "azure_openai"` talks to Azure OpenAI chat completions
+  (deployment in the URL, optional `api_version`).
 - Web UI shell follows a session-first layout: conversations stay in the
   left rail, Watch and Set up fold away, and Chat is a header / transcript
   / docked-composer column. PatternFly page chrome and cabinet colors stay.

@@ -42,6 +42,11 @@ pub const ProviderKind = enum {
     /// Anthropic models served through Google Vertex AI: same message format,
     /// but the model lives in the URL and auth is a GCP bearer token.
     vertex_anthropic,
+    /// Azure OpenAI chat completions: same body as openai_compat, but the
+    /// deployment is in the URL and the key rides `api-key`.
+    azure_openai,
+    /// Google Gemini generateContent (AI Studio).
+    gemini,
 
     pub fn fromStr(s: []const u8) ?ProviderKind {
         return std.meta.stringToEnum(ProviderKind, s);
@@ -146,6 +151,9 @@ pub const Provider = struct {
     /// Endpoint path override; defaults per kind (`/chat/completions`,
     /// `/v1/messages`).
     path: ?[]const u8 = null,
+
+    /// azure_openai only: the `api-version` query. Empty uses the kind default.
+    api_version: []const u8 = "",
 
     /// How long `providers check` waits for this endpoint before giving up on
     /// it, overriding `agent.provider_check_timeout_seconds` for this provider
@@ -1221,6 +1229,9 @@ pub const Config = struct {
         }
         if (obj.get("path")) |k| {
             p.path = try jsonStr(k, "path");
+        }
+        if (obj.get("api_version")) |k| {
+            p.api_version = try jsonStr(k, "api_version");
         }
         if (obj.get("default_model")) |k| {
             p.default_model = try jsonStr(k, "default_model");

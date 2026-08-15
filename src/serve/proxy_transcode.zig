@@ -18,8 +18,9 @@ const proxy = @import("proxy.zig");
 /// inbound route's family, and two structurally-identical enums don't ==.
 pub fn upstreamFamily(kind: config.ProviderKind) proxy.Family {
     return switch (kind) {
-        .openai_compat => .openai,
+        .openai_compat, .azure_openai => .openai,
         .anthropic, .vertex_anthropic => .anthropic,
+        .gemini => .openai,
     };
 }
 

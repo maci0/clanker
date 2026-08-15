@@ -105,6 +105,8 @@ export function configSnippet(m, configured, known) {
       if (m.base_url) lines.push("base_url = " + tomlStr(m.base_url));
       else if (m.kind === "vertex_anthropic") {
         lines.push("# set project, location, service_account_file, and a base_url");
+      } else if (m.kind === "azure_openai") {
+        lines.push("# set base_url to https://<resource>.openai.azure.com");
       }
       if (m.auth && m.auth !== "api_key") lines.push("auth = " + tomlStr(m.auth));
       if (m.api_key_env) lines.push("api_key_env = " + tomlStr(m.api_key_env));

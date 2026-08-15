@@ -18,6 +18,8 @@ pub const api = @import("providers/api.zig");
 pub const openai = @import("providers/openai.zig");
 pub const anthropic = @import("providers/anthropic.zig");
 pub const vertex = @import("providers/vertex.zig");
+pub const azure = @import("providers/azure.zig");
+pub const gemini = @import("providers/gemini.zig");
 
 /// Re-exported so callers keep saying `providers.RequestParams` rather than
 /// reaching into the interface module.
@@ -35,6 +37,8 @@ pub const registry = [_]Provider{
     openai.provider,
     anthropic.provider,
     vertex.provider,
+    azure.provider,
+    gemini.provider,
 };
 
 /// The vtable for a configured provider. Resolved once per request by the
