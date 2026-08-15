@@ -24,6 +24,10 @@ through a gated loop. Follow these conventions when changing this codebase.
 - `clanker gate` — run build, test, tools, fmt, lint, tools-ts-toolchain,
   and release-contract gates. Release policy and version source of truth:
   [RELEASES.md](RELEASES.md); consumer-visible changes: [CHANGELOG.md](CHANGELOG.md).
+- A `zig build test` step that fails while naming no test is usually the tree
+  moving under the build (another session editing, or a second test binary
+  competing for the machine), not a defect: re-run it, or run the compiled
+  binary in `.zig-cache/o/<hash>/test` directly, before hunting for a cause.
 
 ## Zig style
 

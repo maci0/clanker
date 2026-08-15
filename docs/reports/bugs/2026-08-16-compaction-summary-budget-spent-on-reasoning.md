@@ -9,12 +9,15 @@
   observed run), a permanently degraded summary, and the model's actual answer —
   returned in `reasoning_content` — thrown away. Any model with `thinking` in its
   capabilities is affected.
-- **Resolution:** open. Cause confirmed against the live API; no fix committed.
+- **Resolution:** resolved in `d2628464`. The summary call is budgeted for the
+  model it runs on, falls back to the model's reasoning text, and is not retried
+  once it has failed twice in a run.
 
 ## Status
 
-Open. Established by
-[Investigation — `clanker run` never finishes](../investigations/2026-08-16-run-livelock-compaction-thrash.md).
+Resolved. Established by
+[Investigation — `clanker run` never finishes](../investigations/2026-08-16-run-livelock-compaction-thrash.md);
+verified against the live DeepSeek endpoint.
 
 ## Symptom and impact
 

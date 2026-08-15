@@ -9,12 +9,15 @@
   `agent.max_history_tokens`. With this repository's own prompt and the default
   16000-token cap, that is every long run. Each wasted iteration also costs an
   extra LLM round trip and erases the agent's working context.
-- **Resolution:** open. Cause confirmed and reproduced; no fix committed.
+- **Resolution:** resolved in `d2628464`. The threshold now answers to what
+  compaction can actually deliver, and a run pinned against its ceiling stops
+  with `error.CompactionStalled` instead of spinning.
 
 ## Status
 
-Open. Established by
-[Investigation — `clanker run` never finishes](../investigations/2026-08-16-run-livelock-compaction-thrash.md).
+Resolved. Established by
+[Investigation — `clanker run` never finishes](../investigations/2026-08-16-run-livelock-compaction-thrash.md);
+verified against that investigation's reproduction.
 
 ## Symptom and impact
 
@@ -104,43 +107,86 @@ call (a separate defect — the extractive fallback keeps compaction functioning
 
 ## Resolution
 
-Not yet implemented. The changes that address the root cause, smallest first:
+Fixed in `d2628464` (`src/agent/loop.zig`, `src/cli.zig`), in three parts.
 
-1. **Detect no-progress compaction.** Compare the post-compaction estimate with
-   the pre-compaction one. When it did not fall materially, log once — naming the
-   immovable floor, e.g. "system prompt ~14050 tokens of a 16000 threshold" —
-   and suppress further attempts until the history has grown by a margin beyond
-   the last attempt. This alone converts a livelock into a run that proceeds.
-2. **Make the threshold answer to the model.** Treat `max_history_tokens` as a
-   ceiling that cannot fall below what the immovable part needs, or scale it with
-   `context_window` so a 1M-token model is not capped at 16k. Validation should
-   warn when the system prompt approaches the configured cap.
-3. **Give a hopeless run a defined end.** After N consecutive no-progress
-   compactions, abort with a distinct error rather than burning to
-   `max_iterations`, so a supervising wrapper sees a non-zero exit promptly.
+**The threshold answers to what compaction can deliver.** `immovableTokens`
+measures what survives a compaction — the system message, the kept tail, and the
+summary written back in place of the middle — and `raisedThreshold` lifts a
+configured threshold below that floor up to the floor plus half again of
+headroom, bounded by the model's own context budget. `agent.max_history_tokens`
+still caps history; it can no longer demand the impossible. The lift is reported
+once per run:
 
-Operationally, until a fix lands, raise `agent.max_history_tokens` in
-`config.local.toml` to something well clear of the system prompt (for a 1M-token
-model, 100000+ is reasonable) and keep `state/learnings.md` trimmed.
+```
+[WARN] history threshold 16000 is below the 20774 tokens compaction cannot
+       remove (system prompt plus the 6 kept messages); using 31161 for this run
+```
+
+**One definition of what the history costs.** `historyTokens` is now the single
+measure used by the threshold test, the immovable floor, and the before/after
+check. This mattered: the first version of the fix sized a tool result at full
+length for the floor and at its pruned length for the estimate, which overstated
+the floor by a factor of two (41,579 against the true 20,774) and raised the
+threshold far higher than needed.
+
+**A pinned run ends.** The stop condition is `max_consecutive_compactions` (5)
+iterations that each needed a compaction, not a per-compaction progress share.
+The share was tried first and does not work: with a threshold barely above the
+floor, each compaction genuinely frees ~6% and dips just under, then one
+iteration puts the history back over, so every individual compaction "succeeds"
+while the run compacts on every iteration. Consecutive compactions catch that
+shape and the freed-nothing shape alike. The run then fails with
+`error.CompactionStalled`, which `reportUnfinishedRun` treats as an outcome
+rather than a crash and which names both ceilings, since raising the cap only
+helps when the model has the room:
+
+```
+[ERROR] run could not compact its history any further and did not produce a final answer
+[INFO]  agent.max_history_tokens is 16000 and this model gives compaction 20000
+        tokens to work in (half of a 40000 context window)
+```
+
+Operationally, `agent.max_history_tokens` should still be set well clear of the
+system prompt — the fix keeps a run alive and honest, it does not make a 16000
+cap a good setting for a 1M-token model.
 
 ## Verification
 
-Pending. The fix must show, on the reproduction above: compaction attempted at
-most once per growth window rather than every iteration; an explicit log line
-naming the immovable floor; and the run reaching a final answer or a clear
-failure instead of the iteration cap. A unit test over `compactionKeepStart` and
-`compactMiddle` with a system message that alone exceeds the threshold should
-assert the second consecutive attempt is suppressed.
+Against the reproduction above, with the fixed binary:
+
+| scenario | before | after |
+|---|---|---|
+| 1,048,576-token model, 14 iterations | compaction on 12 of 14 iterations, estimate pinned at a repeated 19,496 | one compaction, at iteration 13, when the history genuinely reached 32,013 |
+| 40,000-token model (floor unreachable) | compaction every iteration to the iteration cap | five consecutive compactions, then `CompactionStalled`, exit 1 |
+
+The floor line appears once per run, not per iteration. The stalled run exits
+non-zero promptly, which is what lets a supervising wrapper react.
+
+Unit tests in `src/agent/loop.zig`: `raisedThreshold` (raises below the floor,
+keeps headroom, respects the model budget, leaves an adequate threshold
+untouched), `immovableTokens` (counts system + tail + reserve, discounts what
+pruning would strip, excludes the droppable middle), and `compactionSucceeded`
+(a compaction that leaves the history over the threshold has not succeeded).
+Full suite on the merged tree: 1063 passed, 5 skipped, 0 failed.
 
 ## Follow-up
 
-`scripts/imp-autorecover-loop/loop.py` waits on its repair run with no timeout,
-which is why this defect stalled an unattended loop rather than being noticed
-quickly. A watchdog there is worth having regardless of this fix, since it covers
-every other way a child can fail to return.
+`scripts/imp-autorecover-loop/loop.py` waited on its repair run with no timeout,
+which is why this defect stalled an unattended loop for hours rather than being
+noticed quickly. It now has a watchdog (a wall-clock cap on repair-level runs, a
+silence timeout on every run), which covers every other way a child can fail to
+return, including the next unknown one.
+
+Remaining risk: `agent.max_history_tokens` still defaults to a flat 16000 with no
+relation to the model's context window. The fix makes that harmless rather than
+fatal — a run lifts the threshold and says so — but a default that is wrong for
+every large-window model is still a default worth revisiting, together with a
+config-validation warning when the system prompt approaches the cap.
 
 ## References
 
 - Investigation: [`2026-08-16-run-livelock-compaction-thrash.md`](../investigations/2026-08-16-run-livelock-compaction-thrash.md)
-- Code: `src/agent/loop.zig` (1284, 1313, 1354, 1373, 1387, 666), `src/config.zig` (262)
-- Fix: none yet
+- Code: `src/agent/loop.zig` (`maybeCompactMessages`, `historyTokens`, `immovableTokens`,
+  `raisedThreshold`, `compactionSucceeded`, `CompactionState`), `src/cli.zig`
+  (`reportUnfinishedRun`), `src/config.zig` (`max_history_tokens`)
+- Fix: `d2628464` (with `da32e5a0`, `0a8e904e`, merge `b5950374`)
