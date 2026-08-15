@@ -721,7 +721,11 @@ el.newChat.addEventListener("click", closeRailOnNarrow);
 /* The transcript is either turns or a line saying there are none; it used to
    be turns or nothing at all, which looked identical to a failed load. */
 function syncTranscriptEmpty() {
-  el.transcriptEmpty.hidden = el.transcript.querySelector(".turn") !== null;
+  var empty = el.transcript.querySelector(".turn") === null;
+  el.transcriptEmpty.hidden = !empty;
+  // Empty conversations center the greeting + composer mid-screen with the
+  // suggestions underneath; the first turn docks the composer to the bottom.
+  document.getElementById("view-chat").classList.toggle("chat-empty", empty);
 }
 
 function loadSessions() {
@@ -1098,6 +1102,7 @@ el.steerInput.addEventListener("keydown", function (e) {
    answer as soon as you ask another question. */
 function createTurn(task) {
   if (el.transcriptEmpty) el.transcriptEmpty.hidden = true;
+  document.getElementById("view-chat").classList.remove("chat-empty");
   var turn = document.createElement("div");
   turn.className = "turn";
 

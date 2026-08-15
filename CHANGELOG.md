@@ -44,6 +44,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   send arrow / stop square convention of mainstream chat UIs. The
   keyboard-shortcut hint moved into the tooltip and accessible name, and
   the two buttons still hand focus to each other across a run.
+- An empty conversation centers a greeting and the composer mid-screen
+  with the suggestions underneath, the mainstream chat empty state; the
+  first turn docks the composer back to the bottom. Turn actions (Copy
+  answer, Run again, Edit & resend, Branch, Apply plan) already matched
+  the convention and are unchanged.
 
 ### Added
 
