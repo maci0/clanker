@@ -88,9 +88,10 @@ through a gated loop. Follow these conventions when changing this codebase.
   `session.zig`'s `validSessionId` rather than restating its alphabet.
   `listSessions` / `--continue` read only the listing header (`message_count`
   and `bytes` sit in front of `messages`); a picker must not parse every
-  transcript. The `sessions` and `graph` guests use `ck_fs_read_range` the
-  same way: a full `ck_fs_read` per file burns the 1 MiB host arena and
-  drops later rows. Graph listing reads a 4 KiB prefix (scalars sit in front
+  transcript. Session search scores the same header, then opens transcripts
+  newest-first and stops at the page limit. The `sessions` and `graph` guests
+  use `ck_fs_read_range` the same way: a full `ck_fs_read` per file burns the
+  1 MiB host arena and drops later rows. Graph listing reads a 4 KiB prefix (scalars sit in front
   of `task`/`nodes`) and caps the picker at 50 newest runs; 48 KiB times a
   few dozen files used to exhaust that arena mid-list.
   `Agent.on_token` has no context argument, so streaming side-state
@@ -125,8 +126,10 @@ through a gated loop. Follow these conventions when changing this codebase.
   seconds, so the pulse clock must be too. The page watches `GET /api/events`
   (SSE in `src/serve/live.zig`); HTTP `POST /api/*` stays the command path.
   `chatrooms.fanOut` POSTs each message to every peer's `/api/chat/message`
-  (per-peer backoff on failure). Mesh `CHAT` / `CHAT_SYNC` frames are
-  received on the wire; they are not the fan-out path.
+  (per-peer backoff on failure). A local append seeks onto the jsonl when
+  the log is still under `max_history`; only a trim rewrites the file.
+  Mesh `CHAT` / `CHAT_SYNC` frames are received on the wire; they are not
+  the fan-out path.
 - `src/util/` — logging, dotenv, `ensureDir` (the one way to create `state/`
   when it may be a `--worktree` symlink; `createDirPath` reports NotDir),
   and the one UTF-8 byte-cap (`util/utf8.zig` `cap`, `@import("utf8")` in
