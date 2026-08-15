@@ -592,7 +592,7 @@ function drawCompactor(ctx, cv, m, t, ground, cw, pal) {
   if (age < pushMs) {
     var p = age / pushMs;
     // Dark hole at the far edge.
-    ctx.fillStyle = pal ? pal.bg : "#0b0e0f";
+    ctx.fillStyle = pal.bg;
     ctx.fillRect(hole, ground - 16, 22, 18);
     // The loser's sprite, pushed ahead of the blade, shrinking into the hole.
     var lx = Math.round(cx + (hole - cx) * p);
@@ -604,11 +604,11 @@ function drawCompactor(ctx, cv, m, t, ground, cw, pal) {
     ctx.globalAlpha = 1;
     // Bulldozer: body, blade, two treads that step-cycle on the same t.
     var bx = Math.round(cx - 40 + (hole - cx) * p);
-    ctx.fillStyle = pal ? pal.warn : "#e5b54a";
+    ctx.fillStyle = pal.warn;
     ctx.fillRect(bx, ground - 18, 24, 12);
-    ctx.fillStyle = pal ? pal.warn : "#c9a038";
+    ctx.fillStyle = pal.warn;
     ctx.fillRect(bx + 24, ground - 20, 4, 16);
-    ctx.fillStyle = pal ? pal.surface : "#2a3033";
+    ctx.fillStyle = pal.surface;
     var step = Math.floor(t / 90) % 2;
     ctx.fillRect(bx + 2 + step, ground - 6, 7, 6);
     ctx.fillRect(bx + 14 - step, ground - 6, 7, 6);
@@ -620,11 +620,11 @@ function drawCompactor(ctx, cv, m, t, ground, cw, pal) {
     // short of full closure: the point is the walls closing.
     var w = (age - pushMs) / wallMs;
     ctx.globalAlpha = Math.min(1, w * 3);
-    ctx.fillStyle = pal ? pal.bg : "#121618";
+    ctx.fillStyle = pal.bg;
     ctx.fillRect(0, 0, cv.width, cv.height);
     var gap = 26;
     var travel = Math.round((cv.width / 2 - gap) * Math.min(1, w * 1.2));
-    ctx.fillStyle = pal ? pal.border : "#3a4146";
+    ctx.fillStyle = pal.border;
     ctx.fillRect(0, 0, travel, cv.height);
     ctx.fillRect(cv.width - travel, 0, travel, cv.height);
     ctx.fillStyle = peerColor((cs[idx] && cs[idx].label) || String(idx));

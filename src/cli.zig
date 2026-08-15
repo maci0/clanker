@@ -5480,6 +5480,8 @@ threadlocal var request_keep_alive: bool = false;
 /// True when this request's path carried a `/webui/~<tag>/` cache-bust prefix.
 /// Tagged asset responses may be cached immutably; the HTML always stays no-cache.
 threadlocal var request_webui_tagged: bool = false;
+/// HEAD on the printed `/webui` URL: same headers as GET, no body.
+threadlocal var request_head: bool = false;
 var http_requests_total = std.atomic.Value(u64).init(0);
 var http_errors_total = std.atomic.Value(u64).init(0);
 var http_latency_le_10ms = std.atomic.Value(u64).init(0);
@@ -5558,6 +5560,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     const started_at = std.Io.Timestamp.now(io, .awake);
     request_status = 0;
     request_webui_tagged = false;
+    request_head = false;
     var request_method: []const u8 = "unknown";
     var request_path: []const u8 = "unknown";
     // `total` must outlive the log defer below, because request_path is a
@@ -5619,6 +5622,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const norm = normalizeWebuiPath(raw_path, &webui_path_buf);
         const path = norm.path;
         request_webui_tagged = norm.tagged;
+        request_head = std.mem.eql(u8, method, "HEAD");
         request_method = method;
         request_path = path;
         // Preserve a caller's correlation id across proxies and peer agents.
@@ -5747,7 +5751,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_config_model_set = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/model/set");
         const is_config_model_remove = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/model/remove");
         const is_config_default = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/default");
-        if (is_webui and std.mem.eql(u8, method, "GET") and cfg.modules.webui) {
+        if (is_webui and isWebuiRead(method) and cfg.modules.webui) {
             const conn_val = headerValue(headers_raw, "connection") orelse "";
             if (!std.ascii.eqlIgnoreCase(conn_val, "close")) request_keep_alive = true;
         }
@@ -5767,7 +5771,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleReadiness(stream);
         } else if (is_metrics) {
             handleHttpMetrics(stream);
-        } else if (std.mem.eql(u8, method, "GET") and isWebuiIndexPath(path)) {
+        } else if (isWebuiRead(method) and isWebuiIndexPath(path)) {
             handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), headers_raw, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/import-map.json")) {
             handleWebuiImportMap(io, gpa, cfg, stream);
@@ -7877,6 +7881,10 @@ fn renderWebuiCached(
 
 fn isWebuiIndexPath(path: []const u8) bool {
     return std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or std.mem.eql(u8, path, "/webui/");
+}
+
+fn isWebuiRead(method: []const u8) bool {
+    return std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "HEAD");
 }
 
 /// Every asset of the comptime-embedded page bundle, by request path. Vendored
@@ -12629,7 +12637,7 @@ fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     var hbuf: [4096]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-cache\r\n{s}\r\n", .{ out.len, encoding, etag, webui_csp, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
-    raw_http.writeAllFd(stream.socket.handle, out);
+    if (!request_head) raw_http.writeAllFd(stream.socket.handle, out);
 }
 
 /// A gzipped vendor asset, compressed on first request and kept for the rest of
@@ -15234,6 +15242,12 @@ test "isWebuiIndexPath accepts the slash variants browsers send" {
     try std.testing.expect(isWebuiIndexPath("/webui/"));
     try std.testing.expect(!isWebuiIndexPath("/webui/app.js"));
     try std.testing.expect(!isWebuiIndexPath("/webui//"));
+}
+
+test "isWebuiRead treats HEAD like GET" {
+    try std.testing.expect(isWebuiRead("GET"));
+    try std.testing.expect(isWebuiRead("HEAD"));
+    try std.testing.expect(!isWebuiRead("POST"));
 }
 
 test "normalizeWebuiPath strips a well-formed cache-bust prefix" {

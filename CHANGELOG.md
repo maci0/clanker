@@ -43,6 +43,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - `GET /webui/` (trailing slash) serves the same HTML as `/webui`.
 - Opening the phone rail no longer focus-scrolls Work (Chat/Board) off
   the top of the drawer. Picking a section closes the drawer.
+- Rooms `#chat-log` is no longer a live region. New messages are
+  announced once through `#chat-status`. Theme is a picker, not an
+  11-click cycle. Channel list first paint says Loading channels.
+- Phone suggestions and attachment remove are 44px. Fleet/Arena canvas
+  and mesh lamps read computed theme tokens only. `HEAD /webui` returns
+  the same headers as GET with an empty body. Health tiles use a lamp
+  dome instead of a left-edge tab.
 - Isolated `clanker run` now provisions a checkout `state/` path that is a
   symlink to shared durable storage. Previously Zig reported `NotDir` before
   any shared paths were linked, leaving host-side state private to the

@@ -61,6 +61,33 @@ test("upgradePfForm does not stamp pf-v6-c-form onto a hidden form", function ()
   assert.equal(added, "pf-v6-c-form");
 });
 
+test("rooms log is not a live region; status is", function () {
+  assert.match(html, /id="chat-log"[^>]*role="log"/);
+  assert.doesNotMatch(html, /id="chat-log"[^>]*aria-live=/);
+  assert.match(html, /id="chat-status"[^>]*aria-live="polite"/);
+  assert.match(html, /Loading channels/);
+});
+
+test("theme toggle opens a list, not a cycle", function () {
+  const themeSrc = readFileSync(join(here, "theme.js"), "utf8");
+  assert.match(themeSrc, /export function bindThemeToggle/);
+  assert.match(html, /id="theme-toggle"[^>]*aria-haspopup="listbox"/);
+  assert.doesNotMatch(themeSrc, /THEMES\.indexOf\(theme\) \+ 1/);
+});
+
+test("phone composer suggestions and attachment remove are 44px", function () {
+  assert.match(css, /#view-chat \.suggestion \{ min-height: 44px/);
+  assert.match(css, /\.attachment button \{[\s\S]*min-height: 44px/);
+});
+
+test("parseCssColor reads rgb and hex", async function () {
+  const { parseCssColor, cssColorMix, cssColorAlpha } = await import("./utils.js");
+  assert.deepEqual(parseCssColor("rgb(11, 87, 208)"), [11, 87, 208]);
+  assert.deepEqual(parseCssColor("#0b57d0"), [11, 87, 208]);
+  assert.equal(cssColorAlpha("rgb(10, 20, 30)", 0.5), "rgba(10,20,30,0.5)");
+  assert.equal(cssColorMix("rgb(0, 0, 0)", "rgb(100, 0, 0)", 0.5), "rgb(50,0,0)");
+});
+
 test("accent pill is primary/#submit only, not every unmarked button", function () {
   assert.doesNotMatch(
     css,

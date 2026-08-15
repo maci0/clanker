@@ -582,7 +582,7 @@ function meshTopoKey(data) {
   var nodes = (data.nodes || []).map(function (n) { return n.id + "|" + (n.name || "") + "|" + (n.state || ""); }).join(";");
   var links = (data.links || []).map(function (l) { return l.from + ">" + l.to; }).join(";");
   var pulses = (data.pulses || []).map(function (p) { return p.from + ">" + p.to; }).sort().join(";");
-  return nodes + "#" + links + "#" + pulses;
+  return themeToken("--accent") + "#" + themeToken("--bg") + "#" + nodes + "#" + links + "#" + pulses;
 }
 
 function meshStatusText(data) {
