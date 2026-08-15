@@ -22,6 +22,7 @@ Keys live in `~/.secrets/` (never in the repo). Wire them with
   slash-id handling already supports.
 - Cost: free with a build.nvidia.com account (credit-based; hosted
   endpoints are metered generously for development, not production).
+  Observed limit on this account: 40 requests/min.
 - Key: `~/.secrets/nvidia-build`.
 
 ```toml
