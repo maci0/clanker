@@ -5929,7 +5929,11 @@ Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
       .finally(function () { saveBtn.disabled = false; });
   }
 
-  text.addEventListener("input", paint);
+  text.addEventListener("input", function () {
+    paint();
+    if (isDirty()) setNote("Unsaved changes.");
+    else setNote("");
+  });
   text.addEventListener("scroll", syncScroll);
   fileSel.addEventListener("change", function () {
     var nextFile = fileSel.value;

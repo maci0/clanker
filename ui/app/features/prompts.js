@@ -81,6 +81,8 @@ function renderPrompts(prompts){
       try{ document.getElementById("tab-chat").click(); }catch(_){ window.location.hash="#chat"; }
     });
     head.appendChild(useBtn);
+    var body=document.createElement("pre"); body.textContent=p.content;
+    body.style.cssText="white-space:pre-wrap;word-break:break-word;margin:0.5rem 0 0;font-size:13px;color:var(--fg-muted);max-height:9rem;overflow:auto";
     var copyBtn=document.createElement("button"); copyBtn.type="button"; copyBtn.className="secondary"; copyBtn.textContent="Copy";
     copyBtn.addEventListener("click",function(){
       copyText(p.content, copyBtn, "Copy", body);
@@ -97,8 +99,6 @@ function renderPrompts(prompts){
       });
     });
     head.appendChild(delBtn); card.appendChild(head);
-    var body=document.createElement("pre"); body.textContent=p.content;
-    body.style.cssText="white-space:pre-wrap;word-break:break-word;margin:0.5rem 0 0;font-size:13px;color:var(--fg-muted);max-height:9rem;overflow:auto";
     card.appendChild(body);
     var meta=document.createElement("div"); meta.className="meta";
     meta.textContent=p.id+(p.updated?" · "+new Date(p.updated*1000).toLocaleString():"");
