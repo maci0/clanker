@@ -3568,7 +3568,12 @@ function renderChatRooms(rooms) {
   el.chatText.disabled = empty;
   syncChatSend();
   if (empty) {
-    el.chatStatus.textContent = "No rooms yet. Add [chat.rooms] in config.toml or use --serve-as to peer.";
+    // The sr-only status and the visible empty state must give the same
+    // instruction: the actionable path is creating a channel in the sidebar,
+    // with the config route as the secondary option. They used to disagree —
+    // the status told a screen-reader user to edit config.toml while the
+    // visible state offered a Create button.
+    el.chatStatus.textContent = "No channels yet. Create one to start talking, or add rooms in config.toml.";
     showRoomsComposerLocked("No channels yet. Create one to start talking, or add rooms in config.toml.", true);
     return null;
   }

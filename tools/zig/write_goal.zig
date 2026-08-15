@@ -23,9 +23,6 @@ const lib = @import("lib.zig");
 // registration and no cross-module import. Owns two of the four workflow
 // steps: deciding which forks the intent answers, and assembling the Draft.
 const draft = struct {
-    /// The five fields of a persisted goal, in the order state/goals.json keeps.
-    pub const field_list = "objective, completion_criterion, proof, boundaries, stop_rule";
-
     pub const Field = enum {
         objective,
         completion_criterion,

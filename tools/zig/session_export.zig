@@ -122,15 +122,6 @@ pub fn escape(w: *std.Io.Writer, text: []const u8) !void {
     if (start < text.len) try w.writeAll(text[start..]);
 }
 
-/// `escape` into a fresh allocation. Used by the tests and by callers that
-/// need the escaped form as a value rather than as part of a stream.
-pub fn escapeAlloc(gpa: std.mem.Allocator, text: []const u8) ![]u8 {
-    var out: std.Io.Writer.Allocating = .init(gpa);
-    errdefer out.deinit();
-    try escape(&out.writer, text);
-    return out.toOwnedSlice();
-}
-
 /// Days since the Unix epoch to a civil (year, month, day), and the seconds
 /// within the day to a wall clock. Howard Hinnant's `civil_from_days`, valid
 /// for any date this will ever see. Rendered as UTC rather than local time:
@@ -325,27 +316,30 @@ pub fn defaultPath(gpa: std.mem.Allocator, id: []const u8) ![]u8 {
 // ---------------------------------------------------------------------------
 
 test "escape replaces every character that can change the surrounding markup" {
-    const got = try escapeAlloc(std.testing.allocator, "<a href='x' title=\"y\">a & b</a>");
-    defer std.testing.allocator.free(got);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    try escape(&buf.writer, "<a href='x' title=\"y\">a & b</a>");
     try std.testing.expectEqualStrings(
         "&lt;a href=&#39;x&#39; title=&quot;y&quot;&gt;a &amp; b&lt;/a&gt;",
-        got,
+        buf.written(),
     );
 }
 
 test "escape encodes the ampersand first so an entity is not double-decoded" {
     // The bug a chained replace makes: `&` after `<` turns "&lt;" typed by a
     // user into a literal "<" when the page is read back.
-    const got = try escapeAlloc(std.testing.allocator, "&lt;script&gt;");
-    defer std.testing.allocator.free(got);
-    try std.testing.expectEqualStrings("&amp;lt;script&amp;gt;", got);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    try escape(&buf.writer, "&lt;script&gt;");
+    try std.testing.expectEqualStrings("&amp;lt;script&amp;gt;", buf.written());
 }
 
 test "escape leaves text with nothing to escape byte-identical" {
     const plain = "plain ascii, and \xc3\xa9 \xe2\x9c\x93 utf-8 passing straight through";
-    const got = try escapeAlloc(std.testing.allocator, plain);
-    defer std.testing.allocator.free(got);
-    try std.testing.expectEqualStrings(plain, got);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    try escape(&buf.writer, plain);
+    try std.testing.expectEqualStrings(plain, buf.written());
 }
 
 test "civilFromUnix converts the epoch, a leap day and a pre-epoch time" {

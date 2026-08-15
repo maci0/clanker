@@ -1,6 +1,6 @@
 // Knowledge view — single-user. Collections of documents.
 import { uiConfirm, uiPrompt, toast, showLoadError } from "../core/ui.js";
-import { readJson } from "../core/utils.js";
+import { readJson, fmtBytes } from "../core/utils.js";
 export var selectedKnowledge = (function(){ try { var raw = window.localStorage.getItem("clanker.knowledge"); if (raw) return JSON.parse(raw); } catch(_){} return []; })();
 function persistKnowledge(){ try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(selectedKnowledge)); } catch(_){} }
 function ensureBadge(){
@@ -71,7 +71,7 @@ export function loadKnowledge(){
         include.appendChild(includeTxt);
         title.appendChild(include);
         var name=document.createElement("span"); name.className="knowledge-name";
-        name.textContent=c.title+"  ·  "+c.doc_count+" docs  ·  "+(c.bytes||0)+" bytes";
+        name.textContent=c.title+"  ·  "+c.doc_count+" docs  ·  "+fmtBytes(c.bytes||0);
         if(c.description) name.title=c.description; title.appendChild(name);
         var actions=document.createElement("span"); actions.className="knowledge-actions";
         var open=document.createElement("button"); open.type="button"; open.className="secondary"; open.textContent="Open";

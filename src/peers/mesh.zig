@@ -111,11 +111,6 @@ pub fn compatibleVersion(v: []const u8) bool {
     return std.mem.eql(u8, major, "1");
 }
 
-/// Receiver overwrites `from` with the JOIN-bound id. A member cannot spoof.
-pub fn boundFrom(join_id: []const u8, _: []const u8) []const u8 {
-    return join_id;
-}
-
 pub const Admission = enum { allowlist, prompt, open };
 
 pub const PeerSeed = struct {
@@ -149,13 +144,6 @@ fn matchesSeed(join_id: []const u8, join_name: []const u8, seeds: []const PeerSe
         } else if (std.mem.eql(u8, s.name, join_name)) return true;
     }
     return false;
-}
-
-pub const Drop = enum { remove, mark_unreachable };
-
-/// Explicit LEAVE removes the row. TCP drop / timeout keeps it for redial.
-pub fn onDisconnect(explicit_leave: bool) Drop {
-    return if (explicit_leave) .remove else .mark_unreachable;
 }
 
 /// Keep the connection on which the lexicographically smaller id is the dialer.
@@ -403,10 +391,6 @@ test "header parse binds version and known kinds" {
     try std.testing.expect(!compatibleVersion("0.9"));
 }
 
-test "from on the wire is overwritten by the JOIN-bound id" {
-    try std.testing.expectEqualStrings("real-id", boundFrom("real-id", "spoofed"));
-}
-
 test "admission: allowlist / prompt / open / self / empty" {
     const seeds = [_]PeerSeed{
         .{ .name = "alice", .id = "aaa" },
@@ -419,11 +403,6 @@ test "admission: allowlist / prompt / open / self / empty" {
     try std.testing.expectEqual(Decision.refuse, admit(.allowlist, "me", "zzz", "carol", &seeds));
     try std.testing.expectEqual(Decision.pending, admit(.prompt, "me", "zzz", "carol", &seeds));
     try std.testing.expectEqual(Decision.accept, admit(.open, "me", "zzz", "carol", &seeds));
-}
-
-test "LEAVE removes; TCP drop keeps the row for redial" {
-    try std.testing.expectEqual(Drop.remove, onDisconnect(true));
-    try std.testing.expectEqual(Drop.mark_unreachable, onDisconnect(false));
 }
 
 test "simultaneous open keeps the smaller-id dialer" {

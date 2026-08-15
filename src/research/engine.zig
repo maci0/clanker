@@ -41,11 +41,6 @@ pub const Engine = struct {
         try self.findings.append(self.arena, finding);
     }
 
-    /// Returns all findings gathered so far.
-    pub fn getFindings(self: *const Engine) []const Finding {
-        return self.findings.items;
-    }
-
     /// Summarizes findings into a single string for injection into an
     /// improvement context.
     pub fn summarize(self: *const Engine, arena: std.mem.Allocator) ![]const u8 {
@@ -75,8 +70,6 @@ test "engine records and summarizes findings" {
 
     try e.addFinding(.{ .source = "src/main.zig", .summary = "entry point" });
     try e.addFinding(.{ .source = "", .summary = "standalone note" });
-
-    try std.testing.expectEqual(@as(usize, 2), e.getFindings().len);
 
     const sum = try e.summarize(arena);
     try std.testing.expect(std.mem.find(u8, sum, "entry point") != null);

@@ -1,7 +1,7 @@
 // Models view — what the configured providers offer, a provider's live
 // /models listing, and models.dev discovery. Save writes config.local.toml
 // only (never the shared config.toml), after an explicit confirm.
-import { readJson, fmtInt } from "../core/utils.js";
+import { readJson, fmtInt, fmtBytes } from "../core/utils.js";
 import { loadHljs } from "../core/vendor.js";
 
 function askConfirm(message, opts) {
@@ -774,7 +774,7 @@ function refreshCatalog() {
     .then(readJson)
     .then(function (d) {
       var n = typeof d.bytes === "number" ? d.bytes : 0;
-      status("Catalog refreshed (" + fmtInt(n) + " bytes). Search uses the new snapshot.");
+      status("Catalog refreshed (" + fmtBytes(n) + "). Search uses the new snapshot.");
       if (out) {
         out.textContent = "";
         out.appendChild(empty("Catalog updated. Search again to see current matches."));

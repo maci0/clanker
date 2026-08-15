@@ -2754,20 +2754,6 @@ pub const Config = struct {
         };
     }
 
-    fn jsonArray(v: json.Value, key: []const u8, example: []const u8) !json.Array {
-        return switch (v) {
-            .array => |items| items,
-            else => invalid(key, "an array", v, example, error.NameListInvalid),
-        };
-    }
-
-    fn jsonObject(v: json.Value, key: []const u8, example: []const u8) !json.ObjectMap {
-        return switch (v) {
-            .object => |object| object,
-            else => invalid(key, "a table", v, example, error.ConfigNotObject),
-        };
-    }
-
     /// A string or an array of strings. A bare string becomes a one-element
     /// slice so every consumer only ever sees a list.
     fn jsonNameList(arena: std.mem.Allocator, v: json.Value, key: []const u8) ![]const []const u8 {
