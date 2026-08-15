@@ -140,6 +140,11 @@ Weakest first, each layer overrides the one above it:
 | environment | `CLANKER_HOST` | `CLANKER_WEBUI_PORT` | — | `CLANKER_PROXY_PORT` |
 | flags | `--host` | `--webui-port` | `--serve-as` | `--proxy`, `--no-proxy`, `--proxy-port` |
 
+The proxy also ships standalone: `zig build proxy` builds `clanker-proxy`, a
+binary carrying only the provider/auth/proxy code. It reads the same config
+files, serves `/v1` at the root (default `127.0.0.1:17922`), and honors
+`[serve] proxy_token_env`.
+
 A flag always beats the environment, which always beats the file, matching how
 `--verbose` beats `CLANKER_LOG_LEVEL` and `--provider` beats
 `default_provider`.
