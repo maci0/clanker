@@ -142,7 +142,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try s.objectField("error");
             try s.write(std.fmt.allocPrint(alloc, "{s} failed", .{gate}) catch gate);
             try s.objectField("text");
-            try s.write(failureWindow(res));
+            try s.write(res);
             try s.endObject();
             return out.writeAll(w.written());
         }
