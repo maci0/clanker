@@ -7,6 +7,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- The Office whiteboard shows goal work at a glance: each line carries
+  an IEC status lamp (green working — breathing while a clanker is on
+  it, amber in review, red blocked), working goals lead the board with
+  a live count, and review/blocked goals appear greyed instead of
+  vanishing. Reduced motion stills the breath.
 - Config hot reload: `clanker serve` watches `config.toml` /
   `config.local.toml`. A change that loads cleanly restarts the server
   into it (the same idle-aware exec a binary rebuild uses); a broken
