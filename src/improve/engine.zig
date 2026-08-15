@@ -702,7 +702,9 @@ pub const Engine = struct {
                 );
                 return .failed;
             }
-            log.log(.debug, "proposal text (first 1500): {s}", .{json_text[0..@min(json_text.len, 1500)]});
+            // Log only the byte count, not the body: the proposal is a model
+            // response that can echo file contents shown in the context.
+            log.log(.debug, "unparseable proposal response ({d} bytes)", .{json_text.len});
             // "SyntaxError" alone tells the model nothing it can act on. The
             // usual cause is a file whose own content is full of quotes and
             // braces (a .tool.json descriptor), escaped wrongly inside the
@@ -1250,7 +1252,9 @@ pub const Engine = struct {
         }
         const ideas = (plan_mod.parsePlan(self.arena, json_text, 6, opts.max_request_files) catch null) orelse {
             log.log(.warn, "plan: response was not a usable idea list", .{});
-            log.log(.debug, "plan text (first 1500): {s}", .{json_text[0..@min(json_text.len, 1500)]});
+            // Byte count only: the plan body is a model response and must not
+            // reach the log in full.
+            log.log(.debug, "plan: unusable response was {d} bytes", .{json_text.len});
             return &.{};
         };
         log.log(.info, "plan: {d} candidate idea(s)", .{ideas.len});
