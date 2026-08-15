@@ -3114,7 +3114,7 @@ fn goalMaxIterations(obj: std.json.ObjectMap) ?u32 {
         .float => |f| @trunc(f),
         else => return null,
     };
-    if (n <= 0) return null;
+    if (n <= 0 or n > std.math.maxInt(u32)) return null;
     return @intCast(n);
 }
 
@@ -14942,6 +14942,24 @@ test "clampIterationBudget pins values to 1..=1000" {
     try std.testing.expectEqual(@as(u32, 500), clampIterationBudget(500));
     try std.testing.expectEqual(@as(u32, 1000), clampIterationBudget(1000));
     try std.testing.expectEqual(@as(u32, 1000), clampIterationBudget(9999));
+}
+
+test "goalMaxIterations rejects non-positive and out-of-range values" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const cases = [_]struct { src: []const u8, want: ?u32 }{
+        .{ .src = "{\"max_iterations\":12}", .want = 12 },
+        .{ .src = "{\"max_iterations\":0}", .want = null },
+        .{ .src = "{\"max_iterations\":-3}", .want = null },
+        .{ .src = "{\"max_iterations\":5000000000}", .want = null },
+        .{ .src = "{\"max_iterations\":12.9}", .want = 12 },
+        .{ .src = "{}", .want = null },
+    };
+    for (cases) |c| {
+        const one = try std.json.parseFromSlice(std.json.Value, arena, c.src, .{});
+        try std.testing.expectEqual(c.want, goalMaxIterations(one.value.object));
+    }
 }
 
 test "an ask accepts only its own options and hands the pick to the waiter" {

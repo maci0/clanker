@@ -723,45 +723,14 @@ pub const Agent = struct {
             var ttsr_hit: ?*ttsr.Rule = null;
             const resp = if (self.on_token) |cb| blk: {
                 if (!self.cfg.modules.streaming) break :blk try self.llmChat(request_messages, err_detail, &g, iteration, llm_t0, effort);
-                const Guard = struct {
-                    inner: *const fn ([]const u8) void,
-                    rules: []ttsr.Rule,
-                    buf: []u8,
-                    len: usize = 0,
-                    hit: *?*ttsr.Rule,
-                    stop: ?*std.atomic.Value(bool),
-                    retries: u32,
-                    max_retries: u32,
-
-                    fn feed(self_g: *@This(), delta: []const u8) void {
-                        self_g.inner(delta);
-                        if (self_g.hit.* != null) return;
-                        if (self_g.retries >= self_g.max_retries) return;
-                        if (delta.len >= self_g.buf.len) {
-                            @memcpy(self_g.buf, delta[delta.len - self_g.buf.len ..]);
-                            self_g.len = self_g.buf.len;
-                        } else if (self_g.len + delta.len <= self_g.buf.len) {
-                            @memcpy(self_g.buf[self_g.len..][0..delta.len], delta);
-                            self_g.len += delta.len;
-                        } else {
-                            const drop = self_g.len + delta.len - self_g.buf.len;
-                            std.mem.copyForwards(u8, self_g.buf, self_g.buf[drop..self_g.len]);
-                            self_g.len -= drop;
-                            @memcpy(self_g.buf[self_g.len..][0..delta.len], delta);
-                            self_g.len += delta.len;
-                        }
-                        if (ttsr.firstMatch(self_g.rules, self_g.buf[0..self_g.len])) |rule| {
-                            self_g.hit.* = rule;
-                            if (self_g.stop) |f| f.store(true, .release);
-                        }
-                    }
-                };
                 // No room for the rolling window: take the same unguarded turn
                 // the `streaming` module being off takes, rather than failing
                 // the run over a buffer that only exists to match rules.
-                const guard_buf = self.arena.alloc(u8, self.cfg.ttsr.buffer_bytes) catch
+                const buf_len = @min(self.cfg.ttsr.buffer_bytes, config.ttsr_buffer_bytes_max);
+                if (buf_len == 0) break :blk try self.llmChat(request_messages, err_detail, &g, iteration, llm_t0, effort);
+                const guard_buf = self.arena.alloc(u8, buf_len) catch
                     break :blk try self.llmChat(request_messages, err_detail, &g, iteration, llm_t0, effort);
-                var guard = Guard{
+                var guard = TtsrStreamGuard{
                     .inner = cb,
                     .rules = ttsr_rules.items,
                     .buf = guard_buf,
@@ -770,20 +739,16 @@ pub const Agent = struct {
                     .retries = ttsr_retries,
                     .max_retries = self.cfg.ttsr.max_retries_per_turn,
                 };
-                const wrap = struct {
-                    var gptr: *Guard = undefined;
-                    fn call(delta: []const u8) void {
-                        gptr.feed(delta);
-                    }
-                };
-                wrap.gptr = &guard;
+                const prev_guard = ttsr_guard;
+                ttsr_guard = &guard;
+                defer ttsr_guard = prev_guard;
                 break :blk chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
                     .provider = self.provider,
                     .messages = request_messages,
                     .tools = self.tool_defs,
                     .reasoning_effort = effort,
                     .max_tokens = self.cfg.agent.max_tokens_per_turn,
-                }, err_detail, wrap.call, self.stop_flag) catch |err| {
+                }, err_detail, ttsrStreamWrap, self.stop_flag) catch |err| {
                     if (err != error.Interrupted) {
                         try self.recordFailedLlm(&g, iteration, llm_t0, err, err_detail.*);
                         return err;
@@ -2723,6 +2688,51 @@ fn parentAnswerPrompt(
     return buf.toOwnedSlice(arena);
 }
 
+/// Rolling TTSR window on the streamed token path. `on_token` is a bare
+/// function pointer, so the live guard lives in a threadlocal (same shape
+/// as `stream_tally`) rather than a process-static pointer: two concurrent
+/// streaming runs would otherwise match against each other's buffer.
+const TtsrStreamGuard = struct {
+    inner: *const fn ([]const u8) void,
+    rules: []ttsr.Rule,
+    buf: []u8,
+    len: usize = 0,
+    hit: *?*ttsr.Rule,
+    stop: ?*std.atomic.Value(bool),
+    retries: u32,
+    max_retries: u32,
+
+    fn feed(self_g: *TtsrStreamGuard, delta: []const u8) void {
+        self_g.inner(delta);
+        if (self_g.hit.* != null) return;
+        if (self_g.retries >= self_g.max_retries) return;
+        if (self_g.buf.len == 0) return;
+        if (delta.len >= self_g.buf.len) {
+            @memcpy(self_g.buf, delta[delta.len - self_g.buf.len ..]);
+            self_g.len = self_g.buf.len;
+        } else if (self_g.len + delta.len <= self_g.buf.len) {
+            @memcpy(self_g.buf[self_g.len..][0..delta.len], delta);
+            self_g.len += delta.len;
+        } else {
+            const drop = self_g.len + delta.len - self_g.buf.len;
+            std.mem.copyForwards(u8, self_g.buf, self_g.buf[drop..self_g.len]);
+            self_g.len -= drop;
+            @memcpy(self_g.buf[self_g.len..][0..delta.len], delta);
+            self_g.len += delta.len;
+        }
+        if (ttsr.firstMatch(self_g.rules, self_g.buf[0..self_g.len])) |rule| {
+            self_g.hit.* = rule;
+            if (self_g.stop) |f| f.store(true, .release);
+        }
+    }
+};
+
+threadlocal var ttsr_guard: ?*TtsrStreamGuard = null;
+
+fn ttsrStreamWrap(delta: []const u8) void {
+    if (ttsr_guard) |g| g.feed(delta);
+}
+
 /// Walks `cfg.agent.fallback_providers` after the current provider's own
 /// retry budget is exhausted. Streaming that already emitted content does
 /// not advance the chain. `current` is updated to whoever actually served
@@ -3796,6 +3806,77 @@ test "answerAsParent answers through the parent's provider" {
     const answer = try answerAsParent(io, gpa, &env, null, &provider, "parent task", &transcript, "Which one?", &.{ "A", "B" });
     defer gpa.free(@constCast(answer));
     try std.testing.expectEqualStrings("Hello from Anthropic-mock", answer);
+}
+
+test "TtsrStreamGuard rolls a fixed window across deltas" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var rules = [_]ttsr.Rule{.{
+        .name = "stop",
+        .pattern = try ttsr.Pattern.compile(arena, "STOP"),
+        .inject = "no",
+        .max_fires = 1,
+    }};
+    var buf: [8]u8 = undefined;
+    var hit: ?*ttsr.Rule = null;
+    const Inner = struct {
+        var n: usize = 0;
+        fn f(d: []const u8) void {
+            n += d.len;
+        }
+    };
+    Inner.n = 0;
+    var guard = TtsrStreamGuard{
+        .inner = Inner.f,
+        .rules = &rules,
+        .buf = &buf,
+        .hit = &hit,
+        .stop = null,
+        .retries = 0,
+        .max_retries = 1,
+    };
+
+    guard.feed("aaaa");
+    try std.testing.expect(hit == null);
+    guard.feed("aaST");
+    try std.testing.expect(hit == null);
+    guard.feed("OP!");
+    try std.testing.expect(hit != null);
+    try std.testing.expectEqualStrings("stop", hit.?.name);
+    try std.testing.expectEqual(@as(usize, 11), Inner.n);
+}
+
+test "ttsrStreamWrap uses the threadlocal guard and is a no-op without one" {
+    const Inner = struct {
+        var n: usize = 0;
+        fn f(d: []const u8) void {
+            n += d.len;
+        }
+    };
+    Inner.n = 0;
+    var buf: [8]u8 = undefined;
+    var hit: ?*ttsr.Rule = null;
+    var guard = TtsrStreamGuard{
+        .inner = Inner.f,
+        .rules = &.{},
+        .buf = &buf,
+        .hit = &hit,
+        .stop = null,
+        .retries = 0,
+        .max_retries = 0,
+    };
+
+    const prev = ttsr_guard;
+    ttsr_guard = &guard;
+    defer ttsr_guard = prev;
+    ttsrStreamWrap("abc");
+    try std.testing.expectEqual(@as(usize, 3), Inner.n);
+
+    ttsr_guard = null;
+    ttsrStreamWrap("zzz");
+    try std.testing.expectEqual(@as(usize, 3), Inner.n);
 }
 
 test "tool metrics count invocations and error JSON" {

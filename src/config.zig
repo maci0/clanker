@@ -888,6 +888,11 @@ pub const TtsrRule = struct {
     max_fires: u32 = 1,
 };
 
+/// Upper bound on the streamed TTSR rolling window. The window is allocated
+/// once per LLM turn from the run arena; a u32-wide `buffer_bytes` with no
+/// cap would let a config grow that allocation without bound.
+pub const ttsr_buffer_bytes_max: u32 = 64 * 1024;
+
 pub const Ttsr = struct {
     max_retries_per_turn: u32 = 3,
     buffer_bytes: u32 = 4096,
@@ -1400,14 +1405,8 @@ pub const Config = struct {
             };
         }
         if (obj.get("check_timeout_seconds")) |k| {
-            const secs = try jsonInt(k, "check_timeout_seconds");
-            // Rejected rather than @intCast into a panic: a negative timeout
-            // has no sensible reading, and "0 disables" is already taken.
-            if (secs < 0) {
-                log.log(.error_, "provider '{s}': \"check_timeout_seconds\" must be >= 0 (0 = no ceiling)", .{name});
-                return error.BadCheckTimeout;
-            }
-            p.check_timeout_seconds = @intCast(secs);
+            // 0 = no ceiling. A negative used to @intCast into a 4G hang.
+            p.check_timeout_seconds = try jsonUnsigned(u32, k, "check_timeout_seconds");
         }
 
         // vertex / vertex_anthropic address the model by project/location in
@@ -2082,12 +2081,7 @@ pub const Config = struct {
             f.ask_timeout_seconds = true;
         }
         if (obj.get("provider_check_timeout_seconds")) |k| {
-            const secs = try jsonInt(k, "provider_check_timeout_seconds");
-            if (secs < 0) {
-                log.log(.error_, "agent.provider_check_timeout_seconds must be >= 0 (0 = no ceiling)", .{});
-                return error.BadCheckTimeout;
-            }
-            a.provider_check_timeout_seconds = @intCast(secs);
+            a.provider_check_timeout_seconds = try jsonUnsigned(u32, k, "provider_check_timeout_seconds");
             f.provider_check_timeout_seconds = true;
         }
         if (obj.get("confirm_writes")) |k| {
@@ -2325,6 +2319,7 @@ pub const Config = struct {
         if (obj.get("buffer_bytes")) |k| {
             t.buffer_bytes = try jsonUnsigned(u32, k, "ttsr.buffer_bytes");
             if (t.buffer_bytes == 0) t.buffer_bytes = 4096;
+            if (t.buffer_bytes > ttsr_buffer_bytes_max) t.buffer_bytes = ttsr_buffer_bytes_max;
         }
         if (obj.get("rules")) |k| {
             const arr = switch (k) {
@@ -2342,9 +2337,9 @@ pub const Config = struct {
                 if (ro.get("pattern")) |p| rule.pattern = try jsonStr(p, "rules[].pattern");
                 if (ro.get("inject")) |inj| rule.inject = try jsonStr(inj, "rules[].inject");
                 if (ro.get("max_fires")) |mf| {
-                    const n = try jsonInt(mf, "rules[].max_fires");
-                    if (n <= 0) return error.TtsrMaxFiresZero;
-                    rule.max_fires = @intCast(n);
+                    const n = try jsonUnsigned(u32, mf, "rules[].max_fires");
+                    if (n == 0) return error.TtsrMaxFiresZero;
+                    rule.max_fires = n;
                 }
                 if (rule.name.len == 0) return error.TtsrRuleNameEmpty;
                 if (rule.pattern.len == 0) return error.TtsrRulePatternEmpty;
@@ -2370,12 +2365,11 @@ pub const Config = struct {
         if (obj.get("model")) |k| a.model = try jsonStr(k, "advisor.model");
         if (obj.get("scope")) |k| a.scope = try jsonStr(k, "advisor.scope");
         if (obj.get("context_turns")) |k| {
-            const n = try jsonInt(k, "advisor.context_turns");
-            a.context_turns = if (n <= 0) 1 else @intCast(n);
+            const n = try jsonUnsigned(u32, k, "advisor.context_turns");
+            a.context_turns = if (n == 0) 1 else n;
         }
         if (obj.get("timeout_ms")) |k| {
-            const n = try jsonInt(k, "advisor.timeout_ms");
-            a.timeout_ms = if (n <= 0) 0 else @intCast(n);
+            a.timeout_ms = try jsonUnsigned(u32, k, "advisor.timeout_ms");
         }
         return a;
     }
@@ -2408,8 +2402,8 @@ pub const Config = struct {
         var im = Improve{};
         warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "arena_advisory", "max_cache_bytes", "max_context_requests", "inert_gate", "max_consecutive_test_only", "eval_provider", "plan_phase" }, "improve");
         if (obj.get("max_context_bytes")) |k| {
-            const n = try jsonInt(k, "max_context_bytes");
-            im.max_context_bytes = if (n <= 0) null else @intCast(n);
+            const n = try jsonUnsigned(usize, k, "max_context_bytes");
+            im.max_context_bytes = if (n == 0) null else n;
         }
         if (obj.get("capability_gate")) |k| im.capability_gate = switch (k) {
             .bool => |b| b,
@@ -2418,16 +2412,14 @@ pub const Config = struct {
         if (obj.get("arena_advisory")) |k| im.arena_advisory = try jsonBool(k, "arena_advisory");
         if (obj.get("max_cache_bytes")) |k| im.max_cache_bytes = try jsonUnsigned(u64, k, "max_cache_bytes");
         if (obj.get("max_context_requests")) |k| {
-            const n = try jsonInt(k, "max_context_requests");
-            im.max_context_requests = if (n <= 0) 0 else @intCast(n);
+            im.max_context_requests = try jsonUnsigned(u32, k, "max_context_requests");
         }
         if (obj.get("inert_gate")) |k| im.inert_gate = switch (k) {
             .bool => |b| b,
             else => return error.FieldNotBool,
         };
         if (obj.get("max_consecutive_test_only")) |k| {
-            const n = try jsonInt(k, "max_consecutive_test_only");
-            im.max_consecutive_test_only = if (n <= 0) 0 else @intCast(n);
+            im.max_consecutive_test_only = try jsonUnsigned(u32, k, "max_consecutive_test_only");
         }
         if (obj.get("eval_provider")) |k| im.eval_provider = try jsonStr(k, "eval_provider");
         if (obj.get("plan_phase")) |k| im.plan_phase = switch (k) {
@@ -4168,7 +4160,7 @@ test "a negative check timeout is rejected instead of wrapping into a huge one" 
         \\models = { "a/m" = { provider = "a" } }
         ,
     });
-    try std.testing.expectError(error.BadCheckTimeout, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
 }
 
 test "a negative max_tokens is rejected instead of wrapping into a huge cap" {
@@ -4190,6 +4182,60 @@ test "a negative max_tokens is rejected instead of wrapping into a huge cap" {
         ,
     });
     try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+}
+
+test "advisor and improve unsigned fields reject negatives; ttsr buffer is capped" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[advisor]
+        \\context_turns = -1
+        ,
+    });
+    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[improve]
+        \\max_context_bytes = -1
+        ,
+    });
+    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[ttsr]
+        \\buffer_bytes = 4000000000
+        \\[[ttsr.rules]]
+        \\name = "x"
+        \\pattern = "boom"
+        \\max_fires = 2
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(ttsr_buffer_bytes_max, cfg.ttsr.buffer_bytes);
+    try std.testing.expectEqual(@as(usize, 1), cfg.ttsr.rules.len);
+    try std.testing.expectEqual(@as(u32, 2), cfg.ttsr.rules[0].max_fires);
 }
 
 test "reasoning_effort parses supported values and null when absent" {

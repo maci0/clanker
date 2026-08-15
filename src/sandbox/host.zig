@@ -1389,8 +1389,8 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
             return Err.network;
         };
         if (nr == 0) break;
+        if (nr > h.sandbox.max_http_bytes -| resp.items.len) return Err.too_large;
         resp.appendSlice(h.sandbox.gpa, tmp[0..nr]) catch return Err.too_large;
-        if (resp.items.len > h.sandbox.max_http_bytes) return Err.too_large;
     }
 
     // Strip headers and write the body into the host arena.
@@ -3671,15 +3671,17 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         const sz = sf.call(.{}) catch 0;
         if (sz > 0) child_host.arena_cap = sz;
     }
+    if (args_json.len > std.math.maxInt(u32)) return Err.too_large;
+    const args_len: u32 = @intCast(args_json.len);
     var scratch_fn = inst.typedFunc(fn (u32) u32, "scratch");
-    const sp = scratch_fn.call(.{@intCast(args_json.len)}) catch return Err.invalid;
+    const sp = scratch_fn.call(.{args_len}) catch return Err.invalid;
     if (sp == 0) return Err.too_large;
     const mem = inst.memory() orelse return Err.invalid;
     const slice = mem.slice();
-    if (@as(u64, sp) + args_json.len > slice.len) return Err.too_large;
-    @memcpy(slice[sp .. sp + args_json.len], args_json);
+    if (@as(u64, sp) + args_len > slice.len) return Err.too_large;
+    @memcpy(slice[sp .. sp + args_len], args_json);
     var run_fn = inst.typedFunc(fn (u32, u32) u64, "run");
-    const packed_val = run_fn.call(.{ sp, @intCast(args_json.len) }) catch return Err.invalid;
+    const packed_val = run_fn.call(.{ sp, args_len }) catch return Err.invalid;
     const out_ptr: u32 = @intCast(packed_val >> 32);
     const out_len: u32 = @intCast(packed_val & 0xFFFF_FFFF);
     const mem2 = inst.memory() orelse return Err.invalid;

@@ -74,6 +74,11 @@ through a gated loop. Follow these conventions when changing this codebase.
   the serve cwd), execution graphs, sub-agents, autolearn, workflows. Session ids are path
   fragments; every CLI, TUI, and HTTP entry point uses
   `session.zig`'s `validSessionId` rather than restating its alphabet.
+  `Agent.on_token` has no context argument, so streaming side-state
+  (`stream_tally`, the TTSR guard, `run_stream_socket`) is threadlocal; a
+  process-static pointer would splice concurrent `/api/run` streams.
+  `ttsr.buffer_bytes` is clamped to `ttsr_buffer_bytes_max` because that
+  window is allocated from the run arena each LLM turn.
 - `src/schedule/` — `clanker schedule`: the cron dialect and next-fire
   arithmetic (`cron.zig`, pure — no allocator, clock or `std.Io`, so it is
   fully host-testable), `state/schedule.json` + the fire ledger (`store.zig`),
