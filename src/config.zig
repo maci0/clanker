@@ -4602,15 +4602,11 @@ test "config.toml documents every key the loader accepts" {
     // down at all: a key added to the schema and not to the file is one
     // nobody outside this source file will ever find. Reflection over the
     // structs rather than a hand-kept list, so the guard cannot go stale the
-    // same way the file did. Read at test runtime from the process cwd (the
-    // repo root for `zig build test`, the staging worktree for the improve
-    // gate), so the file stays out of the exe: test blocks are only evaluated
-    // when the test artifact is built, never when the harness is. @embedFile
-    // of a repo-root path is refused by Zig 0.16 as outside the package path.
-    const text = std.fs.cwd().readFileAlloc(std.heap.page_allocator, "config.toml", 16 * 1024 * 1024) catch {
-        std.debug.print("config.toml unreadable\n", .{});
-        return error.ConfigTomlUnreadable;
-    };
+    // same way the file did. Embedded through the `config_toml` anonymous
+    // import that build.zig hangs off the test module only, so the bytes stay
+    // out of the harness exe: @embedFile of a repo-root *path* is refused by
+    // Zig 0.16 as outside the package root, but a module name is not a path.
+    const text = @embedFile("config_toml");
 
     // Fields that are not config keys. `shared_root` is set by `run
     // --worktree` at runtime and deliberately unreadable from a file; the
@@ -4627,8 +4623,13 @@ test "config.toml documents every key the loader accepts" {
             if (comptime std.mem.eql(u8, f.name, "name") and (T == Instance or T == TtsrRule)) skip = false;
             if (!skip and !documentsKey(text, f.name)) {
                 std.debug.print("config.toml does not document {s}.{s}\n", .{ @typeName(T), f.name });
+                // Also on disk: the improve gate keeps the test runner's exit
+                // code and drops its stderr, so the print alone never names
+                // the key that failed a staged run.
                 const probe = std.fmt.allocPrint(std.heap.page_allocator, "{s}.{s}\n", .{ @typeName(T), f.name }) catch "?";
-                std.fs.cwd().writeFile(.{ .sub_path = "state/probe_undoc.txt", .data = probe }) catch {};
+                var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+                defer threaded.deinit();
+                std.Io.Dir.cwd().writeFile(threaded.io(), .{ .sub_path = "state/probe_undoc.txt", .data = probe }) catch {};
                 return error.UndocumentedConfigKey;
             }
         }

@@ -276,8 +276,43 @@ if [[ "$agent" == "clanker" ]]; then
 	clanker_bin="$(resolve_clanker_bin)"
 fi
 
+# Streaming claude's log needs jq to render the JSON events. Without jq, fall
+# back to plain --print: buffered, but still readable when the pass ends.
+claude_streaming=false
+if [[ "$agent" == "claude" ]]; then
+	if command -v jq >/dev/null 2>&1; then
+		claude_streaming=true
+	else
+		printf 'WARNING: jq not found; claude output will only appear when the pass ends.\n' >&2
+	fi
+fi
+
 log_dir="$root/.local/agent-autopush"
 mkdir -p "$log_dir"
+
+# claude only streams under --output-format stream-json, which is JSON lines.
+# Render them back to readable prose as they arrive: assistant text verbatim,
+# one line per tool call, and the final result block. Unparsable lines are
+# dropped rather than killing the pipe.
+render_claude_stream() {
+	jq --unbuffered -Rr '
+		(fromjson? // empty) as $e
+		| if $e.type == "assistant" then
+			($e.message.content[]? |
+				if .type == "text" then
+					(.text | select(. != ""))
+				elif .type == "tool_use" then
+					(((.input // {}) | tostring) as $i
+					 | "→ " + .name + " "
+					   + (if ($i | length) > 160 then $i[0:160] + "…" else $i end))
+				else empty end)
+		  elif $e.type == "result" then
+			"\n── result: " + ($e.subtype // "?")
+			+ " (" + ((($e.duration_ms // 0) / 1000) | floor | tostring) + "s) ──\n"
+			+ ($e.result // "")
+		  else empty end
+	'
+}
 
 build_agent_command() {
 	local -n out=$1
@@ -300,6 +335,12 @@ build_agent_command() {
 			;;
 		claude)
 			out=(claude --print --permission-mode bypassPermissions)
+			# Plain --print buffers the whole run and writes it on exit, so
+			# tail -f shows nothing until the pass ends. stream-json emits an
+			# event per turn; render_claude_stream turns it back into prose.
+			if [[ "$claude_streaming" == true ]]; then
+				out+=(--verbose --output-format stream-json)
+			fi
 			if [[ -n "${AUTOCOMMIT_AGENT_MODEL:-}" ]]; then
 				out+=(--model "$AUTOCOMMIT_AGENT_MODEL")
 			fi
@@ -363,12 +404,19 @@ PROMPT
 	local cmd
 	build_agent_command cmd "$prompt"
 
-	if "${cmd[@]}" >>"$log_file" 2>&1; then
+	# pipefail is set, so the pipeline reports the agent's failure, not jq's.
+	local status=0
+	if [[ "$claude_streaming" == true ]]; then
+		"${cmd[@]}" 2>>"$log_file" | render_claude_stream >>"$log_file" || status=$?
+	else
+		"${cmd[@]}" >>"$log_file" 2>&1 || status=$?
+	fi
+
+	if (( status == 0 )); then
 		printf '[%s] agent pass completed: %s\n' "$(date -Is)" "$log_file"
 		printf '[%s] final git status:\n' "$(date -Is)"
 		git status --short --branch
 	else
-		local status=$?
 		printf '[%s] agent pass failed with exit %s: %s\n' "$(date -Is)" "$status" "$log_file" >&2
 		printf '[%s] final git status:\n' "$(date -Is)" >&2
 		git status --short --branch >&2

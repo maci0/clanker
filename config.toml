@@ -150,6 +150,9 @@ context_window = 512000
 # an explicit value here silently overrides the default, so a raise there
 # does nothing for anyone running from this checkout unless it lands here too.
 max_iterations = 50
+# Completed turns a `/goal` loop may start before it reports a blocked budget
+# outcome. Counts whole turns, where max_iterations counts steps inside one.
+max_goal_turns = 50
 # Ceiling on one provider's turn in `providers check`, so an endpoint that is
 # switched off costs the sweep this instead of the OS connect timeout. Override
 # per provider with `check_timeout_seconds` in its own section.
