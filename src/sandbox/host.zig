@@ -645,6 +645,15 @@ fn parseCkLlmRequest(arena: std.mem.Allocator, raw: []const u8) ?CkLlmRequest {
     return req;
 }
 
+/// Descriptor `max_tokens` is the grant. A guest may only lower it, never
+/// raise it: otherwise a confused (or injected) tool call bills an unbounded
+/// completion against the operator's key. A grant of 0 is treated as the
+/// same 1024 default `sandboxFor` uses when the descriptor omits the key.
+fn clampCkLlmMaxTokens(requested: ?u32, granted: u32) u32 {
+    const cap: u32 = if (granted == 0) 1024 else granted;
+    return @min(requested orelse cap, cap);
+}
+
 /// ck_llm(request) -> completion text in the host arena. The request is either
 /// a bare prompt or a JSON object:
 /// `{"prompt": "...", "provider": "<name>", "model": "<name>", "system": "...", "max_tokens": N}`.
@@ -673,7 +682,7 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     var system: ?[]const u8 = null;
     if (parseCkLlmRequest(arena, raw)) |req| {
         if (req.prompt) |p| prompt = p;
-        if (req.max_tokens) |m| max_tokens = m;
+        max_tokens = clampCkLlmMaxTokens(req.max_tokens, access.max_tokens);
         if (req.system) |s| system = s;
         if (req.provider) |pn| {
             const cfg = h.sandbox.cfg orelse {
@@ -856,8 +865,7 @@ pub fn ckLlmMany(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     if (obj.get("system")) |s| {
         if (s == .string and s.string.len > 0) system = s.string;
     }
-    var max_tokens = access.max_tokens;
-    if (json_util.pluginU32(parsed, "max_tokens")) |mt| max_tokens = mt;
+    const max_tokens = clampCkLlmMaxTokens(json_util.pluginU32(parsed, "max_tokens"), access.max_tokens);
 
     const targets_val = obj.get("targets") orelse return Err.invalid;
     if (targets_val != .array) return Err.invalid;
@@ -5633,6 +5641,14 @@ test "parseCkLlmRequest ignores malformed and out-of-range fields" {
     // A max_tokens beyond u32 range must be ignored, not panic @intCast.
     const big = parseCkLlmRequest(arena, "{\"prompt\":\"x\",\"max_tokens\":9000000000}") orelse return error.TestUnexpectedNull;
     try std.testing.expect(big.max_tokens == null);
+}
+
+test "ck_llm max_tokens cannot exceed the descriptor grant" {
+    try std.testing.expectEqual(@as(u32, 1024), clampCkLlmMaxTokens(null, 1024));
+    try std.testing.expectEqual(@as(u32, 64), clampCkLlmMaxTokens(64, 1024));
+    try std.testing.expectEqual(@as(u32, 1024), clampCkLlmMaxTokens(99_999, 1024));
+    try std.testing.expectEqual(@as(u32, 1024), clampCkLlmMaxTokens(4_000_000_000, 0));
+    try std.testing.expectEqual(@as(u32, 256), clampCkLlmMaxTokens(256, 0));
 }
 
 test "Host.writeResult enforces the arena cap and memory bounds" {

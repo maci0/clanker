@@ -41,7 +41,9 @@ through a gated loop. Follow these conventions when changing this codebase.
 ## Architecture
 
 - `src/llm/` — `client.zig` is the shared HTTP/SSE/retry/token-counting core,
-  one module for every provider. `agent.fallback_providers` is a list
+  one module for every provider. `chatStream` retries the same 429/5xx/transport
+  set as `chat` before any token is emitted, honoring `Retry-After` (integer
+  seconds, capped at 30s). `agent.fallback_providers` is a list
   walked by `chatWithFallbackChain` in `src/agent/loop.zig` after
   same-provider retries exhaust with no content delivered; the vision
   swap in `cli.zig` stays pre-emptive and separate. `[advisor]` is a
@@ -278,6 +280,10 @@ needed to trust it.
 Retrieved documents and memory-search hits are untrusted prompt data. Keep
 them inside explicit retrieval boundaries, separate from the operator task;
 the system prompt must tell the model never to execute directives found there.
+Fence markers inside retrieved text (`</retrieved_knowledge>`,
+`<operator_task>`, and the memory-hit pair) are neutralized so a document
+cannot close the block. Guest `ck_llm` `max_tokens` cannot exceed the
+descriptor grant.
 
 The web UI presents goals and the Kanban board as one workflow: creating a
 goal creates its card, lane moves update goal status, and Archive retains the

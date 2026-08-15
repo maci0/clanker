@@ -515,6 +515,43 @@ fn retryDelayNs(io: std.Io, attempt: u32) u64 {
     return base + jitter;
 }
 
+/// Ceiling on a provider-supplied Retry-After so a hostile or misconfigured
+/// header cannot park the retry loop for minutes. Three attempts at this
+/// cap is already a long wait for a single turn.
+const retry_after_cap_ns: u64 = 30 * std.time.ns_per_s;
+
+/// Parse `Retry-After` as integer seconds. HTTP-date values are ignored and
+/// the caller falls back to `retryDelayNs`. `0` is a valid "retry now".
+fn parseRetryAfterNs(value: []const u8) ?u64 {
+    const trimmed = std.mem.trim(u8, value, " \t");
+    if (trimmed.len == 0) return null;
+    const secs = std.fmt.parseInt(u64, trimmed, 10) catch return null;
+    const ns = secs *| std.time.ns_per_s;
+    return @min(ns, retry_after_cap_ns);
+}
+
+fn headerValueIgnoreCase(head: std.http.Client.Response.Head, name: []const u8) ?[]const u8 {
+    var it = head.iterateHeaders();
+    while (it.next()) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, name)) return h.value;
+    }
+    return null;
+}
+
+fn retryDelayForHead(io: std.Io, attempt: u32, head: std.http.Client.Response.Head) u64 {
+    if (headerValueIgnoreCase(head, "retry-after")) |v| {
+        if (parseRetryAfterNs(v)) |ns| return ns;
+    }
+    return retryDelayNs(io, attempt);
+}
+
+fn sendStreamBody(req: *std.http.Client.Request, body: []const u8) !void {
+    var body_writer = try req.sendBodyUnflushed(&.{});
+    try body_writer.writer.writeAll(body);
+    try body_writer.end();
+    try req.connection.?.flush();
+}
+
 fn sleepRetry(io: std.Io, attempt: u32, provider_name: []const u8, http_status: u16, reason: []const u8) !void {
     const delay = retryDelayNs(io, attempt);
     if (http_status == 0) {
@@ -623,34 +660,97 @@ pub fn chatStream(
     defer if (ctx.abort) |a| a.disarm(ctx.io);
 
     noteRequest();
-    try rate_limit.waitFor(ctx.io, ctx.gpa, provider);
 
     var headers = baseHeaders();
     var extra: providers.ExtraHeaders = undefined;
-    const extra_len = impl.authHeaders(cred, &headers, &extra);
-
+    var extra_len: usize = 0;
     const uri = std.Uri.parse(url) catch return error.InvalidUrl;
-    var req = try client.request(.POST, uri, .{
-        .redirect_behavior = .unhandled,
-        .headers = headers,
-        .extra_headers = extra[0..extra_len],
-    });
-    defer req.deinit();
 
-    req.transfer_encoding = .{ .content_length = body.len };
-    // Request bodies contain the complete conversation, tool output, and
-    // attachments. Debugging must never copy that user data into terminal or
-    // CI logs; the byte count is enough to diagnose framing problems.
-    if (ctx.environ_map.get("CLANKER_DEBUG_BODY") != null) {
-        log.log(.debug, "LLM streaming request provider={s} bytes={d}", .{ provider.name, body.len });
-    }
-    var body_writer = try req.sendBodyUnflushed(&.{});
-    try body_writer.writer.writeAll(body);
-    try body_writer.end();
-    try req.connection.?.flush();
-
+    // Request lives in this slot so Response.request stays valid across the
+    // rest of the call. A retry deinits the previous attempt before opening
+    // a new one; the successful request is deferred to the function end.
+    var req_slot: ?std.http.Client.Request = null;
+    defer if (req_slot) |*r| r.deinit();
     var redirect_buffer: [8192]u8 = undefined;
-    var response = try req.receiveHead(&redirect_buffer);
+    var response: std.http.Client.Response = undefined;
+    var attempt: u32 = 0;
+    while (true) {
+        attempt += 1;
+        if (stop_flag) |f| if (f.load(.acquire)) return error.Interrupted;
+        if (req_slot) |*r| {
+            r.deinit();
+            req_slot = null;
+        }
+        try rate_limit.waitFor(ctx.io, ctx.gpa, provider);
+        headers = baseHeaders();
+        extra_len = impl.authHeaders(cred, &headers, &extra);
+
+        const opened = client.request(.POST, uri, .{
+            .redirect_behavior = .unhandled,
+            .headers = headers,
+            .extra_headers = extra[0..extra_len],
+        }) catch |err| {
+            if (attempt < max_attempts and isRetryableTransport(err)) {
+                noteRetry();
+                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
+                continue;
+            }
+            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
+                provider.name, @errorName(err), attempt, max_attempts,
+            });
+            noteError();
+            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            return err;
+        };
+        req_slot = opened;
+        var req = &req_slot.?;
+
+        req.transfer_encoding = .{ .content_length = body.len };
+        // Request bodies contain the complete conversation, tool output, and
+        // attachments. Debugging must never copy that user data into terminal or
+        // CI logs; the byte count is enough to diagnose framing problems.
+        if (ctx.environ_map.get("CLANKER_DEBUG_BODY") != null) {
+            log.log(.debug, "LLM streaming request provider={s} bytes={d}", .{ provider.name, body.len });
+        }
+        sendStreamBody(req, body) catch |err| {
+            if (attempt < max_attempts and isRetryableTransport(err)) {
+                noteRetry();
+                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
+                continue;
+            }
+            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
+                provider.name, @errorName(err), attempt, max_attempts,
+            });
+            noteError();
+            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            return err;
+        };
+
+        response = req.receiveHead(&redirect_buffer) catch |err| {
+            if (attempt < max_attempts and isRetryableTransport(err)) {
+                noteRetry();
+                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
+                continue;
+            }
+            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
+                provider.name, @errorName(err), attempt, max_attempts,
+            });
+            noteError();
+            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            return err;
+        };
+
+        if (isRetryable(response.head.status) and attempt < max_attempts) {
+            noteRetry();
+            const delay = retryDelayForHead(ctx.io, attempt, response.head);
+            log.log(.warn, "HTTP {d} from '{s}', retrying in {d}ms (attempt {d}/{d})", .{
+                @intFromEnum(response.head.status), provider.name, delay / std.time.ns_per_ms, attempt, max_attempts,
+            });
+            try std.Io.sleep(ctx.io, .{ .nanoseconds = @intCast(delay) }, .awake);
+            continue;
+        }
+        break;
+    }
 
     if (@intFromEnum(response.head.status) >= 400) {
         // The client advertises gzip, and providers compress error bodies too:
@@ -972,6 +1072,15 @@ test "transport retries cover dropped connections, not auth or parse" {
     try std.testing.expect(!isRetryableTransport(error.ApiError));
 }
 
+test "Retry-After is integer seconds, capped, and ignores HTTP-date" {
+    try std.testing.expectEqual(@as(?u64, 0), parseRetryAfterNs("0"));
+    try std.testing.expectEqual(@as(?u64, 2 * std.time.ns_per_s), parseRetryAfterNs(" 2 "));
+    try std.testing.expectEqual(@as(?u64, retry_after_cap_ns), parseRetryAfterNs("999"));
+    try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs(""));
+    try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs("Wed, 21 Oct 2015 07:28:00 GMT"));
+    try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs("-1"));
+}
+
 // ------------------------------------------------------------------- tests --
 
 test "provider response buffers reject bytes beyond their limit" {
@@ -1194,6 +1303,42 @@ test "streaming chat assembles SSE deltas" {
     }
     try std.testing.expectEqualStrings("Hello from the mock stream", resp.message.content orelse "");
     try std.testing.expectEqualStrings("Hello from the mock stream", Sink.collected.items);
+}
+
+test "chatStream retries a 429 then streams the next response" {
+    const mock_server = @import("mock_server.zig");
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, std.testing.allocator, .openai_stream_after_429);
+    defer mock.stop();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("MOCK_API_KEY", "test-key");
+
+    const base_url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}", .{mock.port});
+    defer std.testing.allocator.free(base_url);
+    var arena_for_provider = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_for_provider.deinit();
+    var provider = try config.Provider.single(arena_for_provider.allocator(), "mock-stream-429", base_url, .openai_compat, "mock", .{ .max_tokens = 64 });
+    provider.api_key_env = "MOCK_API_KEY";
+
+    var ctx = Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    const Noop = struct {
+        fn cb(_: []const u8) void {}
+    };
+    var err_detail: ?[]const u8 = null;
+    const resp = try chatStream(&ctx, arena, .{
+        .provider = &provider,
+        .messages = &messages,
+    }, &err_detail, Noop.cb, null);
+    try std.testing.expectEqualStrings("Hello from the mock stream", resp.message.content orelse "");
+    try std.testing.expectEqual(@as(usize, 2), mock.captured.items.len);
 }
 
 test "bounded chat aborts a provider that never sends a response" {
