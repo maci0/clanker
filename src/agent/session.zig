@@ -461,6 +461,29 @@ pub const SessionMeta = struct {
     bytes: usize = 0,
 };
 
+/// Copies listing fields out of a parsed transcript so the file buffer can
+/// be dropped. Peak memory for a picker is then one conversation, not the
+/// sum of every saved one (each file may be up to 16 MiB).
+fn sessionMetaFromStored(arena: std.mem.Allocator, stored: StoredSession) !SessionMeta {
+    var bytes: usize = 0;
+    for (stored.messages) |sm| {
+        if (sm.content) |c| bytes += c.len;
+        if (sm.tool_calls) |calls| {
+            for (calls) |tc| bytes += tc.arguments.len;
+        }
+    }
+    return .{
+        .id = try arena.dupe(u8, stored.id),
+        .title = try arena.dupe(u8, stored.title),
+        .created = stored.created,
+        .updated = stored.updated,
+        .workspace = try arena.dupe(u8, stored.workspace),
+        .archived = stored.archived,
+        .messages = stored.messages.len,
+        .bytes = bytes,
+    };
+}
+
 /// Lists every saved session, most recently updated first, the order a
 /// picker wants, since the session you were just in is the one you are most
 /// likely to return to. A file that cannot be read or parsed is skipped
@@ -472,30 +495,19 @@ pub fn listSessions(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]S
     var dir = base.openDir(io, store_dir, .{ .iterate = true }) catch return out.toOwnedSlice(arena);
     defer dir.close(io);
 
+    var scratch_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer scratch_state.deinit();
+
     var it = dir.iterate();
     while (it.next(io) catch null) |entry| {
+        defer _ = scratch_state.reset(.retain_capacity);
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
-        const path = std.fmt.allocPrint(arena, "{s}/{s}", .{ store_dir, entry.name }) catch continue;
-        const raw = base.readFileAlloc(io, path, arena, .limited(1 << 24)) catch continue;
-        const stored = json.parseFromSliceLeaky(StoredSession, arena, raw, .{ .ignore_unknown_fields = true }) catch continue;
-        var bytes: usize = 0;
-        for (stored.messages) |sm| {
-            if (sm.content) |c| bytes += c.len;
-            if (sm.tool_calls) |calls| {
-                for (calls) |tc| bytes += tc.arguments.len;
-            }
-        }
-        out.append(arena, .{
-            .id = stored.id,
-            .title = stored.title,
-            .created = stored.created,
-            .updated = stored.updated,
-            .workspace = stored.workspace,
-            .archived = stored.archived,
-            .messages = stored.messages.len,
-            .bytes = bytes,
-        }) catch continue;
+        const scratch = scratch_state.allocator();
+        const path = std.fmt.allocPrint(scratch, "{s}/{s}", .{ store_dir, entry.name }) catch continue;
+        const raw = base.readFileAlloc(io, path, scratch, .limited(1 << 24)) catch continue;
+        const stored = json.parseFromSliceLeaky(StoredSession, scratch, raw, .{ .ignore_unknown_fields = true }) catch continue;
+        out.append(arena, sessionMetaFromStored(arena, stored) catch continue) catch continue;
     }
 
     std.mem.sort(SessionMeta, out.items, {}, struct {
@@ -532,15 +544,7 @@ const snippet_radius = 90;
 /// conversation, which is the same as finding nothing.
 pub fn findFold(haystack: []const u8, needle: []const u8) ?usize {
     if (needle.len == 0 or needle.len > haystack.len) return null;
-    var i: usize = 0;
-    outer: while (i + needle.len <= haystack.len) : (i += 1) {
-        var j: usize = 0;
-        while (j < needle.len) : (j += 1) {
-            if (std.ascii.toLower(haystack[i + j]) != std.ascii.toLower(needle[j])) continue :outer;
-        }
-        return i;
-    }
-    return null;
+    return std.ascii.findIgnoreCase(haystack, needle);
 }
 
 /// The text around `at`, trimmed to a word boundary where one is close, with
@@ -597,13 +601,18 @@ pub fn searchSessions(
     var dir = base.openDir(io, store_dir, .{ .iterate = true }) catch return out.toOwnedSlice(arena);
     defer dir.close(io);
 
+    var scratch_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer scratch_state.deinit();
+
     var it = dir.iterate();
     while (it.next(io) catch null) |entry| {
+        defer _ = scratch_state.reset(.retain_capacity);
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
-        const path = std.fmt.allocPrint(arena, "{s}/{s}", .{ store_dir, entry.name }) catch continue;
-        const raw = base.readFileAlloc(io, path, arena, .limited(1 << 24)) catch continue;
-        const stored = json.parseFromSliceLeaky(StoredSession, arena, raw, .{ .ignore_unknown_fields = true }) catch continue;
+        const scratch = scratch_state.allocator();
+        const path = std.fmt.allocPrint(scratch, "{s}/{s}", .{ store_dir, entry.name }) catch continue;
+        const raw = base.readFileAlloc(io, path, scratch, .limited(1 << 24)) catch continue;
+        const stored = json.parseFromSliceLeaky(StoredSession, scratch, raw, .{ .ignore_unknown_fields = true }) catch continue;
 
         var first: ?SearchHit = null;
         var count: usize = 0;
@@ -612,14 +621,16 @@ pub fn searchSessions(
             const at = findFold(content, query) orelse continue;
             count += 1;
             if (first != null) continue;
+            // Strings from `stored` die with the scratch arena; copy the
+            // hit out before the next file reset.
             first = .{
-                .id = stored.id,
-                .title = stored.title,
+                .id = arena.dupe(u8, stored.id) catch break,
+                .title = arena.dupe(u8, stored.title) catch break,
                 .updated = stored.updated,
                 .archived = stored.archived,
                 .turn = idx,
-                .role = m.role,
-                .snippet = snippetAround(arena, content, at, query.len),
+                .role = arena.dupe(u8, m.role) catch break,
+                .snippet = arena.dupe(u8, snippetAround(arena, content, at, query.len)) catch break,
             };
         }
         if (first) |*hit| {

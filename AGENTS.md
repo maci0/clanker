@@ -76,6 +76,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   path args, so a guest cannot bypass `network_allow` or `fs_prefixes`
   through a subprocess. Search tools (`rg`, `ast-grep`, `semcode`) treat
   most args as patterns: `..` is checked only on the last argument.
+  `ck_fs_find` and `ck_fs_grep` skip the same cache/vendor directory names
+  (`zig-pkg`, `zig-out`, `node_modules`, `staging`, `history`), so a
+  project-root walk does not scan copies of the tree.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   workspace registry (`workspace.zig`: folder + chat-history set; empty id is
   the serve cwd), execution graphs, sub-agents, autolearn, workflows. Session

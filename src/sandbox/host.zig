@@ -2651,8 +2651,13 @@ fn fsGrepRecurse(
         defer h.sandbox.gpa.free(rel);
 
         if (entry.kind == .directory) {
-            // Skip hidden directories (e.g. .git)
+            // Hidden names (.git, .zig-cache) plus the same cache/vendor
+            // trees find already skips. Without that, a project-root grep
+            // (the rg-missing fallback in repo_search) reads hundreds of
+            // megabytes of zig-pkg, zig-out, node_modules, and history
+            // copies before it ever reaches source.
             if (entry.name[0] == '.') continue;
+            if (skipDir(entry.name)) continue;
             var sub = dir.openDir(h.sandbox.io, entry.name, .{ .iterate = true }) catch continue;
             defer sub.close(h.sandbox.io);
             try fsGrepRecurse(h, s, sub, rel, pattern, depth + 1, count);
@@ -4838,6 +4843,17 @@ test "argDenied matches operator tokens anywhere, word tokens only at boundaries
     try std.testing.expect(argDenied("gc", "gc"));
     try std.testing.expect(argDenied("-force", "-f"));
     try std.testing.expect(argDenied("--force", "--force"));
+}
+
+test "skipDir names the cache and vendor trees a project-root walk must not enter" {
+    try std.testing.expect(skipDir("node_modules"));
+    try std.testing.expect(skipDir("zig-pkg"));
+    try std.testing.expect(skipDir("zig-out"));
+    try std.testing.expect(skipDir("staging"));
+    try std.testing.expect(skipDir("history"));
+    try std.testing.expect(skipDir(".zig-cache"));
+    try std.testing.expect(!skipDir("src"));
+    try std.testing.expect(!skipDir("tools"));
 }
 
 test "globMatch handles basic patterns" {
