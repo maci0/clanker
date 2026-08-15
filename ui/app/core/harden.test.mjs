@@ -264,6 +264,8 @@ test("Search field names conversations, not Find", function () {
 
 test("Board create goal is the primary action", function () {
   assert.match(html, /id="goal-add"[^>]*class="primary"|class="primary"[^>]*id="goal-add"/);
+  assert.match(html, /id="board-empty-create"[^>]*class="primary"|class="primary"[^>]*id="board-empty-create"/);
+  assert.match(html, /id="board-empty-create"[^>]*>New goal</);
 });
 
 test("create and save forms use a primary CTA", function () {
@@ -426,6 +428,10 @@ test("Fleet empty roster points at System Config instead of the phonebook", func
   assert.match(src, /Add a peer in System → Config/);
   assert.match(src, /Open Config/);
   assert.match(src, /function navToSystemConfig/);
+  assert.match(src, /Open Rooms/);
+  assert.match(src, /Open Chat/);
+  assert.match(src, /function navToChat/);
+  assert.match(src, /"primary", "Open Config"/);
   assert.doesNotMatch(src, /phonebook/);
   assert.doesNotMatch(src, /\[\[peers\]\]/);
 });
@@ -434,6 +440,7 @@ test("Activity empty state offers to open the board", function () {
   const src = readFileSync(join(here, "../../plugins/activity/app.js"), "utf8");
   assert.match(src, /Nothing recorded yet/);
   assert.match(src, /Open board/);
+  assert.match(src, /"primary", "Open board"/);
   assert.match(src, /api\.showView\("board"\)/);
   const css = readFileSync(join(here, "../../plugins/activity/app.css"), "utf8");
   assert.match(css, /@media \(max-width: 40rem\) \{\s*\.activity-card \{ min-height: 44px; \}/);
@@ -443,4 +450,17 @@ test("Knowledge add-document is a primary CTA", function () {
   const src = readFileSync(join(here, "../features/knowledge.js"), "utf8");
   assert.match(src, /submit\.className="primary"/);
   assert.match(src, /submit\.textContent="Add document"/);
+  assert.match(src, /start\.className="primary"/);
+  assert.match(src, /start\.textContent="Add collection"/);
+});
+
+test("rooms own-message actions are labeled and report a failed write", function () {
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  assert.match(app, /editBtn\.textContent = "Edit"/);
+  assert.match(app, /delBtn\.textContent = "Delete"/);
+  assert.match(app, /Could not pin that message/);
+  assert.match(app, /Could not save the edit/);
+  assert.match(app, /Could not delete that message/);
+  assert.doesNotMatch(app, /editBtn\.textContent = "✏️"/);
+  assert.doesNotMatch(app, /delBtn\.textContent = "🗑️"/);
 });
