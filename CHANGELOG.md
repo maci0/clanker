@@ -32,6 +32,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Web UI ES modules no longer 404 as `/webui/~tag/core/core/…`. Two
+  stacked bugs: `run-metrics.js` reused `app.js`'s gzip slot, so a gzip
+  client received `app.js` at the run-metrics URL and then resolved
+  `./core/utils.js` under `/core/`; and the import map prefix `/webui/`
+  also matched already-tagged URLs. `app.js` never ran, so the page was
+  a rail with an empty main column.
 - Isolated `clanker run` now provisions a checkout `state/` path that is a
   symlink to shared durable storage. Previously Zig reported `NotDir` before
   any shared paths were linked, leaving host-side state private to the

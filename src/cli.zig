@@ -8170,7 +8170,12 @@ fn handleWebuiAsset(
     const is_tools = std.mem.endsWith(u8, target, "tools.js");
     const is_ui = std.mem.endsWith(u8, target, "ui.js");
     const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_compare_view) &render_compare_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_arena3d_view) &render_arena3d_view else if (is_todos_view) &render_todos_view else if (is_models_view) &render_models_view else if (is_schedule_view) &render_schedule_view else if (is_search_view) &render_search_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_ai_disclosure) &render_ai_disclosure else if (is_scroll) &render_scroll else if (is_run_metrics) &render_run_metrics else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_compare_view) &gzip_compare_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_arena3d_view) &gzip_arena3d_view else if (is_todos_view) &gzip_todos_view else if (is_models_view) &gzip_models_view else if (is_schedule_view) &gzip_schedule_view else if (is_search_view) &gzip_search_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_ai_disclosure) &gzip_ai_disclosure else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
+    // Must stay in lockstep with `cache` above. A missing gzip slot falls
+    // through to gzip_js (app.js): a gzip client then receives app.js at this
+    // path, and relative imports resolve under the wrong directory
+    // (`core/run-metrics.js` serving app.js became `/core/core/utils.js` 404s
+    // and an empty main column).
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_compare_view) &gzip_compare_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_arena3d_view) &gzip_arena3d_view else if (is_todos_view) &gzip_todos_view else if (is_models_view) &gzip_models_view else if (is_schedule_view) &gzip_schedule_view else if (is_search_view) &gzip_search_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_ai_disclosure) &gzip_ai_disclosure else if (is_scroll) &gzip_scroll else if (is_run_metrics) &gzip_run_metrics else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -8213,13 +8218,23 @@ fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
     respondHtmlGz(gpa, stream, tagged, accepts_gzip, headers_raw);
 }
 
+/// Import map for first-party `/webui/...` specifiers. Keys are the untagged
+/// directories and files, never the prefix `/webui/` itself: that prefix also
+/// matches `/webui/~<tag>/...`, so a relative import already resolved under
+/// the tagged tree (`./core/utils.js` from `/webui/~tag/app.js`) was remapped
+/// again to `/webui/~tag/core/core/utils.js` and 404'd. The whole UI then
+/// painted the rail chrome and never ran app.js.
+fn webuiImportMapJson(buf: []u8, tag: []const u8) ![]const u8 {
+    return std.fmt.bufPrint(buf, "{{\"imports\":{{\"/webui/vendor/\":\"/webui/~{s}/vendor/\",\"/webui/core/\":\"/webui/~{s}/core/\",\"/webui/lib/\":\"/webui/~{s}/lib/\",\"/webui/features/\":\"/webui/~{s}/features/\",\"/webui/app.js\":\"/webui/~{s}/app.js\",\"/webui/app.css\":\"/webui/~{s}/app.css\",\"/webui/preact-boot.js\":\"/webui/~{s}/preact-boot.js\"}}}}", .{ tag, tag, tag, tag, tag, tag, tag });
+}
+
 fn handleWebuiImportMap(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
     const tag = webuiAssetTag(io, gpa, cfg) orelse {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui asset tag unavailable\"}");
         return;
     };
-    var body_buf: [128]u8 = undefined;
-    const body = std.fmt.bufPrint(&body_buf, "{{\"imports\":{{\"/webui/\":\"/webui/~{s}/\"}}}}", .{tag}) catch {
+    var body_buf: [512]u8 = undefined;
+    const body = webuiImportMapJson(&body_buf, tag) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"import map overflow\"}");
         return;
     };
@@ -12730,6 +12745,7 @@ var gzip_search: GzipCache = .{};
 var gzip_composer: GzipCache = .{};
 var gzip_ai_disclosure: GzipCache = .{};
 var gzip_scroll: GzipCache = .{};
+var gzip_run_metrics: GzipCache = .{};
 var gzip_dialog: GzipCache = .{};
 var gzip_usage: GzipCache = .{};
 var gzip_status: GzipCache = .{};
@@ -15242,6 +15258,17 @@ test "withWebuiCacheUrls rewrites assets and injects an import map" {
     try std.testing.expect(std.mem.indexOf(u8, out, "type=\"importmap\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "src=\"/webui/~deadbeef/import-map.json\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "href=\"/webui/app.css\"") == null);
+}
+
+test "webui import map keys do not match an already-tagged URL" {
+    var buf: [512]u8 = undefined;
+    const body = try webuiImportMapJson(&buf, "deadbeef");
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"/webui/\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"/webui/core/\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "/webui/~deadbeef/core/") != null);
+    // A tagged module URL must not be a prefix hit for any key.
+    try std.testing.expect(!std.mem.startsWith(u8, "/webui/~deadbeef/core/utils.js", "/webui/core/"));
+    try std.testing.expect(!std.mem.startsWith(u8, "/webui/~deadbeef/app.js", "/webui/app.js"));
 }
 
 test "no webui module file exists that the asset route has never heard of" {
