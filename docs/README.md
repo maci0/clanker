@@ -71,6 +71,7 @@ header, the URL verb and the credential.
 - **openai_compat** (`src/llm/providers/openai.zig`): works with any OpenAI-compatible endpoint.
 - **anthropic** (`src/llm/providers/anthropic.zig`): Anthropic's native Messages API.
 - **vertex_anthropic** (`src/llm/providers/vertex.zig`): the Anthropic codec on Google Vertex AI (details below).
+- **vertex** (`src/llm/providers/vertex_ai.zig`): Vertex AI. Gemini generateContent, or the Anthropic Vertex wire when the model id is Claude.
 - **azure_openai** (`src/llm/providers/azure.zig`): Azure OpenAI chat completions. Same body as openai_compat; deployment in the URL; key on `api-key`.
 - **gemini** (`src/llm/providers/gemini.zig`): Google Gemini generateContent (AI Studio). Key on `x-goog-api-key`.
 - **deepseek**: OpenAI-compatible provider at `https://api.deepseek.com`.
@@ -900,7 +901,7 @@ arena_advisory = false
 
 Fields:
 - `providers`: map of provider name → connection settings.
-  - `kind`: `"openai_compat"`, `"anthropic"`, `"vertex_anthropic"` (Anthropic models via Google Vertex AI: requires `project` + `location`, and either `api_key_env` or `service_account_file`; an env var wins over the service account if both are set), `"azure_openai"` (Azure chat completions; `api-key` header; optional `api_version`), or `"gemini"` (Google AI Studio generateContent).
+  - `kind`: `"openai_compat"`, `"anthropic"`, `"vertex_anthropic"` (Anthropic-only on Vertex), `"vertex"` (Vertex AI: Gemini plus Claude), `"azure_openai"` (Azure chat completions; `api-key` header; optional `api_version`), or `"gemini"` (Google AI Studio generateContent). Vertex kinds require `project` + `location`, and either `api_key_env` or `service_account_file`.
   - `base_url`, `api_key_env`, `path` (endpoint path override; defaults per `kind`), `default_model` (only needed with more than one model).
   - `check_timeout_seconds`: how long `providers check` waits for this endpoint before reporting it as timed out, overriding `agent.provider_check_timeout_seconds` for this provider alone. Unset takes the global default; `0` means no ceiling. For a LAN endpoint that either answers instantly or is switched off, a second or two is plenty, while a hosted provider wants the longer global default.
   - `kimi-k3` supports reasoning (returns `reasoning` field).

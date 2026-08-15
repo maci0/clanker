@@ -71,14 +71,14 @@ unconfigured one.
 
 | Key | Type | Meaning |
 |---|---|---|
-| `kind` | string | Wire format: `openai_compat` (default), `anthropic`, `vertex_anthropic`, `azure_openai`, or `gemini`. See below. |
+| `kind` | string | Wire format: `openai_compat` (default), `anthropic`, `vertex_anthropic`, `vertex`, `azure_openai`, or `gemini`. See below. |
 | `base_url` | string | Endpoint base. `openai_compat` appends `/chat/completions`, `anthropic` appends `/v1/messages`, `azure_openai` builds `/openai/deployments/<model>/chat/completions`, `gemini` builds `/models/<model>:generateContent`, unless `path` overrides. |
 | `api_key_env` | string | Name of the `.env` variable holding the credential. Omit for a keyless local endpoint (ollama, vLLM). |
 | `auth` | string | Credential-acquisition strategy: `api_key`, `oauth_static` or `oauth_refresh`. Optional — each `kind` auto-detects where the credential types are distinguishable. See below. |
 | `default_model` | string | Which of this provider's models is active by default. |
 | `path` | string | Override the endpoint path (rarely needed). |
 | `check_timeout_seconds` | int | How long `providers check` waits for this endpoint before giving up, overriding the global `agent.provider_check_timeout_seconds`. `0` = no ceiling. |
-| `project`, `location`, `service_account_file` | string | `vertex_anthropic` only (see below). |
+| `project`, `location`, `service_account_file` | string | `vertex` and `vertex_anthropic` (see below). |
 | `api_version` | string | `azure_openai` only. The `api-version` query. Empty uses `2024-10-21`. |
 
 ### `kind = "openai_compat"`
@@ -131,6 +131,31 @@ default_model = "claude-opus-5"
 # api_key_env = "VERTEX_ACCESS_TOKEN"
 ```
 
+### `kind = "vertex"`
+
+Google Vertex AI. Same GCP auth as `vertex_anthropic`. Gemini models use
+generateContent on `publishers/google`. A model id that starts with `claude`
+(or names the Anthropic publisher) uses the Anthropic Vertex wire instead, so
+one `[providers.vertex]` table can hold both families.
+
+```toml
+[providers.vertex]
+kind = "vertex"
+project = "my-gcp-project"
+location = "us-east5"
+service_account_file = "/path/to/service-account.json"
+default_model = "gemini-3.6-flash"
+
+[models."vertex/gemini-3.6-flash"]
+provider = "vertex"
+
+[models."vertex/claude-opus-5@default"]
+provider = "vertex"
+```
+
+`vertex_anthropic` remains the Anthropic-only kind if you want a provider that
+never routes to Gemini.
+
 ### `kind = "azure_openai"`
 
 Azure OpenAI chat completions. Same body as `openai_compat`. The deployment is
@@ -168,7 +193,7 @@ Auth is a separate axis from the wire format, so `kind` says how the request is
 |---|---|
 | `api_key` | Read `api_key_env` and present it the way the wire kind wants (`Bearer` for `openai_compat`/`vertex_anthropic`, `x-api-key` for `anthropic`, `api-key` for `azure_openai`, `x-goog-api-key` for `gemini`). |
 | `oauth_static` | A pasted OAuth access token in `api_key_env`, presented as `Authorization: Bearer` plus any provider beta header. |
-| `oauth_refresh` | A token minted and renewed in-process. Only `vertex_anthropic` supports it today (from `service_account_file`); other kinds reject it rather than downgrade silently. |
+| `oauth_refresh` | A token minted and renewed in-process. `vertex` and `vertex_anthropic` support it (from `service_account_file`); other kinds reject it rather than downgrade silently. |
 
 Leave it unset unless you need it. Each kind auto-detects: `anthropic` reads an
 `sk-ant-oat` prefix as `oauth_static` and anything else as `api_key`;
@@ -252,7 +277,7 @@ Only providers whose API and auth clanker implements appear in catalog
 search: OpenAI-compatible (Bearer API key), Anthropic Messages (API key
 or OAuth by token shape), Vertex Anthropic (GCP `oauth_refresh`), Gemini
 AI Studio (`x-goog-api-key`), and Azure OpenAI (`api-key` plus a
-resource host). Vertex Gemini and Amazon Bedrock are not in that map.
+resource host). Amazon Bedrock is not in that map.
 The table is `src/llm/catalog.zig`.
 `clanker providers check` pings every configured provider and reports
 latency/cost; `clanker providers models <name>` lists a provider's models.

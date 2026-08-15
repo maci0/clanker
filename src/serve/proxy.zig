@@ -15,6 +15,7 @@ const token_stats = @import("../stats/tokens.zig");
 const log = @import("../util/log.zig");
 const raw_http = @import("../util/raw_http.zig");
 const anthropic = @import("../llm/providers/anthropic.zig");
+const vertex_ai = @import("../llm/providers/vertex_ai.zig");
 const xcode = @import("proxy_transcode.zig");
 const build_options = @import("build_options");
 
@@ -188,11 +189,14 @@ fn forward(ctx: Ctx, family: Family) u16 {
 
     const up_family = xcode.upstreamFamily(resolved.provider.kind);
     const need_xcode = chat_route and up_family != family;
-    if (!chat_route and resolved.provider.kind == .vertex_anthropic) {
-        return writeEnvelope(ctx, 400, "unknown_endpoint", "vertex_anthropic only serves chat / messages");
+    if (!chat_route and (resolved.provider.kind == .vertex_anthropic or resolved.provider.kind == .vertex)) {
+        return writeEnvelope(ctx, 400, "unknown_endpoint", "Vertex only serves chat / messages");
     }
     if (resolved.provider.kind == .gemini) {
         return writeEnvelope(ctx, 400, "protocol_mismatch", "gemini is not available on the OpenAI/Anthropic proxy");
+    }
+    if (resolved.provider.kind == .vertex and !vertex_ai.isAnthropicModel(resolved.provider.activeModelName())) {
+        return writeEnvelope(ctx, 400, "protocol_mismatch", "Vertex Gemini is not available on the OpenAI/Anthropic proxy");
     }
 
     var upstream_body = ctx.body;
@@ -200,7 +204,7 @@ fn forward(ctx: Ctx, family: Family) u16 {
         upstream_body = transcodeRequest(arena, family, &resolved.provider, ctx.body) catch {
             return writeEnvelope(ctx, 400, "malformed_request", "Could not transcode request for this backend");
         };
-    } else if (resolved.provider.kind == .vertex_anthropic and isMessagesCreate(ctx.path)) {
+    } else if ((resolved.provider.kind == .vertex_anthropic or resolved.provider.kind == .vertex) and isMessagesCreate(ctx.path)) {
         upstream_body = xcode.rewriteVertexBody(arena, if (resolved.splice)
             (spliceModel(arena, ctx.body, resolved.wire_id) catch {
                 return writeEnvelope(ctx, 400, "missing_required_parameter", "model must be a JSON string");
@@ -217,7 +221,7 @@ fn forward(ctx: Ctx, family: Family) u16 {
 
     const streaming = peek.stream == .yes or wantsEventStream(ctx.headers_raw, ctx.path);
     const impl = providers.forKind(resolved.provider.kind);
-    const url = upstreamUrl(ctx.gpa, &resolved.provider, impl, ctx.path, ctx.query, streaming, need_xcode or resolved.provider.kind == .vertex_anthropic) catch {
+    const url = upstreamUrl(ctx.gpa, &resolved.provider, impl, ctx.path, ctx.query, streaming, need_xcode or resolved.provider.kind == .vertex_anthropic or resolved.provider.kind == .vertex) catch {
         return writeEnvelope(ctx, 502, null, "Failed to build upstream URL");
     };
     defer ctx.gpa.free(url);
@@ -508,6 +512,7 @@ fn upstreamUrl(
 ) ![]u8 {
     const use_vtable = force_vtable or
         (provider.kind == .vertex_anthropic and isMessagesCreate(path)) or
+        (provider.kind == .vertex and (isMessagesCreate(path) or isChatCompletions(path))) or
         (provider.kind == .openai_compat and isChatCompletions(path)) or
         (provider.kind == .azure_openai and isChatCompletions(path)) or
         (provider.kind == .anthropic and isMessagesCreate(path));

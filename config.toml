@@ -5,7 +5,7 @@ default_provider = "kimi-k3"
 # each provider, since most configs never need them.
 #
 #   kind             openai_compat (default) | anthropic | vertex_anthropic
-#                    | azure_openai | gemini
+#                    | vertex | azure_openai | gemini
 #   base_url         required
 #   api_key_env      name of the env var holding the key, never the key itself
 #   default_model    which [models."<name>/..."] entry is active; with exactly
@@ -34,9 +34,10 @@ default_provider = "kimi-k3"
 # # 0 = no ceiling.
 # check_timeout_seconds = 3
 #
-# # vertex_anthropic only, and all three are required for it: the GCP project
-# # and region serving the model, plus the service account json used to mint
-# # access tokens (or api_key_env instead of the file).
+# # vertex and vertex_anthropic: the GCP project and region serving the
+# # model, plus the service account json used to mint access tokens (or
+# # api_key_env instead of the file). kind = "vertex" is Gemini by default
+# # and Claude when the model id starts with claude.
 # project = "my-gcp-project"
 # location = "us-east5"
 # service_account_file = "/path/to/sa.json"

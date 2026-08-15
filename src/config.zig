@@ -42,6 +42,10 @@ pub const ProviderKind = enum {
     /// Anthropic models served through Google Vertex AI: same message format,
     /// but the model lives in the URL and auth is a GCP bearer token.
     vertex_anthropic,
+    /// Google Vertex AI. Gemini generateContent by default; a Claude model
+    /// id uses the Anthropic Vertex wire instead. Same GCP auth as
+    /// `vertex_anthropic`.
+    vertex,
     /// Azure OpenAI chat completions: same body as openai_compat, but the
     /// deployment is in the URL and the key rides `api-key`.
     azure_openai,
@@ -137,8 +141,8 @@ pub const Provider = struct {
     /// are not distinguishable by shape, since guessing wrong sends the
     /// secret on the wrong header.
     auth: ?AuthStrategy = null,
-    /// vertex_anthropic only: the GCP project and region that serve the model,
-    /// and the service account JSON used to mint access tokens.
+    /// vertex / vertex_anthropic only: the GCP project and region that serve
+    /// the model, and the service account JSON used to mint access tokens.
     project: []const u8 = "",
     location: []const u8 = "",
     service_account_file: []const u8 = "",
@@ -1247,18 +1251,18 @@ pub const Config = struct {
             p.check_timeout_seconds = @intCast(secs);
         }
 
-        // vertex_anthropic addresses the model by project/location in the URL
-        // and authenticates from one of two credential sources; missing either
-        // currently only surfaces as error.VertexProjectMissing (or a bare
-        // MissingApiKey) on the first request, far from the config that caused
-        // it.
-        if (p.kind == .vertex_anthropic) {
+        // vertex / vertex_anthropic address the model by project/location in
+        // the URL and authenticate from one of two credential sources;
+        // missing either currently only surfaces as error.VertexProjectMissing
+        // (or a bare MissingApiKey) on the first request, far from the config
+        // that caused it.
+        if (p.kind == .vertex_anthropic or p.kind == .vertex) {
             if (p.project.len == 0 or p.location.len == 0) {
-                log.log(.error_, "provider '{s}': kind \"vertex_anthropic\" requires \"project\" and \"location\"", .{name});
+                log.log(.error_, "provider '{s}': kind \"{s}\" requires \"project\" and \"location\"", .{ name, @tagName(p.kind) });
                 return error.VertexProjectMissing;
             }
             if (p.api_key_env == null and p.service_account_file.len == 0) {
-                log.log(.error_, "provider '{s}': kind \"vertex_anthropic\" requires \"api_key_env\" or \"service_account_file\"", .{name});
+                log.log(.error_, "provider '{s}': kind \"{s}\" requires \"api_key_env\" or \"service_account_file\"", .{ name, @tagName(p.kind) });
                 return error.VertexCredentialMissing;
             }
         }

@@ -19,7 +19,7 @@ const proxy = @import("proxy.zig");
 pub fn upstreamFamily(kind: config.ProviderKind) proxy.Family {
     return switch (kind) {
         .openai_compat, .azure_openai => .openai,
-        .anthropic, .vertex_anthropic => .anthropic,
+        .anthropic, .vertex_anthropic, .vertex => .anthropic,
         .gemini => .openai,
     };
 }

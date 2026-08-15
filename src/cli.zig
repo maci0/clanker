@@ -2337,7 +2337,7 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
             // the usual config, not a missing setup. Doctor already treats
             // a present service-account file as ok; this check used to
             // disagree and call the default provider "not configured".
-            if (p.base_url.len == 0 and p.kind != .vertex_anthropic) break :blk "base_url is empty";
+            if (p.base_url.len == 0 and p.kind != .vertex_anthropic and p.kind != .vertex) break :blk "base_url is empty";
             if (p.base_url.len > 0 and !std.mem.startsWith(u8, p.base_url, "http://") and !std.mem.startsWith(u8, p.base_url, "https://"))
                 break :blk try std.fmt.allocPrint(arena, "base_url '{s}' has no http:// or https:// scheme", .{p.base_url});
             if (p.api_key_env) |env_name| {

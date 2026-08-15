@@ -5,7 +5,7 @@
 //! default we know for the official host) and an auth strategy we already
 //! implement. A new vendor on `@ai-sdk/openai-compatible` with an `api` URL
 //! is supported without a new row. Gemini-native, Bedrock, Azure, and
-//! Vertex Gemini and Bedrock need a new `ProviderKind` before they belong here.
+//! Bedrock needs a new `ProviderKind` before it belongs here.
 
 const std = @import("std");
 const config = @import("../config.zig");
@@ -44,6 +44,7 @@ const npm_rows = std.StaticStringMap(NpmRow).initComptime(.{
     .{ "@openrouter/ai-sdk-provider", NpmRow{ .kind = .openai_compat, .auth = .api_key, .default_base = "https://openrouter.ai/api/v1" } },
     .{ "@ai-sdk/anthropic", NpmRow{ .kind = .anthropic, .auth = .api_key, .default_base = "https://api.anthropic.com" } },
     .{ "@ai-sdk/google-vertex/anthropic", NpmRow{ .kind = .vertex_anthropic, .auth = .oauth_refresh } },
+    .{ "@ai-sdk/google-vertex", NpmRow{ .kind = .vertex, .auth = .oauth_refresh } },
     .{ "@ai-sdk/google", NpmRow{ .kind = .gemini, .auth = .api_key, .default_base = "https://generativelanguage.googleapis.com/v1beta" } },
     .{ "@ai-sdk/azure", NpmRow{ .kind = .azure_openai, .auth = .api_key } },
 });
@@ -55,7 +56,7 @@ pub fn classify(npm: []const u8, api: []const u8, env0: []const u8) ?Support {
     const base = if (api.len > 0) api else row.default_base;
     // Vertex builds the URL from project/location. Azure needs the
     // resource host from the operator (`https://<name>.openai.azure.com`).
-    if (base.len == 0 and row.kind != .vertex_anthropic and row.kind != .azure_openai) return null;
+    if (base.len == 0 and row.kind != .vertex_anthropic and row.kind != .vertex and row.kind != .azure_openai) return null;
 
     var path: ?[]const u8 = null;
     if (row.kind == .anthropic and api.len > 0) {
@@ -149,8 +150,14 @@ test "Azure OpenAI is azure_openai + api_key without a default host" {
     try std.testing.expectEqualStrings("AZURE_API_KEY", s.api_key_env);
 }
 
-test "Vertex Gemini and Bedrock stay unsupported" {
-    try std.testing.expect(classify("@ai-sdk/google-vertex", "", "") == null);
+test "Vertex AI is vertex + oauth_refresh without a base URL" {
+    const s = classify("@ai-sdk/google-vertex", "", "").?;
+    try std.testing.expectEqual(config.ProviderKind.vertex, s.kind);
+    try std.testing.expectEqual(config.AuthStrategy.oauth_refresh, s.auth);
+    try std.testing.expectEqualStrings("", s.base_url);
+}
+
+test "Bedrock stays unsupported" {
     try std.testing.expect(classify("@ai-sdk/amazon-bedrock", "", "") == null);
 }
 

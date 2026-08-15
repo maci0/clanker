@@ -103,8 +103,8 @@ export function configSnippet(m, configured, known) {
       lines.push("[providers." + tomlKey(provider) + "]");
       lines.push("kind = " + tomlStr(m.kind));
       if (m.base_url) lines.push("base_url = " + tomlStr(m.base_url));
-      else if (m.kind === "vertex_anthropic") {
-        lines.push("# set project, location, service_account_file, and a base_url");
+      else if (m.kind === "vertex_anthropic" || m.kind === "vertex") {
+        lines.push("# set project, location, service_account_file (base_url is optional)");
       } else if (m.kind === "azure_openai") {
         lines.push("# set base_url to https://<resource>.openai.azure.com");
       }

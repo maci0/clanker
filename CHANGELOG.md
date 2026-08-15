@@ -56,6 +56,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - `kind = "gemini"` talks to Google Gemini generateContent (AI Studio).
   `kind = "azure_openai"` talks to Azure OpenAI chat completions
   (deployment in the URL, optional `api_version`).
+- `kind = "vertex"` is Google Vertex AI: Gemini generateContent by
+  default, Anthropic `:rawPredict` when the model id is Claude. Same GCP
+  project/location/service-account auth as `vertex_anthropic`, which
+  stays the Anthropic-only kind.
 - Web UI shell follows a session-first layout: conversations stay in the
   left rail, Watch and Set up fold away, and Chat is a header / transcript
   / docked-composer column. PatternFly page chrome and cabinet colors stay.
