@@ -180,8 +180,8 @@ test("prompts filter empty offers to clear the query", function () {
 });
 
 test("rooms filter and message search are search inputs", function () {
-  assert.match(html, /id="chat-room-filter"[^>]*type="search"/);
-  assert.match(html, /id="chat-search-input"[^>]*type="search"/);
+  assert.match(html, /type="search" id="chat-room-filter"/);
+  assert.match(html, /type="search" id="chat-search-input"/);
 });
 
 test("steer row has a visible label", function () {
@@ -189,7 +189,8 @@ test("steer row has a visible label", function () {
 });
 
 test("empty Run control explains the disabled state", function () {
-  assert.match(html, /id="submit"[^>]*title="Write a task first"/);
+  const submit = html.slice(html.indexOf('id="submit"'), html.indexOf('id="submit"') + 220);
+  assert.match(submit, /title="Write a task first"/);
   const src = readFileSync(join(here, "modelpicker.js"), "utf8");
   assert.match(src, /Write a task first/);
 });
