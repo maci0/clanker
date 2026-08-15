@@ -6,6 +6,10 @@ the Done/Planned narrative is [docs/ROADMAP.md](ROADMAP.md).
 Working review logs live in [docs/reviews/](reviews/); design/implementation plans in [docs/plans/](plans/).
 Operational bugs and their evidence-led investigations live in [docs/reports/](reports/).
 Current recovery procedures for recurring failures live in [docs/runbooks/](runbooks/).
+Decisions that are still open live in [docs/rfcs/](rfcs/) ([index](rfcs/README.md), [template](rfcs/TEMPLATE.md)),
+and the evidence they rest on in [docs/research/](research/) ([index](research/README.md), [template](research/TEMPLATE.md));
+a decision that has been made is an [ADR](adrs/). The `rfc` and `research` tools maintain both,
+and neither requires the other.
 
 
 ## Architecture

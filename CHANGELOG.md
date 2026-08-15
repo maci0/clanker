@@ -7,6 +7,22 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- Two tools for the work that precedes a decision, independent of each other.
+  `research` plans a search (the angles a single query misses: alternatives,
+  failure reports, production experience, standards, and the out-of-the-box
+  candidates nobody advertises), sweeps web search, GitHub repositories,
+  Hacker News, and arXiv in one deduplicated call, and keeps what survives as
+  a note under `docs/research/`. `rfc` opens a numbered request for comment
+  under `docs/rfcs/`: options with short, medium, and long term implications,
+  a recommendation whose confidence is a bounded 0–10 score, open questions,
+  next steps, references, and an appendix. Both render a committed template
+  (`docs/research/TEMPLATE.md`, `docs/rfcs/TEMPLATE.md`), keep their index
+  current, and write compare-and-swap. `rfc create` optionally links a
+  research note and lifts its option headings in as stubs marked unverified;
+  nothing else couples the two, and neither is required for the other.
+  Hosts named in `web.allow` extend the research sweep as they already do
+  `fetch_web` and `web_search`.
+
 - The REPL mascot renders as a SIXEL raster on terminals that support SIXEL
   but not kitty graphics, at the same cell footprint and in every existing
   mode, size, facing and speed. The renderer is chosen automatically from the

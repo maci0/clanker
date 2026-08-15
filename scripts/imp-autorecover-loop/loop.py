@@ -58,9 +58,13 @@ ERROR_LINE = re.compile(
 )
 IMPROVE_SOURCE = "improve-self"
 CLANK_SOURCE = "the clanker repair run"
+ESCALATE_SOURCE = "the clanker escalation run"
+# Which repair level a failed run is waiting for.
+ESCALATE_STAGE = "escalate"
+HARNESS_STAGE = "harness"
 EXAMPLES = """
 EXAMPLES
-  run.sh                                    menus for both, then run
+  run.sh                                    menus for all three, then run
 
   loop.py                                   clanker from PATH, configured model
   loop.py --model ollama/qwen3.6-27b-tuned  that model for improve-self
@@ -68,21 +72,26 @@ EXAMPLES
   loop.py "improve the clanker tui"         one fixed goal every batch
   loop.py --iters 5                         larger improve-self batches
   loop.py --max-repairs 3                   give up after 3 failed repair runs
-  loop.py --fix-repairs-with "codex exec"   repair failed clanker repair runs
+  loop.py --escalate-model zai/glm-5.2      escalation runs on a better model
+  loop.py --fix-repairs-with "codex exec"   repair failed escalation runs
 
 CLANKER
   Without --clanker the loop takes clanker from PATH, and falls back
   to <clanker-dir>/zig-out/bin/clanker, so no shim is required.
 
 REPAIR
-  Two levels of repair, each fixing the step above it.
+  Three levels of repair, each fixing the step above it.
 
   1. clanker improve-self runs a batch of iterations.
   2. When that batch fails, a clanker repair run fixes it,
      from the batch's own error lines.
-  3. When that clanker repair run fails, the --fix-repairs-with
-     harness fixes it, from the repair run's error lines.
-     Without that flag, level 3 is skipped.
+  3. When that clanker repair run fails, a clanker escalation
+     run fixes it, from the repair run's error lines. It is
+     another clanker run, and --escalate-model gives it a
+     different provider/model than the repair run had.
+  4. When that escalation run fails, the --fix-repairs-with
+     harness fixes it, from the escalation run's error lines.
+     Without that flag, level 4 is skipped.
 
   Every level returns to improve-self afterwards, so the loop
   keeps going. Each only ever triggers on a non-zero exit, and
@@ -104,6 +113,14 @@ class CommandResult:
     log_path: Path
     stopped_after_failures: tuple[int, int] | None = None
     running_pid: int | None = None
+
+
+@dataclass
+class PendingRepair:
+    """A failed repair run and the level that has not tried to fix it yet."""
+
+    log_path: Path
+    stage: str
 
 
 def run_to_log(command: Sequence[str], *, cwd: Path, label: str) -> CommandResult:
@@ -258,6 +275,19 @@ def repair_errors(log_path: Path) -> str:
     return fit_to_argv(error_report(read_log(log_path)))
 
 
+def consume_log(log_path: Path, failure: str, *, source: str) -> str:
+    """Build the repair prompt from a log, and drop the log either way."""
+    try:
+        return repair_prompt(repair_errors(log_path), failure, source=source)
+    finally:
+        log_path.unlink(missing_ok=True)
+
+
+def add_note(previous: str | None, sentence: str) -> str:
+    """Carry each earlier attempt into the next prompt as one sentence."""
+    return f"{previous} {sentence}" if previous else sentence
+
+
 def resolve_clanker(explicit: str, clanker_dir: Path) -> str | None:
     """Find the clanker binary: the flag first, then PATH, then the checkout build.
 
@@ -320,13 +350,25 @@ def parse_args() -> argparse.Namespace:
         help="iterations per improve-self batch (default: 3)",
     )
     parser.add_argument(
+        "--escalate-model",
+        metavar="MODEL",
+        default="",
+        help=(
+            "model for the clanker escalation run that repairs a failed clanker "
+            "repair run, as <model> or <provider>/<model>; empty omits the flag "
+            "so the escalation run uses Clanker's configured model, the same one "
+            "the repair run just failed on (default: empty)"
+        ),
+    )
+    parser.add_argument(
         "--fix-repairs-with",
         metavar="CMD",
         default="",
         help=(
-            "harness that repairs a failed clanker repair run, as a command whose "
-            "final argument is the prompt. Clanker repair runs fix improve-self; "
-            "this fixes them; empty disables it (default: empty)"
+            "harness that repairs a failed clanker escalation run, as a command "
+            "whose final argument is the prompt. Repair runs fix improve-self, "
+            "escalation runs fix them, this fixes those; empty disables it "
+            "(default: empty)"
         ),
     )
     parser.add_argument(
@@ -383,36 +425,72 @@ def main() -> int:
     previous_goal: str | None = None
     previous_repair: str | None = None
     repair_failures = 0
-    # A failed repair run waiting for the second harness. None means the next step
-    # is a fresh improve-self batch, so a repair always works from the newest log
-    # rather than from a stale one.
-    pending_repair_log: Path | None = None
+    # A failed run waiting for the next repair level. None means the next step is a
+    # fresh improve-self batch, so a repair always works from the newest log rather
+    # than from a stale one.
+    pending: PendingRepair | None = None
     while True:
-        if pending_repair_log is not None:
-            log_path, pending_repair_log = pending_repair_log, None
-            try:
-                prompt = repair_prompt(
-                    repair_errors(log_path), previous_repair or "", source=CLANK_SOURCE
-                )
-            finally:
-                log_path.unlink(missing_ok=True)
+        if pending is not None and pending.stage == ESCALATE_STAGE:
+            # Level 3: another clanker run, optionally on a better model, fixing
+            # the clanker repair run that just failed.
+            prompt = consume_log(pending.log_path, previous_repair or "", source=CLANK_SOURCE)
+            pending = None
+            escalate = [clanker, "run", "--no-worktree"]
+            if args.escalate_model:
+                escalate += ["--model", args.escalate_model]
+            escalate.append(prompt)
+            on_model = f" on {args.escalate_model}" if args.escalate_model else ""
+            print(
+                f"==> repairing the failed clanker repair run with a clanker escalation run{on_model}",
+                flush=True,
+            )
+            escalation = run_to_log(escalate, cwd=clanker_dir, label="escalate")
+            if escalation.status == 0:
+                # The repair run works again, so the next batch starts clean.
+                escalation.log_path.unlink(missing_ok=True)
+                previous_repair = None
+                repair_failures = 0
+                print("==> clanker escalation run completed; resuming improve-self", flush=True)
+                continue
+            print(
+                f"==> clanker escalation run exited with status {escalation.status}",
+                flush=True,
+            )
+            previous_repair = add_note(
+                previous_repair,
+                "A clanker escalation run then tried to repair that clanker repair run "
+                f"and exited with status {escalation.status}.",
+            )
+            # Hand the failed escalation run to the harness when one is configured;
+            # otherwise drop it and let the next improve-self batch resurface it.
+            if args.fix_repairs_command:
+                pending = PendingRepair(escalation.log_path, HARNESS_STAGE)
+            else:
+                escalation.log_path.unlink(missing_ok=True)
+            continue
+
+        if pending is not None:
+            # Level 4: the outside harness, fixing the failed escalation run.
+            prompt = consume_log(pending.log_path, previous_repair or "", source=ESCALATE_SOURCE)
+            pending = None
             harness = args.fix_repairs_command
-            print(f"==> repairing the failed clanker repair run with {harness[0]}", flush=True)
+            print(f"==> repairing the failed clanker escalation run with {harness[0]}", flush=True)
             meta = run_to_log([*harness, prompt], cwd=clanker_dir, label="meta-repair")
             meta.log_path.unlink(missing_ok=True)
             if meta.status == 0:
-                # The repair run works again, so the next batch starts clean.
+                # Clanker's own repair levels work again, so the next batch starts clean.
                 previous_repair = None
                 repair_failures = 0
-                print("==> clanker repair run fixed; resuming improve-self", flush=True)
+                print("==> clanker repair runs fixed; resuming improve-self", flush=True)
             else:
                 print(
                     f"==> {harness[0]} exited with status {meta.status}; resuming improve-self",
                     flush=True,
                 )
-                previous_repair = (
-                    f"A {harness[0]} run then tried to repair that clanker repair run "
-                    f"and exited with status {meta.status}."
+                previous_repair = add_note(
+                    previous_repair,
+                    f"A {harness[0]} run then tried to repair that clanker escalation run "
+                    f"and exited with status {meta.status}.",
                 )
             continue
 
@@ -437,28 +515,26 @@ def main() -> int:
             return 3
 
         log_path = improve_result.log_path
-        try:
-            # Only a non-zero exit or the two-failed-iterations stop starts a
-            # repair; the log text never decides that.
-            if improve_result.status == 0 and improve_result.stopped_after_failures is None:
-                previous_repair = None
-                repair_failures = 0
-                print("==> improve-self batch completed; starting the next one", flush=True)
-                continue
-            if improve_result.stopped_after_failures is not None:
-                first, second = improve_result.stopped_after_failures
-                failure = (
-                    "The loop stopped this improve-self batch after iterations "
-                    f"{first} and {second} each exhausted all attempts."
-                )
-            else:
-                failure = f"improve-self exited with status {improve_result.status}."
-            if previous_repair is not None:
-                failure = f"{failure} {previous_repair}"
-            print(f"==> {failure} Starting a clanker repair run", flush=True)
-            prompt = repair_prompt(repair_errors(log_path), failure, source=IMPROVE_SOURCE)
-        finally:
+        # Only a non-zero exit or the two-failed-iterations stop starts a repair;
+        # the log text never decides that.
+        if improve_result.status == 0 and improve_result.stopped_after_failures is None:
             log_path.unlink(missing_ok=True)
+            previous_repair = None
+            repair_failures = 0
+            print("==> improve-self batch completed; starting the next one", flush=True)
+            continue
+        if improve_result.stopped_after_failures is not None:
+            first, second = improve_result.stopped_after_failures
+            failure = (
+                "The loop stopped this improve-self batch after iterations "
+                f"{first} and {second} each exhausted all attempts."
+            )
+        else:
+            failure = f"improve-self exited with status {improve_result.status}."
+        if previous_repair is not None:
+            failure = f"{failure} {previous_repair}"
+        print(f"==> {failure} Starting a clanker repair run", flush=True)
+        prompt = consume_log(log_path, failure, source=IMPROVE_SOURCE)
 
         repair_result = run_to_log(
             [clanker, "run", "--no-worktree", prompt],
@@ -488,12 +564,9 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        # Hand the failed repair run to the other harness when one is configured;
-        # otherwise drop it and let the next improve-self batch resurface it.
-        if args.fix_repairs_command:
-            pending_repair_log = repair_result.log_path
-        else:
-            repair_result.log_path.unlink(missing_ok=True)
+        # Hand the failed repair run to the escalation run, which hands its own
+        # failure on to the harness when one is configured.
+        pending = PendingRepair(repair_result.log_path, ESCALATE_STAGE)
 
 
 if __name__ == "__main__":

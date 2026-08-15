@@ -60,6 +60,7 @@ const file_lock = @import("util/file_lock.zig");
 const utf8 = @import("util/utf8.zig");
 const gate_checks = @import("gate/checks.zig");
 const schedule_cmd = @import("schedule/command.zig");
+const reports_cmd = @import("reports/command.zig");
 const proxy = @import("serve/proxy.zig");
 const schedule_runner = @import("schedule/runner.zig");
 const schedule_store = @import("schedule/store.zig");
@@ -127,6 +128,10 @@ pub const Command = enum {
     /// registry. `src/toolhost/manifest.zig` is the schema it enforces.
     plugins,
     schedule,
+    /// `reports list|search|open|create|append|update`: the same operational
+    /// reports and runbooks the agent reads through the `reports` tool, from a
+    /// terminal. `src/reports/command.zig`.
+    reports,
 };
 
 pub const Options = struct {
@@ -317,6 +322,18 @@ pub const Options = struct {
     /// read at, written `+02:00`, `-05:00`, `UTC` or a plain minute count.
     /// Fixed, never a DST-aware zone, see src/schedule/cron.zig.
     schedule_tz: ?[]const u8 = null,
+    /// `reports <sub> [args...]`: "search" takes a query, "open" a path,
+    /// "create" a kind, slug, title and summary, "append" a path and markdown,
+    /// "update" a path, the exact old text and its replacement. Absent sub
+    /// means "list". Four positionals because `create` needs four; the meaning
+    /// of each is the subcommand's, the way `schedule`'s two are.
+    reports_sub: ?[]const u8 = null,
+    reports_arg1: ?[]const u8 = null,
+    reports_arg2: ?[]const u8 = null,
+    reports_arg3: ?[]const u8 = null,
+    reports_arg4: ?[]const u8 = null,
+    /// `reports search --kind`: "all" (default), "report" or "runbook".
+    reports_kind: ?[]const u8 = null,
 };
 
 /// Optional out-param for `parse`: on a parse error, holds the offending
@@ -665,6 +682,9 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             } else if (std.mem.eql(u8, a, "--tz-offset")) {
                 opts.schedule_tz = try takeValue(args, &idx, inline_value, a, diag);
                 used = .schedule_tz;
+            } else if (std.mem.eql(u8, a, "--kind")) {
+                opts.reports_kind = try takeValue(args, &idx, inline_value, a, diag);
+                used = .reports_kind;
             } else if (std.mem.eql(u8, a, "--judge-provider")) {
                 opts.arena_judge_provider = try takeValue(args, &idx, inline_value, a, diag);
                 used = .arena_judge_provider;
@@ -784,6 +804,8 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.command = .workflow;
             } else if (std.mem.eql(u8, a, "schedule")) {
                 opts.command = .schedule;
+            } else if (std.mem.eql(u8, a, "reports") or std.mem.eql(u8, a, "report")) {
+                opts.command = .reports;
             } else if (std.mem.eql(u8, a, "version")) {
                 opts.command = .version;
             } else if (a.len > 0 and !std.mem.eql(u8, a, "help")) {
@@ -898,6 +920,23 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.schedule_arg1 = a;
             } else if (opts.schedule_arg2 == null) {
                 opts.schedule_arg2 = a;
+            } else {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
+        } else if (opts.command == .reports) {
+            // Positional-only: <sub> then up to four arguments whose meaning
+            // depends on it (create takes four, update three, search one).
+            if (opts.reports_sub == null) {
+                opts.reports_sub = a;
+            } else if (opts.reports_arg1 == null) {
+                opts.reports_arg1 = a;
+            } else if (opts.reports_arg2 == null) {
+                opts.reports_arg2 = a;
+            } else if (opts.reports_arg3 == null) {
+                opts.reports_arg3 = a;
+            } else if (opts.reports_arg4 == null) {
+                opts.reports_arg4 = a;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
@@ -1505,6 +1544,7 @@ const Flag = enum {
     compare_synthesize,
     compare_reveal,
     schedule_tz,
+    reports_kind,
 
     fn name(self: Flag) []const u8 {
         return switch (self) {
@@ -1553,6 +1593,7 @@ const Flag = enum {
             .compare_synthesize => "--synthesize",
             .compare_reveal => "--reveal",
             .schedule_tz => "--tz-offset",
+            .reports_kind => "--kind",
         };
     }
 
@@ -1607,6 +1648,7 @@ const Flag = enum {
             .compare_synthesize => "also merge the answers into one extra call",
             .compare_reveal => "print the label-to-model key even with no verdict",
             .schedule_tz => "read cron fields at a fixed offset from UTC (±HH:MM)",
+            .reports_kind => "narrow a reports search: all, report, or runbook",
         };
     }
 
@@ -1691,6 +1733,7 @@ const specs = [_]Spec{
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
     .{ .command = .tools_list, .usage = "tools [list]", .blurb = "list the registered WASM tools", .group = .inspect },
     .{ .command = .plugins, .usage = "plugins [list|on <name>|off <name>|validate [path]|new <name>]", .blurb = "list, switch, validate, or scaffold plugins", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\non <name>         switch an optional plugin on\noff <name>        switch an optional plugin off\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nCore tools cannot be switched off. Changes take effect in the next command; a\nrunning REPL reloads its tool catalog immediately.\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
+    .{ .command = .reports, .usage = "reports [list|search <query>|open <path>|create|append|update]", .blurb = "read and record operational reports and runbooks", .group = .inspect, .flags = &.{.reports_kind}, .detail = "Reports preserve the evidence behind a diagnosis; runbooks preserve the\ncurrent recovery procedure. These are the same records the agent reads\nthrough the `reports` tool, in docs/reports/ and docs/runbooks/.\n\nREADING\n  list                       every report and runbook, with its status\n  search <query>             one literal text search across both stores\n  open <path>                print one record in full\n\n  --kind all|report|runbook  narrow a search to one store (default all)\n\nWRITING\n  create <kind> <slug> <title> <summary>\n  append <path> <content>\n  update <path> <old> <new>\n\ncreate scaffolds a TL;DR-first record and adds it to the matching inventory;\nits kind is bug, investigation, or runbook. Report slugs start YYYY-MM-DD-,\nrunbook slugs are lowercase and hyphenated. append adds markdown to the end\nof a record, update replaces one exact passage, and both are compare-and-swap\nwrites: a concurrent edit is refused rather than overwritten, so reopen the\nrecord and retry against its current text.\n\nEXAMPLES\n  clanker reports                             the whole index\n  clanker reports search NotDir               which record covers it\n  clanker reports search zig --kind runbook   only recovery procedures\n  clanker reports open docs/runbooks/improve-staging-build-inputs.md" },
     .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill|refresh] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, uses\n                agent.provider_check_timeout_seconds as its timeout, then ends\n                with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the local models.dev snapshot by id/family\nfill <name>     print catalog specs for a configured provider's models\nrefresh         download models.dev into state/models-dev.json\n                catalog, fill, and the Models view then read that file" },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
@@ -1791,6 +1834,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .workflow => try cmdWorkflow(init, opts),
         .plugins => try cmdPlugins(init, opts),
         .schedule => try cmdSchedule(init, opts),
+        .reports => try cmdReports(init, opts),
     }
 }
 
@@ -4545,6 +4589,64 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
     }
     usageExitFor(io, "plugins", "unknown plugins subcommand '{s}' (list, on, off, validate, new)", .{sub});
 }
+
+/// `clanker reports [list|search|open|create|append|update]`.
+///
+/// The operational reports and runbooks the agent already reads through the
+/// `reports` tool, from a terminal: same records, same compare-and-swap
+/// writes, same inventory, because this goes through that tool rather than
+/// reimplementing the store beside it. Printing lives in
+/// `src/reports/command.zig`; what stays here is the tool call, which needs
+/// the config, the registry and the sandbox this file owns.
+fn cmdReports(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+
+    var caller: ReportsTool = .{ .init = init, .cfg = &cfg };
+    reports_cmd.cmd(init, .{
+        .sub = opts.reports_sub orelse "list",
+        .arg1 = opts.reports_arg1,
+        .arg2 = opts.reports_arg2,
+        .arg3 = opts.reports_arg3,
+        .arg4 = opts.reports_arg4,
+        .kind = opts.reports_kind,
+    }, caller.tool()) catch |err| switch (err) {
+        // The diagnostic is already out; what a script needs from here is the
+        // exit status, not a second Zig error name printed under it.
+        reports_cmd.Error.BadSubcommand, reports_cmd.Error.MissingArg => {
+            printUsageHintFor(io, "reports");
+            std.process.exit(2);
+        },
+        reports_cmd.Error.ToolFailed => std.process.exit(1),
+        else => return err,
+    };
+}
+
+/// Binds `toolJson` to the `reports` guest, so `src/reports/command.zig` can
+/// call the tool without importing the sandbox.
+const ReportsTool = struct {
+    init: std.process.Init,
+    cfg: *const config.Config,
+
+    fn tool(self: *ReportsTool) reports_cmd.Tool {
+        return .{ .ctx = self, .call = call };
+    }
+
+    fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
+        // tool() boxed this ReportsTool as Tool.ctx.
+        const self: *ReportsTool = @ptrCast(@alignCast(ctx));
+        return toolJson(
+            self.init.io,
+            self.init.gpa,
+            self.init.arena.allocator(),
+            self.cfg,
+            self.init.environ_map,
+            "reports",
+            input,
+        );
+    }
+};
 
 /// Toggle responses are otherwise ordinary rendered tool text. Keeping the
 /// failure marker explicit lets the interactive REPL render it inline while

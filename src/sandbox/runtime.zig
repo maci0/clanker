@@ -1211,6 +1211,298 @@ test "reports wasm tool searches report history and current runbooks" {
     try std.testing.expect(std.mem.find(u8, updated_runbook, "then run the focused gate") == null);
 }
 
+test "research wasm tool plans a sweep and keeps the note it produces" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "docs/research");
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/research/README.md", .data =
+        \\# Research notes
+        \\
+        \\<!-- inventory:research:start -->
+        \\No notes yet.
+        \\<!-- inventory:research:end -->
+        \\
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/research/TEMPLATE.md", .data =
+        \\# Research — {{title}}
+        \\
+        \\## Status
+        \\
+        \\{{status}} — searched {{date}}.
+        \\
+        \\Research is evidence, not a decision.
+        \\
+        \\## Question
+        \\
+        \\{{question}}
+        \\
+        \\## Options found
+        \\
+        \\## Out-of-the-box options
+        \\
+    });
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        .fs_prefixes = &.{"docs/research/"},
+        .environ_map = &env_map,
+    };
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/research.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    // A plan has to carry the angles a single search misses, or the sweep it
+    // describes is just one query in a trench coat.
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    const planned = try mod.executeTool("{\"action\":\"plan\",\"topic\":\"embedded key-value stores\",\"depth\":\"standard\"}");
+    defer std.testing.allocator.free(planned);
+    try std.testing.expect(std.mem.find(u8, planned, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, planned, "\"angle\":\"failures\"") != null);
+    try std.testing.expect(std.mem.find(u8, planned, "\"angle\":\"builtin\"") != null);
+    try std.testing.expect(std.mem.find(u8, planned, "out_of_the_box") != null);
+    try std.testing.expect(std.mem.find(u8, planned, "Do nothing") != null);
+
+    // The network is denied here, which is the interesting case: a sweep that
+    // cannot reach a source reports the gap and still answers, rather than
+    // failing the whole call.
+    const mod2 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod2.deinit();
+    const swept = try mod2.executeTool("{\"action\":\"sweep\",\"topic\":\"embedded key-value stores\",\"depth\":\"quick\"}");
+    defer std.testing.allocator.free(swept);
+    try std.testing.expect(std.mem.find(u8, swept, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, swept, "unreachable") != null);
+    try std.testing.expect(std.mem.find(u8, swept, "\"untrusted\":") != null);
+
+    const mod3 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod3.deinit();
+    const created = try mod3.executeTool("{\"action\":\"create\",\"title\":\"Embedded key-value stores\",\"question\":\"Which one runs in a wasm guest?\"}");
+    defer std.testing.allocator.free(created);
+    try std.testing.expect(std.mem.find(u8, created, "\"created\":true") != null);
+    try std.testing.expect(std.mem.find(u8, created, "\"indexed\":true") != null);
+    const note = try tmp.dir.readFileAlloc(io, "docs/research/embedded-key-value-stores.md", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(note);
+    try std.testing.expect(std.mem.find(u8, note, "# Research — Embedded key-value stores") != null);
+    try std.testing.expect(std.mem.find(u8, note, "Which one runs in a wasm guest?") != null);
+    try std.testing.expect(std.mem.find(u8, note, "{{") == null);
+    const index = try tmp.dir.readFileAlloc(io, "docs/research/README.md", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(index);
+    try std.testing.expect(std.mem.find(u8, index, "embedded-key-value-stores.md") != null);
+
+    // A second create must not overwrite an authored note with a scaffold.
+    const mod4 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod4.deinit();
+    const again = try mod4.executeTool("{\"action\":\"create\",\"title\":\"Embedded key-value stores\",\"question\":\"Which one runs in a wasm guest?\"}");
+    defer std.testing.allocator.free(again);
+    try std.testing.expect(std.mem.find(u8, again, "\"ok\":false") != null);
+
+    // The status line changes; the sentence explaining what a status means does not.
+    const mod5 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod5.deinit();
+    const statused = try mod5.executeTool("{\"action\":\"status\",\"path\":\"docs/research/embedded-key-value-stores.md\",\"status\":\"current\"}");
+    defer std.testing.allocator.free(statused);
+    try std.testing.expect(std.mem.find(u8, statused, "\"action\":\"status\"") != null);
+    const restatused = try tmp.dir.readFileAlloc(io, "docs/research/embedded-key-value-stores.md", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(restatused);
+    try std.testing.expect(std.mem.find(u8, restatused, "Current — searched") != null);
+    try std.testing.expect(std.mem.find(u8, restatused, "Draft — searched") == null);
+    try std.testing.expect(std.mem.find(u8, restatused, "Research is evidence, not a decision.") != null);
+
+    const mod6 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod6.deinit();
+    const denied = try mod6.executeTool("{\"action\":\"open\",\"path\":\"docs/research/../adrs/0001-x.md\"}");
+    defer std.testing.allocator.free(denied);
+    try std.testing.expect(std.mem.find(u8, denied, "\"ok\":false") != null);
+}
+
+test "rfc wasm tool numbers a document, seeds it from research, and bounds its confidence" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "docs/rfcs");
+    try tmp.dir.createDirPath(io, "docs/research");
+    try tmp.dir.createDirPath(io, "docs/adrs");
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/rfcs/README.md", .data =
+        \\# RFCs
+        \\
+        \\<!-- inventory:rfc:start -->
+        \\No RFCs yet.
+        \\<!-- inventory:rfc:end -->
+        \\
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/rfcs/TEMPLATE.md", .data =
+        \\# RFC {{number}} — {{title}}
+        \\
+        \\## Status
+        \\
+        \\{{status}} — opened {{date}}.
+        \\
+        \\An RFC is a request for comment.
+        \\
+        \\## Overview
+        \\
+        \\{{overview}}
+        \\
+        \\## Options considered
+        \\
+        \\### Option A — <name>
+        \\
+        \\## Implications by horizon
+        \\
+        \\## Recommendation
+        \\
+        \\**Confidence:** {{confidence}}/10
+        \\
+        \\## References
+        \\
+        \\{{references}}
+        \\
+    });
+    // An existing RFC, so numbering has to continue rather than restart.
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/rfcs/0003-earlier.md", .data =
+        \\# RFC 0003 — Earlier
+        \\
+        \\## Status
+        \\
+        \\Decided — 2026-01-01.
+        \\
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/research/kv-stores.md", .data =
+        \\# Research — Key-value stores
+        \\
+        \\## Options found
+        \\
+        \\### redb — embedded, pure Rust
+        \\
+        \\text
+        \\
+        \\### lmdb
+        \\
+        \\text
+        \\
+        \\## Out-of-the-box options
+        \\
+        \\### a flat file and fsync
+        \\
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/adrs/0004-storage-is-a-flat-file.md", .data =
+        \\# ADR 0004 — Storage is a flat file
+        \\
+        \\## Decision
+        \\
+        \\State is a flat file; no embedded database.
+        \\
+    });
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        .fs_prefixes = &.{ "docs/rfcs/", "docs/research/", "docs/adrs/" },
+        .environ_map = &env_map,
+    };
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/rfc.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    // The checklist is what an under-specified request gets asked, so it has to
+    // carry the questions rather than a list of headings.
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    const checked = try mod.executeTool("{\"action\":\"checklist\",\"topic\":\"storage\"}");
+    defer std.testing.allocator.free(checked);
+    try std.testing.expect(std.mem.find(u8, checked, "\"ask\":") != null);
+    try std.testing.expect(std.mem.find(u8, checked, "status quo") != null);
+
+    const mod2 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod2.deinit();
+    const created = try mod2.executeTool("{\"action\":\"create\",\"title\":\"Key-value store for state\",\"overview\":\"State outgrew the flat file.\",\"research\":\"docs/research/kv-stores.md\"}");
+    defer std.testing.allocator.free(created);
+    try std.testing.expect(std.mem.find(u8, created, "\"created\":true") != null);
+    try std.testing.expect(std.mem.find(u8, created, "\"number\":4") != null);
+    try std.testing.expect(std.mem.find(u8, created, "\"indexed\":true") != null);
+    const rfc = try tmp.dir.readFileAlloc(io, "docs/rfcs/0004-key-value-store-for-state.md", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(rfc);
+    try std.testing.expect(std.mem.find(u8, rfc, "# RFC 0004 — Key-value store for state") != null);
+    try std.testing.expect(std.mem.find(u8, rfc, "State outgrew the flat file.") != null);
+    // Seeded options are stubs marked unverified, and the note is linked, not copied.
+    try std.testing.expect(std.mem.find(u8, rfc, "### redb — embedded, pure Rust") != null);
+    try std.testing.expect(std.mem.find(u8, rfc, "### a flat file and fsync") != null);
+    try std.testing.expect(std.mem.find(u8, rfc, "unverified") != null);
+    try std.testing.expect(std.mem.find(u8, rfc, "### Status quo") != null);
+    try std.testing.expect(std.mem.find(u8, rfc, "../research/kv-stores.md") != null);
+    try std.testing.expect(std.mem.find(u8, rfc, "{{") == null);
+
+    // A confidence outside 0-10 is refused: the score is the one machine-checkable
+    // part of a recommendation, so it cannot be prose or a guess.
+    const mod3 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod3.deinit();
+    const too_sure = try mod3.executeTool("{\"action\":\"recommend\",\"path\":\"docs/rfcs/0004-key-value-store-for-state.md\",\"recommendation\":\"redb\",\"confidence\":12,\"rationale\":\"it is nice\"}");
+    defer std.testing.allocator.free(too_sure);
+    try std.testing.expect(std.mem.find(u8, too_sure, "\"ok\":false") != null);
+
+    const mod4 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod4.deinit();
+    const recommended = try mod4.executeTool("{\"action\":\"recommend\",\"path\":\"docs/rfcs/0004-key-value-store-for-state.md\",\"recommendation\":\"Keep the flat file for now\",\"confidence\":7,\"rationale\":\"No dependency, and the write volume is far below the flat file's limit.\"}");
+    defer std.testing.allocator.free(recommended);
+    try std.testing.expect(std.mem.find(u8, recommended, "\"confidence\":7") != null);
+    const with_rec = try tmp.dir.readFileAlloc(io, "docs/rfcs/0004-key-value-store-for-state.md", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(with_rec);
+    try std.testing.expect(std.mem.find(u8, with_rec, "**Confidence:** 7/10") != null);
+    try std.testing.expect(std.mem.find(u8, with_rec, "Keep the flat file for now") != null);
+    try std.testing.expect(std.mem.find(u8, with_rec, "## References") != null);
+
+    // "Decided" without saying what was decided is how an RFC becomes a dead end.
+    const mod5 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod5.deinit();
+    const bare = try mod5.executeTool("{\"action\":\"status\",\"path\":\"docs/rfcs/0004-key-value-store-for-state.md\",\"status\":\"decided\"}");
+    defer std.testing.allocator.free(bare);
+    try std.testing.expect(std.mem.find(u8, bare, "\"ok\":false") != null);
+
+    const mod6 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod6.deinit();
+    const decided = try mod6.executeTool("{\"action\":\"status\",\"path\":\"docs/rfcs/0004-key-value-store-for-state.md\",\"status\":\"decided\",\"note\":\"Recorded in ADR 0004.\"}");
+    defer std.testing.allocator.free(decided);
+    try std.testing.expect(std.mem.find(u8, decided, "\"status\":\"Decided\"") != null);
+
+    // Searching has to reach the ADRs: an already-recorded decision is the one
+    // thing that should stop an RFC from being written at all.
+    const mod7 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod7.deinit();
+    const found = try mod7.executeTool("{\"action\":\"search\",\"query\":\"flat file\"}");
+    defer std.testing.allocator.free(found);
+    try std.testing.expect(std.mem.find(u8, found, "docs/adrs/0004-storage-is-a-flat-file.md") != null);
+
+    const mod8 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod8.deinit();
+    const listed = try mod8.executeTool("{\"action\":\"list\"}");
+    defer std.testing.allocator.free(listed);
+    try std.testing.expect(std.mem.find(u8, listed, "\"status\":\"Decided\"") != null);
+    try std.testing.expect(std.mem.find(u8, listed, "\"next_number\":5") != null);
+    try std.testing.expect(std.mem.find(u8, listed, "TEMPLATE.md") == null);
+}
+
 test "autolearn wasm tool reports the newest tool_error detail as 'last:'" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();

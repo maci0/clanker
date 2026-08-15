@@ -1,4 +1,4 @@
-for the repair loop, add another layer where we first try to repair clanker run with clanker run before falling back to the sepcified repair harness
+for the repair loop, add another layer where we first try to repair clanker run with clanker run before falling back to the sepcified repair harness. we also should be able to define another provider/model on the clanker run to fix clanker run independently, in case we want to escalate to a better model. similarly how we can already define a different repair harness
 
 
 fix this

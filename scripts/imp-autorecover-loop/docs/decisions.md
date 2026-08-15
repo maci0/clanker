@@ -117,6 +117,30 @@ also passing `--clanker` drives that checkout with the `PATH` binary, not the
 one built inside it. The launcher prints the resolved `BINARY` line before
 starting so the mismatch is visible.
 
+## Clanker gets a second attempt before an outside harness
+
+**Decision.** A failed clanker repair run goes to a clanker escalation run —
+another `clanker run --no-worktree`, with its own `--escalate-model` — and only
+its failure reaches `--fix-repairs-with`.
+
+**Why.** The outside harness is the expensive, least-available level: it needs a
+second agent installed, configured and paid for, and it is off by default, so
+without this level a failed repair run was simply dropped on most setups. Clanker
+is already resolved and already knows the repository, and the escalation run sees
+a different prompt (the repair run's errors, not the batch's), so it is not a
+retry of the same request.
+
+**Why a separate model flag.** Escalating to a stronger model is the main reason
+the level exists, and the repair run deliberately uses Clanker's configured
+model. One flag for both would force the cheap level onto the expensive model
+too. It mirrors `--fix-repairs-with`, where the harness and its model are chosen
+together in one string.
+
+**Consequence.** Empty `--escalate-model` is a second attempt on the same model
+rather than an escalation. That is the same "cannot name the configured model"
+problem as `--model`, and it is resolved the same way — see
+[An empty --model omits the flag entirely](#an-empty---model-omits-the-flag-entirely).
+
 ## Resolve every harness before the first batch
 
 **Decision.** The clanker binary and any `--fix-repairs-with` command are

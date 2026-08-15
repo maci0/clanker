@@ -1,6 +1,7 @@
 #!/bin/bash
-# Select the improve-self model and the harness that repairs a failed clanker
-# repair run, resolve the Clanker checkout and binary, then run the loop.
+# Select the improve-self model, the model the clanker escalation run uses, and
+# the harness that repairs a failed escalation run, resolve the Clanker checkout
+# and binary, then run the loop.
 set -euo pipefail
 
 LOOP="$(dirname "$(readlink -f "$0")")/loop.py"
@@ -16,9 +17,19 @@ MODELS=(
     ollama/qwen3.6-27b-tuned
 )
 
-# Harnesses that repair a failed clanker repair run. Clanker repair runs fix
-# improve-self; these fix the clanker repair runs. The literal "none" skips that
-# level entirely.
+# Models for the clanker escalation run — the second clanker run, which repairs
+# a failed clanker repair run before the outside harness is reached. The literal
+# "default" passes no --model, which is the same model the repair run just
+# failed on, so name a stronger model here to actually escalate. Entries are
+# <model> or <provider>/<model>.
+ESCALATE_MODELS=(
+    default
+    ollama/qwen3.6-27b-tuned
+)
+
+# Harnesses that repair a failed clanker escalation run. Repair runs fix
+# improve-self, escalation runs fix them, and these fix the escalation runs. The
+# literal "none" skips that level entirely.
 #
 # Each entry is a command that takes the prompt as its final argument and
 # reports failure through its exit status, so the harness and its model are
@@ -36,10 +47,17 @@ if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
     cat <<'USAGE'
 usage: run.sh [loop arguments...]
 
-Select the model improve-self batches run on, and the harness that repairs a
-failed clanker repair run, then exec loop.py with the checkout and
-binary already resolved. Every argument is passed straight through to the loop,
-and passing --model or --fix-repairs-with yourself skips the matching menu.
+Select the model improve-self batches run on, the model the clanker escalation
+run uses, and the harness that repairs a failed escalation run, then exec
+loop.py with the checkout and binary already resolved. Every argument is passed
+straight through to the loop, and passing --model, --escalate-model or
+--fix-repairs-with yourself skips the matching menu.
+
+REPAIR LEVELS
+  1  clanker improve-self       a batch of iterations
+  2  clanker repair run         fixes a failed batch, on the configured model
+  3  clanker escalation run     fixes a failed repair run, on --escalate-model
+  4  --fix-repairs-with CMD     fixes a failed escalation run
 
 ENVIRONMENT
   CLANKER_DIR  Clanker checkout to improve  (default: /home/yannick/code/maci0/clanker)
@@ -47,13 +65,14 @@ ENVIRONMENT
                                              back to $CLANKER_DIR/zig-out/bin/clanker)
 
 EXAMPLES
-  run.sh                                      select from both menus, then run
+  run.sh                                      select from all menus, then run
   run.sh --iters 5 "improve the clanker tui"  pass options to the loop
+  run.sh --escalate-model zai/glm-5.2         skip the escalation model menu
   run.sh --fix-repairs-with "codex exec"      skip the harness menu
   CLANKER_DIR=~/src/clanker run.sh            drive another checkout
 
-Edit the MODELS and FIXERS arrays at the top of this file to change the menus.
-Run loop.py --help for the loop's own options.
+Edit the MODELS, ESCALATE_MODELS and FIXERS arrays at the top of this file to
+change the menus. Run loop.py --help for the loop's own options.
 USAGE
     exit 0
 fi
@@ -144,10 +163,20 @@ The clanker runs that repair them use Clanker's configured model." \
     model="$choice"
 fi
 
+escalate_model=""
+if ! has_flag --escalate-model "$@"; then
+    pick "ESCALATION MODEL" \
+        "Model for the clanker escalation run, the second clanker run that
+repairs a failed clanker repair run before the harness below is reached." \
+        default "no --model; the same model the repair run just failed on" \
+        "${ESCALATE_MODELS[@]}"
+    escalate_model="$choice"
+fi
+
 fixer=""
 if ! has_flag --fix-repairs-with "$@"; then
     pick "REPAIR HARNESS" \
-        "Repairs the clanker run that repairs improve-self, when it fails." \
+        "Repairs the clanker escalation run above, when it fails too." \
         none "leave it failed; the next improve-self batch resurfaces the problem" \
         "${FIXERS[@]}"
     fixer="$choice"
@@ -162,6 +191,9 @@ fi
 loop_args=(--clanker-dir "$CLANKER_DIR" --clanker "$CLANKER_BIN")
 if [[ -n "$model" && "$model" != default ]]; then
     loop_args+=(--model "$model")
+fi
+if [[ -n "$escalate_model" && "$escalate_model" != default ]]; then
+    loop_args+=(--escalate-model "$escalate_model")
 fi
 if [[ -n "$fixer" && "$fixer" != none ]]; then
     loop_args+=(--fix-repairs-with "$fixer")
