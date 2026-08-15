@@ -107,6 +107,10 @@ through a gated loop. Follow these conventions when changing this codebase.
 - `ui/vendor/` — vendored JS dependencies for the web UI (preact, htm,
   @preact/signals-core, d3-dag, highlight.js, mermaid, three.js). Committed,
   not generated; inventory in `ui/vendor/README.md`.
+- The models.dev catalog lives in `state/models-dev.json`. It is downloaded
+  only when that file is missing or when `clanker providers refresh` /
+  `POST /api/catalog/refresh` is asked. Serve start and catalog search do
+  not hit the network if the file is present.
 - `src/serve/` — the OpenAI/Anthropic compatibility proxy (`clanker serve --proxy`).
   Native because it attaches provider credentials. It forwards `/v1/*` 1:1 and
   must not go through `client.chat` / `buildRequest`.

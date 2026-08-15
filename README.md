@@ -200,7 +200,7 @@ command, while `clanker <option> -h` explains that option (for example,
 | `help` / `--help` | Print usage |
 | `version` / `--version` | Print the version |
 | `init` | Create `config.local.toml` + `state/` |
-| `providers [check\|models\|catalog\|fill] [name]` | Verify connectivity, list models, query the models.dev catalog, or fill in model specs from it. Defaults to `check` |
+| `providers [check\|models\|catalog\|fill\|refresh] [name]` | Verify connectivity, list models, search the local models.dev snapshot, fill in model specs, or refresh that snapshot. Defaults to `check` |
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive multi-turn chat (streams tokens); the default |
 | `sessions` | List saved sessions |

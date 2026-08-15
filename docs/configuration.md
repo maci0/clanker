@@ -212,13 +212,16 @@ capabilities = ["thinking", "tool_use", "image_in", "video_in"]
 
 ### Auto-populating model specs
 
-`clanker providers catalog <query>` searches the public
-[models.dev](https://models.dev) directory, and `clanker providers fill <name>`
-prints ready-to-paste `[models."..."]` tables (context window, costs,
-capabilities) for a configured provider's models, so most of the model section
-can be generated rather than hand-typed. `clanker providers check` pings every
-configured provider and reports latency/cost; `clanker providers models <name>`
-lists a provider's models.
+`clanker providers catalog <query>` searches a local snapshot of the
+[models.dev](https://models.dev) directory (`state/models-dev.json`), and
+`clanker providers fill <name>` prints ready-to-paste `[models."..."]`
+tables (context window, costs, capabilities) for a configured provider's
+models, so most of the model section can be generated rather than
+hand-typed. The snapshot is downloaded the first time something needs it,
+then only when `clanker providers refresh` (or Refresh catalog in the
+Models view) is asked. Serve start does not contact models.dev.
+`clanker providers check` pings every configured provider and reports
+latency/cost; `clanker providers models <name>` lists a provider's models.
 
 ## `[agent]`
 

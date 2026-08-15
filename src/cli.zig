@@ -132,9 +132,9 @@ pub const Options = struct {
     /// drop the user into a session, the way every other coding agent does,
     /// not print usage at them.
     command: Command = .repl,
-    /// Sub-command for `providers`: "check" (default), "models", "catalog" or
-    /// "fill". `provider` doubles as the catalog search query for "catalog"
-    /// and the provider name for "fill".
+    /// Sub-command for `providers`: "check" (default), "models", "catalog",
+    /// "fill", or "refresh". `provider` doubles as the catalog search query
+    /// for "catalog" and the provider name for "fill".
     providers_sub: []const u8 = "check",
     provider: ?[]const u8 = null,
     model: ?[]const u8 = null,
@@ -818,7 +818,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             if (std.mem.eql(u8, a, sub)) {
                 pending_sub = null;
             } else if (opts.command == .providers_check and sub.len == 0) {
-                if (std.mem.eql(u8, a, "check") or std.mem.eql(u8, a, "models") or std.mem.eql(u8, a, "catalog") or std.mem.eql(u8, a, "fill")) {
+                if (std.mem.eql(u8, a, "check") or std.mem.eql(u8, a, "models") or std.mem.eql(u8, a, "catalog") or std.mem.eql(u8, a, "fill") or std.mem.eql(u8, a, "refresh")) {
                     opts.providers_sub = a;
                 } else {
                     // Not one of the subcommand keywords: the default
@@ -1689,7 +1689,7 @@ const specs = [_]Spec{
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
     .{ .command = .tools_list, .usage = "tools [list]", .blurb = "list the registered WASM tools", .group = .inspect },
     .{ .command = .plugins, .usage = "plugins [list|on <name>|off <name>|validate [path]|new <name>]", .blurb = "list, switch, validate, or scaffold plugins", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\non <name>         switch an optional plugin on\noff <name>        switch an optional plugin off\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nCore tools cannot be switched off. Changes take effect in the next command; a\nrunning REPL reloads its tool catalog immediately.\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
-    .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, uses\n                agent.provider_check_timeout_seconds as its timeout, then ends\n                with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the public models.dev directory by id/family\nfill <name>     print models.dev specs for a configured provider's models" },
+    .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill|refresh] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, uses\n                agent.provider_check_timeout_seconds as its timeout, then ends\n                with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the local models.dev snapshot by id/family\nfill <name>     print catalog specs for a configured provider's models\nrefresh         download models.dev into state/models-dev.json\n                catalog, fill, and the Models view then read that file" },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
     .{ .command = .notify, .usage = "notify <peer> \"<message>\"", .blurb = "send a notification to a peer", .group = .peers },
@@ -2295,6 +2295,9 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     if (std.mem.eql(u8, opts.providers_sub, "fill")) {
         return cmdProvidersFill(init, opts);
     }
+    if (std.mem.eql(u8, opts.providers_sub, "refresh")) {
+        return cmdProvidersRefresh(init);
+    }
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
@@ -2517,47 +2520,61 @@ fn renderConfiguredProviderModels(arena: std.mem.Allocator, provider: *const con
 /// by hand.
 const models_dev_url = "https://models.dev/api.json";
 
-/// Where the catalog body is cached on disk, and for how long a cached copy
-/// answers instead of re-downloading. The catalog runs to several MB and
-/// changes on the order of days, so every CLI invocation re-fetching it was
-/// pure waste; 24h keeps pricing/context data fresh enough for what it feeds
-/// (config authoring, discovery browsing), and a stale-but-present cache
-/// also answers when models.dev is unreachable.
-const models_dev_cache_path = "state/cache/models-dev.json";
-const models_dev_cache_ttl_ns: i128 = 24 * std.time.ns_per_hour;
+/// Durable snapshot of that directory. Downloaded once (first catalog use, or
+/// `providers refresh` / POST /api/catalog/refresh) and then read forever.
+/// Serve start and catalog search do not hit the network when this file is
+/// present. The older 24h cache path is still read so an existing download
+/// is not thrown away on upgrade.
+const models_dev_store_path = "state/models-dev.json";
+const models_dev_legacy_path = "state/cache/models-dev.json";
 
-/// The models.dev catalog body, from the disk cache when fresh, the network
-/// otherwise (writing the cache back), and a stale cache as the fallback when
-/// the network fails. Never errors while any copy exists.
-fn fetchModelsDevCached(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator) ![]const u8 {
-    const cwd = std.Io.Dir.cwd();
-    const fresh: bool = blk: {
-        const st = cwd.statFile(io, models_dev_cache_path, .{}) catch break :blk false;
-        const now = std.Io.Timestamp.now(io, .real).nanoseconds;
-        break :blk now - st.mtime.nanoseconds < models_dev_cache_ttl_ns;
-    };
-    if (fresh) {
-        if (cwd.readFileAlloc(io, models_dev_cache_path, arena, .limited(64 * 1024 * 1024))) |cached| {
-            if (cached.len > 0) return cached;
-        } else |_| {}
-    }
-    const body = httpGet(io, gpa, arena, models_dev_url, null) catch |err| {
-        // Network down: a stale catalog still answers better than an error.
-        if (cwd.readFileAlloc(io, models_dev_cache_path, arena, .limited(64 * 1024 * 1024))) |cached| {
-            if (cached.len > 0) return cached;
-        } else |_| {}
-        return err;
-    };
-    ensure_dir.ensureDir(cwd, io, "state/cache") catch {};
-    atomic_write.writeFile(io, cwd, models_dev_cache_path, body) catch |err|
-        log.log(.warn, "could not cache models.dev catalog: {s}", .{@errorName(err)});
+fn readModelsDevFile(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator, path: []const u8) ?[]const u8 {
+    const body = dir.readFileAlloc(io, path, arena, .limited(64 * 1024 * 1024)) catch return null;
+    if (body.len == 0) return null;
     return body;
 }
 
-/// `clanker providers catalog <query>`, search the models.dev directory for
-/// provider or model ids/families containing `query` (case-insensitive) and
-/// print what it knows about each match. Read-only; nothing here touches
-/// config.toml.
+fn readModelsDevLocal(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator) ?[]const u8 {
+    if (readModelsDevFile(io, dir, arena, models_dev_store_path)) |body| return body;
+    return readModelsDevFile(io, dir, arena, models_dev_legacy_path);
+}
+
+fn writeModelsDevLocal(io: std.Io, dir: std.Io.Dir, body: []const u8) !void {
+    try ensure_dir.ensureDir(dir, io, "state");
+    try atomic_write.writeFile(io, dir, models_dev_store_path, body);
+}
+
+/// The models.dev catalog body. Disk when present; the network only when the
+/// file is missing (first populate) or `refresh` is set. A failed refresh
+/// does not silently keep the old file as if it succeeded.
+fn loadModelsDev(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, refresh: bool) ![]const u8 {
+    const cwd = std.Io.Dir.cwd();
+    if (!refresh) {
+        if (readModelsDevLocal(io, cwd, arena)) |body| return body;
+    }
+    const body = try httpGet(io, gpa, arena, models_dev_url, null);
+    writeModelsDevLocal(io, cwd, body) catch |err|
+        log.log(.warn, "could not store models.dev catalog: {s}", .{@errorName(err)});
+    return body;
+}
+
+/// `clanker providers refresh`, replace the on-disk models.dev snapshot.
+fn cmdProvidersRefresh(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const body = loadModelsDev(io, gpa, arena, true) catch |err| {
+        log.log(.error_, "could not reach models.dev: {s}", .{@errorName(err)});
+        return err;
+    };
+    const out = std.Io.File.stdout();
+    try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "wrote {s} ({d} bytes)\n", .{ models_dev_store_path, body.len }));
+}
+
+/// `clanker providers catalog <query>`, search the local models.dev snapshot
+/// for provider or model ids/families containing `query` (case-insensitive)
+/// and print what it knows about each match. Read-only; nothing here touches
+/// config.toml. Downloads the snapshot only if it is missing.
 fn cmdProvidersCatalog(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -2565,7 +2582,7 @@ fn cmdProvidersCatalog(init: std.process.Init, opts: Options) !void {
     const query = opts.provider orelse
         usageExitFor(io, "providers", "providers catalog needs a query: clanker providers catalog <query>  (e.g. \"kimi\", \"deepseek\")", .{});
 
-    const body = try fetchModelsDevCached(io, gpa, arena);
+    const body = try loadModelsDev(io, gpa, arena, false);
     const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
     if (catalog != .object) {
         log.log(.error_, "models.dev returned unexpected data; try again later", .{});
@@ -2631,7 +2648,7 @@ fn cmdProvidersFill(init: std.process.Init, opts: Options) !void {
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     const p = try cfg.provider(provider_name);
 
-    const body = try fetchModelsDevCached(io, gpa, arena);
+    const body = try loadModelsDev(io, gpa, arena, false);
     const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
     const cat_provider = findCatalogProvider(catalog, p) orelse {
         log.log(.warn, "{s}: no models.dev entry matches base_url {s}", .{ provider_name, p.base_url });
@@ -5739,6 +5756,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/providers");
         const is_catalog = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/catalog");
+        const is_catalog_refresh = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/catalog/refresh");
         const is_provider_models = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/providers/models");
         const is_janitor = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/janitor");
         const is_board = std.mem.eql(u8, path, "/api/board") and
@@ -5879,6 +5897,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleGoals(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_provider_models) {
             handleProviderModels(io, gpa, cfg, environ_map, target, stream);
+        } else if (is_catalog_refresh) {
+            handleCatalogRefresh(io, gpa, stream);
         } else if (is_catalog) {
             handleCatalog(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (is_providers) {
@@ -7911,6 +7931,7 @@ const webui_asset_paths = [_][]const u8{
     "/webui/core/palette.js",
     "/webui/core/plugins.js",
     "/webui/core/scroll.js",
+    "/webui/core/run-metrics.js",
     "/webui/core/search.js",
     "/webui/core/status.js",
     "/webui/core/stream.js",
@@ -8156,6 +8177,7 @@ fn handleWebuiAsset(
     const is_composer = std.mem.endsWith(u8, target, "composer.js");
     const is_ai_disclosure = std.mem.endsWith(u8, target, "ai-disclosure.js");
     const is_scroll = std.mem.endsWith(u8, target, "scroll.js");
+    const is_run_metrics = std.mem.endsWith(u8, target, "run-metrics.js");
     const is_markdown = std.mem.endsWith(u8, target, "markdown.js");
     const is_graph = std.mem.endsWith(u8, target, "graph.js");
     const is_board = !is_board_view and std.mem.endsWith(u8, target, "board.js");
@@ -8172,7 +8194,7 @@ fn handleWebuiAsset(
     const is_modelpicker = std.mem.endsWith(u8, target, "modelpicker.js");
     const is_tools = std.mem.endsWith(u8, target, "tools.js");
     const is_ui = std.mem.endsWith(u8, target, "ui.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_compare_view) &render_compare_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_arena3d_view) &render_arena3d_view else if (is_todos_view) &render_todos_view else if (is_models_view) &render_models_view else if (is_schedule_view) &render_schedule_view else if (is_search_view) &render_search_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_ai_disclosure) &render_ai_disclosure else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_compare_view) &render_compare_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_arena3d_view) &render_arena3d_view else if (is_todos_view) &render_todos_view else if (is_models_view) &render_models_view else if (is_schedule_view) &render_schedule_view else if (is_search_view) &render_search_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_ai_disclosure) &render_ai_disclosure else if (is_scroll) &render_scroll else if (is_run_metrics) &render_run_metrics else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
     const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_compare_view) &gzip_compare_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_arena3d_view) &gzip_arena3d_view else if (is_todos_view) &gzip_todos_view else if (is_models_view) &gzip_models_view else if (is_schedule_view) &gzip_schedule_view else if (is_search_view) &gzip_search_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_ai_disclosure) &gzip_ai_disclosure else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
@@ -8435,10 +8457,10 @@ test "transcriptBytes counts tool call arguments, like the session listing" {
     try std.testing.expectEqual(@as(usize, 510), transcriptBytes(&msgs));
 }
 
-/// The models.dev catalog body, fetched once per process and reused: it runs
-/// to several MB, and re-downloading it per search keystroke would make the
-/// Models view's Discover tab unusable. Guarded because catalog searches
-/// arrive on connection threads.
+/// The on-disk catalog body, held in process so a search keystroke does not
+/// re-read several MB. Filled on first /api/catalog in this process, replaced
+/// by POST /api/catalog/refresh. Guarded because catalog searches arrive on
+/// connection threads.
 var catalog_cache_mutex: std.c.pthread_mutex_t = .{};
 var catalog_cache: ?[]const u8 = null;
 
@@ -8449,11 +8471,45 @@ fn queryParam(arena: std.mem.Allocator, target: []const u8, key: []const u8) ?[]
     return percentDecode(arena, raw) catch null;
 }
 
-/// `GET /api/catalog?q=<query>` — search the public models.dev directory
+/// `POST /api/catalog/refresh` — replace `state/models-dev.json` from
+/// models.dev and drop the in-process copy so the next search sees it.
+fn handleCatalogRefresh(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const fetched = loadModelsDev(io, gpa, arena, true) catch {
+        respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"could not reach models.dev\"}");
+        return;
+    };
+    const owned = gpa.dupe(u8, fetched) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+        return;
+    };
+    _ = std.c.pthread_mutex_lock(&catalog_cache_mutex);
+    if (catalog_cache) |c| gpa.free(c);
+    catalog_cache = owned;
+    _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("bytes") catch return;
+    s.write(owned.len) catch return;
+    s.objectField("path") catch return;
+    s.write(models_dev_store_path) catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
+}
+
+/// `GET /api/catalog?q=<query>` — search the local models.dev snapshot
 /// (the same source `clanker providers catalog` uses) so the web UI's Models
 /// view can offer discovery without a terminal. Results are capped: a broad
 /// query matching half the directory is a paging problem the search box
-/// solves better than a giant response would.
+/// solves better than a giant response would. The network is touched only
+/// when the snapshot is missing (first populate).
 fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -8469,11 +8525,8 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
         _ = std.c.pthread_mutex_lock(&catalog_cache_mutex);
         defer _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
         if (catalog_cache) |c| break :blk c;
-        // Disk-cached (24h TTL) so a serve restart, and every CLI catalog
-        // command, reuses the same download instead of pulling several MB
-        // from models.dev again.
-        const fetched = fetchModelsDevCached(io, gpa, arena) catch {
-            respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"could not reach models.dev\"}");
+        const fetched = loadModelsDev(io, gpa, arena, false) catch {
+            respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"no local catalog; run clanker providers refresh\"}");
             return;
         };
         catalog_cache = gpa.dupe(u8, fetched) catch {
@@ -8612,7 +8665,7 @@ fn writeLocalConfig(io: std.Io, data: []const u8) !void {
 }
 
 fn lookupCatalogModel(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8) !?std.json.Value {
-    const body = fetchModelsDevCached(io, gpa, arena) catch return error.CatalogUnreachable;
+    const body = loadModelsDev(io, gpa, arena, false) catch return error.CatalogUnreachable;
     const catalog = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true }) catch
         return error.CatalogUnreadable;
     if (catalog != .object) return error.CatalogUnreadable;
@@ -12627,6 +12680,7 @@ var render_search: RenderCache = .{};
 var render_composer: RenderCache = .{};
 var render_ai_disclosure: RenderCache = .{};
 var render_scroll: RenderCache = .{};
+var render_run_metrics: RenderCache = .{};
 var render_dialog: RenderCache = .{};
 var render_usage: RenderCache = .{};
 var render_status: RenderCache = .{};
@@ -14652,6 +14706,54 @@ test "renderModelSnippet emits a valid, pasteable TOML models table" {
     try std.testing.expectEqualStrings("Kimi K3", entry.get("display").?.string);
     // "reasoning": true on the catalog entry becomes a "thinking" capability.
     try std.testing.expectEqualStrings("thinking", entry.get("capabilities").?.array.items[0].string);
+}
+
+test "providers refresh is a recognized subcommand" {
+    const opts = try parse(&.{ "clanker", "providers", "refresh" }, null);
+    try std.testing.expectEqualStrings("refresh", opts.providers_sub);
+}
+
+test "readModelsDevLocal prefers state/models-dev.json over the legacy cache path" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try tmp.dir.createDirPath(io, "state/cache");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/cache/models-dev.json", .data = "legacy" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/models-dev.json", .data = "current" });
+    const body = readModelsDevLocal(io, tmp.dir, arena) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("current", body);
+}
+
+test "readModelsDevLocal falls back to the legacy 24h cache path" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try tmp.dir.createDirPath(io, "state/cache");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/cache/models-dev.json", .data = "legacy" });
+    const body = readModelsDevLocal(io, tmp.dir, arena) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("legacy", body);
+}
+
+test "readModelsDevLocal treats a missing or empty file as absent" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try std.testing.expect(readModelsDevLocal(io, tmp.dir, arena) == null);
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/models-dev.json", .data = "" });
+    try std.testing.expect(readModelsDevLocal(io, tmp.dir, arena) == null);
 }
 
 test "catalogCapabilities is the one translation both the CLI snippet and /api/catalog use" {

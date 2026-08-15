@@ -171,6 +171,9 @@ pub fn build(b: *std.Build) void {
     const run_metrics_js_test = b.addSystemCommand(&.{ "node", "--test" });
     run_metrics_js_test.addFileArg(b.path("ui/app/core/run-metrics.test.mjs"));
     test_step.dependOn(&run_metrics_js_test.step);
+    const models_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    models_js_test.addFileArg(b.path("ui/app/features/models.test.mjs"));
+    test_step.dependOn(&models_js_test.step);
 
     // Logic that lives in a tool rather than in src/ still needs its tests run.
     // `zig build test` compiled only src/main.zig, so every `test` block under

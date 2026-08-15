@@ -709,7 +709,7 @@ iter 2
 | `help` | Print usage; after a command it explains that command, and directly after an option it explains that option |
 | `version` | Print the version; `--version` anywhere does the same |
 | `init` | Create `config.local.toml` and `state/` |
-| `providers <check\|models\|catalog\|fill> [name]` | Verify connectivity, list models, search the models.dev catalog, or print catalog specs for configured models |
+| `providers <check\|models\|catalog\|fill\|refresh> [name]` | Verify connectivity, list models, search the local models.dev snapshot, print catalog specs, or refresh that snapshot |
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive REPL with streaming (vaxis-backed; the default for a bare `clanker`) |
 | `sessions`, `history` | List saved conversations |
@@ -1020,7 +1020,8 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/sessions/<id>/compact` | POST | Compact one conversation in place |
 | `/api/skills` | GET | Skills discovered under `agent.skills_dir` (JSON) |
 | `/api/workflows` | GET | Reusable prompt workflows (JSON) |
-| `/api/catalog` | GET | models.dev catalog entries (JSON) |
+| `/api/catalog` | GET | Local models.dev snapshot search (JSON). Downloads the snapshot only if `state/models-dev.json` is missing |
+| `/api/catalog/refresh` | POST | Replace `state/models-dev.json` from models.dev |
 | `/api/providers/models` | GET | Models for a configured provider (JSON) |
 | `/api/files?path=` | GET | List one directory of the workspace (JSON). `..` is clamped at the working directory, so no traversal escapes it |
 | `/api/knowledge` | GET, POST | Knowledge-graph entries |

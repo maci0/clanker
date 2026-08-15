@@ -29,6 +29,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- The models.dev catalog is a local snapshot (`state/models-dev.json`),
+  not a 24-hour cache. Serve start and catalog search do not hit the
+  network when that file exists. First use (or a missing file) downloads
+  it once; `clanker providers refresh` and Refresh catalog on the Models
+  view replace it. An older `state/cache/models-dev.json` is still read
+  so an existing download is kept on upgrade.
 - Web UI shell follows a session-first layout: conversations stay in the
   left rail, Watch and Set up fold away, and Chat is a header / transcript
   / docked-composer column. PatternFly page chrome and cabinet colors stay.

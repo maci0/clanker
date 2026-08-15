@@ -538,7 +538,7 @@ function searchCatalog() {
   out.textContent = "";
   // The panel names a model from the result set being replaced.
   hideSnippet();
-  out.appendChild(empty("Searching models.dev…"));
+  out.appendChild(empty("Searching catalog…"));
   fetch("/api/catalog?q=" + encodeURIComponent(query))
     .then(readJson)
     .then(function (d) {
@@ -573,6 +573,34 @@ function searchCatalog() {
     .finally(function () { btn.disabled = false; });
 }
 
+function refreshCatalog() {
+  var out = document.getElementById("models-catalog-out");
+  var btn = document.getElementById("models-catalog-refresh");
+  if (btn) btn.disabled = true;
+  if (out) {
+    out.textContent = "";
+    out.appendChild(empty("Downloading models.dev into the local catalog…"));
+  }
+  fetch("/api/catalog/refresh", { method: "POST" })
+    .then(readJson)
+    .then(function (d) {
+      var n = typeof d.bytes === "number" ? d.bytes : 0;
+      status("Catalog refreshed (" + fmtInt(n) + " bytes). Search uses the new snapshot.");
+      if (out) {
+        out.textContent = "";
+        out.appendChild(empty("Catalog updated. Search again to see current matches."));
+      }
+    })
+    .catch(function (err) {
+      status("Catalog refresh failed.");
+      if (out) {
+        out.textContent = "";
+        out.appendChild(empty("Catalog refresh failed: " + err.message));
+      }
+    })
+    .finally(function () { if (btn) btn.disabled = false; });
+}
+
 export function loadModelsView() {
   return loadConfigured();
 }
@@ -585,6 +613,8 @@ export function bindModels() {
   if (liveBtn) liveBtn.addEventListener("click", loadLive);
   var catBtn = document.getElementById("models-catalog-btn");
   if (catBtn) catBtn.addEventListener("click", searchCatalog);
+  var catRefresh = document.getElementById("models-catalog-refresh");
+  if (catRefresh) catRefresh.addEventListener("click", refreshCatalog);
   var q = document.getElementById("models-catalog-q");
   if (q) q.addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); searchCatalog(); }
