@@ -19,8 +19,8 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const req = lib.object(input) catch return lib.fail(out, "input must be a JSON object");
-    const id = lib.optStr(req, "id") orelse return lib.fail(out, "need an objective or an id");
-    if (id.len == 0) return lib.fail(out, "need an objective or an id");
+    const id = lib.optStr(req, "id") orelse return lib.fail(out, "update_goal needs an id (get it from add_goal or the board)");
+    if (id.len == 0) return lib.fail(out, "update_goal needs an id (get it from add_goal or the board)");
 
     var patch = store.Patch{ .id = id };
     if (lib.optStr(req, "status")) |s| patch.status = s;
