@@ -12,17 +12,6 @@ const providers = @import("../llm/registry.zig");
 const types = @import("../llm/types.zig");
 const anthropic = @import("../llm/providers/anthropic.zig");
 const vertex = @import("../llm/providers/vertex.zig");
-const proxy = @import("proxy.zig");
-
-/// proxy.Family, not a local enum: the caller compares this against the
-/// inbound route's family, and two structurally-identical enums don't ==.
-pub fn upstreamFamily(kind: config.ProviderKind) proxy.Family {
-    return switch (kind) {
-        .openai_compat, .azure_openai => .openai,
-        .anthropic, .vertex_anthropic, .vertex => .anthropic,
-        .gemini => .openai,
-    };
-}
 
 /// Drop `model` (Vertex addresses it in the URL) and set `anthropic_version`.
 /// Other keys are kept: this is a field swap, not a rebuild.

@@ -1110,7 +1110,7 @@ pub const Config = struct {
 
     fn validateToolResultPrune(agent: Agent) !void {
         if (agent.tool_result_prune_bytes == 0) return;
-        const kept = agent.tool_result_prune_head_bytes + @import("agent/prune.zig").marker.len + agent.tool_result_prune_tail_bytes;
+        const kept = agent.tool_result_prune_head_bytes + @import("util/tool_out.zig").prune_marker.len + agent.tool_result_prune_tail_bytes;
         if (kept < agent.tool_result_prune_bytes) return;
         log.log(.error_, "agent tool-result pruning keeps {d} bytes but threshold is {d}", .{ kept, agent.tool_result_prune_bytes });
         return error.InvalidToolResultPruneConfig;

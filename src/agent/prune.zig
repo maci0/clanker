@@ -3,8 +3,11 @@
 const std = @import("std");
 const types = @import("../llm/types.zig");
 const utf8 = @import("../util/utf8.zig");
+const tool_out = @import("../util/tool_out.zig");
 
-pub const marker = "\n\n[... tool result middle pruned ...]\n\n";
+/// Shared with `config.zig`'s prune validation, which must not depend on this
+/// module; the definition lives in the util leaf.
+const marker = tool_out.prune_marker;
 
 fn tailStart(content: []const u8, want: usize) usize {
     var start = content.len -| want;

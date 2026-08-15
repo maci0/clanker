@@ -119,6 +119,16 @@ pub fn familyOf(v1_path: []const u8, headers_raw: []const u8) Family {
     return .openai;
 }
 
+/// Protocol a provider kind speaks upstream: `.openai` for openai-compatible
+/// (incl. azure and gemini), `.anthropic` for anthropic and vertex anthropic.
+pub fn upstreamFamily(kind: config.ProviderKind) Family {
+    return switch (kind) {
+        .openai_compat, .azure_openai => .openai,
+        .anthropic, .vertex_anthropic, .vertex => .anthropic,
+        .gemini => .openai,
+    };
+}
+
 pub fn joinUpstream(gpa: std.mem.Allocator, base_url: []const u8, inbound_v1_path: []const u8, query: []const u8) ![]u8 {
     const base = std.mem.trimEnd(u8, base_url, "/");
     const rest = if (std.mem.endsWith(u8, base, "/v1") and std.mem.startsWith(u8, inbound_v1_path, "/v1"))
@@ -188,7 +198,7 @@ fn forward(ctx: Ctx, family: Family) u16 {
         error.AmbiguousProvider => return writeEnvelope(ctx, 400, "missing_required_parameter", "Send a model or configure a single provider for this protocol"),
     };
 
-    const up_family = xcode.upstreamFamily(resolved.provider.kind);
+    const up_family = upstreamFamily(resolved.provider.kind);
     const need_xcode = chat_route and up_family != family;
     if (!chat_route and (resolved.provider.kind == .vertex_anthropic or resolved.provider.kind == .vertex)) {
         return writeEnvelope(ctx, 400, "unknown_endpoint", "Vertex only serves chat / messages");

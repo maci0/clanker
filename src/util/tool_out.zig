@@ -29,6 +29,11 @@ pub fn warnIfMalformed(allocator: std.mem.Allocator, name: []const u8, out: []co
     }
 }
 
+/// Separator spliced into an over-long tool result when the agent prunes it
+/// down to head/tail. Lives here (a leaf) so `config.zig` validation can
+/// account for its length without depending on `agent/prune.zig`.
+pub const prune_marker = "\n\n[... tool result middle pruned ...]\n\n";
+
 test "output that opens like JSON and does not parse is reported" {
     // The exact shapes two tools shipped, both from writing a value with
     // print, which emits raw text and quotes nothing.

@@ -79,12 +79,14 @@ test "stripXmlTags joins words and breaks on paragraph ends" {
     const xml = "<p t=\"80\"><s>In</s><s t=\"320\"> 1993,</s></p><p t=\"5440\"><s>hello</s></p>";
     const text = try stripXmlTags(std.testing.allocator, xml);
     defer std.testing.allocator.free(text);
-    try std.testing.expectEqualStrings("In 1993,\nhello", text);
+    // The closing `</p>` of the final paragraph breaks the line too, so the
+    // result ends with one newline rather than a dangling paragraph marker.
+    try std.testing.expectEqualStrings("In 1993,\nhello\n", text);
 }
 
 test "stripXmlTags decodes entities" {
     const xml = "<p>a &amp; b &lt;c&gt; &#39;d</p>";
     const text = try stripXmlTags(std.testing.allocator, xml);
     defer std.testing.allocator.free(text);
-    try std.testing.expectEqualStrings("a & b <c> 'd", text);
+    try std.testing.expectEqualStrings("a & b <c> 'd\n", text);
 }

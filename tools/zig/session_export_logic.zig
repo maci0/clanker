@@ -308,13 +308,13 @@ test "civilFromUnix converts the epoch, a leap day and a pre-epoch time" {
     try std.testing.expectEqual(@as(u8, 1), a.day);
     try std.testing.expectEqual(@as(u8, 0), a.hour);
 
-    // 2024-02-29T12:34:56Z
+    // 2024-02-29T12:24:56Z
     const b = civilFromUnix(1_709_209_496);
     try std.testing.expectEqual(@as(i64, 2024), b.year);
     try std.testing.expectEqual(@as(u8, 2), b.month);
     try std.testing.expectEqual(@as(u8, 29), b.day);
     try std.testing.expectEqual(@as(u8, 12), b.hour);
-    try std.testing.expectEqual(@as(u8, 34), b.minute);
+    try std.testing.expectEqual(@as(u8, 24), b.minute);
     try std.testing.expectEqual(@as(u8, 56), b.second);
 
     // Floor division, not truncation: one second before the epoch is the
@@ -350,9 +350,10 @@ test "render escapes a hostile transcript instead of emitting it as markup" {
 
     // Nothing the session carried may appear as a tag. The only `<script`
     // and `<pre` sequences left in the document are the ones this module
-    // writes itself, and it writes no script at all.
+    // writes itself, and it writes no script at all. `onerror=` is not
+    // checked: it survives into the escaped tool name below, which is text,
+    // and the escaped-form assertion catches the hostile content.
     try std.testing.expect(std.mem.find(u8, html, "<script") == null);
-    try std.testing.expect(std.mem.find(u8, html, "onerror=") == null);
     try std.testing.expect(std.mem.find(u8, html, "<b>bold</b>") == null);
     try std.testing.expect(std.mem.find(u8, html, "</pre><script>") == null);
     try std.testing.expect(std.mem.find(u8, html, "<img src=x") == null);

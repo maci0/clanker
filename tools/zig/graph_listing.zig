@@ -89,8 +89,14 @@ test stemOfJson {
 }
 
 test "GraphFile carries tool arguments for the web UI" {
+    // parseFromSliceLeaky hands back slices with no handle to free, so the
+    // parses go through an arena that is dropped at the end of the test.
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
     const src = "{\"run_id\":\"run-1\",\"task\":\"t\",\"nodes\":[{\"kind\":\"tool\",\"iteration\":1,\"label\":\"edit_file\",\"output\":\"{\\\"ok\\\":true}\",\"arguments\":\"{\\\"path\\\":\\\"a.zig\\\",\\\"old\\\":\\\"x\\\",\\\"new\\\":\\\"y\\\"}\"}]}";
-    const g = try std.json.parseFromSliceLeaky(GraphFile, std.testing.allocator, src, .{ .ignore_unknown_fields = true });
+    const g = try std.json.parseFromSliceLeaky(GraphFile, alloc, src, .{ .ignore_unknown_fields = true });
     try std.testing.expectEqual(@as(usize, 1), g.nodes.len);
     try std.testing.expectEqualStrings("edit_file", g.nodes[0].label);
     const args = g.nodes[0].arguments orelse return error.TestUnexpectedResult;
@@ -103,6 +109,6 @@ test "GraphFile carries tool arguments for the web UI" {
     try std.testing.expect(std.mem.find(u8, enc.written(), "\"arguments\"") != null);
     // Old runs recorded before the field parsed fine and stay field-less.
     const old = "{\"run_id\":\"run-0\",\"task\":\"t\",\"nodes\":[{\"kind\":\"tool\",\"iteration\":1,\"label\":\"read_file\",\"output\":\"{}\"}]}";
-    const g0 = try std.json.parseFromSliceLeaky(GraphFile, std.testing.allocator, old, .{ .ignore_unknown_fields = true });
+    const g0 = try std.json.parseFromSliceLeaky(GraphFile, alloc, old, .{ .ignore_unknown_fields = true });
     try std.testing.expect(g0.nodes[0].arguments == null);
 }
