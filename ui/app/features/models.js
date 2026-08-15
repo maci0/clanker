@@ -700,18 +700,31 @@ function loadLive() {
     .finally(function () { btn.disabled = false; });
 }
 
+var catalogSearching = false;
+function syncCatalogBtn() {
+  var q = document.getElementById("models-catalog-q");
+  var btn = document.getElementById("models-catalog-btn");
+  if (!btn) return;
+  var tooShort = !q || q.value.trim().length < 2;
+  btn.disabled = catalogSearching || tooShort;
+  btn.title = catalogSearching ? "Searching…" : (tooShort
+    ? "Type at least 2 characters"
+    : "Search the models.dev catalog");
+}
+
 function searchCatalog() {
   var out = document.getElementById("models-catalog-out");
   var q = document.getElementById("models-catalog-q");
-  var btn = document.getElementById("models-catalog-btn");
   if (!out || !q) return;
   var query = q.value.trim();
   if (query.length < 2) {
     out.textContent = "";
     out.appendChild(empty("Type at least 2 characters."));
+    syncCatalogBtn();
     return;
   }
-  btn.disabled = true;
+  catalogSearching = true;
+  syncCatalogBtn();
   out.textContent = "";
   // The panel names a model from the result set being replaced.
   hideSnippet();
@@ -734,7 +747,7 @@ function searchCatalog() {
         ];
       });
       if (!rows.length) {
-        out.appendChild(empty("No catalog entry matches \"" + query + "\"."));
+        out.appendChild(empty("No catalog entry matches \"" + query + "\". Try another name, or refresh the catalog."));
         return;
       }
       out.appendChild(table(["provider/model", "ctx", "in $/1M", "out $/1M", "capabilities", ""], rows));
@@ -746,7 +759,7 @@ function searchCatalog() {
     .catch(function (err) {
       failWithRetry(out, "Catalog search failed: " + err.message, searchCatalog);
     })
-    .finally(function () { btn.disabled = false; });
+    .finally(function () { catalogSearching = false; syncCatalogBtn(); });
 }
 
 function refreshCatalog() {
@@ -789,9 +802,13 @@ export function bindModels() {
   var catRefresh = document.getElementById("models-catalog-refresh");
   if (catRefresh) catRefresh.addEventListener("click", refreshCatalog);
   var q = document.getElementById("models-catalog-q");
-  if (q) q.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") { e.preventDefault(); searchCatalog(); }
-  });
+  if (q) {
+    q.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); searchCatalog(); }
+    });
+    q.addEventListener("input", syncCatalogBtn);
+  }
+  syncCatalogBtn();
   var refresh = document.getElementById("models-refresh");
   if (refresh) refresh.addEventListener("click", function () { loadModelsView(); });
   var copy = document.getElementById("models-snippet-copy");

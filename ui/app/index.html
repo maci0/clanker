@@ -215,7 +215,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <button type="button" class="secondary" id="session-rename">Rename</button>
           <button type="button" class="secondary" id="session-move" title="Put this conversation in a workspace">Move to…</button>
           <button type="button" class="secondary" id="session-archive" title="Hide from history without deleting (you can undo in Archived)">Archive</button>
-          <button type="button" class="secondary danger" id="session-delete">Delete</button>
+          <button type="button" class="secondary danger" id="session-delete" title="Permanently delete this conversation. Recorded runs are kept.">Delete</button>
           </div>
           <!-- Folded away rather than dropped: six equal buttons in a row read as
                one wall and hide which three you reach for daily. All of them are
@@ -770,7 +770,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <form id="models-edit-form" class="models-edit-form" onsubmit="return false">
           <label>Provider<input type="text" id="models-edit-provider" autocomplete="off" required></label>
           <label>Local name<input type="text" id="models-edit-model" autocomplete="off" required></label>
-          <label>Wire id<input type="text" id="models-edit-id" autocomplete="off" placeholder="same as local name"></label>
+          <label title="The model name sent to the provider. Leave blank to use the local name.">API model id<input type="text" id="models-edit-id" autocomplete="off" placeholder="same as local name"></label>
           <label>Display name<input type="text" id="models-edit-display" autocomplete="off"></label>
           <label>Category<input type="text" id="models-edit-category" autocomplete="off"></label>
           <label>Context window<input type="number" id="models-edit-context" min="0" step="1"></label>
@@ -787,9 +787,9 @@ lamps carry further). The seven named palettes ride the same tokens.
               <option value="max">max</option>
             </select>
           </label>
-          <label>Cost in $/1M tok<input type="number" id="models-edit-cost-in" min="0" step="0.001" placeholder="(unset)"></label>
-          <label>Cost out $/1M tok<input type="number" id="models-edit-cost-out" min="0" step="0.001" placeholder="(unset)"></label>
-          <label>RPM<input type="number" id="models-edit-rpm" min="0" step="1" placeholder="(unset)"></label>
+          <label title="Input price in US dollars per million tokens">Input cost ($/1M tokens)<input type="number" id="models-edit-cost-in" min="0" step="0.001" placeholder="(unset)"></label>
+          <label title="Output price in US dollars per million tokens">Output cost ($/1M tokens)<input type="number" id="models-edit-cost-out" min="0" step="0.001" placeholder="(unset)"></label>
+          <label title="Maximum requests per minute this model may send">Requests per minute<input type="number" id="models-edit-rpm" min="0" step="1" placeholder="(unset)"></label>
           <label class="models-edit-wide">Capabilities (comma-separated)<input type="text" id="models-edit-capabilities" autocomplete="off" placeholder="tools, vision, reasoning"></label>
         </form>
         <!-- The OpenShift-console pattern: the same resource, editable as its
@@ -905,6 +905,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <button type="button" data-system-jump="system-usage">Usage</button>
       <button type="button" data-system-jump="system-status">Status</button>
       <button type="button" data-system-jump="system-plugins">Plugins</button>
+      <button type="button" data-system-jump="mcp-section">MCP</button>
       <button type="button" data-system-jump="config-editor-section">Config</button>
       <button type="button" data-system-jump="settings-section">Settings</button>
       <button type="button" data-system-jump="system-logs">Logs</button>

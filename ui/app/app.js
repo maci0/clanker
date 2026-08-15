@@ -1199,7 +1199,7 @@ el.sessionDelete.addEventListener("click", function () {
   // Deleting a transcript cannot be undone from here, so it is confirmed.
   // The run graphs survive it: they record runs that really happened and are
   // addressed by run id, not by session.
-  uiConfirm("Delete \"" + (meta.title || sessionId) + "\"? Its recorded runs are kept.", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
+  uiConfirm("Delete \"" + (meta.title || sessionId) + "\"? This cannot be undone. Its recorded runs are kept.", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
     if (!yes) return;
     el.sessionDelete.disabled = true;
     fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "DELETE" })
@@ -1241,12 +1241,38 @@ function syncControls() {
   document.title = busy ? "Running… · clanker" : "clanker";
 }
 
+/* The disclosure starts closed, so a checked Plan / Isolated box used to
+   vanish behind "Run shape" with no lamp on the summary. Isolated can also
+   arrive pre-checked from the server default. The summary is the only
+   control still visible, so it has to name what is on. */
+function syncRunShape() {
+  var shape = document.getElementById("run-shape");
+  if (!shape) return;
+  var summary = shape.querySelector("summary");
+  var bits = [];
+  if (el.planMode && el.planMode.checked) bits.push("Plan");
+  if (el.researchMode && el.researchMode.checked) bits.push("Research");
+  if (el.unlimitedIterations && el.unlimitedIterations.checked) bits.push("Long run");
+  if (el.worktreeMode && el.worktreeMode.checked) bits.push("Isolated");
+  if (summary) {
+    summary.textContent = bits.length ? bits.join(" · ") : "Run shape";
+    summary.title = bits.length
+      ? "This run: " + bits.join(", ") + ". Click to change."
+      : "Plan, research, long run, and isolated worktree";
+  }
+  if (bits.length) shape.setAttribute("data-active", "true");
+  else shape.removeAttribute("data-active");
+}
+
 /** Idle composer hint for plan/research toggles (matches TUI status bar labels). */
 function updateComposerModeHint() {
+  syncRunShape();
   if (busy) return;
   var parts = [];
   if (el.planMode && el.planMode.checked) parts.push("Plan mode · write tools refused");
   if (el.researchMode && el.researchMode.checked) parts.push("Research mode · web search preferred");
+  if (el.unlimitedIterations && el.unlimitedIterations.checked) parts.push("Long run · 1000-step budget");
+  if (el.worktreeMode && el.worktreeMode.checked) parts.push("Isolated worktree · shared checkout untouched");
   if (attachImages.length) {
     parts.push(attachImages.length + (attachImages.length === 1 ? " image attached" : " images attached"));
   }
@@ -1868,6 +1894,7 @@ function renderStatus(status) {
     window.clankerWorktreeDefault = !!defaults.webui_worktree;
     if (el.worktreeMode) el.worktreeMode.checked = !!defaults.webui_worktree;
     if (el.goalWorktree) el.goalWorktree.checked = !!defaults.goal_worktree;
+    updateComposerModeHint();
   }
 }
 
@@ -1920,6 +1947,8 @@ el.task.addEventListener("input", syncControls);
 el.task.addEventListener("input", rememberDraft);
 if (el.planMode) el.planMode.addEventListener("change", updateComposerModeHint);
 if (el.researchMode) el.researchMode.addEventListener("change", updateComposerModeHint);
+if (el.unlimitedIterations) el.unlimitedIterations.addEventListener("change", updateComposerModeHint);
+if (el.worktreeMode) el.worktreeMode.addEventListener("change", updateComposerModeHint);
 // A tab closed or reloaded mid-sentence has no other chance to write.
 window.addEventListener("beforeunload", flushDraft);
 
@@ -4866,11 +4895,32 @@ function parseRunsHash(hash){
   var id=""; try{ id=decodeURIComponent(idPart);}catch(_){ id=idPart; }
   return { id: id, search: params.search||"", kind: params.kind||"", node: params.node||"" };
 }
+function persistRailFolds() {
+  var data = {};
+  document.querySelectorAll("details.rail-fold[id]").forEach(function (d) {
+    data[d.id] = !!d.open;
+  });
+  try { window.localStorage.setItem("clanker.railFolds", JSON.stringify(data)); } catch (e) {}
+}
+
+function restoreRailFolds() {
+  var raw;
+  try { raw = JSON.parse(window.localStorage.getItem("clanker.railFolds") || "null"); } catch (e) { return; }
+  if (!raw || typeof raw !== "object") return;
+  document.querySelectorAll("details.rail-fold[id]").forEach(function (d) {
+    if (Object.prototype.hasOwnProperty.call(raw, d.id)) d.open = !!raw[d.id];
+  });
+}
+
 function syncRailFolds(name) {
   var tab = document.getElementById("tab-" + name);
   var fold = tab && tab.closest ? tab.closest("details.rail-fold") : null;
   if (fold) fold.open = true;
 }
+
+document.querySelectorAll("details.rail-fold[id]").forEach(function (d) {
+  d.addEventListener("toggle", persistRailFolds);
+});
 
 function showView(name, focusPanel) {
   // Goals and board are one workflow now. Keep old bookmarks working while
@@ -5961,6 +6011,7 @@ afterFirstDraw(function () {
 });
 syncSubmitLabel();
 updateComposerModeHint();
+restoreRailFolds();
 // Only the opening view's data is fetched now; the rest load when opened.
 showView(openingView, false);
 /* Reopening the page used to show an empty transcript even when the picker
