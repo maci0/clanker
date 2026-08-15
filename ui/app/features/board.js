@@ -132,6 +132,7 @@ export function loadBoard() {
     .catch(function (err) {
       var msg = "Could not load the board: " + err.message;
       el.boardStatus.textContent = msg;
+      if (el.boardEmpty) el.boardEmpty.hidden = true;
       showLoadError(el.board, msg, loadBoard);
       throw err;
     });
@@ -2000,7 +2001,7 @@ export function bindBoard(deps) {
       if (c.column !== "done" && c.column !== "archive" && (!s.mine || c.assignee === s.me)) open += 1;
     });
     _setTabCount("board", open);
-    el.boardEmpty.hidden = s.cards.length > 0;
+    el.boardEmpty.hidden = !boardLoaded || s.cards.length > 0;
     var filterEmpty = document.getElementById("board-filter-empty");
     if (filterEmpty) {
       var shownN = 0;
@@ -2008,7 +2009,7 @@ export function bindBoard(deps) {
       filterEmpty.hidden = !(s.cards.length && boardHasActiveFilters(s) && shownN === 0);
     }
     var createFold = document.getElementById("board-create-fold");
-    if (createFold && !s.cards.length) createFold.open = true;
+    if (createFold && boardLoaded && !s.cards.length) createFold.open = true;
     syncListControls();
 
     // The detail panel is rebuilt with the board because it shows one of these

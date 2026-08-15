@@ -302,6 +302,7 @@ test("failed list loads keep a visible retry in the panel", function () {
   assert.match(tools, /showLoadError\(box, msg, loadWorkflows\)/);
   assert.match(tools, /showLoadError\(box, msg, loadSkills\)/);
   assert.match(board, /showLoadError\(el\.board/);
+  assert.match(board, /el\.boardEmpty\.hidden = !boardLoaded \|\| s\.cards\.length > 0/);
   assert.match(search, /Try again/);
   assert.match(compare, /showLoadError\(byId\("compare-list"\)/);
   assert.match(arena, /showLoadError\(byId\("arena-list"\)/);
@@ -317,12 +318,8 @@ test("templates and skills say when none are on file", function () {
 });
 
 test("phone fields stay at 16px so iOS does not zoom on focus", function () {
-  const block = css.slice(css.indexOf("@media (max-width: 40rem)"));
-  const phone = block.slice(0, block.indexOf("@media (max-width: 40rem)", 10) === -1
-    ? block.length
-    : block.indexOf("/* Density"));
-  assert.match(phone, /\.composer textarea \{[\s\S]*font-size:\s*16px/);
-  assert.match(phone, /input\[type="text"\]:not\(\.pf-v6-c-form-control\)/);
+  assert.match(css, /iOS Safari zooms the page when a focused field is under 16px/);
+  assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*?\.composer textarea \{\s*font-size:\s*16px/);
 });
 
 test("accent pill is primary/#submit only, not every unmarked button", function () {

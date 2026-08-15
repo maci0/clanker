@@ -36,6 +36,13 @@ test("Files filter empty state offers to clear the filter", function () {
   assert.match(css, /\.files-clear-filter\s*\{/);
 });
 
+test("Files folder load error offers to try again", function () {
+  const js = readFileSync(join(here, "app.js"), "utf8");
+  assert.match(js, /Could not open this folder/);
+  assert.match(js, /Try again/);
+  assert.doesNotMatch(js, /"Error: "\s*\+\s*err\.message/);
+});
+
 test("Files buttons reset the host pill so filenames stay compact", function () {
   assert.match(css, /:where\(#view-files\)\s*button:where\(:not\(\.secondary\)\)/);
   assert.match(css, /\.files-open\s*\{[^}]*min-height:\s*28px/);
