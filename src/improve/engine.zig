@@ -101,6 +101,12 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     // The exit-code switch is not enough: a patch can keep that arm and
     // return `{ .ok = true }` anyway. Bind the result to the computed `ok`.
     .{ .file = "src/gate/checks.zig", .needle = ".ok = ok," },
+    // Every zig gate funnels through runZigArgs' std.process.run. The
+    // exit-code needles above cannot tell which process ran: replacing
+    // `.argv = effective_argv` with a trivially-succeeding argv (e.g.
+    // `&.{ "true" }`) keeps every one of them while making build/test/tools
+    // gates report green without running zig at all.
+    .{ .file = "src/gate/checks.zig", .needle = ".argv = effective_argv," },
     .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig build\")" },
     .{ .file = "src/gate/checks.zig", .needle = "return runZig(gpa, io, dir, &.{ \"build\", \"test\", \"--summary\", \"all\" }, \"zig build test\")" },
     .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig build tools\")" },
@@ -155,6 +161,13 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/cli.zig", .needle = "const results = try r.runAll(list.items);" },
     .{ .file = "src/cli.zig", .needle = "if (!all_ok) return error.EvalsFailed" },
     .{ .file = "src/cli.zig", .needle = "if (res.ok) \"PASS\" else \"FAIL\"" },
+    // The verdict and the score must come from the same `res` in one print
+    // statement. The `if (res.ok) ...` needle alone survives as dead code in
+    // a cmdEval that prints a hardcoded "1.00 PASS" for every staged task:
+    // the host's uncoveredCapabilityTasks only checks the lines exist, so a
+    // fake-PASS cmdEval would skip the capability suite while every needle
+    // still matched.
+    .{ .file = "src/cli.zig", .needle = "res.score, if (res.ok) \"PASS\" else \"FAIL\"" },
     .{ .file = "src/cli.zig", .needle = "scorers.Eval.loadAll(" },
     .{ .file = "src/improve/engine.zig", .needle = "uncoveredCapabilityTasks(" },
     .{ .file = "src/improve/engine.zig", .needle = "cmdEvalShapeBroken(" },
@@ -2700,10 +2713,16 @@ fn tomlKeyEquals(src: []const u8, key: []const u8, value: []const u8) bool {
     return false;
 }
 
-/// cmdEval is writable. Needles keep `runAll` in the file; they do not
-/// stop an early `return` that prints fake `NAME: 1.00 PASS` lines and
-/// skips the runner. The staged binary is what capabilityGate execs, so
-/// that shape has to be refused here.
+/// cmdEval is writable. The early-return shape and the result lines both
+/// have to be refused here: a cmdEval that skips the runner and prints fake
+/// `NAME: 1.00 PASS` lines for every staged task passes the host's
+/// `uncoveredCapabilityTasks` (which only checks the lines exist) while
+/// never running a single eval, and the staged binary is what capabilityGate
+/// execs. The early-`return` scan stops the skip-the-runner shape; the
+/// coupled print requirement stops a runner that is ignored: the printed
+/// verdict must derive from the real `res.score` and `res.ok` inside a loop
+/// over what `runAll` actually returned, and no `.ok =` assignment may
+/// rewrite a result.
 fn cmdEvalShapeBroken(src: []const u8) ?[]const u8 {
     const start = std.mem.find(u8, src, "fn cmdEval(") orelse return "fn cmdEval(";
     const rest = src[start..];
@@ -2722,9 +2741,16 @@ fn cmdEvalShapeBroken(src: []const u8) ?[]const u8 {
         if (std.mem.find(u8, t, "return error.UnknownEval;") != null) continue;
         return "cmdEval returns before runAll";
     }
-    if (std.mem.find(u8, body, "res.ok =") != null) return "cmdEval overwrites eval results";
-    if (std.mem.find(u8, body, "if (res.ok) \"PASS\" else \"FAIL\"") == null)
-        return "if (res.ok) \"PASS\" else \"FAIL\"";
+    // `res.ok =` missed a loop variable renamed to anything else; the
+    // assignment is to an `.ok` field regardless of the name.
+    if (std.mem.find(u8, body, ".ok = ") != null) return "cmdEval mutates eval results";
+    if (std.mem.find(u8, body, "for (results) |res|") == null)
+        return "cmdEval does not iterate the eval results";
+    // The verdict and the score must come from the same `res` in the same
+    // print: `res.score, if (res.ok) "PASS" else "FAIL"` cannot survive in
+    // a line that prints a hardcoded "1.00 PASS".
+    if (std.mem.find(u8, body, "res.score, if (res.ok) \"PASS\" else \"FAIL\"") == null)
+        return "cmdEval must derive PASS/FAIL from res.score and res.ok";
     if (std.mem.find(u8, body, "if (!all_ok) return error.EvalsFailed") == null)
         return "if (!all_ok) return error.EvalsFailed";
     return null;
@@ -3184,7 +3210,79 @@ test "the live cmdEval still runs every task and prints its real result" {
         \\}
         \\fn next() void {}
     ;
-    try std.testing.expectEqualStrings("cmdEval overwrites eval results", cmdEvalShapeBroken(overwrite).?);
+    try std.testing.expectEqualStrings("cmdEval mutates eval results", cmdEvalShapeBroken(overwrite).?);
+    // The runner runs and its results are iterated, but the printed verdict
+    // is a hardcoded PASS: every pinned string survives as dead code while
+    // not a single eval is actually reported. The loop variable name and the
+    // print both have to be checked, or renaming one of them slips past.
+    const fake_pass =
+        \\fn cmdEval() !void {
+        \\    const results = try r.runAll(list.items);
+        \\    for (results) |res| {
+        \\        try out.writeStreamingAll(io, std.fmt.allocPrint(arena, "{s}: 1.00 PASS\n", .{res.name}));
+        \\    }
+        \\    var all_ok = true;
+        \\    if (res.ok) "PASS" else "FAIL";
+        \\    if (!all_ok) return error.EvalsFailed;
+        \\}
+        \\fn next() void {}
+    ;
+    try std.testing.expectEqualStrings("cmdEval must derive PASS/FAIL from res.score and res.ok", cmdEvalShapeBroken(fake_pass).?);
+    const fake_pass_renamed =
+        \\fn cmdEval() !void {
+        \\    const results = try r.runAll(list.items);
+        \\    for (results) |r| {
+        \\        try out.writeStreamingAll(io, std.fmt.allocPrint(arena, "{s}: 1.00 PASS\n", .{r.name}));
+        \\    }
+        \\    var all_ok = true;
+        \\    if (res.ok) "PASS" else "FAIL";
+        \\    if (!all_ok) return error.EvalsFailed;
+        \\}
+        \\fn next() void {}
+    ;
+    try std.testing.expectEqualStrings("cmdEval does not iterate the eval results", cmdEvalShapeBroken(fake_pass_renamed).?);
+    // Mutating through a renamed loop variable must be caught too: the
+    // result field is `.ok`, whatever the loop binds it to.
+    const mutate_renamed =
+        \\fn cmdEval() !void {
+        \\    const results = try r.runAll(list.items);
+        \\    for (results) |*r| r.ok = true;
+        \\    for (results) |res| {
+        \\        try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "{s}: {d:.2} {s}\n", .{ res.name, res.score, if (res.ok) "PASS" else "FAIL" }));
+        \\    }
+        \\    var all_ok = true;
+        \\    if (res.ok) "PASS" else "FAIL";
+        \\    if (!all_ok) return error.EvalsFailed;
+        \\}
+        \\fn next() void {}
+    ;
+    try std.testing.expectEqualStrings("cmdEval mutates eval results", cmdEvalShapeBroken(mutate_renamed).?);
+}
+
+test "improve-self still verifies the merged result after the run" {
+    // cmdImproveSelf runs the loop, merges every promotion back, and only
+    // then verifies the tree the promotions actually landed in (verifyGates,
+    // on the shared tree after the worktree is dropped). The staged gates
+    // check a copy; verifyGates is the one pass over the merged result.
+    // cli.zig is writable, so a patch deleting that call would let a bad
+    // merge -- or a tree the staged copy never saw -- pass as green with
+    // nothing left to catch it. Compiled against the staged cli.zig, exactly
+    // like cmdEvalShapeBroken above.
+    const src = @embedFile("../cli.zig");
+
+    const start = std.mem.find(u8, src, "fn cmdImproveSelf(") orelse return error.ImproveSelfShapeChanged;
+    try std.testing.expect(std.mem.find(u8, src[start..], "try verifyGates(gpa, io, arena);") != null);
+
+    // And verifyGates itself must still reach the gates it reports: a
+    // verifyGates that only logs would keep the call above while checking
+    // nothing.
+    const vg = std.mem.find(u8, src, "fn verifyGates(") orelse return error.VerifyGatesShapeChanged;
+    const rest = src[vg..];
+    const end_rel = std.mem.find(u8, rest[1..], "\nfn ") orelse rest.len - 1;
+    const body = rest[0 .. end_rel + 1];
+    for ([_][]const u8{ "gate_checks.buildGate(", "gate_checks.testGate(", "gate_checks.toolsGate(", "gate_checks.fmtGate(", "gate_checks.lintGate(" }) |needle| {
+        try std.testing.expect(std.mem.find(u8, body, needle) != null);
+    }
 }
 
 test "the live build.zig still wires test and tools steps" {
