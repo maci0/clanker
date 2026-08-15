@@ -115,6 +115,8 @@
 }
 .files-sort-btn:hover { color: var(--fg); }
 .files-sort-btn.active { color: var(--accent); font-weight: 600; }
+.files-header .files-sort-btn:nth-child(3),
+.files-header .files-sort-btn:nth-child(4) { text-align: right; }
 
 /* ─── file list ───────────────────────────────────────────────────────────── */
 .files-list {
@@ -179,7 +181,7 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.files-size { text-align: right; }
+.files-size, .files-when { text-align: right; }
 
 .files-empty {
   margin-top: var(--space-3);
