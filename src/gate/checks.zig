@@ -249,7 +249,7 @@ pub fn toolDescriptorGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, t
         // Owned by .stdout so GateResult.deinit frees it; .detail aliases it,
         // matching runZigArgs' convention. A `defer gpa.free(detail)` here
         // freed the text on this very return: every caller (the engine's
-        // feedback/history, the test's indexOf) then read freed memory.
+        // feedback/history, the test's find) then read freed memory.
         const detail = try std.mem.join(gpa, "; ", problems.items);
         return .{ .ok = false, .label = "tool-descriptor", .detail = detail, .stdout = detail };
     }
@@ -1362,7 +1362,7 @@ pub fn toolsTsToolchainGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir)
         return .{ .ok = false, .label = "tools-ts-toolchain", .detail = detail };
     };
     defer gpa.free(npmrc);
-    if (std.mem.indexOf(u8, npmrc, "ignore-scripts=true") == null) {
+    if (std.mem.find(u8, npmrc, "ignore-scripts=true") == null) {
         return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/.npmrc must set ignore-scripts=true" };
     }
 
@@ -1402,7 +1402,7 @@ pub fn toolsTsToolchainGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir)
         return .{ .ok = false, .label = "tools-ts-toolchain", .detail = detail };
     };
     defer gpa.free(lock);
-    if (std.mem.indexOf(u8, lock, "\"integrity\":") == null) {
+    if (std.mem.find(u8, lock, "\"integrity\":") == null) {
         return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/package-lock.json is missing npm integrity hashes" };
     }
 
@@ -1430,7 +1430,7 @@ pub fn releaseContractGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) 
         return .{ .ok = false, .label = "release-contract", .detail = detail };
     };
     defer gpa.free(changelog);
-    if (std.mem.indexOf(u8, changelog, "## [Unreleased]") == null) {
+    if (std.mem.find(u8, changelog, "## [Unreleased]") == null) {
         return .{ .ok = false, .label = "release-contract", .detail = "CHANGELOG.md must have a [Unreleased] section" };
     }
 
@@ -1439,9 +1439,9 @@ pub fn releaseContractGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) 
         return .{ .ok = false, .label = "release-contract", .detail = detail };
     };
     defer gpa.free(readme);
-    if (std.mem.indexOf(u8, readme, "CHANGELOG.md") == null)
+    if (std.mem.find(u8, readme, "CHANGELOG.md") == null)
         return .{ .ok = false, .label = "release-contract", .detail = "README.md must link to CHANGELOG.md" };
-    if (std.mem.indexOf(u8, readme, "RELEASES.md") == null)
+    if (std.mem.find(u8, readme, "RELEASES.md") == null)
         return .{ .ok = false, .label = "release-contract", .detail = "README.md must link to RELEASES.md" };
 
     const releases = dir.readFileAlloc(io, "RELEASES.md", gpa, .limited(1 << 20)) catch |err| {
@@ -1449,7 +1449,7 @@ pub fn releaseContractGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) 
         return .{ .ok = false, .label = "release-contract", .detail = detail };
     };
     defer gpa.free(releases);
-    if (std.mem.indexOf(u8, releases, "build.zig.zon") == null)
+    if (std.mem.find(u8, releases, "build.zig.zon") == null)
         return .{ .ok = false, .label = "release-contract", .detail = "RELEASES.md must name build.zig.zon as the version source of truth" };
 
     return .{ .ok = true, .label = "release-contract" };
@@ -1467,5 +1467,5 @@ test "releaseContractGate accepts the live release files" {
 
 test "releaseContractGate rejects a changelog without Unreleased" {
     const bad = "# Changelog\n\n## [0.1.0] - 2026-01-01\n";
-    try std.testing.expect(std.mem.indexOf(u8, bad, "## [Unreleased]") == null);
+    try std.testing.expect(std.mem.find(u8, bad, "## [Unreleased]") == null);
 }

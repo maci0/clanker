@@ -1163,7 +1163,7 @@ const AddGoalArgs = struct {
 /// contains `::` unambiguous unless the user deliberately types the delimiter.
 fn splitAddGoalArgs(args: []const u8) ?AddGoalArgs {
     const delimiter = " :: ";
-    const at = std.mem.indexOf(u8, args, delimiter) orelse return null;
+    const at = std.mem.find(u8, args, delimiter) orelse return null;
     const objective = std.mem.trim(u8, args[0..at], " \t");
     const completion_criterion = std.mem.trim(u8, args[at + delimiter.len ..], " \t");
     if (objective.len == 0 or completion_criterion.len == 0) return null;

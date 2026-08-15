@@ -2772,7 +2772,7 @@ fn fsGrepFile(
 
     // Skip binary files: check first 512 bytes for null.
     const check_len = @min(data.len, 512);
-    if (std.mem.indexOfScalar(u8, data[0..check_len], 0) != null) return;
+    if (std.mem.findScalar(u8, data[0..check_len], 0) != null) return;
 
     // Scan line by line.
     var line_no: u32 = 1;

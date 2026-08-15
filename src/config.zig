@@ -1911,6 +1911,7 @@ pub const Config = struct {
 
     fn defaultInstName(arena: std.mem.Allocator) ![]const u8 {
         var seed: u64 = @as(u64, @intCast(std.c.getpid())) *% 0x9e3779b97f4a7c15;
+        // Residual posix: no std.Io equivalent for hostname; go lower.
         var host_buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
         if (std.posix.gethostname(&host_buf)) |host| {
             for (host) |ch| seed ^= std.hash.Wyhash.hash(0, &[_]u8{ch});
@@ -2656,7 +2657,7 @@ pub const Config = struct {
     fn lineForSetting(raw: []const u8, path: []const u8) usize {
         const leaf_start = if (std.mem.lastIndexOfScalar(u8, path, '.')) |index| index + 1 else 0;
         var leaf = path[leaf_start..];
-        if (std.mem.indexOfScalar(u8, leaf, '[')) |index| leaf = leaf[0..index];
+        if (std.mem.findScalar(u8, leaf, '[')) |index| leaf = leaf[0..index];
         var lines = std.mem.splitScalar(u8, raw, '\n');
         var line: usize = 1;
         while (lines.next()) |source_line| : (line += 1) {
@@ -2683,12 +2684,12 @@ pub const Config = struct {
         const corrected_example = if (std.mem.startsWith(u8, example, "setting =")) blk: {
             const leaf_start: usize = if (std.mem.lastIndexOfScalar(u8, full_path, '.')) |index| index + 1 else 0;
             var leaf = full_path[leaf_start..];
-            if (std.mem.indexOfScalar(u8, leaf, '[')) |index| leaf = leaf[0..index];
+            if (std.mem.findScalar(u8, leaf, '[')) |index| leaf = leaf[0..index];
             break :blk std.fmt.bufPrint(&corrected_example_buf, "{s}{s}", .{ leaf, example["setting".len..] }) catch example;
         } else example;
         if (actual) |value| switch (value) {
             .string => |text| {
-                const sensitive = std.mem.indexOf(u8, full_path, "key") != null or std.mem.indexOf(u8, full_path, "token") != null or std.mem.indexOf(u8, full_path, "secret") != null;
+                const sensitive = std.mem.find(u8, full_path, "key") != null or std.mem.find(u8, full_path, "token") != null or std.mem.find(u8, full_path, "secret") != null;
                 if (sensitive) {
                     log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got string (value redacted); correct it with {s}", .{ source.file_name, line, full_path, expected, corrected_example });
                 } else {
@@ -4104,8 +4105,8 @@ test "first boot with no [instance] anywhere persists a name to the local file" 
 
     const written = try tmp.dir.readFileAlloc(io, "config.local.toml", std.testing.allocator, .limited(1 << 16));
     defer std.testing.allocator.free(written);
-    try std.testing.expect(std.mem.indexOf(u8, written, "[instance]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, written, cfg.instance.name) != null);
+    try std.testing.expect(std.mem.find(u8, written, "[instance]") != null);
+    try std.testing.expect(std.mem.find(u8, written, cfg.instance.name) != null);
 
     // Second boot: the persisted name must survive unchanged rather than
     // being re-rolled on every launch.
@@ -4144,8 +4145,8 @@ test "persisting an instance name appends to an existing local file without clob
 
     const written = try tmp.dir.readFileAlloc(io, "config.local.toml", std.testing.allocator, .limited(1 << 16));
     defer std.testing.allocator.free(written);
-    try std.testing.expect(std.mem.indexOf(u8, written, "max_iterations = 7") != null);
-    try std.testing.expect(std.mem.indexOf(u8, written, "[instance]") != null);
+    try std.testing.expect(std.mem.find(u8, written, "max_iterations = 7") != null);
+    try std.testing.expect(std.mem.find(u8, written, "[instance]") != null);
 }
 
 test "mesh section and peer id parse" {

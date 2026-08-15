@@ -113,7 +113,7 @@ fn writeFrame(fd: std.posix.fd_t, gpa: std.mem.Allocator, payload: []const u8) b
 }
 
 fn parseAddr(host: []const u8, port: u16) !std.Io.net.IpAddress {
-    if (std.mem.indexOfScalar(u8, host, ':') != null)
+    if (std.mem.findScalar(u8, host, ':') != null)
         return std.Io.net.IpAddress.parseIp6(host, port);
     return std.Io.net.IpAddress.parseIp4(host, port);
 }
@@ -121,7 +121,7 @@ fn parseAddr(host: []const u8, port: u16) !std.Io.net.IpAddress {
 pub fn parseHostPort(s: []const u8) !struct { host: []const u8, port: u16 } {
     if (s.len == 0) return error.BadAddress;
     if (s[0] == '[') {
-        const end = std.mem.indexOfScalar(u8, s, ']') orelse return error.BadAddress;
+        const end = std.mem.findScalar(u8, s, ']') orelse return error.BadAddress;
         if (end + 2 > s.len or s[end + 1] != ':') return error.BadAddress;
         return .{ .host = s[1..end], .port = std.fmt.parseInt(u16, s[end + 2 ..], 10) catch return error.BadAddress };
     }
@@ -210,6 +210,8 @@ fn readLoop(rt: *Runtime, stream: std.Io.net.Stream) void {
     defer acc.deinit(rt.gpa);
     var tmp: [4096]u8 = undefined;
     while (!rt.stop.load(.monotonic)) {
+        // Residual posix: raw TCP mesh socket pump, same hand-rolled socket
+        // family as the HTTP server.
         const n = std.posix.read(fd, &tmp) catch break;
         if (n == 0) break;
         acc.appendSlice(rt.gpa, tmp[0..n]) catch break;

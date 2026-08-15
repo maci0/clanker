@@ -1565,7 +1565,7 @@ pub const Agent = struct {
             const content = m.content orelse continue;
             if (std.mem.startsWith(u8, content, original_request_prefix)) {
                 const anchored = content[original_request_prefix.len..];
-                const end = std.mem.indexOf(u8, anchored, "\n\n[conversation summary") orelse anchored.len;
+                const end = std.mem.find(u8, anchored, "\n\n[conversation summary") orelse anchored.len;
                 return anchored[0..end];
             }
             return content;
@@ -3605,7 +3605,7 @@ test "compaction summaries retain the original request across repeated compactio
     };
     const compacted = try Agent.compactionSummaryWithOriginalRequest(arena, &first, "[conversation summary] first pass");
     try std.testing.expect(std.mem.startsWith(u8, compacted, original_request_prefix));
-    try std.testing.expect(std.mem.indexOf(u8, compacted, "Fix the crash in the session runner") != null);
+    try std.testing.expect(std.mem.find(u8, compacted, "Fix the crash in the session runner") != null);
 
     const second = [_]types.Message{
         .{ .role = .user, .content = compacted },
@@ -3613,8 +3613,8 @@ test "compaction summaries retain the original request across repeated compactio
     };
     const compacted_again = try Agent.compactionSummaryWithOriginalRequest(arena, &second, "[conversation summary] second pass");
     try std.testing.expect(std.mem.startsWith(u8, compacted_again, original_request_prefix));
-    try std.testing.expect(std.mem.indexOf(u8, compacted_again, "Fix the crash in the session runner") != null);
-    try std.testing.expect(std.mem.indexOf(u8, compacted_again, "[conversation summary] first pass") == null);
+    try std.testing.expect(std.mem.find(u8, compacted_again, "Fix the crash in the session runner") != null);
+    try std.testing.expect(std.mem.find(u8, compacted_again, "[conversation summary] first pass") == null);
 }
 
 test "capToolResult leaves small results untouched and truncates large ones" {

@@ -399,8 +399,8 @@ test "openai request body sends a model alias id as the wire SKU" {
     const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
     const body = try buildRequest(arena, .{ .provider = &p, .messages = &messages });
     defer arena.free(body);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"model\":\"grok-4.6\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "grok4.6-coding") == null);
+    try std.testing.expect(std.mem.find(u8, body, "\"model\":\"grok-4.6\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "grok4.6-coding") == null);
 }
 
 test "openai request body sends reasoning_effort and omits it when unset" {

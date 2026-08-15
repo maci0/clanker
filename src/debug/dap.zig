@@ -44,7 +44,7 @@ fn frameRequestSeq(payload: []const u8) ?u32 {
 }
 
 pub fn decodeFrame(buf: []const u8) ?Decoded {
-    const sep = std.mem.indexOf(u8, buf, "\r\n\r\n") orelse return null;
+    const sep = std.mem.find(u8, buf, "\r\n\r\n") orelse return null;
     const headers = buf[0..sep];
     const body_start = sep + 4;
     var content_len: ?usize = null;
@@ -877,36 +877,36 @@ test "fake adapter: launch, breakpoint, continue, stack, variables, evaluate" {
             return err;
         },
     };
-    try std.testing.expect(std.mem.indexOf(u8, launched, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, launched, "\"ok\":true") != null);
 
     const bps = try handle(&sess, opts,
         \\{"op":"set_breakpoints","source":"src/main.c","lines":[42],"condition":"x > 0","hitCondition":"3"}
     );
-    try std.testing.expect(std.mem.indexOf(u8, bps, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, bps, "\"ok\":true") != null);
 
     const cont = try handle(&sess, opts, "{\"op\":\"continue\"}");
-    try std.testing.expect(std.mem.indexOf(u8, cont, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, cont, "\"ok\":true") != null);
 
     const stack = try handle(&sess, opts, "{\"op\":\"stack_trace\"}");
-    try std.testing.expect(std.mem.indexOf(u8, stack, "\"name\":\"main\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, stack, "src/main.c") != null);
-    try std.testing.expect(std.mem.indexOf(u8, stack, "42") != null);
+    try std.testing.expect(std.mem.find(u8, stack, "\"name\":\"main\"") != null);
+    try std.testing.expect(std.mem.find(u8, stack, "src/main.c") != null);
+    try std.testing.expect(std.mem.find(u8, stack, "42") != null);
 
     const vars = try handle(&sess, opts, "{\"op\":\"variables\",\"variables_reference\":3}");
-    try std.testing.expect(std.mem.indexOf(u8, vars, "\"name\":\"x\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, vars, "\"value\":\"10\"") != null);
+    try std.testing.expect(std.mem.find(u8, vars, "\"name\":\"x\"") != null);
+    try std.testing.expect(std.mem.find(u8, vars, "\"value\":\"10\"") != null);
 
     const ev = try handle(&sess, opts, "{\"op\":\"evaluate\",\"expression\":\"x + 1\",\"frame_id\":1}");
-    try std.testing.expect(std.mem.indexOf(u8, ev, "\"result\":\"11\"") != null);
+    try std.testing.expect(std.mem.find(u8, ev, "\"result\":\"11\"") != null);
 
     // Same sequence a second time on a fresh launch: consistent, not a flake.
     const launched2 = try handle(&sess, opts, "{\"op\":\"launch\",\"adapter\":\"fake\",\"program\":\"./myapp\"}");
-    try std.testing.expect(std.mem.indexOf(u8, launched2, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, launched2, "\"ok\":true") != null);
     const stack2 = try handle(&sess, opts, "{\"op\":\"stack_trace\"}");
-    try std.testing.expect(std.mem.indexOf(u8, stack2, "\"name\":\"main\"") != null);
+    try std.testing.expect(std.mem.find(u8, stack2, "\"name\":\"main\"") != null);
 
     const disc = try handle(&sess, opts, "{\"op\":\"disconnect\"}");
-    try std.testing.expect(std.mem.indexOf(u8, disc, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, disc, "\"ok\":true") != null);
     try std.testing.expect(reg.get("dbg-1", "dap") == null);
 }
 

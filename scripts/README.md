@@ -30,3 +30,17 @@ a complete directory tree. Transient `*.lock` files are excluded.
 runs one catch-up backup when the user systemd manager returns after downtime.
 The installed launcher lives at `~/.local/bin/clanker-state-backup`; it is
 local configuration and is not committed.
+
+Snapshots older than `CLANKER_BACKUP_RETENTION_DAYS` (default 30) are pruned
+on each successful backup; set it to `0` to keep every snapshot. Staging
+directories from runs that died mid-backup are always cleaned up.
+
+To restore, pick a snapshot and copy its `state/`, `agents/`, and `local/`
+trees back over the current targets, e.g.:
+
+```bash
+cp -a "$(readlink -f state)/../backups/<timestamp>/state/." state/
+```
+
+Stopping the service or `clanker` first avoids overwriting a live tree
+mid-write.

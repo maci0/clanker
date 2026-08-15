@@ -451,15 +451,15 @@ test "gemini request body uses contents, systemInstruction, and functionDeclarat
         .temperature = 0.2,
     });
     defer arena.free(body);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"systemInstruction\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"role\":\"user\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"role\":\"model\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"functionCall\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"functionResponse\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"name\":\"history\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"maxOutputTokens\":256") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"temperature\":0.2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "chat/completions") == null);
+    try std.testing.expect(std.mem.find(u8, body, "\"systemInstruction\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"role\":\"user\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"role\":\"model\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"functionCall\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"functionResponse\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"name\":\"history\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"maxOutputTokens\":256") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"temperature\":0.2") != null);
+    try std.testing.expect(std.mem.find(u8, body, "chat/completions") == null);
 }
 
 test "gemini response parse reads text, functionCall, cache, and thought" {

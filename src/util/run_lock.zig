@@ -106,6 +106,7 @@ fn processExists(pid: u32) bool {
     // value past pid_t cannot name a process at all: none of them is a live
     // owner, and passing them through would probe something else entirely.
     if (pid == 0 or pid > std.math.maxInt(std.posix.pid_t)) return false;
+    // Residual posix: kill(2) liveness probe has no std.Io equivalent.
     // Only ProcessNotFound (ESRCH) is a confirmed absence. PermissionDenied
     // (EPERM) means it is alive and owned by another user, and Unexpected is
     // doubt, which the comment at the top promises to treat as held: refusing

@@ -12,7 +12,7 @@ pub const tail_bytes: usize = 64 * 1024;
 /// cannot describe a path at all.
 pub fn validName(name: []const u8) bool {
     if (name.len == 0) return false;
-    if (std.mem.indexOfAny(u8, name, "/\\") != null) return false;
+    if (std.mem.findAny(u8, name, "/\\") != null) return false;
     if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) return false;
     for (name) |c| {
         if (c < 0x20 or c == 0x7f) return false;

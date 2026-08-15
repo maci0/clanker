@@ -210,9 +210,9 @@ fn update(obj: std.json.Value, out: *lib.Out) !void {
     // to use this guest-owned copy rather than the fsRead response.
     const raw = lib.fsRead(path) catch |err| return lib.failErr(out, err, "opening the report or runbook before update");
     const text = try lib.alloc.dupe(u8, raw);
-    const start = std.mem.indexOf(u8, text, old) orelse
+    const start = std.mem.find(u8, text, old) orelse
         return lib.fail(out, "old text was not found; open the current record and copy the exact text");
-    if (std.mem.indexOfPos(u8, text, start + old.len, old) != null)
+    if (std.mem.findPos(u8, text, start + old.len, old) != null)
         return lib.fail(out, "old text appears more than once; include more surrounding text so the update is unambiguous");
     const expected = try lib.alloc.dupe(u8, try lib.hash(text));
 
@@ -298,9 +298,9 @@ fn addToInventory(kind: []const u8, target: Target, title: []const u8) !bool {
     const expected = try lib.alloc.dupe(u8, try lib.hash(index));
     const marker = try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:start -->", .{kind});
     const end_marker = try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:end -->", .{kind});
-    const start = std.mem.indexOf(u8, index, marker) orelse return false;
+    const start = std.mem.find(u8, index, marker) orelse return false;
     const content_start = start + marker.len;
-    const rel_end = std.mem.indexOf(u8, index[content_start..], end_marker) orelse return false;
+    const rel_end = std.mem.find(u8, index[content_start..], end_marker) orelse return false;
     const end = content_start + rel_end;
     const previous = std.mem.trim(u8, index[content_start..end], " \t\r\n");
     const empty_marker = if (std.mem.eql(u8, kind, "runbook")) "No runbooks yet." else "No reports yet.";

@@ -221,7 +221,7 @@ test "a path outside the stdlib preopen is unreachable" {
     // prompt on stderr); an uncaught exception there prints a traceback and
     // continues rather than setting a nonzero process exit, so the exit code
     // is not the signal here — the traceback naming the denied path is.
-    try std.testing.expect(std.mem.indexOf(u8, out.stderr, "FileNotFoundError") != null);
+    try std.testing.expect(std.mem.find(u8, out.stderr, "FileNotFoundError") != null);
 }
 
 fn binaryPresent(io: std.Io) bool {

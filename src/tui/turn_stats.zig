@@ -472,8 +472,8 @@ test "live session strip shows a turn before any tokens land" {
         .live_ttft_ms = 320,
     }).?;
     try std.testing.expect(std.mem.startsWith(u8, line, "1 turn \u{b7} 1 step"));
-    try std.testing.expect(std.mem.indexOf(u8, line, "TTFT 320ms") != null);
-    try std.testing.expect(std.mem.indexOf(u8, line, "Input") == null);
+    try std.testing.expect(std.mem.find(u8, line, "TTFT 320ms") != null);
+    try std.testing.expect(std.mem.find(u8, line, "Input") == null);
 }
 
 test "contextMeter is null without a window" {

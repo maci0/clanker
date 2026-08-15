@@ -47,7 +47,7 @@ fn failureWindow(res: []const u8) []const u8 {
         const line = res[line_start..i];
         i = line_start;
         if (line_start > 0) i -= 1;
-        if (std.mem.indexOf(u8, line, "error:") != null and
+        if (std.mem.find(u8, line, "error:") != null and
             !std.mem.startsWith(u8, std.mem.trim(u8, line, " \t\r"), "error: the following build command"))
         {
             start = line_start;
@@ -59,7 +59,7 @@ fn failureWindow(res: []const u8) []const u8 {
     const to = @min(res.len, from + max_window);
     // Trim a trailing build-command dump that landed inside the window.
     var end = to;
-    if (std.mem.indexOf(u8, res[from..to], "error: the following build command")) |p| end = from + p;
+    if (std.mem.find(u8, res[from..to], "error: the following build command")) |p| end = from + p;
     return res[from..end];
 }
 

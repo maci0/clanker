@@ -47,8 +47,8 @@ pub fn isAnthropicModel(name: []const u8) bool {
 }
 
 fn looksLikeGemini(body: []const u8) bool {
-    return std.mem.indexOf(u8, body, "\"candidates\"") != null or
-        std.mem.indexOf(u8, body, "\"usageMetadata\"") != null;
+    return std.mem.find(u8, body, "\"candidates\"") != null or
+        std.mem.find(u8, body, "\"usageMetadata\"") != null;
 }
 
 fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildError![]u8 {
@@ -169,13 +169,13 @@ test "vertex AI Gemini body is generateContent, Claude body is Anthropic Vertex"
     gem.project = "p";
     gem.location = "us-east5";
     const gem_body = try buildRequest(arena, .{ .provider = &gem, .messages = &messages });
-    try std.testing.expect(std.mem.indexOf(u8, gem_body, "\"contents\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, gem_body, "anthropic_version") == null);
+    try std.testing.expect(std.mem.find(u8, gem_body, "\"contents\"") != null);
+    try std.testing.expect(std.mem.find(u8, gem_body, "anthropic_version") == null);
 
     var claude = try config.Provider.single(arena, "vertex", "", .vertex, "claude-opus-5@default", .{ .max_tokens = 256 });
     claude.project = "p";
     claude.location = "us-east5";
     const claude_body = try buildRequest(arena, .{ .provider = &claude, .messages = &messages });
-    try std.testing.expect(std.mem.indexOf(u8, claude_body, "\"anthropic_version\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, claude_body, "\"contents\"") == null);
+    try std.testing.expect(std.mem.find(u8, claude_body, "\"anthropic_version\"") != null);
+    try std.testing.expect(std.mem.find(u8, claude_body, "\"contents\"") == null);
 }

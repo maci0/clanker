@@ -3897,6 +3897,7 @@ fn execSelf(gpa: std.mem.Allocator, exe_path: [:0]const u8, argv_tail: []const [
     // an inherited fd is purely a leak: one listener per reload until EMFILE.
     // SETFD only acts at exec time, so if the execve below fails the current
     // image keeps running with nothing closed.
+    // Residual posix: rlimits have no std.Io equivalent; go lower.
     const nofile = std.posix.getrlimit(.NOFILE) catch std.posix.rlimit{ .cur = 1024, .max = 1024 };
     // ponytail: linear fcntl sweep; parse /proc/self/fd if the limit is ever huge
     const fd_max: i32 = @intCast(@min(nofile.cur, 65536));
@@ -4028,6 +4029,7 @@ const HotReload = struct {
 
         var buf: [4096]u8 align(@alignOf(std.os.linux.inotify_event)) = undefined;
         while (true) {
+            // Residual posix: inotify events are raw Linux fd reads, no std.Io API.
             const n = std.posix.read(fd, &buf) catch return;
             if (n == 0) return;
             var relevant = false;
@@ -4479,9 +4481,9 @@ fn toolRefusalStatus(out: []const u8) u16 {
 
 fn toolRefusalIsMissing(out: []const u8) bool {
     const key = "\"error\":\"";
-    const start = std.mem.indexOf(u8, out, key) orelse return false;
+    const start = std.mem.find(u8, out, key) orelse return false;
     const rest = out[start + key.len ..];
-    const end = std.mem.indexOfScalar(u8, rest, '"') orelse return false;
+    const end = std.mem.findScalar(u8, rest, '"') orelse return false;
     const msg = rest[0..end];
     return std.mem.startsWith(u8, msg, "no such") or
         std.mem.eql(u8, msg, "not found") or
@@ -5875,6 +5877,8 @@ fn connectionThread(conn: *Connection) void {
 
 fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream, surface: proxy.Surface) void {
     defer stream.close(io);
+    // Residual posix: raw socket recv-timeout option for the hand-rolled HTTP
+    // server loops below.
     const tv: std.posix.timeval = .{ .sec = connection_read_timeout_seconds, .usec = 0 };
     std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
     var requests: u8 = 0;
@@ -8457,16 +8461,16 @@ fn withWebuiCacheUrls(arena: std.mem.Allocator, html: []const u8, tag: []const u
 
     // Inject the import map immediately after <head...>.
     var i: usize = 0;
-    if (std.mem.indexOf(u8, html, "<head>")) |h| {
-        if (std.mem.indexOfScalar(u8, html[h..], '>')) |rel| {
+    if (std.mem.find(u8, html, "<head>")) |h| {
+        if (std.mem.findScalar(u8, html[h..], '>')) |rel| {
             const at = h + rel + 1;
             try out.appendSlice(arena, html[0..at]);
             try out.append(arena, '\n');
             try out.appendSlice(arena, map);
             i = at;
         }
-    } else if (std.mem.indexOf(u8, html, "<head ")) |h| {
-        if (std.mem.indexOfScalar(u8, html[h..], '>')) |rel| {
+    } else if (std.mem.find(u8, html, "<head ")) |h| {
+        if (std.mem.findScalar(u8, html[h..], '>')) |rel| {
             const at = h + rel + 1;
             try out.appendSlice(arena, html[0..at]);
             try out.append(arena, '\n');
@@ -11668,7 +11672,7 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         } else if (std.mem.startsWith(u8, rest, "/search") and std.mem.eql(u8, method, "GET")) {
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing q\"}");
         } else if ((std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "DELETE")) and
-            (rest.len == 0 or std.mem.endsWith(u8, rest, "/docs") or std.mem.indexOf(u8, rest, "/docs/") != null))
+            (rest.len == 0 or std.mem.endsWith(u8, rest, "/docs") or std.mem.find(u8, rest, "/docs/") != null))
         {
             // Known write shape, unreadable body (or empty id).
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
@@ -16188,19 +16192,19 @@ test "withWebuiCacheUrls rewrites assets and injects an import map" {
         \\<script type="module" src="/webui/app.js"></script>
     ;
     const out = try withWebuiCacheUrls(arena, html, "deadbeef");
-    try std.testing.expect(std.mem.indexOf(u8, out, "/webui/~deadbeef/app.css") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "/webui/~deadbeef/app.js") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "type=\"importmap\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "src=\"/webui/~deadbeef/import-map.json\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "href=\"/webui/app.css\"") == null);
+    try std.testing.expect(std.mem.find(u8, out, "/webui/~deadbeef/app.css") != null);
+    try std.testing.expect(std.mem.find(u8, out, "/webui/~deadbeef/app.js") != null);
+    try std.testing.expect(std.mem.find(u8, out, "type=\"importmap\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "src=\"/webui/~deadbeef/import-map.json\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "href=\"/webui/app.css\"") == null);
 }
 
 test "webui import map keys do not match an already-tagged URL" {
     var buf: [512]u8 = undefined;
     const body = try webuiImportMapJson(&buf, "deadbeef");
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"/webui/\"") == null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"/webui/core/\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "/webui/~deadbeef/core/") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"/webui/\"") == null);
+    try std.testing.expect(std.mem.find(u8, body, "\"/webui/core/\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "/webui/~deadbeef/core/") != null);
     // A tagged module URL must not be a prefix hit for any key.
     try std.testing.expect(!std.mem.startsWith(u8, "/webui/~deadbeef/core/utils.js", "/webui/core/"));
     try std.testing.expect(!std.mem.startsWith(u8, "/webui/~deadbeef/app.js", "/webui/app.js"));

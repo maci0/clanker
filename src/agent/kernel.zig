@@ -255,6 +255,7 @@ fn roundTrip(opts: EvalOpts, line: []const u8) EvalError![]u8 {
             if (self.ms == 0) return;
             self.io.sleep(.{ .nanoseconds = @as(i96, self.ms) * std.time.ns_per_ms }, .awake) catch return;
             if (!self.cancel.load(.monotonic)) {
+                // Residual posix: signal delivery has no std.Io equivalent.
                 std.posix.kill(self.pid, std.posix.SIG.TERM) catch {};
             }
         }
@@ -336,7 +337,7 @@ test "encodeRequest / parseResponse are inverses for a cell" {
     const arena = arena_state.allocator();
     const line = try encodeRequest(arena, .{ .cell = "1 + 1" });
     try std.testing.expect(std.mem.endsWith(u8, line, "\n"));
-    try std.testing.expect(std.mem.indexOf(u8, line, "\"cell\"") != null);
+    try std.testing.expect(std.mem.find(u8, line, "\"cell\"") != null);
     const parsed = try parseResponse(arena,
         \\{"ok":true,"stdout":"","stderr":"","result":"2","duration_ms":3}
     );
@@ -405,7 +406,7 @@ test "python cells persist, reset drops the name, persist works again" {
         error.Python3NotFound => return error.SkipZigTest,
         else => return err,
     };
-    try std.testing.expect(std.mem.indexOf(u8, out1, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, out1, "\"ok\":true") != null);
 
     var second = base;
     second.cell = "x + 1";

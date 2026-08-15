@@ -48,7 +48,7 @@ pub fn validName(name: []const u8) bool {
 
 pub fn validPath(path: []const u8) bool {
     if (path.len == 0 or path.len > max_path_bytes) return false;
-    return std.mem.indexOfScalar(u8, path, 0) == null;
+    return std.mem.findScalar(u8, path, 0) == null;
 }
 
 pub fn find(list: []const Workspace, id: []const u8) ?*const Workspace {

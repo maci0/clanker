@@ -166,7 +166,8 @@ pub fn noteRun(working: bool) void {
 }
 
 /// Long-lived SSE write loop. Caller must have already decided this
-/// connection is not keep-alive.
+/// connection is not keep-alive. Residual posix: raw-fd SSE push bus, same
+/// hand-rolled HTTP family as cli.zig's server.
 pub fn serveSse(fd: std.posix.fd_t, topics: []const u8) void {
     const id = subscribe(parseTopics(topics)) orelse {
         const body = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 52\r\n\r\n{\"ok\":false,\"error\":\"too many live subscribers\"}";
@@ -220,7 +221,7 @@ test "subscribe publish take, overflow drops oldest" {
         publish(.chat, line);
     }
     const got = take(a, &buf) orelse return error.MissingAfterDrop;
-    try std.testing.expect(std.mem.indexOf(u8, got.json, "\"n\":") != null);
+    try std.testing.expect(std.mem.find(u8, got.json, "\"n\":") != null);
 }
 
 test "parseTopics empty is all, unknown names ignored" {
@@ -242,9 +243,9 @@ test "noteChat publishes both a chat and a mesh event without reusing a complete
     var buf: [event_cap]u8 = undefined;
     const chat_ev = take(a, &buf) orelse return error.MissingChat;
     try std.testing.expectEqual(Topic.chat, chat_ev.topic);
-    try std.testing.expect(std.mem.indexOf(u8, chat_ev.json, "\"t\":\"chat\"") != null);
+    try std.testing.expect(std.mem.find(u8, chat_ev.json, "\"t\":\"chat\"") != null);
     var buf2: [event_cap]u8 = undefined;
     const mesh_ev = take(a, &buf2) orelse return error.MissingMesh;
     try std.testing.expectEqual(Topic.mesh, mesh_ev.topic);
-    try std.testing.expect(std.mem.indexOf(u8, mesh_ev.json, "\"t\":\"talk\"") != null);
+    try std.testing.expect(std.mem.find(u8, mesh_ev.json, "\"t\":\"talk\"") != null);
 }

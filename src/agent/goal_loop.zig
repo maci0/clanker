@@ -166,7 +166,7 @@ test "goal loop reports its turn budget as blocked" {
     });
     try std.testing.expectEqual(Verdict.blocked, outcome.verdict);
     try std.testing.expectEqual(@as(u32, 2), outcome.turns);
-    try std.testing.expect(std.mem.indexOf(u8, outcome.reason, "budget") != null);
+    try std.testing.expect(std.mem.find(u8, outcome.reason, "budget") != null);
 }
 
 test "evaluator parser is conservative for malformed output" {

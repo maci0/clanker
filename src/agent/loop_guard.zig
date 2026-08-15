@@ -75,7 +75,7 @@ fn writeValue(arena: std.mem.Allocator, s: *std.json.Stringify, value: std.json.
 
 fn matchesPattern(pattern: []const u8, name: []const u8) bool {
     if (std.mem.eql(u8, pattern, "*")) return true;
-    const star = std.mem.indexOfScalar(u8, pattern, '*') orelse return std.mem.eql(u8, pattern, name);
+    const star = std.mem.findScalar(u8, pattern, '*') orelse return std.mem.eql(u8, pattern, name);
     const prefix = pattern[0..star];
     const suffix = pattern[star + 1 ..];
     return name.len >= prefix.len + suffix.len and std.mem.startsWith(u8, name, prefix) and std.mem.endsWith(u8, name, suffix);

@@ -35,15 +35,15 @@ pub fn validFile(file: []const u8) bool {
 pub fn jsRejected(js: []const u8) ?[]const u8 {
     if (js.len == 0) return "app.js is empty";
     if (js.len > max_js_bytes) return "app.js is too large";
-    if (std.mem.indexOf(u8, js, "clanker.registerView") == null)
+    if (std.mem.find(u8, js, "clanker.registerView") == null)
         return "app.js must call clanker.registerView";
-    if (std.mem.indexOf(u8, js, "innerHTML") != null)
+    if (std.mem.find(u8, js, "innerHTML") != null)
         return "app.js must not assign innerHTML (build DOM with createElement / api.el)";
-    if (std.mem.indexOf(u8, js, "eval(") != null)
+    if (std.mem.find(u8, js, "eval(") != null)
         return "app.js must not call eval (CSP forbids it)";
-    if (std.mem.indexOf(u8, js, "new Function") != null)
+    if (std.mem.find(u8, js, "new Function") != null)
         return "app.js must not use new Function (CSP forbids it)";
-    if (std.mem.indexOf(u8, js, "document.write") != null)
+    if (std.mem.find(u8, js, "document.write") != null)
         return "app.js must not use document.write";
     return null;
 }

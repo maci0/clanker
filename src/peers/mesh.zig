@@ -106,7 +106,7 @@ pub fn parseHeader(arena: std.mem.Allocator, payload: []const u8) !Header {
 /// Major must match. Minor may advance; unknown optional fields are ignored.
 pub fn compatibleVersion(v: []const u8) bool {
     if (v.len == 0) return false;
-    const dot = std.mem.indexOfScalar(u8, v, '.') orelse return false;
+    const dot = std.mem.findScalar(u8, v, '.') orelse return false;
     const major = v[0..dot];
     return std.mem.eql(u8, major, "1");
 }
@@ -269,7 +269,7 @@ pub fn buildMap(arena: std.mem.Allocator, in: MapInput) !Map {
         var right: ?[]const u8 = null;
         if (std.mem.startsWith(u8, room.room, "dm:")) {
             const rest = room.room["dm:".len..];
-            const bar = std.mem.indexOfScalar(u8, rest, '|') orelse continue;
+            const bar = std.mem.findScalar(u8, rest, '|') orelse continue;
             left = resolveName(in.self_id, in.self_name, in.peers, rest[0..bar]);
             right = resolveName(in.self_id, in.self_name, in.peers, rest[bar + 1 ..]);
         } else if (resolveName(in.self_id, in.self_name, in.peers, room.last_from)) |other| {
@@ -419,6 +419,6 @@ test "mesh map is self plus peers, wires from dm rooms, pulse when recent" {
     var s = std.json.Stringify{ .writer = &out.writer };
     try writeMap(&s, map);
     const json = out.written();
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"working\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"from\":\"aaa\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"working\":true") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"from\":\"aaa\"") != null);
 }

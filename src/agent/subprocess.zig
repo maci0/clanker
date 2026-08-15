@@ -149,7 +149,7 @@ pub const Registry = struct {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         const h = self.findLocked(session_id, kind) orelse return null;
-        const nl = std.mem.indexOfScalar(u8, h.leftover.items, '\n') orelse return null;
+        const nl = std.mem.findScalar(u8, h.leftover.items, '\n') orelse return null;
         const line = arena.dupe(u8, std.mem.trimEnd(u8, h.leftover.items[0..nl], "\r")) catch return null;
         const rest = h.leftover.items[nl + 1 ..];
         std.mem.copyForwards(u8, h.leftover.items, rest);
@@ -238,6 +238,7 @@ pub const Registry = struct {
         if (h.child) |*c| {
             c.kill(self.io);
         } else {
+            // Residual posix: signal delivery has no std.Io equivalent.
             std.posix.kill(h.pid, std.posix.SIG.TERM) catch {};
         }
         h.leftover.deinit(self.gpa);
