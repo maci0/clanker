@@ -2552,23 +2552,23 @@ pub const Agent = struct {
         // Run before-transforms on the arguments (input rewriting / validation).
         const effective_args = self.runChain(tc.name, .before, tc.arguments) catch tc.arguments;
 
-        const out = mod.executeTool(effective_args) catch |err| {
+        // Allocate the result straight into the run arena (executeToolAlloc)
+        // so the conversation history does not need a second copy of the
+        // output: returning the gpa buffer raw would yield 0xAA-poisoned
+        // tool messages on the sequential path (use-after-free), which is why
+        // the result used to be arena-duped after executeTool's gpa copy.
+        const out = mod.executeToolAlloc(self.arena, effective_args) catch |err| {
             log.log(.error_, "tool '{s}' failed: {s}", .{ tc.name, @errorName(err) });
             return toolErrorJson(self.arena, "tool execution failed: {s} ({s})", .{ tc.name, @errorName(err) });
         };
-        defer self.ctx.gpa.free(out);
         const t1 = std.Io.Timestamp.now(self.ctx.io, .awake);
         const ms = @divTrunc(t0.durationTo(t1).nanoseconds, std.time.ns_per_ms);
 
-        // Arena-own the result for the conversation history BEFORE the defer
-        // above frees the gpa buffer: returning it raw yields 0xAA-poisoned
-        // tool messages on the sequential path (use-after-free).
-        const owned = try self.arena.dupe(u8, out);
         log.log(.info, "tool '{s}' -> {d} bytes in {d}ms", .{ tc.name, out.len, ms });
-        tool_out.warnIfMalformed(self.ctx.gpa, tc.name, owned);
+        tool_out.warnIfMalformed(self.ctx.gpa, tc.name, out);
 
         // Run after-transforms on the result (output filtering / post-processing).
-        const transformed = self.runChain(tc.name, .after, owned) catch owned;
+        const transformed = self.runChain(tc.name, .after, out) catch out;
         return transformed;
     }
 

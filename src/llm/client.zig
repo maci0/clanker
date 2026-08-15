@@ -816,6 +816,13 @@ pub fn chatStream(
     var sse_done = false;
     var at_eof = false;
     var ttft_ms: ?u64 = null;
+    // Frames already consumed from the front of `sse.items` (the parse
+    // cursor). `frame` is a view into sse.items, so every frame is handled
+    // fully before the cursor advances; the consumed prefix is compacted
+    // away once per read chunk instead of once per frame, so a chunk that
+    // coalesces many tiny frames does not memmove the whole remainder K
+    // times (the old shift-per-frame was quadratic in the frame count).
+    var sse_consumed: usize = 0;
     while (!sse_done) {
         // A peek, not a consuming swap: Agent.stopRequested() is the one
         // place that consumes the flag, so a Ctrl-C caught here still gets
@@ -840,10 +847,12 @@ pub fn chatStream(
             try appendResponseBytes(&sse, ctx.gpa, "\n\n", resp_cap);
             at_eof = true;
         } else try appendResponseBytes(&sse, ctx.gpa, buf[0..n], resp_cap);
-        // Process complete frames (data: ... blank line). `frame` is a view
-        // into sse.items, so handle it fully before the buffer is shifted.
-        while (std.mem.find(u8, sse.items, "\n\n")) |frame_end| {
-            const frame = sse.items[0..frame_end];
+        // Process complete frames (data: ... blank line), starting the search
+        // at the parse cursor so consumed bytes are never rescanned.
+        var frame_start = sse_consumed;
+        while (std.mem.indexOf(u8, sse.items[frame_start..], "\n\n")) |off| {
+            const frame_end = frame_start + off;
+            const frame = sse.items[frame_start..frame_end];
             var frame_done = false;
             var it = std.mem.splitScalar(u8, frame, '\n');
             while (it.next()) |raw_line| {
@@ -867,13 +876,21 @@ pub fn chatStream(
                 if (ttft_ms == null) ttft_ms = elapsedMs(ctx.io, llm_t0);
                 try acc.apply(ev, on_delta);
             }
-            const rest = sse.items[frame_end + 2 ..];
-            std.mem.copyForwards(u8, sse.items[0..rest.len], rest);
-            sse.items.len = rest.len;
+            frame_start = frame_end + 2;
             if (frame_done) {
                 sse_done = true;
                 break;
             }
+        }
+        // Compact the consumed prefix once per chunk so the next read appends
+        // to an empty tail instead of a buffer that grows for the stream's
+        // whole life.
+        sse_consumed = frame_start;
+        if (sse_consumed > 0) {
+            const rest = sse.items[sse_consumed..];
+            std.mem.copyForwards(u8, sse.items[0..rest.len], rest);
+            sse.items.len = rest.len;
+            sse_consumed = 0;
         }
         if (at_eof) break;
     }

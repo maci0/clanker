@@ -162,8 +162,16 @@ pub const ToolModule = struct {
     }
 
     /// Executes the tool with `input` (JSON), returning the tool's JSON output
-    /// in a fresh allocation.
+    /// in a fresh gpa allocation.
     pub fn executeTool(self: *ToolModule, input: []const u8) ![]u8 {
+        return self.executeToolAlloc(self.gpa, input);
+    }
+
+    /// Same as `executeTool`, but the result is allocated from `alloc` instead
+    /// of the module's gpa. The agent loop arena-owns every tool result for the
+    /// conversation history, so allocating straight into the run arena there
+    /// skips the second full copy of the output (up to the per-call cap).
+    pub fn executeToolAlloc(self: *ToolModule, alloc: std.mem.Allocator, input: []const u8) ![]u8 {
         self.h.reset();
 
         // ---- input buffer ----
@@ -199,7 +207,7 @@ pub const ToolModule = struct {
         const mem_after_run = self.inst.memory() orelse return error.ToolNoMemory;
         const mem_bytes = mem_after_run.slice();
         if (@as(u64, r.ptr) + r.len > mem_bytes.len) return error.ToolInvalidOutput;
-        return self.gpa.dupe(u8, mem_bytes[r.ptr .. r.ptr + r.len]);
+        return alloc.dupe(u8, mem_bytes[r.ptr .. r.ptr + r.len]);
     }
 };
 

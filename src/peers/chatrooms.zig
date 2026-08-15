@@ -301,18 +301,15 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     // write below, so two racing deliveries of the same id cannot both pass
     // the check and both append. Empty ids (messages from a peer too old to
     // send one) are never deduped, matching the pre-existing behaviour for
-    // them. The retained window is exactly what trimLog already keeps, so
-    // this adds no unbounded state.
+    // them. The log never holds more than `max_history` entries after an
+    // append (trimLog keeps exactly the newest `max`), and a redelivery is a
+    // retry of a just-appended message, so scanning the tail of the retained
+    // window finds any duplicate: parsing every record in the log used to cost
+    // one JSON parse per message on every send.
     if (msg.id.len > 0) {
-        var existing_msgs: std.ArrayList(Message) = .empty;
-        parseLog(arena, existing, &existing_msgs) catch |err| {
-            log.log(.warn, "[chat] could not parse {s} ({s}); duplicate delivery would not be caught", .{ path, @errorName(err) });
-        };
-        for (existing_msgs.items) |m| {
-            if (std.mem.eql(u8, m.id, msg.id)) {
-                log.log(.debug, "[chat] duplicate message id '{s}' ignored", .{msg.id});
-                return;
-            }
+        if (hasMessageId(arena, existing, msg.id, cfg.chatrooms.max_history)) {
+            log.log(.debug, "[chat] duplicate message id '{s}' ignored", .{msg.id});
+            return;
         }
     }
 
@@ -349,6 +346,27 @@ fn jsonlLineCount(raw: []const u8) usize {
         if (ln.len > 0) n += 1;
     }
     return n;
+}
+
+/// True when `id` appears among the last `max` lines of `raw`. The log is
+/// trimmed to `max_history` entries on every append, so the last `max` lines
+/// cover the whole log; walking from the end also finds a duplicate (always a
+/// recent redelivery) after parsing only a few lines.
+fn hasMessageId(arena: std.mem.Allocator, raw: []const u8, id: []const u8, max: u32) bool {
+    if (max == 0) return false;
+    var end = raw.len;
+    var checked: u32 = 0;
+    while (end > 0 and checked < max) {
+        var start = end;
+        while (start > 0 and raw[start - 1] != '\n') start -= 1;
+        const line = raw[start..end];
+        end = if (start > 0) start - 1 else 0;
+        if (line.len == 0) continue;
+        const m = std.json.parseFromSliceLeaky(Message, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
+        if (std.mem.eql(u8, m.id, id)) return true;
+        checked += 1;
+    }
+    return false;
 }
 
 fn appendLogLine(base: std.Io.Dir, io: std.Io, path: []const u8, existing: []const u8, line: []const u8) !void {
@@ -907,28 +925,42 @@ pub fn readNew(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
     _ = gpa;
     const path = subPath(arena, state_dir, log_path) catch return &[_]Message{};
     const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return &[_]Message{};
-    var all: std.ArrayList(Message) = .empty;
-    try parseLog(arena, raw, &all);
-    var start: usize = 0;
-    var found_id = false;
-    if (cursor.id.len > 0) {
-        for (all.items, 0..) |m, i| {
-            if (std.mem.eql(u8, m.id, cursor.id)) {
-                start = i + 1;
-                found_id = true;
-            }
-        }
-    }
-
+    // Walk lines from the end and stop at the cursor id: the cursor sits at
+    // the newest message the agent has read, so pending messages are always
+    // in the tail, and the old forward scan parsed every record in the log on
+    // every agent turn even when nothing new had arrived. Messages are
+    // collected newest-first and reversed below, and the timestamp fallback
+    // applies only when the id was never found (a legacy {"ts":...} cursor, or
+    // retention trimmed the id away); once the id is found, log order is
+    // authoritative even when peer clocks move backwards.
+    var end = raw.len;
     var out: std.ArrayList(Message) = .empty;
-    for (all.items[start..]) |m| {
-        // Timestamp fallback supports the old {"ts":...} cursor and recovers
-        // if retention trimmed away the id. Once the id is found, log order is
-        // authoritative even when peer clocks move backwards.
-        if (!found_id and m.ts <= cursor.ts) continue;
+    var found_id = false;
+    var done = false;
+    while (end > 0 and !done) {
+        var start = end;
+        while (start > 0 and raw[start - 1] != '\n') start -= 1;
+        const line = raw[start..end];
+        end = if (start > 0) start - 1 else 0;
+        if (line.len == 0) continue;
+        const m = std.json.parseFromSliceLeaky(Message, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
+        if (cursor.id.len > 0 and std.mem.eql(u8, m.id, cursor.id)) {
+            found_id = true;
+            done = true;
+            continue;
+        }
         try out.append(arena, m);
-        if (out.items.len >= inbox_limit) break;
     }
+    std.mem.reverse(Message, out.items);
+    if (!found_id) {
+        var kept: std.ArrayList(Message) = .empty;
+        for (out.items) |m| {
+            if (m.ts <= cursor.ts) continue;
+            try kept.append(arena, m);
+        }
+        out = kept;
+    }
+    if (out.items.len > inbox_limit) out.items.len = inbox_limit;
     return out.toOwnedSlice(arena);
 }
 
