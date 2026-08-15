@@ -1714,7 +1714,7 @@ dialog.slack-dialog.pf-v6-c-modal-box {
   font-variant-numeric: tabular-nums; letter-spacing: 0.02em; line-height: 1.5;
   opacity: 1;
 }
-.run-metrics { margin: 0.3rem 0 0; }
+.run-metrics { margin: 0.3rem 0 0; overflow-wrap: anywhere; }
 .run-metrics[hidden] { display: none; }
 .knowledge-badge {
   display: none; margin: 0.35rem 0 0; padding: 0.35rem 0.55rem;

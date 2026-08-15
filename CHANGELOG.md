@@ -63,10 +63,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 - A run-metrics line under the composer, DeepSeek-harness style: turns,
   steps, LLM time vs tool-call time, average time-to-first-token,
-  completion tok/s, cache hit rate, and input/output token counts. TTFT
-  is newly measured (`types.ChatResponse.ttft_ms`, streaming only) and
-  folded into `RunStats`; steps and the LLM/tool time split are derived
-  client-side from the existing `tool_call`/`tool_result` stream events.
+  completion tok/s, cache hit rate, and input/output token counts. The
+  strip ticks while a turn is running (wall clock and step count every
+  200ms, client TTFT on the first stream delta) and accumulates across
+  turns until New chat, a session switch, or reload. Token totals,
+  cache hit rate, and tok/s wait for the server `done` event. TTFT is
+  also measured server-side (`types.ChatResponse.ttft_ms`, streaming
+  only) and folded into `RunStats` when that event arrives.
 - The Models view can add, edit, and remove a configured model, not only
   save a catalog snippet: `POST /api/config/model/set` table-replaces a
   full field set (temperature, cost overrides, capabilities, etc.) into

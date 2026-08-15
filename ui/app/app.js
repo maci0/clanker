@@ -31,6 +31,7 @@ import { loadModelsView as modelsLoadView, bindModels as modelsBind } from "./fe
 import { loadScheduleView as scheduleLoadView, bindSchedule as scheduleBind } from "./features/schedule.js";
 import { loadSearchView as searchLoadView, bindSearch as searchBind, bindSearchDeps as searchDeps } from "./features/search.js";
 import { createAnswerHead, ANSWER_LABEL } from "./core/ai-disclosure.js";
+import { applyDoneStats, beginLiveTurn, emptyRunMetrics, formatRunMetrics, liveElapsedMs, noteFirstToken } from "./core/run-metrics.js";
 
 /* CSP blocks inline onload handlers, so PatternFly stays media=print until
    this module runs. Flip to all as soon as the sheet is ready so first paint
@@ -362,6 +363,7 @@ el.newChat.addEventListener("click", function () {
   // reload to make it selectable.
   renderSessionOptions(knownSessions);
   el.sessionStatus.textContent = "Started a new conversation.";
+  resetSessionMetrics();
   syncControls();
   autoGrow();
   el.task.focus();
@@ -852,6 +854,7 @@ function switchSession(id, jump) {
   // conversation being opened rather than the one being left.
   flushDraft();
   sessionId = id;
+  resetSessionMetrics();
   el.task.value = "";
   try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
   renderSessionChip();
@@ -1053,6 +1056,7 @@ function startElapsed(startedAt) {
   stopElapsed();
   function tick() {
     el.hint.textContent = runWaitLabel + " · " + ((Date.now() - startedAt) / 1000).toFixed(1) + "s";
+    paintRunMetrics();
   }
   tick();
   elapsedTimer = window.setInterval(tick, 200);
@@ -1779,19 +1783,18 @@ function handleSlashDocFile(task){
 }
 
 // ---- session status bar: goal / tool-call / sub-agent / todos receipt ----
-// Reflects the turn currently streaming, or the last one that did — not the
+// Reflects the turn currently streaming, or the last one that did, not the
 // whole session's history. Resets on every new submit; nothing here is
 // persisted, so a reload clears it the same way the live caret does.
+// sessionMetrics is the opposite: it accumulates across turns in this
+// tab until New chat, a session switch, or reload.
 var statusToolCalls = 0;
 var statusSubagentCalls = 0;
-var runSteps = 0;
-var runToolMs = 0;
+var sessionMetrics = emptyRunMetrics();
 
 function resetSessionStatusBar() {
   statusToolCalls = 0;
   statusSubagentCalls = 0;
-  runSteps = 0;
-  runToolMs = 0;
   if (!el.sessionStatusBar) return;
   el.sessionStatusBar.hidden = false;
   [el.statusGoal, el.statusTools, el.statusSubagent, el.statusTodos].forEach(function (chip) {
@@ -1799,42 +1802,17 @@ function resetSessionStatusBar() {
   });
 }
 
-/* Compact token counts: DeepSeek's own strip reads "4.6M tok" / "73.9K tok",
-   not a locale-grouped "4,632,904" that would not fit one line. */
-function fmtTok(n) {
-  if (typeof n !== "number" || !isFinite(n)) return "0";
-  var abs = Math.abs(n);
-  if (abs >= 1e6) return (n / 1e6).toFixed(1) + "M";
-  if (abs >= 1e3) return (n / 1e3).toFixed(1) + "K";
-  return String(Math.round(n));
+function resetSessionMetrics() {
+  sessionMetrics = emptyRunMetrics();
+  paintRunMetrics();
 }
 
-function renderRunMetrics(stats) {
+function paintRunMetrics() {
   if (!el.runMetrics) return;
-  if (typeof stats.ms !== "number") { el.runMetrics.hidden = true; return; }
-  var turns = el.transcript ? el.transcript.querySelectorAll(".turn").length : 0;
-  // +1: the final answer-producing iteration never fires a tool_call event,
-  // so runSteps alone undercounts by exactly the one step every turn has.
-  var steps = runSteps + 1;
-  var llmMs = Math.max(stats.ms - runToolMs, 0);
-  var parts = [];
-  parts.push(fmtInt(turns) + " turn" + (turns === 1 ? "" : "s") + " · " + fmtInt(steps) + " step" + (steps === 1 ? "" : "s"));
-  parts.push("LLM " + fmtMs(llmMs) + " · Tool call " + fmtMs(runToolMs));
-  var bits2 = [];
-  if (typeof stats.ttft_samples === "number" && stats.ttft_samples > 0) {
-    bits2.push("TTFT avg " + fmtMs(stats.ttft_ms_total / stats.ttft_samples));
-  }
-  var completion = typeof stats.completion_tokens === "number" ? stats.completion_tokens : 0;
-  if (stats.ms > 0) bits2.push((completion / (stats.ms / 1000)).toFixed(0) + " tok/s");
-  if (bits2.length) parts.push(bits2.join(" · "));
-  var hit = typeof stats.cache_hit_tokens === "number" ? stats.cache_hit_tokens : 0;
-  var miss = typeof stats.cache_miss_tokens === "number" ? stats.cache_miss_tokens : 0;
-  if (hit + miss > 0) parts.push("Cache hit " + ((hit / (hit + miss)) * 100).toFixed(0) + "%");
-  if (typeof stats.prompt_tokens === "number" && typeof stats.completion_tokens === "number") {
-    parts.push("Input " + fmtTok(stats.prompt_tokens) + " tok · Output " + fmtTok(stats.completion_tokens) + " tok");
-  }
-  el.runMetrics.textContent = parts.join(" | ");
-  el.runMetrics.hidden = false;
+  var line = formatRunMetrics(sessionMetrics, Date.now());
+  el.runMetrics.textContent = line;
+  el.runMetrics.hidden = !line;
+  el.runMetrics.setAttribute("aria-live", sessionMetrics.live ? "off" : "polite");
 }
 
 function setStatusGoal(goalId) {
@@ -1907,6 +1885,8 @@ el.form.addEventListener("submit", function (e) {
   showCaret(turn, true);
   turn.root.setAttribute("data-live", "true");
   var startedAt = Date.now();
+  beginLiveTurn(sessionMetrics, startedAt);
+  paintRunMetrics();
   runWaitLabel = "thinking";
   startElapsed(startedAt);
   controller = new AbortController();
@@ -1936,8 +1916,8 @@ el.form.addEventListener("submit", function (e) {
     if (line.charCodeAt(0) === 1) {
       var evt;
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
-      if (evt.type === "tool_call") { addToolEvent(turn, evt.names, evt.calls); setTurnPhase(turn, "tool"); if (evt.names) { runWaitLabel = "running " + evt.names; pushLiveNode("tool", evt.names, evt.names, 0); } bumpStatusTools(evt.calls); runSteps += 1; }
-      else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); runWaitLabel = "thinking"; if (typeof evt.ms === "number") runToolMs += evt.ms; if(evt.ms){
+      if (evt.type === "tool_call") { addToolEvent(turn, evt.names, evt.calls); setTurnPhase(turn, "tool"); if (evt.names) { runWaitLabel = "running " + evt.names; pushLiveNode("tool", evt.names, evt.names, 0); } bumpStatusTools(evt.calls); sessionMetrics.liveSteps += 1; paintRunMetrics(); }
+      else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); runWaitLabel = "thinking"; if (typeof evt.ms === "number") { sessionMetrics.liveToolMs += evt.ms; paintRunMetrics(); } if(evt.ms){
         var last = liveGraph.nodes[liveGraph.nodes.length-1]; if(last && last.kind==="tool") last.duration_ms = evt.ms;
       }}
       // The run's own private checklist (features/todos.js): pushed whenever a
@@ -1954,7 +1934,8 @@ el.form.addEventListener("submit", function (e) {
       else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + errorRecoveryHint(evt.message) + "]\n", true); setTurnPhase(turn, ""); pushLiveNode("tool", evt.message, "error", 0); }
       else if (evt.type === "done") {
         renderStats(turn, evt, task);
-        renderRunMetrics(evt);
+        applyDoneStats(sessionMetrics, evt);
+        paintRunMetrics();
         statsRendered = true;
         setTurnPhase(turn, "");
         pushLiveNode("final", "done", "done", evt.ms||0);
@@ -1962,6 +1943,10 @@ el.form.addEventListener("submit", function (e) {
       return;
     }
     var stick = nearBottom();
+    if (sessionMetrics.live && sessionMetrics.liveTtftMs == null) {
+      noteFirstToken(sessionMetrics, Date.now());
+      paintRunMetrics();
+    }
     appendText(turn, line + "\n", false);
     // live markdown: throttled incremental render while streaming
     if (!turn._mdThrottle) { turn._mdThrottle = 0; turn._lastMD = ""; }
@@ -2078,7 +2063,11 @@ el.form.addEventListener("submit", function (e) {
     // A turn appended under an active filter showed regardless of whether it
     // matched, and the count line then contradicted the screen.
     if (el.turnFilter.value.trim()) applyTurnFilter();
+    if (sessionMetrics.live) {
+      applyDoneStats(sessionMetrics, { ms: liveElapsedMs(sessionMetrics, Date.now()) });
+    }
     stopElapsed();
+    paintRunMetrics();
     controller = null;
     // Stop is about to be hidden; take focus back to the composer rather
     // than letting it drop to <body>.
