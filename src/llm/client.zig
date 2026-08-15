@@ -15,6 +15,7 @@ const config = @import("../config.zig");
 const log = @import("../util/log.zig");
 const redact = @import("../util/redact.zig");
 const token_stats = @import("../stats/tokens.zig");
+const rate_limit = @import("rate_limit.zig");
 const build_options = @import("build_options");
 
 /// Reported to providers as the `User-Agent` header. Built from
@@ -226,6 +227,7 @@ pub fn chat(
     var outcome: FetchOutcome = undefined;
     while (true) {
         attempt += 1;
+        try rate_limit.waitFor(ctx.io, ctx.gpa, provider);
         outcome = doFetch(ctx, &client, url, body, cred, impl, provider, arena, err_detail) catch |err| {
             if (attempt < max_attempts and isRetryableTransport(err)) {
                 noteRetry();
@@ -589,6 +591,7 @@ pub fn chatStream(
     defer if (ctx.abort) |a| a.disarm(ctx.io);
 
     noteRequest();
+    try rate_limit.waitFor(ctx.io, ctx.gpa, provider);
 
     var headers = baseHeaders();
     var extra: providers.ExtraHeaders = undefined;

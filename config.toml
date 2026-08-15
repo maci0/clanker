@@ -34,6 +34,10 @@ default_provider = "moonshotai"
 # # 0 = no ceiling.
 # check_timeout_seconds = 3
 #
+# # Self-imposed requests per minute for every model on this provider.
+# # A model's own rpm is a separate cap, not an override of this one.
+# rpm = 40
+#
 # # vertex and vertex_anthropic: the GCP project and region serving the
 # # model. Credential is service_account_file, gcloud ADC
 # # (`gcloud auth application-default login`), or api_key_env.
@@ -109,6 +113,7 @@ base_url = "http://127.0.0.1:8000/v1"
 #                                # modalities
 # category = "fast"              # free-form grouping for the model pickers
 #                                # (flagship, fast, reasoning, cheap, ...)
+# rpm = 40                       # self-imposed requests per minute; omit = none
 #
 # One default model per provider. Extra SKUs go in config.local.toml.
 # Context, max output, cost, display, and capabilities are filled from

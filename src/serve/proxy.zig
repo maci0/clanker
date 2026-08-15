@@ -12,6 +12,7 @@ const auth = @import("../llm/auth.zig");
 const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
 const token_stats = @import("../stats/tokens.zig");
+const rate_limit = @import("../llm/rate_limit.zig");
 const log = @import("../util/log.zig");
 const raw_http = @import("../util/raw_http.zig");
 const anthropic = @import("../llm/providers/anthropic.zig");
@@ -326,6 +327,8 @@ fn pipe(
         watch.stop.store(true, .release);
         if (watcher) |t| t.join();
     }
+
+    rate_limit.waitFor(ctx.io, ctx.gpa, provider) catch return error.ConnectFailed;
 
     var req = http_client.request(method, uri, .{
         .redirect_behavior = .unhandled,

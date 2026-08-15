@@ -8799,6 +8799,7 @@ fn handleConfigDefault(io: std.Io, gpa: std.mem.Allocator, body: []const u8, str
 fn renderModelConfigBlock(arena: std.mem.Allocator, provider_name: []const u8, name: []const u8, obj: std.json.ObjectMap) ![]const u8 {
     var fields: std.ArrayList([]const u8) = .empty;
     if (fieldStr(obj, "id")) |sku| try fields.append(arena, try std.fmt.allocPrint(arena, "id = {s}", .{try tomlQuoted(arena, sku)}));
+    if (jsonNum(obj, "rpm")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "rpm = {d}", .{@as(i64, @intFromFloat(v))}));
     if (jsonNum(obj, "context_window")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "context_window = {d}", .{@as(i64, @intFromFloat(v))}));
     if (jsonNum(obj, "max_tokens")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "max_tokens = {d}", .{@as(i64, @intFromFloat(v))}));
     if (jsonNum(obj, "temperature")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "temperature = {d}", .{v}));
@@ -9037,6 +9038,10 @@ fn handleProviders(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         s.write(entry.key_ptr.*) catch return;
         s.objectField("default_model") catch return;
         s.write(prov.default_model) catch return;
+        if (prov.rpm) |r| {
+            s.objectField("rpm") catch return;
+            s.write(r) catch return;
+        }
         s.objectField("models") catch return;
         s.beginArray() catch return;
         var mit = prov.models.iterator();
@@ -9083,6 +9088,10 @@ fn handleProviders(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
             if (m.value_ptr.category.len > 0) {
                 s.objectField("category") catch return;
                 s.write(m.value_ptr.category) catch return;
+            }
+            if (m.value_ptr.rpm) |r| {
+                s.objectField("rpm") catch return;
+                s.write(r) catch return;
             }
             s.endObject() catch return;
         }

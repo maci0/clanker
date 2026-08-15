@@ -141,6 +141,9 @@ pub const Model = struct {
     /// /model picker, and the CLI. Purely presentational: never sent to a
     /// provider. Empty sorts last within its provider.
     category: []const u8 = "",
+    /// Self-imposed requests per minute for this local name. Null or 0 is
+    /// unlimited. Independent of the provider's own `rpm` (both apply).
+    rpm: ?u32 = null,
 
     /// The name the provider API wants. `key` is the table-key name.
     pub fn wireName(self: Model, key: []const u8) []const u8 {
@@ -176,6 +179,11 @@ pub const Provider = struct {
 
     /// azure_openai only: the `api-version` query. Empty uses the kind default.
     api_version: []const u8 = "",
+
+    /// Self-imposed requests per minute shared by every model on this
+    /// provider. Null or 0 is unlimited. A model's own `rpm` is a separate
+    /// cap on that name, not an override of this one.
+    rpm: ?u32 = null,
 
     /// How long `providers check` waits for this endpoint before giving up on
     /// it, overriding `agent.provider_check_timeout_seconds` for this provider
@@ -1209,6 +1217,7 @@ pub const Config = struct {
             "service_account_file",
             "path",
             "default_model",
+            "rpm",
             "check_timeout_seconds",
             // Legacy names: flagged with a dedicated error below, not a warning.
             "model",
@@ -1271,6 +1280,9 @@ pub const Config = struct {
         }
         if (obj.get("default_model")) |k| {
             p.default_model = try jsonStr(k, "default_model");
+        }
+        if (obj.get("rpm")) |k| {
+            p.rpm = try jsonUnsigned(u32, k, "rpm");
         }
         if (obj.get("check_timeout_seconds")) |k| {
             const secs = try jsonInt(k, "check_timeout_seconds");
@@ -1444,6 +1456,7 @@ pub const Config = struct {
             "cost_per_1m_output",
             "capabilities",
             "category",
+            "rpm",
         }, name);
         if (obj.get("id")) |k| m.id = try jsonStr(k, "id");
         if (obj.get("context_window")) |k| {
@@ -1476,6 +1489,7 @@ pub const Config = struct {
             m.capabilities = try caps.toOwnedSlice(arena);
         }
         if (obj.get("category")) |k| m.category = try jsonStr(k, "category");
+        if (obj.get("rpm")) |k| m.rpm = try jsonUnsigned(u32, k, "rpm");
         return m;
     }
 

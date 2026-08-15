@@ -1247,6 +1247,10 @@ fn writeModelJson(s: *std.json.Stringify, m: *const config_mod.Model, provider: 
         try s.objectField("category");
         try s.write(m.category);
     }
+    if (m.rpm) |r| {
+        try s.objectField("rpm");
+        try s.write(r);
+    }
     try s.endObject();
 }
 

@@ -9,6 +9,7 @@ const auto_learn = @import("agent/auto_learn.zig");
 const subprocess = @import("agent/subprocess.zig");
 const host = @import("sandbox/host.zig");
 const vertex_token = @import("llm/vertex_token.zig");
+const rate_limit = @import("llm/rate_limit.zig");
 const config = @import("config.zig");
 
 // `clanker repl` (src/tui/repl.zig) puts the terminal in raw mode with
@@ -37,6 +38,7 @@ comptime {
     _ = @import("llm/registry.zig");
     _ = @import("llm/catalog.zig");
     _ = @import("llm/models_dev.zig");
+    _ = @import("llm/rate_limit.zig");
     _ = @import("llm/providers/api.zig");
     _ = @import("llm/providers/common.zig");
     _ = @import("llm/sampling_profiles.zig");
@@ -159,6 +161,7 @@ pub fn main(init: std.process.Init) !void {
     defer subprocess.deinitProcessRegistry();
     defer if (host.zig_lib_dir.len > 0) gpa.free(host.zig_lib_dir);
     defer vertex_token.deinit(init.io, gpa);
+    defer rate_limit.deinit(init.io, gpa);
     std.posix.setrlimit(.STACK, .{ .cur = std.math.maxInt(u64), .max = std.math.maxInt(u64) }) catch {};
     const arena = init.arena.allocator();
 

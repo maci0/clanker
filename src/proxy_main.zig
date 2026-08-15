@@ -17,6 +17,7 @@ const log = @import("util/log.zig");
 const dotenv = @import("util/dotenv.zig");
 const raw_http = @import("util/raw_http.zig");
 const vertex_token = @import("llm/vertex_token.zig");
+const rate_limit = @import("llm/rate_limit.zig");
 const build_options = @import("build_options");
 
 const default_host = "127.0.0.1";
@@ -33,6 +34,7 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     defer vertex_token.deinit(io, gpa);
+    defer rate_limit.deinit(io, gpa);
     conn_gpa = gpa;
 
     var host: []const u8 = init.environ_map.get("CLANKER_HOST") orelse default_host;

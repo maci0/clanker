@@ -14,6 +14,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Omitted `context_window`, `max_tokens`, cost, display, and capabilities
   are filled from the models.dev snapshot at load. A written value always
   wins. Load does not download the snapshot.
+- `rpm` on a `[providers.*]` or `[models."..."]` table is a self-imposed
+  requests-per-minute cap. Clanker waits before sending so it does not
+  exceed the window. A model cap and a provider cap both apply when set.
 - `zig build proxy` builds `clanker-proxy`, the OpenAI/Anthropic
   compatibility proxy as a standalone binary: same `config.toml` /
   `config.local.toml`, `/v1` at the root, `[serve] proxy_token_env`

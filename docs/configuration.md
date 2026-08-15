@@ -78,6 +78,7 @@ unconfigured one.
 | `default_model` | string | Which of this provider's models is active by default. |
 | `path` | string | Override the endpoint path (rarely needed). |
 | `check_timeout_seconds` | int | How long `providers check` waits for this endpoint before giving up, overriding the global `agent.provider_check_timeout_seconds`. `0` = no ceiling. |
+| `rpm` | int | Self-imposed requests per minute for every model on this provider. Omit or `0` = no cap. A model's own `rpm` is a separate cap on that name, not an override. |
 | `project`, `location`, `service_account_file` | string | `vertex` and `vertex_anthropic` (see below). `service_account_file` is optional when gcloud ADC is present. |
 | `api_version` | string | `azure_openai` only. The `api-version` query. Empty uses `2024-10-21`. |
 
@@ -260,6 +261,7 @@ alias can keep its own `max_tokens` while inheriting the SKU's window.
 | `cost_per_1m_output` | float | models.dev `cost.output` | USD per 1M output tokens. Omit to take the snapshot. |
 | `capabilities` | string[] | models.dev reasoning/tool_call/modalities | `"tool_use"`, `"image_in"`, `"video_in"`, `"audio_in"`, `"thinking"`, `"always_thinking"`. Self-documents what the model supports. A model that declares its capabilities but omits `image_in` is treated as non-vision: the webui refuses image attachments to it up front (instead of sending `image_url` blocks that a text-only endpoint such as DeepSeek v4-flash rejects), so declare `image_in` on any model that accepts images. An empty list is filled from the snapshot; a written list is kept as-is. |
 | `category` | string | `""` | Free-form grouping (`"flagship"`, `"fast"`, `"reasoning"`, `"cheap"`, ...) used to sort/group the model list in the webui picker, the TUI's `/model` picker, and the CLI. Purely presentational, never sent to a provider. Empty sorts last within its provider. |
+| `rpm` | int | unset | Self-imposed requests per minute for this local name. Omit or `0` = no cap. Independent of the provider's `rpm`; both apply when set. |
 
 ```toml
 [models."deepseek/deepseek-v4-pro"]
@@ -284,6 +286,7 @@ capabilities = ["thinking", "tool_use", "image_in", "video_in"]
 provider = "xai"
 id = "grok-4.6"
 temperature = 0.2
+rpm = 40
 
 [models."xai/grok4.6-general"]
 provider = "xai"
