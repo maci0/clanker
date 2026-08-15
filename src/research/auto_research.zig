@@ -60,7 +60,11 @@ pub const Loop = struct {
         };
         defer run_lock.close(io);
         var id_buf: [64]u8 = undefined;
-        var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1))));
+        // Seed the run-id RNG from the Io seam (io.random) rather than the
+        // wall clock, so a simulated Io yields a reproducible run id.
+        var seed: [8]u8 = undefined;
+        std.Io.random(io, &seed);
+        var prng = std.Random.DefaultPrng.init(std.mem.bytesToValue(u64, &seed));
         const id = std.fmt.bufPrint(&id_buf, "ar-{d}-{x}", .{ @as(i64, @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000))), prng.random().int(u64) & 0xffff }) catch "ar-fallback";
         const owned_id = try gpa.dupe(u8, id);
         defer gpa.free(owned_id);

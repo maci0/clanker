@@ -2043,8 +2043,11 @@ const name_adjectives = [_][]const u8{ "shiny", "rusty", "chrome", "cosmic", "at
 const name_nouns = [_][]const u8{ "bender", "clamps", "calculon", "flexo", "crushinator", "hedonismbot", "roberto", "donbot", "preacherbot", "cogsworth", "servo", "gearbot", "rustbucket", "widget", "clunker", "tinman", "sparky", "rustbolt", "boltface", "mechbot" };
 
 fn friendlyInstanceName(arena: std.mem.Allocator, io: std.Io) !struct { name: []const u8, id: []const u8 } {
-    const ts: u64 = @intCast(std.Io.Timestamp.now(io, .real).nanoseconds);
-    var prng = std.Random.DefaultPrng.init(ts ^ (ts >> 32));
+    // Entropy comes from the Io seam (io.random), not the wall clock, so a
+    // simulated Io with a seeded RNG yields a reproducible instance identity.
+    var seed: [8]u8 = undefined;
+    std.Io.random(io, &seed);
+    var prng = std.Random.DefaultPrng.init(std.mem.bytesToValue(u64, &seed));
     const r = prng.random();
     const adj = name_adjectives[r.uintLessThan(usize, name_adjectives.len)];
     const noun = name_nouns[r.uintLessThan(usize, name_nouns.len)];
