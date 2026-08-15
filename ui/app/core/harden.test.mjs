@@ -416,6 +416,9 @@ test("Search and Create channel use a primary CTA", function () {
   assert.match(html, /id="chat-create-confirm"[^>]*class="primary"|class="primary"[^>]*id="chat-create-confirm"/);
   assert.match(html, /id="chat-create-confirm"[^>]*>Create channel</);
   assert.match(html, /id="config-editor-save"[^>]*class="primary"|class="primary"[^>]*id="config-editor-save"/);
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  assert.match(app, /btn\.className = "primary"/);
+  assert.match(app, /btn\.textContent = "Create a channel"/);
 });
 
 test("Fleet empty roster points at System Config instead of the phonebook", function () {

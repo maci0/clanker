@@ -3568,7 +3568,7 @@ function showRoomsComposerLocked(message, offerCreate) {
   if (offerCreate && el.chatCreateRoomBtn) {
     var btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "secondary";
+    btn.className = "primary";
     btn.textContent = "Create a channel";
     btn.addEventListener("click", function () { el.chatCreateRoomBtn.click(); });
     box.appendChild(btn);
