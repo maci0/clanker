@@ -34,9 +34,9 @@ pub const Workspace = struct {
     created: i64 = 0,
 };
 
-/// A workspace id is what sessions store. Same alphabet as a session id's
-/// cousin `validWorkspace` in cli.zig: no separators, no controls, so the
-/// rail cannot lie about nesting and the id can never be a path.
+/// A workspace id is what sessions store. No separators, no controls, so the
+/// rail cannot lie about nesting and the id can never be a path. HTTP and
+/// session-tag callers that allow the empty default workspace wrap this.
 pub fn validName(name: []const u8) bool {
     if (name.len == 0 or name.len > max_name_len) return false;
     for (name) |c| {

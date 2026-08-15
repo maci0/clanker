@@ -2,30 +2,6 @@
 
 const std = @import("std");
 
-/// Appends a JSON string literal (quoted, escaped) to `out`.
-pub fn appendJsonString(arena: std.mem.Allocator, out: *std.ArrayList(u8), s: []const u8) !void {
-    try out.append(arena, '"');
-    for (s) |c| {
-        switch (c) {
-            '"' => try out.appendSlice(arena, "\\\""),
-            '\\' => try out.appendSlice(arena, "\\\\"),
-            '\n' => try out.appendSlice(arena, "\\n"),
-            '\r' => try out.appendSlice(arena, "\\r"),
-            '\t' => try out.appendSlice(arena, "\\t"),
-            0x08 => try out.appendSlice(arena, "\\b"),
-            0x0c => try out.appendSlice(arena, "\\f"),
-            0x00...0x07, 0x0b, 0x0e...0x1f => {
-                try out.appendSlice(arena, "\\u00");
-                const hex = "0123456789abcdef";
-                try out.append(arena, hex[c >> 4]);
-                try out.append(arena, hex[c & 0x0f]);
-            },
-            else => try out.append(arena, c),
-        }
-    }
-    try out.append(arena, '"');
-}
-
 /// Non-empty string field from a plugin/tool descriptor config object.
 pub fn pluginStr(cfg_value: std.json.Value, key: []const u8) ?[]const u8 {
     if (cfg_value != .object) return null;
@@ -124,24 +100,6 @@ test "json field helpers" {
     try std.testing.expectEqual(@as(f64, 3.0), try floatField(obj, "count"));
     try std.testing.expectError(error.FieldNotNumber, floatField(obj, "name"));
     try std.testing.expectError(error.MissingField, floatField(obj, "missing"));
-}
-
-test "appendJsonString escapes all JSON control characters" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var out: std.ArrayList(u8) = .empty;
-    try appendJsonString(arena, &out, "a\x00b\x08c\x0cd\x1fe");
-    try std.testing.expectEqualStrings("\"a\\u0000b\\bc\\fd\\u001fe\"", out.items);
-
-    out.clearRetainingCapacity();
-    try appendJsonString(arena, &out, "\x01\x0b\x0e\x1f");
-    try std.testing.expectEqualStrings("\"\\u0001\\u000b\\u000e\\u001f\"", out.items);
-
-    out.clearRetainingCapacity();
-    try appendJsonString(arena, &out, "clean");
-    try std.testing.expectEqualStrings("\"clean\"", out.items);
 }
 
 test "pluginStr and pluginU32 fall back to null on missing, empty, or wrong-typed fields" {

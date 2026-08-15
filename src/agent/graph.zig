@@ -59,22 +59,15 @@ pub const output_preview_cap = 4000;
 /// preview is deliberately roomier than the output preview.
 pub const arguments_preview_cap = 8000;
 
-/// Bounds a recorded preview to `cap` bytes.
-/// When the cap cuts through a UTF-8 codepoint, backs up to the start of
-/// that codepoint so the preview never ends with a dangling continuation byte
-/// (which would corrupt the JSON or UI rendering).
-pub fn previewCap(s: []const u8, cap: usize) []const u8 {
-    return utf8.cap(s, cap);
-}
-
 /// Bounds a node's recorded output to `output_preview_cap` bytes.
+/// `utf8.cap` backs up if the cut would split a codepoint.
 pub fn truncatedPreview(s: []const u8) []const u8 {
-    return previewCap(s, output_preview_cap);
+    return utf8.cap(s, output_preview_cap);
 }
 
 /// Bounds a node's recorded arguments to `arguments_preview_cap` bytes.
 pub fn truncatedArgs(s: []const u8) []const u8 {
-    return previewCap(s, arguments_preview_cap);
+    return utf8.cap(s, arguments_preview_cap);
 }
 
 pub const Graph = struct {

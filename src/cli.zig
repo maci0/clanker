@@ -7435,8 +7435,7 @@ fn handleAsk(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
 /// hear that rather than fill memory.
 const steer_message_cap = 16;
 const goal_id_cap = 64;
-/// Same cap as isSlug enforces on a session id, so any session that could
-/// exist fits.
+/// Same cap as session.validSessionId, so any session that could exist fits.
 const session_id_cap = 64;
 
 /// A steer slot is occupied when either a goal or a session is set: a goal
@@ -9507,19 +9506,8 @@ const WebuiPluginPost = struct {
     enabled: ?bool = null,
 };
 
-/// Shared shape check for filesystem-facing identifiers (plugin names,
-/// session ids): non-empty, bounded, and limited to characters that cannot
-/// traverse a path. Traversal is refused outright, not sanitised.
-fn isSlug(s: []const u8) bool {
-    if (s.len == 0 or s.len > 64) return false;
-    for (s) |c| {
-        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
-    }
-    return true;
-}
-
 fn validPluginName(name: []const u8) bool {
-    return isSlug(name);
+    return session.validSessionId(name);
 }
 
 test validPluginName {
@@ -10089,7 +10077,7 @@ fn handleSessions(
         // n (1-based) and continues in a copy, the per-turn branch a chat
         // UI offers. The numeric suffix is handled before id validation, for
         // the same reason the fork suffix is: "<id>/branch/<n>" contains
-        // separators and would never pass isSlug.
+        // separators and would never pass session.validSessionId.
         if (std.mem.eql(u8, method, "POST")) {
             if (branchSuffix(id)) |branch| {
                 const src_id = branch.src;
@@ -10902,12 +10890,9 @@ fn handlePlugins(
 /// compared, and a name carrying separators or control characters would make
 /// the rail lie about what is nested in what.
 fn validWorkspace(name: []const u8) bool {
-    if (name.len > 64) return false;
-    for (name) |c| {
-        if (c < 0x20 or c == 0x7f) return false;
-        if (c == '/' or c == '\\') return false;
-    }
-    return true;
+    // Empty is the default workspace (serve cwd). Any other id uses the
+    // alphabet workspace.zig owns, not a restated copy.
+    return name.len == 0 or workspace_mod.validName(name);
 }
 
 test validWorkspace {
@@ -10972,7 +10957,7 @@ fn handleWorkspaces(
 
     if (rest.len > 1 and rest[0] == '/') {
         const id = rest[1..];
-        if (!validWorkspace(id) or id.len == 0) {
+        if (!workspace_mod.validName(id)) {
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid workspace\"}");
             return;
         }
@@ -11384,7 +11369,7 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
 /// per-sync file cap cannot distinguish a deleted file from an unseen one, and
 /// deleting on that reading is the one failure here that loses data.
 fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, col_id: []const u8, body: []const u8, stream: std.Io.net.Stream) void {
-    if (!isSlug(col_id)) {
+    if (!session.validSessionId(col_id)) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad collection id\"}");
         return;
     }
@@ -11823,7 +11808,7 @@ fn handleSchedule(
     const rest = path["/api/schedule".len..];
     if (std.mem.eql(u8, method, "POST")) {
         const id = if (rest.len > 1 and rest[0] == '/') rest[1..] else "";
-        if (!isSlug(id)) {
+        if (!session.validSessionId(id)) {
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad entry id\"}");
             return;
         }

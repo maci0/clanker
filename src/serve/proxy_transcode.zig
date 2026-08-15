@@ -905,7 +905,7 @@ fn jsonF64(v: ?json.Value) ?f64 {
     };
 }
 
-fn jsonU32(v: ?json.Value) ?u32 {
+pub fn jsonU32(v: ?json.Value) ?u32 {
     return switch (v orelse return null) {
         .integer => |i| if (i >= 0 and i <= std.math.maxInt(u32)) @intCast(i) else null,
         else => null,

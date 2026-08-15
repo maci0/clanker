@@ -647,13 +647,19 @@ pub fn latestSessionId(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ?
 /// The compaction budget a session is trimmed to before every save.
 pub const max_session_tokens = 128 * 1024;
 
-fn estimatedTokens(message: types.Message) usize {
+/// Chars/4, rounded up. Short strings are not free. One function so
+/// save-time trim, mid-turn compaction, and the context meter cannot drift.
+pub fn estimateTextTokens(bytes: usize) usize {
+    if (bytes == 0) return 0;
+    return bytes / 4 + @intFromBool(bytes % 4 != 0);
+}
+
+pub fn estimatedTokens(message: types.Message) usize {
     var bytes: usize = if (message.content) |content| content.len else 0;
     if (message.tool_calls) |calls| {
         for (calls) |call| bytes +|= call.arguments.len;
     }
-    // Round up so short messages and short tool arguments are not free.
-    return bytes / 4 + @intFromBool(bytes % 4 != 0);
+    return estimateTextTokens(bytes);
 }
 
 /// Drops oldest non-system messages until the estimated token count fits under
@@ -779,6 +785,13 @@ test "compactMessages counts tool-call arguments toward the token estimate" {
     try std.testing.expectEqual(types.Role.system, messages.items[0].role);
     try std.testing.expectEqual(types.Role.user, messages.items[1].role);
     try std.testing.expectEqualStrings("bbbb", messages.items[1].content.?);
+}
+
+test "estimateTextTokens rounds up so short strings are not free" {
+    try std.testing.expectEqual(@as(usize, 0), estimateTextTokens(0));
+    try std.testing.expectEqual(@as(usize, 1), estimateTextTokens(1));
+    try std.testing.expectEqual(@as(usize, 1), estimateTextTokens(4));
+    try std.testing.expectEqual(@as(usize, 2), estimateTextTokens(5));
 }
 
 test "estimatedTokens rounds up so short messages are not free" {

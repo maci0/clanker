@@ -18,13 +18,14 @@
 //!   * Cache hit rate is dropped when the provider reported no cache
 //!     accounting at all, rather than shown as `cache 0%`.
 //!
-//! The context meter estimates history at bytes/4, the same chars-per-token
-//! heuristic `session.compactMessages` compacts against and the web UI's own
-//! context meter divides by (`core/composer.js`'s `contextLabel`), so the
-//! REPL's percentage and the browser's agree on the same conversation.
+//! The context meter uses `session.estimatedTokens`, the same per-message
+//! chars/4 `session.compactMessages` trims against. The web composer's
+//! "about N%" label is a cheaper total-bytes/4 of the session file, close
+//! enough for a percentage, not a second budget.
 
 const std = @import("std");
 const types = @import("../llm/types.zig");
+const session = @import("../agent/session.zig");
 
 /// Everything one completed turn is worth reporting. Zero-valued fields are
 /// omitted from the rendered line rather than printed as zeroes (see the
@@ -288,11 +289,12 @@ pub fn historyBytes(messages: []const types.Message) usize {
     return n;
 }
 
-/// The same chars/4 estimate `session.compactMessages` budgets against. It is
-/// a heuristic, not a tokenizer: the meter says "roughly how full", and being
-/// exactly right would need a per-provider tokenizer clanker does not carry.
+/// The same per-message chars/4 estimate `session.compactMessages` budgets
+/// against. A heuristic, not a tokenizer: the meter says "roughly how full".
 pub fn historyTokens(messages: []const types.Message) usize {
-    return historyBytes(messages) / 4;
+    var n: usize = 0;
+    for (messages) |m| n +|= session.estimatedTokens(m);
+    return n;
 }
 
 /// How many mid-turn compactions a conversation carries, and how many
@@ -515,7 +517,8 @@ test "historyBytes counts tool-call arguments, not just content" {
         .{ .role = .user, .content = "abcde" },
     };
     try std.testing.expectEqual(@as(usize, 16), historyBytes(&msgs));
-    try std.testing.expectEqual(@as(usize, 4), historyTokens(&msgs));
+    // Per-message ceil(bytes/4): sys 3 -> 1, args 8 -> 2, user 5 -> 2.
+    try std.testing.expectEqual(@as(usize, 5), historyTokens(&msgs));
 }
 
 test "summaryState finds both placeholder spellings and lifts the count out" {

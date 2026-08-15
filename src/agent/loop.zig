@@ -29,6 +29,7 @@ const hooks_config = @import("../hooks/config.zig");
 const hooks_runner = @import("../hooks/runner.zig");
 const thinking = @import("thinking.zig");
 const ttsr = @import("ttsr.zig");
+const session = @import("session.zig");
 
 /// Process-local RED counters for tool invocations. No per-tool labels: the
 /// tally in state/tool_usage.json and the correlated logs carry that detail.
@@ -1281,25 +1282,19 @@ pub const Agent = struct {
         try base.writeFile(io, .{ .sub_path = reasoning_path, .data = out.items });
     }
 
-    /// Estimates the number of LLM tokens for a text string using the
-    /// chars/4 heuristic (conservative approximation of BPE tokenization).
-    /// Used for compaction thresholds and pre-call logging so decisions
-    /// track actual model context limits instead of arbitrary byte counts.
-    fn estimateTokens(text: []const u8) usize {
-        return @max(text.len / 4, if (text.len > 0) @as(usize, 1) else 0);
-    }
-
     /// Estimates the total token count across all messages in the conversation.
+    /// Per-message overhead (role, separators) is extra on top of the shared
+    /// chars/4 text estimate, so mid-turn compaction fires a little before
+    /// the raw-text budget that `session.compactMessages` uses.
     fn estimateMessageTokens(messages: []const types.Message) usize {
         var total: usize = 0;
         for (messages) |m| {
-            // Per-message overhead (role, separators) ~4 tokens.
             total += 4;
-            if (m.content) |c| total += estimateTokens(c);
+            if (m.content) |c| total += session.estimateTextTokens(c.len);
             if (m.tool_calls) |calls| {
                 for (calls) |tc| {
-                    total += estimateTokens(tc.arguments);
-                    total += estimateTokens(tc.name);
+                    total += session.estimateTextTokens(tc.arguments.len);
+                    total += session.estimateTextTokens(tc.name.len);
                 }
             }
         }

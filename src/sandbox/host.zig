@@ -373,26 +373,24 @@ fn fsPrefixesFor(
 /// Builds the `config` object handed to an exec-capable tool, merging its
 /// descriptor config with the harness's exec policy (git_remote_ops,
 /// exec_pattern_allow). Non-exec tools keep their own config untouched. The
-/// extra keys are inert to a tool that does not read `config`. The JSON is
-/// built by hand because it is small and controlled, and avoids relying on
-/// std.json.Stringify's serialization of a nested string slice.
+/// extra keys are inert to a tool that does not read `config`.
 pub fn execPolicyConfig(
     arena: std.mem.Allocator,
     tool_config: []const u8,
     cfg: *const config_mod.Config,
 ) ![]const u8 {
     _ = tool_config; // git.zig / gh.zig carry no descriptor config of their own.
-    var out: std.ArrayList(u8) = .empty;
-    try out.append(arena, '{');
-    try out.appendSlice(arena, "\"git_remote_ops\":");
-    try out.appendSlice(arena, if (cfg.agent.git_remote_ops) "true" else "false");
-    try out.appendSlice(arena, ",\"exec_pattern_allow\":[");
-    for (cfg.agent.exec_pattern_allow, 0..) |p, i| {
-        if (i > 0) try out.append(arena, ',');
-        try json_util.appendJsonString(arena, &out, p);
-    }
-    try out.appendSlice(arena, "]}");
-    return out.toOwnedSlice(arena);
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("git_remote_ops");
+    try s.write(cfg.agent.git_remote_ops);
+    try s.objectField("exec_pattern_allow");
+    try s.beginArray();
+    for (cfg.agent.exec_pattern_allow) |p| try s.write(p);
+    try s.endArray();
+    try s.endObject();
+    return out.toOwnedSlice();
 }
 
 fn appendNetworkAllow(
