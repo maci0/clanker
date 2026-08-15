@@ -4602,12 +4602,15 @@ test "config.toml documents every key the loader accepts" {
     // down at all: a key added to the schema and not to the file is one
     // nobody outside this source file will ever find. Reflection over the
     // structs rather than a hand-kept list, so the guard cannot go stale the
-    // same way the file did. Resolved relative to this source file (src/),
-    // so it reaches the committed config.toml at the repo root. Plain
-    // @embedFile of a repo-root path keeps the file out of the exe: test
-    // blocks are only evaluated when the test artifact is built, never when
-    // the harness is.
-    const text = @embedFile("../config.toml");
+    // same way the file did. Read at test runtime from the process cwd (the
+    // repo root for `zig build test`, the staging worktree for the improve
+    // gate), so the file stays out of the exe: test blocks are only evaluated
+    // when the test artifact is built, never when the harness is. @embedFile
+    // of a repo-root path is refused by Zig 0.16 as outside the package path.
+    const text = std.fs.cwd().readFileAlloc(std.heap.page_allocator, "config.toml", 16 * 1024 * 1024) catch {
+        std.debug.print("config.toml unreadable\n", .{});
+        return error.ConfigTomlUnreadable;
+    };
 
     // Fields that are not config keys. `shared_root` is set by `run
     // --worktree` at runtime and deliberately unreadable from a file; the
