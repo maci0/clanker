@@ -175,7 +175,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   Served HTML rewrites assets to `/webui/~<8hex>/...` (content tag from the wasm +
   vendor embeds) so browsers cannot keep a stale module graph across rebuilds.
   `renderWebui` reads `zig-out/ui/app.wasm` with an 8 MiB cap (the guest embeds the
-  whole `ui/app` tree and has already crossed 1 MiB).
+  whole `ui/app` tree and has already crossed 1 MiB). `showView` treats an unknown
+  hash as Chat, so in-page jumps (System sections) scroll in JS rather than
+  linking to `#section-id`.
 
 ## WASM by default
 

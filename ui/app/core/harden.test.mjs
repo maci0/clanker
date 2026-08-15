@@ -212,6 +212,47 @@ test("empty log picker names the empty state", function () {
   assert.match(src, /logSelect\.disabled = true/);
 });
 
+test("rooms composer does not park a leftover hash in the text field", function () {
+  assert.doesNotMatch(css, /\.chat-composer::before\s*\{[^}]*content:\s*"#"/);
+  assert.match(css, /\.chat-composer\s*\{[^}]*flex-direction:\s*column/);
+});
+
+test("rooms message actions stay visible without hover", function () {
+  assert.match(css, /@media \(hover: none\)/);
+  assert.match(css, /\.chat-msg:not\(\.chat-msg-deleted\) \.chat-actions/);
+});
+
+test("rooms channel rows are 44px on coarse pointers", function () {
+  assert.match(css, /\.slack-room-item/);
+  assert.match(css, /pointer: coarse[\s\S]*\.slack-room-item/);
+});
+
+test("System view has an on-page jump list", function () {
+  assert.match(html, /class="system-jump"/);
+  assert.match(html, /data-system-jump="settings-section"/);
+  assert.match(html, /id="system-progress"/);
+  assert.match(html, /id="system-logs"/);
+});
+
+test("knowledge hint tells the reader to tick a collection", function () {
+  assert.match(html, /Tick a collection to include its documents in the next chat/);
+  assert.doesNotMatch(html, /inject documents/);
+  const kb = readFileSync(join(here, "../features/knowledge.js"), "utf8");
+  assert.match(kb, /Tick a collection to include its documents in the next chat/);
+});
+
+test("Board new-goal form sits behind a disclosure", function () {
+  assert.match(html, /id="board-create-fold"/);
+  const fold = html.slice(html.indexOf('id="board-create-fold"'), html.indexOf('id="card-form"'));
+  assert.match(fold, /id="goal-form"/);
+});
+
+test("rooms copy uses the shared copy feedback helper", function () {
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  assert.match(app, /copyText\(m\.text, copyBtn, "Copy"/);
+  assert.match(app, /function syncChatLogEmpty/);
+});
+
 test("accent pill is primary/#submit only, not every unmarked button", function () {
   assert.doesNotMatch(
     css,
