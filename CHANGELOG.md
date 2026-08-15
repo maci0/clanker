@@ -7,6 +7,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `zig build proxy` builds `clanker-proxy`, the OpenAI/Anthropic
+  compatibility proxy as a standalone binary: same `config.toml` /
+  `config.local.toml`, `/v1` at the root, `[serve] proxy_token_env`
+  auth, `--host` / `--port` flags with `CLANKER_HOST` /
+  `CLANKER_PROXY_PORT` fallbacks (default 127.0.0.1:17922). No web UI,
+  agent, TUI, or tool host is compiled in.
 - Vertex (`vertex` and `vertex_anthropic`) accepts Application Default
   Credentials from `gcloud auth application-default login` or
   `GOOGLE_APPLICATION_CREDENTIALS`, in addition to a service-account JSON

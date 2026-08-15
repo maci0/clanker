@@ -111,6 +111,28 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run clanker");
     run_step.dependOn(&run_cmd.step);
 
+    // ------------------------------------------------------------------ proxy
+    // `zig build proxy`: clanker-proxy, the compatibility proxy alone — no web
+    // UI, agent, TUI, or tool host, so none of the vaxis/zwasm/vendor deps.
+    // Not part of the default install; built only when asked for.
+    const proxy_exe = b.addExecutable(.{
+        .name = "clanker-proxy",
+        .use_llvm = true,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/proxy_main.zig"),
+            .target = exe_target,
+            .optimize = optimize,
+            .strip = optimize != .Debug,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "build_options", .module = build_options.createModule() },
+                .{ .name = "toml", .module = toml_mod },
+            },
+        }),
+    });
+    const proxy_step = b.step("proxy", "Build clanker-proxy (standalone compatibility proxy)");
+    proxy_step.dependOn(&b.addInstallArtifact(proxy_exe, .{}).step);
+
     // ------------------------------------------------------------------ tests
     // Tests run on the host's own architecture, so `zig build test` works on any
     // dev machine rather than only an x86_64 linux one. Deliberately not
