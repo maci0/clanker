@@ -57,7 +57,10 @@ const scratch_cap = if (@hasDecl(root, "input_scratch_cap")) root.input_scratch_
 /// the whole tool call without resetting, so this is the total a tool can pull
 /// in from the host per invocation. 64 KiB made this project's own source files
 /// unreadable. It is .bss, so it costs linear-memory pages and nothing on disk.
-const host_arena_cap = 1024 * 1024;
+/// A tool that makes many host calls in one invocation (a research sweep is a
+/// dozen HTTP fetches) can raise it in its root source; the whole module still
+/// has to fit in the runtime's 16 MiB of linear memory, out_cap included.
+const host_arena_cap = if (@hasDecl(root, "host_arena_cap")) root.host_arena_cap else 1024 * 1024;
 /// Bigger than the input and host-result buffers because a tool's output is
 /// the one thing that can legitimately be large: webui.zig JSON-encodes the
 /// whole embedded page through here. All three are `undefined`, so they cost

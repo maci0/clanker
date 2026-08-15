@@ -407,8 +407,15 @@ fn appendNetworkAllow(
     return list.toOwnedSlice(arena);
 }
 
+/// Tools whose whole job is reaching the open web, and which therefore read
+/// the operator's `web.allow` on top of the hosts their manifest names. The
+/// `research` sweep is one: its static hosts are the search and index APIs it
+/// calls itself, and a site the operator wants it to reach should be a config
+/// edit rather than a manifest edit.
 fn isResearchTool(name: []const u8) bool {
-    return std.mem.eql(u8, name, "fetch_web") or std.mem.eql(u8, name, "web_search");
+    return std.mem.eql(u8, name, "fetch_web") or
+        std.mem.eql(u8, name, "web_search") or
+        std.mem.eql(u8, name, "research");
 }
 
 test "execPolicyConfig injects git_remote_ops and exec_pattern_allow for exec tools" {
