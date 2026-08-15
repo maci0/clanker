@@ -4647,7 +4647,8 @@ el.chatForm.addEventListener("submit", function (e) {
     el.chatStatus.textContent = "Message is " + bytes + " bytes; the limit is " + chat_max_bytes + ".";
     return;
   }
-  el.chatSend.disabled = true;
+  chatSending = true;
+  syncChatSend();
   // /api/chat/send, not /api/chat/message: the latter is the inbound
   // endpoint peers post to, which only logs rooms this instance has already
   // joined. Sending appends locally and fans out to every peer, and joins
@@ -4662,7 +4663,8 @@ el.chatForm.addEventListener("submit", function (e) {
   }).catch(function (err) {
     el.chatStatus.textContent = "Could not send: " + err.message;
   }).finally(function () {
-    el.chatSend.disabled = false;
+    chatSending = false;
+    syncChatSend();
     el.chatText.focus();
   });
 });

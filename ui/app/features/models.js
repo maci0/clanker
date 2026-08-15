@@ -3,6 +3,7 @@
 // only (never the shared config.toml), after an explicit confirm.
 import { readJson, fmtInt } from "../core/utils.js";
 import { loadHljs } from "../core/vendor.js";
+import { showLoadError } from "../core/ui.js";
 
 function askConfirm(message, opts) {
   return import("../core/ui.js").then(function (mod) { return mod.uiConfirm(message, opts); });
@@ -374,8 +375,7 @@ function loadConfigured() {
       });
     })
     .catch(function (err) {
-      box.textContent = "";
-      box.appendChild(empty("Could not load providers: " + err.message));
+      showLoadError(box, "Could not load providers: " + err.message, loadConfigured);
     });
 }
 
@@ -670,8 +670,7 @@ function loadLive() {
       status(rows.length + " models from " + sel.value + ".");
     })
     .catch(function (err) {
-      out.textContent = "";
-      out.appendChild(empty("Could not list: " + err.message));
+      showLoadError(out, "Could not list: " + err.message, loadLive);
     })
     .finally(function () { btn.disabled = false; });
 }
@@ -720,8 +719,7 @@ function searchCatalog() {
       }
     })
     .catch(function (err) {
-      out.textContent = "";
-      out.appendChild(empty("Catalog search failed: " + err.message));
+      showLoadError(out, "Catalog search failed: " + err.message, searchCatalog);
     })
     .finally(function () { btn.disabled = false; });
 }

@@ -305,7 +305,21 @@ export function bindKnowledge(){
         searchOut.appendChild(row);
       });
       if(status) status.textContent=hits.length+(hits.length===1?" document.":" documents.");
-    }).catch(function(err){ if(searchOut) searchOut.textContent=err.message; if(status) status.textContent=err.message; });
+    }).catch(function(err){
+      var msg="Search failed: "+err.message;
+      if(searchOut){
+        searchOut.textContent="";
+        var failed=document.createElement("p");
+        failed.className="run-empty";
+        failed.appendChild(document.createTextNode(msg+" "));
+        var retry=document.createElement("button");
+        retry.type="button"; retry.className="secondary"; retry.textContent="Try again";
+        retry.addEventListener("click",doSearch);
+        failed.appendChild(retry);
+        searchOut.appendChild(failed);
+      }
+      if(status) status.textContent=msg;
+    });
   }
   if(searchBtn) searchBtn.addEventListener("click",doSearch);
   if(searchInput) searchInput.addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); doSearch(); } });

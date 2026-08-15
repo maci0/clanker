@@ -66,6 +66,10 @@
   font-family: var(--mono);
   font-size: var(--step--1);
 }
+@media (max-width: 40rem) {
+  /* Plugin sheets load after the host 16px phone guard. */
+  .files-filter { font-size: 16px; }
+}
 .files-filter:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .files-toggle-btn { font-family: var(--mono); letter-spacing: .05em; }
 .files-toggle-btn.active { border-color: var(--accent); color: var(--accent); }

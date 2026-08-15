@@ -243,7 +243,11 @@ clanker.registerView({
       focusIdx = -1;
       list.textContent = "";
       var entries = visibleEntries();
-      emptyMsg.hidden = entries.length > 0 || filterText.length > 0;
+      var hiddenCount = 0;
+      if (!showHidden && !filterText) {
+        allEntries.forEach(function(e) { if (e.name.charAt(0) === ".") hiddenCount += 1; });
+      }
+      emptyMsg.hidden = true;
       if (!entries.length) {
         if (filterText) {
           var none = mk("p","files-empty");
@@ -258,6 +262,18 @@ clanker.registerView({
           });
           none.appendChild(clear);
           list.appendChild(none);
+        } else if (hiddenCount) {
+          var hidden = mk("p","files-empty");
+          hidden.appendChild(document.createTextNode(
+            hiddenCount === 1 ? "This folder has 1 hidden item. " : "This folder has " + hiddenCount + " hidden items. "
+          ));
+          var show = mk("button","files-clear-filter","Show hidden");
+          show.type = "button";
+          show.addEventListener("click", function() { hiddenBtn.click(); });
+          hidden.appendChild(show);
+          list.appendChild(hidden);
+        } else {
+          emptyMsg.hidden = false;
         }
         return;
       }

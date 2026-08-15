@@ -237,6 +237,21 @@ crept back outside `providers/`)**
   with no provider surface; pin: byte-stable ordering for prompt-cache
   hits must stay host-controlled.
 
+**Profiles (from DSH's launcher, 2026-08-16)**
+
+`dsh --profile <name>` boots an ordered stack of plugin-bundle patch
+layers under user overrides, with `--patch` for extra overlays and
+`--dump-config` to print the composed tree. Clanker already has the
+layering (`config.toml` < `config.local.toml` < env < flags) but no way
+to NAME a stack: a "web" profile vs a "headless" profile vs a
+"free-endpoints" profile is today a hand-swapped config.local.toml.
+Candidate shape: `clanker --profile <name>` reading
+`profiles/<name>.toml` as an extra overlay between config.local.toml
+and the environment, plus a `--dump-config` that prints the merged
+result (the config-doc test already proves the schema is reflectable).
+Cheap, composes with hot reload, and gives the plugin surfaces a way to
+ship curated bundles.
+
 **Verified clean / must stay core**
 
 `src/llm/client.zig` has zero kind-switches; every guest routes through
