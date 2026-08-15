@@ -133,8 +133,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             // double it, and truncating here would recreate the very blindness
             // failureWindow exists to fix.
             report.clearRetainingCapacity();
-            var w: std.Io.Writer = .{ .context = &report, .writeFn = appendWriteFn };
-            var s = std.json.Stringify{ .writer = &w, .options = .{} };
+            var w: std.Io.Writer.Allocating = .init(alloc);
+            defer w.deinit();
+            var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
             try s.beginObject();
             try s.objectField("ok");
             try s.write(false);
@@ -143,7 +144,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try s.objectField("text");
             try s.write(failureWindow(res));
             try s.endObject();
-            return out.writeAll(report.items);
+            return out.writeAll(w.written());
         }
         try report.appendSlice(alloc, gate);
         try report.appendSlice(alloc, " ok; ");
