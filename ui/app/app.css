@@ -716,10 +716,10 @@ button.model-pill {
   overflow: hidden;
 }
 /* The model name is a control label, not ambient chrome: --fg-muted alone
-   dips just under 4.5:1 on the density slice's #f4f4f5 surface, so both the
-   header chip and the composer pill pull the muted tone toward the main text
-   colour — dark enough on every light palette, bright enough on every dark
-   one, because both variables are per-theme. */
+   can sit near the 4.5:1 floor on a raised panel, so both the header chip
+   and the composer pill pull the muted tone toward the main text colour —
+   dark enough on every light palette, bright enough on every dark one,
+   because both variables are per-theme. */
 #header-model, button.model-pill { color: color-mix(in srgb, var(--fg-muted) 55%, var(--fg)); }
 button.model-pill:hover,
 button.model-pill:focus-visible {
@@ -3348,8 +3348,8 @@ button.rail-group:hover { color: var(--fg); }
   display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .rail-item-meta { display: block; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
-/* Same density-slice contrast fix as the model chips: --fg-muted alone sits
-   at 4.39:1 on the #f4f4f5 surface. */
+/* Same density-slice contrast fix as the model chips: --fg-muted alone can
+   sit near the 4.5:1 floor on a raised panel. */
 .rail-item-meta { color: color-mix(in srgb, var(--fg-muted) 55%, var(--fg)); }
 .rail-empty { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
 h2#session-title {
