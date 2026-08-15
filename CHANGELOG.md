@@ -23,6 +23,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Operator web UI pages (Runs, Fleet, Models, Board, Rooms, and the rest)
   fill the main column instead of sitting in Chat's ~46rem centered
   measure. Chat keeps that reading width.
+- Files view uses the full main column when no preview is open, and
+  filename / crumb / sort controls are no longer painted as 40px accent
+  pills by the host button rule.
 
 ### Added
 

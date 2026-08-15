@@ -1,6 +1,21 @@
 /* Files plugin — themed via CSS custom properties from the host page.
    All tokens (--space-*, --fg, --accent, etc.) are the page's own. */
 
+/* Host `button:where(:not(.pf-v6-c-button))` is a 40px accent pill (specificity
+   of a bare `button`). Every filename, crumb, and sort header matches that
+   unless this file resets it. #view-files button beats the host tag rule. */
+:where(#view-files) button:where(:not(.secondary)) {
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  font-weight: 500;
+  background: transparent;
+  color: inherit;
+}
+
 /* ─── breadcrumbs ─────────────────────────────────────────────────────────── */
 .files-crumbs {
   display: flex;
@@ -16,15 +31,17 @@
   font-size: var(--step--1);
 }
 .files-crumb {
-  padding: 2px var(--space-2);
+  padding: 0.1rem 0.25rem;
   border: 1px solid transparent;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--fg-muted);
   font-family: var(--mono);
   font-size: var(--step--1);
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
+  min-height: 28px;
 }
 .files-crumb:hover { border-color: var(--accent); color: var(--accent); }
 .files-crumb-here { color: var(--fg); font-weight: 600; cursor: default; }
@@ -53,16 +70,22 @@
 .files-toggle-btn { font-family: var(--mono); letter-spacing: .05em; }
 .files-toggle-btn.active { border-color: var(--accent); color: var(--accent); }
 
-/* ─── split panes ─────────────────────────────────────────────────────────── */
+/* ─── split panes ───────────────────────────────────────────────────────────
+   A closed preview used to leave the 1fr column empty (display:none still
+   reserves the 40% 1fr track), so the listing sat in a skinny strip. */
 .files-panes {
   display: grid;
-  grid-template-columns: 40% 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3);
   align-items: start;
+  width: 100%;
 }
-/* narrow: single column */
+.files-panes:has(.files-right:not([hidden])) {
+  grid-template-columns: minmax(16rem, 1fr) minmax(18rem, 1.15fr);
+}
 @media (max-width: 700px) {
-  .files-panes { grid-template-columns: 1fr; }
+  .files-panes,
+  .files-panes:has(.files-right:not([hidden])) { grid-template-columns: minmax(0, 1fr); }
 }
 .files-left  { min-width: 0; }
 .files-right { min-width: 0; }
@@ -77,14 +100,18 @@
   border-bottom: 1px solid var(--rule) !important;
 }
 .files-sort-btn {
-  padding: 2px var(--space-1);
+  justify-self: stretch;
+  padding: 0.15rem var(--space-1);
   border: none;
   background: transparent;
   color: var(--fg-muted);
   font-size: var(--step--1);
   font-family: var(--sans, inherit);
+  font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
+  min-height: 28px;
+  text-align: left;
 }
 .files-sort-btn:hover { color: var(--fg); }
 .files-sort-btn.active { color: var(--accent); font-weight: 600; }
@@ -103,10 +130,10 @@
 
 .files-row {
   display: grid;
-  grid-template-columns: 1.5rem 1fr 5rem 8rem;
+  grid-template-columns: 1.5rem minmax(8rem, 1fr) 6.5rem 10rem;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
+  padding: 0.2rem var(--space-2);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: var(--surface-2);
@@ -128,14 +155,18 @@
 
 .files-name { min-width: 0; overflow-wrap: anywhere; }
 .files-open {
+  display: block;
+  width: 100%;
   border: none;
   background: transparent;
   color: var(--fg);
   font-family: var(--mono);
   font-size: var(--step--1);
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
-  padding: 0;
+  padding: 0.15rem 0;
+  min-height: 28px;
   overflow-wrap: anywhere;
   word-break: break-all;
 }

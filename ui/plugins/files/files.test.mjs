@@ -1,0 +1,31 @@
+// Contract on the shipped Files stylesheet: the listing must not sit in a
+// leftover 40% track when the preview is closed, and plugin-local buttons
+// must beat the host's 40px accent-pill rule.
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const css = readFileSync(join(here, "app.css"), "utf8");
+const host = readFileSync(join(here, "../../app/app.css"), "utf8");
+
+test("host still paints a bare button as a tall pill", function () {
+  assert.match(host, /button:where\(:not\(\.pf-v6-c-button\)\)/);
+  assert.match(host, /min-height:\s*40px/);
+});
+
+test("Files listing fills the column until a preview is open", function () {
+  assert.match(css, /\.files-panes\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.doesNotMatch(
+    css,
+    /\.files-panes\s*\{[^}]*grid-template-columns:\s*40%\s+1fr/,
+  );
+  assert.match(css, /\.files-panes:has\(\.files-right:not\(\[hidden\]\)\)/);
+});
+
+test("Files buttons reset the host pill so filenames stay compact", function () {
+  assert.match(css, /:where\(#view-files\)\s*button:where\(:not\(\.secondary\)\)/);
+  assert.match(css, /\.files-open\s*\{[^}]*min-height:\s*28px/);
+});

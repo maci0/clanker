@@ -107,6 +107,11 @@ clanker.registerView({
     var openPath = "";
 
     // ── chrome ──
+    var head = mk("div", "section-head");
+    var title = mk("h2", null, this.title || "Files");
+    head.appendChild(title);
+    container.appendChild(head);
+
     var crumbs = mk("nav", "files-crumbs");
     crumbs.setAttribute("aria-label", "Breadcrumb");
     container.appendChild(crumbs);
