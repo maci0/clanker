@@ -6,7 +6,7 @@ var _picker = null;
 var _list = null;
 var _anchor = null;
 var _open = false;
-var _onChange = null;
+var _listeners = [];
 
 export function loadTheme() {
   var t = null;
@@ -103,6 +103,7 @@ function renderList(current) {
 
 function openPicker(anchor, current) {
   ensurePicker();
+  if (_anchor && _anchor !== anchor) _anchor.setAttribute("aria-expanded", "false");
   _anchor = anchor;
   _open = true;
   _picker.hidden = false;
@@ -125,18 +126,18 @@ function choose(name) {
   if (THEMES.indexOf(name) === -1) return;
   try { window.localStorage.setItem("clanker.theme", name); } catch (e) {}
   applyTheme(name);
-  if (_onChange) _onChange(name);
+  for (var i = 0; i < _listeners.length; i++) _listeners[i](name);
   closePicker();
 }
 
 export function bindThemeToggle(btn, onChange) {
   if (!btn) return;
-  _onChange = typeof onChange === "function" ? onChange : null;
+  if (typeof onChange === "function") _listeners.push(onChange);
   btn.setAttribute("aria-haspopup", "listbox");
   btn.setAttribute("aria-expanded", "false");
   btn.addEventListener("click", function (e) {
     e.preventDefault();
-    if (_open) closePicker();
+    if (_open && _anchor === btn) closePicker();
     else openPicker(btn, loadTheme());
   });
 }

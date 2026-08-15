@@ -93,6 +93,19 @@ test("theme toggle opens a list, not a cycle", function () {
   assert.doesNotMatch(themeSrc, /THEMES\.indexOf\(theme\) \+ 1/);
 });
 
+test("settings and palette choose a theme instead of cycling", function () {
+  assert.match(html, /id="settings-theme-cycle"[^>]*>Choose theme</);
+  assert.doesNotMatch(html, />Cycle theme</);
+  const pal = readFileSync(join(here, "palette.js"), "utf8");
+  assert.match(pal, /label: "Choose theme"/);
+  assert.doesNotMatch(pal, /Cycle theme/);
+});
+
+test("voice input copy matches click-to-start behavior", function () {
+  assert.match(html, /id="voice-btn"[^>]*title="Voice input \(click to start\)"/);
+  assert.doesNotMatch(html, /hold or click/);
+});
+
 test("phone composer suggestions and attachment remove are 44px", function () {
   assert.match(css, /#view-chat \.suggestion \{ min-height: 44px/);
   assert.match(css, /\.attachment button \{[\s\S]*min-height: 44px/);
@@ -109,6 +122,8 @@ test("empty transcript names the new conversation, not Idle", function () {
   const empty = html.slice(html.indexOf('id="transcript-empty"'), html.indexOf('id="transcript-empty"') + 280);
   assert.match(empty, />New conversation</);
   assert.doesNotMatch(empty, />Idle</);
+  assert.match(html, /id="session-title">New conversation</);
+  assert.match(html, /id="chat-channel-title">Loading…</);
 });
 
 test("conversation filter says it matches titles", function () {

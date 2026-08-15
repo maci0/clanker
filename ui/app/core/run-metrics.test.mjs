@@ -101,6 +101,7 @@ test("app.js ticks the strip from rAF and stream usage events", function () {
   assert.match(app, /function startElapsed[\s\S]*paintRunMetrics\(/);
   assert.match(app, /function switchSession[\s\S]*resetSessionMetrics\(/);
   assert.match(app, /evt\.type === "usage"/);
+  assert.match(app, /This visit/);
   assert.doesNotMatch(app, /function renderRunMetrics\(/);
   assert.doesNotMatch(app, /function fmtTok\(/);
 });

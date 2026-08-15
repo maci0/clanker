@@ -1444,12 +1444,11 @@ textarea:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent);
 }
 .composer .toolbar { border-top-color: color-mix(in srgb, var(--rule) 35%, transparent); }
 .composer .toolbar #submit { border-radius: 999px; padding-inline: 1rem; min-height: 34px; font-size: 13px; }
-/* Send is a labeled "↑ Run" pill (rule above); Stop swaps into its spot as
-   a circle while a turn runs. aspect-ratio keeps the circle square when the
-   touch media queries raise min-height to 44px. */
+/* Send is a labeled "↑ Run" pill; Stop swaps into its spot as a matching
+   labeled pill so the control still names the action while a turn runs. */
 .composer .toolbar #cancel {
   display: inline-flex; align-items: center; justify-content: center;
-  min-height: 36px; aspect-ratio: 1; padding: 0; border-radius: 50%;
+  gap: 0.35rem; min-height: 36px; padding-inline: 1rem; border-radius: 999px;
 }
 .composer .toolbar #submit { display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; }
 .composer .toolbar #submit svg,
@@ -1725,6 +1724,7 @@ dialog.slack-dialog.pf-v6-c-modal-box {
 }
 .run-metrics[hidden] { display: none; }
 .run-metrics-cell { white-space: nowrap; }
+.run-metrics-scope { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
 .knowledge-badge {
   display: none; margin: 0.35rem 0 0; padding: 0.35rem 0.55rem;
   border: 1px dashed var(--rule); border-radius: 8px; background: var(--surface-2);

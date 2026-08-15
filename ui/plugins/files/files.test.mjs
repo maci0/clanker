@@ -32,6 +32,7 @@ test("Files filter empty state offers to clear the filter", function () {
   const js = readFileSync(join(here, "app.js"), "utf8");
   assert.match(js, /files-clear-filter/);
   assert.match(js, /Clear filter/);
+  assert.match(js, /Filter by name/);
   assert.match(css, /\.files-clear-filter\s*\{/);
 });
 

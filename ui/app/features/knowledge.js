@@ -20,7 +20,8 @@ function refreshBadge(){
   badge.style.display="block";
   // Reuse knowledge hint text when available
   var hint = document.getElementById("knowledge-hint");
-  var msg = hint ? hint.textContent : (selectedKnowledge.length + " collection(s) will be included in the next prompt.");
+  var n = selectedKnowledge.length;
+  var msg = hint ? hint.textContent : (n + (n === 1 ? " collection" : " collections") + " will be included in the next prompt.");
   badge.textContent = msg + " ";
   var clear = document.createElement("button");
   clear.type="button"; clear.className="secondary knowledge-badge-clear"; clear.textContent="Clear";
@@ -30,7 +31,10 @@ function refreshBadge(){
 function updateHint(){
   var hint=document.getElementById("knowledge-hint");
   if(!hint) return;
-  hint.textContent = selectedKnowledge.length ? selectedKnowledge.length+" collection(s) will be included in the next prompt." : "No knowledge selected. Check collections to inject documents into the next chat.";
+  var n = selectedKnowledge.length;
+  hint.textContent = n
+    ? n + (n === 1 ? " collection" : " collections") + " will be included in the next prompt."
+    : "No knowledge selected. Check collections to inject documents into the next chat.";
 }
 export function loadKnowledge(){
   var status=document.getElementById("knowledge-status");

@@ -33,7 +33,7 @@ export function paletteEntries() {
   out.push({ kind: "action", label: "Fork this conversation", run: function () { _el.sessionFork.click(); } });
   out.push({ kind: "action", label: "Compact this conversation", run: function () { _el.sessionCompact.click(); } });
   out.push({ kind: "action", label: "Export this conversation as Markdown", run: function () { _el.sessionExport.click(); } });
-  out.push({ kind: "action", label: "Cycle theme", run: function () { _el.themeToggle.click(); } });
+  out.push({ kind: "action", label: "Choose theme", run: function () { _el.themeToggle.click(); } });
   out.push({ kind: "action", label: "Keyboard shortcuts", run: function () { overlayOpen(_el.help, _el.helpClose); } });
   _refs.knownSessionsHolder.list.forEach(function (s) {
     out.push({ kind: "chat", label: _refs.sessionLabel(s), run: function () { _showView("chat", false); _switchSession(s.id); } });

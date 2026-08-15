@@ -349,7 +349,11 @@ var applyTheme = applyThemeMod;
 
 var theme = loadTheme();
 applyTheme(theme);
-bindThemeToggleMod(el.themeToggle, function (next) { theme = next; });
+bindThemeToggleMod(el.themeToggle, function (next) {
+  theme = next;
+  var themeLabel = document.getElementById("settings-theme-label");
+  if (themeLabel) themeLabel.textContent = next;
+});
 
 el.newChat.addEventListener("click", function () {
   if (busy) return;
@@ -1989,24 +1993,26 @@ function paintRunMetrics() {
   var parts = formatRunMetricsParts(sessionMetrics, Date.now());
   el.runMetrics.hidden = !parts.length;
   el.runMetrics.setAttribute("aria-live", sessionMetrics.live ? "off" : "polite");
+  el.runMetrics.title = "This visit only. Reloading or opening another conversation clears these numbers.";
   if (!parts.length) {
     el.runMetrics.textContent = "";
     return;
   }
+  var cells = [{ key: "scope", text: "This visit" }].concat(parts);
   var kids = el.runMetrics.children;
-  if (kids.length !== parts.length) {
+  if (kids.length !== cells.length) {
     el.runMetrics.textContent = "";
-    parts.forEach(function (p) {
+    cells.forEach(function (p) {
       var s = document.createElement("span");
-      s.className = "run-metrics-cell";
+      s.className = "run-metrics-cell" + (p.key === "scope" ? " run-metrics-scope" : "");
       s.setAttribute("data-m", p.key);
       s.textContent = p.text;
       el.runMetrics.appendChild(s);
     });
     return;
   }
-  for (var i = 0; i < parts.length; i++) {
-    if (kids[i].textContent !== parts[i].text) kids[i].textContent = parts[i].text;
+  for (var i = 0; i < cells.length; i++) {
+    if (kids[i].textContent !== cells[i].text) kids[i].textContent = cells[i].text;
   }
 }
 
@@ -4986,7 +4992,7 @@ function syncScrollButton() { scrollSyncButton(el.transcript, el.scrollBottom, s
 uiAdd(el.scrollBottom, icon("deposit", 14));
 el.submit.textContent = "";
 uiAdd(el.submit, icon("arrowUp", 16), document.createTextNode("Run"));
-uiAdd(el.cancel, icon("stop", 14));
+uiAdd(el.cancel, icon("stop", 14), document.createTextNode("Stop"));
 el.scrollBottom.addEventListener("click", function () {
   scrollChatLatest(prefersReducedMotion() ? "auto" : "smooth");
   el.task.focus();
@@ -5666,12 +5672,8 @@ try {
   (function(){
     var themeCycle = document.getElementById("settings-theme-cycle");
     var themeLabel = document.getElementById("settings-theme-label");
-    var headerCycle = document.getElementById("theme-toggle");
-    function syncThemeLabel(){
-      try { themeLabel.textContent = theme; } catch(_){}
-    }
-    if (themeCycle) themeCycle.addEventListener("click", function(){ if(headerCycle) headerCycle.click(); setTimeout(syncThemeLabel, 0); });
-    syncThemeLabel();
+    if (themeCycle) bindThemeToggleMod(themeCycle);
+    if (themeLabel) themeLabel.textContent = theme;
     // session/status mirrors
     function syncSessionMirror(){
       try {
@@ -5744,7 +5746,10 @@ function renderKbMentionList() {
         el.promptList.hidden = true;
         el.task.focus();
         var hint = document.getElementById("knowledge-hint");
-        if (hint) hint.textContent = kbSelected.length + " collection(s) will be included in the next prompt.";
+        if (hint) {
+          var n = kbSelected.length;
+          hint.textContent = n + (n === 1 ? " collection" : " collections") + " will be included in the next prompt.";
+        }
       });
       el.promptList.appendChild(li);
     });

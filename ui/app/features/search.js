@@ -132,7 +132,7 @@ function render() {
   if (!state.hits.length) {
     var none = document.createElement("p");
     none.className = "run-empty";
-    none.textContent = "No conversation says “" + state.query + "”.";
+    none.textContent = "No conversation says “" + state.query + "”. Try another phrase, or filter titles in the sidebar.";
     list.appendChild(none);
     if (status) status.textContent = "No matches.";
     return;

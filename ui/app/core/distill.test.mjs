@@ -31,6 +31,12 @@ test("submit is a labeled Run control", function () {
   assert.match(html, /id="submit"[^>]*>Run</);
 });
 
+test("cancel is a labeled Stop pill, not an icon-only circle", function () {
+  const app = readFileSync(join(here, "..", "app.js"), "utf8");
+  assert.match(app, /createTextNode\("Stop"\)/);
+  assert.doesNotMatch(css, /\.composer \.toolbar #cancel \{[^}]*aspect-ratio:\s*1/);
+});
+
 test("Board filters sit behind a disclosure and Only mine is singular", function () {
   assert.match(html, /class="board-filter-fold"/);
   assert.match(html, /Saves a Backlog card/);

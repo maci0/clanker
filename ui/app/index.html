@@ -150,8 +150,8 @@ lamps carry further). The seven named palettes ride the same tokens.
       <div class="rail-workspace-bar">
         <label class="sr-only" for="workspace-pick">Workspace</label>
         <select id="workspace-pick" title="Workspace"></select>
-        <button type="button" class="rail-ws-btn" id="workspace-new" title="New workspace">+</button>
-        <button type="button" class="rail-ws-btn" id="workspace-remove" title="Remove this workspace" hidden>−</button>
+        <button type="button" class="rail-ws-btn" id="workspace-new" title="New workspace" aria-label="New workspace">+</button>
+        <button type="button" class="rail-ws-btn" id="workspace-remove" title="Remove this workspace" aria-label="Remove this workspace" hidden>−</button>
       </div>
       <button type="button" class="rail-new" id="new-chat">New chat</button>
       <label class="sr-only" for="session-filter">Filter conversations by title</label>
@@ -207,7 +207,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <!-- A heading, not the kicker this used to be: it names the conversation
          rather than labelling the row beneath it. -->
     <div class="section-head">
-      <h2 id="session-title">…</h2>
+      <h2 id="session-title">New conversation</h2>
       <div class="run-picker" id="session-picker">
         <div class="session-actions">
           <div class="session-acts-body" id="session-acts-body">
@@ -321,7 +321,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           </label>
             </div>
           </details>
-          <button type="button" class="secondary" id="voice-btn" title="Voice input (hold or click)" aria-label="Voice input"></button>
+          <button type="button" class="secondary" id="voice-btn" title="Voice input (click to start)" aria-label="Voice input (click to start)"></button>
           <button type="button" class="secondary danger" id="cancel" hidden
                   title="Stop the running turn" aria-label="Stop the running turn"></button>
           <button type="submit" class="primary" id="submit" disabled
@@ -527,7 +527,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <div class="slack-channel-header" id="chat-channel-header">
           <div class="slack-channel-name">
             <button type="button" class="slack-sidebar-toggle" id="chat-sidebar-toggle" title="Toggle sidebar" aria-label="Toggle sidebar"></button>
-            <span id="chat-channel-title">…</span>
+            <span id="chat-channel-title">Loading…</span>
             <span class="slack-channel-topic" id="chat-channel-topic"></span>
           </div>
           <div class="slack-channel-actions">
@@ -968,10 +968,10 @@ lamps carry further). The seven named palettes ride the same tokens.
         <div class="settings-panel">
           <div class="settings-panel-title">Appearance</div>
           <div class="settings-actions">
-            <button type="button" class="secondary" id="settings-theme-cycle">Cycle theme</button>
+            <button type="button" class="secondary" id="settings-theme-cycle" title="Choose theme" aria-haspopup="listbox" aria-expanded="false">Choose theme</button>
             <span class="meta" id="settings-theme-label">system</span>
           </div>
-          <div class="meta settings-note">Cycles through the header theme control's themes (single-user).</div>
+          <div class="meta settings-note">Same themes as the header control. Local to this browser.</div>
         </div>
         <div class="settings-panel">
           <div class="settings-panel-title">Chat history</div>

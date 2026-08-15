@@ -122,7 +122,7 @@ clanker.registerView({
 
     var filterInput = mk("input", "files-filter");
     filterInput.type = "search";
-    filterInput.placeholder = "Filter…";
+    filterInput.placeholder = "Filter by name…";
     filterInput.setAttribute("aria-label", "Filter entries");
     toolbar.appendChild(filterInput);
 
