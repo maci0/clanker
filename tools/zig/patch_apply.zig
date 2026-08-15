@@ -12,6 +12,9 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const patch_logic = @import("patch_logic.zig");
+
+const patchOnce = patch_logic.patchOnce;
 
 const Change = struct {
     file: []const u8 = "",
@@ -56,29 +59,4 @@ fn applyOne(c: Change) !void {
     const patched = try patchOnce(lib.alloc, text, c.old, replacement);
     defer lib.alloc.free(patched);
     return lib.fsWrite(c.file, patched);
-}
-
-/// Replaces the first occurrence of `old` in `text` with `new`, or appends
-/// `new` when `old` is empty. Same semantics as the native patch applier it
-/// replaced: exact match, first occurrence only, never line-numbered.
-fn patchOnce(alloc: std.mem.Allocator, text: []const u8, old: []const u8, new: []const u8) ![]u8 {
-    if (old.len == 0) return std.mem.concat(alloc, u8, &.{ text, new });
-    const idx = std.mem.find(u8, text, old) orelse return error.OldTextNotFound;
-    return std.mem.concat(alloc, u8, &.{ text[0..idx], new, text[idx + old.len ..] });
-}
-
-test "patchOnce replaces only the first exact-match occurrence" {
-    const got = try patchOnce(std.testing.allocator, "hello world world", "world", "zig");
-    defer std.testing.allocator.free(got);
-    try std.testing.expectEqualStrings("hello zig world", got);
-}
-
-test "patchOnce appends when old is empty" {
-    const got = try patchOnce(std.testing.allocator, "hello", "", " world");
-    defer std.testing.allocator.free(got);
-    try std.testing.expectEqualStrings("hello world", got);
-}
-
-test "patchOnce fails when old text is not found" {
-    try std.testing.expectError(error.OldTextNotFound, patchOnce(std.testing.allocator, "hello", "xyz", "new"));
 }

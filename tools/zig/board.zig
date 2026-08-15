@@ -25,16 +25,18 @@ const std = @import("std");
 const lib = @import("lib.zig");
 const cards = @import("cards.zig");
 
-/// The room a board lives in when the caller does not name one. A room per
-/// board, so a team can keep more than one without them bleeding together.
-const default_room = "board";
-
 /// The guest asks for history in pages because the host answers into a 64 KB
 /// buffer, and a fold needs the whole log rather than its tail. The cap stops
 /// a pathological log from looping forever; a board that reaches it is reported
 /// rather than silently truncated, since a partial fold would quietly resurrect
-/// deleted cards and lose moves.
-const max_pages = 64;
+/// deleted cards and lose moves. Owned by cards.zig (host-tested) so the guard
+/// ships next to the tests that pin it.
+const max_pages = cards.max_pages;
+const pageCapExceeded = cards.pageCapExceeded;
+
+/// The room a board lives in when the caller does not name one. A room per
+/// board, so a team can keep more than one without them bleeding together.
+const default_room = "board";
 
 const Req = struct {
     op: []const u8 = "",
@@ -77,10 +79,6 @@ const History = struct {
     messages: []const cards.Message = &.{},
     has_more: bool = false,
 };
-
-fn pageCapExceeded(pages_read: usize, has_more: bool) bool {
-    return pages_read >= max_pages and has_more;
-}
 
 const Sent = struct {
     ok: bool = false,
@@ -143,12 +141,6 @@ fn history(alloc: std.mem.Allocator, room: []const u8) ![]cards.Message {
         }
     }.lt);
     return all.items;
-}
-
-test "history page cap fails only when another page exists" {
-    try std.testing.expect(!pageCapExceeded(max_pages - 1, true));
-    try std.testing.expect(!pageCapExceeded(max_pages, false));
-    try std.testing.expect(pageCapExceeded(max_pages, true));
 }
 
 /// Appends one action to the room. The message id becomes the card id for an

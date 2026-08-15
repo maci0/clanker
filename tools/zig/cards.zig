@@ -670,12 +670,27 @@ pub fn checklistItemReady(card: *const Card, id: []const u8) bool {
     return false;
 }
 
+/// Room-history paging cap and its guard, shared with tools/zig/board.zig:
+/// pages are read oldest-first until an empty page, and an explicit failure
+/// only when a full page still has `has_more` (a full final page stays valid).
+pub const max_pages: usize = 64;
+
+pub fn pageCapExceeded(pages_read: usize, has_more: bool) bool {
+    return pages_read >= max_pages and has_more;
+}
+
 // ------------------------------------------------------------------- tests --
 
 const t_alloc = std.testing.allocator;
 
 fn msg(id: []const u8, from: []const u8, ts: i64, text: []const u8) Message {
     return .{ .room = "dev", .from = from, .text = text, .ts = ts, .id = id };
+}
+
+test "history page cap fails only when another page exists" {
+    try std.testing.expect(!pageCapExceeded(max_pages - 1, true));
+    try std.testing.expect(!pageCapExceeded(max_pages, false));
+    try std.testing.expect(pageCapExceeded(max_pages, true));
 }
 
 test "add + claim + close round-trip" {
