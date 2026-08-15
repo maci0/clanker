@@ -7,6 +7,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `reasoning_format` on a provider or model overrides how reasoning is
+  read out of a response: `auto` (the kind's native field), `think_tag`
+  (pull a leading `<think>...</think>` out of the content — the local
+  vLLM DeepSeek shape, vs the API's `reasoning_content` field), or
+  `none` (discard). An unclosed tag leaves the content untouched.
+- A model entry can override its endpoint: `base_url` and `path` on a
+  `[models."..."]` table point that one model at a different host or
+  route (a local vLLM beside the hosted API on the same provider entry).
+  URL only; auth still comes from the provider.
 - `tool_schema` and `thinking_schema` on a provider or model override the
   wire encoding for endpoints that deviate from the flat OpenAI shape:
   tools can be the standard array or omitted entirely (`"none"`), and the
@@ -153,12 +162,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - A run-metrics line under the composer, DeepSeek-harness style: turns,
   steps, LLM time vs tool-call time, average time-to-first-token,
   completion tok/s, cache hit rate, and input/output token counts. The
-  strip ticks while a turn is running (wall clock and step count every
-  200ms, client TTFT on the first stream delta) and accumulates across
-  turns until New chat, a session switch, or reload. Token totals,
-  cache hit rate, and tok/s wait for the server `done` event. TTFT is
-  also measured server-side (`types.ChatResponse.ttft_ms`, streaming
-  only) and folded into `RunStats` when that event arrives.
+  strip ticks every animation frame while a turn is running (wall clock,
+  steps, live tokens from mid-run `usage` events plus a chars/4 estimate
+  until the next official snapshot) and accumulates across turns until
+  New chat, a session switch, or reload. The vaxis REPL paints the same
+  strip on its last row, under the composer, and redraws it on the
+  stream tick (~33ms). TTFT is also measured server-side
+  (`types.ChatResponse.ttft_ms`, streaming only) and folded into
+  `RunStats` when that event arrives.
 - The Models view can add, edit, and remove a configured model, not only
   save a catalog snippet: `POST /api/config/model/set` table-replaces a
   full field set (temperature, cost overrides, capabilities, etc.) into

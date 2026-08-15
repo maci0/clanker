@@ -103,6 +103,25 @@ pub const ThinkingSchema = enum {
     }
 };
 
+/// How reasoning is read OUT of a response. The request side is
+/// `ThinkingSchema`; this is the parse side, because the same model can
+/// differ by host: the DeepSeek API returns a `reasoning_content` field
+/// while a local vLLM serving the same weights inlines `<think>...</think>`
+/// into the content.
+pub const ReasoningFormat = enum {
+    /// The provider's native reasoning field, as parsed today.
+    auto,
+    /// Extract a leading `<think>...</think>` block from the content into
+    /// the response's reasoning; the content keeps only what follows.
+    think_tag,
+    /// Discard reasoning entirely.
+    none,
+
+    pub fn fromStr(s: []const u8) ?ReasoningFormat {
+        return std.meta.stringToEnum(ReasoningFormat, s);
+    }
+};
+
 /// How a provider's credential is acquired, a separate axis from the wire
 /// kind, because one wire format can accept several (docs/adrs/0005). Left
 /// unset, each kind auto-detects from the credential's shape where the two
@@ -177,6 +196,12 @@ pub const Model = struct {
     /// provider's setting, then the kind default.
     tool_schema: ?ToolSchema = null,
     thinking_schema: ?ThinkingSchema = null,
+    reasoning_format: ?ReasoningFormat = null,
+    /// Endpoint override for this model alone: a different host serving the
+    /// same provider entry (empty keeps the provider's `base_url`) and a
+    /// different endpoint path (null keeps the provider's `path`/default).
+    base_url: []const u8 = "",
+    path: ?[]const u8 = null,
 
     /// The name the provider API wants. `key` is the table-key name.
     pub fn wireName(self: Model, key: []const u8) []const u8 {
@@ -221,6 +246,7 @@ pub const Provider = struct {
     /// Endpoint-wide wire encoding defaults; a model's own setting wins.
     tool_schema: ?ToolSchema = null,
     thinking_schema: ?ThinkingSchema = null,
+    reasoning_format: ?ReasoningFormat = null,
 
     /// How long `providers check` waits for this endpoint before giving up on
     /// it, overriding `agent.provider_check_timeout_seconds` for this provider
@@ -281,6 +307,22 @@ pub const Provider = struct {
     /// provider, then the flat `reasoning_effort` field.
     pub fn effectiveThinkingSchema(self: *const Provider) ThinkingSchema {
         return self.activeModel().thinking_schema orelse self.thinking_schema orelse .reasoning_effort;
+    }
+
+    /// How the active model's reasoning is read out of a response: model,
+    /// then provider, then the provider kind's native field.
+    pub fn effectiveReasoningFormat(self: *const Provider) ReasoningFormat {
+        return self.activeModel().reasoning_format orelse self.reasoning_format orelse .auto;
+    }
+
+    /// This provider with the active model's endpoint overrides folded in,
+    /// for URL building only — auth and everything else stay the provider's.
+    pub fn wireProvider(self: *const Provider) Provider {
+        var p = self.*;
+        const m = self.activeModel();
+        if (m.base_url.len > 0) p.base_url = m.base_url;
+        if (m.path) |mp| p.path = mp;
+        return p;
     }
 };
 
@@ -1269,6 +1311,7 @@ pub const Config = struct {
             "rpm",
             "tool_schema",
             "thinking_schema",
+            "reasoning_format",
             "check_timeout_seconds",
             // Legacy names: flagged with a dedicated error below, not a warning.
             "model",
@@ -1347,6 +1390,13 @@ pub const Config = struct {
             p.thinking_schema = ThinkingSchema.fromStr(s) orelse {
                 log.log(.error_, "provider '{s}': thinking_schema \"{s}\" is not one of \"reasoning_effort\", \"reasoning\", \"thinking\", \"none\"", .{ name, s });
                 return error.UnknownThinkingSchema;
+            };
+        }
+        if (obj.get("reasoning_format")) |k| {
+            const s = try jsonStr(k, "reasoning_format");
+            p.reasoning_format = ReasoningFormat.fromStr(s) orelse {
+                log.log(.error_, "provider '{s}': reasoning_format \"{s}\" is not one of \"auto\", \"think_tag\", \"none\"", .{ name, s });
+                return error.UnknownReasoningFormat;
             };
         }
         if (obj.get("check_timeout_seconds")) |k| {
@@ -1524,6 +1574,9 @@ pub const Config = struct {
             "rpm",
             "tool_schema",
             "thinking_schema",
+            "reasoning_format",
+            "base_url",
+            "path",
         }, name);
         if (obj.get("id")) |k| m.id = try jsonStr(k, "id");
         if (obj.get("context_window")) |k| {
@@ -1557,6 +1610,15 @@ pub const Config = struct {
                 return error.UnknownThinkingSchema;
             };
         }
+        if (obj.get("reasoning_format")) |k| {
+            const s = try jsonStr(k, "reasoning_format");
+            m.reasoning_format = ReasoningFormat.fromStr(s) orelse {
+                log.log(.error_, "models[\"{s}\"]: reasoning_format \"{s}\" is not one of \"auto\", \"think_tag\", \"none\"", .{ name, s });
+                return error.UnknownReasoningFormat;
+            };
+        }
+        if (obj.get("base_url")) |k| m.base_url = try jsonStr(k, "base_url");
+        if (obj.get("path")) |k| m.path = try jsonStr(k, "path");
         if (obj.get("display")) |k| m.display = try jsonStr(k, "display");
         if (obj.get("cost_per_1m_input")) |k| m.cost_per_1m_input = try jsonFloat(k, "cost_per_1m_input");
         if (obj.get("cost_per_1m_output")) |k| m.cost_per_1m_output = try jsonFloat(k, "cost_per_1m_output");

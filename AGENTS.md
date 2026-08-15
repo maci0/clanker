@@ -91,9 +91,10 @@ through a gated loop. Follow these conventions when changing this codebase.
   `builder.zig` (compiles WASM tools), `usage.zig` (tool call accounting).
   `builder.zig` is part of the anti-cheat boundary.
 - `src/tui/` — libvaxis-backed REPL (`clanker repl`), syntax highlighting,
-  theme, transcript rendering, control-character sanitizing, per-turn stats,
-  terminal width tracking, and the optional mascot (`mascot.zig`, off by
-  default). The mascot's frames are generated, not hand-written:
+  theme, transcript rendering, control-character sanitizing, per-turn stats
+  plus a last-row session strip (`turn_stats.writeSession`, same fields as
+  the web `#run-metrics`), terminal width tracking, and the optional mascot
+  (`mascot.zig`, off by default). The mascot's frames are generated, not hand-written:
   `src/tui/mascot/gen_frames.py` turns the source gif into
   `mascot_frames.zig` (three cell grids) plus the pngs the kitty-graphics path
   transmits, and only needs rerunning when the artwork changes.

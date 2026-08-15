@@ -2177,32 +2177,70 @@ const Model = struct {
         self.maybeFoldReply(reply_start);
         bridge_stream_buf.clearRetainingCapacity();
 
+        // Fold live session-strip counters before resetting them. finishTurn
+        // runs while `bridge_streaming` is still true (the UI thread clears
+        // that after join); draw treats `bridge_live_started_ns == 0` as
+        // idle so the same numbers are not added twice in that window.
+        const official = if (turn) |t| t.accounted() else false;
+        const wall_ms: u64 = if (turn) |t| t.wall_ms else liveElapsedMs();
+        self.session_steps +|= bridge_live_steps +| 1;
+        self.session_tool_ms +|= bridge_live_tool_ms;
+        self.session_llm_ms +|= wall_ms -| bridge_live_tool_ms;
+        if (official) {
+            const t = turn.?;
+            self.session_tokens +|= t.prompt_tokens +| t.completion_tokens;
+            if (t.cost_usd) |c| self.session_cost = (self.session_cost orelse 0) + c;
+            self.session_prompt +|= t.prompt_tokens;
+            self.session_completion +|= t.completion_tokens;
+            self.session_cache_hit +|= t.cache_hit_tokens;
+            self.session_cache_miss +|= t.cache_miss_tokens;
+        } else {
+            self.session_tokens +|= bridge_live_prompt +| bridge_live_completion;
+            self.session_prompt +|= bridge_live_prompt;
+            self.session_completion +|= bridge_live_completion;
+            self.session_cache_hit +|= bridge_live_cache_hit;
+            self.session_cache_miss +|= bridge_live_cache_miss;
+        }
+        if (bridge_live_ttft_samples > 0) {
+            self.session_ttft_ms +|= bridge_live_ttft_total;
+            self.session_ttft_n +|= bridge_live_ttft_samples;
+        } else if (bridge_live_ttft_ms) |ttft| {
+            self.session_ttft_ms +|= ttft;
+            self.session_ttft_n +|= 1;
+        }
+        resetBridgeLive();
+
         // The turn's receipt, last line of the turn: tokens, wall time,
         // tok/s, cache hit rate, cost and how full the context now is. Same
         // formatter `clanker run` prints on stderr (`tui/turn_stats.zig`).
-        if (turn) |t| {
-            if (t.accounted()) {
-                self.session_tokens +|= t.prompt_tokens +| t.completion_tokens;
-                if (t.cost_usd) |c| self.session_cost = (self.session_cost orelse 0) + c;
-                self.session_steps +|= bridge_live_steps +| 1;
-                self.session_tool_ms +|= bridge_live_tool_ms;
-                self.session_llm_ms +|= t.wall_ms -| bridge_live_tool_ms;
-                self.session_prompt +|= t.prompt_tokens;
-                self.session_completion +|= t.completion_tokens;
-                self.session_cache_hit +|= t.cache_hit_tokens;
-                self.session_cache_miss +|= t.cache_miss_tokens;
-                if (bridge_live_ttft_samples > 0) {
-                    self.session_ttft_ms +|= bridge_live_ttft_total;
-                    self.session_ttft_n +|= bridge_live_ttft_samples;
-                } else if (bridge_live_ttft_ms) |ttft| {
-                    self.session_ttft_ms +|= ttft;
-                    self.session_ttft_n +|= 1;
-                }
-                if (stats_mod.formatTurn(self.arena, t)) |line| {
-                    self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
-                } else |_| {}
-            }
+        if (official) {
+            if (stats_mod.formatTurn(self.arena, turn.?)) |line| {
+                self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+            } else |_| {}
         }
+    }
+
+    /// Completed totals plus the in-flight turn. Caller holds `bridge_mutex`.
+    fn sessionStrip(self: *const Model) stats_mod.SessionStats {
+        const live = bridge_live_started_ns != 0;
+        const live_ms: u64 = if (live) liveElapsedMs() else 0;
+        const est: u64 = if (live and bridge_live_completion == 0)
+            @as(u64, @intCast(bridge_stream_buf.items.len / 4))
+        else
+            0;
+        return .{
+            .turns = self.session_turns,
+            .steps = self.session_steps +| bridge_live_steps +| if (live) @as(u64, 1) else 0,
+            .llm_ms = self.session_llm_ms +| (if (live) live_ms -| bridge_live_tool_ms else 0),
+            .tool_ms = self.session_tool_ms +| bridge_live_tool_ms,
+            .ttft_ms_total = self.session_ttft_ms +| bridge_live_ttft_total,
+            .ttft_samples = self.session_ttft_n +| bridge_live_ttft_samples,
+            .live_ttft_ms = if (bridge_live_ttft_samples == 0) bridge_live_ttft_ms else null,
+            .prompt_tokens = self.session_prompt +| bridge_live_prompt,
+            .completion_tokens = self.session_completion +| bridge_live_completion +| est,
+            .cache_hit_tokens = self.session_cache_hit +| bridge_live_cache_hit,
+            .cache_miss_tokens = self.session_cache_miss +| bridge_live_cache_miss,
+        };
     }
 
     /// If the reply that begins at `reply_start` is long enough, mark it as a
@@ -4212,7 +4250,11 @@ const Model = struct {
             // The taller box must still leave a transcript worth reading.
             max.height >= mascot.inputBoxHeight(mascot_v) + 5;
         const box_h: u16 = if (mascot_in_box) mascot.inputBoxHeight(mascot_v) else 3;
-        const box_y = max.height -| box_h;
+        // Same session strip as the web UI's `#run-metrics`. One row under
+        // the composer once a turn has started; skipped when the terminal
+        // cannot hold status + box + this line without overlapping.
+        const metrics_h: u16 = if (self.session_turns > 0 and max.height > box_h + 1) 1 else 0;
+        const box_y = max.height -| box_h -| metrics_h;
         const top: u16 = 1;
         const frame_bottom = box_y -| 1;
         // Above-the-box modes claim the rows directly above the composer, so
@@ -4320,6 +4362,13 @@ const Model = struct {
         }
         if (self.session_id) |sid| {
             _ = writeStatusPairIfFits(surface, &scol, dot, dim, sid, dim);
+        }
+
+        if (metrics_h > 0) {
+            if (stats_mod.formatSession(&self.metrics_buf, self.sessionStrip())) |line| {
+                var mcol: u16 = 0;
+                writeRowAt(surface, max.height - 1, &mcol, line, dim);
+            }
         }
 
         drawBox(surface, 0, box_y, max.width, box_h, rule_style);

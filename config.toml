@@ -46,6 +46,11 @@ default_provider = "moonshotai"
 # tool_schema = "openai"
 # thinking_schema = "reasoning_effort"
 #
+# # Parse-side reasoning override: "auto" (the kind's native field),
+# # "think_tag" (pull a leading <think>...</think> out of the content,
+# # the local-vLLM DeepSeek shape), or "none" (discard reasoning).
+# reasoning_format = "auto"
+#
 # # vertex and vertex_anthropic: the GCP project and region serving the
 # # model. Credential is service_account_file, gcloud ADC
 # # (`gcloud auth application-default login`), or api_key_env.
@@ -124,6 +129,9 @@ base_url = "http://127.0.0.1:8000/v1"
 # rpm = 40                       # self-imposed requests per minute; omit = none
 # tool_schema = "openai"         # or "none": omit the tools array for this model
 # thinking_schema = "reasoning_effort"  # or "reasoning" / "thinking" / "none"
+# reasoning_format = "auto"      # or "think_tag" / "none": response parse side
+# base_url = "http://127.0.0.1:8000/v1"  # endpoint override for this model only
+# path = "/chat/completions"     # endpoint path override for this model only
 #
 # One default model per provider. Extra SKUs go in config.local.toml.
 # Context, max output, cost, display, and capabilities are filled from

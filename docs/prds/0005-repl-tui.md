@@ -156,7 +156,7 @@ specific `vxfw` shape, not an open-ended "figure it out":
 | Inline `ask_user`/confirm-before-write | **Shipped** | Dedicated ask modal (`ask_open` / `handleAskKey` / `drawAskModal`) on a pthread bridge; `ask_fn` always, `confirm_fn` when `confirm_writes=always` |
 | Multi-line input | **Gap** | `vxfw.TextField` has no multi-line mode; Shift+Enter has no vaxis primitive to hook |
 | Plan / research modes | **Shipped** | `/plan [on|off]` and `/research [on|off]`; bare commands toggle, status bar shows active modes |
-| Visible stats/compaction | **Shipped** | `src/tui/turn_stats.zig`; status-bar context meter + per-turn line + compaction notices |
+| Visible stats/compaction | **Shipped** | `src/tui/turn_stats.zig`; status-bar context meter + per-turn line + last-row session strip (same fields as the web `#run-metrics`) + compaction notices |
 
 ## Failure modes
 

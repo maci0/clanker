@@ -4,7 +4,9 @@
 //! One formatter, two surfaces. `clanker run` prints the turn line on stderr
 //! (stdout stays pipe-clean, as ever) and the vaxis REPL appends the same
 //! string to its transcript, so the two can't drift into two dialects of
-//! "1234 in / 567 out". Everything here is pure: a struct of numbers in, a
+//! "1234 in / 567 out". Session-lifetime totals share this file too
+//! (`writeSession`): the web `#run-metrics` strip and the REPL's last row
+//! under the composer. Everything here is pure: a struct of numbers in, a
 //! string out, no allocator-per-frame and no terminal, which is what makes it
 //! testable at all, the vaxis event loop is not.
 //!

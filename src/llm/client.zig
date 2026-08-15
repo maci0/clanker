@@ -210,7 +210,11 @@ pub fn chat(
     const body = try impl.buildRequest(ctx.gpa, params);
     defer ctx.gpa.free(body);
 
-    const url = try impl.endpointUrl(ctx.gpa, provider, false);
+    // Endpoint override: a model can point at a different host/path than
+    // its provider entry (local vLLM vs the hosted API). URL only — auth
+    // and the rest of the request still come from `provider`.
+    const wire = provider.wireProvider();
+    const url = try impl.endpointUrl(ctx.gpa, &wire, false);
     defer ctx.gpa.free(url);
 
     var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
@@ -291,7 +295,33 @@ pub fn chat(
     };
     const ms: u64 = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
     recordUsage(ctx, arena, provider, resp.usage, ms);
-    return resp;
+    var out = resp;
+    applyReasoningFormat(provider, &out);
+    return out;
+}
+
+/// Parse-side reasoning override (`reasoning_format`). The same weights can
+/// answer differently by host: the DeepSeek API puts reasoning in its own
+/// field while a local vLLM inlines `<think>...</think>` into the content.
+/// Slices point into the same arena the response came from, so re-slicing
+/// needs no copies.
+fn applyReasoningFormat(provider: *const config.Provider, resp: *types.ChatResponse) void {
+    switch (provider.effectiveReasoningFormat()) {
+        .auto => {},
+        .none => resp.reasoning = null,
+        .think_tag => {
+            const content = resp.message.content orelse return;
+            const t = std.mem.trimStart(u8, content, " \t\r\n");
+            if (!std.mem.startsWith(u8, t, "<think>")) return;
+            const inner = t["<think>".len..];
+            // Unclosed tag: the model is still "thinking" or truncated;
+            // leave the content alone rather than guess at a boundary.
+            const close = std.mem.find(u8, inner, "</think>") orelse return;
+            const thought = std.mem.trim(u8, inner[0..close], " \t\r\n");
+            if (resp.reasoning == null and thought.len > 0) resp.reasoning = thought;
+            resp.message.content = std.mem.trimStart(u8, inner[close + "</think>".len ..], " \t\r\n");
+        },
+    }
 }
 
 fn boundedChatTask(
@@ -578,7 +608,9 @@ pub fn chatStream(
     const body = try impl.buildRequest(ctx.gpa, p);
     defer ctx.gpa.free(body);
 
-    const url = try impl.endpointUrl(ctx.gpa, provider, true);
+    // Same endpoint override as chat(): URL only, auth stays the provider's.
+    const wire = provider.wireProvider();
+    const url = try impl.endpointUrl(ctx.gpa, &wire, true);
     defer ctx.gpa.free(url);
 
     var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
@@ -743,6 +775,7 @@ pub fn chatStream(
     var resp = try acc.finish();
     const ms: u64 = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
     resp.ttft_ms = ttft_ms;
+    applyReasoningFormat(provider, &resp);
     recordUsage(ctx, arena, provider, resp.usage, ms);
     return resp;
 }
@@ -844,6 +877,49 @@ const StreamAccumulator = struct {
         return .{ .message = msg, .usage = usage_out, .finish_reason = self.finish_reason };
     }
 };
+
+test "reasoning_format think_tag splits content into reasoning and answer" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const p = try config.Provider.single(arena, "vllm", "http://127.0.0.1:8000/v1", .openai_compat, "deepseek", .{ .max_tokens = 64, .reasoning_format = .think_tag });
+    var resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "<think>step by step</think>\nfinal answer" } };
+    applyReasoningFormat(&p, &resp);
+    try std.testing.expectEqualStrings("step by step", resp.reasoning.?);
+    try std.testing.expectEqualStrings("final answer", resp.message.content.?);
+
+    // Unclosed tag stays untouched rather than guessing a boundary.
+    var open = types.ChatResponse{ .message = .{ .role = .assistant, .content = "<think>never closed" } };
+    applyReasoningFormat(&p, &open);
+    try std.testing.expect(open.reasoning == null);
+    try std.testing.expectEqualStrings("<think>never closed", open.message.content.?);
+
+    // auto (a provider with no override anywhere) leaves the native parse alone.
+    const auto_p = try config.Provider.single(arena, "api", "https://api.deepseek.com", .openai_compat, "deepseek", .{ .max_tokens = 64 });
+    var plain = types.ChatResponse{ .message = .{ .role = .assistant, .content = "<think>x</think>y" } };
+    applyReasoningFormat(&auto_p, &plain);
+    try std.testing.expectEqualStrings("<think>x</think>y", plain.message.content.?);
+
+    // none discards a provider-native reasoning field.
+    const none_p = try config.Provider.single(arena, "q", "https://q.test/v1", .openai_compat, "m", .{ .max_tokens = 64, .reasoning_format = .none });
+    var dropped = types.ChatResponse{ .message = .{ .role = .assistant, .content = "y" }, .reasoning = "secret chain" };
+    applyReasoningFormat(&none_p, &dropped);
+    try std.testing.expect(dropped.reasoning == null);
+}
+
+test "a model's base_url/path override the provider's for the URL only" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const p = try config.Provider.single(arena, "deepseek", "https://api.deepseek.com", .openai_compat, "deepseek-v4-pro", .{ .max_tokens = 64, .base_url = "http://127.0.0.1:8000/v1", .path = "/custom/completions" });
+    const wire = p.wireProvider();
+    try std.testing.expectEqualStrings("http://127.0.0.1:8000/v1", wire.base_url);
+    try std.testing.expectEqualStrings("/custom/completions", wire.path.?);
+    // Auth-side fields are untouched on the original.
+    try std.testing.expectEqualStrings("https://api.deepseek.com", p.base_url);
+}
 
 fn isRetryable(status: std.http.Status) bool {
     return switch (status) {
