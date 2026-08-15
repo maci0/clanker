@@ -102,10 +102,10 @@ lamps carry further). The seven named palettes ride the same tokens.
 <aside class="pf-v6-c-page__sidebar pf-m-expanded rail" id="rail" aria-label="Navigation">
   <div class="pf-v6-c-page__sidebar-main">
     <div class="pf-v6-c-page__sidebar-body">
-  <!-- Grouped by what you came to do: work on something, watch what happened,
-       or set the place up. Seven flat tabs said these were all one kind of
-       thing. -->
-  <nav class="pf-v6-c-nav rail-nav" role="tablist" aria-orientation="vertical" aria-label="Sections">
+  <!-- Session-first rail (DeepSeek Harness topology, cabinet tokens):
+       Work destinations stay visible, conversations fill the column,
+       Watch and Set up fold so they do not eat the list. -->
+  <nav class="pf-v6-c-nav rail-nav rail-places" role="tablist" aria-orientation="vertical" aria-label="Sections">
     <section class="pf-v6-c-nav__section" aria-labelledby="rail-section-work">
       <h2 class="pf-v6-c-nav__section-title rail-group" id="rail-section-work">Work</h2>
       <ul class="pf-v6-c-nav__list" role="presentation">
@@ -117,57 +117,31 @@ lamps carry further). The seven named palettes ride the same tokens.
         </li>
       </ul>
     </section>
-    <section class="pf-v6-c-nav__section" aria-labelledby="rail-section-watch">
-      <h2 class="pf-v6-c-nav__section-title rail-group" id="rail-section-watch">Watch</h2>
-      <ul class="pf-v6-c-nav__list" role="presentation">
-        <li class="pf-v6-c-nav__item">
-          <button type="button" class="rail-tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
-        </li>
-        <li class="pf-v6-c-nav__item">
-          <button type="button" class="rail-tab" role="tab" id="tab-fleet" aria-controls="view-fleet" aria-selected="false" tabindex="-1" data-view="fleet">Fleet</button>
-        </li>
-        <li class="pf-v6-c-nav__item">
-          <button type="button" class="rail-tab" role="tab" id="tab-arena" aria-controls="view-arena" aria-selected="false" tabindex="-1" data-view="arena">Arena</button>
-        </li>
-        <li class="pf-v6-c-nav__item">
-          <button type="button" class="rail-tab" role="tab" id="tab-compare" aria-controls="view-compare" aria-selected="false" tabindex="-1" data-view="compare">Compare</button>
-        </li>
-        <li class="pf-v6-c-nav__item">
-          <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
-        </li>
-      </ul>
-    </section>
-    <section class="pf-v6-c-nav__section" aria-labelledby="rail-section-setup">
-      <h2 class="pf-v6-c-nav__section-title rail-group" id="rail-section-setup">Set up</h2>
-      <ul class="pf-v6-c-nav__list" role="presentation">
-        <li class="pf-v6-c-nav__item">
-          <button type="button" class="rail-tab" role="tab" id="tab-models" aria-controls="view-models" aria-selected="false" tabindex="-1" data-view="models">Models</button>
-        </li>
-        <li class="pf-v6-c-nav__item">
-          <button type="button" class="rail-tab" role="tab" id="tab-search" aria-controls="view-search" aria-selected="false" tabindex="-1" data-view="search">Search</button>
-        </li>
-        <li class="pf-v6-c-nav__item">
-          <button type="button" class="rail-tab" role="tab" id="tab-schedule" aria-controls="view-schedule" aria-selected="false" tabindex="-1" data-view="schedule">Schedule</button>
-        </li>
-        <li class="pf-v6-c-nav__item">
-          <button type="button" class="rail-tab" role="tab" id="tab-knowledge" aria-controls="view-knowledge" aria-selected="false" tabindex="-1" data-view="knowledge">Knowledge</button>
-        </li>
-        <li class="pf-v6-c-nav__item">
-          <button type="button" class="rail-tab" role="tab" id="tab-prompts" aria-controls="view-prompts" aria-selected="false" tabindex="-1" data-view="prompts">Prompts</button>
-        </li>
-        <li class="pf-v6-c-nav__item">
-          <button type="button" class="rail-tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
-        </li>
-        <li class="pf-v6-c-nav__item">
-          <button type="button" class="rail-tab" role="tab" id="tab-system" aria-controls="view-system" aria-selected="false" tabindex="-1" data-view="system">System</button>
-        </li>
-      </ul>
-    </section>
+    <details class="rail-fold" id="rail-fold-watch">
+      <summary class="pf-v6-c-nav__section-title rail-group" id="rail-section-watch">Watch</summary>
+      <section class="pf-v6-c-nav__section" aria-labelledby="rail-section-watch">
+        <ul class="pf-v6-c-nav__list" role="presentation">
+          <li class="pf-v6-c-nav__item">
+            <button type="button" class="rail-tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
+          </li>
+          <li class="pf-v6-c-nav__item">
+            <button type="button" class="rail-tab" role="tab" id="tab-fleet" aria-controls="view-fleet" aria-selected="false" tabindex="-1" data-view="fleet">Fleet</button>
+          </li>
+          <li class="pf-v6-c-nav__item">
+            <button type="button" class="rail-tab" role="tab" id="tab-arena" aria-controls="view-arena" aria-selected="false" tabindex="-1" data-view="arena">Arena</button>
+          </li>
+          <li class="pf-v6-c-nav__item">
+            <button type="button" class="rail-tab" role="tab" id="tab-compare" aria-controls="view-compare" aria-selected="false" tabindex="-1" data-view="compare">Compare</button>
+          </li>
+          <li class="pf-v6-c-nav__item">
+            <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
+          </li>
+        </ul>
+      </section>
+    </details>
   </nav>
 
-  <!-- Conversations belong to Chat, so they are shown under it rather than
-       taking a third of the screen while you read a run graph. -->
-  <div class="rail-context" id="rail-context" hidden>
+  <div class="rail-context" id="rail-context">
     <div class="rail-head">
       <button type="button" class="rail-new" id="new-chat">New chat</button>
       <label class="sr-only" for="session-filter">Filter conversations</label>
@@ -180,32 +154,84 @@ lamps carry further). The seven named palettes ride the same tokens.
     </div>
     <ul class="rail-list" id="rail-list" aria-label="Conversations"></ul>
   </div>
+
+  <nav class="pf-v6-c-nav rail-nav rail-settings" role="tablist" aria-orientation="vertical" aria-label="Set up">
+    <details class="rail-fold" id="rail-fold-setup">
+      <summary class="pf-v6-c-nav__section-title rail-group" id="rail-section-setup">Set up</summary>
+      <section class="pf-v6-c-nav__section" aria-labelledby="rail-section-setup">
+        <ul class="pf-v6-c-nav__list" role="presentation">
+          <li class="pf-v6-c-nav__item">
+            <button type="button" class="rail-tab" role="tab" id="tab-models" aria-controls="view-models" aria-selected="false" tabindex="-1" data-view="models">Models</button>
+          </li>
+          <li class="pf-v6-c-nav__item">
+            <button type="button" class="rail-tab" role="tab" id="tab-search" aria-controls="view-search" aria-selected="false" tabindex="-1" data-view="search">Search</button>
+          </li>
+          <li class="pf-v6-c-nav__item">
+            <button type="button" class="rail-tab" role="tab" id="tab-schedule" aria-controls="view-schedule" aria-selected="false" tabindex="-1" data-view="schedule">Schedule</button>
+          </li>
+          <li class="pf-v6-c-nav__item">
+            <button type="button" class="rail-tab" role="tab" id="tab-knowledge" aria-controls="view-knowledge" aria-selected="false" tabindex="-1" data-view="knowledge">Knowledge</button>
+          </li>
+          <li class="pf-v6-c-nav__item">
+            <button type="button" class="rail-tab" role="tab" id="tab-prompts" aria-controls="view-prompts" aria-selected="false" tabindex="-1" data-view="prompts">Prompts</button>
+          </li>
+          <li class="pf-v6-c-nav__item">
+            <button type="button" class="rail-tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
+          </li>
+          <li class="pf-v6-c-nav__item">
+            <button type="button" class="rail-tab" role="tab" id="tab-system" aria-controls="view-system" aria-selected="false" tabindex="-1" data-view="system">System</button>
+          </li>
+        </ul>
+      </section>
+    </details>
+  </nav>
     </div>
   </div>
 </aside>
 
 <div class="pf-v6-c-page__main-container shell" tabindex="-1">
 <main class="pf-v6-c-page__main" id="main" tabindex="-1">
-  <div class="view" id="view-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="-1">
-    <!-- No aria-live here: each turn's answer is its own live region (see
+  <div class="view conversation" id="view-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="-1">
+    <!-- Conversation column: header, scrolling transcript, docked composer.
+         No aria-live here: each turn's answer is its own live region (see
          createTurn). Nesting one inside the other made a screen reader announce
          every streamed chunk twice, once per region. -->
-    <!-- Conversations are persisted server-side per session id; this picks which
-         one the composer below continues. Sits above the transcript because it
-         names what the transcript is showing. -->
-    <section>
+    <header class="conversation-header">
     <!-- A heading, not the kicker this used to be: it names the conversation
-         rather than labelling the row beneath it, and it is the same size as
-         every other view's heading so the primary surface is not the one view
-         with no hierarchy. -->
+         rather than labelling the row beneath it. -->
     <div class="section-head">
       <h2 id="session-title">…</h2>
+      <div class="run-picker" id="session-picker">
+        <div class="session-actions">
+          <button type="button" class="secondary" id="session-fork">Fork</button>
+          <button type="button" class="secondary" id="session-rename">Rename</button>
+          <button type="button" class="secondary" id="session-move" title="Put this conversation in a workspace">Move to…</button>
+          <button type="button" class="secondary" id="session-archive" title="Hide from history without deleting (you can undo in Archived)">Archive</button>
+          <button type="button" class="secondary danger" id="session-delete">Delete</button>
+          <!-- Folded away rather than dropped: six equal buttons in a row read as
+               one wall and hide which three you reach for daily. All of them are
+               also in the command palette. -->
+          <details class="more">
+            <summary>More</summary>
+            <div class="more-actions">
+              <button type="button" class="secondary" id="session-share" title="Copy a link to this conversation">Share</button>
+              <button type="button" class="secondary" id="session-compact" title="Drop the oldest exchanges from this conversation">Compact</button>
+              <button type="button" class="secondary" id="session-export" title="Download this conversation as Markdown">Export .md</button>
+              <button type="button" class="secondary" id="session-export-json" title="Download this conversation as JSON">Export .json</button>
+              <button type="button" class="secondary" id="session-copy" title="Copy the whole transcript">Copy all</button>
+              <button type="button" class="secondary" id="prompt-save" title="Save what is in the composer as a reusable prompt">Save prompt</button>
+              <button type="button" class="secondary" id="session-import" title="Import a chat from JSON (OpenAI export)">Import chat</button>
+            </div>
+          </details>
+        </div>
+        <p class="sr-only" id="session-status" role="status" aria-live="polite"></p>
+      </div>
     </div>
     <!-- What the current/last turn actually did, at a glance: whether a goal
          is steering it, how many tool calls it made, how many of those were
          sub-agent delegations, and the run's private todo progress. Live
          while streaming, left as a receipt once the turn finishes; resets
-         when the next turn starts. Session-lifetime only — not persisted,
+         when the next turn starts. Session-lifetime only, not persisted,
          so a reload clears it, same as the transcript's live caret does. -->
     <div class="session-status-bar" id="session-status-bar" hidden>
       <span class="status-chip" id="status-goal" hidden></span>
@@ -213,39 +239,14 @@ lamps carry further). The seven named palettes ride the same tokens.
       <span class="status-chip" id="status-subagent" hidden></span>
       <span class="status-chip" id="status-todos" hidden></span>
     </div>
-    <div class="run-picker" id="session-picker">
-      <div class="session-actions">
-        <button type="button" class="secondary" id="session-fork">Fork</button>
-        <button type="button" class="secondary" id="session-rename">Rename</button>
-        <button type="button" class="secondary" id="session-move" title="Put this conversation in a workspace">Move to…</button>
-        <button type="button" class="secondary" id="session-archive" title="Hide from history without deleting (you can undo in Archived)">Archive</button>
-        <button type="button" class="secondary danger" id="session-delete">Delete</button>
-        <!-- Folded away rather than dropped: six equal buttons in a row read as
-             one wall and hide which three you reach for daily. All of them are
-             also in the command palette. -->
-        <details class="more">
-          <summary>More</summary>
-          <div class="more-actions">
-            <button type="button" class="secondary" id="session-share" title="Copy a link to this conversation">Share</button>
-            <button type="button" class="secondary" id="session-compact" title="Drop the oldest exchanges from this conversation">Compact</button>
-            <button type="button" class="secondary" id="session-export" title="Download this conversation as Markdown">Export .md</button>
-            <button type="button" class="secondary" id="session-export-json" title="Download this conversation as JSON">Export .json</button>
-            <button type="button" class="secondary" id="session-copy" title="Copy the whole transcript">Copy all</button>
-            <button type="button" class="secondary" id="prompt-save" title="Save what is in the composer as a reusable prompt">Save prompt</button>
-            <button type="button" class="secondary" id="session-import" title="Import a chat from JSON (OpenAI export)">Import chat</button>
-          </div>
-        </details>
-      </div>
-      <p class="sr-only" id="session-status" role="status" aria-live="polite"></p>
-    </div>
-
     <div class="transcript-tools">
       <label for="turn-filter">Search this conversation</label>
       <input type="search" id="turn-filter" placeholder="Find in transcript…" autocomplete="off">
       <span class="meta" id="turn-filter-count"></span>
     </div>
+    </header>
 
-
+    <div class="conversation-scroll">
     <div class="transcript" id="transcript"></div>
     <div class="run-empty" id="transcript-empty" hidden>
       <p>No task queued</p>
@@ -253,7 +254,7 @@ lamps carry further). The seven named palettes ride the same tokens.
            this thing does; each one is a real task against this repo. -->
       <div class="suggestions" id="suggestions"></div>
     </div>
-    </section>
+    </div>
 
     <form id="task-form" class="composer">
       <label for="task">Task</label>

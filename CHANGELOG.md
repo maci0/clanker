@@ -12,6 +12,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   any shared paths were linked, leaving host-side state private to the
   worktree while sandboxed tools used the checkout state.
 
+### Changed
+
+- Web UI shell follows a session-first layout: conversations stay in the
+  left rail, Watch and Set up fold away, and Chat is a header / transcript
+  / docked-composer column. PatternFly page chrome and cabinet colors stay.
+
 ### Added
 
 - `clanker add-goal` and `/add-goal` save a structured goal without starting

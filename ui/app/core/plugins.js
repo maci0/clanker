@@ -192,20 +192,28 @@ export function bindPlugins(ctx) {
       tab.tabIndex = -1;
       tab.setAttribute("data-view", spec.id);
       tab.textContent = spec.title || spec.id;
-      var nav = document.querySelector(".rail-nav");
-      var headings = nav.querySelectorAll(".rail-group");
+      var rail = document.getElementById("rail");
+      var headings = rail ? rail.querySelectorAll(".rail-group") : [];
       var placed = false;
       for (var i = 0; i < headings.length; i++) {
-        if (headings[i].textContent !== group) continue;
-        var at = headings[i].nextElementSibling;
-        while (at && at.nextElementSibling && !at.nextElementSibling.classList.contains("rail-group")) {
-          at = at.nextElementSibling;
+        if ((headings[i].textContent || "").trim() !== group) continue;
+        var host = headings[i].closest("details, section, nav") || headings[i].parentNode;
+        var list = host.querySelector(".pf-v6-c-nav__list");
+        if (list) {
+          var item = document.createElement("li");
+          item.className = "pf-v6-c-nav__item";
+          item.appendChild(tab);
+          list.appendChild(item);
+        } else {
+          host.appendChild(tab);
         }
-        nav.insertBefore(tab, at ? at.nextElementSibling : null);
         placed = true;
         break;
       }
-      if (!placed) nav.appendChild(tab);
+      if (!placed) {
+        var fallback = document.querySelector(".rail-nav");
+        if (fallback) fallback.appendChild(tab);
+      }
       _VIEWS.push(spec.id);
       pluginViews[spec.id] = { spec: spec, section: section };
       var mounted = false;

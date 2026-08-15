@@ -547,7 +547,7 @@ body {
 #app-page.pf-v6-c-page {
   flex: 1 1 auto;
   min-height: 0;
-  height: auto;
+  height: 100%;
   /* PF page chrome paints a glass frame on main-container; cabinet shell owns the look. */
   --pf-v6-c-page__main-container--BorderColor: transparent;
   --pf-v6-c-page__main-container--BorderBlockStartWidth: 0;
@@ -556,6 +556,14 @@ body {
   --pf-v6-c-page__main-container--BorderInlineEndWidth: 0;
   --pf-v6-c-page__main-container--BackgroundColor: transparent;
 }
+/* PF parks the sidebar off-canvas below 75rem. We keep it visible down to
+   40rem, so the main column has to leave that 15rem track empty. */
+@media (min-width: 40.01rem) and (max-width: 74.99rem) {
+  .pf-v6-c-page__main-container.shell { margin-inline-start: 15rem; }
+  #app-page.pf-v6-c-page:has(#rail[data-collapsed="true"]) .pf-v6-c-page__main-container.shell {
+    margin-inline-start: 3.5rem;
+  }
+}
 #app-masthead.pf-v6-c-masthead {
   border-bottom: 1px solid var(--rule);
   background: var(--surface);
@@ -563,6 +571,8 @@ body {
   top: 0;
   z-index: 5;
   flex: none;
+  min-height: 0;
+  padding-block: 0.3rem;
 }
 #app-masthead .pf-v6-c-masthead__content {
   display: flex;
@@ -589,6 +599,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  height: 100%;
   --pf-v6-c-page__main-container--BorderColor: transparent;
   --pf-v6-c-page__main-container--BorderBlockStartWidth: 0;
   --pf-v6-c-page__main-container--BorderBlockEndWidth: 0;
@@ -697,17 +708,55 @@ button.chip-btn {
 }
 button.chip-btn:hover { color: var(--fg); background: var(--surface-2); border-color: var(--rule); }
 
-main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: var(--space-4) clamp(0.75rem, 2.5vw, 2rem) var(--space-5); }
+main,
+main.pf-v6-c-page__main {
+  flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto;
+  padding: var(--space-4) clamp(0.75rem, 2.5vw, 2rem) var(--space-5);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
 .view > section { max-width: 46rem; margin-left: auto; margin-right: auto; }
-#view-chat > section { max-width: 46rem; }
 #view-board > section { max-width: none; }
 #view-runs > section, #view-fleet > section { max-width: 62rem; }
+
+/* Conversation column: header / scrollport / docked composer. Other views
+   keep the same measure and scroll inside the main column. */
+#view-chat {
+  display: flex; flex-direction: column;
+  flex: 1 1 auto; min-height: 0; width: 100%;
+}
+#view-chat[hidden] { display: none; }
+#view-chat .conversation-header {
+  flex: none; width: 100%; max-width: 46rem; margin-inline: auto;
+}
+#view-chat .conversation-header .section-head {
+  margin-bottom: var(--space-2);
+  align-items: center;
+}
+#view-chat .conversation-header h2#session-title { flex: 1 1 10rem; min-width: 0; }
+#view-chat .conversation-header .run-picker { margin: 0; }
+#view-chat .conversation-header .session-status-bar { margin-bottom: var(--space-2); }
+#view-chat .conversation-scroll {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  width: 100%;
+}
+#view-chat .conversation-scroll .transcript,
+#view-chat .conversation-scroll .run-empty {
+  max-width: 46rem; margin-inline: auto;
+}
+#view-chat .composer {
+  flex: none; position: static;
+  width: 100%; max-width: 46rem; margin: var(--space-3) auto 0;
+}
+.view:not(#view-chat):not([hidden]) {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+}
 
 /* ---- tabs: one view at a time ----
    Everything used to be stacked in one column, so reaching Tools meant
    scrolling past the whole transcript, the run graph and every room. */
 .rail-nav,
-.pf-v6-c-nav.rail-nav { display: flex; flex-direction: column; gap: 1px; flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.pf-v6-c-nav.rail-nav { display: flex; flex-direction: column; gap: 1px; flex: none; min-height: 0; overflow: visible; }
 .pf-v6-c-nav.rail-nav .pf-v6-c-nav__list { list-style: none; margin: 0; padding: 0; }
 .pf-v6-c-nav.rail-nav .pf-v6-c-nav__item { margin: 0; }
 /* Legend plates down the rail: engraved caps in mono, a lamp beside the
@@ -799,10 +848,33 @@ button.pf-v6-c-nav__link.rail-tab.pf-m-current:hover {
 .rail-tab,
 .pf-v6-c-nav__link.rail-tab { position: relative; padding-left: var(--space-5); }
 .rail-context {
-  margin-top: var(--space-3); border-top: 1px solid var(--rule); padding-top: var(--space-3);
-  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  margin-top: var(--space-2); border-top: 1px solid var(--rule); padding-top: var(--space-2);
+  flex: 1 1 auto; min-height: 8rem; display: flex; flex-direction: column;
 }
 .rail-context[hidden] { display: none; }
+.rail-settings {
+  flex: none; margin-top: auto;
+  border-top: 1px solid var(--rule); padding-top: var(--space-2);
+}
+.rail-fold { border: 0; margin: 0; padding: 0; }
+.rail-fold:not([open]) > :not(summary) { display: none; }
+.rail-fold > summary.rail-group {
+  list-style: none; cursor: pointer;
+}
+.rail-fold > summary.rail-group::-webkit-details-marker { display: none; }
+.rail-fold > summary.rail-group::after {
+  content: "";
+  width: 0.4em; height: 0.4em;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  margin-left: auto; flex: none;
+  opacity: 0.6;
+}
+.rail-fold[open] > summary.rail-group::after { transform: rotate(45deg); }
+@media (prefers-reduced-motion: reduce) {
+  .rail-fold > summary.rail-group::after { transition: none; }
+}
 /* A count of what is behind the tab, so the numbers are not hidden by the
    thing that hides everything else. */
 .tab-count { color: var(--fg-muted); font-weight: 400; margin-left: 0.4rem; }
@@ -815,7 +887,7 @@ button.pf-v6-c-nav__link.rail-tab.pf-m-current:hover {
 .view > section:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
 
 /* ---- transcript: a running list of turns, chat-style ---- */
-.transcript { display: flex; flex-direction: column; gap: var(--space-5); margin-top: var(--space-4); padding-bottom: var(--space-3); }
+.transcript { display: flex; flex-direction: column; gap: var(--space-5); margin-top: var(--space-3); padding-bottom: var(--space-3); }
 .transcript:empty { display: none; }
 /* A turn is a job on the panel's record: seamed off from the one above,
    its number stamped in the margin, a blue strip lit while it runs.
@@ -2797,7 +2869,7 @@ input[type="checkbox"] {
 
 .transcript-tools {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
-  margin-top: var(--space-3);
+  margin-top: var(--space-2);
   border: 1px solid var(--rule); border-radius: 999px;
   padding: 0.2rem 0.5rem 0.2rem 0.6rem;
   background: var(--surface);
@@ -3009,7 +3081,7 @@ main.pf-v6-c-page__main {
   box-shadow: none;
   min-height: 0;
   flex: 1 1 auto;
-  overflow-y: auto;
+  overflow: hidden;
 }
 .rail,
 .pf-v6-c-page__sidebar.rail {
@@ -3040,14 +3112,14 @@ main.pf-v6-c-page__main {
   min-height: 0;
   overflow: hidden;
 }
-.rail-head { display: flex; flex-direction: column; gap: var(--space-3); flex: none; }
+.rail-head { display: flex; flex-direction: column; gap: var(--space-2); flex: none; }
 /* The rail is pinned: only the conversation list scrolls, not the whole
    sidebar, so the tabs and the chat controls stay put while the history
    moves under the pointer. The list owns the scrollbar. */
 .rail-nav { flex: none; }
 .rail-context {
-  flex: 1; min-height: 0; display: flex; flex-direction: column;
-  margin-top: var(--space-3); border-top: 1px solid var(--rule); padding-top: var(--space-3);
+  flex: 1 1 auto; min-height: 8rem; display: flex; flex-direction: column;
+  margin-top: var(--space-2); border-top: 1px solid var(--rule); padding-top: var(--space-2);
 }
 .rail-context[hidden] { display: none; }
 .rail-new {
@@ -3123,8 +3195,8 @@ button.rail-group:hover { color: var(--fg); }
 h2#session-title {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 100%;
-  font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--fg-muted);
-  text-transform: none; letter-spacing: 0;
+  font-family: var(--sans); font-size: 15px; font-weight: 600; color: var(--fg);
+  text-transform: none; letter-spacing: -0.01em;
 }
 #rail-toggle { display: none; }
 #app-masthead .pf-v6-c-masthead__toggle #rail-toggle { display: none; }
@@ -3173,8 +3245,11 @@ h2#session-title {
   .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .rail-item::after,
   .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .rail-tab::after { content: attr(data-short); font-size: var(--step-0); }
   .rail[data-collapsed="true"] .rail-context, .rail[data-collapsed="true"] .rail-group,
+  .rail[data-collapsed="true"] .rail-fold, .rail[data-collapsed="true"] .rail-settings,
   .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .rail-context,
   .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .rail-group,
+  .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .rail-fold,
+  .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .rail-settings,
   .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .pf-v6-c-nav__section { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .rail { transition: none; } }

@@ -271,9 +271,15 @@ CSS steps: `--step--1` 0.6875rem, `--step-0` 0.8125rem, `--step-1` 0.9375rem,
 
 ## Layout
 
-- Shell: masthead + rail + main
-- Rail fixed ~15rem; drawer below 40rem
-- Main content centered; chat measure capped (~46rem)
+- Shell: thin PF masthead + session-first rail + main column
+- Rail: Work destinations, then the conversation list (always), Watch and
+  Set up folded so they do not eat the list; 15rem; drawer below 40rem.
+  Between 40rem and 75rem the main column leaves a 15rem inset so PF's
+  overlay sidebar cannot cover the heading.
+- Chat is a three-part column: session header, scrolling transcript,
+  docked composer. Other views replace the conversation column; the
+  session list stays
+- Chat measure capped (~46rem); other views keep their own max-width
 - Breakpoints in rem (40rem phone drawer, 48rem rooms sidebar)
 - Coarse pointer and narrow viewports: 44px minimum for rail tabs, New chat,
   pins, session actions, chat message actions, chips, and composer submit/voice

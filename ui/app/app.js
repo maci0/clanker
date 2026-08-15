@@ -341,6 +341,7 @@ el.themeToggle.addEventListener("click", function () {
 
 el.newChat.addEventListener("click", function () {
   if (busy) return;
+  if (currentView !== "chat") showView("chat", false);
   // The half-written task belongs to the conversation being left, so it is
   // saved there and the new one opens with an empty composer.
   flushDraft();
@@ -440,7 +441,11 @@ function railRowFor(s, current) {
     type: "button",
     class: "rail-item",
     title: title,
-    onclick: function () { switchSession(s.id); closeRailOnNarrow(); }
+    onclick: function () {
+      if (currentView !== "chat") showView("chat", false);
+      switchSession(s.id);
+      closeRailOnNarrow();
+    }
   }, T.span({ class: "rail-item-title" }, title), T.span({ class: "rail-item-meta" }, meta));
   if (open) row.setAttribute("aria-current", "true");
 
@@ -4397,6 +4402,12 @@ function parseRunsHash(hash){
   var id=""; try{ id=decodeURIComponent(idPart);}catch(_){ id=idPart; }
   return { id: id, search: params.search||"", kind: params.kind||"", node: params.node||"" };
 }
+function syncRailFolds(name) {
+  var tab = document.getElementById("tab-" + name);
+  var fold = tab && tab.closest ? tab.closest("details.rail-fold") : null;
+  if (fold) fold.open = true;
+}
+
 function showView(name, focusPanel) {
   // Goals and board are one workflow now. Keep old bookmarks working while
   // making Board the only visible navigation destination.
@@ -4457,7 +4468,8 @@ function showView(name, focusPanel) {
     if (deepSearch || deepKind) { try{ localStorage.setItem("clanker.graphSearch", deepSearch||""); localStorage.setItem("clanker.graphKind", deepKind||""); }catch(_){} }
   }
   viewSettled = true;
-  el.railContext.hidden = name !== "chat";
+  if (el.railContext) el.railContext.hidden = false;
+  syncRailFolds(name);
   if (focusPanel) document.getElementById("view-" + name).focus();
   if (!viewLoaded[name] && viewLoaders[name]) {
     // Marked loaded only once it has loaded: a view whose first fetch failed
