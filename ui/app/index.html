@@ -313,8 +313,10 @@ lamps carry further). The seven named palettes ride the same tokens.
             <span>Worktree</span>
           </label>
           <button type="button" class="secondary" id="voice-btn" title="Voice input (hold or click)" aria-label="Voice input"></button>
-          <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
-          <button type="submit" class="primary" id="submit" disabled>Run (Ctrl+Enter)</button>
+          <button type="button" class="secondary danger" id="cancel" hidden
+                  title="Stop the running turn" aria-label="Stop the running turn"></button>
+          <button type="submit" class="primary" id="submit" disabled
+                  title="Run (Ctrl+Enter)" aria-label="Run (Ctrl+Enter)"></button>
         </div>
       </div>
       <!-- Last turn's run shape: steps, LLM vs tool time, TTFT, throughput,

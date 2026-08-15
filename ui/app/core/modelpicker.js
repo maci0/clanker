@@ -409,7 +409,11 @@ export function fallbackProviderValue() {
 }
 
 export function syncSubmitLabel() {
-  _el.submit.textContent = _el.enterSends.checked ? "Run (Enter)" : "Run (Ctrl+Enter)";
+  // Icon-only send control: the shortcut hint rides the tooltip and the
+  // accessible name, not visible text.
+  var hint = _el.enterSends.checked ? "Run (Enter)" : "Run (Ctrl+Enter)";
+  _el.submit.title = hint;
+  _el.submit.setAttribute("aria-label", hint);
 }
 
 export function bindModelPicker(ctx) {

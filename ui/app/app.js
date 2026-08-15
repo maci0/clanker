@@ -1024,8 +1024,10 @@ function syncControls() {
     el.steerHint.textContent = "";
     updateComposerModeHint();
   }
-  if (busy) el.submit.textContent = "Running…";
-  else syncSubmitLabel();
+  // The send circle yields its spot to the stop circle while a turn runs
+  // (the focus handoff below keeps keyboard users on the live control).
+  el.submit.hidden = busy;
+  if (!busy) syncSubmitLabel();
   document.title = busy ? "Running… · clanker" : "clanker";
 }
 
@@ -4729,6 +4731,8 @@ var prefersReducedMotion = scrollPrefersReducedMotion;
 function syncScrollButton() { scrollSyncButton(el.transcript, el.scrollBottom, scrollChatBox()); }
 
 uiAdd(el.scrollBottom, icon("deposit", 14));
+uiAdd(el.submit, icon("arrowUp", 16));
+uiAdd(el.cancel, icon("stop", 14));
 el.scrollBottom.addEventListener("click", function () {
   scrollChatLatest(prefersReducedMotion() ? "auto" : "smooth");
   el.task.focus();

@@ -40,6 +40,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Vendored PatternFly CSS is subset to the twelve components the UI
   actually uses (1.8MB to 625KB); `scripts/subset-patternfly.py`
   regenerates it from a stock release file after an upgrade.
+- The composer's Run and Stop controls are one circular icon spot, the
+  send arrow / stop square convention of mainstream chat UIs. The
+  keyboard-shortcut hint moved into the tooltip and accessible name, and
+  the two buttons still hand focus to each other across a run.
 
 ### Added
 

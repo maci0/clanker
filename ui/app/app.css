@@ -1398,7 +1398,20 @@ textarea:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent);
 }
 .composer .toolbar { border-top-color: color-mix(in srgb, var(--rule) 35%, transparent); }
 .composer .toolbar #submit { border-radius: 999px; padding-inline: 1rem; min-height: 34px; font-size: 13px; }
-.composer .toolbar #cancel { border-radius: 999px; min-height: 34px; font-size: 13px; }
+/* Send and stop are one circular spot that swaps content: an up arrow when
+   idle, a stop square while a turn runs. aspect-ratio keeps the circle
+   square when the touch media queries raise min-height to 44px. */
+.composer .toolbar #submit,
+.composer .toolbar #cancel {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 36px; aspect-ratio: 1; padding: 0; border-radius: 50%;
+}
+.composer .toolbar #submit svg,
+.composer .toolbar #cancel svg { display: block; }
+/* The author display above beats the UA [hidden] rule (same trap as
+   .rail-context[hidden]); restate it or the off-duty circle paints. */
+.composer .toolbar #submit[hidden],
+.composer .toolbar #cancel[hidden] { display: none; }
 .toolbar > .meta { margin-right: auto; font-size: 11px; }
 .toolbar > .meta:empty { display: none; }
 .toolbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); min-width: 0; }

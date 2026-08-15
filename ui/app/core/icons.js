@@ -34,6 +34,8 @@ export var ICON_PATHS = {
   // Up/down arrows: the priority ladder's high and low ends.
   arrowUp: ["M12 19V5", "M6 12l6-6 6 6"],
   arrowDown: ["M12 5v14", "M6 12l6 6 6-6"],
+  // A square: stop the running turn.
+  stop: ["M7.5 7.5h9v9h-9z"],
   // A rule: the middle of the priority ladder.
   minus: ["M6 12h12"],
   // A calendar: due dates and the patient timeline.
