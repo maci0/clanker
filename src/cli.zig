@@ -2013,9 +2013,9 @@ const local_template =
     \\kind = "openai_compat"
     \\base_url = "https://api.deepseek.com"
     \\api_key_env = "DEEPSEEK_API_KEY"
-    \\default_model = "deepseek-v4-flash"
+    \\default_model = "deepseek-v4-pro"
     \\
-    \\[models."deepseek/deepseek-v4-flash"]
+    \\[models."deepseek/deepseek-v4-pro"]
     \\provider = "deepseek"
     \\max_tokens = 2048
     \\
@@ -5262,6 +5262,49 @@ const ListenPolicy = struct {
     proxy_port: u16,
 };
 
+/// Startup card on stdout: badge, clickable URLs, how to reach the LAN, how
+/// to stop. A piped stdout (a service file, a script grepping the URL) still
+/// gets the original bare `http://host:port/webui` line and nothing else, so
+/// nothing that parsed the old output breaks. Colors honor NO_COLOR.
+fn printServeBanner(io: std.Io, environ_map: *std.process.Environ.Map, disp: []const u8, listen: ListenPolicy) void {
+    const stdout = std.Io.File.stdout();
+    const tty = stdout.isTty(io) catch false;
+    if (!tty) {
+        std.debug.print("http://{s}/webui\n", .{disp});
+        return;
+    }
+    const color = environ_map.get("NO_COLOR") == null;
+    const bold = if (color) "\x1b[1m" else "";
+    const dim = if (color) "\x1b[2m" else "";
+    const green = if (color) "\x1b[32m" else "";
+    const cyan = if (color) "\x1b[36m" else "";
+    const off = if (color) "\x1b[0m" else "";
+
+    var buf: [2048]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    const loopback = isLoopbackHost(listen.host);
+    // The favicon's robot, three rows tall: framed head, lamp eye, mouth bar.
+    w.print("\n  {s}▛▀▀▀▜{s}   {s}clanker serve ready{s}  {s}{s}{s}\n", .{ dim, off, bold, off, dim, version, off }) catch return;
+    if (loopback)
+        w.print("  {s}▌{s} {s}◉{s} {s}▐{s}   Web UI is reachable from this machine only.\n", .{ dim, off, green, off, dim, off }) catch return
+    else
+        w.print("  {s}▌{s} {s}◉{s} {s}▐{s}   Web UI is reachable from the network.\n", .{ dim, off, green, off, dim, off }) catch return;
+    w.print("  {s}▙▄▄▄▟{s}\n\n", .{ dim, off }) catch return;
+    w.print("  Local:    {s}http://{s}/webui{s}\n", .{ cyan, disp, off }) catch return;
+    if (loopback)
+        w.print("  Network:  off  {s}use --host 0.0.0.0 to enable{s}\n", .{ dim, off }) catch return
+    else
+        w.print("  Network:  on  {s}bound to {s}{s}\n", .{ dim, listen.host, off }) catch return;
+    if (listen.proxy_enabled) {
+        if (listen.proxy_port != listen.port)
+            w.print("  Proxy:    {s}port {d}{s} at /v1\n", .{ cyan, listen.proxy_port, off }) catch return
+        else
+            w.print("  Proxy:    {s}http://{s}/proxy/v1{s}\n", .{ cyan, disp, off }) catch return;
+    }
+    w.print("  Stop:     Ctrl+C\n\n", .{}) catch return;
+    stdout.writeStreamingAll(io, w.buffered()) catch {};
+}
+
 /// Resolves the listener across its three layers, weakest first:
 /// `[serve]` in config.toml < `CLANKER_HOST`/`CLANKER_WEBUI_PORT` <
 /// `--host`/`--webui-port`. The most persistent and least specific source
@@ -5391,8 +5434,7 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     if (listen.proxy_enabled and !dedicated) {
         log.log(.info, "serve proxy at http://{s}/proxy/v1", .{disp});
     }
-    // Bare clickable URL (no log prefix) so terminals render it as a link.
-    std.debug.print("http://{s}/webui\n", .{disp});
+    printServeBanner(io, init.environ_map, disp, listen);
 
     if (dedicated) {
         const proxy_addr = try parseBindAddr(listen.host, listen.proxy_port);

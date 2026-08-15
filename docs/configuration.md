@@ -92,7 +92,7 @@ Any OpenAI-compatible `/chat/completions` endpoint: OpenAI, DeepSeek, Moonshot
 kind = "openai_compat"
 base_url = "https://api.deepseek.com"
 api_key_env = "DEEPSEEK_API_KEY"
-default_model = "deepseek-v4-flash"
+default_model = "deepseek-v4-pro"
 
 [providers.ollama]                       # keyless local endpoint
 kind = "openai_compat"
@@ -126,7 +126,7 @@ base_url = "https://<location>-aiplatform.googleapis.com"
 project = "my-gcp-project"
 location = "us-east5"
 service_account_file = "/path/to/service-account.json"
-default_model = "claude-sonnet-5"
+default_model = "claude-opus-5"
 # or, instead of service_account_file, paste a short-lived token:
 # api_key_env = "VERTEX_ACCESS_TOKEN"
 ```
@@ -142,7 +142,7 @@ the model name in the URL, and the credential rides `api-key` (not Bearer).
 kind = "azure_openai"
 base_url = "https://contoso.openai.azure.com"
 api_key_env = "AZURE_API_KEY"
-default_model = "gpt-4o"
+default_model = "gpt-5.6"
 # api_version = "2024-12-01-preview"   # optional; default 2024-10-21
 ```
 
@@ -156,7 +156,7 @@ Google Gemini generateContent (AI Studio). The key rides `x-goog-api-key`.
 kind = "gemini"
 base_url = "https://generativelanguage.googleapis.com/v1beta"
 api_key_env = "GOOGLE_API_KEY"
-default_model = "gemini-2.5-flash"
+default_model = "gemini-3.6-flash"
 ```
 
 ### `auth` — the credential axis
@@ -218,14 +218,13 @@ overrides how it is *shown* (never what is *sent*).
 | `category` | string | `""` | Free-form grouping (`"flagship"`, `"fast"`, `"reasoning"`, `"cheap"`, ...) used to sort/group the model list in the webui picker, the TUI's `/model` picker, and the CLI. Purely presentational, never sent to a provider. Empty sorts last within its provider. |
 
 ```toml
-[models."deepseek/deepseek-v4-flash"]
+[models."deepseek/deepseek-v4-pro"]
 provider = "deepseek"
-context_window = 1048576
-max_tokens = 8192
-temperature = 0.2
-reasoning_effort = "low"
-cost_per_1m_input = 0.14
-cost_per_1m_output = 0.28
+context_window = 1000000
+max_tokens = 16384
+reasoning_effort = "medium"
+cost_per_1m_input = 0.435
+cost_per_1m_output = 0.87
 capabilities = ["thinking", "tool_use"]
 
 [models."kimi-k3/kimi-k3"]
@@ -551,12 +550,12 @@ default_provider = "deepseek"
 kind = "openai_compat"
 base_url = "https://api.deepseek.com"
 api_key_env = "DEEPSEEK_API_KEY"
-default_model = "deepseek-v4-flash"
+default_model = "deepseek-v4-pro"
 
-[models."deepseek/deepseek-v4-flash"]
+[models."deepseek/deepseek-v4-pro"]
 provider = "deepseek"
-context_window = 1048576
-max_tokens = 8192
+context_window = 1000000
+max_tokens = 16384
 ```
 
 ```bash

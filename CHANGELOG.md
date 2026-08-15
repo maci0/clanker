@@ -29,6 +29,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `clanker serve` greets a terminal with a startup card: robot badge,
+  version, clickable Local URL, whether the network can reach it, the
+  proxy mount when enabled, and how to stop. A piped stdout still gets
+  the original bare `http://host:port/webui` line, so scripts that
+  parsed it keep working; colors honor NO_COLOR.
+- Provider defaults now point at the newest general-purpose catalog
+  models: DeepSeek `deepseek-v4-pro`, OpenAI `gpt-5.6`, Anthropic
+  `claude-opus-5`, Muse Spark `muse-spark-1.2`. Kimi stays on `kimi-k3`.
+  Local ollama/vLLM ids are unchanged. Specs (context, cost, capabilities)
+  come from the models.dev snapshot.
 - The models.dev catalog is a local snapshot (`state/models-dev.json`),
   not a 24-hour cache. Serve start and catalog search do not hit the
   network when that file exists. First use (or a missing file) downloads
