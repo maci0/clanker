@@ -312,8 +312,35 @@ test("rooms channel rows are 44px on coarse pointers", function () {
 test("System view has an on-page jump list", function () {
   assert.match(html, /class="system-jump"/);
   assert.match(html, /data-system-jump="settings-section"/);
+  assert.match(html, /data-system-jump="mcp-section"/);
   assert.match(html, /id="system-progress"/);
   assert.match(html, /id="system-logs"/);
+});
+
+test("Run shape summary names the modes that are on", function () {
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  assert.match(app, /function syncRunShape/);
+  assert.match(app, /bits\.join\(" · "\)/);
+  assert.match(app, /el\.worktreeMode\.addEventListener\("change", updateComposerModeHint\)/);
+  assert.match(css, /\.run-shape\[data-active="true"\]/);
+});
+
+test("rail Watch and Set up folds persist across loads", function () {
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  assert.match(app, /clanker\.railFolds/);
+  assert.match(app, /function restoreRailFolds/);
+  assert.match(app, /restoreRailFolds\(\)/);
+});
+
+test("session Delete explains it is permanent", function () {
+  const del = html.slice(html.indexOf('id="session-delete"'), html.indexOf('id="session-delete"') + 220);
+  assert.match(del, /Permanently delete this conversation/);
+});
+
+test("Search stays disabled until the query is long enough", function () {
+  const src = readFileSync(join(here, "../features/search.js"), "utf8");
+  assert.match(src, /btn\.disabled = on \|\| tooShort/);
+  assert.match(src, /Type at least /);
 });
 
 test("knowledge hint tells the reader to tick a collection", function () {

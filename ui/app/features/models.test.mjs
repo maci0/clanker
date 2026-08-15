@@ -35,12 +35,20 @@ test("configSnippet writes a provider table from the catalog mapping", function 
 
 test("Models edit form has an rpm field", function () {
   assert.match(html, /id="models-edit-rpm"/);
+  assert.match(html, /Requests per minute/);
   assert.match(js, /payload\.rpm = rpm/);
 });
 
 test("Models edit form has a wire id field for aliases", function () {
   assert.match(html, /id="models-edit-id"/);
+  assert.match(html, /API model id/);
   assert.match(js, /payload\.id = sku/);
+});
+
+test("catalog Search stays disabled until the query is long enough", function () {
+  assert.match(js, /function syncCatalogBtn/);
+  assert.match(js, /tooShort = !q \|\| q\.value\.trim\(\)\.length < 2/);
+  assert.match(js, /Try another name, or refresh the catalog/);
 });
 
 test("Models list and catalog failures offer to try again", function () {
