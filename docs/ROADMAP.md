@@ -125,6 +125,128 @@
 - **Auto thinking** — a per-turn classifier call (small fast model) resolves the reasoning effort level (`low`/`medium`/`high`/`xhigh`) from the user's message text. Cheap turns stay cheap; complex turns get the budget. Override applies to the main think call only; opt-in via `agent.auto_thinking = true`. PRD: [docs/prds/0020-auto-thinking.md](prds/0020-auto-thinking.md).
 - **Smart commit** — `clanker commit` reads the working tree diff, calls the LLM to group hunks into atomic commits, topologically sorts them by file dependencies, orders source before tests/docs/config, validates conventional commit types, and executes in order. Lock files excluded; cycles rejected. PRD: [docs/prds/0021-smart-commit.md](prds/0021-smart-commit.md).
 
+## Everything-is-a-plugin audit (2026-08-16)
+
+The whole tree reviewed against the philosophy README/AGENTS.md now state.
+Reference pattern for migrations: `tools/zig/logs.zig` (native handler
+deleted, guest owns the logic, pure helper host-tested) and the three
+recorder splits (native writer at the choke point, guest reader:
+`model_stats`, `autolearn`, `reasoning`). Ranked worklist:
+
+**Bug, fix first**
+
+- **The webui plugin registry exists twice and disagrees.** Native
+  (`handleWebuiPlugins`, `src/cli.zig`) seeds `files`+`music` on a missing
+  `state/webui_plugins.json`; the `webui_addon` guest does not, so on a
+  fresh checkout the page shows them enabled while the guest sees them
+  disabled — and `webui_addon action=enable` then writes an enabled list
+  containing only the new addon, silently switching Files and Music off.
+  Fix: the HTTP handlers call the guest; the seed moves into
+  `webui_addon.zig`; the native scan/toggle copies die.
+
+**Route-to-guest migrations (guest already exists or is trivial)**
+
+- `/api/workflows` reimplements what the `workflows` guest lists; one
+  `toolJson` call replaces it.
+- `/api/skills` + `scanSkills` mirror `system_prompt.zig`'s own skills
+  scan (its docstring admits it), with `max_skill_bytes` duplicated as a
+  constant in each. A `skills` guest (list/show/search, `workflows`-shaped)
+  collapses both and gives skills the descriptor they lack.
+- `/api/sessions` listing overlaps the `sessions` guest; mutations
+  (fork/branch/rename/delete) stay native or grow guest ops.
+- `/api/providers` listing overlaps the `providers` guest's
+  `action:"list"`.
+- `/api/goals` GET is a raw `state/goals.json` read while the writes
+  already bridge to `add_goal`/`update_goal`.
+- `/api/schedule` has no guest at all — the one surface with no plugin
+  shape even attempted. The `alarm` guest (whole store owned in-guest,
+  file locking) is the template; `cron.zig` is already pure and belongs
+  in `host_tested_helpers`; only `runner.zig`'s `Fire` callback stays
+  native. This also unblocks the `/watch` skill noted above.
+- `/api/files` (~200 native lines, hand-rolled `..` clamp instead of the
+  sandbox's `safeJoin`) duplicates `list_files`/`read_file`/`find_files`.
+  Real pin: workspace roots can sit outside the sandbox root, and the
+  descriptor model has no per-request root grant yet — design that first.
+
+**Core code with a natural guest shape**
+
+- `src/agent/advisor.zig` — one prompt, one `ck_llm`-shaped call, one
+  parsed note; the arena/compare guests already prove the shape. Becomes
+  a `turn_hook` + `llm:true` guest.
+- `src/agent/thinking.zig` — the auto-thinking classifier is the purest
+  candidate in the tree: one call in, one word out.
+- models.dev catalog fetch/search (`loadModelsDev`, `handleCatalog*`) —
+  guest with `network_allow:["models.dev"]` +
+  `fs_prefixes:["state/models-dev.json"]`; config-load's snapshot read
+  path stays native.
+- `src/doctor.zig` — read-only checks overlapping the `status` guest;
+  every needed privilege is expressible in a descriptor.
+- `chatrooms.fanOut` makes native HTTP posts to peers while
+  `phonebook.zig` documents routing the same traffic class through the
+  `peers` guest precisely so the tool's `network_from_config` allowlist
+  gates it. Route fan-out the same way.
+- `src/research/engine.zig` is dead (only the comptime test block
+  references it): delete, or make it the `autoresearch` planner.
+
+**Web UI plugin surface: grow the API, then migrate views**
+
+- `pluginApi()` (`ui/app/core/plugins.js`) lacks five of the six things
+  every built-in feature view uses: POST/mutations, the live bus
+  (`onLive`), `uiConfirm`/`uiPrompt`/`toast`, workspace context, `icon()`,
+  namespaced storage. Existing plugins already work around it (office
+  raw-fetches `/api/chat/send`; health and office poll on `setInterval`
+  beside a live SSE bus they cannot reach).
+- `plugin.json` declares nothing (four string fields) while every WASM
+  tool declares `fs_prefixes`/`network_allow`/`env_allow` — the one
+  plugin surface without a declared surface. Add a capability field.
+- `src/serve/live.zig`'s `Topic` is a closed enum and no `ck_publish`
+  exists, so neither a guest nor a UI plugin can ever emit an event;
+  every publisher must be native. An open (string-topic or registered)
+  publish path is what makes the two items above complete.
+- Then migrate built-in views out of `app.wasm`: `schedule`, `search`,
+  `compare` need only `getJSON` and are ready today; `arena3d` (20K of
+  3D toy) is the cheapest weight loss; `board`/`goals` stay built-in
+  (the goal/board reconciliation is declared core).
+
+**Provider vtable leaks (the registry abolished kind-switches; these
+crept back outside `providers/`)**
+
+- `src/serve/proxy.zig` holds eleven `provider.kind ==` sites (route
+  refusals, body rewrite, `use_vtable` disjunction, `speaks()`), plus a
+  model-name sniff to pick a protocol. Fold into vtable fields
+  (`proxyFamily`, `servesRoute`, `needsBodyRewrite`, `overlayHeaders`).
+- `auth.zig`'s `quotaProject` switch → a `Spec` field like the rest of
+  the strategy axis; `proxy_transcode.zig`'s `upstreamFamily` and
+  `catalog.zig`'s anthropic `/v1` fixup → vtable/table data.
+
+**Data that is still code**
+
+- Themes: three hand-kept lists (`src/tui/theme.zig` structs + enum +
+  map, `ui/app/core/theme.js` THEMES array, one `:root[data-theme]`
+  block each in `app.css`). A theme is a name and a color table — the
+  textbook data plugin, currently requiring three edits in two languages
+  and two rebuilds.
+- Slash commands: three separate hardcoded tables (REPL registry,
+  `SLASH_CMDS` in app.js, palette entries) while `/workflow <name>` is
+  already data-driven — the generic shape exists and serves one consumer.
+- Skills have no frontmatter, no enable/disable (tools and UI plugins
+  both have one), and no progressive disclosure: every body rides every
+  prompt unconditionally, so the surface taxes each request linearly as
+  it grows.
+- `system_prompt.build` concatenates ~10 independent context sections
+  with no provider surface; pin: byte-stable ordering for prompt-cache
+  hits must stay host-controlled.
+
+**Verified clean / must stay core**
+
+`src/llm/client.zig` has zero kind-switches; every guest routes through
+`lib.run`; the tool ABI has no leaks. Staying native on purpose: the
+sandbox and its policy, `toolhost/builder.zig`, the improve/evals/gate
+surface, credential handling (`auth`, `gcp_jwt`, `vertex_token`), the
+proxy's credential attachment, config and `toml_edit`, the agent loop and
+session write path, kernel/DAP host processes, mesh sockets, the
+run/ask/steer command surface, and the three recorder write paths.
+
 ## Autolearn
 
 Automatically observed from usage patterns (state/autolearn.jsonl, last 7 days). Refresh with `clanker autolearn`.
