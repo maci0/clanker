@@ -138,9 +138,12 @@ through a gated loop. Follow these conventions when changing this codebase.
   scratch/host_arena/run, imports env.ck_*); `zig-out/tools/` — Zig tool build
   output (`zig build tools`), gitignored.
 - `ui/` — web UI surface (not a tool): `ui/app/` (HTML/JS/CSS), `ui/plugins/` (plugin
-  apps), `ui/vendor/` (vendored JS), `ui/webui.zig` (internal WASM guest). The web UI
-  is that guest: `clanker serve` loads `webui.wasm` at start, so a `.js`/`.css` edit
-  needs `zig build tools` and a serve restart; rebuilding the host binary does not pick it up.
+  apps; drop-in views, no host rebuild), `ui/vendor/` (vendored JS), `ui/webui.zig`
+  (internal WASM guest). The web UI is that guest: `clanker serve` loads
+  `webui.wasm` at start, so a `.js`/`.css` edit needs `zig build tools` and a
+  serve restart; rebuilding the host binary does not pick it up. A chat that
+  should add a view uses the `webui_addon` tool (`ui/plugins/<name>/`), not
+  edits to `ui/app/`. Plugin `app.js`/`app.css` changes are served from disk.
   Served HTML rewrites assets to `/webui/~<8hex>/...` (content tag from the wasm +
   vendor embeds) so browsers cannot keep a stale module graph across rebuilds.
   `renderWebui` reads `zig-out/ui/app.wasm` with an 8 MiB cap (the guest embeds the

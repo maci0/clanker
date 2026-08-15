@@ -1,0 +1,274 @@
+//! webui_addon: create and toggle ad-hoc web UI views under ui/plugins/.
+//!
+//! The page discovers those directories at request time, so a chat that
+//! writes plugin.json + app.js can add a view without rebuilding clanker.
+//! Enable writes state/webui_plugins.json; the browser picks the new script
+//! up on System → Web UI plugins Refresh, or a reload.
+
+const std = @import("std");
+const lib = @import("lib.zig");
+const logic = @import("webui_addon_logic.zig");
+
+pub const input_scratch_cap = 512 * 1024;
+
+const plugins_dir = "ui/plugins";
+const state_path = "state/webui_plugins.json";
+
+const State = struct {
+    enabled: []const []const u8 = &.{},
+};
+
+export fn run(ptr: u32, len: u32) callconv(.c) u64 {
+    return lib.run(ptr, len, tool_main);
+}
+
+fn tool_main(input: []const u8, out: *lib.Out) !void {
+    const obj = try lib.object(input);
+    const action = lib.optStr(obj, "action") orelse "list";
+    if (std.mem.eql(u8, action, "list")) return actionList(out);
+    if (std.mem.eql(u8, action, "create")) return actionCreate(obj, out);
+    if (std.mem.eql(u8, action, "put")) return actionPut(obj, out);
+    if (std.mem.eql(u8, action, "show")) return actionShow(obj, out);
+    if (std.mem.eql(u8, action, "enable")) return actionToggle(obj, out, true);
+    if (std.mem.eql(u8, action, "disable")) return actionToggle(obj, out, false);
+    try lib.fail(out, "unknown action (list, create, put, show, enable, disable)");
+}
+
+fn actionList(out: *lib.Out) !void {
+    const state = loadState();
+    const raw = lib.fsList(plugins_dir) catch {
+        return writeList(out, &.{}, state);
+    };
+    const names = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch {
+        return writeList(out, &.{}, state);
+    };
+    var addons: std.ArrayList(Listed) = .empty;
+    if (names == .array) {
+        for (names.array.items) |item| {
+            if (item != .string) continue;
+            var name = item.string;
+            if (name.len > 0 and name[name.len - 1] == '/') name = name[0 .. name.len - 1];
+            if (!logic.validName(name)) continue;
+            const manifest_path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}/plugin.json", .{ plugins_dir, name });
+            const raw_m = lib.fsRead(manifest_path) catch continue;
+            const m = std.json.parseFromSliceLeaky(Manifest, lib.alloc, raw_m, .{ .ignore_unknown_fields = true }) catch continue;
+            try addons.append(lib.alloc, .{
+                .name = name,
+                .title = if (m.title.len > 0) m.title else name,
+                .description = m.description,
+                .group = if (m.group.len > 0) m.group else "Watch",
+                .enabled = isEnabled(state, name),
+            });
+        }
+    }
+    return writeList(out, addons.items, state);
+}
+
+const Listed = struct {
+    name: []const u8,
+    title: []const u8,
+    description: []const u8,
+    group: []const u8,
+    enabled: bool,
+};
+
+fn writeList(out: *lib.Out, addons: []const Listed, state: State) !void {
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("hint");
+    try s.write("Turn an addon on with action=enable. The page loads new scripts from System → Web UI plugins (Refresh) or a reload.");
+    try s.objectField("addons");
+    try s.beginArray();
+    for (addons) |a| {
+        try s.beginObject();
+        try s.objectField("name");
+        try s.write(a.name);
+        try s.objectField("title");
+        try s.write(a.title);
+        try s.objectField("description");
+        try s.write(a.description);
+        try s.objectField("group");
+        try s.write(a.group);
+        try s.objectField("enabled");
+        try s.write(a.enabled);
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.objectField("enabled");
+    try s.beginArray();
+    for (state.enabled) |e| try s.write(e);
+    try s.endArray();
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
+const Manifest = struct {
+    name: []const u8 = "",
+    title: []const u8 = "",
+    description: []const u8 = "",
+    group: []const u8 = "Watch",
+};
+
+fn actionCreate(obj: std.json.Value, out: *lib.Out) !void {
+    const name = lib.optStr(obj, "name") orelse return lib.fail(out, "create needs name");
+    if (!logic.validName(name)) return lib.fail(out, "name must be 1-64 letters, digits, '-' or '_'");
+    const title = lib.optStr(obj, "title") orelse name;
+    if (title.len == 0 or title.len > logic.max_title_len) return lib.fail(out, "title must be 1-64 characters");
+    const description = lib.optStr(obj, "description") orelse "";
+    if (description.len > logic.max_desc_len) return lib.fail(out, "description is too long");
+    const group = lib.optStr(obj, "group") orelse "Watch";
+    if (!logic.validGroup(group)) return lib.fail(out, "group must be Work, Watch, or Set up");
+    const js = lib.optStr(obj, "js") orelse return lib.fail(out, "create needs js (the app.js source)");
+    if (logic.jsRejected(js)) |why| return lib.fail(out, why);
+    const css = lib.optStr(obj, "css") orelse "";
+    if (logic.cssRejected(css)) |why| return lib.fail(out, why);
+    const overwrite = lib.optBool(obj, "overwrite", false);
+    const enable = lib.optBool(obj, "enable", true);
+
+    const dir = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ plugins_dir, name });
+    const manifest_path = try std.fmt.allocPrint(lib.alloc, "{s}/plugin.json", .{dir});
+    if (!overwrite) {
+        if (lib.fsStat(manifest_path)) |_| {
+            return lib.fail(out, "addon already exists; pass overwrite:true to replace it");
+        } else |_| {}
+    }
+    lib.fsMkdir(plugins_dir) catch {};
+    lib.fsMkdir(dir) catch |err| {
+        return lib.failErr(out, err, "creating the addon directory");
+    };
+
+    const manifest = try writeManifestJson(name, title, description, group);
+    lib.fsWrite(manifest_path, manifest) catch |err| return lib.failErr(out, err, "writing plugin.json");
+    const js_path = try std.fmt.allocPrint(lib.alloc, "{s}/app.js", .{dir});
+    lib.fsWrite(js_path, js) catch |err| return lib.failErr(out, err, "writing app.js");
+    if (css.len > 0) {
+        const css_path = try std.fmt.allocPrint(lib.alloc, "{s}/app.css", .{dir});
+        lib.fsWrite(css_path, css) catch |err| return lib.failErr(out, err, "writing app.css");
+    }
+    if (enable) setEnabled(name, true) catch |err| return lib.failErr(out, err, "enabling the addon");
+
+    return writeOk(out, name, enable);
+}
+
+fn actionPut(obj: std.json.Value, out: *lib.Out) !void {
+    const name = lib.optStr(obj, "name") orelse return lib.fail(out, "put needs name");
+    if (!logic.validName(name)) return lib.fail(out, "bad addon name");
+    const file = lib.optStr(obj, "file") orelse return lib.fail(out, "put needs file (app.js, app.css, or plugin.json)");
+    if (!logic.validFile(file)) return lib.fail(out, "file must be app.js, app.css, or plugin.json");
+    const content = lib.optStr(obj, "content") orelse return lib.fail(out, "put needs content");
+    if (std.mem.eql(u8, file, "app.js")) {
+        if (logic.jsRejected(content)) |why| return lib.fail(out, why);
+    } else if (std.mem.eql(u8, file, "app.css")) {
+        if (logic.cssRejected(content)) |why| return lib.fail(out, why);
+    } else {
+        _ = std.json.parseFromSliceLeaky(Manifest, lib.alloc, content, .{ .ignore_unknown_fields = true }) catch
+            return lib.fail(out, "plugin.json is not valid JSON");
+    }
+    const dir = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ plugins_dir, name });
+    if (lib.fsStat(dir)) |_| {} else |_| return lib.fail(out, "no such addon (create it first)");
+    const path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ dir, file });
+    lib.fsWrite(path, content) catch |err| return lib.failErr(out, err, "writing the file");
+    return writeOk(out, name, isEnabled(loadState(), name));
+}
+
+fn actionShow(obj: std.json.Value, out: *lib.Out) !void {
+    const name = lib.optStr(obj, "name") orelse return lib.fail(out, "show needs name");
+    if (!logic.validName(name)) return lib.fail(out, "bad addon name");
+    const dir = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ plugins_dir, name });
+    const manifest_path = try std.fmt.allocPrint(lib.alloc, "{s}/plugin.json", .{dir});
+    const js_path = try std.fmt.allocPrint(lib.alloc, "{s}/app.js", .{dir});
+    const css_path = try std.fmt.allocPrint(lib.alloc, "{s}/app.css", .{dir});
+    const manifest = lib.fsRead(manifest_path) catch return lib.fail(out, "no such addon");
+    const js = lib.fsRead(js_path) catch "";
+    const css = lib.fsRead(css_path) catch "";
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("name");
+    try s.write(name);
+    try s.objectField("enabled");
+    try s.write(isEnabled(loadState(), name));
+    try s.objectField("plugin_json");
+    try s.write(manifest);
+    try s.objectField("js");
+    try s.write(js);
+    try s.objectField("css");
+    try s.write(css);
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
+fn actionToggle(obj: std.json.Value, out: *lib.Out, on: bool) !void {
+    const name = lib.optStr(obj, "name") orelse return lib.fail(out, "needs name");
+    if (!logic.validName(name)) return lib.fail(out, "bad addon name");
+    const manifest_path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}/plugin.json", .{ plugins_dir, name });
+    if (lib.fsStat(manifest_path)) |_| {} else |_| return lib.fail(out, "no such addon");
+    setEnabled(name, on) catch |err| return lib.failErr(out, err, "updating plugin state");
+    return writeOk(out, name, on);
+}
+
+fn writeOk(out: *lib.Out, name: []const u8, enabled: bool) !void {
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("name");
+    try s.write(name);
+    try s.objectField("enabled");
+    try s.write(enabled);
+    try s.objectField("path");
+    try s.write(try std.fmt.allocPrint(lib.alloc, "ui/plugins/{s}/", .{name}));
+    try s.objectField("next");
+    try s.write("The addon is on disk. If this page is already open, System → Web UI plugins → Refresh (or reload) loads the new script.");
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
+fn writeManifestJson(name: []const u8, title: []const u8, description: []const u8, group: []const u8) ![]const u8 {
+    var buf: std.Io.Writer.Allocating = .init(lib.alloc);
+    var s = std.json.Stringify{ .writer = &buf.writer, .options = .{ .whitespace = .indent_2 } };
+    try s.beginObject();
+    try s.objectField("name");
+    try s.write(name);
+    try s.objectField("title");
+    try s.write(title);
+    try s.objectField("description");
+    try s.write(description);
+    try s.objectField("group");
+    try s.write(group);
+    try s.endObject();
+    try buf.writer.writeByte('\n');
+    return buf.written();
+}
+
+fn loadState() State {
+    const raw = lib.fsRead(state_path) catch return .{};
+    return std.json.parseFromSliceLeaky(State, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch .{};
+}
+
+fn isEnabled(state: State, name: []const u8) bool {
+    for (state.enabled) |e| {
+        if (std.mem.eql(u8, e, name)) return true;
+    }
+    return false;
+}
+
+fn setEnabled(name: []const u8, on: bool) !void {
+    const state = loadState();
+    const next = try logic.mergeEnabled(lib.alloc, state.enabled, name, on);
+    var buf: std.Io.Writer.Allocating = .init(lib.alloc);
+    var s = std.json.Stringify{ .writer = &buf.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("enabled");
+    try s.beginArray();
+    for (next) |e| try s.write(e);
+    try s.endArray();
+    try s.endObject();
+    try lib.fsWrite(state_path, buf.written());
+}

@@ -234,6 +234,9 @@ export function bindPlugins(ctx) {
         return null;
       };
       _wireTab(tab, _VIEWS.length - 1);
+      if (typeof spec.boot === "function") {
+        try { spec.boot(pluginApi()); } catch (e) {}
+      }
     }
   };
   if (_el.webuiPluginsRefresh && !_el.webuiPluginsRefresh._bound) {

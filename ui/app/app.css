@@ -133,8 +133,8 @@
   --pf-t--global--font--family--mono: var(--mono);
 }
 
-/* Dark: #212121 / #171717. Slightly lighter than
-   the old graphite so chat bubbles have room to breathe.
+/* Night-shift cabinet: anthracite backplane, green-grey panel faces.
+   Slightly lifted from true black so chat bubbles have room to breathe.
    Only when theme is system (no data-theme): a :not(light/latte/...)
    list is more specific than :root[data-theme="mocha"] and was painting
    named dark themes with the default dark ramp. */

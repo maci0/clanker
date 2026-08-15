@@ -29,6 +29,10 @@ clanker.registerView({
   id: "activity",
   title: "Activity",
   group: "Watch",
+  boot: function (api) {
+    // Optional. Runs when the script loads, even if the view is closed.
+    // Persistent chrome (a mini-player dock) belongs here.
+  },
   mount: function (container, api) {
     // container is an empty element owned by this plugin.
     // Called once, the first time the view is opened.
@@ -38,6 +42,10 @@ clanker.registerView({
   }
 });
 ```
+
+From chat, the `webui_addon` tool writes these files and can enable the
+addon. Ask for a view ("build me a music player") and it should call that
+tool rather than edit `ui/app/`. `music` is the shipped example.
 
 `api` is the small surface the page offers plugins:
 

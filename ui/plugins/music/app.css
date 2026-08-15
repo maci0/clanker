@@ -1,0 +1,133 @@
+/* Tokens only, so the player follows the cabinet theme. */
+
+.music-dock {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(36rem, calc(100vw - 2rem));
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--lift);
+}
+.music-dock[data-collapsed="true"] {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.music-dock-title {
+  flex: 1 1 8rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.music-btn {
+  flex: none;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  cursor: pointer;
+}
+.music-btn-play { min-width: 40px; }
+.music-fab {
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+
+.music-transport { display: flex; align-items: center; gap: var(--space-1); }
+.music-seek, .music-vol {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 8rem;
+}
+.music-seek { flex: 1 1 10rem; }
+.music-seek input[type="range"],
+.music-vol input[type="range"] { flex: 1 1 auto; min-width: 4rem; }
+.music-time {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+  min-width: 2.5rem;
+}
+
+.music-now { margin: var(--space-3) 0; }
+.music-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.music-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+.music-file {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.music-file input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+.music-url { display: flex; gap: var(--space-2); flex: 1 1 16rem; min-width: 0; }
+.music-url input { flex: 1 1 auto; min-width: 0; }
+
+.music-list { list-style: none; margin: 0; padding: 0; max-width: 40rem; }
+.music-track {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--rule);
+}
+.music-track-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.music-track.is-current .music-track-name { color: var(--accent); font-weight: 600; }
+.music-empty { color: var(--fg-muted); padding: var(--space-3) 0; }
+
+@media (max-width: 40rem) {
+  .music-dock {
+    left: var(--space-3);
+    right: var(--space-3);
+    bottom: 5.5rem;
+    max-width: none;
+  }
+}

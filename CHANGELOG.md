@@ -7,6 +7,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- Ad-hoc web UI addons from chat. Ask for a view ("build me a music
+  player") and the `webui_addon` tool writes `ui/plugins/<name>/` and
+  can enable it. System → Web UI plugins is the on/off switch. A
+  shipped Music addon plays local files or URLs, with a dock that stays
+  up while the addon is on. `registerView` now has an optional `boot`
+  hook for that kind of persistent chrome.
 - The Office whiteboard shows goal work at a glance: each line carries
   an IEC status lamp (green working — breathing while a clanker is on
   it, amber in review, red blocked), working goals lead the board with

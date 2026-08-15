@@ -564,6 +564,7 @@ Internal tools, never offered to the model:
 | `graph` | `state/runs/` | Render the latest execution graph |
 | `status` | none — reads clanker's own config through the host (ck_harness_config) | Show this instance and its peers |
 | `plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
+| `webui_addon` | `ui/plugins/`, `state/webui_plugins.json` | Create, update, list, and toggle ad-hoc web UI views from chat |
 | `autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`) |
 | `webui` | none | Serve the web UI at `GET /`. Same-origin only: every script, style and font comes from this server's own `/webui/*` routes, with no CDN and no third-party origin (`script-src 'self'`). Not a single file — the page is many small ES modules, each served on its own route |
 | `translate` | none | Transform plugin, off by default: translates tool results through `ck_llm` |

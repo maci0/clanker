@@ -3,7 +3,8 @@
 ## Status
 
 **Web UI plugins: Shipped.** `ui/plugins/<name>/` (`plugin.json` +
-`app.js` + optional `app.css`), discovered by `handleWebuiPlugins`
+`app.js` + optional `app.css`), created from chat by the `webui_addon`
+tool, discovered by `handleWebuiPlugins`
 (`src/cli.zig:7206-7299`), served same-origin from `/webui/plugins/<name>/*`
 (`handleWebuiPluginAsset`, `src/cli.zig:7305-7355`), registered client-side
 via `window.clanker.registerView()` (`ui/app/core/plugins.js:171-221`),
