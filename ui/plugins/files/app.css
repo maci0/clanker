@@ -69,6 +69,10 @@
 @media (max-width: 40rem) {
   /* Plugin sheets load after the host 16px phone guard. */
   .files-filter { font-size: 16px; }
+  /* The plugin resets host button min-height so filenames stay compact
+     on a pointer; on a phone those 28px crumbs and rows miss the tap. */
+  .files-crumb, .files-sort-btn, .files-open { min-height: 44px; }
+  .files-row:not(.files-header) { min-height: 44px; }
 }
 .files-filter:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .files-toggle-btn { font-family: var(--mono); letter-spacing: .05em; }

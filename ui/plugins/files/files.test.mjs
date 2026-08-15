@@ -66,3 +66,7 @@ test("Files buttons reset the host pill so filenames stay compact", function () 
   assert.match(css, /:where\(#view-files\)\s*button:where\(:not\(\.secondary\)\)/);
   assert.match(css, /\.files-open\s*\{[^}]*min-height:\s*28px/);
 });
+
+test("Files crumbs and rows are 44px on a phone", function () {
+  assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*\.files-crumb, \.files-sort-btn, \.files-open \{ min-height: 44px; \}/);
+});
