@@ -147,6 +147,22 @@ candidates rather than above them.
 - **Correction to the previous draft: "no Zig client found" was wrong for both.**
   That claim carried a `low confidence, one search only` caveat and the caveat
   fired. Both candidates are materially more viable than the last revision said.
+- **etcd needs no Zig client and has the best CAS and lease primitives here — and
+  is still not the answer.** Its gRPC-gateway exposes the whole v3 API as base64
+  JSON over HTTP, so clanker's existing HTTP client reaches it today. `Txn`
+  compares on `mod_revision` *is* the document-CAS shape, and TTL leases *are*
+  the claim shape. But a 1.5 MiB max request and an 8 GB suggested store, on a
+  system its own docs call *"not intended as a general-purpose database"*, rule
+  it out for sessions and logs — `high` confidence
+  ([gateway](https://etcd.io/docs/v3.5/dev-guide/api_grpc_gateway/),
+  [limits](https://etcd.io/docs/v3.3/dev-guide/limit/)).
+- **FoundationDB is ruled out by a measured number, not a judgement.** Values
+  cannot exceed 100,000 bytes and transactions cannot exceed 5 seconds. **19 of
+  this checkout's 38 session transcripts already exceed the value limit**, with a
+  median of 95 KB sitting on the line and a maximum of 1.75 MB — `high`
+  confidence
+  ([known limitations](https://apple.github.io/foundationdb/known-limitations.html),
+  local measurement).
 - **The PRD's full-mesh model does not reach the stated scale.** 32 members,
   per-entity SPOF, and no replication for the improvement and learning logs. It
   is a reasonable v1 for a handful of instances and is not what a fleet of
@@ -562,36 +578,163 @@ event-shaped rather than record-shaped.
   [ADR-8](https://github.com/nats-io/nats-architecture-and-design/blob/main/adr/ADR-8.md),
   [state-store patterns write-up](https://timderzhavets.com/blog/building-distributed-state-stores-with-nats-jetstream/).
 
-### F. etcd / FoundationDB — strongly consistent cluster stores
+### F1. etcd — the best CAS and lease primitives here, on the wrong data
 
-- **What it is:** etcd is a Raft-backed KV store for cluster metadata, with
-  leases, watches, and compare-and-swap on key revision. FoundationDB is a
-  distributed transactional KV store with optimistic concurrency control and
-  serializable multi-key transactions.
-- **Maturity:** both are heavily used in production; both are Apache-2.0.
-- **Fit:** middling, and it is a question of operational weight rather than
-  correctness. Both presuppose a cluster an operator runs and monitors — a
-  quorum, not a single server. If the deployment is already many servers on a
-  network, that objection is weaker than the previous draft claimed, but it is
-  still a bigger step than one Postgres or one NATS server, and neither covers
-  the bulk data. etcd in particular is a *metadata* store with a value-size
-  limit; `state/sessions/` at 9.5 MB and growing does not belong in it.
-- **Pros:** correct by construction; FoundationDB's OCC is the reference design
-  for the concurrency this question asks about; etcd's lease primitive is exactly
-  right for agent liveness at scale, and is the cleanest expression of the claim
-  shape in the schema appendix.
-- **Cons:** quorum to operate; no Zig client found for either — a weaker claim
-  than it looks, since the same search was wrong about Postgres and NATS, so
-  treat this as under-searched rather than settled; etcd's value-size limit rules
-  out the blob shape entirely.
-- **Unknowns:** Zig client availability, genuinely unresolved after one search.
-  Whether FoundationDB's operational cost is justified if a fleet ever needs
-  serializable multi-key transactions, which nothing in clanker currently does.
+The most interesting result of this pass. etcd is simultaneously the **best fit
+in the note for two of clanker's four shapes and disqualified for the other
+two**, and both halves are worth recording because they suggest a split role
+rather than a yes/no.
+
+- **What it is:** a Raft-backed, strongly consistent key-value store built for
+  cluster metadata. It is what Kubernetes stores its entire cluster state in, so
+  its production pedigree is not in question. Apache-2.0.
+- **Access: no Zig client is required.** This retracts the previous draft's
+  objection. etcd ships a **gRPC-gateway exposing the whole v3 API as plain
+  JSON over HTTP** at `[CLIENT-URL]/v3/*` — `/v3/kv/put`, `/v3/kv/range`,
+  `/v3/kv/txn`, `/v3/watch`. Keys and values are byte arrays and so are base64
+  encoded in JSON. clanker already has an HTTP client and already speaks JSON, so
+  etcd is reachable today with no new dependency at all — the only candidate in
+  the note with that property. The documented gateway limitation is that it does
+  not support authentication via TLS Common Name. Read 2026-08-16.
+- **Why its primitives fit so well.** Two of the four shapes in the schema
+  appendix map onto etcd features exactly, rather than being emulated:
+
+  | Shape | etcd feature |
+  |---|---|
+  | Documents (CAS) | `Txn`: an atomic If/Then/Else comparing `version`, `create_revision`, `mod_revision` or `value` with `=`, `>`, `<`, `!=`. Guarding an update on unchanged `mod_revision` *is* the `doc(key, revision)` row |
+  | Claims / leases | Leases with a TTL and keepalive: attached keys are **deleted automatically** when the client stops renewing. The `expires_ts` in the claim schema stops being something clanker has to enforce |
+
+  A third is close: watch takes a `start_revision` and can replay "the entire
+  available event history from the last compaction revision", which is precisely
+  PRD 0011's `CHAT_SYNC` `after_id` cursor — implemented by the server instead of
+  by `state/mesh/cursors.json`.
+- **Why it is disqualified for the bulk, with measured numbers.** etcd is
+  explicitly *"designed to handle small key value pairs typical for metadata"*
+  and *"not intended as a general-purpose database"*. The limits:
+
+  | Limit | Default | Flag |
+  |---|---|---|
+  | Max request size | 1.5 MiB | `--max-request-bytes` |
+  | Storage quota | 2 GB | `--quota-backend-bytes` |
+  | Suggested maximum DB size | 8 GB | warns at startup above this |
+
+  The stated reason for the size ceiling is **MTTR**: etcd recovers 2 GB in
+  about 20 seconds on good hardware and cannot do the same for a terabyte.
+
+  Checked against this checkout's `state/sessions/` on 2026-08-16 — 38 files,
+  9.8 MB total, median 95 KB, p90 535 KB, **max 1.75 MB** — one transcript
+  already exceeds the 1.5 MiB request limit, and base64 encoding through the
+  JSON gateway inflates every payload by ~33%, which drops the effective ceiling
+  to roughly 1.1 MiB of real content. Session transcripts and the append-only
+  logs do not belong in etcd, today, at 38 sessions.
+- **Operational cost, which is the highest in the note after FoundationDB:**
+  - **Quorum loss stops writes with no automatic recovery.** Not a degraded
+    mode — the cluster goes read-only and waits for an operator.
+  - **fsync latency under 10 ms is the official recommendation.** etcd persists
+    every proposal to a write-ahead log, and unrelated disk activity causing long
+    fsyncs makes it miss heartbeats, triggering leader elections and request
+    timeouts. This is the most commonly reported production failure.
+  - **Defragmentation must be run periodically and blocks the member while it
+    runs.** Skipping it lets storage grow past quota into a read-only alarm
+    state. Most production teams schedule it weekly.
+  - It wants an odd-numbered cluster (3 or 5), so "one small server" is not the
+    deployment.
+- **Verdict:** wrong as *the* backend, genuinely attractive as a **coordination
+  sidecar** next to a bulk store — goals, card state, agent claims and leases in
+  etcd; sessions, blobs and logs in Postgres or object storage. That is a
+  two-store architecture and its cost is that it is two stores, which is why it
+  is not the recommendation. If clanker only ever needed the coordination subset
+  — the "narrow the requirement" option — etcd would lead outright.
+- **Unknowns:** whether the JSON gateway's `/v3/watch` streaming behaves well
+  over a long-lived HTTP connection from clanker's client; how much the base64
+  inflation costs in practice; whether the operational burden is acceptable to an
+  operator who is not already running Kubernetes.
 - **Evidence:**
-  [db-engines comparison](https://db-engines.com/en/system/FoundationDB;etcd),
-  read 2026-08-16. Note that the comparison summary calling etcd "eventually
-  consistent" is wrong — etcd is linearizable for reads through Raft — so this
-  source is low quality and the claim is marked `low` in the evidence log.
+  [gRPC-gateway](https://etcd.io/docs/v3.5/dev-guide/api_grpc_gateway/) (fetched:
+  URL scheme, base64 encoding, endpoint list, CN limitation),
+  [etcd v3 API learning guide](https://etcd.io/docs/v3.5/learning/api/) (fetched:
+  Txn compare targets, lease TTL/keepalive, watch `start_revision`),
+  [system limits](https://etcd.io/docs/v3.3/dev-guide/limit/),
+  [why 8 GB](https://www.perfectscale.io/blog/etcd-8gb) (MTTR rationale),
+  [five production failure patterns](https://perun.au/insights/etcd-production/),
+  all read 2026-08-16; local `find state/sessions -printf '%s'` for the size
+  distribution.
+
+### F2. FoundationDB — the most correct concurrency model, on the worst-fitting shape
+
+- **What it is:** a distributed, ordered, transactional key-value store with
+  optimistic concurrency control and **serializable** multi-key transactions —
+  the strongest correctness guarantee of any candidate in this note. Apple's
+  Record Layer runs on it for services with hundreds of millions of users;
+  Snowflake uses it for metadata; Tigris uses it for object-storage metadata.
+  Apache-2.0.
+- **Hard limits, from the project's own "Known Limitations" page** (fetched
+  2026-08-16 — these are absolute, not tunable):
+
+  | Limit | Value |
+  |---|---|
+  | Key size | 10,000 bytes |
+  | **Value size** | **100,000 bytes** |
+  | Transaction size | 10,000,000 bytes of affected data |
+  | **Transaction duration** | **5 seconds** |
+  | Tested cluster size | up to 500 processes |
+  | Tested database size | up to 100 TB |
+
+- **The value limit is disqualifying on measured data.** Of this checkout's 38
+  session transcripts, **19 — exactly half — already exceed 100,000 bytes**, the
+  median (95 KB) sits right on the line, and the largest is 1.75 MB, or 17× the
+  limit. Every session write would become a chunked multi-key range with its own
+  reassembly logic, on a dataset that is 38 sessions on one developer's machine.
+  This is not a scaling concern for later; it is broken now.
+- **The 5-second limit is a real architectural constraint, not a tuning knob.**
+  Reads after five seconds raise `transaction_too_old` and commits with writes
+  fail. The established workaround is the Record Layer's **continuations** —
+  splitting one logical operation into a sequence of small independent
+  transactions, each returning a token to resume from. That is a sound pattern
+  and it is also a layer clanker would have to write itself, in Zig, because the
+  Record Layer is Java.
+- **Access is the heaviest of any candidate.** No Zig binding was found. Every
+  language binding sits on `libfdb_c.so`, and linking it also requires `libm`,
+  `libpthread` and `librt`. Zig's C FFI makes writing the binding
+  straightforward, but the result is a runtime shared-library dependency whose
+  version must track the cluster's — a categorically larger commitment than
+  `pg.zig`, which is native Zig with no C at all.
+- **Pros:**
+  - Serializable transactions with OCC: the reference design for the concurrency
+    this question asks about, and the only candidate that could make a multi-key
+    state update atomic.
+  - Proven at scales far beyond anything clanker will reach.
+  - The layer concept is philosophically close to clanker's own "everything is a
+    plugin" pressure — a thin core with structure added above it.
+- **Cons:**
+  - The 100 KB value limit versus measured data, above. Decisive.
+  - No long-running transaction, so any operation spanning an agent turn needs
+    continuations.
+  - C shared library plus a binding clanker would write and maintain.
+  - Heaviest operational model in the note: a multi-role process cluster, not a
+    daemon. Even Apple built workarounds (QuiCK) for the transaction limits.
+  - Nothing in clanker currently needs serializable multi-key transactions, so
+    the one thing it is uniquely best at is unused.
+- **Unknowns:** whether a Zig binding exists that this search missed; whether
+  chunking sessions across keys is as bad in practice as it looks on paper.
+- **Evidence:**
+  [Known limitations](https://apple.github.io/foundationdb/known-limitations.html)
+  (fetched: all six numbers),
+  [C API](https://apple.github.io/foundationdb/api-c.html) (libfdb_c and its link
+  requirements),
+  [Record Layer announcement](https://www.foundationdb.org/blog/announcing-record-layer/)
+  and [Record Layer paper](https://www.foundationdb.org/files/record-layer-paper.pdf)
+  (Apple production use),
+  [continuations as the 5s workaround](https://pierrezemb.fr/posts/understanding-fdb-record-layer-continuations/),
+  [Tigris on FoundationDB](https://www.tigrisdata.com/blog/building-a-database-using-foundationdb/),
+  all read 2026-08-16; local session-size measurement as above.
+
+**Correction carried from the previous draft.** It cited a db-engines comparison
+calling etcd "eventually consistent" and flagged it as probably wrong. That is
+now settled: etcd's own API documentation describes `Txn` as *"an atomic
+If/Then/Else construct"* over a Raft-replicated log with monotonic revisions,
+which is not an eventually consistent design. The db-engines summary should not
+be relied on; it stays in the references marked unreliable.
 
 ### G. CRDTs — Automerge, Yjs, Loro
 
@@ -744,9 +887,18 @@ separating.
 | I. PRD 0011 full mesh | n/a (native) | **No** | No — logs/knowledge unreplicated | **No**, `max_members = 32` | **No**, `home_unreachable` refuses | Does not reach the stated deployment size |
 | C. SQLite / WAL | via C | No | Yes, on one host | Single-host only | n/a | One writer at a time; wrong tier for many servers |
 | D. libSQL / Turso | unverified | Hosted or self-host | Yes | Yes | Partly — first-to-sync-wins loses writes | Vendor dependency |
-| F. etcd / FoundationDB | none found (under-searched) | Yes, a quorum | No — etcd value-size limit | Yes | Yes | Heaviest operations of any candidate |
+| **F1. etcd** | **none needed** — JSON/HTTP gateway | Yes, a quorum (3 or 5) | No — 1.5 MiB request, 8 GB store | Yes | Yes | Best CAS + lease primitives here, but metadata-only by design |
+| F2. FoundationDB | none found; `libfdb_c` + FFI | Yes, a process cluster | **No — 100 KB value limit** | Yes | Yes | Half of existing session files already exceed the value limit |
 | H. S3 conditional writes | n/a (HTTP) | No, a bucket | Blobs + claims only | Yes | Yes | Round-trip per op; no watch; needs credentials |
 | G. CRDTs | none | No | n/a | Yes | Yes | Redundant once a backend resolves concurrency |
+
+Reading the F rows together is the surprise of this pass: **etcd needs no client
+library at all** — its gRPC-gateway is plain JSON over HTTP — and has the best
+compare-and-swap and lease primitives in the note, while being disqualified as
+the primary store by a 1.5 MiB request limit and an explicit "not a
+general-purpose database" design stance. FoundationDB is the reverse: the
+strongest correctness model, ruled out by a 100 KB value limit that half this
+checkout's session transcripts already exceed.
 
 The shape of the answer: **A for tier 1, and J or E for tier 2**, with the choice
 between them turning on whether clanker's state is judged record-shaped
@@ -790,9 +942,18 @@ acceptable.
 | S3 supports `If-None-Match` create and `If-Match` ETag CAS | [AWS](https://aws.amazon.com/blogs/storage/building-multi-writer-applications-on-amazon-s3-using-native-controls/), [Morling](https://www.morling.dev/blog/leader-election-with-s3-conditional-writes/) | 2026-08-16 | high |
 | Task claiming via conditional create is an established agent pattern | [Piper](https://benpiper.com/post/2026/can-s3-replace-a-central-orchestrator-for-agents/) | 2026-08-16 | medium |
 | Worktree-per-agent is the industry norm for parallel coding agents | [Augment Code](https://www.augmentcode.com/guides/git-worktrees-parallel-ai-agent-execution) | 2026-08-16 | medium |
-| "etcd is eventually consistent" | [db-engines](https://db-engines.com/en/system/FoundationDB;etcd) | 2026-08-16 | **low — believed wrong**; etcd is linearizable via Raft. Recorded to mark the source unreliable |
+| "etcd is eventually consistent" | [db-engines](https://db-engines.com/en/system/FoundationDB;etcd) | 2026-08-16 | **low — wrong, now settled**; etcd's own API doc describes an atomic If/Then/Else `Txn` over a Raft log with monotonic revisions. Source marked unreliable |
 | No pure-Zig embedded KV store found; Zig options are C bindings | one search only, `lmdb-zig` / `lmdbx-zig` | 2026-08-16 | low — under-searched |
-| No Zig client for etcd or FoundationDB | one search only | 2026-08-16 | low — the same search was **wrong** about Postgres and NATS, so treat as unsearched |
+| ~~No Zig client for etcd~~ | previous draft | 2026-08-16 | **retracted** — none is needed; the gRPC-gateway is JSON over HTTP at `/v3/*` |
+| etcd max request 1.5 MiB, storage quota 2 GB default, 8 GB suggested max; MTTR is the stated reason | [system limits](https://etcd.io/docs/v3.3/dev-guide/limit/), [PerfectScale](https://www.perfectscale.io/blog/etcd-8gb) | 2026-08-16 | high |
+| etcd is "designed to handle small key value pairs typical for metadata" and not a general-purpose database | [system limits](https://etcd.io/docs/v3.3/dev-guide/limit/) | 2026-08-16 | high |
+| etcd `Txn` compares version / create_revision / mod_revision / value; leases auto-delete keys on TTL expiry; watch resumes from `start_revision` | [etcd v3 API](https://etcd.io/docs/v3.5/learning/api/), fetched | 2026-08-16 | high |
+| etcd needs fsync under 10 ms; quorum loss stops writes with no automatic recovery; defragmentation blocks the member and must be scheduled | [five failure patterns](https://perun.au/insights/etcd-production/) | 2026-08-16 | medium |
+| FoundationDB: key 10,000 B, value 100,000 B, transaction 10,000,000 B, transaction duration 5 s | [known limitations](https://apple.github.io/foundationdb/known-limitations.html), fetched | 2026-08-16 | high |
+| 19 of 38 session transcripts exceed FDB's 100 KB value limit; median 95 KB, p90 535 KB, max 1.75 MB; 1 exceeds etcd's 1.5 MiB | local `find state/sessions -type f -printf '%s'` | 2026-08-16 | high |
+| FDB's 5 s limit is worked around with Record Layer continuations (many small transactions plus a resume token), which is Java | [Zemb](https://pierrezemb.fr/posts/understanding-fdb-record-layer-continuations/), [Record Layer paper](https://www.foundationdb.org/files/record-layer-paper.pdf) | 2026-08-16 | medium |
+| FDB bindings all sit on `libfdb_c.so` and must also link libm, libpthread, librt; no Zig binding found | [C API](https://apple.github.io/foundationdb/api-c.html) | 2026-08-16 | medium — absence is one search |
+| FDB production users: Apple (Record Layer), Snowflake metadata, Tigris metadata | [Record Layer announcement](https://www.foundationdb.org/blog/announcing-record-layer/), [Tigris](https://www.tigrisdata.com/blog/building-a-database-using-foundationdb/) | 2026-08-16 | medium |
 | ~~No Zig client for NATS~~ | previous draft of this note | 2026-08-16 | **retracted** — `nats-io/nats.zig` is official and supports JetStream + KV |
 
 ### Rejected leads, kept deliberately
@@ -846,11 +1007,15 @@ only ones that block choosing a tier-2 backend.
    answer by default.
 6. **What is the per-write latency of the channel path versus a direct write?**
    Decides whether the hot append logs need batching behind `ck_state`.
-7. **Do agents need claims/leases, and where do they come from?** No option
-   except J (`SKIP LOCKED`), F (etcd leases) and H (conditional create) has one,
-   and PRD 0011 has no notion of an agent claiming a resource with a timeout and
-   a fence token. Above a handful of agents that gap shows up as two agents doing
-   the same work.
+7. **Do agents need claims/leases, and is that worth a second store?** PRD 0011
+   has no notion of an agent claiming a resource with a timeout and a fence
+   token; above a handful of agents that gap shows up as two agents doing the
+   same work. etcd expresses it natively (TTL leases, server-side expiry) and is
+   reachable with no new dependency, but only as a *sidecar* to a bulk store —
+   its 1.5 MiB request limit rules it out as the primary. So the real question is
+   whether coordination is worth running a second system for, or whether
+   Postgres's `SKIP LOCKED` plus an `expires_ts` column is good enough. The
+   default answer should be one store until measurement says otherwise.
 8. **Should `state/` be a git repository?** git is already a hard dependency, the
    worktree machinery exists, and per-agent branches with explicit merges is a
    well-understood model. Not searched at all; noted because it is the kind of
@@ -862,6 +1027,10 @@ only ones that block choosing a tier-2 backend.
 
 ## What would change the answer
 
+- **Session transcripts getting smaller, or moving out of the store.** The FDB
+  and etcd verdicts both rest on transcript size. If sessions moved to object
+  storage with only metadata in the KV store, F1 becomes a live primary
+  candidate rather than a sidecar.
 - **A decision that mesh stays small.** If `max_members = 32` is affirmed as the
   intended scale, option I is sufficient for the multi-host case and this note
   narrows to tier 1 plus pooling the logs.
@@ -929,7 +1098,24 @@ only ones that block choosing a tier-2 backend.
 - [NATS JetStream Key/Value Store](https://docs.nats.io/nats-concepts/jetstream/key-value-store)
 - [NATS ADR-8: KV design](https://github.com/nats-io/nats-architecture-and-design/blob/main/adr/ADR-8.md)
 - [Building distributed state stores with NATS JetStream](https://timderzhavets.com/blog/building-distributed-state-stores-with-nats-jetstream/)
-- [db-engines: etcd vs FoundationDB](https://db-engines.com/en/system/FoundationDB;etcd) — low quality, see evidence log
+- [db-engines: etcd vs FoundationDB](https://db-engines.com/en/system/FoundationDB;etcd) — unreliable, see evidence log
+
+**etcd**
+
+- [gRPC-gateway: the v3 API as JSON over HTTP](https://etcd.io/docs/v3.5/dev-guide/api_grpc_gateway/)
+- [etcd v3 API: Txn, leases, watch](https://etcd.io/docs/v3.5/learning/api/)
+- [System limits](https://etcd.io/docs/v3.3/dev-guide/limit/)
+- [Why the etcd database size should not exceed 8 GB](https://www.perfectscale.io/blog/etcd-8gb)
+- [etcd in production: five failure patterns](https://perun.au/insights/etcd-production/)
+
+**FoundationDB**
+
+- [Known limitations](https://apple.github.io/foundationdb/known-limitations.html) — the six hard numbers
+- [C API](https://apple.github.io/foundationdb/api-c.html) — libfdb_c and its link requirements
+- [Announcing the Record Layer](https://www.foundationdb.org/blog/announcing-record-layer/)
+- [FoundationDB Record Layer: a multi-tenant structured datastore (paper)](https://www.foundationdb.org/files/record-layer-paper.pdf)
+- [Bypassing the transaction limits with continuations](https://pierrezemb.fr/posts/understanding-fdb-record-layer-continuations/)
+- [Tigris: building a database on FoundationDB](https://www.tigrisdata.com/blog/building-a-database-using-foundationdb/)
 
 **CRDTs**
 
@@ -1023,3 +1209,10 @@ claim(resource, holder, acquired_ts, expires_ts, fence_token)
 Create-if-absent is the whole protocol; `expires_ts` handles a dead holder, and
 `fence_token` is what stops a resumed-from-pause agent acting on a lease it has
 already lost.
+
+Of every option in this note, **etcd expresses this row natively and the others
+emulate it**: an etcd lease carries the TTL, keepalive renews it, and the
+attached keys are deleted by the server when renewal stops — so `expires_ts`
+stops being something clanker enforces on a timer it has to run itself. Postgres
+does it with a `expires_ts` column plus `SKIP LOCKED`, S3 with a conditional
+create plus a sweeper, and PRD 0011 has no form of it at all.
