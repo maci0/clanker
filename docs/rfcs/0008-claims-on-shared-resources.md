@@ -428,8 +428,13 @@ do not let `state/claims/*.json` become something a consumer reads directly.
    caught none of it — a lease arbitrates writers who collide, and unpushed
    work collides with nobody. Counting is what caught it, and the useful
    distinction the count produced is **missing ref** versus **lost work**:
-   of 43 branches with no matching ref upstream, 11 held content and the
-   rest were stale pointers at commits already there. If this is worth
+   of the branches with no matching ref upstream, 11 held content and the
+   rest were stale pointers at commits already there. Two sessions counted
+   the missing refs on the same disk minutes apart and got 43 and 57; the
+   cause was not established. The 11 are the number that matters and two
+   independent methods agree on it — a patch-id sweep and an ahead-count —
+   but that a simple census of one repository disagrees with itself between
+   two readers is the open question restating itself. If this is worth
    solving it is a different mechanism — something that answers "what here
    exists nowhere else", periodically and without being asked. It may
    deserve its own RFC rather than an option in this one.
