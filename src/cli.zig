@@ -7833,7 +7833,7 @@ fn runStreamToolCall(calls: []const types.ToolCall) void {
         s.objectField("name") catch return;
         s.write(tc.name) catch return;
         s.objectField("args") catch return;
-        const cap: usize = 400;
+        const cap = tui_transcript.card_preview_cap;
         const clipped = utf8.cap(tc.arguments, cap);
         if (clipped.len < tc.arguments.len) {
             var arg_buf: [cap + 3]u8 = undefined;

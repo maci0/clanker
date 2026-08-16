@@ -66,8 +66,10 @@ fn noteToolError() void {
 /// Each chatroom inbox line injected into a run. Long enough to see what a
 /// peer said, short enough that a burst of rooms cannot fill the context.
 const max_chat_inbox_preview_bytes: usize = 300;
-/// What the human is shown when asked to allow a tool call.
-const max_args_preview_bytes: usize = 400;
+/// How much of a tool call's arguments a human is shown when judging it:
+/// the shared budget for the confirm prompt, the TUI card body, and the web
+/// stream's per-call row (card_preview_cap in tui/transcript.zig).
+pub const args_preview_cap: usize = 400;
 /// Recent messages kept verbatim when compacting history or pruning stale
 /// tool results. Compaction walks further back from this window so a
 /// tool_call/result pair is never split.
@@ -1788,17 +1790,9 @@ pub const Agent = struct {
             }
             return resp;
         };
-        var s = std.mem.trim(u8, content, " \t\r\n");
         // Unwrap markdown emphasis (bold/italic) so an exact-match answer like
         // **42** becomes 42.
-        while (s.len >= 4 and s[0] == '*' and s[1] == '*' and s[s.len - 1] == '*' and s[s.len - 2] == '*') {
-            s = s[2 .. s.len - 2];
-            s = std.mem.trim(u8, s, " \t\r\n");
-        }
-        while (s.len >= 2 and ((s[0] == '*' and s[s.len - 1] == '*') or (s[0] == '_' and s[s.len - 1] == '_'))) {
-            s = s[1 .. s.len - 1];
-            s = std.mem.trim(u8, s, " \t\r\n");
-        }
+        var s = unwrapScalarEmphasis(std.mem.trim(u8, content, " \t\r\n"));
         // Find the first code fence marker; if present, extract content between
         // the fences even if prose precedes it (the answer_format eval expects
         // an exact-match answer, not a fenced/prose-wrapped variant).
@@ -1991,12 +1985,7 @@ pub const Agent = struct {
         // The fallback may pick a line that itself carries markdown emphasis
         // or backticks (e.g. "The answer is: **42**" or "It's `42`");
         // reapply the unwrap so the returned value is the exact-match answer.
-        while (s.len >= 4 and s[0] == '*' and s[1] == '*' and s[s.len - 1] == '*' and s[s.len - 2] == '*') {
-            s = std.mem.trim(u8, s[2 .. s.len - 2], " \t\r\n");
-        }
-        while (s.len >= 2 and ((s[0] == '*' and s[s.len - 1] == '*') or (s[0] == '_' and s[s.len - 1] == '_'))) {
-            s = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
-        }
+        s = unwrapScalarEmphasis(s);
         if (s.len >= 2 and s[0] == '`' and s[s.len - 1] == '`') {
             s = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
         }
@@ -3381,13 +3370,13 @@ const ToolWorker = struct {
 /// is re-encoded as JSON for the stream event, and a split code point there
 /// is not a smaller preview but a malformed one.
 fn argsPreview(args: []const u8) []const u8 {
-    return utf8.cap(args, max_args_preview_bytes);
+    return utf8.cap(args, args_preview_cap);
 }
 
 test argsPreview {
     try std.testing.expectEqualStrings("short", argsPreview("short"));
     const long = "x" ** 500;
-    try std.testing.expectEqual(max_args_preview_bytes, argsPreview(long).len);
+    try std.testing.expectEqual(args_preview_cap, argsPreview(long).len);
     // A multi-byte code point straddling the cap is dropped whole.
     const emoji = ("y" ** 399) ++ "\u{1F600}";
     try std.testing.expectEqualStrings("y" ** 399, argsPreview(emoji));
@@ -3511,6 +3500,37 @@ test "stripTrailingPunctForExact preserves string punctuation" {
     try std.testing.expectEqualStrings("42", stripTrailingPunctForExact("42,"));
     try std.testing.expectEqualStrings("true", stripTrailingPunctForExact("true."));
     try std.testing.expectEqualStrings("hello", stripTrailingPunctForExact("hello"));
+}
+
+/// Repeatedly unwraps markdown emphasis around a whole-string scalar answer
+/// (`**bold**`, `*italic*`, `_italic_`) so an exact-match answer like **42**
+/// becomes 42. The result is a slice of the caller's buffer, re-trimmed after
+/// each unwrap; single-backtick inline code is a separate policy handled at
+/// its own position in the caller (it must come after fence extraction).
+fn unwrapScalarEmphasis(s: []const u8) []const u8 {
+    var out = s;
+    while (out.len >= 4 and out[0] == '*' and out[1] == '*' and out[out.len - 1] == '*' and out[out.len - 2] == '*') {
+        out = std.mem.trim(u8, out[2 .. out.len - 2], " \t\r\n");
+    }
+    while (out.len >= 2 and ((out[0] == '*' and out[out.len - 1] == '*') or (out[0] == '_' and out[out.len - 1] == '_'))) {
+        out = std.mem.trim(u8, out[1 .. out.len - 1], " \t\r\n");
+    }
+    return out;
+}
+
+test "unwrapScalarEmphasis unwraps bold, italic, and nested combinations" {
+    try std.testing.expectEqualStrings("42", unwrapScalarEmphasis("**42**"));
+    try std.testing.expectEqualStrings("42", unwrapScalarEmphasis("*42*"));
+    try std.testing.expectEqualStrings("42", unwrapScalarEmphasis("_42_"));
+    // Whitespace revealed inside the markers is trimmed on each pass.
+    try std.testing.expectEqualStrings("42", unwrapScalarEmphasis("**  42  **"));
+    // Wrapping that is not whole-string emphasis is left alone.
+    try std.testing.expectEqualStrings("a**b**", unwrapScalarEmphasis("a**b**"));
+    try std.testing.expectEqualStrings("*a* b", unwrapScalarEmphasis("*a* b"));
+    // An unmatched trailing marker is literal text.
+    try std.testing.expectEqualStrings("42*", unwrapScalarEmphasis("42*"));
+    // Empty input is a no-op.
+    try std.testing.expectEqualStrings("", unwrapScalarEmphasis(""));
 }
 
 /// Extracts the exact-match answer from a JSON object: only unwraps when an
