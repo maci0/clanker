@@ -431,6 +431,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker commit` works again. It called the `smart_commit` guest through a
+  helper that wraps its argument as `{"args": "<string>"}` and requires a
+  `text` field in the reply; the guest emits neither, so the verb always
+  failed with "the internal tool returned unreadable output" — after paying
+  for the grouping model call — and never received `dry_run` or `scope`, which
+  made the post-confirmation write a second dry run that reported success.
+  The command now sends a structured body and renders the reply host-side
+  through `commit_logic.renderPlan`, with different wording for a proposal and
+  an applied commit so it cannot claim a write it did not make.
 - `improve-self` reclaims its own worktree when a run promotes nothing.
   `cleanup` used to keep every unmerged worktree "for manual recovery",
   but the `merged` flag is only ever set by the promotion path, so a run
