@@ -375,15 +375,18 @@ do not let `state/claims/*.json` become something a consumer reads directly.
    to a resource another session could hold — and until it is done, the
    enforcement surface is an estimate.
 
-   **One class already found, and it is not native.** Each of the five record
-   stores keeps a second copy of a record status in its `README.md` inventory
-   and writes it with a compare-and-swap over the whole file. That is per-file
-   CAS, not a claim: it refuses a lost update but gives the loser nothing to
-   wait on, so two sessions creating records in the same store in the same
-   second serialize by retry. Those are guest writers rather than native ones,
-   which widens the question — if the enforcement surface includes guests,
-   then `claim` cannot be only a host-side check at a handful of call sites,
-   and the five inventory writers are its first real consumers.
+   **One class already found, and it is not native.** Each record store keeps a
+   second copy of a record status in a `README.md` inventory and writes it
+   with a compare-and-swap over the whole file. That is six index writers
+   across five guests — `reports` maintains two, `docs/reports/README.md` and
+   `docs/runbooks/README.md`, and a single session landed a row in both on the
+   day this was written. Per-file CAS is not a claim: it refuses a lost update
+   but gives the loser nothing to wait on, so two sessions creating records in
+   the same store in the same second serialize by retry. Those are guest
+   writers rather than native ones, which widens the question — if the
+   enforcement surface includes guests, then `claim` cannot be only a
+   host-side check at a handful of call sites, and those six index writers are
+   its first real consumers.
 2. **Is the contended resource usually copyable?** The whole D-first shape
    depends on yes. **Partially answered, from a second day of evidence.** A
    session that did all its git work in a throwaway worktree off `origin/main`
