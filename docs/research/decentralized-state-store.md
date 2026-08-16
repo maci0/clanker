@@ -2,7 +2,7 @@
 
 ## Status
 
-Current — searched 2026-08-16. Revised after reading PRD 0011 (clanker mesh): the multi-host half is already decided by the home-instance rule, so the open problem is single-host process concurrency.
+Current — searched 2026-08-16. Draft 3: separates the access path (tier 1) from where state lives (tier 2). Loopback fixes only tier 1; PostgreSQL and NATS JetStream lead tier 2, both with native Zig 0.16 clients.
 
 Research is evidence, not a decision: it records what exists, how good it is,
 and how confident the finding is. The decision that follows belongs in an
@@ -11,139 +11,177 @@ and how confident the finding is. The decision that follows belongs in an
 ## Question
 
 Which backend, concurrency-control mechanism and access path should clanker use
-so runs isolated in git worktrees, and peers on other hosts, can read and write
-shared agent state concurrently without copying state directories?
+so runs isolated in git worktrees, **and instances running on different servers
+in a network**, can read and write shared agent state concurrently without
+copying state directories?
 
-Three constraints make the question answerable rather than open-ended:
+Four constraints make the question answerable rather than open-ended:
 
 1. **The writer is a sandboxed wasm guest.** Whatever it calls must be reachable
    through a `ck_*` host function under a manifest grant, not through an ambient
    filesystem path.
-2. **The harness is Zig 0.16 with two fetched dependencies** (`zwasm`, `vaxis`)
-   plus vendored TOML. A candidate's cost includes what it adds to that list.
-3. **Concurrency is real, not hypothetical.** The target is tens to thousands of
-   concurrent agents. The next section establishes that this is a *single-host*
-   figure — many short-lived processes sharing one `state/` — because mesh caps
-   membership at 32.
+2. **The harness is Zig 0.16** with two fetched dependencies (`zwasm`, `vaxis`)
+   plus vendored TOML. A candidate's cost includes what it adds to that list —
+   and whether a Zig client for it exists at all.
+3. **The deployment is many servers, not one laptop.** Tens to thousands of
+   concurrent agents spread across hosts on a network, each of which may fail
+   independently.
+4. **No agent may be blocked by another agent's host being down.** This is the
+   constraint that separates the candidates, and the one the current design does
+   not meet.
 
-## Constraints locked by PRD 0011 (clanker mesh)
+## Two tiers, not one
 
-Read after the first draft of this note and it changed several conclusions, so
-it goes before the evidence rather than in a footnote.
-[PRD 0011](../prds/0011-clanker-mesh.md) is marked *design locked*, Phase 1
-partly built. Five of its decisions bound this question:
+The first two drafts of this note collapsed two independent questions into one
+answer, and that was their central error. They are separate axes and each needs
+its own decision:
 
-1. **Loopback HTTP to serve is already the house pattern.** Locked decision 1:
-   *"Serve owns sockets. Everyone else is a loopback HTTP client."* `clanker
-   mesh`, `ck_mesh` inside `clanker run` and the REPL, and `chatrooms.fanOut` in
-   any process all reach the mesh by POSTing to the local serve. Option A below
-   is therefore not a new architecture — it is the existing one, extended from
-   mesh control to state.
-2. **The door is a named host channel, not a guest network grant.** `ck_mesh` is
-   registered next to `ck_chat` and gated on `tool_self_name`; *"the host
-   function is the sandbox door; the I/O is not raw TCP."* The guest never holds
-   the socket and never needs `network_allow`. This is a better answer than the
-   one the first draft reached, and it removes the loopback-authorization
-   objection to option A.
-3. **No second daemon.** An explicit non-goal. Whatever owns state must be
-   `clanker serve`, not a new process.
-4. **No CRDT, no merge — explicitly.** Non-goal: *"Automatic conflict resolution
-   beyond the home-instance rule. No CRDT, no merge."* Concurrency across hosts
-   is resolved by **ownership**: the member that first shares a session is its
-   *home*, home writes the canonical record, everyone else holds a read-only
-   replica under `state/mesh/<home-id>/`, and continuing a session whose home is
-   unreachable is **refused** (`home_unreachable`) rather than forked.
-5. **Mesh is 32 members, not 10⁴.** `max_members = 32`, full mesh, *"32·31/2 =
-   496 connections, which is the point of the cap."* So the thousands-of-agents
-   figure in the question is **within one host** — many short-lived `clanker
-   run` processes against one serve — and *not* across mesh peers. The two
-   scales need different mechanisms, and conflating them was the first draft's
-   main error.
+```
+guest (wasm, inside a worktree)
+  │
+  │  TIER 1 — the access path
+  │  How does a sandboxed guest reach state at all?
+  │  Problem it solves: safeJoinSecure / shared_root fragility
+  ▼
+local clanker serve
+  │
+  │  TIER 2 — where state lives
+  │  Which store holds the truth for N servers, and who resolves concurrency?
+  │  Problem it solves: cross-host sharing, availability, scale
+  ▼
+shared backend  (or peer mesh, or local files)
+```
 
-The net effect: the multi-host half of the question is already decided, and
-decided *against* a shared store. What remains genuinely open is the local half —
-how many processes on one machine safely share one `state/`.
+**Tier 1 is a local question with a clear answer** (option A below): a name-gated
+`ck_state` host channel, with the host doing the I/O. It removes the recurring
+worktree breakage. It is necessary and it is nowhere near sufficient — a loopback
+call reaches the *local* serve and nothing else, so tier 1 alone leaves every
+server an island.
+
+**Tier 2 is the open question** and is where every remaining option lives. Note
+that tier 1 makes tier 2 *replaceable*: once guests call `ck_state` instead of
+writing paths, the backend behind serve can change without touching a single
+guest. That is the strongest argument for doing tier 1 first, and it is an
+argument about optionality rather than about state.
+
+## What PRD 0011 decides, and what it leaves open
+
+[PRD 0011](../prds/0011-clanker-mesh.md) is marked *design locked, in progress*
+(Phase 1 partly built). It is a **candidate for tier 2, not the frame for this
+question** — an in-progress design is evidence about intent, not a constraint
+research must accept. Read 2026-08-16.
+
+**What it settles.**
+
+- **Tier 1's shape, for a different noun.** Locked decision 1: *"Serve owns
+  sockets. Everyone else is a loopback HTTP client."* `ck_mesh` is a name-gated
+  host channel; the host does the I/O; the guest never holds a socket and never
+  needs `network_allow`. Option A is that pattern applied to state, so tier 1 is
+  not a new architecture — it is the existing one.
+- **Session and workspace consistency, by ownership.** The member that first
+  shares a session is its **home**; home writes the canonical
+  `state/sessions/<id>.json`; other members hold a read-only replica under
+  `state/mesh/<home-id>/`. This *is* a cross-server mechanism — the question is
+  whether it is the right one.
+- **Board and goals, as a replicated log.** A card action is a chat `send`
+  (ADR 0001), fanned out and deduped by message id. Eventually consistent, with
+  no conflict resolution: two agents moving one card to different lanes both
+  append, and fold order decides.
+
+**What it does not settle, and this is the larger half.**
+
+1. **Most of `state/` is not covered at all.** `token_stats.jsonl`,
+   `improvements.jsonl`, `autolearn.jsonl`, `reasoning.jsonl`, knowledge and
+   `learnings.md` have no mesh frame and no replication story. On a fleet they
+   stay **per-host islands**. For a system whose whole premise is collective
+   self-improvement, that is the most consequential gap in this note: a hundred
+   servers would produce a hundred disjoint improvement logs and a hundred
+   private sets of learnings.
+2. **`max_members = 32`.** Full mesh, *"32·31/2 = 496 connections, which is the
+   point of the cap."* That is a property of choosing full-mesh gossip, not a
+   requirement of the problem. At the stated deployment size the topology is the
+   binding constraint, and a shared backend does not have it.
+3. **Availability is per-entity single-point-of-failure.** *"If home is
+   `unreachable`, continue is refused (`reason="home_unreachable"`), not forked
+   locally."* Correct, and deliberately so — but it means every host is a SPOF
+   for the sessions it owns. On one laptop that is invisible; across servers it
+   means routine host maintenance strands work.
+4. **"No CRDT, no merge"** is a non-goal that follows from the ownership model.
+   It stays sound for tier 2 candidates that also have a single writer per
+   entity, and it is not binding on a store that resolves concurrency itself.
+
+So the PRD's own model — peer-to-peer full mesh, per-entity ownership, refuse on
+owner loss — is **option I** in the survey below, ranked against the shared-store
+candidates rather than above them.
 
 ## TL;DR
 
-- **The pain is the path, not the store.** Worktree state sharing today is two
-  independent mechanisms that must agree — host-side symlinks
-  (`linkCheckoutState`, `src/improve/worktree.zig:313`) and guest-side prefix
-  routing (`rootForPath`, `src/sandbox/host.zig:4742`). Every sandbox hardening
-  pass re-derives `safeJoinSecure` and can silently break the second half while
-  the first still looks correct — `high` confidence, observed in-tree
-  ([bug record](../reports/bugs/2026-08-14-worktree-state-symlink-notdir.md)).
-- **clanker already has a compare-and-swap primitive, and it does not scale to
-  the state files that matter.** `ck_fs_write_if` (`src/sandbox/host.zig:3117`)
-  is whole-file CAS: read all, SHA-256, compare, replace, under a `.ck_cas.lock`
-  sidecar. `max_fs_bytes` defaults to 1 MiB (`src/sandbox/host.zig:178`), and
-  `state/token_stats.jsonl` is already 3.2 MB — CAS on the hot append-only logs
-  fails `too_large` before contention is even reached — `high` confidence,
-  verified in tree.
-- **The answer is already the house pattern: a `ck_state` host channel that
-  talks loopback HTTP to `clanker serve`.** PRD 0011 locks *"serve owns sockets,
-  everyone else is a loopback HTTP client"* and routes `ck_mesh` exactly this
-  way; `clanker serve` already exposes 43 distinct `/api/*` routes. An HTTP
-  write path is immune to `safeJoinSecure` hardening by construction, because it
-  is not a path — `high` confidence, verified in tree and against
-  [PRD 0011](../prds/0011-clanker-mesh.md).
-- **Route it through a name-gated channel, not a guest `network_allow` grant.**
+- **Tier 1 and tier 2 are separate decisions, and loopback only answers tier 1.**
+  A `ck_state` channel to the local serve fixes the worktree breakage and leaves
+  cross-server state entirely unsolved. Both halves are needed; only tier 1 is
+  currently obvious — `high` confidence.
+- **The pain in tier 1 is the path, not the store.** Worktree state sharing is
+  two mechanisms that must agree — host-side symlinks (`linkCheckoutState`,
+  `src/improve/worktree.zig:313`) and guest-side prefix routing (`rootForPath`,
+  `src/sandbox/host.zig:4742`). `shared_root` is a special case *inside*
+  `safeJoinSecure`, the function the improve loop exists to harden — `high`
+  confidence, observed in-tree
+  ([bug](../reports/bugs/2026-08-14-worktree-state-symlink-notdir.md)).
+- **Route tier 1 through a name-gated channel, not a `network_allow` grant.**
   `networkAllowed` (`src/sandbox/host.zig:2350`) glob-matches the hostname and
-  never examines the port, so a `["127.0.0.1"]` grant would admit *any* local
-  port — including other services on the box. `ck_mesh`'s design avoids this by
-  making the host do the I/O behind a `tool_self_name` gate. State should copy
-  that, not `ck_http` — `high` confidence.
-- **SQLite is not ruled out by the "no libc" rule.** `build.zig` already sets
-  `link_libc = true` for the host binary (`build.zig:126`, `:406`, `:412`). The
-  real objection to SQLite is its write model, not its C-ness: WAL gives many
-  readers and exactly **one** writer, so N agents still serialize, and
-  `SQLITE_BUSY` needs `busy_timeout` + `BEGIN IMMEDIATE` + short transactions —
-  all three, or it fails under load — `high` confidence
-  ([tenthousandmeters](https://tenthousandmeters.com/blog/sqlite-concurrent-writes-and-database-is-locked-errors/),
-  [berthub](https://berthub.eu/articles/posts/a-brief-post-on-sqlite3-database-locked-despite-timeout/)).
-- **CRDTs are ruled out by decision, not just by fit.** PRD 0011 lists
-  *"No CRDT, no merge"* as a non-goal and resolves cross-host concurrency by
-  home-instance ownership instead. The technical case agrees — the bulk of
-  `state/` is append-only logs and single-owner records, and text CRDTs cost
-  16–32 bytes of metadata per character — but the decision is already made —
-  `high` confidence on the decision, `medium` on the numbers
-  ([Loro benchmarks](https://loro.dev/docs/performance)).
-- **The cross-host store candidates are off-model.** Turso, NATS KV, etcd,
-  FoundationDB and S3 conditional writes all assume many writers converging on
-  one store. PRD 0011 instead gives every shared entity a single owning host and
-  **refuses** the write when that host is unreachable. They are surveyed below
-  because the survey has value if that decision is ever revisited, not because
-  any of them is a live candidate — `high` confidence.
-- **The real open problem is local, not distributed.** Mesh caps at 32 members;
-  the 10³–10⁴ agent figure is short-lived processes on *one* machine sharing one
-  `state/`. That is a single-host concurrency problem, and it is the half no
-  locked decision covers — `high` confidence.
+  never examines the port, so a `["127.0.0.1"]` grant admits *any* local service.
+  `ck_mesh` avoids this by gating on `tool_self_name` — `high` confidence.
+- **PostgreSQL is the strongest tier-2 candidate and was missing from the first
+  two drafts.** It expresses all four of clanker's data shapes with one
+  dependency — append tables, row-version CAS, bytea blobs, and `FOR UPDATE SKIP
+  LOCKED` plus advisory locks for claims — and `pg.zig` is a **native Zig 0.16
+  driver needing no libc and no C client** (MIT, 591 stars, read 2026-08-16) —
+  `high` confidence
+  ([pg.zig](https://github.com/karlseguin/pg.zig),
+  [PG explicit locking](https://www.postgresql.org/docs/current/explicit-locking.html)).
+- **NATS JetStream is the strongest event-shaped alternative, and it has an
+  official Zig client.** `nats-io/nats.zig` requires Zig 0.16+, is Apache-2.0,
+  and supports JetStream and the KV store with integration tests — though it is
+  explicitly pre-1.0 with an API that may change — `high` confidence
+  ([nats.zig](https://github.com/nats-io/nats.zig)).
+- **Correction to the previous draft: "no Zig client found" was wrong for both.**
+  That claim carried a `low confidence, one search only` caveat and the caveat
+  fired. Both candidates are materially more viable than the last revision said.
+- **The PRD's full-mesh model does not reach the stated scale.** 32 members,
+  per-entity SPOF, and no replication for the improvement and learning logs. It
+  is a reasonable v1 for a handful of instances and is not what a fleet of
+  servers needs — `high` confidence, from the PRD itself.
+- **CRDTs remain rejected, now on their own merits.** With a shared backend
+  resolving concurrency there is nothing for them to do; the append-only logs
+  need ordering, not merging. The PRD's non-goal is no longer the reason —
+  `medium` confidence.
 
 ## Scope and method
 
 - **Searched:** the local tree first (`src/sandbox/host.zig`,
   `src/improve/worktree.zig`, `src/util/file_lock.zig`, `src/peers/`,
   `build.zig`, `build.zig.zon`, `docs/reports/`), then
-  [PRD 0011](../prds/0011-clanker-mesh.md) in full, then web search on six axes —
-  embedded SQLite concurrency, libSQL/Turso embedded replicas, CRDT library
+  [PRD 0011](../prds/0011-clanker-mesh.md) in full, then web search on eight axes
+  — embedded SQLite concurrency, libSQL/Turso embedded replicas, CRDT library
   comparison, NATS JetStream KV vs etcd vs FoundationDB, S3 conditional writes,
-  and agent-harness worktree architectures. The `research` tool's `plan` and
-  `sweep` actions were run first (see [Appendix](#appendix)).
-- **Not searched:** hosted multi-tenant control planes (Temporal, Restate,
-  Dapr's state building block) — they assume a scheduler clanker does not have
-  and an operator willing to run a cluster. Raft-in-Zig implementations were not
-  surveyed; if the daemon option is chosen, replication is a later question, not
-  this one. No benchmark was run: every performance number below is quoted, not
-  measured.
-- **Freshness:** sweep and verification both 2026-08-16. Newest sources are the
-  2026 comparison pages; the SQLite concurrency material is stable and older by
-  design. Turso pricing and product shape age fastest. The PRD is the fastest-
-  moving input of all: it is marked *in progress*, so a Phase 1 landing or a
-  revised non-goal dates this note before any external source does.
-- **Revision:** the first draft was written without PRD 0011 and reached the
-  right candidate for the wrong reasons — it treated the loopback-to-serve
-  design as a new proposal and the 10⁴ figure as a cross-host requirement. Both
-  are corrected above. The option survey itself did not change.
+  agent-harness worktree architectures, PostgreSQL coordination primitives, and
+  Zig client availability for the surviving candidates. The `research` tool's
+  `plan` and `sweep` actions were run first (see [Appendix](#appendix)).
+- **Not searched:** hosted control planes (Temporal, Restate, Dapr) — they
+  replace the agent loop rather than the state store. Raft-in-Zig was not
+  surveyed; if a self-hosted store wins, its own HA is a later question. No
+  benchmark was run: every performance number is quoted, not measured. Neither
+  Zig driver was compiled or run against a live server.
+- **Freshness:** all verification 2026-08-16. The PRD is the fastest-moving input
+  — marked *in progress*, so a Phase 1 landing or a revised non-goal dates this
+  note before any external source does. `nats.zig` is pre-1.0 and its API is
+  declared unstable.
+- **Revision history.** Draft 1 was written without PRD 0011. Draft 2 read it and
+  over-corrected, treating an in-progress design as settled ground and archiving
+  the cross-host candidates. Draft 3 (this one) separates the two tiers, restores
+  those candidates, adds PostgreSQL — absent from both earlier drafts — and
+  corrects two wrong "no Zig client" claims. The tier-1 finding is the only one
+  that has survived unchanged throughout.
 
 ## The problem, stated in terms of the current tree
 
@@ -199,6 +237,11 @@ target of 10³–10⁴ agents the copy alone dominates. The current design alrea
 rejects it for plain runs, which is why `linkCheckoutState` exists at all.
 
 ## Options found
+
+### Tier 1 — the access path
+
+How a sandboxed guest reaches state at all. Local question, and the two options
+are not rivals: B is the fallback if A is judged too large.
 
 ### A. `ck_state` host channel to serve, over loopback — the house pattern extended
 
@@ -281,6 +324,113 @@ shape for a neighbouring problem.
   records the measured lost-update rate this class of bug produces — *"six
   writers posting ten messages each kept twelve of sixty."*
 
+---
+
+### Tier 2 — where state lives
+
+Which store holds the truth across N servers, and who resolves concurrency. This
+is the open half. Options C through I are all tier-2 answers; A is orthogonal to
+every one of them and composes with all of them.
+
+Two candidates lead, for different data shapes, and both now have native Zig
+clients on the current compiler — which was the objection that ruled them out in
+the previous draft, wrongly.
+
+### J. PostgreSQL — one dependency, all four data shapes
+
+**Strongest tier-2 candidate.** Listed out of alphabetical order because it was
+absent from the first two drafts; adding it changed the ranking.
+
+- **What it is:** a single shared relational server that every clanker instance
+  connects to over the network. `serve` becomes a client, not the owner of truth.
+- **How it expresses clanker's four shapes** — the reason it leads, since no
+  other single candidate covers all four:
+
+  | Shape | Mechanism |
+  |---|---|
+  | Append-only logs | plain `INSERT` into an append table; MVCC means writers never block each other |
+  | Documents (CAS) | `UPDATE ... WHERE key = $1 AND revision = $2`, row count 0 means lost the race |
+  | Blobs | `bytea`, or large objects, or a path into object storage |
+  | Claims / leases | `SELECT FOR UPDATE SKIP LOCKED` for work claiming, `pg_advisory_xact_lock` for global constraints |
+
+- **Maturity:** the highest on the list. PostgreSQL licence.
+  **`pg.zig` is a native Zig driver, not a C binding**: targets Zig 0.16.0, needs
+  no libc and no `libpq`, MIT, 591 stars, 216 commits, actively maintained.
+  Supports connection pooling, prepared statements, transactions, `LISTEN/NOTIFY`
+  (which is the change-notification primitive the web UI wants), JSON/JSONB and
+  arrays. TLS is via OpenSSL and marked experimental — the one caveat. Read
+  2026-08-16.
+- **Fit:** very good, with one honest cost. It solves availability (no per-entity
+  SPOF — any agent can write any record from any host), scale (thousands of
+  clients is ordinary for Postgres, not exotic), and concurrency (MVCC plus real
+  transactions) in one move. `LISTEN/NOTIFY` even replaces the polling the mesh
+  design uses SSE for.
+- **Pros:**
+  - Removes the `max_members` ceiling entirely: clients do not connect to each
+    other, so there is no O(n²) topology.
+  - A host going down strands nothing. That is constraint 4, met directly.
+  - Covers the state PRD 0011 leaves out — improvement logs, token stats,
+    learnings, knowledge — with no new mechanism, so the fleet can actually learn
+    collectively.
+  - `SKIP LOCKED` gives the claim/lease primitive that is missing everywhere else
+    in this note.
+  - Boring, inspectable, and an operator can query it with `psql` when an agent
+    misbehaves. This is worth more than it sounds for a self-modifying system.
+- **Cons:**
+  - **It is a server an operator must run.** This is the real cost, and it
+    changes clanker's deployment shape from "a checkout on a machine" to "a
+    checkout plus a database". A single-laptop user should not need one, which
+    argues for Postgres being one backend behind `ck_state`, not the only one.
+  - Postgres itself becomes the SPOF unless it is made HA — a smaller and much
+    better-understood problem than per-entity ownership, but not free.
+  - Connection count: thousands of short-lived `clanker run` processes each
+    opening a connection needs PgBouncer or routing through the local `serve`,
+    which tier 1 already does.
+  - TLS in `pg.zig` is experimental, which matters on a real network.
+- **Unknowns:** `pg.zig` under thousands of concurrent connections; whether TLS
+  maturity blocks a LAN deployment; migration path from the current JSONL files.
+- **Evidence:** [pg.zig](https://github.com/karlseguin/pg.zig) (fetched
+  2026-08-16 for version, licence, dependencies, features);
+  [PostgreSQL explicit locking](https://www.postgresql.org/docs/current/explicit-locking.html);
+  [SKIP LOCKED as a distributed lock](https://medium.com/@arkadii.osheev.official/lightweight-distributed-locks-with-postgresql-skip-locked-in-action-2461a067b491);
+  [why SKIP LOCKED alone is not enough for global constraints](https://terrislinenbach.medium.com/why-for-update-skip-locked-isnt-enough-using-pg-advisory-xact-lock-to-build-a-correct-postgresql-d3eb9db46473);
+  [Postgres for agentic AI](https://www.pgedge.com/blog/postgres-for-agentic-ai-your-database-is-a-compute-layer-not-a-parking-lot).
+
+### I. PRD 0011's full mesh — peer-to-peer, per-entity ownership
+
+The status quo candidate. Included because a survey without it cannot be
+audited, and because it is the only option already partly built.
+
+- **What it is:** no backend. Every instance holds its own `state/`, connects
+  directly to every other member, and each shared entity has one owning host
+  ("home") that serializes its writes. Board and goals replicate as a deduped
+  message log; sessions replicate as read-only copies under
+  `state/mesh/<home-id>/`.
+- **Maturity:** Phase 1 codec, admission, liveness and the Fleet map are built
+  with host tests; listener, `ck_mesh`, CLI and fan-out are open. Phase 3
+  (workspace and file sharing) is unstarted. Read 2026-08-16.
+- **Fit:** good for a handful of instances an operator knows about; poor at the
+  stated scale, on three independent counts.
+- **Pros:**
+  - No server to run — the only candidate with that property, and it is a real
+    one. A two-laptop mesh works with no infrastructure at all.
+  - Already designed, partly built, and consistent with the sandbox model.
+  - Failure is local: losing one host loses only that host's owned entities.
+- **Cons:**
+  - `max_members = 32`, by design, because full mesh is O(n²) connections. The
+    stated deployment does not fit.
+  - Per-entity SPOF: `home_unreachable` refuses the write outright. Routine host
+    maintenance strands work.
+  - Covers only sessions, workspaces, files, chat and board. The improvement
+    logs, token stats, learnings and knowledge have **no replication story at
+    all**, so a fleet does not pool what it learns.
+  - Conflict resolution for board and goals is fold order over a deduped log,
+    which is last-writer-wins without saying so.
+- **Unknowns:** whether `max_members` could be raised with a different topology
+  (hub, or gossip with partial connectivity) without abandoning the design — the
+  PRD rejects hub-and-spoke explicitly but only at 32 members.
+- **Evidence:** [PRD 0011](../prds/0011-clanker-mesh.md), whole document.
+
 ### C. SQLite (or libSQL) as the state backend
 
 - **What it is:** replace the JSON/JSONL files with one embedded relational
@@ -325,13 +475,11 @@ shape for a neighbouring problem.
 
 ---
 
-**Options D through H are surveyed against a decision already taken.** Each is a
-shared multi-writer store for the cross-host case, and PRD 0011 resolves that
-case by single-owner ("home instance") writes with an explicit refusal when the
-owner is unreachable. They are recorded in full because a survey that omits the
-rejected candidates cannot be re-audited, and because the home-instance rule is
-a v1 choice that a later phase could revisit — not because any of them is a live
-candidate today.
+**Options D through H are live tier-2 candidates.** The previous draft marked
+them archival on the grounds that PRD 0011 had already decided the cross-host
+question. That was wrong twice over: the PRD covers only part of `state/`, and
+an in-progress design is not a constraint on research. They are ranked here on
+their merits against the four constraints, alongside J and I.
 
 ### D. libSQL / Turso embedded replicas — local reads, forwarded writes
 
@@ -342,12 +490,13 @@ candidate today.
 - **Maturity:** commercial product with public docs and an examples repo; offline
   sync reached public beta. Exact version and licence not read in this pass —
   `unverified`.
-- **Fit:** the closest published architecture to the shape the *question*
-  describes — every host holds a replica, one primary owns the writes. But PRD
-  0011 already implements that idea without the dependency: "home instance" is
-  a per-entity primary, and `state/mesh/<home-id>/` is the read-only replica.
-  Turso would centralize the primary for the whole mesh instead of per session,
-  which is a different and larger commitment.
+- **Fit:** the closest published architecture to the literal shape of the
+  question — every host holds a replica, one primary owns the writes — and it is
+  the middle ground between J and I. Against J it trades SQL and one server for
+  local-speed reads; against I it trades "no server" for a primary that does not
+  vanish with one host. The blocking issue is not architecture but ownership: a
+  hosted product with an unverified self-host story is a heavier commitment than
+  a Postgres or NATS server the operator already knows how to run.
 - **Pros:** the read path is a local file, so per-host read latency is
   unaffected by mesh size; the write path is already the "centralized backend"
   the question asks for; sync is a solved, supported feature rather than
@@ -373,27 +522,45 @@ candidate today.
 
 - **What it is:** a key-value store layered on JetStream streams, with revision
   numbers, history, and `watch` for change notification.
-- **Maturity:** established, widely deployed, Apache-2.0. Version not read —
-  `unverified`.
-- **Fit:** genuinely good for the *coordination* subset — which agent owns which
-  task, goal status, lease/claim records — and its `watch` would replace polling
-  in the web UI. Poor for the bulk: session transcripts and token logs are not
-  KV-shaped and would bloat a stream.
-- **Pros:** revision-based CAS is exactly the primitive row 2 needs, at key
-  granularity rather than file granularity; multi-host by construction, so the
-  mesh case is free; watch eliminates polling loops.
-- **Cons:** a server to run, which for a single-developer local harness is a
-  large step up in operational weight; no Zig client found in this pass, so the
-  wire protocol would be implemented or a C client linked; it answers
-  coordination but leaves the document and blob state unsolved, so it is an
-  addition rather than a replacement.
-- **Unknowns:** Zig client availability; storage cost of history at clanker's
-  write rates.
-- **Evidence:**
+**Runner-up to J**, and the better fit if clanker's state is judged to be
+event-shaped rather than record-shaped.
+
+- **Maturity:** established, widely deployed, Apache-2.0. **Correction to the
+  previous draft, which said no Zig client existed:** `nats-io/nats.zig` is the
+  **official** client, requires Zig 0.16.0 or later, is Apache-2.0, 218 stars,
+  and supports core pub/sub, server-authenticated TLS, JetStream (pull and push
+  consumers), the KV store and Micro Services, all covered by integration tests.
+  It is explicitly **pre-1.0 and under active development, with an API that may
+  change**; Object Store and client mTLS are planned, not built. Fetched
+  2026-08-16.
+- **Fit:** strong for three of the four shapes and weak on one. Streams are the
+  natural home for the append-only logs — which is the majority of `state/` by
+  volume and exactly what PRD 0011 leaves unreplicated. KV with revision CAS
+  covers documents, and KV TTLs give claims. The gap is blobs: Object Store is
+  the right answer and is the one part the Zig client has not implemented.
+- **Pros:**
+  - Multi-host by construction with no `max_members` ceiling, and no per-entity
+    SPOF.
+  - `watch` is push-based change notification, which removes polling from the web
+    UI and from any agent waiting on another's result.
+  - Streams give replay and history for free — a genuinely good match for
+    `improvements.jsonl` and `autolearn.jsonl`, where "what has this fleet
+    learned" is a replay over a log.
+  - Lighter to operate than Postgres for a pure message/KV workload.
+- **Cons:**
+  - A server to run, same objection as J.
+  - Pre-1.0 client with a declared-unstable API, in a project that pins two
+    dependencies deliberately. This is the main risk and it is not small.
+  - No Object Store in the Zig client, so blobs need a second mechanism.
+  - Weaker than Postgres for the read patterns the web UI has: no ad-hoc queries,
+    no joins, no `psql` to inspect state by hand.
+- **Unknowns:** storage cost of stream history at clanker's write rates; how the
+  pre-1.0 API churn behaves in practice; whether Object Store lands.
+- **Evidence:** [nats.zig](https://github.com/nats-io/nats.zig) (fetched
+  2026-08-16 for official status, Zig version, feature table, pre-1.0 status),
   [NATS KV docs](https://docs.nats.io/nats-concepts/jetstream/key-value-store),
   [ADR-8](https://github.com/nats-io/nats-architecture-and-design/blob/main/adr/ADR-8.md),
-  [state-store patterns write-up](https://timderzhavets.com/blog/building-distributed-state-stores-with-nats-jetstream/),
-  read 2026-08-16.
+  [state-store patterns write-up](https://timderzhavets.com/blog/building-distributed-state-stores-with-nats-jetstream/).
 
 ### F. etcd / FoundationDB — strongly consistent cluster stores
 
@@ -402,18 +569,24 @@ candidate today.
   distributed transactional KV store with optimistic concurrency control and
   serializable multi-key transactions.
 - **Maturity:** both are heavily used in production; both are Apache-2.0.
-- **Fit:** poor, for a reason that is about clanker rather than about them. Both
-  presuppose a cluster an operator runs and monitors. clanker's deployment unit
-  is a checkout on a laptop; requiring a quorum to start an agent inverts that.
-  FoundationDB's transaction model is the best technical match to row 2 of the
-  table, and the worst operational match to how clanker ships.
+- **Fit:** middling, and it is a question of operational weight rather than
+  correctness. Both presuppose a cluster an operator runs and monitors — a
+  quorum, not a single server. If the deployment is already many servers on a
+  network, that objection is weaker than the previous draft claimed, but it is
+  still a bigger step than one Postgres or one NATS server, and neither covers
+  the bulk data. etcd in particular is a *metadata* store with a value-size
+  limit; `state/sessions/` at 9.5 MB and growing does not belong in it.
 - **Pros:** correct by construction; FoundationDB's OCC is the reference design
-  for the concurrency the question asks about; etcd's lease primitive is exactly
-  right for agent liveness at scale.
-- **Cons:** operational weight; no Zig client for either found in this pass;
-  etcd is not designed for the data volume `state/sessions/` represents (it is a
-  metadata store with a value-size limit).
-- **Unknowns:** none that would change the verdict at clanker's deployment shape.
+  for the concurrency this question asks about; etcd's lease primitive is exactly
+  right for agent liveness at scale, and is the cleanest expression of the claim
+  shape in the schema appendix.
+- **Cons:** quorum to operate; no Zig client found for either — a weaker claim
+  than it looks, since the same search was wrong about Postgres and NATS, so
+  treat this as under-searched rather than settled; etcd's value-size limit rules
+  out the blob shape entirely.
+- **Unknowns:** Zig client availability, genuinely unresolved after one search.
+  Whether FoundationDB's operational cost is justified if a fleet ever needs
+  serializable multi-key transactions, which nothing in clanker currently does.
 - **Evidence:**
   [db-engines comparison](https://db-engines.com/en/system/FoundationDB;etcd),
   read 2026-08-16. Note that the comparison summary calling etcd "eventually
@@ -428,18 +601,23 @@ candidate today.
   stars); Automerge has `automerge-repo` for sync; Loro is newest, Rust+WASM,
   and leads the benchmark suite on size and speed. Read 2026-08-16, from
   secondary comparison pages — `medium` confidence on the numbers.
-- **Fit:** **excluded by decision.** PRD 0011 lists *"Automatic conflict
-  resolution beyond the home-instance rule. No CRDT, no merge"* among its
-  non-goals. Reversing that is an ADR, not a research finding.
+- **Fit:** poor, on the merits. The previous draft said "excluded by decision"
+  because PRD 0011 lists *"no CRDT, no merge"* as a non-goal; that is still true
+  but it is no longer the reason, since the PRD is now one candidate among
+  several rather than the frame.
 
-  The independent technical case reaches the same place, which is worth
-  recording because it means the non-goal is not merely a scoping convenience:
-  the append-only logs need ordering, not merging; the single-owner directories
-  have no concurrent writers by construction; the small documents have a natural
-  owner. The one slice where a CRDT would genuinely earn its keep is
-  collaborative editing of a shared artifact — a Kanban card, a goal description
-  — edited by two agents at once, which is exactly the case PRD 0011 chose to
-  refuse rather than merge.
+  The independent case: the append-only logs need ordering, not merging; the
+  per-entity directories have no concurrent writers by construction; the small
+  documents have a natural owner. More decisively, **a shared backend removes the
+  problem CRDTs solve.** CRDTs earn their keep when replicas must accept writes
+  while partitioned from each other; options J and E accept writes centrally and
+  resolve concurrency there. Choosing a backend makes CRDTs redundant, and
+  choosing peer-to-peer (option I) is what would make them relevant again — which
+  is precisely the combination PRD 0011 rejects.
+
+  The one slice where a CRDT would still earn its keep is two agents editing one
+  Kanban card or goal description simultaneously, which every option in this note
+  currently resolves as last-writer-wins.
 - **Pros:** removes the need for a central writer entirely; offline-first by
   construction; the strongest possible answer to "thousands of agents on
   different hosts" *if* the data is merge-shaped.
@@ -469,10 +647,12 @@ candidate today.
   leases, leader election, and task claiming with no coordinator at all.
 - **Maturity:** GA on S3 since late 2024; equivalents predate it on GCS and Azure
   Blob. Read 2026-08-16.
-- **Fit:** interesting and directly on point for the multi-host case, irrelevant
-  for the single-laptop case. The task-claiming pattern — try to `PutObject` a
-  claim key with `If-None-Match`, and you own the task if it succeeds — is
-  precisely the primitive a 10⁴-agent fleet needs, and it needs no server.
+- **Fit:** partial but genuinely valuable, and best read as a *complement* to J
+  or E rather than a rival. It covers exactly the two shapes the leaders are
+  weakest on — blobs (where `state/sessions/` at 9.5 MB does not belong in a
+  KV store) and claims (try to `PutObject` a claim key with `If-None-Match`; you
+  own the task if it succeeds). It cannot cover documents or hot logs: no watch,
+  and a round-trip per operation.
 - **Pros:** no infrastructure to run beyond a bucket; scales to the stated agent
   count without a coordinator; the same API works across three clouds and MinIO.
 - **Cons:** network round-trip per operation makes it wrong for hot local state;
@@ -498,8 +678,9 @@ Each prompt answered explicitly, including the ones that do not apply.
   of replicated state that nobody has named as one. (4) **PRD 0011 has already
   designed the access path**: `ck_mesh` as a name-gated host channel whose host
   side speaks loopback HTTP to serve. Option A is that design applied to a
-  second noun. The out-of-the-box answer here was not a library at all; it was a
-  decision already written down in another document.
+  second noun. The out-of-the-box answer for tier 1 was not a library at all; it
+  was a decision already written down in another document. Note that none of the
+  four helps with tier 2.
 - **Standard library / OS primitive.** Two are underused. `O_APPEND` writes below
   `PIPE_BUF` are atomic on local filesystems, which is the correct and nearly
   free answer for row 1 of the table — no CAS, no lock, no daemon. And a **unix
@@ -509,21 +690,24 @@ Each prompt answered explicitly, including the ones that do not apply.
   sandbox for the same reason it cannot reach `state/` — so the socket must be
   passed as an inherited file descriptor, or the transport falls back to
   loopback HTTP. Worth a spike.
-- **Do nothing.** The current symlink + `shared_root` pair works when both halves
-  agree. The cost is a recurring class of breakage — two records in
-  `docs/reports/`, one hardening rollback in `git log` (`44071710`), and a live
-  refusal observed during this session. Note that PRD 0011 does *not* force the
-  issue: mesh replicates into `state/mesh/<peer-id>/` from serve, which already
-  runs outside any worktree, so mesh can ship without this being solved. Doing
-  nothing stays viable longer than the first draft of this note assumed — the
-  forcing function is local agent count, not mesh.
-- **Narrow the requirement.** The strongest option on the list. The table above
-  shows only ~16 KB of `state/` — the small mutable documents — actually needs
-  compare-and-swap. Everything else needs atomic append or has a single owner.
-  Solving *only* the coordination subset (goals, cards, claims, leases) through
-  a shared store, and leaving sessions and logs as local files replicated
-  lazily, cuts the problem by an order of magnitude and is compatible with every
-  option above.
+- **Do nothing.** Two different "nothings", one per tier. On tier 1 the symlink
+  + `shared_root` pair works when both halves agree, at the cost of a recurring
+  class of breakage — two records in `docs/reports/`, one hardening rollback in
+  `git log` (`44071710`), and a live refusal observed during this session. On
+  tier 2, doing nothing means every server keeps a private `state/`: the fleet
+  runs, but nothing pools. Agents re-derive the same learnings independently,
+  token accounting is per-host, and `improvements.jsonl` fragments N ways. That
+  is survivable at two hosts and is the thing the whole question exists to
+  prevent at a hundred.
+- **Narrow the requirement.** Still the strongest move on the list, and it
+  survives the reframing. Only ~16 KB of `state/` — the small mutable documents —
+  genuinely needs compare-and-swap; everything else needs atomic append or has a
+  single owner. A staged adoption follows directly: put the coordination subset
+  (goals, cards, claims, leases) in a shared backend first, keep sessions and
+  blobs local with lazy replication, and move the append-only logs when the
+  fleet is large enough that pooling them matters. Every tier-2 candidate
+  supports being adopted in that order, and tier 1 is what makes the staging
+  invisible to guests.
 - **Adjacent domain.** Two transfer well. Build systems solved "many workers, one
   cache, no coordinator" with content-addressed storage plus atomic rename —
   clanker's `sessions/` and `runs/` are content-addressed in all but name.
@@ -531,29 +715,54 @@ Each prompt answered explicitly, including the ones that do not apply.
   explicit" — and clanker already has git in the loop, which raises the
   unexplored question of whether `state/` should be a git repository with
   branches per agent.
-- **Buy, host, or delegate.** Options D, E, F, and H are all this. The
-  consistent finding is that they solve the multi-host problem at the cost of an
-  operator running something. That trade is wrong today and may be right once
-  mesh has real users, which is what makes option A attractive: it is the only
-  candidate whose local and hosted forms are the same code.
+- **Buy, host, or delegate.** Options D, E, F, H and J are all this, and the
+  consistent finding is that they solve the cross-server problem at the cost of
+  an operator running something. The judgement changed between drafts: for one
+  laptop that trade is clearly wrong, and for a network of servers it is clearly
+  right, because such a deployment already runs infrastructure. Option I is the
+  only candidate that avoids it entirely, and it pays for that with a 32-member
+  ceiling. The honest summary is that "no server to run" and "many servers" are
+  close to mutually exclusive.
 
 ## Comparison
 
-| Option | Maturity | Licence | Fit vs PRD 0011 | Main risk |
-|---|---|---|---|---|
-| A. `ck_state` channel → serve over loopback | In-tree | own | **Best** — is locked decision 1, extended from mesh to state | Serve becomes a hard dependency of every run |
-| B. Generalize `ck_fs_write_if` | In-tree | own | Compatible, but partial — small docs only | Does not address the sandbox-path fragility at all |
-| C. SQLite / WAL | Very high | Public domain | Compatible — an engine *behind* A, not a rival to it | One writer at a time; `SQLITE_BUSY` under load |
-| D. libSQL / Turso embedded replicas | Medium-high | unverified | Off-model — duplicates the home-instance rule with a vendor | Vendor dependency; first-to-sync-wins loses writes |
-| E. NATS JetStream KV | High | Apache-2.0 | Off-model — good for claims, but a shared multi-writer store | A server to run (0011 non-goal); no Zig client found |
-| F. etcd / FoundationDB | Very high | Apache-2.0 | Off-model — requires a cluster to start an agent | Operationally inverts how clanker ships |
-| G. CRDTs (Yjs / Automerge / Loro) | High (Yjs) | MIT-ish | **Excluded** — explicit 0011 non-goal | Reversing it is an ADR; also per-char metadata, nested wasm |
-| H. S3-style conditional writes | High | n/a (service) | Off-model for state; the *claim/lease* idea survives | Round-trip per op; needs cloud credentials |
+**Tier 1 — access path.** Not mutually exclusive with anything in tier 2.
+
+| Option | Maturity | Fit | Main risk |
+|---|---|---|---|
+| A. `ck_state` channel → local serve | In-tree pattern (`ck_mesh`) | **Best** — removes the fragility outright and makes tier 2 swappable | Serve becomes a hard dependency of every run |
+| B. Generalize `ck_fs_write_if` | In-tree | Partial — small documents only | Still goes through `safeJoinSecure`, so it does not fix the actual break |
+
+**Tier 2 — where state lives.** Ranked against the four constraints, with
+constraint 4 (no agent blocked by another host being down) doing most of the
+separating.
+
+| Option | Zig client | Server to run | Covers all 4 shapes | Scales past 32 hosts | Survives a host loss | Main risk |
+|---|---|---|---|---|---|---|
+| **J. PostgreSQL** | `pg.zig`, native, Zig 0.16, MIT | Yes, one | **Yes** | Yes | Yes | Operator must run a DB; `pg.zig` TLS experimental |
+| **E. NATS JetStream** | `nats.zig`, official, Zig 0.16, Apache-2.0 | Yes, one | No — blobs missing | Yes | Yes | Client is pre-1.0 with a declared-unstable API |
+| I. PRD 0011 full mesh | n/a (native) | **No** | No — logs/knowledge unreplicated | **No**, `max_members = 32` | **No**, `home_unreachable` refuses | Does not reach the stated deployment size |
+| C. SQLite / WAL | via C | No | Yes, on one host | Single-host only | n/a | One writer at a time; wrong tier for many servers |
+| D. libSQL / Turso | unverified | Hosted or self-host | Yes | Yes | Partly — first-to-sync-wins loses writes | Vendor dependency |
+| F. etcd / FoundationDB | none found (under-searched) | Yes, a quorum | No — etcd value-size limit | Yes | Yes | Heaviest operations of any candidate |
+| H. S3 conditional writes | n/a (HTTP) | No, a bucket | Blobs + claims only | Yes | Yes | Round-trip per op; no watch; needs credentials |
+| G. CRDTs | none | No | n/a | Yes | Yes | Redundant once a backend resolves concurrency |
+
+The shape of the answer: **A for tier 1, and J or E for tier 2**, with the choice
+between them turning on whether clanker's state is judged record-shaped
+(Postgres) or event-shaped (NATS), and on whether a pre-1.0 client API is
+acceptable.
 
 ## Evidence log
 
 | Claim | Source | Read on | Confidence |
 |---|---|---|---|
+| `pg.zig` is a native Zig 0.16 PostgreSQL driver needing no libc and no libpq; MIT, 591 stars, pooling + LISTEN/NOTIFY; TLS experimental | [pg.zig](https://github.com/karlseguin/pg.zig), fetched | 2026-08-16 | high |
+| `nats-io/nats.zig` is the official NATS Zig client, Zig 0.16+, Apache-2.0, 218 stars, JetStream + KV supported, **pre-1.0 with an API that may change**; Object Store not implemented | [nats.zig](https://github.com/nats-io/nats.zig), fetched | 2026-08-16 | high |
+| Postgres expresses all four shapes: append INSERT, row-version CAS, bytea, `FOR UPDATE SKIP LOCKED` + advisory locks | [PG explicit locking](https://www.postgresql.org/docs/current/explicit-locking.html), [SKIP LOCKED](https://medium.com/@arkadii.osheev.official/lightweight-distributed-locks-with-postgresql-skip-locked-in-action-2461a067b491) | 2026-08-16 | high |
+| `SKIP LOCKED` alone does not enforce global constraints; advisory locks are needed for "at most N concurrent" | [Linenbach](https://terrislinenbach.medium.com/why-for-update-skip-locked-isnt-enough-using-pg-advisory-xact-lock-to-build-a-correct-postgresql-d3eb9db46473) | 2026-08-16 | medium |
+| PRD 0011 leaves token stats, improvements, autolearn, reasoning, knowledge and learnings with no replication story | [PRD 0011](../prds/0011-clanker-mesh.md), absence across the frame table and Phase 3 scope | 2026-08-16 | high |
+| PRD 0011 refuses a write when the owning host is unreachable (`home_unreachable`) | same, Failure modes + "Shared workspaces (Phase 3)" | 2026-08-16 | high |
 | Serve owns sockets; CLI, REPL, `clanker run` and `fanOut` are loopback HTTP clients of it | [PRD 0011](../prds/0011-clanker-mesh.md), "Serve owns the mesh" table + locked decision 1 | 2026-08-16 | high |
 | `ck_mesh` is a name-gated host channel; the guest never holds the socket | same, "`ck_mesh` is a privileged channel" + goal 6 | 2026-08-16 | high |
 | "No CRDT, no merge" is an explicit non-goal; cross-host concurrency is the home-instance rule | same, Non-goals + "Shared workspaces (Phase 3)" | 2026-08-16 | high |
@@ -583,6 +792,8 @@ Each prompt answered explicitly, including the ones that do not apply.
 | Worktree-per-agent is the industry norm for parallel coding agents | [Augment Code](https://www.augmentcode.com/guides/git-worktrees-parallel-ai-agent-execution) | 2026-08-16 | medium |
 | "etcd is eventually consistent" | [db-engines](https://db-engines.com/en/system/FoundationDB;etcd) | 2026-08-16 | **low — believed wrong**; etcd is linearizable via Raft. Recorded to mark the source unreliable |
 | No pure-Zig embedded KV store found; Zig options are C bindings | one search only, `lmdb-zig` / `lmdbx-zig` | 2026-08-16 | low — under-searched |
+| No Zig client for etcd or FoundationDB | one search only | 2026-08-16 | low — the same search was **wrong** about Postgres and NATS, so treat as unsearched |
+| ~~No Zig client for NATS~~ | previous draft of this note | 2026-08-16 | **retracted** — `nats-io/nats.zig` is official and supports JetStream + KV |
 
 ### Rejected leads, kept deliberately
 
@@ -603,58 +814,85 @@ Each prompt answered explicitly, including the ones that do not apply.
 
 ## Open questions
 
-Ordered by what blocks a decision, most blocking first.
+Ordered by what blocks a decision, most blocking first. The first two are the
+only ones that block choosing a tier-2 backend.
 
-1. **What happens to `clanker run` when serve is not running?** This is option
-   A's central question and nothing in the tree or PRD 0011 answers it. Mesh
-   could refuse (*"start `clanker serve`"*) because mesh is optional; state is
-   not. Refuse, auto-start, or fall back to direct writes — each is a different
-   product, and a fallback reintroduces the divergence the channel exists to
-   prevent.
-2. **What is the per-write latency of the channel path versus a direct write?**
-   Decides whether the hot append logs need batching behind `ck_state` or can go
-   through the same route as everything else.
-3. **Is the transport loopback HTTP or a unix socket?** PRD 0011 says loopback
-   HTTP for mesh, but mesh is inherently networked and state is not. A socket
-   needs no port and no authorization story — if a sandboxed process can reach
-   one at all, which is the same wall a path outside the worktree hits unless
-   the descriptor is inherited. Worth a spike before copying the mesh answer by
-   default.
-4. **Does the mesh cap of 32 members hold as the fleet grows?** The question
-   posits 10³–10⁴ agents; PRD 0011 caps mesh at 32 and calls the cap deliberate.
-   If those agents are all local processes the cap is irrelevant, and option A
-   is sufficient. If they are meant to be hosts, `max_members` is the binding
-   constraint and D/E/F re-enter — so this question decides whether half this
-   note is live or archival.
-5. **Should `state/` be a git repository?** git is already a hard dependency, the
-   worktree machinery already exists, and per-agent branches with an explicit
-   merge is a well-understood model. Not searched at all; noted because it is the
-   kind of answer the "adjacent domain" prompt exists to surface.
-6. **Is there a claim/lease primitive worth taking from option H** even though
-   the store is off-model? PRD 0011 has no notion of an agent claiming a
-   resource with a timeout and a fence token, and at any fleet size above a
-   handful that gap shows up as two agents doing the same work.
-7. **Would a hand-written LWW-register plus OR-set cover goals and Kanban
-   cards** at a fraction of a CRDT library's cost? Parked, not open: PRD 0011's
-   "no merge" non-goal makes this an ADR question rather than a research one.
+1. **Is PRD 0011's peer-to-peer model meant to reach fleet scale, or is it a
+   small-cluster feature?** This is the question everything else hangs on. If
+   mesh is "a handful of instances an operator knows about", option I stands and
+   a backend is a separate, additional decision. If mesh is meant to be the
+   fleet, then `max_members = 32` and `home_unreachable` are load-bearing
+   constraints that do not hold, and the PRD needs revising rather than
+   extending. **This is an operator/product question, not a research one**, and
+   this note cannot settle it.
+2. **Is clanker's state record-shaped or event-shaped?** Decides J versus E. The
+   volume argues event-shaped: the append-only logs are the bulk. The read
+   patterns argue record-shaped: the web UI wants queries and joins, and an
+   operator debugging a self-modifying agent wants `psql`. A backend that gets
+   this wrong is expensive to leave.
+3. **What happens to `clanker run` when serve is not running?** Option A's
+   central question, unanswered in the tree and the PRD. Mesh can refuse
+   (*"start `clanker serve`"*) because mesh is optional; state is not. Refuse,
+   auto-start, or fall back to direct writes — each is a different product, and a
+   fallback reintroduces the divergence the channel exists to prevent.
+4. **Is a pre-1.0 client API acceptable for a core dependency?** `nats.zig` is
+   explicitly pre-1.0 with a changing API, in a project that pins two
+   dependencies deliberately. If not, E drops and J leads by default.
+5. **Is the tier-1 transport loopback HTTP or a unix socket?** PRD 0011 says
+   loopback HTTP for mesh, but mesh is inherently networked and state is not. A
+   socket needs no port and no authorization story — if a sandboxed process can
+   reach one at all, which is the same wall a path outside the worktree hits
+   unless the descriptor is inherited. Worth a spike before copying the mesh
+   answer by default.
+6. **What is the per-write latency of the channel path versus a direct write?**
+   Decides whether the hot append logs need batching behind `ck_state`.
+7. **Do agents need claims/leases, and where do they come from?** No option
+   except J (`SKIP LOCKED`), F (etcd leases) and H (conditional create) has one,
+   and PRD 0011 has no notion of an agent claiming a resource with a timeout and
+   a fence token. Above a handful of agents that gap shows up as two agents doing
+   the same work.
+8. **Should `state/` be a git repository?** git is already a hard dependency, the
+   worktree machinery exists, and per-agent branches with explicit merges is a
+   well-understood model. Not searched at all; noted because it is the kind of
+   answer the "adjacent domain" prompt exists to surface.
+9. **Would a hand-written LWW-register plus OR-set cover concurrent goal and card
+   edits?** The one case every option currently resolves as last-writer-wins.
+   Low priority: it is a refinement on whichever backend wins, not a choice
+   between backends.
 
 ## What would change the answer
 
-- **PRD 0011's `max_members = 32` being raised, or the home-instance rule being
-  revisited.** These are the two decisions that keep options D through H
-  archival. Either one moving makes them live again.
-- **A measured contention problem on one host.** If lost updates start appearing
-  at current agent counts, C moves from "engine behind A" to urgent.
-- **`clanker serve` becoming a required process.** Would remove option A's only
-  serious objection and make it nearly free.
-- **A pure-Zig embedded transactional store reaching maturity.** Would remove
-  the only real objection to C.
-- **A sandbox hardening pass that removes `shared_root`.** Would convert the
-  recurring breakage into a permanent one and force this decision immediately.
+- **A decision that mesh stays small.** If `max_members = 32` is affirmed as the
+  intended scale, option I is sufficient for the multi-host case and this note
+  narrows to tier 1 plus pooling the logs.
+- **`nats.zig` reaching 1.0, or `pg.zig`'s TLS leaving experimental.** These are
+  the two specific maturity gaps separating the leaders from being obvious
+  choices.
+- **A measured contention problem on one host.** If lost updates appear at
+  current agent counts, tier 1 becomes urgent independently of tier 2.
+- **`clanker serve` becoming a required process.** Removes option A's only
+  serious objection and makes tier 1 nearly free.
+- **A sandbox hardening pass that removes `shared_root`.** Converts the recurring
+  tier-1 breakage into a permanent one and forces that half immediately.
+- **An operator who will not run a server.** Collapses tier 2 to option I or to
+  doing nothing, regardless of what the survey says.
 
 ## References
 
-**Locked design**
+**Zig clients for the leading candidates**
+
+- [pg.zig — native PostgreSQL driver for Zig](https://github.com/karlseguin/pg.zig)
+- [nats-io/nats.zig — official NATS Zig client](https://github.com/nats-io/nats.zig)
+- [qail-zig — second Zig PostgreSQL driver](https://github.com/qail-io/qail-zig), not evaluated
+
+**PostgreSQL coordination**
+
+- [PostgreSQL: explicit locking](https://www.postgresql.org/docs/current/explicit-locking.html)
+- [Lightweight distributed locks with SKIP LOCKED](https://medium.com/@arkadii.osheev.official/lightweight-distributed-locks-with-postgresql-skip-locked-in-action-2461a067b491)
+- [Why SKIP LOCKED is not enough — advisory locks for global constraints](https://terrislinenbach.medium.com/why-for-update-skip-locked-isnt-enough-using-pg-advisory-xact-lock-to-build-a-correct-postgresql-d3eb9db46473)
+- [Postgres for agentic AI](https://www.pgedge.com/blog/postgres-for-agentic-ai-your-database-is-a-compute-layer-not-a-parking-lot)
+
+**In-tree design (candidate, not constraint)**
 
 - [PRD 0011 — Clanker Mesh (TCP peer-to-peer clustering)](../prds/0011-clanker-mesh.md)
   — serve-owns-sockets, `ck_mesh` as a host channel, home-instance consistency,
