@@ -1,0 +1,422 @@
+✔ Mesh is a Watch plugin over the mesh HTTP control plane (0.526123ms)
+✔ mesh-off and empty member lists are visible, not only a status line (0.089831ms)
+✔ self-leave asks before dropping every member (0.77116ms)
+✔ identity facts include a copyable listen address (0.095452ms)
+✔ join field stays 16px on a phone so iOS does not zoom (0.123636ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 54.495856
+✔ tool category labels are the Tools section headings (0.505684ms)
+✔ tool categories sort work-first, unknown before other (0.549888ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 41.970552
+✔ music plugin registers a view and a dock (0.546772ms)
+✔ playback ticks update chrome in place instead of rebuilding the tree (0.101143ms)
+✔ empty playlist and bad URL say what to do next (0.572702ms)
+✔ music URL field is 16px on a phone so iOS does not zoom (0.105901ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 40.184977
+✔ INLINE_RE matches strike as well as bold (0.48233ms)
+✔ live Chat streaming renders fences, not raw backticks (0.150557ms)
+✔ Rooms messages use the same fence-aware renderer (0.126831ms)
+✔ user chat bubbles render the prompt as markdown and keep the source (0.101493ms)
+✔ renderMarkdown turns bold, lists and fences into elements (1.249772ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 41.708181
+✔ host accent pill is primary and submit only (1.179689ms)
+✔ Files listing fills the column until a preview is open (0.142782ms)
+✔ Files hidden-only folder offers to show hidden items (0.145257ms)
+✔ Files filter is 16px on a phone so iOS does not zoom (0.100582ms)
+✔ Files empty nested folder offers to go up (0.144686ms)
+✔ Files filter empty state offers to clear the filter (0.152881ms)
+✔ Files folder load error offers to try again (0.174433ms)
+✔ Files file open error shows in the preview with retry (0.135419ms)
+✔ Files buttons reset the host pill so filenames stay compact (0.128715ms)
+✔ Files crumbs and rows are 44px on a phone (0.174012ms)
+✔ Files listing drops Size and Modified on a phone so names stay on-screen (0.128585ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 39.196283
+✔ empty Chat hides session verbs and find (0.52512ms)
+✔ a page load starts a new conversation instead of replaying the last session (1.278927ms)
+✔ run-shape disclosure holds the four mode toggles (0.14688ms)
+✔ submit is a labeled Run control (0.102917ms)
+✔ cancel is a labeled Stop pill, not an icon-only circle (0.774797ms)
+✔ sidebar title filter matches words the compact label drops (1.330446ms)
+✔ Board filters sit behind a disclosure and Only mine is singular (0.148062ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 41.145769
+✔ every themes/*.json file is a named palette with tokens (0.843598ms)
+✔ theme.js loads the catalog from disk, not a hardcoded list (0.103477ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 35.400498
+✔ fmtTok uses compact M/K units (0.526263ms)
+✔ formatRunMetrics is empty before any run (0.176266ms)
+✔ live tick grows LLM time without waiting for done (7.317067ms)
+✔ tool time is carved out of live elapsed (0.194751ms)
+✔ done event folds this turn into session totals and stops live (0.280966ms)
+✔ beginLiveTurn counts the turn immediately so the strip is not 0 turns (0.18386ms)
+✔ live TTFT shows before tokens arrive (0.207786ms)
+✔ app.js ticks the strip from rAF and stream usage events (0.890628ms)
+✔ usage events and streamed chars show tokens before done (0.357572ms)
+✔ estTokens is 4 chars per token (0.135088ms)
+✔ second turn accumulates tokens and steps (0.089581ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 48.737179
+✔ Search is a Work plugin that searches conversations (0.409681ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 33.357334
+✔ nearBottom is false at the top of a tall conversation box (0.43018ms)
+✔ nearBottom is true when the conversation box is within the floor of the end (0.074652ms)
+✔ scrollChatToLatest moves the conversation box, not window.scrollY (0.476848ms)
+✔ Jump-to-latest button stays hidden while the conversation is at the end (0.111483ms)
+✔ shipped Chat markup is a session-first PF column (0.742024ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 39.662803
+✔ slash catalog is data, not a table in app.js (0.552053ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 33.52347
+✔ Compare is a Watch plugin that confirms before recording a pick (0.449587ms)
+✔ a failed comparison open replaces the answers, not just the status line (0.14154ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 32.233551
+✔ Models Discover has a catalog refresh control (0.532074ms)
+✔ configSnippet writes a provider table from the catalog mapping (0.194811ms)
+✔ Models edit form has an rpm field (0.09955ms)
+✔ Models edit form has a wire id field for aliases (0.1046ms)
+✔ catalog Search stays disabled until the query is long enough (0.083459ms)
+✔ Models list and catalog failures offer to try again (0.087838ms)
+✔ catalog refresh posts to /api/catalog/refresh (0.196905ms)
+✔ model save copy does not tell the operator to restart by hand (0.155376ms)
+✔ model write and remove use a confirm dialog, not click-again (0.269594ms)
+✔ configured empty state offers Add model instead of only config.toml (0.137392ms)
+✔ Configured table folds alias variants behind a group toggle (0.085102ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 40.937693
+✔ card-form stays in the tree as a hidden compatibility form (0.817799ms)
+✔ author CSS hides a hidden form so PF display cannot leak it (0.166848ms)
+✔ upgradePfForm does not stamp pf-v6-c-form onto a hidden form (0.16802ms)
+✔ rooms log is not a live region; status is (0.176346ms)
+✔ progress log is not a live region; status is (0.187107ms)
+✔ header model chip is not a live region (0.107756ms)
+✔ run graph measures node heights after one layout flush (0.13125ms)
+✔ theme toggle opens a list, not a cycle (0.111473ms)
+✔ settings and palette choose a theme instead of cycling (0.178531ms)
+✔ voice input copy matches click-to-start behavior (0.165255ms)
+✔ phone composer suggestions and attachment remove are 44px (0.12595ms)
+✔ Search sits in Work, not the folded Set up group (0.09482ms)
+✔ empty transcript names the new conversation, not Idle (0.06831ms)
+✔ conversation filter says it matches titles (0.058492ms)
+✔ channel name pattern explains the allowed characters (0.075524ms)
+✔ workspace plus minus hit 44px on coarse pointers (0.113456ms)
+✔ config file picker has a visible label (0.044745ms)
+✔ attaching an image does not wipe the plan/research hint (0.642985ms)
+✔ toasts expose a visible dismiss control (0.088229ms)
+✔ required field labels are marked in CSS (0.06287ms)
+✔ parseCssColor reads rgb and hex (0.933118ms)
+✔ knowledge search hits open the matching collection (0.127132ms)
+✔ knowledge deep link opens the real collection view (0.670227ms)
+✔ tools filter empty offers to clear the query (0.087908ms)
+✔ prompts filter empty offers to clear the query (0.064433ms)
+✔ rail title-filter empty offers to clear the query (0.562563ms)
+✔ board filter empty offers to clear the filters (0.231682ms)
+✔ knowledge search empty offers to clear the query (0.539228ms)
+✔ compare and arena empty lists sit in the picker, not only the status line (0.132623ms)
+✔ Rooms does not steal Ctrl+K from the Jump palette (0.658045ms)
+✔ rooms filter and message search are search inputs (0.607047ms)
+✔ steer row has a visible label (0.042121ms)
+✔ empty Run control explains the disabled state (0.078429ms)
+✔ empty Rooms Send control explains the disabled state (0.678173ms)
+✔ required marker covers a required input nested in its label (0.124116ms)
+✔ Search field names conversations, not Find (0.065916ms)
+✔ Board create goal is the primary action (0.136901ms)
+✔ create and save forms use a primary CTA (0.21498ms)
+✔ Settings surfaces the Enter-sends composer preference (0.046348ms)
+✔ empty log picker names the empty state (0.064483ms)
+✔ rooms composer does not park a leftover hash in the text field (0.203628ms)
+✔ rooms message actions stay visible without hover (0.050216ms)
+✔ rooms channel rows are 44px on coarse pointers (0.188359ms)
+✔ System view has an on-page jump list (0.088298ms)
+✔ Run shape summary names the modes that are on (0.781239ms)
+✔ rail Watch and Set up folds persist across loads (0.630311ms)
+✔ session Delete explains it is permanent (0.047812ms)
+✔ Search stays disabled until the query is long enough (0.098508ms)
+✔ knowledge hint tells the reader to include a collection in chat (0.112935ms)
+✔ goal Isolated worktree label matches the composer toggle (0.084512ms)
+✔ Prompts Use confirms before replacing an unsent task (0.065565ms)
+✔ Compare pick asks before recording an irreversible choice (0.057048ms)
+✔ channel create turns spaces into hyphens as you type (0.642044ms)
+✔ disabling a web UI plugin offers a reload control (0.074883ms)
+✔ showView waits for plugins before treating an unknown view as Chat (0.882833ms)
+✔ pluginApi offers POST, live bus, dialogs, workspace, icons, storage, session (0.164704ms)
+✔ Board new-goal form sits behind a disclosure (0.063952ms)
+✔ rooms copy uses the shared copy feedback helper (0.537845ms)
+✔ failed list loads keep a visible retry in the panel (1.326198ms)
+✔ templates and skills say when none are on file (0.084882ms)
+✔ phone fields stay at 16px so iOS does not zoom on focus (0.217174ms)
+✔ accent pill is primary/#submit only, not every unmarked button (0.174603ms)
+✔ Search and Create channel use a primary CTA (0.896779ms)
+✔ Fleet empty roster points at System Config instead of the phonebook (0.127052ms)
+✔ Activity empty state offers to open the board (0.088499ms)
+✔ Knowledge add-document is a primary CTA (0.087948ms)
+✔ rooms own-message actions are labeled and report a failed write (0.757364ms)
+ℹ tests 67
+ℹ suites 0
+ℹ pass 67
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 63.555815
+✔ a failed match open replaces the transcript, not just the status line (0.416523ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 36.792261
+✔ operator sections fill the main column (0.593131ms)
+✔ Chat header, transcript and composer share the full column width (0.17816ms)
+✔ every named theme owns a code well in the page luminance family (1.160863ms)
+✔ Rooms log fills the pane instead of a leftover 24rem box (0.211002ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 35.713044
+test
++- run test 1081 pass, 5 skip, 1 fail (1087 total)
+[WARN] ts_ms=1786873529050 [sandbox] tool denied network access to 'lite.duckduckgo.com'
+[WARN] ts_ms=1786873529065 [sandbox] tool denied network access to 'www.bing.com'
+[WARN] ts_ms=1786873529080 [sandbox] tool denied network access to 'lite.duckduckgo.com'
+[WARN] ts_ms=1786873529096 [sandbox] tool denied network access to 'www.bing.com'
+[WARN] ts_ms=1786873529111 [sandbox] tool denied network access to 'lite.duckduckgo.com'
+[WARN] ts_ms=1786873529126 [sandbox] tool denied network access to 'www.bing.com'
+[WARN] ts_ms=1786873529141 [sandbox] tool denied network access to 'lite.duckduckgo.com'
+[WARN] ts_ms=1786873529156 [sandbox] tool denied network access to 'www.bing.com'
+[WARN] ts_ms=1786873529171 [sandbox] refused to read environment variable 'GITHUB_TOKEN'
+[WARN] ts_ms=1786873529186 [sandbox] tool denied network access to 'api.github.com'
+[WARN] ts_ms=1786873529201 [sandbox] tool denied network access to 'hn.algolia.com'
+[WARN] ts_ms=1786873530433 [sandbox] ck_chat denied op 'send' for tool ''
+[INFO] ts_ms=1786873530448 [exec] → git
+[INFO] ts_ms=1786873530450 [exec] ✓ git … 2ms
+[ERROR] ts_ms=1786873530543 [tool] invalid JSON value at line 1, column 2
+[ERROR] ts_ms=1786873530619 [tool] invalid base64 character
+[ERROR] ts_ms=1786873530625 [tool] value must be between 1 and 3999
+[ERROR] ts_ms=1786873530631 [tool] malformed run-length data: expected <digits><char> pairs
+[ERROR] ts_ms=1786873530634 [sandbox] tool trap: OutOfFuel (tool=)
+[WARN] ts_ms=1786873531062 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531075 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531100 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531114 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531138 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531445 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531501 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531830 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531844 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531859 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531874 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531888 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531918 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531934 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531949 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531965 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873531980 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873532009 [llm] denied: tool descriptor does not set "llm": true
+[WARN] ts_ms=1786873532049 tools dir 'no-such-tools-dir' not found; check agent.tools_dir (expected a directory of *.tool.json manifests)
+[WARN] ts_ms=1786873532049 tool 'echo' from 'override' overrides 'builtins'
+[WARN] ts_ms=1786873532050 tools dir 'no-such-extra' not found; check agent.tools_dir (expected a directory of *.tool.json manifests)
+[WARN] ts_ms=1786873532089 fallback: 'missing' is not a configured provider; skipping
+[WARN] ts_ms=1786873622157 could not lock state/workspaces.lock (FileNotFound); a concurrent write may be lost
+[WARN] ts_ms=1786873622159 could not lock state/workspaces.lock (FileNotFound); a concurrent write may be lost
+[INFO] ts_ms=1786873622170 build cache .zig-cache is 0 MiB (limit 0 MiB); dropping it
+[WARN] ts_ms=1786873622170 refusing to cap 'src': not a build cache
+[INFO] ts_ms=1786873622171 clearing a run lock left by process 4294967290, which no longer exists
+[INFO] ts_ms=1786873622172 clearing a run lock with no readable owner
+[WARN] ts_ms=1786873622184 file request: '.env' is outside the readable surface
+[WARN] ts_ms=1786873622184 file request: '.env' is outside the readable surface
+[WARN] ts_ms=1786873622184 file request: 'state/x.json' is outside the readable surface
+[WARN] ts_ms=1786873622185 proposal rejected: '.git/config' is outside the modifiable surface
+[WARN] ts_ms=1786873622318 file request: 'src/does_not_exist.zig' does not exist
+[WARN] ts_ms=1786873622328 capability gate failed: no staged binary (FileNotFound)
+[WARN] ts_ms=1786873622331 lint: TODO found in dirty.zig
+[WARN] ts_ms=1786873622332 lint: HACK found in hacky.zig
+[INFO] ts_ms=1786873622653 chat: subscribed to 'ops' = true
+[INFO] ts_ms=1786873622653 chat: subscribed to 'dev' = false
+[WARN] ts_ms=1786873622713 CLANKER_WEBUI_PORT 'not-a-port' is not a 16-bit port number; ignoring
+[WARN] ts_ms=1786873622713 CLANKER_WEBUI_PORT '0' is not a usable port; ignoring
+[INFO] ts_ms=1786873624217 steering run with active goal new
+[WARN] ts_ms=1786873624217 goal 'no-such' not found in state/goals.json
+[WARN] ts_ms=1786873625270 schedule: state/schedule.json is not a readable entry list; treating it as empty
+[WARN] ts_ms=1786873625288 schedule: entry sch-2 has an unusable spec 'every tuesday'; it will never fire
+[INFO] ts_ms=1786873625288 schedule: firing 1 due entry (1 scheduled)
+[INFO] ts_ms=1786873625288 request_id=schedule-sch-1 schedule: entry sch-1 ok in 0ms (trigger=due)
+[INFO] ts_ms=1786873625290 schedule: firing 1 due entry (1 scheduled)
+[INFO] ts_ms=1786873625290 request_id=schedule-sch-1 schedule: entry sch-1 ok in 0ms (trigger=due)
+[INFO] ts_ms=1786873625291 schedule: firing 2 due entries (2 scheduled)
+[WARN] ts_ms=1786873625291 request_id=schedule-sch-1 schedule: entry sch-1 failed: ProviderRefused (trigger=due)
+[WARN] ts_ms=1786873625291 request_id=schedule-sch-2 schedule: entry sch-2 failed: ProviderRefused (trigger=due)
+[INFO] ts_ms=1786873625292 schedule: another run-due is still working; nothing started
+[INFO] ts_ms=1786873625293 schedule: firing 1 due entry (1 scheduled)
+[INFO] ts_ms=1786873625293 request_id=schedule-sch-1 schedule: entry sch-1 ok in 0ms (trigger=due)
+[INFO] ts_ms=1786873625294 request_id=schedule-sch-1 schedule: entry sch-1 ok in 0ms (trigger=manual)
+[INFO] ts_ms=1786873625295 schedule: firing 2 due entries (2 scheduled)
+[INFO] ts_ms=1786873625295 request_id=schedule-sch-1 schedule: entry sch-1 ok in 0ms (trigger=due)
+[INFO] ts_ms=1786873625295 request_id=schedule-sch-2 schedule: entry sch-2 ok in 0ms (trigger=due)
+[INFO] ts_ms=1786873625296 schedule: firing 1 due entry (1 scheduled)
+[INFO] ts_ms=1786873625296 request_id=schedule-sch-1 schedule: entry sch-1 ok in 0ms (trigger=due)
+[ERROR] ts_ms=1786873625297 no scheduled entry; `clanker schedule list` shows them
+[ERROR] ts_ms=1786873625297 reports: the record changed while appending
+[ERROR] ts_ms=1786873625297 reports: the tool answered something that is not JSON
+[ERROR] ts_ms=1786873625298 research: depth must be quick, standard, or deep
+[ERROR] ts_ms=1786873625298 research: the tool answered something that is not JSON
+error: 'sandbox.host.test.fsWriteIfImpl creates missing parent directories' failed:
+       [ERROR] ts_ms=1786873521432 agent.repeat_tool_thresholds must not be empty
+       [ERROR] ts_ms=1786873521432 agent.repeat_tool_thresholds value 1 must be at least 2
+       [ERROR] ts_ms=1786873521432 agent.repeat_tool_thresholds contains duplicate value 3
+       [ERROR] ts_ms=1786873521432 config.toml:10: configuration setting agent.max_iterations: expected an integer; got string "many"; correct it with max_iterations = 1
+       [ERROR] ts_ms=1786873521432 config.local.toml:3: configuration setting ttsr.rules[].pattern: expected a string; got integer 7; correct it with pattern = "value"
+       [ERROR] ts_ms=1786873521434 models["deepseek/deepseek-chat"]: temperature 3 is outside 0..2
+       [WARN] ts_ms=1786873521434 config config.toml: no providers defined
+       [WARN] ts_ms=1786873521435 config config.toml: no providers defined
+       [WARN] ts_ms=1786873521435 config config.toml: no providers defined
+       [WARN] ts_ms=1786873521435 config config.toml: no providers defined
+       [ERROR] ts_ms=1786873521436 bad.toml: configuration validation failed (ConfirmWritesInvalid); inspect the setting named by the preceding diagnostic
+       [ERROR] ts_ms=1786873521436 bad.toml: configuration validation failed (WorktreeDefaultInvalid); inspect the setting named by the preceding diagnostic
+       [ERROR] ts_ms=1786873521436 bad.toml: configuration validation failed (WorktreeModeInvalid); inspect the setting named by the preceding diagnostic
+       [ERROR] ts_ms=1786873521439 provider 'flat': "model" was replaced by the top-level "models" table. Add [models."flat/<name>"] with "provider": "flat", and set "default_model": "<name>" if there is more than one
+       [ERROR] ts_ms=1786873521439 config.toml: configuration validation failed (ProviderLegacyModelFields); inspect the setting named by the preceding diagnostic
+       [ERROR] ts_ms=1786873521441 provider 'n': thinking_schema "cot" is not one of "reasoning_effort", "reasoning", "thinking", "none"
+       [ERROR] ts_ms=1786873521441 config.toml: configuration validation failed (UnknownThinkingSchema); inspect the setting named by the preceding diagnostic
+       [ERROR] ts_ms=1786873521442 mcp_servers 'bad': transport "stdio" requires "command"
+       [ERROR] ts_ms=1786873521442 config.toml: configuration validation failed (McpServerCommandMissing); inspect the setting named by the preceding diagnostic
+       [ERROR] ts_ms=1786873521442 agent tool-result pruning keeps 109 bytes but threshold is 100
+       [ERROR] ts_ms=1786873521446 config.toml:1: configuration setting providers.check_timeout_seconds: expected an unsigned integer in 0..; got integer -1; correct it with check_timeout_seconds = 1
+       [ERROR] ts_ms=1786873521446 config.toml:1: configuration setting models.max_tokens: expected an unsigned integer in 0..; got integer -1; correct it with max_tokens = 1
+       [ERROR] ts_ms=1786873521447 config.toml:5: configuration setting advisor.context_turns: expected an unsigned integer in 0..; got integer -1; correct it with context_turns = 1
+       [ERROR] ts_ms=1786873521447 config.toml:5: configuration setting improve.max_context_bytes: expected an unsigned integer in 0..; got integer -1; correct it with max_context_bytes = 1
+       [ERROR] ts_ms=1786873521449 models["m"]: reasoning_effort "turbo" is not one of "none", "low", "medium", "high", "max"
+       [ERROR] ts_ms=1786873521450 config.toml: configuration validation failed (ReplExecAllowNotArray); inspect the setting named by the preceding diagnostic
+       [ERROR] ts_ms=1786873521451 config.toml: configuration validation failed (WorktreeDefaultInvalid); inspect the setting named by the preceding diagnostic
+       [ERROR] ts_ms=1786873521451 agent: exec_pattern_allow must not name git commands (use git_remote_ops instead)
+       [ERROR] ts_ms=1786873521451 config.toml: configuration validation failed (ExecPatternAllowGitForbidden); inspect the setting named by the preceding diagnostic
+       [ERROR] ts_ms=1786873521451 provider 'p': unknown auth "oauth" (expected "api_key", "oauth_static" or "oauth_refresh")
+       [ERROR] ts_ms=1786873521451 bad.toml: configuration validation failed (UnknownAuthStrategy); inspect the setting named by the preceding diagnostic
+       [ERROR] ts_ms=1786873521452 provider 'v': kind "vertex_anthropic" requires "project" and "location"
+       [ERROR] ts_ms=1786873521452 config.toml: configuration validation failed (VertexProjectMissing); inspect the setting named by the preceding diagnostic
+       [ERROR] ts_ms=1786873521453 provider 'empty': no models declared (add a [models."empty/<name>"] entry)
+       [ERROR] ts_ms=1786873521453 provider 'p': default_model 'absent' is not in its models
+       [ERROR] ts_ms=1786873521453 default_provider 'typo' is not in "providers"
+       [WARN] ts_ms=1786873521454 config: unknown key 'mx_iterations' in agent (ignored, check spelling)
+       [ERROR] ts_ms=1786873521454 config.toml: configuration validation failed (FieldNotBool); inspect the setting named by the preceding diagnostic
+       [ERROR] ts_ms=1786873521454 config.toml:5: configuration setting modules.streaming: expected a boolean; got string "false"; correct it with streaming = true
+       [ERROR] ts_ms=1786873521468 openai provider error (rate_limit_error): Rate limit reached for requests
+       [ERROR] ts_ms=1786873521468 openai provider error (rate_limit_error): Rate limit reached for requests
+       [ERROR] ts_ms=1786873521471 anthropic error (not_found_error): model: claude-nope not found
+       [ERROR] ts_ms=1786873521472 vertex: no credentials file (set service_account_file, GOOGLE_APPLICATION_CREDENTIALS, or run gcloud auth application-default login)
+       [ERROR] ts_ms=1786873521473 gemini provider error (INVALID_ARGUMENT): API key not valid
+       [ERROR] ts_ms=1786873521473 no credential for provider 'remote': set DEFINITELY_UNSET_KEY_FOR_TEST, service_account_file, or gcloud ADC
+       [ERROR] ts_ms=1786873521473 provider 'x': auth "oauth_refresh" is not supported by kind "openai_compat"
+       [WARN] ts_ms=1786873521477 HTTP 429 from 'mock-stream-429', retrying in 0ms (attempt 1/3)
+       [WARN] ts_ms=1786873521534 [exec] 'rm' is not on the caller's exec allowlist (1 command(s))
+       [INFO] ts_ms=1786873521534 [exec] → ls
+       [INFO] ts_ms=1786873521535 [exec] → ls
+       expected 0, found 1
+       /usr/lib/zig/std/testing.zig:118:17: 0x1719b1c in expectEqualInner__anon_68410 (test)
+                       return error.TestExpectedEqual;
+                       ^
+       /usr/lib/zig/std/testing.zig:83:5: 0x24d94c3 in expectEqual (test)
+           return expectEqualInner(T, expected, actual);
+           ^
+       /home/yannick/code/maci0/clanker/src/sandbox/host.zig:6482:5: 0x24d95ab in test.fsWriteIfImpl creates missing parent directories (test)
+           try std.testing.expectEqual(Err.ok, rc);
+           ^
+failed command: ./.zig-cache/o/6ce0028d3256fa401b8a98365bfd3dbf/test --cache-dir=./.zig-cache --seed=0xaa065165 --listen=-
+
+Build Summary: 283/285 steps succeeded (1 failed); 1375/1381 tests passed (5 skipped, 1 failed)
+test transitive failure
++- run test 1081 pass, 5 skip, 1 fail (1087 total)
+
+error: the following build command failed with exit code 1:
+.zig-cache/o/7b028a21551e08d8a451811c9de51fc9/build /usr/bin/zig /usr/lib/zig /home/yannick/code/maci0/clanker .zig-cache /home/yannick/.cache/zig --seed 0xaa065165 -Z88b6c3a5ba7b4ac5 test

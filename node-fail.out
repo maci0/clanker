@@ -1,0 +1,15 @@
+✔ operator sections fill the main column (0.667793ms)
+✔ Chat header, transcript and composer share the full column width (0.197115ms)
+✔ every named theme owns a code well in the page luminance family (1.125946ms)
+✔ Rooms log fills the pane instead of a leftover 24rem box (0.214589ms)
+✔ slash catalog is data, not a table in app.js (0.800566ms)
+✔ every themes/*.json file is a named palette with tokens (0.846644ms)
+✔ theme.js loads the catalog from disk, not a hardcoded list (0.100472ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 41.979501
