@@ -7302,7 +7302,9 @@ fn completionLogLevel(path: []const u8, status: u16) ?log.Level {
     if (!(std.mem.startsWith(u8, path, "/api/") or status >= 400 or status == 0)) return null;
     if (status >= 500 or status == 0) return .error_;
     if (status >= 400) return .warn;
-    return .info;
+    // Successful requests are not logged: only errors and warnings are worth a
+    // line in the serve output.
+    return null;
 }
 
 fn recordHttpRequest(status: u16, duration_ms: u64) void {
@@ -14211,8 +14213,8 @@ test "only requests worth reading about are logged, at a level matching the stat
     try std.testing.expectEqual(@as(?log.Level, null), completionLogLevel("/health/live", 200));
     try std.testing.expectEqual(@as(?log.Level, null), completionLogLevel("/", 304));
 
-    // API traffic is logged whatever it did, so a run can be traced.
-    try std.testing.expectEqual(@as(?log.Level, .info), completionLogLevel("/api/status", 200));
+    // Successful API traffic is not logged; only errors and warnings are.
+    try std.testing.expectEqual(@as(?log.Level, null), completionLogLevel("/api/status", 200));
 
     // Failures are logged wherever they happen, API or not.
     try std.testing.expectEqual(@as(?log.Level, .warn), completionLogLevel("/webui/nope.js", 404));

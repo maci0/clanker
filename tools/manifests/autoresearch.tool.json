@@ -1,19 +1,63 @@
 {
   "name": "autoresearch",
-  "description": "list autoresearch runs or tail a run's ledger. Input {\"run\":\"<id>\", \"last\":20}. No id lists runs.",
-  "llm_description": "List autoresearch runs or tail a run's ledger. Input {run:'<id>', last:20}; no id lists runs.",
+  "description": "Read or append autoresearch run ledgers. {\"op\":\"list\"} (no run id) lists runs; {\"op\":\"tail\",\"run\":\"<id>\",\"last\":20} tails a run's ledger. {\"op\":\"append\",\"run\":\"<id>\",\"summary\":\"...\",\"ok\":true,\"metric\":0.9,...} appends a ledger entry; this is the engine loop's per-iteration write, but a caller with the fields may use it too. Fields for append: summary, ok, metric, metric_name, iter, ts, duration_ms, detail, stdout, stderr.",
+  "llm_description": "List runs (op list, no run id), tail a run's ledger (op tail, run + last), or append a ledger entry (op append, run + summary/ok/metric/iter...). Run ids are the ledger subdirectories under state/autoresearch/.",
   "wasm": "zig-out/tools/autoresearch.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
       "op": {
-        "type": "string"
+        "type": "string",
+        "enum": ["list", "tail", "append"],
+        "description": "list (default): enumerate runs; tail: read a run's ledger; append: write a ledger entry"
       },
       "run": {
-        "type": "string"
+        "type": "string",
+        "description": "Run id (the state/autoresearch/<id> directory). Required for tail and append."
       },
       "last": {
-        "type": "integer"
+        "type": "integer",
+        "description": "tail: how many trailing ledger lines to return. Defaults to 20."
+      },
+      "summary": {
+        "type": "string",
+        "description": "append: one-line summary of the iteration"
+      },
+      "ok": {
+        "type": "boolean",
+        "description": "append: whether the iteration succeeded"
+      },
+      "metric": {
+        "type": "number",
+        "description": "append: best-metric value for this iteration"
+      },
+      "metric_name": {
+        "type": "string",
+        "description": "append: name of the metric being optimized"
+      },
+      "iter": {
+        "type": "integer",
+        "description": "append: iteration number"
+      },
+      "ts": {
+        "type": "integer",
+        "description": "append: unix seconds; omitted means now"
+      },
+      "duration_ms": {
+        "type": "integer",
+        "description": "append: wall time of the iteration"
+      },
+      "detail": {
+        "type": "string",
+        "description": "append: longer notes"
+      },
+      "stdout": {
+        "type": "string",
+        "description": "append: raw stdout, tailed to the ledger"
+      },
+      "stderr": {
+        "type": "string",
+        "description": "append: raw stderr, tailed to the ledger"
       }
     }
   },

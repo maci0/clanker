@@ -34,6 +34,10 @@
         "type": "string",
         "description": "chat_fanout: the room the message goes to."
       },
+      "from": {
+        "type": "string",
+        "description": "chat_fanout: sender name stamped on the message; omitted means this instance's own name."
+      },
       "text": {
         "type": "string",
         "description": "chat_fanout: the message text."
