@@ -5479,6 +5479,21 @@ fn cmdNotify(init: std.process.Init, opts: Options) !void {
     log.log(.info, "notify {s}: sent", .{peer_name});
 }
 
+/// `clanker mesh <sub>`: the operator surface over local serve's mesh control
+/// plane. The CLI never opens a mesh socket — only `clanker serve` owns those —
+/// so this dials the local serve over loopback HTTP via `peers/command.zig`.
+/// `--webui-port` (and config/env, through `resolveListen`) selects which serve
+/// when several run on one host.
+fn cmdMesh(init: std.process.Init, opts: Options) !void {
+    const cfg = try config.Config.load(init.io, init.arena.allocator(), std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    const listen = resolveListen(&cfg, init.environ_map, opts);
+    const control_host = mesh_cmd.controlHost(listen.host);
+    try mesh_cmd.cmd(init, .{
+        .sub = opts.mesh_sub,
+        .arg1 = opts.mesh_arg1,
+    }, control_host, listen.port);
+}
+
 fn cmdMcp(init: std.process.Init, opts: Options) !void {
     _ = opts;
     const gpa = init.gpa;
