@@ -16330,6 +16330,16 @@ fn cmdAutoresearch(init: std.process.Init, opts: Options) !void {
     try eng.run(.{ .targets = targets.items, .harness_argv = harness_argv.items, .metric_name = opts.research_metric orelse "score", .metric_pattern = opts.research_pattern orelse "", .direction = opts.research_direction, .iters = opts.iters, .dry_run = false, .research_dir = "state/autoresearch", .budget_seconds = opts.research_budget });
 }
 
+/// The `workflow` object's `body` field from a `workflows` tool response, or
+/// null when the shape is not what the guest promises.
+fn workflowBody(resp: std.json.Value) ?[]const u8 {
+    const w = resp.object.get("workflow") orelse return null;
+    if (w != .object) return null;
+    const b = w.object.get("body") orelse return null;
+    if (b != .string) return null;
+    return b.string;
+}
+
 fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
@@ -16367,7 +16377,11 @@ fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
     try is.endObject();
     const raw = try toolJson(io, gpa, arena, &cfg, init.environ_map, "workflows", ibuf[0..iw.end]);
     const resp = try std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true });
-    const ok = resp == .object and (resp.object.get("ok") orelse .{ .bool = false }) == .bool and resp.object.get("ok").?.bool;
+    const ok = blk: {
+        if (resp != .object) break :blk false;
+        const v = resp.object.get("ok") orelse break :blk false;
+        break :blk v == .bool and v.bool;
+    };
 
     if (std.mem.eql(u8, sub, "list")) {
         if (!ok) {
@@ -16383,6 +16397,7 @@ fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
             return;
         }
         for (list) |item| {
+            if (item != .object) continue;
             const name = if (item.object.get("name")) |n| (if (n == .string) n.string else "") else "";
             const hint = if (item.object.get("arg_hint")) |h| (if (h == .string) h.string else "") else "";
             const desc = if (item.object.get("description")) |d| (if (d == .string) d.string else "") else "";
