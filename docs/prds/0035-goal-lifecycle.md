@@ -6,7 +6,8 @@ Shipped. `write_goal` drafting, `add_goal` persistence, and the shared
 continuing goal loop are implemented. A loop starts its first agent turn
 immediately, evaluates each completed turn, and continues until achieved,
 blocked, cancelled, or budget-limited. Sources of truth are `tools/zig/write_goal.zig`,
-`tools/zig/add_goal.zig`, `src/agent/`, `src/cli.zig`, `src/tui/repl.zig`, and
+`tools/zig/add_goal.zig`, `tools/zig/update_goal.zig`, `tools/zig/goal_store.zig`,
+`src/agent/`, `src/cli.zig`, `src/tui/repl.zig`, and
 `ui/app/features/goals.js`. The architecture decision is
 [ADR 0012](../adrs/0012-goal-draft-persistence-and-execution-are-separate.md).
 
@@ -16,7 +17,10 @@ write `scripts/verify-goal.sh`, and the evaluator weighs the script's measured
 exit status. The evaluator does **not** execute the script itself — a host exec
 of agent-written shell would escape the sandbox, so that is the deliberate,
 accepted design. A goal's board card mirrors the goal and carries its structured
-fields; `state/goals.json` remains the durable goal record.
+fields; `state/goals.json` remains the durable goal record. A goal is tagged to
+a workspace (project) and owns first-class tasks, public or private to named
+instances; the card checklist is a projection of the public tasks only
+(RFC 0001 / [ADR 0020](../adrs/0020-a-workspace-is-a-multi-root-project-whose-board-is-its.md)).
 
 ## Problem
 

@@ -42,9 +42,11 @@ showed.
 
 **The board is a chatroom.** There is no `state/board.json`. A card action is
 a chat message (`@todo {...}`, encoded/decoded in `cards.zig`) appended to a
-room (default `"board"`). The host appends and fans out to subscribed peers;
-the folding — every rule about what a card is — happens inside the sandboxed
-guest, because that is application logic and the host's job is transport.
+room (default `ws:<id>` — the project's `#general` — for a non-empty workspace;
+the empty default workspace keeps `board`). The host appends and fans out to
+subscribed peers; the folding — every rule about what a card is — happens
+inside the sandboxed guest, because that is application logic and the host's
+job is transport.
 
 **Derive, don't store.** Every read and every write response re-derives the
 board by folding the room's whole log, oldest first, deduplicated by message

@@ -1270,8 +1270,8 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/mesh/leave` | POST | `{"peer_id":"…"}` or `{}` for self-leave |
 | `/api/mesh/pending` | GET, POST | Prompt-mode JOIN queue; POST `{"id","allow"}` admits or denies |
 | `/api/sessions` | GET, POST | List saved conversations, newest first; POST `{import_chat:true,title,messages}` imports one |
-| `/api/workspaces` | GET, POST | List workspaces (default cwd plus registered folders) or create one `{name,path}` |
-| `/api/workspaces/<id>` | POST, DELETE | Rename/repath a workspace, or remove it (chats move to the default; the folder stays) |
+| `/api/workspaces` | GET, POST | List workspaces (default cwd plus registered projects) or create one `{name,path}` / `{name,roots:[{name,path}]}` |
+| `/api/workspaces/<id>` | POST, DELETE | Rename/re-root a workspace, or remove it (chats move to the default; the folders stay) |
 | `/api/sessions/<id>` | GET, DELETE | Read or delete one saved conversation |
 | `/api/sessions/<id>/fork` | POST | Copy a conversation to a new id |
 | `/api/sessions/<id>/branch/<n>` | POST | Fork from message `n`, dropping everything after it |
@@ -1281,7 +1281,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/catalog` | GET | Local models.dev snapshot search (JSON). Only providers whose API+auth clanker implements. Downloads the snapshot only if `state/models-dev.json` is missing |
 | `/api/catalog/refresh` | POST | Replace `state/models-dev.json` from models.dev |
 | `/api/providers/models` | GET | Models for a configured provider (JSON) |
-| `/api/files?path=` | GET | List one directory of the current workspace (JSON), or preview a file. `?workspace=` selects a registered folder. `..` is clamped at that folder; a missing directory is 404 |
+| `/api/files?path=` | GET | List one directory of the current workspace (JSON), or preview a file. `?workspace=` selects a registered project (its primary root). `..` is clamped at that root; a missing directory is 404 |
 | `/api/knowledge` | GET, POST | Knowledge-graph entries |
 | `/api/prompts` | GET, POST | Stored prompts |
 | `/api/reports` | GET, POST | The `docs/reports/` and `docs/runbooks/` records. Relays the `reports` guest |

@@ -2,9 +2,10 @@
 
 ## Status
 
-Discussion — opened 2026-08-16, revised same day for the multi-component
-project model, then for the goal/task split, then after a 6-combatant
-arena (`arena-1786861439-dad384e4`) that rejected goal-is-a-card.
+Decided — 2026-08-16. Implemented as Option B (multi-root project, no
+goal-is-a-card); recorded in ADR 0020. The earlier arena
+(`arena-1786861439-dad384e4`) that rejected goal-is-a-card is what settled the
+goal/task split.
 
 An RFC is a *request for comment*: it presents the options and a recommendation
 so a decision can be made, and it is not itself the decision record. When it is
@@ -677,6 +678,7 @@ project actually needs its own board; keep `board` as the empty-id workspace's
 
 ## References
 
+- [ADR 0020 — A workspace is a multi-root project whose board is its #general room](../adrs/0020-a-workspace-is-a-multi-root-project-whose-board-is-its.md)
 - [ADR 0001 — The Kanban board is a chatroom](../adrs/0001-board-is-a-chatroom.md)
 - [ADR 0002 — Private run todos vs the shared board](../adrs/0002-private-todos-vs-shared-board.md)
 - [ADR 0012 — Goal draft, persistence, and execution are separate](../adrs/0012-goal-draft-persistence-and-execution-are-separate.md)

@@ -68,7 +68,7 @@ its arguments.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fs_prefixes` | string[] | `[]` | Directory prefixes, relative to `agent.sandbox_root`, this tool may read and write through `ck_fs_*`. Empty means no filesystem at all. There is no read-only grant: a prefix carries write access |
+| `fs_prefixes` | string[] | `[]` | Directory prefixes, relative to `agent.sandbox_root`, this tool may read and write through `ck_fs_*`. Empty means no filesystem at all. There is no read-only grant: a prefix carries write access. For a multi-root workspace, a relative guest path whose first component names one of the project's roots resolves under that root; the same prefix grant is checked against the remainder, so the prefix list itself is unchanged |
 | `network_allow` | string[] | `[]` | Hostnames this tool may reach through `ck_http`. Each entry is an exact hostname or a glob (`*.github.com`, and a bare `*` allows every host). No scheme, no path, no port |
 | `network_from_config` | string | `""` | `"peers"` or `"providers"`: the harness appends those configured hosts to `network_allow` at load, because a manifest cannot know what is in someone's `config.toml` |
 | `exec_allow` | string[] | `[]` | Commands this tool may run through `ck_exec`, compared against `argv[0]` **exactly**. Empty is not "the harness default set" — it is no exec at all |

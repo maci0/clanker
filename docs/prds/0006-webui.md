@@ -32,7 +32,7 @@ iteration cap the parent couldn't see how far it got).
    adding a socket or breaking the strict CSP.
 2. Session, workspace, and context control matching what the CLI already
    offers: fork, plan mode, visible compaction, provider/model switching,
-   folder-backed workspaces.
+   folder-backed workspaces, each a project with one or more named roots.
 3. Visibility into multi-instance and per-run behavior (peers, subagents,
    run progress, and todos — the shared board view plus the private per-run
    checklist) that a browser can show better than a terminal can.
@@ -312,7 +312,7 @@ Phase 2 — session and context control:
 - [x] 2.2 Plan mode
 - [x] 2.3 Visible compaction
 - [x] 2.4 Provider/model switching
-- [x] 2.5 Folder-backed workspaces — any number of `{name, path}` rows in `state/workspaces.json`; rail picker scopes chats; files + run sandbox root at that folder
+- [x] 2.5 Project-backed workspaces — any number of `{name, roots:[{name,path}]}` rows in `state/workspaces.json`; rail picker scopes chats; files + run sandbox root at the project's primary root
 
 Phase 3 — see what the agents are doing:
 
