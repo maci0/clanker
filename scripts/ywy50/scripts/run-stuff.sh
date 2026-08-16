@@ -1,0 +1,2 @@
+#!/bin/sh
+./zig-out/bin/clanker run '/goal implement 3 fixes or 1 feature from the roadmap'
