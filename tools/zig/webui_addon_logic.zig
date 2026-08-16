@@ -15,6 +15,7 @@ pub const groups = [_][]const u8{ "Work", "Watch", "Set up" };
 pub const capabilities = [_][]const u8{
     "get",   "post",      "live", "emit",    "confirm", "prompt",
     "toast", "workspace", "icon", "storage", "render",  "session",
+    "del",
 };
 
 /// Fresh `state/webui_plugins.json` is missing: Files is the Work surface
@@ -70,7 +71,7 @@ pub fn validCapability(cap: []const u8) bool {
 /// Why this capabilities list must not ship. Null means every name is known.
 pub fn capabilitiesRejected(caps: []const []const u8) ?[]const u8 {
     for (caps) |c| {
-        if (!validCapability(c)) return "unknown capability (get, post, live, emit, confirm, prompt, toast, workspace, icon, storage, render, session)";
+        if (!validCapability(c)) return "unknown capability (get, post, del, live, emit, confirm, prompt, toast, workspace, icon, storage, render, session)";
     }
     return null;
 }
@@ -144,6 +145,10 @@ test "capabilitiesRejected names the pluginApi surface" {
     try std.testing.expect(!validCapability("eval"));
     try std.testing.expect(validCapability("workspace"));
     try std.testing.expect(validCapability("session"));
+    // `del` is the DELETE verb on pluginApi (drop a resource by id, with an
+    // optional JSON body), so a plugin that deletes must be able to declare it.
+    try std.testing.expect(capabilitiesRejected(&.{"del"}) == null);
+    try std.testing.expect(validCapability("del"));
 }
 
 test "jsRejected requires registerView and refuses CSP-breaking APIs" {

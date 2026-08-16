@@ -160,9 +160,9 @@ pub const Options = struct {
     provider: ?[]const u8 = null,
     model: ?[]const u8 = null,
     task: ?[]const u8 = null,
-    /// The required completion criterion for `add-goal`. A persisted goal is
-    /// a reviewable contract, not a raw prompt, so the CLI receives its two
-    /// required fields separately rather than inventing one from the objective.
+    /// The optional completion criterion for `add-goal`. A persisted goal is
+    /// still a reviewable contract, but a missing criterion is allowed: the
+    /// goal loop's first turn drafts a measurable one (PRD 0035 Goal 5).
     goal_completion_criterion: ?[]const u8 = null,
     /// Internal routing state for `goal` and `run "/goal …"`. It is never a
     /// user-facing flag: persisted `--goal <id>` also enables the same loop.
@@ -1116,10 +1116,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
         setDiag(diag, "<objective> <completion criterion>");
         return error.MissingArg;
     }
-    if (opts.command == .add_goal and opts.goal_completion_criterion == null) {
-        setDiag(diag, "<completion criterion>");
-        return error.MissingArg;
-    }
     if (opts.command == .improve_self and opts.task == null) {
         setDiag(diag, "<instructions>");
         return error.MissingArg;
@@ -1821,7 +1817,7 @@ const specs = [_]Spec{
     .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
     .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model }, .detail = "Starts work immediately, then evaluates every completed agent turn\nagainst the supplied condition and continues until achieved, blocked,\nor the goal-turn budget ends. It does not require a write-goal draft\nor an added goal. Use `add-goal` when you want to persist a goal for a\nlater `run --goal <id>`, and `write-goal` when you only want a\nstructured draft." },
     .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the goal_write tool directly and prints a reviewable draft. It\nnever writes state/goals.json or starts an agent run." },
-    .{ .command = .add_goal, .usage = "add-goal \"<objective>\" \"<completion criterion>\"", .blurb = "persist a goal without running it", .group = .work, .detail = "Calls the goal_add tool directly. It writes the supplied structured goal\nto state/goals.json and prints its id, but never starts work. Run it\nlater with `clanker run --goal <id>` or from the goal board. Use\n`write-goal` first if you need help drafting the two fields." },
+    .{ .command = .add_goal, .usage = "add-goal \"<objective>\" [\"<completion criterion>\"]", .blurb = "persist a goal without running it", .group = .work, .detail = "Calls the goal_add tool directly. It creates a goal-card and writes the\ngoals.json index, and prints the id, but never starts work. The criterion\nis optional: the goal loop drafts a measurable one on its first turn. Run\nit later with `clanker run --goal <id>` or from the goal board. Use\n`write-goal` first if you need help drafting the fields." },
     .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--iters <n>        cap the number of attempts (default 3)\n--dry-run          propose changes without applying them" },
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
@@ -5405,16 +5401,17 @@ fn cmdWriteGoal(init: std.process.Init, opts: Options) !void {
     if (!std.mem.endsWith(u8, markdown.string, "\n")) try writeStdOut(io, "\n");
 }
 
-/// `clanker add-goal <objective> <completion criterion>` persists a goal
-/// through the sandboxed goal_add tool and stops there. Execution is a
-/// separate explicit choice: `clanker run --goal <id>` or the goal board.
+/// `clanker add-goal <objective> [<completion criterion>]` persists a goal
+/// through the sandboxed goal_add tool and stops there. The criterion is
+/// optional: a missing one is drafted by the goal loop's first turn. Execution
+/// is a separate explicit choice: `clanker run --goal <id>` or the goal board.
 fn cmdAddGoal(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.goal) return error.ModuleDisabled;
     const objective = opts.task orelse return error.MissingTask;
-    const completion = opts.goal_completion_criterion orelse return error.MissingArg;
+    const completion = opts.goal_completion_criterion orelse "";
 
     var input: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
@@ -14881,16 +14878,18 @@ test "write-goal accepts one intent and is listed as a command" {
     try std.testing.expectEqualStrings("<write-goal intent>", diag);
 }
 
-test "add-goal accepts two fields and goal slash tasks route deliberately" {
+test "add-goal accepts an optional criterion and goal slash tasks route deliberately" {
     const opts = try parse(&.{ "clanker", "add-goal", "fix the web UI", "zig build test passes" }, null);
     try std.testing.expectEqual(Command.add_goal, opts.command);
     try std.testing.expectEqualStrings("fix the web UI", opts.task.?);
     try std.testing.expectEqualStrings("zig build test passes", opts.goal_completion_criterion.?);
     try std.testing.expectEqual(Command.add_goal, commandForHelp("add-goal").?);
 
-    var diag: []const u8 = "";
-    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "add-goal", "only objective" }, &diag));
-    try std.testing.expectEqualStrings("<completion criterion>", diag);
+    // The criterion is optional: a goal with only an objective is valid and
+    // the loop drafts its criterion on the first turn.
+    const solo = try parse(&.{ "clanker", "add-goal", "only objective" }, null);
+    try std.testing.expectEqualStrings("only objective", solo.task.?);
+    try std.testing.expect(solo.goal_completion_criterion == null);
     try std.testing.expectEqualStrings("fix the web UI", goalSlashIntent(" /goal fix the web UI ").?);
     try std.testing.expect(goalSlashIntent("/goalkeeper fixes") == null);
 

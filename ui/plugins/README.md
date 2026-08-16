@@ -61,6 +61,7 @@ tool rather than edit `ui/app/`. `music` is the shipped demo; `schedule`,
 |---|---|
 | `api.getJSON(path)` | same-origin GET returning parsed JSON, throwing the server's own error text |
 | `api.postJSON(path, body)` | same-origin POST of a JSON body, same error shape as `getJSON` |
+| `api.del(path, body)` | same-origin DELETE. `body` optional; when present it is a JSON body, matching `postJSON` |
 | `api.onLive(fn)` | subscribe to `GET /api/events` (SSE). `fn` receives each `{t: ...}` event; the return value unsubscribes |
 | `api.emit(data)` | POST `/api/live` as `{from: <plugin id>, data}`. Lands on the `plugin` topic as `{"t":"plugin","from":...,"data":...}` |
 | `api.confirm(message, opts)` / `api.prompt(message, initial, opts)` | the page's dialogs (`uiConfirm` / `uiPrompt`) |

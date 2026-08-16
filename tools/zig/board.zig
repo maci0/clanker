@@ -64,6 +64,14 @@ const Req = struct {
     /// Id of the goal (state/goals.json) the card mirrors; "" unlinks on
     /// update. Set at creation by the web UI's goal->board mirroring.
     goal: ?[]const u8 = null,
+    /// Goal-as-card fields, carried on create/update so a card can be the
+    /// goal record (RFC 0001).
+    completion_criterion: ?[]const u8 = null,
+    proof: ?[]const u8 = null,
+    stop_rule: ?[]const u8 = null,
+    boundaries: ?[]const u8 = null,
+    max_iterations: ?u32 = null,
+    worktree: ?[]const u8 = null,
     labels: ?[]const cards.Label = null,
     prompt_tokens: ?u64 = null,
     completion_tokens: ?u64 = null,
@@ -334,6 +342,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .deadline = req.deadline,
             .who = assignee,
             .goal = req.goal,
+            .completion_criterion = req.completion_criterion,
+            .proof = req.proof,
+            .stop_rule = req.stop_rule,
+            .boundaries = req.boundaries,
+            .max_iterations = req.max_iterations,
+            .worktree = req.worktree,
             .labels = req.labels,
         }) catch return lib.fail(out, "could not post the card to the room");
         return respond(out, room, try cards.derive(alloc, try history(alloc, room)), "");
@@ -375,6 +389,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             // Either reassigns, and "" clears.
             .who = req.who orelse req.assignee,
             .goal = req.goal,
+            .completion_criterion = req.completion_criterion,
+            .proof = req.proof,
+            .stop_rule = req.stop_rule,
+            .boundaries = req.boundaries,
+            .max_iterations = req.max_iterations,
+            .worktree = req.worktree,
             .labels = req.labels,
         };
     } else if (std.mem.eql(u8, op, "move")) blk: {

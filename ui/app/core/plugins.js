@@ -55,6 +55,16 @@ export function pluginApi(spec) {
         body: JSON.stringify(body == null ? {} : body)
       }).then(readJsonResponse);
     },
+    // DELETE without a body is the common shape (drop a resource by id);
+    // when a body is passed it is JSON, matching postJSON.
+    del: function (path, body) {
+      var init = { method: "DELETE" };
+      if (body != null) {
+        init.headers = { "Content-Type": "application/json" };
+        init.body = JSON.stringify(body);
+      }
+      return fetch(path, init).then(readJsonResponse);
+    },
     onLive: onLive,
     emit: function (data) {
       return fetch("/api/live", {
