@@ -190,3 +190,47 @@ belong to which session), an explicit hold on `.git`-writing commands while one
 session finished a rebase, and an explicit release afterwards. Nothing in the
 checkout communicates that, which is why the collision happened before the
 messaging started rather than after.
+
+## Pushing without stashing anyone: a temporary worktree
+
+Recorded by a session that hit the "I need to push and the shared checkout is
+dirty with three other sessions' work" case twice today and found a way through
+that touches nobody else's files.
+
+The trap: your commit is ready, `origin/main` has moved, and integrating means
+`rebase` or `merge`. Both refuse or clobber when the working tree carries other
+sessions' uncommitted work — `rebase` exits with "cannot rebase: You have
+unstaged changes", and `merge` overwrites any dirty file its incoming commits
+touch. The obvious unblock is `git stash`, and that is precisely the move this
+report exists to warn against: it takes work that is not yours.
+
+A temporary worktree has none of that surface, because it never touches the
+shared working directory:
+
+```bash
+git worktree add -b push-tmp /tmp/pushwt <your-commit>
+git -C /tmp/pushwt merge origin/main
+git -C /tmp/pushwt push origin push-tmp:main
+git worktree remove --force /tmp/pushwt
+git branch -D push-tmp
+```
+
+Why each step matters. `worktree add` checks your commit out somewhere else, so
+the dirty files in the shared checkout are never read or written. The merge
+happens in that isolated tree, so a conflict — if any — is yours alone to
+resolve and cannot leave half-merged content where another session will commit
+it. `push push-tmp:main` publishes the result under the branch name the remote
+expects without your local `main` ever moving. Removing the worktree and the
+branch leaves no trace.
+
+The property that makes this safe to repeat: your local `main` stays an
+ancestor of what you pushed, so the shared checkout can fast-forward later
+rather than facing a divergence someone has to merge.
+
+Verified on 2026-08-16: pushed commit 115d4022 this way while
+`src/cli.zig`, `src/main.zig`, `src/improve/*`, `tools/zig/adr.zig`,
+`tools/zig/prd.zig` and `tools/zig/doc_scaffold.zig` were all dirty with two
+other sessions' in-progress work. `git status --porcelain` was byte-identical
+before and after.
+
+Use this whenever the alternative is stashing someone else's work.
