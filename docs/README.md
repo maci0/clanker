@@ -945,7 +945,7 @@ Fields:
   - `max_iterations`: tool-call rounds per turn before the run stops (default 50). Hitting it errors the turn, so keep it generous for multi-file work.
   - `compact_threshold_bytes`: if conversation exceeds this, compact history.
   - `max_total_tokens`: total token budget across the run.
-  - `max_tokens_per_turn`, `max_history_tokens`: per-turn input cap and total history budget before compaction kicks in.
+  - `max_tokens_per_turn`, `max_history_tokens`: per-turn input cap and total history budget before compaction kicks in. `max_history_tokens` is an absolute number rather than a share of the model's window, so its 16000 default is small for a large-window model; a run lifts it for itself (and logs that it did) when it falls below what compaction cannot remove — the system message and the six kept messages — and ends with `CompactionStalled` rather than compacting on every iteration when even that is not enough. See [History budget and compaction](configuration.md#history-budget-and-compaction).
   - `tools_dir`: one directory or a list of them (default `tools/manifests`). Later-listed wins on a tool name collision. `skills_dir`, `system_prompt_file`, `learnings_file`, `state_dir`: other paths the agent reads/writes at runtime.
   - `global_instructions_file`: optional path to device-global operator instructions. When empty (default), clanker loads `$HOME/.agents/AGENTS.md` if present. Missing or empty files are skipped.
   - `sandbox_root`: the run's root. `ck_fs_*` paths resolve under it and `ck_exec`

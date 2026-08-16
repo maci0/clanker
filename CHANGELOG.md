@@ -206,6 +206,31 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A run can no longer spend itself compacting a history it cannot shrink.
+  Compaction preserves the system message and the last six messages, so when
+  those alone exceeded `agent.max_history_tokens` it was asked to compact on
+  every iteration and freed nothing on any of them — a run seen doing this past
+  iteration 173, printing throughout, was making no progress at all. The
+  threshold is now lifted for the run when it falls below what compaction cannot
+  remove (with headroom, never past what the model's window allows) and says so
+  once; a run that still needs to compact five iterations in a row ends with
+  `CompactionStalled`, reported as an outcome with partial work rather than a
+  crash, naming both the configured cap and what the model's window leaves
+  compaction, since raising the cap only helps when the model has room. The
+  16000 default is unchanged and is still small for a large-window model —
+  `docs/configuration.md` and a new
+  `docs/runbooks/agent-run-compaction-thrash.md` cover setting it.
+
+- The compaction summary no longer fails on every compaction on a thinking
+  model. Its 512-token budget was the combined allowance for reasoning and
+  answer, and reasoning runs first, so a real transcript spent the whole budget
+  before a single content token: the LLM summary was replaced by the extractive
+  fallback every time, at the price of a round trip each. The call now asks for
+  a budget that fits both and the least reasoning the model will do, uses the
+  model's own reasoning text when content comes back empty, distinguishes a
+  summary truncated at the budget from an empty one, and stops asking after two
+  failures in a run rather than paying for the same failure per compaction.
+
 - HTTP API status codes now distinguish client mistakes from missing
   resources. Tool-backed routes (`/api/board`, `/api/knowledge`,
   `/api/prompts`, `/api/compare`, `/api/arena`) map `no such …` / `not
