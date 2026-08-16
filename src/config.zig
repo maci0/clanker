@@ -483,8 +483,9 @@ pub const Agent = struct {
     isolated_webui: bool = false,
 };
 
-/// Persistent eval kernels (PRD 0016). Off by default: a kernel is an
-/// unsandboxed subprocess with the host's ambient filesystem permission.
+/// Persistent eval kernels (PRD 0016). Off by default. Python cells run
+/// WASI-sandboxed when the vendored interpreter is present; the unsandboxed
+/// host `python3` fallback is deprecated (see `python_wasi_binary` below).
 pub const Kernel = struct {
     enabled: bool = false,
     max_output_bytes: u32 = 65536,
@@ -2365,8 +2366,18 @@ pub const Config = struct {
         if (obj.get("ping_interval_seconds")) |n| m.ping_interval_seconds = try jsonUnsigned(u32, n, "mesh.ping_interval_seconds");
         if (obj.get("admission")) |s| {
             m.admission = try jsonStr(s, "mesh.admission");
+            // PRD 0011 reserves "prompt" (queue the JOIN for the operator),
+            // but the queue, the /api/mesh/pending endpoints, and the
+            // `clanker mesh` subcommand do not exist yet, so the JOIN handler
+            // would silently refuse every unknown id with no trace. Reject it
+            // at load rather than let a mesh advertise a mode it cannot honor.
+            if (std.mem.eql(u8, m.admission, "prompt")) {
+                log.log(.error_, "mesh.admission \"prompt\" is not implemented yet (PRD 0011 pending-join queue is not built); a JOIN from an unknown id would be refused like \"allowlist\". Use \"allowlist\" or \"open\"", .{});
+                diagnostic_emitted = true;
+                last_load_diagnostic = true;
+                return error.MeshPromptAdmissionUnimplemented;
+            }
             if (!std.mem.eql(u8, m.admission, "allowlist") and
-                !std.mem.eql(u8, m.admission, "prompt") and
                 !std.mem.eql(u8, m.admission, "open"))
                 return error.MeshAdmissionInvalid;
         }

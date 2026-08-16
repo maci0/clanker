@@ -1,7 +1,7 @@
 {
   "name": "kernel",
-  "description": "Persistent Python or JS eval kernel for the current session. Off by default (kernel.enabled = false): this is an unsandboxed subprocess with the host's ambient filesystem permission. Input {kernel:\"python\"|\"js\", cell, reset?, timeout_ms?}. Magic prefixes: %pip install, %time, %%bash, !cmd.",
-  "llm_description": "Session-scoped Python/JS eval kernel. Disabled unless kernel.enabled=true (unsandboxed subprocess). {kernel:'python'|'js', cell, reset?, timeout_ms?}. Magics: %pip, %time, %%bash, !cmd.",
+  "description": "Persistent Python or JS eval kernel for the current session. Off by default (kernel.enabled = false). Python cells run sandboxed under the WASI CPython from scripts/setup-python-wasi.sh when it is present (fuel/memory/timeout-bounded, no network); without it they fall back to a deprecated unsandboxed python3 subprocess. Input {kernel:\"python\"|\"js\", cell, reset?, timeout_ms?}. Magic prefixes: %pip install, %time, %%bash, !cmd.",
+  "llm_description": "Session-scoped Python/JS eval kernel. Disabled unless kernel.enabled=true. Python runs WASI-sandboxed when the vendored interpreter is present (see scripts/setup-python-wasi.sh); the unsandboxed python3 fallback is deprecated. {kernel:'python'|'js', cell, reset?, timeout_ms?}. Magics: %pip, %time, %%bash, !cmd.",
   "wasm": "zig-out/tools/kernel.wasm",
   "confirm": true,
   "input_schema": {

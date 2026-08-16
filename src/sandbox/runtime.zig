@@ -119,7 +119,7 @@ pub const ToolModule = struct {
         self.h = try gpa.create(host.Host);
         self.h.* = .{
             .sandbox = sb,
-            .rng = std.Random.DefaultPrng.init(seedRng(sb.seed, wasm_bytes)),
+            .rng = std.Random.DefaultPrng.init(seedRng(sb.seed, wasm_bytes, io)),
         };
 
         self.engine = try zwasm.Engine.init(gpa, .{});
@@ -235,9 +235,18 @@ pub fn loadNamedTool(
     return ToolModule.load(gpa, io, sb, wasm_bytes);
 }
 
-fn seedRng(seed: u64, salt: []const u8) u64 {
+fn seedRng(seed: u64, salt: []const u8, io: std.Io) u64 {
     var h = std.hash.Wyhash.init(0x6A09E667F3BCC909);
     h.update(std.mem.asBytes(&seed));
+    // `agent.seed = 0` (the default) is documented as time-seeded: the tool
+    // RNG is reproducible only when a nonzero seed is set. Without this, seed
+    // 0 would be a pure function of the module bytes and every clanker
+    // instance everywhere would draw the identical ck_random stream. The
+    // clock mixes per-process entropy in; a nonzero seed stays deterministic.
+    if (seed == 0) {
+        const ts: u64 = @intCast(std.Io.Timestamp.now(io, .real).nanoseconds);
+        h.update(std.mem.asBytes(&ts));
+    }
     h.update(salt);
     return h.final();
 }

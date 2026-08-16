@@ -1,7 +1,9 @@
-//! Persistent eval kernels. Off by default (`kernel.enabled = false`): a
-//! kernel is an unsandboxed subprocess. This guest refuses when disabled
-//! and reports a missing runtime clearly. The host registry (PRD 0016/0017)
-//! owns process lifetime.
+//! Persistent eval kernels. Off by default (`kernel.enabled = false`).
+//! Python cells run WASI-sandboxed when the vendored interpreter is present
+//! (ADR 0010); without it the host falls back to a deprecated unsandboxed
+//! `python3` subprocess. This guest refuses when disabled and reports a
+//! missing runtime clearly. The host registry (PRD 0016/0017) owns process
+//! lifetime.
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -14,7 +16,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const cfg = lib.parseHarnessConfig();
     if (!cfg.kernel.enabled) {
-        return lib.fail(out, "kernel is disabled (kernel.enabled = false); this is an unsandboxed subprocess and stays opt-in");
+        return lib.fail(out, "kernel is disabled (kernel.enabled = false); enable it in config.toml to run Python/JS cells");
     }
 
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});

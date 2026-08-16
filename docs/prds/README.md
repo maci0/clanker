@@ -46,7 +46,7 @@ and Implementation lists checkable file-level phases.
 | [0023](0023-webui-model-config.md) | Web UI model config | Shipped | Writes `config.local.toml` only |
 | [0024](0024-sampling-profiles.md) | Sampling profiles | Shipped | Use-case table fills empty knobs |
 | [0025](0025-fallback-provider-chain.md) | Fallback provider chain | Shipped | Reactive list; vision path unchanged |
-| [0026](0026-llm-proxy.md) | LLM compatibility proxy | Draft | Independent of agent-loop drafts; four-PR plan |
+| [0026](0026-llm-proxy.md) | LLM compatibility proxy | In progress | Serve surface landed, off by default; e2e not wired |
 | [0027](0027-write-goal.md) | write-goal drafting | Shipped | Draft-only; persistence and execution live in 0035 |
 | [0028](0028-hooks-bridge.md) | Lifecycle hooks (Claude Code bridge) | Shipped | Five events, bounded policy runner, black-box fixture |
 | [0029](0029-loop-hygiene-guard.md) | Loop-hygiene guard | Shipped | Consecutive canonical-call reminders; configurable thresholds/exclusions |
@@ -56,7 +56,7 @@ and Implementation lists checkable file-level phases.
 | [0033](0033-agent-presets.md) | Agent presets | Draft | deepseek-code.com audit; supersedes the Feynman "role prompt files" note |
 | [0034](0034-session-subprocs.md) | Session subprocess inspector | Draft | Lists/kills 0016 registry rows from doctor + a guest |
 | [0035](0035-goal-lifecycle.md) | Goal lifecycle capabilities | Shipped | Draft, persist, and execute are independent |
-| [0036](0036-sixel-mascot-rendering.md) | SIXEL mascot rendering | Draft | Kitty → SIXEL → Unicode cells; depends on libvaxis support |
+| [0036](0036-sixel-mascot-rendering.md) | SIXEL mascot rendering | In progress | Kitty → SIXEL → Unicode cells implemented; manual terminal matrix open |
 
 ## Recommended build order (Drafts)
 
@@ -65,10 +65,9 @@ optional subsystems:
 
 1. **0016** supervisors / **0017** DAP
 2. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
-3. **0026** — LLM compatibility proxy (parallelizable; four incremental PRs)
-4. **0030** — ACP server (mirrors the already-shipped `clanker mcp` shape)
-5. **0033** — agent presets (filter-only v1; independent of 0032)
-6. **0032** — MCP client bridge (largest: needs a new registry dispatch kind; soft-depends on 0016 for a long-lived subprocess handle)
+3. **0030** — ACP server (mirrors the already-shipped `clanker mcp` shape)
+4. **0033** — agent presets (filter-only v1; independent of 0032)
+5. **0032** — MCP client bridge (largest: needs a new registry dispatch kind; soft-depends on 0016 for a long-lived subprocess handle)
 
 ## Editing rules (short)
 

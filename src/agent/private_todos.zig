@@ -1,6 +1,8 @@
-//! Per-subagent private todo lists: a nested run's own scratch list, distinct
-//! from the shared Kanban board (the `board` tool; see
-//! docs/adrs/0002-private-todos-vs-shared-board.md). Private to one run and
+//! Per-run private todo lists: a run's own scratch checklist, distinct from
+//! the shared Kanban board (the `board` tool; see
+//! docs/adrs/0002-private-todos-vs-shared-board.md). `Agent.run` attaches a
+//! fresh list for every top-level run and detaches it on return; a nested
+//! run gets its own from `subagent.runNested`. Private to one run and
 //! held in memory only, never written to the chatroom log, never fanned out
 //! to peers, and discarded when the run returns. What survives is a summary
 //! appended to the sub-agent's final answer, so the parent can see how far a
@@ -33,9 +35,9 @@ pub const Item = struct {
     }
 };
 
-/// One nested run's list. Created by subagent.runNested on its arena and
-/// handed to every tool sandbox of that run via Sandbox.private_todos; no
-/// other run ever sees the pointer. Unsynchronized on purpose: nested runs
+/// One run's list. Created by Agent.run or subagent.runNested on their arena
+/// and handed to every tool sandbox of that run via Sandbox.private_todos;
+/// no other run ever sees the pointer. Unsynchronized on purpose: runs
 /// execute tools strictly sequentially (Agent.no_parallel_tools), so two
 /// tool calls of the same run never touch the list concurrently.
 pub const List = struct {

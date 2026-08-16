@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted. See `docs/prds/0003-run-todos.md` for the full design and its current
-gaps (private todos are wired only for sub-agent runs, not top-level ones).
+Accepted. See `docs/prds/0003-run-todos.md` for the full design and its
+current gaps (a leftover-todos summary is still sub-agent-only).
 
 ## Context
 
@@ -30,9 +30,13 @@ Known issues). Private todos live in memory only
 
 A sub-agent's working notes never leak to a room or a peer, and the board
 never fills with scratch plans nobody but the run itself cared about. The
-cost, currently unresolved: only sub-agent runs get a private list wired up
-(`subagent.runNested` attaches one); a top-level run has nowhere to put a
-scratch plan and `todo_*` simply fails there. That gap is tracked as an open
-question in `docs/prds/0003-run-todos.md`, not treated as settled by this ADR —
-this decision fixes which two mechanisms exist and how they're told apart,
-not that every run currently has access to the private one.
+original cost this record shipped with — only sub-agent runs got a list
+wired up, so a top-level run had nowhere to put a scratch plan and `todo_*`
+failed there — was closed in-tree: `Agent.run` now attaches a fresh
+arena-owned list for every top-level run and detaches it when the run
+returns, so a later REPL turn never sees the previous turn's work. What
+remains open is tracked in `docs/prds/0003-run-todos.md`: the sub-agent
+path appends a leftover-todos summary to its final answer, and it is an
+open question whether top-level runs should do the same. This decision
+fixes which two mechanisms exist and how they're told apart, not every
+surface detail of the private list.
