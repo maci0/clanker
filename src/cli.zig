@@ -11999,6 +11999,7 @@ fn writeWorkspaceJson(
     id: []const u8,
     name: []const u8,
     path: []const u8,
+    roots: ?[]const workspace_mod.Root,
     is_builtin: bool,
     orphan: bool,
     chats: usize,
@@ -12010,6 +12011,19 @@ fn writeWorkspaceJson(
     try s.write(name);
     try s.objectField("path");
     try s.write(path);
+    try s.objectField("roots");
+    try s.beginArray();
+    if (roots) |rs| {
+        for (rs) |r| {
+            try s.beginObject();
+            try s.objectField("name");
+            try s.write(r.name);
+            try s.objectField("path");
+            try s.write(r.path);
+            try s.endObject();
+        }
+    }
+    try s.endArray();
     try s.objectField("builtin");
     try s.write(is_builtin);
     try s.objectField("orphan");
@@ -12030,7 +12044,18 @@ fn writeWorkspaceCreated(arena: std.mem.Allocator, stream: std.Io.net.Stream, w:
     s.objectField("name") catch return;
     s.write(w.name) catch return;
     s.objectField("path") catch return;
-    s.write(w.path) catch return;
+    s.write(workspacePrimaryPath(w)) catch return;
+    s.objectField("roots") catch return;
+    s.beginArray() catch return;
+    for (w.roots) |r| {
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(r.name) catch return;
+        s.objectField("path") catch return;
+        s.write(r.path) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", out.written());
 }

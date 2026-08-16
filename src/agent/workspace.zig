@@ -231,7 +231,11 @@ pub fn addRoots(
     list.appendSlice(arena, try load(io, arena, base)) catch return error.OutOfMemory;
     if (find(list.items, name) != null) return Error.Duplicate;
     const id = try nextId(arena, list.items, name);
-    const members: []const []const u8 = if (owner.len > 0) try arena.dupe([]const u8, &.{owner}) else &.{};
+    const members: []const []const u8 = if (owner.len > 0) blk: {
+        const m = try arena.alloc([]const u8, 1);
+        m[0] = owner;
+        break :blk m;
+    } else &.{};
     const ws = Workspace{ .id = id, .name = name, .roots = resolved, .members = members, .created = now };
     list.append(arena, ws) catch return error.OutOfMemory;
     try save(io, arena, base, list.items);
@@ -455,8 +459,8 @@ test "addRoots stores a named multi-root project" {
     const loaded = try load(io, arena, tmp.dir);
     try std.testing.expectEqual(@as(usize, 1), loaded.len);
     try std.testing.expectEqual(@as(usize, 2), loaded[0].roots.len);
-    try std.testing.expectEqualStrings(core, try pathFor(loaded, "relumea") orelse unreachable);
-    try std.testing.expectEqualStrings(web, (try rootsFor(loaded, "relumea") orelse unreachable)[1].path);
+    try std.testing.expectEqualStrings(core, pathFor(loaded, "relumea") orelse unreachable);
+    try std.testing.expectEqualStrings(web, (rootsFor(loaded, "relumea") orelse unreachable)[1].path);
 
     // A leaf with no registered row is the default workspace.
     try std.testing.expect(pathFor(loaded, "") == null);
@@ -475,6 +479,7 @@ test "a legacy path-only row loads as one unnamed root" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
+    try tmp.dir.createDirPath(io, "state");
     try tmp.dir.writeFile(io, .{ .sub_path = store_path, .data =
         \\[{"id":"old","name":"old","path":"/tmp/old-folder","created":3}]
     });
