@@ -2,7 +2,7 @@
 
 ## Status
 
-Current — searched 2026-08-16. Draft 3: separates the access path (tier 1) from where state lives (tier 2). Loopback fixes only tier 1; PostgreSQL and NATS JetStream lead tier 2, both with native Zig 0.16 clients.
+Current — searched 2026-08-16. Draft 4: names the topology axis (central store vs full replication per host) and the CP/AP axis, and surveys 17 candidates across both. No recommendation -- the choice belongs in an RFC.
 
 Research is evidence, not a decision: it records what exists, how good it is,
 and how confident the finding is. The decision that follows belongs in an
@@ -131,8 +131,37 @@ candidates rather than above them.
   `networkAllowed` (`src/sandbox/host.zig:2350`) glob-matches the hostname and
   never examines the port, so a `["127.0.0.1"]` grant admits *any* local service.
   `ck_mesh` avoids this by gating on `tool_self_name` — `high` confidence.
-- **PostgreSQL is the strongest tier-2 candidate and was missing from the first
-  two drafts.** It expresses all four of clanker's data shapes with one
+- **"Every host knows the full state" is full replication, and it is a different
+  requirement from "a centralized backend".** Naming that axis reorganises the
+  field: the central-store options (Postgres, CockroachDB, Turso) and the
+  full-replication options (etcd, Consul, rqlite/dqlite, Corrosion, Marmot, PRD
+  0011) answer different questions. Both are surveyed; neither is selected here.
+- **The second axis is what happens under partition.** CP options (etcd, Consul,
+  rqlite, PRD 0011) refuse writes without a quorum — a minority host stops
+  recording entirely. AP options (Corrosion/cr-sqlite, Marmot, CRDTs) keep
+  accepting writes everywhere and converge. For an agent fleet, whether an
+  isolated worker should stall or keep working is a product question that selects
+  the row — `high` confidence.
+- **Corrosion is the closest published match to the mesh requirement.** Fly.io
+  built it *after* outgrowing a central Consul state database: gossip-replicated
+  SQLite with multi-writer CRDTs (`cr-sqlite`), an HTTP API, SQL subscriptions,
+  SWIM membership and QUIC transport, running across **800+ nodes at p99 ~1 s**.
+  Apache-2.0, ~1.8k stars, docs marked WIP; it is a Rust daemon, and its CRDT
+  basis is what PRD 0011's non-goal rules out — `high` confidence
+  ([repo](https://github.com/superfly/corrosion), [Fly blog](https://fly.io/blog/corrosion/)).
+- **PostgreSQL needs a cluster for reliability, which weakens it against the
+  natively-distributed options.** Single-node Postgres is a single point of
+  failure; HA means Patroni or repmgr, i.e. failover-and-recovery machinery.
+  YugabyteDB is PostgreSQL wire-compatible and resilient by construction, so
+  `pg.zig` may work against it unchanged — the cheapest high-value experiment
+  this note suggests, and unverified — `medium` confidence.
+- **No general-purpose Zig-native store exists.** TigerBeetle is Zig, distributed
+  by VSR, and operationally the simplest thing here — and its schema is fixed to
+  debits and credits, so it cannot hold `state/`. It is the proof that a
+  Zig-native replicated store is achievable and the reference if clanker ever
+  builds one — `high` confidence.
+- **PostgreSQL was missing from the first two drafts and covers all four shapes
+  with one dependency.** It expresses all four of clanker's data shapes with one
   dependency — append tables, row-version CAS, bytea blobs, and `FOR UPDATE SKIP
   LOCKED` plus advisory locks for claims — and `pg.zig` is a **native Zig 0.16
   driver needing no libc and no C client** (MIT, 591 stars, read 2026-08-16) —
@@ -194,10 +223,21 @@ candidates rather than above them.
   declared unstable.
 - **Revision history.** Draft 1 was written without PRD 0011. Draft 2 read it and
   over-corrected, treating an in-progress design as settled ground and archiving
-  the cross-host candidates. Draft 3 (this one) separates the two tiers, restores
-  those candidates, adds PostgreSQL — absent from both earlier drafts — and
-  corrects two wrong "no Zig client" claims. The tier-1 finding is the only one
-  that has survived unchanged throughout.
+  the cross-host candidates. Draft 3 separated the two tiers, restored those
+  candidates, added PostgreSQL, and corrected two wrong "no Zig client" claims.
+  Draft 4 (this one) names the topology axis — central store versus full
+  replication on every host — which is what the question was actually about, and
+  adds the seven candidates that axis surfaces (rqlite/dqlite, Corrosion +
+  cr-sqlite, Marmot, Consul, CockroachDB/YugabyteDB, TigerBeetle, and the NATS
+  alternatives). It also drops the recommendation language earlier drafts had
+  drifted into: the field is laid out for an RFC to choose from, per this
+  directory's own convention. The tier-1 finding is the only one that has
+  survived unchanged throughout.
+- **Known gaps, stated so the next reader does not mistake breadth for depth.**
+  Marmot was never fetched at source. Licences for Consul, CockroachDB,
+  YugabyteDB and Turso are unverified. No candidate was compiled, deployed or
+  benchmarked. `pg.zig` against YugabyteDB is a guess. Every performance figure
+  is quoted.
 
 ## The problem, stated in terms of the current tree
 
@@ -261,9 +301,10 @@ are not rivals: B is the fallback if A is judged too large.
 
 ### A. `ck_state` host channel to serve, over loopback — the house pattern extended
 
-**Strongest candidate.** It is the only one that removes the fragile mechanism
-instead of adding a second beside it, and PRD 0011 has already committed to its
-shape for a neighbouring problem.
+The tier-1 option that removes the fragile mechanism rather than adding a second
+beside it, and the one PRD 0011 has already committed to for a neighbouring
+problem. Tier 1 has no real competition, which is why this half of the note is
+short.
 
 - **What it is:** make `clanker serve` the owner of `state/`. A guest calls
   `ck_state`, a name-gated privileged channel registered next to `ck_chat` and
@@ -348,14 +389,49 @@ Which store holds the truth across N servers, and who resolves concurrency. This
 is the open half. Options C through I are all tier-2 answers; A is orthogonal to
 every one of them and composes with all of them.
 
-Two candidates lead, for different data shapes, and both now have native Zig
-clients on the current compiler — which was the objection that ruled them out in
-the previous draft, wrongly.
+#### Tier 2 has two axes, and the first one was never named
+
+"Where state lives" is really two questions, and separating them explains why
+etcd, Postgres and PRD 0011 felt incomparable in earlier drafts:
+
+- **Topology** — is there one store everyone talks to, or does **every host hold
+  the full state**?
+- **Consistency under partition** — does the system **refuse writes** without a
+  quorum (CP), or **accept them everywhere and converge** later (AP)?
+
+|  | **CP** — quorum required, refuses on partition | **AP** — always writable, converges later |
+|---|---|---|
+| **Central store** | J. PostgreSQL (+ Patroni/repmgr for HA), O. CockroachDB / YugabyteDB | D. Turso (first-to-sync-wins) |
+| **Full replication on every host** | **F1. etcd**, N. Consul, K. rqlite / dqlite | **L. Corrosion + cr-sqlite**, M. Marmot, G. CRDTs, I. PRD 0011 mesh |
+| **External / neither** | H. S3 conditional writes | E. NATS JetStream (per-stream replicas) |
+
+**The requirement "if one host fails, the others still know the full state" is
+the bottom-left and bottom-right cells** — full replication — and it is a
+different requirement from "a centralized backend that handles concurrency".
+Earlier drafts answered the second while the question was really the first.
+
+**So: yes, etcd does exactly this.** Every member holds the entire keyspace,
+replicated by Raft; any member serves reads; losing one host loses nothing. The
+caveat is what CP means in practice: etcd needs a **majority alive**, so a
+3-node cluster tolerates 1 failure and a 5-node cluster tolerates 2. A host in
+the minority side of a partition stops accepting writes entirely. That is
+correct behaviour and it is also the opposite of what an agent fleet usually
+wants, where an isolated worker continuing to record its own token usage and
+learnings is strictly better than it stalling.
+
+The AP row is where the genuinely mesh-shaped answers live, and the previous
+drafts missed all of them.
+
+Two candidates lead on data shape, and both now have native Zig clients on the
+current compiler — which was the objection that ruled them out in the previous
+draft, wrongly. But on *topology*, neither is the best fit for a mesh; see
+options K through N.
 
 ### J. PostgreSQL — one dependency, all four data shapes
 
-**Strongest tier-2 candidate.** Listed out of alphabetical order because it was
-absent from the first two drafts; adding it changed the ranking.
+Listed out of alphabetical order because it was absent from the first two
+drafts. It is the reference *central-store* candidate; the full-replication
+candidates are K, L, M, N and I.
 
 - **What it is:** a single shared relational server that every clanker instance
   connects to over the network. `serve` becomes a client, not the owner of truth.
@@ -393,10 +469,17 @@ absent from the first two drafts; adding it changed the ranking.
   - Boring, inspectable, and an operator can query it with `psql` when an agent
     misbehaves. This is worth more than it sounds for a self-modifying system.
 - **Cons:**
-  - **It is a server an operator must run.** This is the real cost, and it
-    changes clanker's deployment shape from "a checkout on a machine" to "a
-    checkout plus a database". A single-laptop user should not need one, which
-    argues for Postgres being one backend behind `ck_state`, not the only one.
+  - **It is a server an operator must run.** This changes clanker's deployment
+    shape from "a checkout on a machine" to "a checkout plus a database". A
+    single-laptop user should not need one, which argues for Postgres being one
+    backend behind `ck_state`, not the only one.
+  - **For reliability it is a *cluster*, not a server.** One Postgres is a single
+    point of failure, so any deployment that cares about a host dying needs
+    streaming replication plus Patroni or repmgr — failover-and-recovery
+    machinery that is itself a thing to operate and to test. This is the
+    strongest argument against J relative to the full-replication row, and
+    relative to option O, whose availability comes from resilience rather than
+    from failover.
   - Postgres itself becomes the SPOF unless it is made HA — a smaller and much
     better-understood problem than per-entity ownership, but not free.
   - Connection count: thousands of short-lived `clanker run` processes each
@@ -538,8 +621,8 @@ their merits against the four constraints, alongside J and I.
 
 - **What it is:** a key-value store layered on JetStream streams, with revision
   numbers, history, and `watch` for change notification.
-**Runner-up to J**, and the better fit if clanker's state is judged to be
-event-shaped rather than record-shaped.
+The better fit if clanker's state is judged event-shaped rather than
+record-shaped, and the transport option M builds on.
 
 - **Maturity:** established, widely deployed, Apache-2.0. **Correction to the
   previous draft, which said no Zig client existed:** `nats-io/nats.zig` is the
@@ -809,6 +892,237 @@ be relied on; it stays in the references marked unreliable.
   [Piper, S3 as an agent orchestrator](https://benpiper.com/post/2026/can-s3-replace-a-central-orchestrator-for-agents/),
   read 2026-08-16.
 
+### K. rqlite / dqlite — Raft-replicated SQLite, full copy on every node
+
+- **What they are:** SQLite plus Raft. **rqlite** is a standalone process
+  fronting SQLite with an HTTP API and configurable read consistency (strong,
+  eventual, none), automatic failover, and sub-second elections. **dqlite**
+  (Canonical) is a *library* that embeds the same idea into your own binary — no
+  external database process at all — and is what Canonical ships inside LXD and
+  MicroK8s.
+- **Topology / consistency:** full replication, CP. Every node has the complete
+  database on local disk.
+- **Fit:** dqlite is architecturally the closest thing in this note to "clanker
+  serve grows a replicated state store", because it is a library rather than a
+  server — which would preserve the "no second daemon" property that PRD 0011
+  cares about while giving every host the full state. rqlite is the same idea as
+  a separate process with an HTTP API clanker could call today.
+- **Pros:** SQL and SQLite semantics, so the schema sketch maps over unchanged;
+  no size limits of the etcd kind; rqlite's HTTP API needs no client library;
+  dqlite embeds, so the deployment stays one binary.
+- **Cons:** single-writer through the Raft leader — every write is forwarded, so
+  this does not solve write concurrency, only availability and replication;
+  quorum required, same minority-partition stall as etcd; dqlite is a C library
+  (Zig can bind it, but it is C) and is heavily coupled to Canonical's needs;
+  rqlite's HTTP hop adds latency.
+- **Unknowns:** dqlite's viability outside Canonical's stack; whether write
+  forwarding through a leader is acceptable at clanker's agent counts; Zig
+  bindings for dqlite (not searched).
+- **Evidence:** [rqlite](https://github.com/rqlite/rqlite),
+  [dqlite](https://dqlite.io/),
+  [VPS comparison of the SQLite replication options](https://onidel.com/blog/sqlite-replication-vps-2025),
+  [mvsqlite's comparison with dqlite and rqlite](https://github.com/losfair/mvsqlite/wiki/Comparison-with-dqlite-and-rqlite),
+  read 2026-08-16.
+
+### L. Corrosion + cr-sqlite — gossip-replicated SQLite with multi-writer CRDTs
+
+**The closest published match to a mesh where every host knows the full state.**
+It is what Fly.io built after finding a central Consul state database
+insufficient, which is very nearly the transition this question is asking about.
+
+- **What it is:** a daemon that propagates SQLite state across a cluster with
+  **multi-writer support via CRDTs** (the `cr-sqlite` extension), eventual
+  consistency, a **RESTful HTTP API**, **SQL query subscriptions**, QUIC
+  peer-to-peer transport, and SWIM gossip for cluster formation. Every node holds
+  the full state in a local SQLite file and answers SQL queries against it.
+- **Topology / consistency:** full replication, **AP**. Every node accepts
+  writes, always; conflicts resolve by CRDT semantics rather than by refusing.
+- **Maturity:** Apache-2.0, ~1.8k stars, 1,130 commits, actively developed. Fly.io
+  runs it across **800+ nodes** with **p99 propagation around one second**. The
+  documentation is marked WIP, which is the main maturity caveat. Rust.
+  Read 2026-08-16.
+- **`cr-sqlite` separately:** MIT, ~3.8k stars, 2,168 commits, a run-time loadable
+  SQLite/libSQL extension. `SELECT crsql_as_crr('table')` upgrades a table to a
+  "conflict-free replicated relation"; changes flow through a `crsql_changes`
+  virtual table. Supports last-write-wins registers, fractional indices,
+  observe-remove sets and multi-value registers; distributed counters and
+  rich-text are in progress. **Inserts are 2.5× slower than plain SQLite; reads
+  are the same speed.** The project advises building against a release tag as
+  main may not be stable.
+- **Fit:** on topology, the best in the note for the stated requirement. On
+  clanker's data shapes it is good for documents and coordination, and the
+  append-only logs are naturally an OR-set or a grow-only table. Blobs would
+  gossip badly and should live elsewhere.
+- **Pros:**
+  - Exactly the requirement: any host can be lost, every survivor still has
+    everything, and every survivor keeps accepting writes.
+  - HTTP API plus SQL subscriptions means clanker's existing HTTP client reaches
+    it, and the web UI's live views get push updates without polling.
+  - Proven at a scale (800+ nodes) far beyond PRD 0011's 32-member ceiling.
+  - It is the empirical answer to "we tried a central store and outgrew it".
+- **Cons:**
+  - A Rust daemon — a second runtime in the deployment, and the "no second
+    daemon" non-goal in PRD 0011 argues against it.
+  - Documentation WIP; built for one company's use case, and general-purpose use
+    is plausible but not demonstrated.
+  - CRDT semantics mean convergence, not correctness: two agents moving one card
+    to different lanes still converge on *a* lane. PRD 0011's "no CRDT, no merge"
+    non-goal is a direct objection.
+  - 2.5× insert cost on CRDT tables.
+- **Unknowns:** whether cr-sqlite could be used **without** Corrosion — the
+  extension plus clanker's own gossip over the mesh transport it is already
+  building. That is the most interesting unexplored combination in this note.
+- **Evidence:** [Corrosion repo](https://github.com/superfly/corrosion) (fetched:
+  licence, stars, API, transport, WIP status),
+  [Fly blog: Corrosion](https://fly.io/blog/corrosion/),
+  [Corrosion docs](https://superfly.github.io/corrosion/),
+  [Corrosion CRDT docs](https://superfly.github.io/corrosion/crdts.html),
+  [cr-sqlite](https://github.com/vlcn-io/cr-sqlite) (fetched: licence, stars,
+  CRDT types, 2.5× insert cost, stability warning),
+  [QCon talk](https://qconlondon.com/presentation/apr2025/fast-eventual-consistency-inside-corrosion-distributed-system-powering-flyio),
+  read 2026-08-16.
+
+### M. Marmot — multi-master SQLite replication over NATS JetStream
+
+- **What it is:** a distributed SQLite layer that replicates changes across nodes
+  **without application changes**, using NATS JetStream as the transport. v2 adds
+  an automatic anti-entropy system that continuously monitors and repairs
+  replication lag. Explicitly multi-master, in contrast to rqlite's single-leader
+  model.
+- **Topology / consistency:** full replication, AP-leaning.
+- **Fit:** interesting mainly because it **composes two candidates already in
+  this note**. If NATS is chosen for events (option E), Marmot gives replicated
+  SQLite on the same infrastructure with no additional server — which is a
+  materially better answer than either alone.
+- **Pros:** multi-master; no application changes; reuses NATS if it is already
+  there; SQLite semantics.
+- **Cons:** smaller project than the others here; couples the state store to NATS
+  specifically; conflict resolution semantics not verified in this pass.
+- **Unknowns:** maturity, licence, star count and conflict semantics — **not
+  fetched**, this option is the least verified in the note and is recorded as a
+  lead rather than a finding.
+- **Evidence:** [Marmot repo](https://github.com/maxpert/marmot),
+  [HN discussion](https://news.ycombinator.com/item?id=38600743),
+  [Lobsters discussion](https://lobste.rs/s/f9slcf/marmot_distributed_sqlite_replication),
+  read 2026-08-16, all `unverified` at the source.
+
+### N. Consul — gossip membership plus a Raft-replicated KV
+
+- **What it is:** HashiCorp's service-discovery system. Serf/`memberlist` gossip
+  maintains agent-level cluster membership and failure detection; the KV store
+  and service catalog sit on Raft across the server nodes.
+- **Topology / consistency:** full replication among servers, CP. Multi-datacenter
+  is a first-class concept, using WAN gossip between DCs — the one candidate that
+  designs explicitly for "clanker instances in several networks".
+- **Fit:** functionally very close to etcd for clanker's purposes, with a better
+  story for multi-site and a worse one for being lightweight. Same
+  metadata-store size posture; the same reasons that rule etcd out as the primary
+  store apply.
+- **Pros:** HTTP API, so no client library; mature; multi-datacenter federation;
+  gossip-based failure detection is exactly the liveness mechanism PRD 0011
+  hand-rolls with PING/PONG.
+- **Cons:** heavier than etcd for the same job; BSL licence since 2023 (not
+  verified in this pass); a KV store, so the bulk-data objection is unchanged.
+- **Unknowns:** current licence terms — **`unverified`, and it matters**; whether
+  the WAN-federation model maps onto clanker's mesh.
+- **Evidence:**
+  [HashiCorp on gossip, Serf, memberlist, Raft and SWIM](https://www.hashicorp.com/en/resources/everybody-talks-gossip-serf-memberlist-raft-swim-hashicorp-consul),
+  read 2026-08-16. Note that several comparison pages returned for this query
+  (StackShare-derived) describe etcd as gossip-based and eventually consistent,
+  which is wrong on both counts; that whole family of sources is unreliable.
+
+### O. Distributed SQL — CockroachDB, YugabyteDB
+
+- **What they are:** horizontally scalable, strongly consistent SQL databases
+  that are multi-node by design. YugabyteDB is PostgreSQL wire-compatible and
+  reuses the Postgres query layer.
+- **Topology / consistency:** sharded and replicated across nodes, CP.
+- **Fit:** the direct answer to the objection raised against option J — that
+  Postgres needs Patroni or repmgr for HA. As one comparison puts it,
+  YugabyteDB's availability *"is based on resilience, unlike PostgreSQL HA which
+  is based on failover and recovery techniques."* If clanker is going to depend
+  on a SQL store across servers anyway, a natively distributed one removes the
+  failover machinery rather than automating it.
+- **Pros:** no separate HA tooling; survives node loss natively; YugabyteDB's
+  Postgres compatibility means `pg.zig` may work unchanged — which, if true, is a
+  significant finding, because it would give a natively-distributed backend with
+  a native Zig client;
+  CockroachDB is strong for geo-distribution.
+- **Cons:** heavier per node than Postgres; single-region performance trails
+  Postgres by roughly 20–30% for CockroachDB; both are a cluster to operate;
+  licences are not the plain OSS story Postgres has (CockroachDB in particular)
+  and were **not verified** in this pass.
+- **Unknowns:** whether `pg.zig` actually works against YugabyteDB — the highest
+  value/lowest cost experiment suggested anywhere in this note; current licence
+  terms for both.
+- **Evidence:**
+  [YugabyteDB resiliency vs PostgreSQL HA](https://www.yugabyte.com/blog/yugabytedb-resiliency-vs-postgresql-ha-solutions/)
+  (vendor source, read critically),
+  [three-way comparison](https://www.index.dev/skill-vs-skill/cockroachdb-vs-postgresql-vs-yugabytedb),
+  read 2026-08-16.
+
+### P. The Zig-native landscape — TigerBeetle and what does not exist
+
+Asked explicitly because a Zig-native store would fit this codebase better than
+anything else. The honest answer is that it does not exist for this use case.
+
+- **TigerBeetle** is the flagship Zig database: a financial-accounting DBMS,
+  distributed by default via Viewstamped Replication, with all memory allocated
+  upfront, no dynamic allocation, single-core deterministic execution, and direct
+  I/O bypassing the page cache. Deployment is "install the binary on however many
+  machines you want" with no ZooKeeper and no async replication — operationally
+  the simplest distributed store in this note by a wide margin.
+
+  **And it cannot be used here.** It is not a general-purpose store: its schema
+  is fixed to double-entry accounts and transfers. Nothing in `state/` is a
+  debit or a credit. It is listed because it is the strongest evidence that a
+  Zig-native replicated store is *achievable*, and because its VSR implementation
+  is the best available reference if clanker ever built its own replication over
+  the mesh transport.
+- **`pg.zig` and `nats.zig`** are Zig *clients*, covered above, and remain the
+  only native-Zig path to a mature store.
+- **Not found:** any general-purpose embedded or distributed key-value store
+  written in Zig. `lmdb-zig` / `lmdbx-zig` are C bindings; "Axion" appeared in one
+  result as a Zig storage engine and was **not investigated** — a lead, not a
+  finding.
+- **What this implies:** the build-it-ourselves option is a real one — cr-sqlite
+  or a hand-written LWW/OR-set layer, gossiped over the mesh transport PRD 0011
+  is already building — and it is the only option that keeps everything in-tree.
+  Its cost is that clanker would own a distributed-systems problem, which is the
+  category of work most likely to be subtly wrong.
+- **Evidence:** [TigerBeetle architecture](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/ARCHITECTURE.md),
+  [TigerBeetle on dbdb.io](https://dbdb.io/db/tigerbeetle),
+  [awesome-zig](https://github.com/zigcc/awesome-zig), read 2026-08-16.
+
+### Q. NATS alternatives for the event-shaped half
+
+Asked explicitly. The short answer is that the alternatives are better at
+streaming and worse at everything else NATS was attractive for.
+
+- **Redpanda** — Kafka-compatible, written in C++, no JVM and no ZooKeeper, lower
+  latency and simpler operations than Kafka. Strong for durable long-retention
+  streaming. **No KV store and no watch**, so it covers one of clanker's four
+  shapes.
+- **Apache Kafka** — the reference. Highest durability and ecosystem, heaviest
+  operations, JVM. Same one-shape limitation.
+- **Redis Streams** — simplest of the three, consumer groups, adequate below
+  ~10K messages/second, which is comfortably above clanker's write rate. Redis
+  also has a KV store and keyspace notifications, so it is the only alternative
+  here that covers documents *and* events. Persistence and clustering
+  semantics were **not verified** in this pass.
+- **Why none displaces NATS for this question:** what made JetStream attractive
+  was the *combination* — streams for the logs, KV with revision CAS for
+  documents, TTLs for claims, `watch` for push updates, one server, one official
+  Zig client. Redpanda and Kafka give a better version of one quarter of that.
+- **Unknowns:** Fluvio and Iggy (Rust streaming systems) returned nothing usable
+  in this search and were **not evaluated**; Redis as a full state store was not
+  assessed.
+- **Evidence:**
+  [Redpanda vs NATS vs Kafka 2026](https://www.pkgpulse.com/blog/redpanda-vs-nats-vs-apache-kafka-event-streaming-platforms-2026),
+  [message broker comparison 2026](https://dev.to/mahdi0shamlou/message-brokers-comparison-2026-kafka-rabbitmq-nats-redis-streams-which-one-should-you-3ea8),
+  [NATS alternatives roundup](https://www.modern-datatools.com/alternatives/nats),
+  read 2026-08-16 — all secondary comparison pages, so `medium` at best.
+
 ## Out-of-the-box options
 
 Each prompt answered explicitly, including the ones that do not apply.
@@ -869,41 +1183,53 @@ Each prompt answered explicitly, including the ones that do not apply.
 
 ## Comparison
 
-**Tier 1 — access path.** Not mutually exclusive with anything in tier 2.
+The note's job is to lay the field out, not to pick. Two tables, because the two
+tiers are independent decisions.
+
+**Tier 1 — access path.** Composes with every tier-2 option.
 
 | Option | Maturity | Fit | Main risk |
 |---|---|---|---|
-| A. `ck_state` channel → local serve | In-tree pattern (`ck_mesh`) | **Best** — removes the fragility outright and makes tier 2 swappable | Serve becomes a hard dependency of every run |
-| B. Generalize `ck_fs_write_if` | In-tree | Partial — small documents only | Still goes through `safeJoinSecure`, so it does not fix the actual break |
+| A. `ck_state` channel → local serve | In-tree pattern (`ck_mesh`) | Removes the worktree fragility; makes tier 2 swappable | Serve becomes a hard dependency of every run |
+| B. Generalize `ck_fs_write_if` | In-tree | Small documents only | Still goes through `safeJoinSecure`, so it does not fix the break |
 
-**Tier 2 — where state lives.** Ranked against the four constraints, with
-constraint 4 (no agent blocked by another host being down) doing most of the
-separating.
+**Tier 2 — where state lives.** `Topology` and `Partition` are the two axes;
+"Full state per host" is the column that answers "one host dies, the rest still
+know everything".
 
-| Option | Zig client | Server to run | Covers all 4 shapes | Scales past 32 hosts | Survives a host loss | Main risk |
+| Option | Topology | Partition | Zig client | To operate | All 4 shapes | Notes |
 |---|---|---|---|---|---|---|
-| **J. PostgreSQL** | `pg.zig`, native, Zig 0.16, MIT | Yes, one | **Yes** | Yes | Yes | Operator must run a DB; `pg.zig` TLS experimental |
-| **E. NATS JetStream** | `nats.zig`, official, Zig 0.16, Apache-2.0 | Yes, one | No — blobs missing | Yes | Yes | Client is pre-1.0 with a declared-unstable API |
-| I. PRD 0011 full mesh | n/a (native) | **No** | No — logs/knowledge unreplicated | **No**, `max_members = 32` | **No**, `home_unreachable` refuses | Does not reach the stated deployment size |
-| C. SQLite / WAL | via C | No | Yes, on one host | Single-host only | n/a | One writer at a time; wrong tier for many servers |
-| D. libSQL / Turso | unverified | Hosted or self-host | Yes | Yes | Partly — first-to-sync-wins loses writes | Vendor dependency |
-| **F1. etcd** | **none needed** — JSON/HTTP gateway | Yes, a quorum (3 or 5) | No — 1.5 MiB request, 8 GB store | Yes | Yes | Best CAS + lease primitives here, but metadata-only by design |
-| F2. FoundationDB | none found; `libfdb_c` + FFI | Yes, a process cluster | **No — 100 KB value limit** | Yes | Yes | Half of existing session files already exceed the value limit |
-| H. S3 conditional writes | n/a (HTTP) | No, a bucket | Blobs + claims only | Yes | Yes | Round-trip per op; no watch; needs credentials |
-| G. CRDTs | none | No | n/a | Yes | Yes | Redundant once a backend resolves concurrency |
+| J. PostgreSQL | Central | CP | `pg.zig`, native, 0.16 | 1 server **+ Patroni/repmgr for HA** | Yes | Only single-node without HA tooling |
+| O. CockroachDB / YugabyteDB | Central, sharded | CP | maybe `pg.zig` (Yugabyte is PG-compatible) | Cluster | Yes | Resilience instead of failover; licences unverified |
+| D. Turso / libSQL | Central primary + replicas | AP-ish | unverified | Hosted or self-host | Yes | First-to-sync-wins loses writes |
+| **F1. etcd** | **Full per host** | CP | **none needed** (JSON/HTTP) | Quorum, 3 or 5 | No — 1.5 MiB / 8 GB | Best CAS + lease primitives here |
+| N. Consul | **Full per host** | CP | none needed (HTTP) | Quorum | No — KV store | Multi-datacenter is first-class; licence unverified |
+| K. rqlite / dqlite | **Full per host** | CP | rqlite: none (HTTP); dqlite: C lib | 1 process, or embedded | Yes | dqlite embeds — no second daemon |
+| **L. Corrosion + cr-sqlite** | **Full per host** | **AP** | none needed (HTTP) | 1 Rust daemon | Mostly — blobs poorly | Proven at 800+ nodes; docs WIP |
+| M. Marmot | **Full per host** | AP-ish | via NATS | NATS + Marmot | Yes | Composes with E; least verified here |
+| I. PRD 0011 mesh | **Full per host** | CP-ish (refuses) | n/a, native | **Nothing** | No — logs unreplicated | `max_members = 32`; per-entity SPOF |
+| E. NATS JetStream | Per-stream replicas | Tunable | `nats.zig`, official, 0.16 | 1 server | No — blobs missing | Client pre-1.0, API unstable |
+| F2. FoundationDB | Sharded cluster | CP | none; `libfdb_c` + FFI | Process cluster | **No — 100 KB values** | Half of existing sessions exceed it |
+| C. SQLite / WAL | Single host | n/a | via C | Nothing | Yes, locally | Not a cross-host answer |
+| H. S3 conditional writes | External | CP-ish | none needed (HTTP) | A bucket | Blobs + claims only | Complement, not a primary |
+| G. CRDTs (Yjs/Automerge/Loro) | **Full per host** | **AP** | none | Nothing | n/a | Library, not a store; see L for the applied form |
+| P. TigerBeetle | Full per host (VSR) | CP | native Zig | Binary per node | **No — fixed schema** | Unusable here; best Zig reference |
 
-Reading the F rows together is the surprise of this pass: **etcd needs no client
-library at all** — its gRPC-gateway is plain JSON over HTTP — and has the best
-compare-and-swap and lease primitives in the note, while being disqualified as
-the primary store by a 1.5 MiB request limit and an explicit "not a
-general-purpose database" design stance. FoundationDB is the reverse: the
-strongest correctness model, ruled out by a 100 KB value limit that half this
-checkout's session transcripts already exceed.
+Four observations for whoever writes the RFC, none of them a recommendation:
 
-The shape of the answer: **A for tier 1, and J or E for tier 2**, with the choice
-between them turning on whether clanker's state is judged record-shaped
-(Postgres) or event-shaped (NATS), and on whether a pre-1.0 client API is
-acceptable.
+1. **Full replication and "no server to run" are not exclusive.** dqlite embeds
+   as a library, and PRD 0011 needs nothing. Both keep clanker a single binary.
+2. **The CP options all stall a minority partition.** etcd, Consul, rqlite and
+   PRD 0011 all refuse writes when cut off. Whether an isolated agent should
+   stop recording, or keep working and converge, is a product question that
+   selects the row.
+3. **Two candidates need no client library at all** — etcd and Corrosion both
+   speak HTTP — and two have native Zig clients. Client availability, which the
+   earlier drafts treated as decisive, separates the field much less than
+   expected.
+4. **Composition beats selection in several places.** etcd for claims plus
+   Postgres for bulk; NATS plus Marmot; anything plus S3 for blobs. The survey
+   is not obliged to produce a single winner.
 
 ## Evidence log
 
@@ -953,6 +1279,16 @@ acceptable.
 | 19 of 38 session transcripts exceed FDB's 100 KB value limit; median 95 KB, p90 535 KB, max 1.75 MB; 1 exceeds etcd's 1.5 MiB | local `find state/sessions -type f -printf '%s'` | 2026-08-16 | high |
 | FDB's 5 s limit is worked around with Record Layer continuations (many small transactions plus a resume token), which is Java | [Zemb](https://pierrezemb.fr/posts/understanding-fdb-record-layer-continuations/), [Record Layer paper](https://www.foundationdb.org/files/record-layer-paper.pdf) | 2026-08-16 | medium |
 | FDB bindings all sit on `libfdb_c.so` and must also link libm, libpthread, librt; no Zig binding found | [C API](https://apple.github.io/foundationdb/api-c.html) | 2026-08-16 | medium — absence is one search |
+| Corrosion: gossip + cr-sqlite CRDTs + HTTP API + SQL subscriptions + QUIC + SWIM; Apache-2.0, ~1.8k stars, docs WIP | [repo](https://github.com/superfly/corrosion), fetched | 2026-08-16 | high |
+| Fly.io runs Corrosion across 800+ nodes at p99 ~1 s, after replacing a central Consul state database | [Fly blog](https://fly.io/blog/corrosion/), [QCon](https://qconlondon.com/presentation/apr2025/fast-eventual-consistency-inside-corrosion-distributed-system-powering-flyio) | 2026-08-16 | medium |
+| cr-sqlite: MIT, ~3.8k stars; LWW registers, fractional indices, OR-sets, multi-value registers; inserts 2.5x slower than plain SQLite, reads unchanged; build against a release tag | [repo](https://github.com/vlcn-io/cr-sqlite), fetched | 2026-08-16 | high |
+| rqlite is Raft SQLite with an HTTP API and tunable read consistency; dqlite is the same idea as an embeddable library | [comparison](https://onidel.com/blog/sqlite-replication-vps-2025), [mvsqlite wiki](https://github.com/losfair/mvsqlite/wiki/Comparison-with-dqlite-and-rqlite) | 2026-08-16 | medium |
+| Marmot is multi-master SQLite replication over NATS JetStream with v2 anti-entropy | discussion threads only, repo not fetched | 2026-08-16 | low — unverified |
+| Consul uses Serf gossip for membership and Raft for the KV catalog, with first-class multi-datacenter | [HashiCorp](https://www.hashicorp.com/en/resources/everybody-talks-gossip-serf-memberlist-raft-swim-hashicorp-consul) | 2026-08-16 | medium |
+| Postgres HA is failover-and-recovery (Patroni/repmgr); YugabyteDB's is resilience, and it is PG wire-compatible | [Yugabyte](https://www.yugabyte.com/blog/yugabytedb-resiliency-vs-postgresql-ha-solutions/) — vendor | 2026-08-16 | medium — vendor source, direction credible |
+| TigerBeetle is a Zig DBMS, VSR-replicated, upfront allocation, direct I/O, install-the-binary deployment — and its schema is fixed to accounts and transfers | [architecture](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/ARCHITECTURE.md), [dbdb.io](https://dbdb.io/db/tigerbeetle) | 2026-08-16 | high |
+| No general-purpose embedded or distributed KV store written in Zig was found | searches across awesome-zig and DB roundups | 2026-08-16 | medium |
+| Redpanda/Kafka/Redis Streams cover streaming but not the KV+watch+TTL combination | secondary comparison pages | 2026-08-16 | medium |
 | FDB production users: Apple (Record Layer), Snowflake metadata, Tigris metadata | [Record Layer announcement](https://www.foundationdb.org/blog/announcing-record-layer/), [Tigris](https://www.tigrisdata.com/blog/building-a-database-using-foundationdb/) | 2026-08-16 | medium |
 | ~~No Zig client for NATS~~ | previous draft of this note | 2026-08-16 | **retracted** — `nats-io/nats.zig` is official and supports JetStream + KV |
 
@@ -967,6 +1303,14 @@ acceptable.
 - **`research` tool `sweep`, result size.** The deep sweep returned 49,670 bytes
   and the agent harness delivered only the first 32,768, pruning the middle. A
   deep sweep cannot currently be read in full by the agent that requested it.
+- **StackShare-derived comparison pages** (`consul vs etcd`, `etcd vs serf`).
+  Returned prominently and describe etcd as gossip-based and eventually
+  consistent, both wrong. Same failure mode as the db-engines page. Treat that
+  whole family as unusable for consistency claims.
+- **Fluvio and Iggy** (Rust streaming systems). Named in the search, returned
+  nothing substantive; not evaluated.
+- **"Axion", a Zig storage engine.** Appeared once in a roundup; not
+  investigated. A lead, not a finding.
 - **Dapr state building block.** Abstracts over the stores in options E and F;
   adds an abstraction layer without answering which store, and assumes a
   sidecar. Not pursued.
@@ -978,36 +1322,45 @@ acceptable.
 Ordered by what blocks a decision, most blocking first. The first two are the
 only ones that block choosing a tier-2 backend.
 
-1. **Is PRD 0011's peer-to-peer model meant to reach fleet scale, or is it a
-   small-cluster feature?** This is the question everything else hangs on. If
-   mesh is "a handful of instances an operator knows about", option I stands and
-   a backend is a separate, additional decision. If mesh is meant to be the
-   fleet, then `max_members = 32` and `home_unreachable` are load-bearing
-   constraints that do not hold, and the PRD needs revising rather than
-   extending. **This is an operator/product question, not a research one**, and
-   this note cannot settle it.
-2. **Is clanker's state record-shaped or event-shaped?** Decides J versus E. The
+1. **Should an isolated agent stall or keep working?** The CP/AP question, and
+   the one that selects a row rather than a candidate. If an agent cut off from
+   the fleet should keep recording its own runs, tokens and learnings and
+   converge later, the AP options (Corrosion/cr-sqlite, Marmot) are the family.
+   If divergence is worse than downtime, the CP options (etcd, Consul, rqlite,
+   PRD 0011) are. **A product question, not a research one**; this note cannot
+   settle it and everything else depends on it.
+2. **Is PRD 0011's peer-to-peer model meant to reach fleet scale, or is it a
+   small-cluster feature?** If mesh is "a handful of instances an operator knows
+   about", option I stands and a backend is a separate, additional decision. If
+   mesh is meant to be the fleet, `max_members = 32` and `home_unreachable` are
+   load-bearing constraints that do not hold, and the PRD needs revising rather
+   than extending. Also product, not research.
+3. **Does `pg.zig` work against YugabyteDB?** The cheapest high-value experiment
+   in this note. If it does, one afternoon buys a natively-distributed,
+   node-loss-tolerant SQL backend with a native Zig client and no failover
+   machinery — which would materially change the central-store column.
+4. **Is clanker's state record-shaped or event-shaped?** Decides J versus E. The
    volume argues event-shaped: the append-only logs are the bulk. The read
    patterns argue record-shaped: the web UI wants queries and joins, and an
    operator debugging a self-modifying agent wants `psql`. A backend that gets
    this wrong is expensive to leave.
-3. **What happens to `clanker run` when serve is not running?** Option A's
+5. **What happens to `clanker run` when serve is not running?** Option A's
    central question, unanswered in the tree and the PRD. Mesh can refuse
    (*"start `clanker serve`"*) because mesh is optional; state is not. Refuse,
    auto-start, or fall back to direct writes — each is a different product, and a
    fallback reintroduces the divergence the channel exists to prevent.
-4. **Is a pre-1.0 client API acceptable for a core dependency?** `nats.zig` is
+6. **Is a pre-1.0 client API acceptable for a core dependency?** `nats.zig` is
    explicitly pre-1.0 with a changing API, in a project that pins two
    dependencies deliberately. If not, E drops and J leads by default.
-5. **Is the tier-1 transport loopback HTTP or a unix socket?** PRD 0011 says
+7. **Is the tier-1 transport loopback HTTP or a unix socket?** PRD 0011 says
    loopback HTTP for mesh, but mesh is inherently networked and state is not. A
    socket needs no port and no authorization story — if a sandboxed process can
    reach one at all, which is the same wall a path outside the worktree hits
    unless the descriptor is inherited. Worth a spike before copying the mesh
    answer by default.
-6. **What is the per-write latency of the channel path versus a direct write?**
+8. **What is the per-write latency of the channel path versus a direct write?**
    Decides whether the hot append logs need batching behind `ck_state`.
-7. **Do agents need claims/leases, and is that worth a second store?** PRD 0011
+9. **Do agents need claims/leases, and is that worth a second store?** PRD 0011
    has no notion of an agent claiming a resource with a timeout and a fence
    token; above a handful of agents that gap shows up as two agents doing the
    same work. etcd expresses it natively (TTL leases, server-side expiry) and is
@@ -1016,14 +1369,23 @@ only ones that block choosing a tier-2 backend.
    whether coordination is worth running a second system for, or whether
    Postgres's `SKIP LOCKED` plus an `expires_ts` column is good enough. The
    default answer should be one store until measurement says otherwise.
-8. **Should `state/` be a git repository?** git is already a hard dependency, the
+10. **Should `state/` be a git repository?** git is already a hard dependency, the
    worktree machinery exists, and per-agent branches with explicit merges is a
    well-understood model. Not searched at all; noted because it is the kind of
    answer the "adjacent domain" prompt exists to surface.
-9. **Would a hand-written LWW-register plus OR-set cover concurrent goal and card
+11. **Would a hand-written LWW-register plus OR-set cover concurrent goal and card
    edits?** The one case every option currently resolves as last-writer-wins.
    Low priority: it is a refinement on whichever backend wins, not a choice
    between backends.
+
+12. **Could `cr-sqlite` be used without Corrosion** — the extension plus
+    clanker's own gossip over the mesh transport PRD 0011 is already building?
+    That would give multi-writer full replication with no second daemon and no
+    Rust, which is the combination nothing else in this note offers. Entirely
+    unexplored, and the most interesting loose end here.
+13. **Is Marmot real?** Recorded from discussion threads only; repo, licence,
+    maturity and conflict semantics were never fetched. It is the least verified
+    option in the note and would need a pass of its own before being weighed.
 
 ## What would change the answer
 
@@ -1099,6 +1461,30 @@ only ones that block choosing a tier-2 backend.
 - [NATS ADR-8: KV design](https://github.com/nats-io/nats-architecture-and-design/blob/main/adr/ADR-8.md)
 - [Building distributed state stores with NATS JetStream](https://timderzhavets.com/blog/building-distributed-state-stores-with-nats-jetstream/)
 - [db-engines: etcd vs FoundationDB](https://db-engines.com/en/system/FoundationDB;etcd) — unreliable, see evidence log
+
+**Full-replication candidates**
+
+- [Corrosion](https://github.com/superfly/corrosion) · [Fly blog](https://fly.io/blog/corrosion/) · [docs](https://superfly.github.io/corrosion/) · [CRDT docs](https://superfly.github.io/corrosion/crdts.html) · [QCon talk](https://qconlondon.com/presentation/apr2025/fast-eventual-consistency-inside-corrosion-distributed-system-powering-flyio)
+- [cr-sqlite](https://github.com/vlcn-io/cr-sqlite) — the CRDT SQLite extension underneath it
+- [rqlite](https://github.com/rqlite/rqlite) · [dqlite](https://dqlite.io/) · [SQLite replication comparison](https://onidel.com/blog/sqlite-replication-vps-2025) · [mvsqlite's dqlite/rqlite comparison](https://github.com/losfair/mvsqlite/wiki/Comparison-with-dqlite-and-rqlite)
+- [Marmot](https://github.com/maxpert/marmot) — unverified; [HN](https://news.ycombinator.com/item?id=38600743), [Lobsters](https://lobste.rs/s/f9slcf/marmot_distributed_sqlite_replication)
+- [HashiCorp on gossip, Serf, memberlist, Raft and SWIM](https://www.hashicorp.com/en/resources/everybody-talks-gossip-serf-memberlist-raft-swim-hashicorp-consul)
+
+**Distributed SQL**
+
+- [YugabyteDB resiliency vs PostgreSQL HA](https://www.yugabyte.com/blog/yugabytedb-resiliency-vs-postgresql-ha-solutions/) — vendor source
+- [CockroachDB vs PostgreSQL vs YugabyteDB](https://www.index.dev/skill-vs-skill/cockroachdb-vs-postgresql-vs-yugabytedb)
+
+**Zig-native landscape**
+
+- [TigerBeetle architecture](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/ARCHITECTURE.md) · [dbdb.io entry](https://dbdb.io/db/tigerbeetle)
+- [awesome-zig](https://github.com/zigcc/awesome-zig)
+
+**NATS alternatives**
+
+- [Redpanda vs NATS vs Kafka 2026](https://www.pkgpulse.com/blog/redpanda-vs-nats-vs-apache-kafka-event-streaming-platforms-2026)
+- [Message broker comparison 2026](https://dev.to/mahdi0shamlou/message-brokers-comparison-2026-kafka-rabbitmq-nats-redis-streams-which-one-should-you-3ea8)
+- [NATS alternatives roundup](https://www.modern-datatools.com/alternatives/nats)
 
 **etcd**
 
