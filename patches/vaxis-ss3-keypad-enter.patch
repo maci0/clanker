@@ -1,6 +1,8 @@
+diff --git a/src/Parser.zig b/src/Parser.zig
+index d16f1a2..064b9b5 100644
 --- a/src/Parser.zig
 +++ b/src/Parser.zig
-@@ -164,6 +164,10 @@
+@@ -163,6 +163,10 @@ inline fn parseSs3(input: []const u8) Result {
          'E' => .{ .codepoint = Key.kp_begin },
          'F' => .{ .codepoint = Key.end },
          'H' => .{ .codepoint = Key.home },
@@ -11,3 +13,22 @@
          'P' => .{ .codepoint = Key.f1 },
          'Q' => .{ .codepoint = Key.f2 },
          'R' => .{ .codepoint = Key.f3 },
+@@ -868,6 +872,18 @@ test "parse: xterm key up" {
+     }
+ }
+ 
++test "parse: ss3 keypad enter" {
++    const alloc = testing.allocator_instance.allocator();
++    const input = "\x1bOM";
++    var parser: Parser = .{};
++    const result = try parser.parse(input, alloc);
++    const expected_key: Key = .{ .codepoint = Key.kp_enter };
++    const expected_event: Event = .{ .key_press = expected_key };
++
++    try testing.expectEqual(3, result.n);
++    try testing.expectEqual(expected_event, result.event);
++}
++
+ test "parse: xterm shift+up" {
+     const alloc = testing.allocator_instance.allocator();
+     const input = "\x1b[1;2A";

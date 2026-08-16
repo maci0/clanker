@@ -71,7 +71,19 @@ line-break handler fires; the repl also matches `kp_enter` so the patched
 legacy path lands in the same branch. A fresh clone or CI merely loses
 Shift+Enter on legacy-Konsole-style terminals.
 
-Status: local-only, upstreamable as-is to `rockorager/libvaxis`.
+The patch also carries a `parse: ss3 keypad enter` test beside the other
+parser tests. It never runs inside clanker's build (vendored dependency
+tests are not part of `zig build test`); it is there because the same commit
+is pushed to `github.com/ywy50/libvaxis` on the `ss3-keypad-enter` branch,
+which is where a PR to `rockorager/libvaxis` would come from — same
+arrangement as `sixel-graphics` above. Until that lands and the pin in
+`build.zig.zon` moves, this file is what survives a `zig-pkg` wipe.
+Regenerate it from that branch with
+`git diff 82cec0db..ss3-keypad-enter -- src/`, where `82cec0db` is the
+commit `build.zig.zon` pins (`zig build test` passes on the branch at that
+base).
+
+Status: local-only, upstreamable as-is.
 
 ## zwasm-lazy-mem-cksum.patch
 
