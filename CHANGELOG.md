@@ -469,6 +469,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker repl` copy (mouse-drag release and Ctrl-Shift-C) now also pipes
+  the text into the host clipboard tool (`wl-copy`, `xclip`, `xsel`, or
+  `pbcopy`, chosen from the desktop session) as a fallback to OSC 52, so a
+  terminal that ignores OSC 52 clipboard writes still receives the copy.
+  The keys help documents that Shift+drag uses the terminal's own selection
+  and that the hosting terminal may intercept Ctrl-Shift-C.
 - `agent.sandbox_follow_symlinks` now also applies when a turn issues two or
   more tool calls. The parallel tool path builds its own sandbox and omitted
   the flag, so symlinked granted paths (`state/`, `.local`) were still

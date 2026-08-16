@@ -116,6 +116,7 @@ comptime {
     _ = @import("tui/syntax.zig");
     _ = @import("tui/turn_stats.zig");
     _ = @import("tui/mascot.zig");
+    _ = @import("tui/clipboard.zig");
     _ = @import("tui/repl.zig");
     _ = @import("serve/proxy.zig");
     _ = @import("serve/proxy_transcode.zig");

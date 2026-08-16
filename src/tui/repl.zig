@@ -63,6 +63,7 @@ const sanitize = @import("sanitize.zig");
 const transcript_mod = @import("transcript.zig");
 const stats_mod = @import("turn_stats.zig");
 const mascot = @import("mascot.zig");
+const clipboard = @import("clipboard.zig");
 const worktree_mod = @import("../improve/worktree.zig");
 
 /// Redraw cadence while a turn is streaming: ~30fps, so streamed tokens land
@@ -1396,10 +1397,12 @@ const keys_help =
     \\  PgUp/PgDn         page transcript (Home: top; End/Esc: tail)
     \\  Ctrl-C            stop the current turn, or quit when idle
     \\  Ctrl-Shift-C      copy the selection (or the input line)
+    \\                    the hosting terminal may intercept Ctrl-Shift-C
     \\  Ctrl-Shift-V, Shift-Insert   paste from the system clipboard
     \\  Ctrl-U/K/W, Ctrl-Y   kill to start/end/word, then yank
     \\  mouse wheel       scroll the transcript
     \\  mouse drag        select transcript text (copies on release)
+    \\  Shift+drag        the terminal's own selection (bypasses clanker)
 ;
 
 /// True for a submitted line with no content: empty, or only whitespace.
@@ -3974,6 +3977,7 @@ const Model = struct {
                 const text = extractSelectionText(ctx.alloc, surface, self.sel_start, self.sel_end) catch return;
                 defer ctx.alloc.free(text);
                 try ctx.copyToClipboard(text);
+                clipboard.copyBestEffort(self.gpa, self.io, self.ctx.environ_map, text);
                 ctx.redraw = true;
             },
             .motion => {},
@@ -4000,6 +4004,7 @@ const Model = struct {
                 const text = extractSelectionText(ctx.alloc, surface, self.sel_start, self.sel_end) catch "";
                 defer if (text.len > 0) ctx.alloc.free(text);
                 if (text.len > 0) try ctx.copyToClipboard(text);
+                if (text.len > 0) clipboard.copyBestEffort(self.gpa, self.io, self.ctx.environ_map, text);
             }
             self.has_selection = false;
             ctx.redraw = true;
@@ -4008,6 +4013,7 @@ const Model = struct {
         const input = self.text_field.buf.dupe() catch return;
         defer self.text_field.buf.allocator.free(input);
         if (input.len > 0) try ctx.copyToClipboard(input);
+        if (input.len > 0) clipboard.copyBestEffort(self.gpa, self.io, self.ctx.environ_map, input);
     }
 
     /// Up: walk one entry older in the history. First step parks the live
