@@ -117,7 +117,14 @@ pub fn parseDecision(alloc: std.mem.Allocator, text: []const u8) Decision {
     const parsed = std.json.parseFromSliceLeaky(Parsed, alloc, text, .{ .ignore_unknown_fields = true }) catch
         return .{ .verdict = .continue_, .reason = "the evaluator returned unreadable output; verify the condition directly and continue working" };
     const reason = if (parsed.reason.len > 0) parsed.reason else "the evaluator did not provide a reason";
-    const verdict = verdict_names.get(parsed.status) orelse
+    // Verdict spellings vary by model ("Achieved", "CONTINUE"); normalize case so a
+    // verified fix or genuine blocker is recognized instead of misread as continue,
+    // which would burn the turn budget re-attempting work already judged. Empty and
+    // unknown statuses stay conservative below.
+    const status_norm = alloc.dupe(u8, parsed.status) catch return .{ .verdict = .continue_, .reason = "the evaluator returned an unknown status; verify the condition directly and continue working" };
+    defer alloc.free(status_norm);
+    for (status_norm) |*c| c.* = std.ascii.toLower(c.*);
+    const verdict = verdict_names.get(status_norm) orelse
         return .{ .verdict = .continue_, .reason = "the evaluator returned an unknown status; verify the condition directly and continue working" };
     return .{ .verdict = verdict, .reason = reason };
 }
