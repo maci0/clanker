@@ -131,6 +131,7 @@ comptime {
     _ = @import("schedule/command.zig");
     _ = @import("reports/command.zig");
     _ = @import("research/command.zig");
+    _ = @import("rfc/command.zig");
 }
 
 /// Resolves the Zig standard library directory at startup (via `zig env`),
