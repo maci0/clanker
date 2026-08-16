@@ -64,14 +64,49 @@ pub const Worktree = struct {
         gpa.free(self.created_from);
     }
 
+    /// Whether the branch holds commits the base branch does not, asked of git
+    /// rather than inferred from `merged`.
+    ///
+    /// `merged` only ever becomes true inside `mergeBack`, whose sole caller is
+    /// the promotion path, so it answers "did a promotion land?" and not "is
+    /// there anything here to lose". Those differ in both directions: a run
+    /// that promotes nothing never commits either, leaving a branch identical
+    /// to its base that `cleanup` used to keep forever; and an agent that
+    /// commits inside the worktree outside the promotion path strands real
+    /// work that `merged` knows nothing about.
+    ///
+    /// Fails safe: an unreadable repository answers "yes, stranded", because
+    /// keeping a worktree costs disk and deleting one can cost work.
+    pub fn hasStrandedCommits(self: *const Worktree, gpa: std.mem.Allocator, io: std.Io) bool {
+        const range = std.fmt.allocPrint(gpa, "{s}..{s}", .{ self.base_branch, self.branch }) catch return true;
+        defer gpa.free(range);
+        // `-C self.path` rather than the caller's cwd: cleanup runs after the
+        // chdir back out of the worktree, and a later caller's cwd is not
+        // guaranteed to be inside this repository at all.
+        const argv = [_][]const u8{ "git", "-C", self.path, "rev-list", "--count", range };
+        const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return true;
+        defer gpa.free(res.stdout);
+        defer gpa.free(res.stderr);
+        switch (res.term) {
+            .exited => |c| if (c != 0) return true,
+            else => return true,
+        }
+        const count = std.fmt.parseInt(u32, std.mem.trim(u8, res.stdout, " \t\r\n"), 10) catch return true;
+        return count > 0;
+    }
+
     /// Removes the worktree and its branch. Must be called after chdir-ing
     /// back out of it: git refuses to remove a worktree that is anyone's cwd.
-    /// When the branch was never merged back, the worktree and branch are
-    /// kept so the stranded work remains reachable (`git worktree list`
-    /// shows it, `git log <branch>` has the commits).
+    /// A worktree is kept only when it still holds commits the base branch
+    /// lacks, so the stranded work stays reachable (`git worktree list` shows
+    /// it, `git log <branch>` has the commits).
     pub fn cleanup(self: *const Worktree, gpa: std.mem.Allocator, io: std.Io) void {
-        if (!self.merged) {
-            log.log(.warn, "improve-self: worktree {s} was not merged; keeping it and branch {s} for manual recovery", .{ self.path, self.branch });
+        // Not `if (!self.merged)`: a run that promoted nothing never called
+        // mergeBack, so `merged` is false on a branch that is byte-identical
+        // to its base. Keeping those accumulated 38 empty worktrees in four
+        // days, each logging "for manual recovery" with nothing to recover.
+        if (!self.merged and self.hasStrandedCommits(gpa, io)) {
+            log.log(.warn, "improve-self: worktree {s} still holds commits {s} does not; keeping it and branch {s}. Land them with: git merge {s}", .{ self.path, self.base_branch, self.branch, self.branch });
             return;
         }
         {
@@ -85,8 +120,10 @@ pub const Worktree = struct {
             };
             if (!ok) log.log(.warn, "git worktree remove {s} failed: {s}", .{ self.path, res.stderr });
         }
-        // The branch was successfully merged, so -d (which refuses to
-        // delete unmerged branches) is safe and will succeed.
+        // Either the branch merged back or it holds nothing the base lacks, so
+        // -d (which refuses to delete unmerged branches) is safe and succeeds
+        // in both cases. It stays -d rather than -D so that a race that lands
+        // a commit between the check and here still refuses to drop it.
         {
             const argv = [_][]const u8{ "git", "branch", "-d", self.branch };
             const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return;
@@ -114,7 +151,14 @@ pub const Worktree = struct {
             };
             defer gpa.free(branch_sha);
 
-            if (std.mem.eql(u8, base_sha, branch_sha)) return; // already even
+            // Already even: nothing to fold in, which is the successful
+            // outcome and not a failed merge. Returning without setting
+            // `merged` left an end-of-run merge attempt unable to ever
+            // reclaim a worktree whose run promoted nothing.
+            if (std.mem.eql(u8, base_sha, branch_sha)) {
+                self.merged = true;
+                return;
+            }
 
             const merge_base = mergeBaseOf(gpa, io, base_sha, branch_sha) catch {
                 log.log(.warn, "improve-self: could not find a merge base for {s} and {s}", .{ self.base_branch, self.branch });
@@ -363,6 +407,69 @@ fn sharedDirectory(name: []const u8) bool {
         std.mem.eql(u8, name, ".local") or
         std.mem.eql(u8, name, ".agents") or
         std.mem.eql(u8, name, ".claude");
+}
+
+test "a branch holding no commits the base lacks is not stranded work" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(io, &root_buf)];
+
+    // A real repository: the question `hasStrandedCommits` answers is a git
+    // one, and a stub would only re-assert the rev-list arguments back at us.
+    try gitOk(gpa, io, root, &.{ "init", "-q", "-b", "main" });
+    try gitOk(gpa, io, root, &.{ "config", "user.email", "t@example.invalid" });
+    try gitOk(gpa, io, root, &.{ "config", "user.name", "test" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "seed.txt", .data = "seed\n" });
+    try gitOk(gpa, io, root, &.{ "add", "seed.txt" });
+    try gitOk(gpa, io, root, &.{ "commit", "-qm", "seed" });
+    try gitOk(gpa, io, root, &.{ "branch", "topic" });
+
+    var wt: Worktree = .{
+        .path = root,
+        .branch = "topic",
+        .base_branch = "main",
+        .created_from = "",
+    };
+
+    // Freshly cut: identical to the base, so there is nothing to recover and
+    // the worktree must not be kept. This is the shape ~three quarters of a
+    // four-day pile of leftover improve-self worktrees had.
+    try std.testing.expect(!wt.hasStrandedCommits(gpa, io));
+
+    // A commit the base does not have IS stranded work, and outlives the run
+    // whether or not a promotion ever merged it.
+    try tmp.dir.writeFile(io, .{ .sub_path = "topic.txt", .data = "work\n" });
+    try gitOk(gpa, io, root, &.{ "add", "topic.txt" });
+    try gitOk(gpa, io, root, &.{ "commit", "-qm", "stranded" });
+    try gitOk(gpa, io, root, &.{ "branch", "-f", "topic", "HEAD" });
+    try gitOk(gpa, io, root, &.{ "update-ref", "refs/heads/main", "HEAD~1" });
+    try std.testing.expect(wt.hasStrandedCommits(gpa, io));
+
+    // Once the base carries it, it is no longer stranded.
+    try gitOk(gpa, io, root, &.{ "update-ref", "refs/heads/main", "topic" });
+    try std.testing.expect(!wt.hasStrandedCommits(gpa, io));
+}
+
+/// Runs one git command in `repo` and fails the test unless it exits 0.
+fn gitOk(gpa: std.mem.Allocator, io: std.Io, repo: []const u8, args: []const []const u8) !void {
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(gpa);
+    try argv.appendSlice(gpa, &.{ "git", "-C", repo });
+    try argv.appendSlice(gpa, args);
+    const res = try std.process.run(gpa, io, .{ .argv = argv.items });
+    defer gpa.free(res.stdout);
+    defer gpa.free(res.stderr);
+    switch (res.term) {
+        .exited => |c| if (c != 0) {
+            std.debug.print("git {s} failed: {s}\n", .{ args[0], res.stderr });
+            return error.GitCommandFailed;
+        },
+        else => return error.GitCommandFailed,
+    }
 }
 
 test "every shared directory is provisioned for native worktree I/O" {

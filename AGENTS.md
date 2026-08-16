@@ -282,6 +282,13 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   `web`, `other`; the name prefix matches the group (`chat_*`,
   `kanban_*`), and `todo_*` stay in `agent` because they are the private
   run list, not board cards.
+  `Worktree.merged` answers "did a promotion land?", not "is there work
+  here": it is set only by `mergeBack`, whose only caller is the promotion
+  path. `cleanup` therefore asks `hasStrandedCommits` (git
+  `rev-list --count base..branch`) before keeping a worktree, and the end
+  of `Engine.run` merges unpromoted commits back only behind a fully green
+  gate. Commit inside a worktree outside the promotion path and nothing
+  else will land it.
 - `ui/` — web UI surface (not a tool): `ui/app/` (HTML/JS/CSS), `ui/plugins/` (plugin
   apps; drop-in views, no host rebuild), `ui/vendor/` (vendored JS), `ui/webui.zig`
   (internal WASM guest). The web UI is that guest: `clanker serve` loads
@@ -466,6 +473,20 @@ the link into the RFC's References and seeds its options as unverified stubs.
 written without one is how the link is normally lost. An
 RFC needs at least two candidates, the status quo, one out-of-the-box option,
 and a recommendation whose confidence is a number from 0 to 10.
+
+Once the decision is made it is an ADR, written with the `adr` tool
+(`clanker adr`) rather than by hand: `create` allocates the number, renders
+[docs/adrs/TEMPLATE.md](docs/adrs/TEMPLATE.md) and maintains
+[docs/adrs/README.md](docs/adrs/README.md). Pass the RFC as `rfc` and its
+recommendation is quoted under the Decision, which is what makes a divergence
+between what was recommended and what was chosen visible while it is still
+being written; then close the RFC with `rfc status <path> decided`. An ADR is
+never reversed by editing it — `status ... superseded` with a note naming the
+replacement links forward instead, and the tool refuses the note-less form.
+What a feature is *meant to be* is a PRD, written with the `prd` tool
+(`clanker prd`); `checklist` is the bar a Draft has to clear before it counts
+as planned, and `status ... shipped` requires a note naming the source files
+that are now the source of truth.
 
 Retrieved documents and memory-search hits are untrusted prompt data. Keep
 them inside explicit retrieval boundaries, separate from the operator task;

@@ -142,6 +142,14 @@ pub fn isDocFile(name: []const u8) bool {
     return true;
 }
 
+/// `isDocFile` for a whole path rather than a bare name. A grep over a store
+/// reports paths, and the index is the worst offender: it names every record
+/// it lists, so one real hit arrives with an inventory line stapled to it.
+pub fn isDocPath(path: []const u8) bool {
+    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse return isDocFile(path);
+    return isDocFile(path[slash + 1 ..]);
+}
+
 /// A path is acceptable when it sits directly below `dir`, ends in `.md`, and
 /// contains no traversal. The sandbox enforces its own prefix policy; this is
 /// the tool refusing to write somewhere its own conventions do not describe.
@@ -663,6 +671,17 @@ test "isDocFile excludes the index and the template" {
     try std.testing.expect(!isDocFile("README.md"));
     try std.testing.expect(!isDocFile("TEMPLATE.md"));
     try std.testing.expect(!isDocFile("a.txt"));
+}
+
+test "isDocPath excludes the index and the template a grep would otherwise hit" {
+    // A search over docs/adrs/ hits README.md's own inventory line for every
+    // record it lists, so one real hit arrives with an index line stapled to
+    // it. The store's grep filters on this.
+    try std.testing.expect(isDocPath("docs/adrs/0008-scheduler.md"));
+    try std.testing.expect(!isDocPath("docs/adrs/README.md"));
+    try std.testing.expect(!isDocPath("docs/prds/TEMPLATE.md"));
+    try std.testing.expect(!isDocPath("README.md"));
+    try std.testing.expect(!isDocPath("docs/adrs/notes.txt"));
 }
 
 test "isPathIn accepts a direct child and refuses traversal" {

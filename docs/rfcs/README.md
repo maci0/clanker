@@ -74,8 +74,16 @@ An RFC is only as good as its options. When a [research note](../research/)
 exists, pass it as `research` — the tool links it and lifts its option headings
 in as stubs marked unverified. Those stubs are claims to check, not content:
 re-verify each one against its source before it goes in the body, because the
-note may be stale or may have been written for a different question. When there
-is no note, do the searching in this turn — the `research` tool's `sweep`, then
+note may be stale or may have been written for a different question.
+
+Nothing links a note that was not passed. `create` therefore reports the notes
+in [docs/research/](../research/) as `research_available` when it was given
+none — every RFC in this directory was written that way, which is why none of
+them link one. If a listed note covers the decision, recreate the RFC with
+`research` set to its path rather than adding the reference by hand: the link
+and the seeded option stubs come from the same read.
+
+When there is no note, do the searching in this turn — the `research` tool's `sweep`, then
 `fetch_web` on what looks promising. For a direction question with nothing to
 search, look for alternative perspectives instead: prior art in comparable
 projects, and the strongest case against the recommendation.

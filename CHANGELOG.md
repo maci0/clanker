@@ -37,6 +37,26 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker adr` and `clanker prd`, plus the `adr` and `prd` tools behind them:
+  the two record stores that had no verb and were maintained by hand. `adr`
+  covers `list`, `search`, `open`, `create`, `append`, `update` and `status`
+  over `docs/adrs/`; `prd` adds `checklist` over `docs/prds/`. Both allocate
+  the next number, render the store's `TEMPLATE.md` and maintain its index, so
+  the CLI, the web UI and the agent share one implementation. `adr search`
+  spans the ADRs, RFCs and PRDs together and `prd search` the PRDs and ADRs,
+  because which store a hit lands in is the answer: an ADR means the question
+  is settled, an RFC means it is still open, a PRD means a feature already
+  specifies around it.
+  - `adr create` requires consequences, and `adr status ... superseded`
+    requires a note naming the replacement — a decision record that only
+    argues for itself, or that is reversed by editing its history out, is
+    worthless to whoever later asks whether to revisit it.
+  - `prd status ... shipped` requires a note naming the source files that are
+    now the single source of truth, and `prd list` groups by status with the
+    unfinished work first.
+  - New: `docs/adrs/README.md` (the store had no index), inventory markers in
+    `docs/prds/README.md`, and `{{placeholder}}`s in both `TEMPLATE.md` files
+    so the tools can render them.
 - `clanker research`: the `research` tool on the CLI, with `list`, `plan`,
   `sweep`, `search`, `open`, `create`, `append`, `update` and `status`. It
   calls the same sandboxed tool the agent uses, so the notes in
@@ -411,6 +431,29 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker commit` works again. It called the `smart_commit` guest through a
+  helper that wraps its argument as `{"args": "<string>"}` and requires a
+  `text` field in the reply; the guest emits neither, so the verb always
+  failed with "the internal tool returned unreadable output" — after paying
+  for the grouping model call — and never received `dry_run` or `scope`, which
+  made the post-confirmation write a second dry run that reported success.
+  The command now sends a structured body and renders the reply host-side
+  through `commit_logic.renderPlan`, with different wording for a proposal and
+  an applied commit so it cannot claim a write it did not make.
+- `improve-self` reclaims its own worktree when a run promotes nothing.
+  `cleanup` used to keep every unmerged worktree "for manual recovery",
+  but the `merged` flag is only ever set by the promotion path, so a run
+  that promoted nothing left behind a worktree whose branch was
+  byte-identical to its base. Those accumulated indefinitely and
+  `clanker janitor` will not remove them. `cleanup` now asks git whether
+  the branch holds commits the base lacks, and keeps the worktree only
+  when it does.
+- `improve-self` folds commits made inside its worktree outside the
+  promotion path back into the base branch at the end of a run, instead
+  of stranding them on an abandoned branch. Conditioned on a fully
+  passing final gate — the same bar a promotion clears — and on
+  `agent.git_commit`; a run that ends on a failing gate still keeps its
+  worktree for manual recovery.
 - Lifecycle hooks that never read stdin (`printf`, `echo`) no longer fail
   the hook when the child exits before the payload write finishes. The
   decision on stdout still applies.

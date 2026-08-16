@@ -275,7 +275,11 @@ needed:
   list in `src/sandbox/host.zig`, which joins those prefixes onto the checkout
   instead of the run's root. Deliberately not symlinks: `safeJoinSecure` refuses
   to traverse a symlinked component (that is what stops `allowed/link/secret`
-  escapes), so a linked `state/` would *deny* every tool that touched it.
+  escapes), so a linked `state/` *denies* every tool that touched it. A checkout
+  that deliberately keeps `state/` in external storage sets
+  `agent.sandbox_follow_symlinks` to lift exactly that refusal — off by default,
+  a known risk, and not a security finding
+  ([ADR 0017](adrs/0017-sandbox-symlink-traversal-is-opt-in.md)).
 - **The harness itself** reads roughly 44 hardcoded relative `state/...` paths
   against the process cwd, so `linkCheckoutState` symlinks these entries into the
   worktree and native I/O follows them. It creates the checkout's shared runtime
@@ -863,6 +867,80 @@ clanker rfc status docs/rfcs/0007-http-client-for-the-proxy.md decided "Chose op
 ```
 
 `create` allocates the next number, renders [docs/rfcs/TEMPLATE.md](rfcs/TEMPLATE.md) and indexes it; it refuses when that template is missing rather than inventing a skeleton. An RFC needs real options: at least two candidates, the status quo, and one out-of-the-box possibility. `recommend` takes a confidence from 0 to 10 — a recommendation without one is an opinion. Statuses are `draft`, `discussion`, `decided`, `deferred`, `withdrawn` and `superseded`. `append`, `update`, `recommend` and `status` are compare-and-swap writes: a concurrent edit is refused rather than overwritten, so reopen the RFC and retry against its current text. A refused write exits 1, a usage mistake exits 2.
+
+### Decisions already made (ADRs)
+
+The other half of the same story: an [ADR](adrs/) is what an RFC becomes once
+the decision is made. `clanker adr` goes through the sandboxed `adr` tool
+(`tools/zig/adr.zig`); the CLI half is `src/adr/command.zig`, which only
+renders. Read them:
+
+```bash
+clanker adr
+clanker adr search "provider vtable"
+clanker adr open docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md
+```
+
+`search` spans the ADRs, the RFCs and the PRDs and reports each group
+separately, because which store a hit falls in *is* the answer: an ADR means
+the question is settled, an RFC means the same ground is still open, and a PRD
+means a feature already specifies around it. `list` reads each status from the
+document rather than the index, and prints the next free number.
+
+Write them:
+
+```bash
+clanker adr create "Providers are a native vtable" "Keys must not enter the sandbox" "Each provider is one vtable file plus a registry row" "Adding one is three edits; a provider cannot be hot-swapped"
+clanker adr status docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md superseded "Superseded by ADR 0021."
+```
+
+`create` takes the title as the *choice made* rather than the question, and
+requires consequences: an ADR that only argues for its own decision is useless
+to the one reader it is written for, whoever is later deciding whether to
+revisit it. Passing the RFC a decision came from links it from Status and
+quotes that RFC's recommendation under the Decision, so a divergence between
+what was recommended and what was chosen shows up while the ADR is still being
+written. Statuses are `proposed`, `accepted`, `superseded` and `deprecated`;
+the last two require a note, because a reversal that edits the history out of a
+record destroys the only account of why the original constraint looked binding.
+
+### Feature specifications (PRDs)
+
+What a feature is *meant to be*, in [docs/prds/](prds/) — distinct from a
+decision (an ADR), an open question (an RFC), and the shipped narrative
+([ROADMAP.md](ROADMAP.md)). `clanker prd` calls the `prd` tool
+(`tools/zig/prd.zig`); `src/prd/command.zig` renders. Read them:
+
+```bash
+clanker prd
+clanker prd search "kanban board"
+clanker prd open docs/prds/0002-kanban-board.md
+```
+
+`list` groups by status with Draft and In progress above Shipped, because "what
+is still open" is the question this store is read to answer, and a flat list in
+filename order buries four Drafts under thirty shipped rows. Its statuses are
+phrases rather than single words, so they are read against a fixed vocabulary;
+an unrecognized wording is grouped under `OTHER` rather than dropped.
+
+When a request is too vague to draft from, ask before inventing a scope:
+
+```bash
+clanker prd checklist
+```
+
+Write them:
+
+```bash
+clanker prd create "Scheduled runs" "Nothing fires unless something outside clanker invokes it" "1. Fire due entries on a cron spec"
+clanker prd status docs/prds/0009-schedule.md shipped "src/schedule/ is the source of truth; clanker schedule exposes it"
+```
+
+`shipped` requires a note naming the source files that are now the single
+source of truth — that is what makes the claim checkable instead of taken on
+trust. The `prd` index is a Markdown table with a Notes column rather than a
+list, so a status change rewrites only the status cell and leaves the note
+alone.
 
 ### Scheduled runs
 
