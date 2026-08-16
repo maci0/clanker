@@ -25,6 +25,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   tools-ts-toolchain, and release-contract gates. Release policy and version
   source of truth:
   [RELEASES.md](RELEASES.md); consumer-visible changes: [CHANGELOG.md](CHANGELOG.md).
+  It drops `.zig-cache` when that exceeds its size limit, so a gate run after a
+  long session rebuilds from scratch and takes minutes longer than the same
+  gate run twice; that log line is the cause, not a stall.
 - A `zig build test` step that fails while naming no test is usually the tree
   moving under the build (another session editing, or a second test binary
   competing for the machine), not a defect: re-run it, or run the compiled
@@ -440,8 +443,9 @@ an investigation, then a bug report and a runbook once recovery is confirmed.
 Re-open after a compare-and-swap conflict. Records start with `## TL;DR`.
 
 Before a choice between libraries, external tools, or architectures, search
-[docs/rfcs/](docs/rfcs/) and [docs/adrs/](docs/adrs/) with the `rfc` tool: a
-matching ADR means it is already decided. Gathering the evidence and making the
+[docs/rfcs/](docs/rfcs/) and [docs/adrs/](docs/adrs/) with the `rfc` tool (the
+same records are on the CLI as `clanker rfc`): a matching ADR means it is
+already decided. Gathering the evidence and making the
 decision are separate records with separate tools — `research` writes notes in
 [docs/research/](docs/research/), `rfc` writes the open decision — and neither
 is required for the other, so never create one merely because the other exists.

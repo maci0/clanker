@@ -835,6 +835,35 @@ clanker reports update docs/reports/investigations/2026-08-16-run-livelock.md "I
 
 `create` writes a TL;DR-first scaffold and adds it to the matching inventory; its kind is `bug`, `investigation` or `runbook`, report slugs start `YYYY-MM-DD-`, and runbook slugs are lowercase and hyphenated. `append` adds markdown to the end of a record and `update` replaces one exact passage. Both are compare-and-swap writes: a concurrent documentation edit is refused rather than overwritten, so reopen the record and retry against its current text. A refused write exits 1, a usage mistake exits 2.
 
+### Open decisions (RFCs)
+
+The decisions in [docs/rfcs/](rfcs/) that have not been made yet, from a terminal. `clanker rfc` goes through the same sandboxed `rfc` tool the agent calls (`tools/zig/rfc.zig`), so both surfaces share one store, one index and one set of compare-and-swap writes; the CLI half is `src/rfc/command.zig`, which only renders. Read them:
+
+```bash
+clanker rfc
+clanker rfc search "http client"
+clanker rfc open docs/rfcs/0001-workspace-room-board-hierarchy.md
+```
+
+`search` covers the RFCs and the ADRs together on purpose: a matching [ADR](adrs/) means the decision is already made, which is the one answer that should stop an RFC from being written at all. `list` prints each RFC's status read from the document itself rather than from the index, and the next free number, so the number to claim is never counted by hand.
+
+When a request is too vague to draft from, ask before inventing a scope:
+
+```bash
+clanker rfc checklist "state store"
+```
+
+Write them:
+
+```bash
+clanker rfc create "HTTP client for the proxy" "The proxy needs one client and the choice is not recorded"
+clanker rfc append docs/rfcs/0006-example.md "## Option C"
+clanker rfc recommend docs/rfcs/0006-example.md "Adopt option B" 7 "Why, and what would move it"
+clanker rfc status docs/rfcs/0006-example.md decided "Chose option B; see the ADR"
+```
+
+`create` allocates the next number, renders [docs/rfcs/TEMPLATE.md](rfcs/TEMPLATE.md) and indexes it; it refuses when that template is missing rather than inventing a skeleton. An RFC needs real options: at least two candidates, the status quo, and one out-of-the-box possibility. `recommend` takes a confidence from 0 to 10 — a recommendation without one is an opinion. Statuses are `draft`, `discussion`, `decided`, `deferred`, `withdrawn` and `superseded`. `append`, `update`, `recommend` and `status` are compare-and-swap writes: a concurrent edit is refused rather than overwritten, so reopen the RFC and retry against its current text. A refused write exits 1, a usage mistake exits 2.
+
 ### Scheduled runs
 
 Recurring agent runs, kept in `state/schedule.json` and recorded in `state/schedule/log.jsonl`. Code: `tools/zig/schedule_cron.zig` (the dialect, host-tested), `src/schedule/` (`store.zig` the two files, `runner.zig` the due/claim/fire logic, `command.zig` the operator surface), and the `schedule` guest (`tools/zig/schedule.zig`) which `/api/schedule` relays to. Full design in [docs/prds/0009-schedule.md](prds/0009-schedule.md).

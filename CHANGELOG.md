@@ -37,6 +37,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker rfc [list|search|open|checklist|create|append|update|recommend|status]`:
+  the requests for comment under `docs/rfcs/` from a terminal, over the same
+  sandboxed `rfc` tool the agent calls. `list` reads each status from the
+  document rather than the index and prints the next free number; `search`
+  covers the RFCs and the ADRs together, so a decision already recorded
+  surfaces before it is re-litigated; `recommend` takes a confidence from 0
+  to 10. Previously the store was reachable only through the agent.
 - `symbolic_regression` compute tool: search a closed-form expression that
   fits numeric data and return a Pareto front of `{expr, complexity, mse}`.
   For discovering a formula. `calculator` still evaluates a known one.

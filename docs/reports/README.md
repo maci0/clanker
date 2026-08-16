@@ -70,6 +70,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [State backups stopped for two days because .agents is a real directory](bugs/2026-08-16-state-backup-aborts-on-checkout-local-agents.md) — Resolved
+
 - [Isolated-run e2e still called the removed `goal` guest](bugs/2026-08-16-worktree-e2e-calls-removed-goal-tool.md) — Resolved
 
 - [research status action never updates the README inventory entry](bugs/2026-08-16-research-status-leaves-inventory-draft.md) — Resolved

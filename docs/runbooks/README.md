@@ -51,6 +51,8 @@ both are compare-and-swap writes, so reopen the record after a conflict.
 ## Inventory
 
 <!-- inventory:runbook:start -->
+- [State backups are not running](state-backups-not-running.md) — Current
+
 - [improve-self staging tests blocked by cwd-dependent and Io.Io mismatches](improve-self-staging-test-blocker.md) — Current
 
 - [Agent run compaction thrash](agent-run-compaction-thrash.md) — Give
