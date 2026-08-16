@@ -133,8 +133,9 @@ idle.
   and `tools/manifests/{reports,rfc,adr,prd,research}.tool.json`. Their
   `fs_prefixes` stay the only path policy.
 - `src/cli.zig` relay machinery (hard): `toolJson`, `toolResultFailed`,
-  `toolRefusalStatus`, `respondTool`, `respondCompressible`, `requestPath`,
-  `percentDecode`.
+  `toolRefusalStatus`, `respondTool`, `respondCompressible`, `queryParam`,
+  `percentDecode`. Not `requestPath`: no record id is read off the path, and
+  the router matches against the already query-stripped `path`.
 - [PRD 0037](0037-adr-and-prd-record-stores.md) (soft): added the `adr` and
   `prd` guests and CLI verbs; this extends the same guests to HTTP.
 - `handleSkills` / `skillsRouteToToolInput` in `src/cli.zig` (soft): the
@@ -174,7 +175,7 @@ idle.
 | Record changed between read and write (compare-and-swap conflict) | The guest's refusal telling the caller to re-open and retry, relayed as 400. Never a silent overwrite, never a 500. |
 | `update` `old` text absent or not unique in the record | The guest's refusal, relayed as 400. |
 | Guest `.wasm` missing or fails to load (`zig build tools` not run) | 500, `{"ok":false,"error":"<tool> tool unavailable"}`, and the load failure is logged host-side. |
-| Query string carries an unknown parameter (a `?t=` cache-buster) | Passed to the guest as a string field and ignored by it. `requestPath` keeps it out of any path field. |
+| Query string carries an unknown parameter (a `?t=` cache-buster) | Passed to the guest as a string field and ignored by it. No record id is read off the path, so a query parameter can never become part of one. |
 
 ## Acceptance criteria
 

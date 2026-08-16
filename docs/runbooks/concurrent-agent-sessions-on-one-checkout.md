@@ -49,6 +49,30 @@ ls .git | grep -E "MERGE_HEAD|rebase|CHERRY_PICK_HEAD"
 An `interactive rebase in progress` line, or a `rebase-merge` directory,
 means someone else owns the index. Do not touch it.
 
+A session is not the only thing that writes this tree. `clanker improve-self`
+commits its promotions straight onto `main` and keeps a candidate staged while
+it gates, so unexplained `imp-` commits and a staged file that undoes them are
+usually one live loop mid-iteration, not a decision anyone made. Read the lock
+for the holder:
+
+```bash
+cat state/improve.lock
+```
+
+```bash
+ps -p "$(cat state/improve.lock)" -o pid,etime,cmd
+```
+
+Use the lock, not `pgrep`. The lock names the holder and is still true when you
+read it; `pgrep -af improve-self` is a snapshot that also matches the shell
+running the guard, and on 2026-08-16 it produced a process id that did not
+exist and an instruction that was not the one running — twice, in two
+different sessions, each time cited as evidence for a conclusion about who
+owned the tree. Wait for the holder to exit (`--iters` bounds it) rather than
+committing or discarding its staged work: committing races a process that will
+overwrite the index, and discarding pulls the tree out from under a gate in
+flight.
+
 ## Recover
 
 **Committing while others are live — the default.** Do not stage in the
