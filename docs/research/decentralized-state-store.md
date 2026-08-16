@@ -1398,7 +1398,13 @@ only ones that block choosing a tier-2 backend.
    answer by default.
 8. **What is the per-write latency of the channel path versus a direct write?**
    Decides whether the hot append logs need batching behind `ck_state`.
-9. **Do agents need claims/leases, and is that worth a second store?** PRD 0011
+9. **Do agents need claims/leases, and is that worth a second store?** No longer
+   hypothetical: see
+   [the concurrent-sessions bug](../reports/bugs/2026-08-16-concurrent-sessions-commit-each-others-work.md),
+   where the contended resource is the git working tree rather than a file in
+   `state/`. That widens the question — a claim mechanism useful to clanker has
+   to cover resources outside the state store, which argues for the lease living
+   wherever coordination lives rather than being a column on a state table. PRD 0011
    has no notion of an agent claiming a resource with a timeout and a fence
    token; above a handful of agents that gap shows up as two agents doing the
    same work. etcd expresses it natively (TTL leases, server-side expiry) and is
@@ -1633,6 +1639,19 @@ claim(resource, holder, acquired_ts, expires_ts, fence_token)
 Create-if-absent is the whole protocol; `expires_ts` handles a dead holder, and
 `fence_token` is what stops a resumed-from-pause agent acting on a lease it has
 already lost.
+
+**This row has a live instance in the tree.**
+[Five sessions committed and stashed each other's work](../reports/bugs/2026-08-16-concurrent-sessions-commit-each-others-work.md)
+records five agents sharing one checkout with no arbitration over the working
+tree and index: a commit swept up another session's unfinished guests, a stash
+briefly held three sessions' changes, and a rebase `--continue` refused while
+`git ls-files -u` reported nothing unmerged, because another session was writing
+the index between the check and the continue. The report's root cause — *"a git
+working tree and index are process-global shared state, and nothing in the
+harness arbitrates them"* — is this row, on a resource that is not in `state/`
+at all. Its open design question, whether staging should take a claim the way
+`clanker schedule run-due` takes its flock, is the same question as which
+mechanism below backs `claim(...)`.
 
 Of every option in this note, **etcd expresses this row natively and the others
 emulate it**: an etcd lease carries the TTL, keepalive renews it, and the
