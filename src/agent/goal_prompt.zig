@@ -19,7 +19,9 @@ pub const template =
     "This is the first turn of a continuing goal loop. Work toward the requested outcome and verify what you can; " ++
     "after this turn an evaluator will decide whether more turns are needed. " ++
     "Do not stop to require a goal_write draft or a goal_add record: those are optional, separate capabilities. " ++
-    "Use goal_write only when the user asks to draft or refine a structured goal, and use goal_add only when the user asks to persist one without running it.";
+    "Use goal_write only when the user asks to draft or refine a structured goal, and use goal_add only when the user asks to persist one without running it.\n" ++
+    "\n" ++
+    "Acceptance criteria: if the goal above does not already state a measurable completion criterion, draft one before working — something a script can check, such as time elapsed, a score reached, an eval passing, a file present, or a command exiting zero. Then write a test script at `scripts/verify-goal.sh` that checks that criterion and exits 0 only when it is met. If the goal already states a measurable criterion, use it verbatim and still write the same script. State the criterion plainly in your first message so the evaluator can judge it.";
 
 /// Render the full task prompt for an intent. `alloc` is the caller's arena.
 pub fn task(alloc: std.mem.Allocator, intent: []const u8) ![]const u8 {
@@ -35,4 +37,12 @@ test "template carries the intent and starts a loop without a draft or record" {
     try std.testing.expect(std.mem.find(u8, out, "optional, separate capabilities") != null);
     try std.testing.expect(std.mem.find(u8, out, "goal_write") != null);
     try std.testing.expect(std.mem.find(u8, out, "goal_add") != null);
+}
+
+test "template asks the agent to draft measurable criteria and a test script" {
+    const out = try task(std.testing.allocator, "make it fast");
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.find(u8, out, "measurable completion criterion") != null);
+    try std.testing.expect(std.mem.find(u8, out, "scripts/verify-goal.sh") != null);
+    try std.testing.expect(std.mem.find(u8, out, "exits 0 only when it is met") != null);
 }

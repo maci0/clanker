@@ -3,9 +3,8 @@
 ## Status
 
 Discussion — opened 2026-08-16, revised same day for the multi-component
-project model (a project spans several folders, owns a `#general` feed and
-optional per-goal output rooms, and any clanker — local, loopback, or
-networked — joins the same way).
+project model, then for the goal/task split (a goal has many tasks; a task
+is public to the goal or private to named clankers).
 
 An RFC is a *request for comment*: it presents the options and a recommendation
 so a decision can be made, and it is not itself the decision record. When it is
@@ -32,8 +31,8 @@ second clanker — a different process on the same host, or a networked
 instance — to **join the project** and see the same board, feed, and folders.
 
 **Decision to make.** How should folders, the workspace (a project), its
-rooms (`#general` feed, per-goal output), goals, membership, and remote clanker
-instances relate?
+rooms (`#general` feed, per-goal output), goals, the tasks under a goal,
+membership, and remote clanker instances relate?
 
 **Why now.** Three follow-on changes are blocked on the same answer: bind the
 default board to a workspace, put goals on the board as cards, and define
@@ -48,8 +47,13 @@ that the next change has to migrate.
   card**, not a separate record: objective, completion criterion, proof, stop
   rule, and status are card fields, and `state/goals.json` becomes an index over
   goal-cards rather than a store. ADR 0012's draft / persist / run split is
-  retained; only what "persist" writes changes — create the card, not append
+  retained; only what "persist" writes changes, create the card, not append
   `goals.json`.
+- A goal has **many tasks**. A task is work under that goal, not a second
+  goal and not a run-scratch todo (ADR 0002). Public tasks are visible to
+  every member working the goal. Private tasks are visible only to the
+  clankers they name (`instance.id`). Run-private `todo_*` items still die
+  with the run and never attach to a goal.
 - A workspace **is** a project: one stable id over one or more named folders
   (components). The single-folder model fails the suite case by construction.
 - A project owns a small **room namespace**, not one log: a default `#general`
@@ -87,7 +91,8 @@ that the next change has to migrate.
 write / add / run split (ADR 0012). Whether the board stays a chatroom
 (ADR 0001). Cron. Implementing share/enter/leave in this turn. Per-root share
 (share a subset of a project's folders). Roles/permissions within a project
-(read-only member vs editor). A general arbitrary room hierarchy (rooms beyond
+(read-only member vs editor). Task visibility is not a project role: it is
+who can see one task on one goal. A general arbitrary room hierarchy (rooms beyond
 `#general` / per-goal). A UI that browses the whole mesh as one tree (PRD 0011
 non-goal). Per-session exclude from a share (PRD 0011 open question).
 
@@ -107,6 +112,8 @@ per-project roster yet.
 | Kanban | fold of a room, default `"board"` (`tools/zig/board.zig`) | the room the caller named, otherwise one global board for the instance. The board is already a room fold; there is no per-project `#general` room and no goal rooms |
 | Goal | `state/goals.json` | optional `worktree` (git branch/path). No workspace field (`tools/zig/add_goal.zig`) |
 | Goal room | *does not exist* | a goal's model output lives in a session, with no room of its own |
+| Public task | checklist item on a card (`tools/zig/cards.zig` `subtask_*`) | the card. Folded from `@todo` in the board's room, so everyone who can see the board sees it. A card cannot enter Done until every item is complete |
+| Goal-private task | *does not exist* | no durable task scoped to a goal but hidden from some members |
 | Membership | `state/mesh/members.json` (PRD 0011) | **mesh** membership only. No per-project roster, no enter/leave |
 | Bind record | *does not exist* | nothing maps a remote project's folders to local checkouts |
 | Private todos | in-memory, per run (ADR 0002) | the run, never a room |
@@ -282,8 +289,12 @@ Four hazards follow, and each is resolved explicitly.
           W --> Gen["ws:relumea · #general<br/>chat + card actions<br/>(board = fold of this room)"]
           W --> GoalRoom["ws:relumea:goal:&lt;id&gt;<br/>per-goal model output<br/>(optional, lossy feed)"]
           W --> Goals["goals — cards on the board (#general)"]
+          W --> PubTasks["public tasks: checklist on the goal-card"]
+          W --> PrivTasks["private tasks: visible_to named instance.id"]
           W --> Sessions["sessions — tagged relumea"]
           W --> Members["members — main (home), laptop"]
+          Goals --> PubTasks
+          Goals --> PrivTasks
       end
 
       subgraph Fleet["fleet rooms — not projects"]
@@ -308,6 +319,26 @@ Four hazards follow, and each is resolved explicitly.
   separate goal record to mirror). The empty-id (cwd)
   workspace keeps today's `board` room as its `#general`, so existing logs do
   not move.
+
+  **A goal has many tasks.** The card is the goal; the tasks are the work
+  under it. Two visibilities, one parent:
+
+  | Kind | Who sees it | Where it lives | Survives the run? |
+  |---|---|---|---|
+  | Public task | every member who can see the goal | checklist item on the goal-card (`@todo` in `#general`) | yes |
+  | Private task | only the named `instance.id`s | home-held on the goal, `visible_to: []instance.id`; **not** in the `#general` fold | yes |
+  | Run scratch | the run that created it | in-memory `todo_*` (ADR 0002) | no |
+
+  Public tasks are today's card checklist: a tree, with independent
+  dependency edges, and they block the card entering Done
+  (`cards.checklistComplete`). Private tasks attach to the same goal so a
+  clanker can keep durable work that other members must not claim or even
+  list. They are not written as `@todo` in `#general`: the board fold is
+  public, and a private item there would leak. Home stores them next to the
+  goal-card and replicates only to the named members. ADR 0002 run scratch
+  stays the third layer: a turn's "check the gate then patch" notes still
+  die with the run and never become a goal task unless someone promotes them
+  with an explicit public or private add.
 
   **Two different canonical rules.** The board's room *is* the board's source
   of truth (ADR 0001: there is no `board.json`), and a goal is a card in that
@@ -465,8 +496,9 @@ Four hazards follow, and each is resolved explicitly.
 - **If B:** add `workspace` on goals; default the board room to `ws:<id>`
   (`#general`) when a non-empty workspace is selected (empty-id keeps `board`
   so today's log does not move); add a membership roster row (owner + entered
-  members). **Spike the sandbox root set before anything else** — it is the
-  only irreversible-enough change and the only security-sensitive one.
+  members); treat the card checklist as the goal's public tasks and keep
+  private tasks off that fold. **Spike the sandbox root set before anything else**:
+  it is the only irreversible-enough change and the only security-sensitive one.
 - **If A:** add `workspace` on goals; default `board:<id>`; extra-attach stays
   an open question.
 - **If C:** rename in the UI only, or accept rooms-without-folders leaking.
@@ -508,7 +540,8 @@ Four hazards follow, and each is resolved explicitly.
 **Recommended option:** Option B, multi-root project workspace: a stable
 workspace id over one or more named roots; a small room namespace — `ws:<id>`
 (`#general`: chat + card actions) and optional `ws:<id>:goal:<id>` rooms for
-model output; goal-cards and sessions tagged to that id; and mesh share / enter /
+model output; goal-cards and sessions tagged to that id; a goal with many
+tasks (public on the card, private to named clankers); and mesh share / enter /
 leave / bind kept distinct from mesh join / leave.
 
 **Confidence:** 6/10
@@ -600,6 +633,11 @@ project actually needs its own board; keep `board` as the empty-id workspace's
     fields vs. card-body content, and how does the `state/goals.json` index get
     rebuilt from cards? Bias: criterion, proof, and stop_rule are card fields;
     the index is rebuilt from cards on startup, no migration.
+14. **Do private tasks block Done?** Public checklist items already do
+    (`cards.checklistComplete`). Bias: a member cannot mark the goal Done
+    while it still has *that member's* open private tasks; other members do
+    not see those items and are not blocked by them. Home still holds the
+    full set so a goal loop on home can wait. Who: this RFC.
 
 ## Next steps / action items
 
@@ -616,6 +654,9 @@ project actually needs its own board; keep `board` as the empty-id workspace's
       its session.
 - [ ] Spike: add `workspace` to `goal_add` / `goal_update` as an optional field
       defaulting to the current rail id.
+- [ ] Spike: public tasks stay card checklist items; private tasks attach to
+      the goal with `visible_to: []instance.id` and never land in the
+      `#general` fold. Confirm Done-blocking (question 14).
 - [ ] Add a per-workspace membership roster (owner + entered members) as part of
       mesh Phase 3; share / enter / leave / bind are operator verbs on
       `workspace_share`, not new frame kinds.
@@ -669,6 +710,8 @@ a real join record; the rest are foreign keys or derived views.
 | Room | Board | 1:0..1 | only `#general` folds a board (ADR 0001); goal and fleet rooms do not |
 | Board | Card | 1:N | cards are `@todo` messages in the board's room |
 | Goal | Card | **1:1 (identity)** | a goal is a card with its goal fields set; `state/goals.json` is an index over those cards, not a store |
+| Goal | Task | **1:N** | public tasks are checklist items on that card; private tasks attach to the same goal with `visible_to` |
+| Task | Instance | N:N | public: every project member; private: only the named `instance.id`s |
 | Goal | Room | 1:0..1 | `ws:<id>:goal:<card-id>`, created on demand, chat/status only |
 
 Fleet rooms (`dm:<a>|<b>`, `ops`) are rooms with no folder, so they map to zero
@@ -689,6 +732,19 @@ flowchart TD
     Gen --> Peers["fan-out to entered members"]
     GR --> Peers
     Fleet --> Subs["fan-out to subscribers"]
+```
+
+**Task visibility: public to the goal, or private to named clankers?**
+
+```mermaid
+flowchart TD
+    T["a task is added under a goal"] --> Q{"who should see it?"}
+    Q -->|"everyone on the goal"| Pub["public task<br/>checklist item on the goal-card<br/>@todo in #general"]
+    Q -->|"only these clankers"| Priv["private task<br/>visible_to: instance.id list<br/>home stores it, not the #general fold"]
+    Q -->|"only this run"| Scratch["run scratch todo_*<br/>in-memory, discarded (ADR 0002)"]
+    Pub --> Done["blocks the card entering Done"]
+    Priv --> Open["see open question 14: block Done?"]
+    Scratch --> Die["gone when the run returns"]
 ```
 
 **Run isolation — worktree or shared checkout?**
@@ -754,6 +810,26 @@ sequenceDiagram
         Goal->>Gen: update board card
     end
     Goal->>Gen: card moved to Done
+```
+
+### User journey: public and private tasks on one goal
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator
+    participant Main as instance main
+    participant Side as instance side
+    participant Card as goal-card (public)
+    participant Home as home private store
+
+    Op->>Card: public task "merge the PR"
+    Note over Card: both main and side see it on the board
+    Main->>Home: private task "draft the commit msg"<br/>visible_to = [main]
+    Note over Side: side never lists that item
+    Side->>Home: private task "local repro notes"<br/>visible_to = [side]
+    Note over Main: main never lists side's notes
+    Main->>Home: private task "shared scratch"<br/>visible_to = [main, side]
+    Note over Main,Side: only those two see it; #general does not
 ```
 
 ### User journey — meshed peer binds and merges

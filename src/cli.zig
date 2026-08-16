@@ -2529,8 +2529,9 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
             // from project/location at request time, so an empty base_url is
             // the usual config, not a missing setup. Doctor already treats
             // a present service-account file as ok; this check used to
-            // disagree and call the default provider "not configured".
-            if (p.base_url.len == 0 and p.kind != .vertex_anthropic and p.kind != .vertex) break :blk "base_url is empty";
+            // disagree and call the default provider "not configured". Which
+            // kinds build the URL from project/location is on the vtable.
+            if (p.base_url.len == 0 and !providers.forKind(p.kind).auth.needs_project_location) break :blk "base_url is empty";
             if (p.base_url.len > 0 and !std.mem.startsWith(u8, p.base_url, "http://") and !std.mem.startsWith(u8, p.base_url, "https://"))
                 break :blk try std.fmt.allocPrint(arena, "base_url '{s}' has no http:// or https:// scheme", .{p.base_url});
             if (p.api_key_env) |env_name| {
@@ -3290,7 +3291,9 @@ fn taskWithGoal(arena: std.mem.Allocator, task: []const u8, g: GoalContext) ![]c
             "Work on this goal until the completion criterion is met. When the work is done, land it in the repository so the goal is genuinely complete: create a branch, commit your changes to it (staging by explicit path), push the branch, open a pull request, and merge it. Do not leave the finished work uncommitted.\n\nObjective: {s}\nDone when: {s}\n",
             .{ g.objective, g.completion_criterion },
         );
-    return try std.fmt.allocPrint(arena, "{s}{s}", .{ g.section, body });
+    const verify =
+        "Acceptance criteria: if the completion criterion is not measurable, draft a measurable one before working, then write a test script at `scripts/verify-goal.sh` that checks it and exits 0 only when it is met. If it is already measurable, use it verbatim and still write the script. State the criterion plainly so the evaluator can judge it.\n";
+    return try std.fmt.allocPrint(arena, "{s}{s}{s}", .{ g.section, body, verify });
 }
 
 /// Resolves which goal steers this run: explicit id, else newest active when

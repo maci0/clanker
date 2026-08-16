@@ -73,6 +73,18 @@ test "every configurable kind resolves to its own provider" {
     }
 }
 
+test "the vertex kinds own the project-location and file-credential flags" {
+    // config.zig and doctor.zig read these off the vtable instead of
+    // switching on `provider.kind`; the flags must stay attached to the
+    // providers that set them, and absent elsewhere.
+    for (std.enums.values(config.ProviderKind)) |kind| {
+        const spec = forKind(kind).auth;
+        const is_vertex = kind == .vertex or kind == .vertex_anthropic;
+        try std.testing.expectEqual(is_vertex, spec.needs_project_location);
+        try std.testing.expectEqual(is_vertex, spec.file_credential);
+    }
+}
+
 test "the registry covers exactly the kinds config accepts" {
     // The two lists are the whole cost of adding a provider; a tag that
     // parses out of config but has no implementation would otherwise only

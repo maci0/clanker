@@ -29,6 +29,20 @@ through a gated loop. Follow these conventions when changing this codebase.
   competing for the machine), not a defect: re-run it, or run the compiled
   binary in `.zig-cache/o/<hash>/test` directly, before hunting for a cause.
 
+Write the failing test first. Put it next to the shipped function (`test`
+blocks in `src/`, `host_tested_helpers` for pure `tools/zig/` logic, or
+`tests/e2e/` for an operator verb). Run it and confirm it fails for the
+reason you intend (wrong answer, missing file, refused path), not because
+the module is not imported from `src/main.zig` or `tests/e2e/main.zig`.
+Then change the implementation until that test passes. Do not add a helper
+whose only caller is a test: that is inert, not TDD. A passing test must
+drive the real entry point and assert content the shipped code produced
+(stdout, a JSON field, a file it wrote). Re-implementing the logic in the
+test, injecting a finished result and reading it back, or checking only
+exit 0 is not a test. Non-trivial logic and anything that parses untrusted
+input get a test (fuzz parsers); trivial wrappers do not. Prefer a unit
+test for a pure function and an e2e case for a CLI or HTTP journey.
+
 ## Zig style
 
 - Target Zig 0.16 APIs: `std.Io` (Dir/File/Threaded), `std.process.Init`,

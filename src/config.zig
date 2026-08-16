@@ -18,6 +18,7 @@ const log = @import("util/log.zig");
 const toml_bridge = @import("util/toml_bridge.zig");
 const atomic_write = @import("util/atomic_write.zig");
 const models_dev = @import("llm/models_dev.zig");
+const llm_registry = @import("llm/registry.zig");
 
 /// A schema failure is reported before it reaches the command dispatcher.
 /// Keeping the original TOML source here is intentional: the intermediate
@@ -1441,11 +1442,13 @@ pub const Config = struct {
             p.check_timeout_seconds = try jsonUnsigned(u32, k, "check_timeout_seconds");
         }
 
-        // vertex / vertex_anthropic address the model by project/location in
-        // the URL. Missing those only surfaces as error.VertexProjectMissing
+        // Some kinds address the model by project/location in the URL
+        // (Vertex). Missing those only surfaces as error.VertexProjectMissing
         // on the first request, far from the config that caused it. A
         // credential file is optional at load: minting also reads gcloud ADC.
-        if (p.kind == .vertex_anthropic or p.kind == .vertex) {
+        // Which kinds that is lives on the provider vtable, not a kind check
+        // here (config cannot name the kinds; the registry owns them).
+        if (llm_registry.forKind(p.kind).auth.needs_project_location) {
             if (p.project.len == 0 or p.location.len == 0) {
                 log.log(.error_, "provider '{s}': kind \"{s}\" requires \"project\" and \"location\"", .{ name, @tagName(p.kind) });
                 return error.VertexProjectMissing;

@@ -22,6 +22,8 @@ pub const provider: api.Provider = .{
         .mint = mint,
         .required = true,
         .quota_from_project = true,
+        .needs_project_location = true,
+        .file_credential = true,
     },
     .proxy = .{
         .family = .anthropic,

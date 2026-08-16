@@ -18,6 +18,7 @@ const registry = @import("toolhost/registry.zig");
 const log = @import("util/log.zig");
 const ensure_dir = @import("util/ensure_dir.zig");
 const vertex_token = @import("llm/vertex_token.zig");
+const llm_registry = @import("llm/registry.zig");
 
 const Status = enum {
     ok,
@@ -121,7 +122,7 @@ fn runChecks(
                 p.name,
                 if (set) env_name else try std.fmt.allocPrint(arena, "{s} is not set", .{env_name}),
             );
-        } else if (p.kind == .vertex or p.kind == .vertex_anthropic) {
+        } else if (llm_registry.forKind(p.kind).auth.file_credential) {
             // The path is not printed: it is usually under a home directory
             // and its name tends to carry the cloud project.
             if (vertex_token.resolveCredentialsPath(arena, p.service_account_file, environ_map)) |path| {
@@ -295,7 +296,7 @@ pub fn cmdSetup(init: std.process.Init) !void {
         if (p.api_key_env) |env_name| {
             break :blk if (init.environ_map.get(env_name)) |v| v.len > 0 else false;
         }
-        if (p.kind == .vertex or p.kind == .vertex_anthropic) {
+        if (llm_registry.forKind(p.kind).auth.file_credential) {
             const path = vertex_token.resolveCredentialsPath(arena, p.service_account_file, init.environ_map) orelse break :blk false;
             break :blk fileExists(io, path);
         }

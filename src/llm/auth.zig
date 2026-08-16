@@ -52,6 +52,16 @@ pub const Spec = struct {
     /// When true, `Credential.quota_project` is `provider.project` (Vertex
     /// user ADC's `x-goog-user-project`). A Spec field, not a kind switch.
     quota_from_project: bool = false,
+    /// The provider addresses the model in a URL built from `project` and
+    /// `location` (Vertex). Config must require both at load, instead of a
+    /// provider failing on the first request with VertexProjectMissing. A
+    /// Spec field, not a `kind ==` check outside the provider files.
+    needs_project_location: bool = false,
+    /// The credential may come from a local file (`service_account_file` or
+    /// gcloud ADC) resolved by `vertex_token`, not only an env var. Doctor
+    /// reads this to know where to look when no `api_key_env` is configured.
+    /// A Spec field, not a `kind ==` check outside the provider files.
+    file_credential: bool = false,
 };
 
 /// A resolved credential, ready to be turned into headers.
