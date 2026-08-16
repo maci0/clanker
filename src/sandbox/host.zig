@@ -3200,7 +3200,12 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
 
     const lock_path = std.fmt.allocPrint(sb.gpa, "{s}.ck_cas.lock", .{full}) catch return Err.invalid;
     defer sb.gpa.free(lock_path);
-    const lock_file = base.createFile(sb.io, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| {
+    // Through the retrying create, like appendLocked: the sidecar does not
+    // exist before the first CAS on a path, so the first concurrent writers
+    // race to create it, and a plain create loses that race on macOS with a
+    // spurious FileNotFound (file_lock.createFileRetry has the story). Mapping
+    // that to Err.invalid refuses a write that was never in conflict.
+    const lock_file = file_lock.createFileRetry(sb.io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| {
         log.log(.warn, "[fs_write_if] could not acquire lock for '{s}': {s}", .{ sub_path, @errorName(err) });
         return Err.invalid;
     };
@@ -6520,6 +6525,60 @@ test "fsWriteIfImpl writes when hash matches and rejects on mismatch" {
     const after3 = try tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
     defer gpa.free(after3);
     try std.testing.expectEqualStrings("updated", after3);
+}
+
+test "fsWriteIfImpl survives racing creates of a not-yet-existing lock file" {
+    // The lock sidecar does not exist before the first CAS on a path, so the
+    // first concurrent writers all create it at once. That is exactly the race
+    // `file_lock.createFileRetry` absorbs: a plain create loses it on macOS
+    // (~2 in 400) and reports FileNotFound, which this function would turn
+    // into Err.invalid -- a valid write refused for no reason. Every attempt
+    // here must end ok or mismatch; never invalid.
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const Worker = struct {
+        dir: std.Io.Dir,
+        io: std.Io,
+        gpa: std.mem.Allocator,
+        invalid: u32 = 0,
+
+        fn run(self: *@This()) void {
+            var sb = Sandbox{
+                .gpa = self.gpa,
+                .io = self.io,
+                .root_dir = ".",
+                .network_allow = &.{},
+                .fs_prefixes = &.{"."},
+                .environ_map = undefined,
+            };
+            var i: usize = 0;
+            while (i < 25) : (i += 1) {
+                // Empty expected hash: ok on the create, mismatch once another
+                // worker got there first. Both are correct answers; Err.invalid
+                // is the lock create having failed.
+                const rc = fsWriteIfImpl(&sb, self.dir, "race_cas.txt", "", "x");
+                if (rc == Err.invalid) self.invalid += 1;
+            }
+        }
+    };
+
+    var workers: [8]Worker = undefined;
+    var threads: [8]std.Thread = undefined;
+    for (&workers, 0..) |*w, i| {
+        w.* = .{ .dir = tmp.dir, .io = io, .gpa = gpa };
+        threads[i] = try std.Thread.spawn(.{}, Worker.run, .{w});
+    }
+    for (&threads) |*t| t.join();
+    for (&workers) |*w| try std.testing.expectEqual(@as(u32, 0), w.invalid);
 }
 
 test "fsWriteIfImpl creates missing parent directories" {

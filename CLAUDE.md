@@ -231,8 +231,9 @@ opens a mesh socket itself. A notification is not a chat message.
 
 ## Catalog tools with no top-level verb
 
-`clanker tools list` prints 116 tools; only some have their own command. The
-rest are reached through the agent:
+`clanker tools list` ends with a count — 94 tools and 22 plugins as of
+2026-08-16 — and only some of them have their own command. The rest are
+reached through the agent:
 
 ```bash
 clanker run "<task that needs the tool>"
