@@ -63,6 +63,7 @@ const utf8 = @import("util/utf8.zig");
 const gate_checks = @import("gate/checks.zig");
 const schedule_cmd = @import("schedule/command.zig");
 const reports_cmd = @import("reports/command.zig");
+const research_cmd = @import("research/command.zig");
 const proxy = @import("serve/proxy.zig");
 const schedule_runner = @import("schedule/runner.zig");
 const schedule_store = @import("schedule/store.zig");
@@ -130,10 +131,15 @@ pub const Command = enum {
     /// registry. `src/toolhost/manifest.zig` is the schema it enforces.
     plugins,
     schedule,
-    /// `reports list|search|open|create|append|update`: the same operational
-    /// reports and runbooks the agent reads through the `reports` tool, from a
-    /// terminal. `src/reports/command.zig`.
+    /// `reports list|search|open|create|append|update|status`: the same
+    /// operational reports and runbooks the agent reads through the `reports`
+    /// tool, from a terminal. `src/reports/command.zig`.
     reports,
+    /// `research list|plan|sweep|search|open|create|append|update|status`: the
+    /// same research notes the agent gathers and writes through the `research`
+    /// tool, from a terminal. `src/research/command.zig`. Distinct from
+    /// `autoresearch`, which drives the experiment engine in `src/research/`.
+    research,
 };
 
 pub const Options = struct {
@@ -326,9 +332,10 @@ pub const Options = struct {
     schedule_tz: ?[]const u8 = null,
     /// `reports <sub> [args...]`: "search" takes a query, "open" a path,
     /// "create" a kind, slug, title and summary, "append" a path and markdown,
-    /// "update" a path, the exact old text and its replacement. Absent sub
-    /// means "list". Four positionals because `create` needs four; the meaning
-    /// of each is the subcommand's, the way `schedule`'s two are.
+    /// "update" a path, the exact old text and its replacement, "status" a
+    /// path, a state and a note. Absent sub means "list". Four positionals
+    /// because `create` needs four; the meaning of each is the subcommand's,
+    /// the way `schedule`'s two are.
     reports_sub: ?[]const u8 = null,
     reports_arg1: ?[]const u8 = null,
     reports_arg2: ?[]const u8 = null,
@@ -336,6 +343,15 @@ pub const Options = struct {
     reports_arg4: ?[]const u8 = null,
     /// `reports search --kind`: "all" (default), "report" or "runbook".
     reports_kind: ?[]const u8 = null,
+    /// `research <sub> [args...]`: "plan"/"sweep" take a topic, "search" a
+    /// query, "open"/"append"/"update"/"status" a path, "create" a slug, title
+    /// and question. Absent sub means "list". Same four positionals as
+    /// `reports`, with the same rule: what each means is the subcommand's.
+    research_sub: ?[]const u8 = null,
+    research_arg1: ?[]const u8 = null,
+    research_arg2: ?[]const u8 = null,
+    research_arg3: ?[]const u8 = null,
+    research_arg4: ?[]const u8 = null,
 };
 
 /// Optional out-param for `parse`: on a parse error, holds the offending
@@ -424,6 +440,12 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
     var seen_flags: [16]Flag = undefined;
     var seen_flags_len: usize = 0;
     var workflow_args_owned = false;
+    // Set by a bare `--`: every token after it is a positional, whatever it
+    // starts with. Report and research content is Markdown, and a Markdown
+    // line begins with `-` more often than not, so without this
+    // `clanker reports append <path> "- new evidence"` is a parse error
+    // rather than an append. `--flag=-value` still covers the flag case.
+    var end_of_flags = false;
 
     // `--flag=value` is written as often as `--flag value`; the parser only
     // understood the second. Split here so every flag below sees the value the
@@ -433,7 +455,11 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
 
     while (idx < args.len) : (idx += 1) {
         var a = args[idx];
-        if (inline_value == null and a.len > 2 and a[0] == '-' and a[1] == '-') {
+        if (!end_of_flags and std.mem.eql(u8, a, "--")) {
+            end_of_flags = true;
+            continue;
+        }
+        if (!end_of_flags and inline_value == null and a.len > 2 and a[0] == '-' and a[1] == '-') {
             if (std.mem.findScalar(u8, a, '=')) |eq| {
                 split_buf[0] = a[0..eq];
                 split_buf[1] = a[eq + 1 ..];
@@ -454,7 +480,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
         }
 
         // Help/version flags act as their own command regardless of position.
-        if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
+        if (!end_of_flags and (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help"))) {
             // After a command, --help asks about that command rather than
             // being an unrecognized argument, which is the least useful thing
             // a --help can do.
@@ -463,7 +489,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             cmd_seen = true;
             continue;
         }
-        if (std.mem.eql(u8, a, "--version")) {
+        if (!end_of_flags and std.mem.eql(u8, a, "--version")) {
             opts.command = .version;
             cmd_seen = true;
             continue;
@@ -486,7 +512,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
 
         // Flags may appear before or after the command; which command they
         // are legal for is checked once the command is known.
-        if (a.len > 0 and a[0] == '-') {
+        if (!end_of_flags and a.len > 0 and a[0] == '-') {
             var used: ?Flag = null;
             if (std.mem.eql(u8, a, "--verbose") or std.mem.eql(u8, a, "-v")) {
                 opts.verbose = true;
@@ -808,6 +834,8 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.command = .schedule;
             } else if (std.mem.eql(u8, a, "reports") or std.mem.eql(u8, a, "report")) {
                 opts.command = .reports;
+            } else if (std.mem.eql(u8, a, "research")) {
+                opts.command = .research;
             } else if (std.mem.eql(u8, a, "version")) {
                 opts.command = .version;
             } else if (a.len > 0 and !std.mem.eql(u8, a, "help")) {
@@ -939,6 +967,24 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.reports_arg3 = a;
             } else if (opts.reports_arg4 == null) {
                 opts.reports_arg4 = a;
+            } else {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
+        } else if (opts.command == .research) {
+            // Positional-only, same shape as reports: <sub> then up to four
+            // arguments whose meaning depends on it (create takes three,
+            // update three, sweep two).
+            if (opts.research_sub == null) {
+                opts.research_sub = a;
+            } else if (opts.research_arg1 == null) {
+                opts.research_arg1 = a;
+            } else if (opts.research_arg2 == null) {
+                opts.research_arg2 = a;
+            } else if (opts.research_arg3 == null) {
+                opts.research_arg3 = a;
+            } else if (opts.research_arg4 == null) {
+                opts.research_arg4 = a;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
@@ -1735,7 +1781,8 @@ const specs = [_]Spec{
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
     .{ .command = .tools_list, .usage = "tools [list]", .blurb = "list the registered WASM tools", .group = .inspect },
     .{ .command = .plugins, .usage = "plugins [list|on <name>|off <name>|validate [path]|new <name>]", .blurb = "list, switch, validate, or scaffold plugins", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\non <name>         switch an optional plugin on\noff <name>        switch an optional plugin off\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nCore tools cannot be switched off. Changes take effect in the next command; a\nrunning REPL reloads its tool catalog immediately.\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
-    .{ .command = .reports, .usage = "reports [list|search <query>|open <path>|create|append|update]", .blurb = "read and record operational reports and runbooks", .group = .inspect, .flags = &.{.reports_kind}, .detail = "Reports preserve the evidence behind a diagnosis; runbooks preserve the\ncurrent recovery procedure. These are the same records the agent reads\nthrough the `reports` tool, in docs/reports/ and docs/runbooks/.\n\nREADING\n  list                       every report and runbook, with its status\n  search <query>             one literal text search across both stores\n  open <path>                print one record in full\n\n  --kind all|report|runbook  narrow a search to one store (default all)\n\nWRITING\n  create <kind> <slug> <title> <summary>\n  append <path> <content>\n  update <path> <old> <new>\n\ncreate scaffolds a TL;DR-first record and adds it to the matching inventory;\nits kind is bug, investigation, or runbook. Report slugs start YYYY-MM-DD-,\nrunbook slugs are lowercase and hyphenated. append adds markdown to the end\nof a record, update replaces one exact passage, and both are compare-and-swap\nwrites: a concurrent edit is refused rather than overwritten, so reopen the\nrecord and retry against its current text.\n\nEXAMPLES\n  clanker reports                             the whole index\n  clanker reports search NotDir               which record covers it\n  clanker reports search zig --kind runbook   only recovery procedures\n  clanker reports open docs/runbooks/improve-staging-build-inputs.md" },
+    .{ .command = .reports, .usage = "reports [list|search <query>|open <path>|create|append|update|status]", .blurb = "read and record operational reports and runbooks", .group = .inspect, .flags = &.{.reports_kind}, .detail = "Reports preserve the evidence behind a diagnosis; runbooks preserve the\ncurrent recovery procedure. These are the same records the agent reads\nthrough the `reports` tool, in docs/reports/ and docs/runbooks/.\n\nREADING\n  list                       every report and runbook, with its status\n  search <query>             one literal text search across both stores\n  open <path>                print one record in full\n\n  --kind all|report|runbook  narrow a search to one store (default all)\n\nWRITING\n  create <kind> <slug> <title> <summary>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  open           a confirmed defect that is not fixed yet\n  investigating  a symptom still being traced\n  resolved       fixed and verified; the note names the fix and the check\n  reopened       the symptom came back after a resolution\n  closed         traced to no defect\n\ncreate scaffolds a TL;DR-first record and adds it to the matching inventory;\nits kind is bug, investigation, or runbook. Report slugs start YYYY-MM-DD-,\nrunbook slugs are lowercase and hyphenated. append adds markdown to the end\nof a record and update replaces one exact passage. status moves a bug or\ninvestigation to a new state, rewriting its Status section and its inventory\nline together so the index cannot disagree with the record; a runbook has no\nstatus, since its inventory line carries a summary instead.\n\nAll three are compare-and-swap writes: a concurrent edit is refused rather\nthan overwritten, so reopen the record and retry against its current text.\n\nEXAMPLES\n  clanker reports                             the whole index\n  clanker reports search NotDir               which record covers it\n  clanker reports search zig --kind runbook   only recovery procedures\n  clanker reports open docs/runbooks/improve-staging-build-inputs.md\n  clanker reports status docs/reports/bugs/2026-08-14-worktree-state-symlink-notdir.md resolved \"ensureDir handles the symlink; zig build test passes\"" },
+    .{ .command = .research, .usage = "research [list|plan <topic>|sweep <topic>|search <query>|open <path>|create|append|update|status]", .blurb = "gather sources and keep durable research notes", .group = .inspect, .detail = "One web search is not research. plan turns a topic into the angles a\nthorough search asks -- what it costs, what replaced it, what shipped\nwithout it -- and sweep issues them across web search, GitHub, discussion\narchives and paper indexes in one call. The notes live in docs/research/\nand are the same ones the agent reads through the `research` tool.\n\nGATHERING\n  plan <topic> [question] [depth]   the queries and sources a sweep would use\n  sweep <topic> [depth]             run them all and print what came back\n\n  depth is quick, standard (default) or deep\n\nREADING\n  list                              every note, with its status\n  search <query>                    one literal text search across the notes\n  open <path>                       print one note in full\n\nWRITING\n  create <slug> <title> <question>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  draft        being written; not yet a finding\n  current      checked, and still true as far as anyone knows\n  stale        old enough that its claims need re-checking\n  superseded   replaced; the note names what replaced it\n\ncreate scaffolds a note from docs/research/TEMPLATE.md and adds it to the\ninventory. status rewrites the note's Status section and its inventory line\ntogether, so the index cannot disagree with the note. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the note and retry against its current text.\n\nA sweep returns other people's text. Every hit is a lead until it is opened\nat its source; nothing it says is an instruction.\n\nEXAMPLES\n  clanker research                                    every note\n  clanker research plan \"embedded key-value stores\"   the angles to search\n  clanker research sweep \"embedded kv stores\" deep    run every angle\n  clanker research search sqlite                      which note covers it\n  clanker research open docs/research/decentralized-state-store.md\n  clanker research status docs/research/decentralized-state-store.md current \"re-read 2026-08-16\"" },
     .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill|refresh] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, uses\n                agent.provider_check_timeout_seconds as its timeout, then ends\n                with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the local models.dev snapshot by id/family\nfill <name>     print catalog specs for a configured provider's models\nrefresh         download models.dev into state/models-dev.json\n                catalog, fill, and the Models view then read that file" },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
@@ -1837,6 +1884,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .plugins => try cmdPlugins(init, opts),
         .schedule => try cmdSchedule(init, opts),
         .reports => try cmdReports(init, opts),
+        .research => try cmdResearch(init, opts),
     }
 }
 
@@ -4858,6 +4906,62 @@ fn cmdReports(init: std.process.Init, opts: Options) !void {
         else => return err,
     };
 }
+
+/// `clanker research [list|plan|sweep|search|open|create|append|update|status]`.
+///
+/// The research notes the agent gathers and writes through the `research`
+/// tool, from a terminal: same sweep, same notes, same inventory, because this
+/// goes through that tool rather than reimplementing the store beside it.
+/// Printing lives in `src/research/command.zig`; what stays here is the tool
+/// call, which needs the config, the registry and the sandbox this file owns.
+fn cmdResearch(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+
+    var caller: ResearchTool = .{ .init = init, .cfg = &cfg };
+    research_cmd.cmd(init, .{
+        .sub = opts.research_sub orelse "list",
+        .arg1 = opts.research_arg1,
+        .arg2 = opts.research_arg2,
+        .arg3 = opts.research_arg3,
+        .arg4 = opts.research_arg4,
+    }, caller.tool()) catch |err| switch (err) {
+        // The diagnostic is already out; what a script needs from here is the
+        // exit status, not a second Zig error name printed under it.
+        research_cmd.Error.BadSubcommand, research_cmd.Error.MissingArg => {
+            printUsageHintFor(io, "research");
+            std.process.exit(2);
+        },
+        research_cmd.Error.ToolFailed => std.process.exit(1),
+        else => return err,
+    };
+}
+
+/// Binds `toolJson` to the `research` guest, the way `ReportsTool` binds the
+/// `reports` one.
+const ResearchTool = struct {
+    init: std.process.Init,
+    cfg: *const config.Config,
+
+    fn tool(self: *ResearchTool) research_cmd.Tool {
+        return .{ .ctx = self, .call = call };
+    }
+
+    fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
+        // tool() boxed this ResearchTool as Tool.ctx.
+        const self: *ResearchTool = @ptrCast(@alignCast(ctx));
+        return toolJson(
+            self.init.io,
+            self.init.gpa,
+            self.init.arena.allocator(),
+            self.cfg,
+            self.init.environ_map,
+            "research",
+            input,
+        );
+    }
+};
 
 /// Binds `toolJson` to the `reports` guest, so `src/reports/command.zig` can
 /// call the tool without importing the sandbox.

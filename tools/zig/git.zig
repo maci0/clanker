@@ -34,7 +34,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 /// against the run's root, so edits land there while `git -C <wt> status`
 /// reports on an empty worktree, and both halves look successful.
 const allowed_verbs = [_][]const u8{
-    "status", "diff", "log", "show", "add", "commit", "ls-files", "rev-parse", "branch", "blame", "worktree",
+    "status", "diff", "log", "show", "add", "commit", "ls-files", "rev-parse", "branch", "worktree",
 };
 
 /// Mirror of the host's exec_deny_tokens (src/sandbox/host.zig): verbs and

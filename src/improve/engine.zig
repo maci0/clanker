@@ -3066,6 +3066,14 @@ const improve_system =
     \\- Only touch files shown in the context. Never change the eval machinery
     \\  (src/evals/, src/improve/, src/toolhost/builder.zig).
     \\- Changes must compile with Zig 0.16 std APIs. Prefer minimal diffs.
+    \\- Files under tools/zig/ and tools/ts/ are sandboxed WASM guests built for
+    \\  wasm32-freestanding. No libc, no host-only builtins, and no filesystem,
+    \\  process or network access except through the ck_* host imports declared
+    \\  in tools/zig/lib.zig. A builtin you cannot find in the Zig language
+    \\  reference does not exist: inventing one fails the tools gate on every
+    \\  attempt of the iteration, and @errorUpdate has cost this loop several
+    \\  whole batches that way. To add context to a guest error, return a
+    \\  different error or report it through lib.fail/lib.failErr.
     \\- A patch has to change what the program does. Two shapes are refused
     \\  outright, whatever their summary says:
     \\    - adding a function, plus a test for that function, and no caller. If

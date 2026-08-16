@@ -410,6 +410,76 @@ fn isEmptyPlaceholder(previous: []const u8) bool {
     return std.mem.find(u8, previous, "\n") == null;
 }
 
+/// The separator between an inventory entry's title and its status field.
+const em_dash = "\u{2014}";
+
+pub const InventoryEntry = struct {
+    /// Link target of the entry's first Markdown link, e.g. `bugs/foo.md`.
+    target: []const u8,
+    /// Offset of the em dash that introduces the status field, or null when
+    /// the entry carries no status yet.
+    status_start: ?usize,
+};
+
+/// Splits one `- [Title](link) — Status` inventory line. The status separator
+/// is looked for *after* the link rather than at the first em dash, so a title
+/// that contains one is not mistaken for it.
+pub fn inventoryEntry(line: []const u8) ?InventoryEntry {
+    const open = std.mem.find(u8, line, "](") orelse return null;
+    const close = std.mem.findPos(u8, line, open + 2, ")") orelse return null;
+    const target = line[open + 2 .. close];
+    if (target.len == 0) return null;
+    return .{ .target = target, .status_start = std.mem.findPos(u8, line, close + 1, em_dash) };
+}
+
+/// Rewrites the status field of the inventory entry linking to `target`.
+///
+/// An index status is a second copy of the record's own `## Status` line, and
+/// a second copy that only `create` ever writes is a copy that is wrong from
+/// the first status change onwards. Every writer of the record's status calls
+/// this so the two move together. Returns false when the markers or the entry
+/// are absent — the caller reports that rather than guessing which row it
+/// meant, since rewriting the wrong row is worse than leaving the index stale.
+pub fn setInventoryStatus(
+    w: *std.Io.Writer,
+    index: []const u8,
+    start_marker: []const u8,
+    end_marker: []const u8,
+    target: []const u8,
+    status: []const u8,
+) !bool {
+    const start = std.mem.find(u8, index, start_marker) orelse return false;
+    const content_start = start + start_marker.len;
+    const end = std.mem.findPos(u8, index, content_start, end_marker) orelse return false;
+
+    var scan = content_start;
+    while (scan < end) {
+        const line_end = @min(std.mem.findPos(u8, index, scan, "\n") orelse end, end);
+        const line = index[scan..line_end];
+        const entry = inventoryEntry(line) orelse {
+            scan = line_end + 1;
+            continue;
+        };
+        if (!std.mem.eql(u8, entry.target, target)) {
+            scan = line_end + 1;
+            continue;
+        }
+        try w.writeAll(index[0..scan]);
+        if (entry.status_start) |at| {
+            try w.writeAll(line[0..at]);
+        } else {
+            try w.writeAll(std.mem.trimEnd(u8, line, " \t\r"));
+            try w.writeAll(" ");
+        }
+        try w.writeAll(em_dash);
+        try w.writeAll(" ");
+        try w.writeAll(status);
+        try w.writeAll(index[line_end..]);
+        return true;
+    }
+    return false;
+}
+
 // ------------------------------------------------------------------ tests
 
 test "isoDate renders the epoch, a leap day, and a late date" {
@@ -646,4 +716,70 @@ test "insertInventory reports missing markers" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
     try std.testing.expect(!try insertInventory(&out.writer, "# Index\n", "<!-- inventory:rfc:start -->", "<!-- inventory:rfc:end -->", "- x"));
+}
+
+test "inventoryEntry reads the link and the status separator after it" {
+    const entry = inventoryEntry("- [A title — with a dash](bugs/a.md) — Open").?;
+    try std.testing.expectEqualStrings("bugs/a.md", entry.target);
+    try std.testing.expectEqualStrings("— Open", "- [A title — with a dash](bugs/a.md) — Open"[entry.status_start.?..]);
+
+    const bare = inventoryEntry("- [No status](bugs/b.md)").?;
+    try std.testing.expectEqualStrings("bugs/b.md", bare.target);
+    try std.testing.expect(bare.status_start == null);
+
+    try std.testing.expect(inventoryEntry("just prose") == null);
+}
+
+test "setInventoryStatus rewrites only the matching entry" {
+    const index =
+        "<!-- inventory:bug:start -->\n" ++
+        "- [First](bugs/a.md) — Open\n" ++
+        "\n" ++
+        "- [Second](bugs/b.md) — Open\n" ++
+        "<!-- inventory:bug:end -->\n";
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expect(try setInventoryStatus(&out.writer, index, "<!-- inventory:bug:start -->", "<!-- inventory:bug:end -->", "bugs/b.md", "Resolved"));
+    try std.testing.expectEqualStrings(
+        "<!-- inventory:bug:start -->\n" ++
+            "- [First](bugs/a.md) — Open\n" ++
+            "\n" ++
+            "- [Second](bugs/b.md) — Resolved\n" ++
+            "<!-- inventory:bug:end -->\n",
+        out.written(),
+    );
+}
+
+test "setInventoryStatus keeps an em dash that belongs to the title" {
+    const index = "<!-- s -->\n- [Run — never finishes](investigations/x.md) — Investigating\n<!-- e -->\n";
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expect(try setInventoryStatus(&out.writer, index, "<!-- s -->", "<!-- e -->", "investigations/x.md", "Resolved"));
+    try std.testing.expectEqualStrings(
+        "<!-- s -->\n- [Run — never finishes](investigations/x.md) — Resolved\n<!-- e -->\n",
+        out.written(),
+    );
+}
+
+test "setInventoryStatus adds a status field to an entry without one" {
+    const index = "<!-- s -->\n- [Bare](a.md)\n<!-- e -->\n";
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expect(try setInventoryStatus(&out.writer, index, "<!-- s -->", "<!-- e -->", "a.md", "Current"));
+    try std.testing.expectEqualStrings("<!-- s -->\n- [Bare](a.md) — Current\n<!-- e -->\n", out.written());
+}
+
+test "setInventoryStatus reports an entry or markers it cannot find" {
+    const index = "<!-- s -->\n- [A](a.md) — Draft\n<!-- e -->\n";
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expect(!try setInventoryStatus(&out.writer, index, "<!-- s -->", "<!-- e -->", "missing.md", "Current"));
+    try std.testing.expect(!try setInventoryStatus(&out.writer, "# Index\n", "<!-- s -->", "<!-- e -->", "a.md", "Current"));
+}
+
+test "setInventoryStatus does not reach past the end marker" {
+    const index = "<!-- s -->\n- [A](a.md) — Draft\n<!-- e -->\n- [B](b.md) — Draft\n";
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expect(!try setInventoryStatus(&out.writer, index, "<!-- s -->", "<!-- e -->", "b.md", "Current"));
 }
