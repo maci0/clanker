@@ -204,18 +204,33 @@ test "columns stay aligned and the thinking breakdown renders from the totals" {
 
     // Every row's numeric columns start at the same offset, including the
     // row whose provider name exceeds the default column width.
+    // The numeric block begins right after the two padded name columns, so
+    // every data row must reach it at the same index. Searching for a value
+    // instead compares unlike columns: `kimi-k3` has no calls token to find
+    // and falls through to its cost cell, which is 40-odd columns further
+    // right than the calls cell the long-provider row matches, so the
+    // assertion could never hold no matter how well the table lined up.
+    var provider_w: usize = 15;
+    var model_w: usize = 30;
+    for (rows) |r| {
+        provider_w = @max(provider_w, r.provider.len);
+        model_w = @max(model_w, r.model.len);
+    }
+    const numbers_at = provider_w + 1 + model_w;
+
     var it = std.mem.splitScalar(u8, text, '\n');
-    var offset: ?usize = null;
+    _ = it.next(); // the header names the columns; the rows carry the figures
     while (it.next()) |line| {
         if (line.len == 0) continue;
-        const calls_at = std.mem.indexOf(u8, line, " 29 ") orelse
-            std.mem.indexOf(u8, line, " 31 ") orelse
-            std.mem.indexOf(u8, line, "    0.02") orelse continue;
-        if (offset) |o| {
-            try std.testing.expectEqual(o, calls_at);
-        } else {
-            offset = calls_at;
-        }
+        // The thinking breakdown is a trailing note, not a row of the table.
+        if (std.mem.startsWith(u8, line, "thinking ")) continue;
+        try std.testing.expect(line.len > numbers_at);
+        // Everything before the numeric block is the padded names; the block
+        // itself opens with the right-aligned calls field.
+        const calls_cell = line[numbers_at .. numbers_at + 5];
+        const trimmed = std.mem.trim(u8, calls_cell, " ");
+        try std.testing.expect(trimmed.len > 0);
+        for (trimmed) |c| try std.testing.expect(std.ascii.isDigit(c));
     }
 }
 

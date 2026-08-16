@@ -60,7 +60,6 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   append.
 - `rfc create` reports the research notes it could have linked, as
   `research_available`, when it was given no `research` path.
-
 - `agent.sandbox_follow_symlinks` (default `false`): allow a component of an
   already-granted sandbox path to be a symlink. Following a link out of the
   sandbox root is a known security risk, so it stays off unless the operator
