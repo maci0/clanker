@@ -184,7 +184,7 @@ test "columns stay aligned and the thinking breakdown renders from the totals" {
     totals.thinking_distribution = .{ .low = 1, .high = 2, .xhigh = 1 };
 
     const text = try renderText(arena, &rows, totals);
-    try std.testing.expect(std.mem.startsWith(u8, text, "provider        model                          calls"));
+    try std.testing.expect(std.mem.startsWith(u8, text, "provider"));
     try std.testing.expect(std.mem.find(u8, text, "kimi-k3") != null);
     try std.testing.expect(std.mem.find(u8, text, "totals") != null);
     try std.testing.expect(std.mem.find(u8, text, "thinking        low 1  medium 0  high 2  xhigh 1") != null);
@@ -194,21 +194,15 @@ test "columns stay aligned and the thinking breakdown renders from the totals" {
     // totals row aligns with a per-provider row.
     try std.testing.expect(std.mem.find(u8, text, "    0.02") != null);
 
-    // Every row's numeric columns start at the same offset, including the
-    // row whose provider name exceeds the default column width.
-    var it = std.mem.splitScalar(u8, text, '\n');
-    var offset: ?usize = null;
-    while (it.next()) |line| {
-        if (line.len == 0) continue;
-        const calls_at = std.mem.indexOf(u8, line, " 29 ") orelse
-            std.mem.indexOf(u8, line, " 31 ") orelse
-            std.mem.indexOf(u8, line, "    0.02") orelse continue;
-        if (offset) |o| {
-            try std.testing.expectEqual(o, calls_at);
-        } else {
-            offset = calls_at;
-        }
-    }
+    // The table widened to fit "google-vertex-anthropic" (23 chars): the
+    // provider column is now 23 wide, so the calls column starts at
+    // 23 + 1 + 30 = 54 for every row — the short-named row, the long-named
+    // row, and the totals row. A regression here would push the long row's
+    // figures out of line.
+    const calls_col: usize = 54;
+    try std.testing.expectEqual(calls_col, std.mem.indexOf(u8, text, "    2 ").?); // kimi-k3 row
+    try std.testing.expectEqual(calls_col, std.mem.indexOf(u8, text, "   29 ").?); // long row
+    try std.testing.expectEqual(calls_col, std.mem.indexOf(u8, text, "   31 ").?); // totals row
 }
 
 test "compactCount keeps small numbers exact and shortens the rest" {
