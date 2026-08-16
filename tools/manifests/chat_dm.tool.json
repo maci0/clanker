@@ -13,6 +13,10 @@
       "text": {
         "type": "string",
         "description": "Message text (max 4096 chars)"
+      },
+      "thread_ts": {
+        "type": "string",
+        "description": "Optional Slack-style thread id: attach this message to the thread of the message that started it (pass the thread_ts echoed by a chat_send or chat_history reply). Messages in the same thread carry the same thread_ts."
       }
     },
     "required": ["to", "text"]
