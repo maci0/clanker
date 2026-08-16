@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [Every completed GET /api/events is logged at ERROR and counted as a server error](bugs/2026-08-17-sse-subscriptions-logged-as-server-errors.md) — Resolved
+
 - [Runs filter's 'failed' keyword throws a TypeError and could never match](bugs/2026-08-17-runs-filter-failed-keyword-throws.md) — Resolved
 
 - [clanker janitor never prunes sub-run graphs](bugs/2026-08-17-janitor-never-prunes-sub-run-graphs.md) — Resolved
@@ -127,6 +129,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [GET /api/events logs as ERROR status=0 and counts as an http error](investigations/2026-08-17-sse-requests-logged-as-errors.md) — Resolved
+
 - [TUI Shift+Enter logs vaxis_parser unhandled ss3 instead of newline](investigations/2026-08-17-tui-shift-enter-ss3-unhandled.md) — Resolved
 
 - [Web UI run history is stale because graph listings sort filenames lexically](investigations/2026-08-17-web-ui-run-history-stale.md) — Resolved

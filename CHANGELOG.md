@@ -485,6 +485,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker serve` no longer logs every completed `GET /api/events` at ERROR,
+  nor counts it as a server error. The SSE handler writes its own `200 OK`
+  rather than going through the shared responder, and it did not report that
+  status back, so each finished subscription was logged with `status=0` and
+  added to `http.errors_total` in `GET /api/metrics` — two per web UI page
+  load, which made the instance's own health number unusable.
+- A `GET /api/events` subscriber whose client has gone now releases its
+  subscriber slot and connection thread immediately instead of at the next
+  write. On an idle bus the first write is the 15-second keepalive ping, so
+  dead subscriptions accumulated over that window against the 32-subscriber
+  and 64-connection ceilings; a browser that reloads often could be answered
+  `503 too many live subscribers`.
+
 - `clanker janitor` now sweeps the graphs of nested runs. Its predicate
   matched only `run-*.json`, while a sub-agent run writes
   `sub-<unix nanoseconds>.json` to the same directory, so those graphs were

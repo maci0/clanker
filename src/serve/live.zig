@@ -6,6 +6,7 @@
 //! queued event rather than blocking a sender.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const raw_http = @import("../util/raw_http.zig");
 
 pub const Topic = enum { chat, mesh, arena, run, metrics, plugin };
@@ -206,32 +207,72 @@ pub fn notePlugin(from: []const u8, data_json: []const u8) void {
     publish(.plugin, json);
 }
 
+/// POLLRDHUP, the event a plain client-side close raises while our own half of
+/// the socket is still open. It has to be asked for, unlike POLLHUP/POLLERR/
+/// POLLNVAL, and POLLHUP does not stand in for it: POLLHUP wants both halves
+/// shut, which never happens here because the server half stays open. Zig
+/// carries the constant on `EPOLL` but not on `POLL` (0x2000 on every Linux
+/// architecture clanker targets), so it is spelled out. Elsewhere this is 0 and
+/// the loop falls back to noticing the hangup on its next write.
+const poll_hangup: i16 = if (@hasDecl(std.posix.POLL, "RDHUP"))
+    std.posix.POLL.RDHUP
+else if (builtin.os.tag == .linux)
+    0x2000
+else
+    0;
+const poll_dead: i16 = poll_hangup | std.posix.POLL.HUP | std.posix.POLL.ERR | std.posix.POLL.NVAL;
+
+/// The subscriber's 50ms idle tick, waited out on the socket instead of on the
+/// clock, so a client that has gone away is noticed now rather than at the next
+/// write. Nothing writes to an idle bus, so without this a hung-up subscriber
+/// held one of `max_subs` slots and one connection thread until the 15s
+/// keepalive ping -- and the web UI opens two streams per page load (a probe
+/// fetch it cancels, then the EventSource), so reloads stacked up dead slots.
+/// Returns true when the peer is gone. Residual posix: raw-fd SSE push bus.
+fn idleTickSawHangup(fd: std.posix.fd_t) bool {
+    var pfd = [1]std.posix.pollfd{.{ .fd = fd, .events = poll_hangup, .revents = 0 }};
+    // poll retries EINTR itself, so what is left is NetworkDown /
+    // SystemResources / Unexpected. None of those prove the peer is gone;
+    // pace the tick on the clock instead and look again next time round.
+    const ready = std.posix.poll(&pfd, 50) catch {
+        const ts: std.posix.timespec = .{ .sec = 0, .nsec = 50 * std.time.ns_per_ms };
+        _ = std.c.nanosleep(&ts, null);
+        return false;
+    };
+    return ready > 0 and (pfd[0].revents & poll_dead) != 0;
+}
+
 /// Long-lived SSE write loop. Caller must have already decided this
 /// connection is not keep-alive. Residual posix: raw-fd SSE push bus, same
 /// hand-rolled HTTP family as cli.zig's server.
-pub fn serveSse(fd: std.posix.fd_t, topics: []const u8) void {
+///
+/// Returns the status line it wrote, because it writes the response itself
+/// rather than going through cli.zig's `respond`. The caller must store it in
+/// `request_status`: a subscription that ran to a client hangup is an ordinary
+/// 200, and leaving the status at 0 logged every one of them at ERROR and
+/// counted it in `/api/metrics`' `http.errors_total`.
+pub fn serveSse(fd: std.posix.fd_t, topics: []const u8) u16 {
     const id = subscribe(parseTopics(topics)) orelse {
         const body = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 52\r\n\r\n{\"ok\":false,\"error\":\"too many live subscribers\"}";
         raw_http.writeAll(fd, body) catch {};
-        return;
+        return 503;
     };
     defer unsubscribe(id);
-    raw_http.writeAll(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\nX-Accel-Buffering: no\r\n\r\nretry: 2000\n\n") catch return;
+    raw_http.writeAll(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\nX-Accel-Buffering: no\r\n\r\nretry: 2000\n\n") catch return 200;
     var evbuf: [event_cap]u8 = undefined;
     var ssebuf: [event_cap + 32]u8 = undefined;
     var idle: u32 = 0;
     while (true) {
         if (take(id, &evbuf)) |ev| {
             const framed = writeSse(&ssebuf, ev.json) orelse continue;
-            raw_http.writeAll(fd, framed) catch return;
+            raw_http.writeAll(fd, framed) catch return 200;
             idle = 0;
             continue;
         }
-        const ts: std.posix.timespec = .{ .sec = 0, .nsec = 50 * std.time.ns_per_ms };
-        _ = std.c.nanosleep(&ts, null);
+        if (idleTickSawHangup(fd)) return 200;
         idle += 1;
         if (idle >= 300) {
-            raw_http.writeAll(fd, ": ping\n\n") catch return;
+            raw_http.writeAll(fd, ": ping\n\n") catch return 200;
             idle = 0;
         }
     }

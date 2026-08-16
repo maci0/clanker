@@ -6731,7 +6731,9 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
                 return;
             }
             request_keep_alive = false;
-            live.serveSse(stream.socket.handle, live.topicsFromTarget(target));
+            // serveSse writes its own response bytes, so it -- not `respond` --
+            // is what knows this request's status.
+            request_status = live.serveSse(stream.socket.handle, live.topicsFromTarget(target));
         } else if (is_live_publish) {
             handleLivePublish(gpa, body, stream);
         } else if (is_mesh_map) {

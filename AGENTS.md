@@ -281,7 +281,15 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   every other refusal to 400; `requestPath` strips the query before a
   resource id is read off the target. A handler that writes the HTTP
   response itself (`writeAllFd`) must set `request_status`; leaving it
-  0 logs ERROR even when the client got 200 (`/webui/plugins/*`).
+  0 logs ERROR even when the client got 200 (`/webui/plugins/*`) and adds
+  it to `http.errors_total`. That includes a handler that only *returns* a
+  status: `live.serveSse` writes its own header and streams for minutes, so
+  its `u16` return is the only thing that knows the request succeeded.
+  Its idle tick is a `poll` for POLLRDHUP, not a sleep — a subscriber that
+  waits for a failing write holds one of `max_subs` slots until the 15s
+  keepalive ping. `std.posix.POLL` has no `RDHUP` on a libc target (Zig
+  puts it on `EPOLL`), and POLLHUP is not a substitute: it wants both
+  halves shut, and the server half is open.
   `std.json.Stringify.objectField` writes only the key; a raw JSON
   value after it needs `beginWriteRaw` (the colon lives there). `GET /api/logs` is the `logs` guest
   (`state/logs/` only); `GET /api/sessions` is the `sessions` guest

@@ -10,4 +10,5 @@ comptime {
     _ = @import("mesh_test.zig");
     _ = @import("journeys_test.zig");
     _ = @import("records_api_test.zig");
+    _ = @import("live_sse_test.zig");
 }
