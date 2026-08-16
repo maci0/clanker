@@ -4,11 +4,11 @@
 
 - **What failed:** safeJoinSecure refuses any path component that is a symlink, so a checkout whose state/ is a symlink into external storage had every guest call under state/ denied: clanker schedule list and add failed outright and run graphs were never persisted. Fixed by ADR 0017's agent.sandbox_follow_symlinks opt-in; the flag then did not work because applyAgentFields never copied it into the merged config.
 - **Impact:** To be confirmed.
-- **Resolution:** Resolved on 2026-08-16. agent.sandbox_follow_symlinks (ADR 0017) plus the missing applyAgentFields copy; verified by schedule round-trip and a persisted run graph.
+- **Resolution:** Resolved on 2026-08-16. Re-resolved 2026-08-17: follow_symlinks now also copied into the parallel ToolWorker sandbox literal (src/agent/loop.zig); verified with a 4-call file_ops/list_files probe on .local
 
 ## Status
 
-Resolved on 2026-08-16. agent.sandbox_follow_symlinks (ADR 0017) plus the missing applyAgentFields copy; verified by schedule round-trip and a persisted run graph.
+Resolved on 2026-08-16. Re-resolved 2026-08-17: follow_symlinks now also copied into the parallel ToolWorker sandbox literal (src/agent/loop.zig); verified with a 4-call file_ops/list_files probe on .local
 
 ## Symptom and impact
 
@@ -79,3 +79,10 @@ alongside an unrelated base key; and another asserts it defaults to false.
 ## References
 
 - Investigation: none yet
+## Follow-up 2026-08-17: flag was ignored on the parallel tool path
+
+The resolution was incomplete. `agent.sandbox_follow_symlinks` was wired into `host.sandboxFor` (src/sandbox/host.zig:337) but the parallel-path `ToolWorker` in src/agent/loop.zig builds its own `Sandbox` literal and omitted `.follow_symlinks`, so it defaulted to false — the same omission class the literal's own comments record for `exec_allow`/`env_allow`. Any turn issuing 2+ tool calls ran on that path and still refused symlinked granted paths (`.local`, `state/`).
+
+Evidence: with the flag set since 18:57 on 2026-08-16, a 4-call probe run (`clanker run` with file_ops stat / list_files on .local) was refused at 22:42; state/autolearn.jsonl records .local refusals at 21:50, after the config change.
+
+Fix: `.follow_symlinks = self.cfg.agent.sandbox_follow_symlinks` added to the ToolWorker sandbox literal. Verified by re-running the same 4-call probe: .local stat and listing now succeed. Separately, `file_ops` gained a narrow `zig-out/gate-failure.txt` fs_prefixes entry — that refusal was a genuine manifest gap, not the symlink defect.

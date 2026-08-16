@@ -15,6 +15,7 @@
     "state",
     "build.zig",
     "build.zig.zon",
+    "zig-out/gate-failure.txt",
     "README.md",
     "AGENTS.md",
     ".agents",

@@ -469,6 +469,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `agent.sandbox_follow_symlinks` now also applies when a turn issues two or
+  more tool calls. The parallel tool path builds its own sandbox and omitted
+  the flag, so symlinked granted paths (`state/`, `.local`) were still
+  refused there while single-call turns worked.
+- The `file_ops` tool can now reach `zig-out/gate-failure.txt`, so a model
+  can inspect why a gate run failed instead of being refused by sandbox
+  policy.
 - `clanker autolearn` no longer fails with "no observations to synthesize"
   (with `--model`) or silently aggregates nothing (without) once
   `state/autolearn.jsonl` exceeds 1 MiB. The guest read the whole log with a

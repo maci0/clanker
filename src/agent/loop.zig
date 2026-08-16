@@ -3307,6 +3307,10 @@ const ToolWorker = struct {
             .root_dir = self.cfg.agent.sandbox_root,
             .shared_root = self.cfg.agent.shared_root,
             .extra_roots = self.cfg.agent.sandbox_roots,
+            // Same omission class as exec_allow/env_allow below: without this
+            // the parallel path refused symlinked granted paths (state/,
+            // .local) that the sequential path allowed under ADR 0017's flag.
+            .follow_symlinks = self.cfg.agent.sandbox_follow_symlinks,
             .network_allow = self.tool.network_allow,
             .fs_prefixes = self.tool.fs_prefixes,
             // The named host channels (ck_harness_config, ck_std_api,
