@@ -16332,52 +16332,97 @@ fn cmdAutoresearch(init: std.process.Init, opts: Options) !void {
 
 fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
     const io = init.io;
+    const gpa = init.gpa;
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
-    const workflows_mod = @import("agent/workflows.zig");
-    const wfs = try workflows_mod.loadAllMerged(arena, io, cfg.agent.workflows_dir);
+    // The scan of workflows_dir + .cursor/workflows belongs to the `workflows`
+    // WASM tool (single implementation, shared workflows_logic.zig): the CLI
+    // calls it rather than re-reading the same markdown files natively, the
+    // same shape as `clanker schedule list` -> the `schedule` guest. Only the
+    // config-driven disabled case is decided here, so the message stays local.
     const sub = opts.workflow_sub orelse "list";
+    if (cfg.agent.workflows_dir.len == 0) {
+        if (std.mem.eql(u8, sub, "list")) {
+            try writeStdOut(io, "no workflows found (workflows disabled: agent.workflows_dir is empty)\n");
+        } else {
+            printUsageError(io, "workflows are disabled: agent.workflows_dir is empty", .{});
+            std.process.exit(1);
+        }
+        return;
+    }
+
+    // Tool input: {} lists, {"name"} shows, {"name","args"} expands.
+    var ibuf: [1024]u8 = undefined;
+    var iw: std.Io.Writer = .fixed(&ibuf);
+    var is = std.json.Stringify{ .writer = &iw, .options = .{} };
+    try is.beginObject();
+    if (opts.workflow_name) |name| {
+        try is.objectField("name");
+        try is.write(name);
+    }
+    if (std.mem.eql(u8, sub, "run")) {
+        try is.objectField("args");
+        try is.write(opts.workflow_args orelse "");
+    }
+    try is.endObject();
+    const raw = try toolJson(io, gpa, arena, &cfg, init.environ_map, "workflows", ibuf[0..iw.end]);
+    const resp = try std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true });
+    const ok = resp == .object and (resp.object.get("ok") orelse .{ .bool = false }) == .bool and resp.object.get("ok").?.bool;
+
     if (std.mem.eql(u8, sub, "list")) {
-        if (wfs.len == 0) {
-            try writeStdOut(io, "no workflows found");
-            if (cfg.agent.workflows_dir.len > 0) {
-                var buf: [512]u8 = undefined;
-                const msg = std.fmt.bufPrint(&buf, " in {s}/ (add markdown files there)\n", .{cfg.agent.workflows_dir}) catch ".\n";
-                try writeStdOut(io, msg);
-            } else {
-                try writeStdOut(io, " (workflows disabled: agent.workflows_dir is empty)\n");
-            }
+        if (!ok) {
+            try writeStdOut(io, "no workflows found\n");
             return;
         }
-        for (wfs) |wf| {
+        const list = if (resp.object.get("workflows")) |v| (if (v == .array) v.array.items else &.{}) else &.{};
+        if (list.len == 0) {
+            try writeStdOut(io, "no workflows found");
+            var buf: [512]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, " in {s}/ (add markdown files there)\n", .{cfg.agent.workflows_dir}) catch ".\n";
+            try writeStdOut(io, msg);
+            return;
+        }
+        for (list) |item| {
+            const name = if (item.object.get("name")) |n| (if (n == .string) n.string else "") else "";
+            const hint = if (item.object.get("arg_hint")) |h| (if (h == .string) h.string else "") else "";
+            const desc = if (item.object.get("description")) |d| (if (d == .string) d.string else "") else "";
             var buf: [1024]u8 = undefined;
-            const line = if (wf.arg_hint.len > 0)
-                std.fmt.bufPrint(&buf, "{s} {s}: {s}\n", .{ wf.name, wf.arg_hint, wf.description }) catch continue
+            const line = if (hint.len > 0)
+                std.fmt.bufPrint(&buf, "{s} {s}: {s}\n", .{ name, hint, desc }) catch continue
             else
-                std.fmt.bufPrint(&buf, "{s}: {s}\n", .{ wf.name, wf.description }) catch continue;
+                std.fmt.bufPrint(&buf, "{s}: {s}\n", .{ name, desc }) catch continue;
             try writeStdOut(io, line);
         }
         return;
     }
+
+    const name = opts.workflow_name orelse blk: {
+        const what: []const u8 = if (std.mem.eql(u8, sub, "show")) "show" else "run";
+        usageExitFor(io, "workflow", "workflow {s} needs a name; run `clanker workflow list` to see names", .{what});
+        break :blk "";
+    };
+    if (!ok) {
+        printUsageError(io, "no workflow named '{s}'; run `clanker workflow list` to see names", .{name});
+        std.process.exit(1);
+    }
     if (std.mem.eql(u8, sub, "show")) {
-        const name = opts.workflow_name orelse
-            usageExitFor(io, "workflow", "workflow show needs a name; run `clanker workflow list` to see names", .{});
-        const wf = workflows_mod.findByName(wfs, name) orelse {
-            printUsageError(io, "no workflow named '{s}'; run `clanker workflow list` to see names", .{name});
-            std.process.exit(1);
-        };
-        try writeStdOut(io, wf.body);
+        const body = workflowBody(resp) orelse "";
+        try writeStdOut(io, body);
         try writeStdOut(io, "\n");
         return;
     }
     if (std.mem.eql(u8, sub, "run")) {
-        const name = opts.workflow_name orelse
-            usageExitFor(io, "workflow", "workflow run needs a name; run `clanker workflow list` to see names", .{});
-        const wf = workflows_mod.findByName(wfs, name) orelse {
-            printUsageError(io, "no workflow named '{s}'; run `clanker workflow list` to see names", .{name});
-            std.process.exit(1);
+        // The guest expands non-empty args itself. Empty args fall through to
+        // its show shape, so expand natively from the shared logic (the same
+        // function the guest calls) to preserve `workflow run <name>`.
+        const expanded = blk: {
+            if (resp.object.get("prompt")) |p| {
+                if (p == .string) break :blk p.string;
+            }
+            const body = workflowBody(resp) orelse "";
+            const workflows_mod = @import("agent/workflows.zig");
+            break :blk try workflows_mod.instantiate(arena, body, "");
         };
-        const expanded = try workflows_mod.instantiate(arena, wf.body, opts.workflow_args orelse "");
         var run_opts = opts;
         run_opts.command = .run;
         run_opts.task = expanded;
