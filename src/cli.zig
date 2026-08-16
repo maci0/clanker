@@ -4287,7 +4287,10 @@ fn runDelta(delta: []const u8) void {
     if (run_stdout_color) {
         run_md.feed(&w.interface, delta);
     } else {
-        w.interface.writeAll(delta) catch {};
+        // Same fail-fast as the color branch above: a closed stdout pipe must
+        // not keep taking a failed write + flush per delta for the rest of
+        // the stream.
+        w.interface.writeAll(delta) catch return;
     }
     w.interface.flush() catch {};
 }
@@ -9334,8 +9337,10 @@ fn handleConfigRawSet(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stre
 
     const check_dir_path = "state/cache/config-check";
     const cwd = std.Io.Dir.cwd();
-    ensure_dir.ensureDir(cwd, io, "state") catch {};
-    ensure_dir.ensureDir(cwd, io, "state/cache") catch {};
+    // ensureDir creates missing parents, so this one call both makes the
+    // whole state/cache/config-check chain and reports a failure (500
+    // below). The earlier explicit pre-ensuring of "state" and "state/cache"
+    // swallowed their errors and was redundant with this guarded call.
     ensure_dir.ensureDir(cwd, io, check_dir_path) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not create the validation directory\"}");
         return;
