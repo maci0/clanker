@@ -1,26 +1,32 @@
-@AGENTS.md
+# Use clanker's own tooling — mandatory
 
-# Use clanker's own tooling
+**If clanker implements a verb for the task, you must use that verb.** Ad-hoc
+shell — `grep`, `find`, `rm`, hand-written markdown, a hand-rolled `git`
+sequence — is the fallback for what clanker does not implement, never the
+default. Reaching for shell when a verb exists is a defect, not a shortcut.
 
-clanker is both the program you are changing and the program you work with.
-Prefer its verbs over ad-hoc shell for anything it already implements.
+Before starting any task, ask: *does clanker already have a verb for this?*
+The tables below answer that; `clanker --help` and `clanker <verb> --help`
+answer the rest. Search records with `clanker reports search` / `clanker rfc
+search`, not `grep`. Clean up with `clanker janitor`, not `rm` or
+`find -delete`. Commit with `clanker commit`, verify with `clanker gate`.
 
-The reason is the plugin boundary, not convenience. Nearly every verb below is
-a sandboxed WASM guest plus a manifest, and the CLI, the web UI, and the agent
-all call that one implementation — `toolText` / `toolJson` in `cli.zig` are
-that call. Reaching for `grep`, `find`, or hand-written markdown builds a
-second implementation that drifts from the first, skips the descriptor's path
-and command policy, and leaves no durable record. `clanker reports search`
-reads the same store the agent reads; a `grep` over `docs/` does not.
-
-So: if a verb exists for the task, use it. Shell is the fallback for what
-clanker does not implement, not the default.
+The reason is the plugin boundary, not convenience. clanker is both the program
+you are changing and the program you work with. Nearly every verb below is a
+sandboxed WASM guest plus a manifest, and the CLI, the web UI, and the agent all
+call that one implementation — `toolText` / `toolJson` in `cli.zig` are that
+call. Reaching for `grep`, `find`, or hand-written markdown builds a second
+implementation that drifts from the first, skips the descriptor's path and
+command policy, and leaves no durable record. `clanker reports search` reads the
+same store the agent reads; a `grep` over `docs/` does not.
 
 **Check before you assert.** A verb's purpose is written down. Before
 describing what one does, read its record: `docs/README.md` for the
 documentation taxonomy, `docs/adrs/` for decisions already made, `docs/prds/`
 for what a feature is meant to be, `docs/manifest.md` for what a descriptor
 may grant. `--help` is the surface, not the design.
+
+@AGENTS.md
 
 ## The record stores, and which is which
 
