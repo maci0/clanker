@@ -359,7 +359,20 @@ pub const Options = struct {
     research_arg2: ?[]const u8 = null,
     research_arg3: ?[]const u8 = null,
     research_arg4: ?[]const u8 = null,
+    /// `mesh <sub> [arg]`: "status" (default), "join" takes host:port,
+    /// "leave"/"admit"/"deny" take a peer id. Absent leave is self-leave.
+    mesh_sub: []const u8 = "status",
+    mesh_arg1: ?[]const u8 = null,
 };
+
+fn isMeshSub(name: []const u8) bool {
+    return std.mem.eql(u8, name, "status") or
+        std.mem.eql(u8, name, "join") or
+        std.mem.eql(u8, name, "leave") or
+        std.mem.eql(u8, name, "pending") or
+        std.mem.eql(u8, name, "admit") or
+        std.mem.eql(u8, name, "deny");
+}
 
 /// Optional out-param for `parse`: on a parse error, holds the offending
 /// token/flag/value so the caller can report *what* was wrong, not just the
@@ -969,8 +982,14 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 return error.UnknownArg;
             }
         } else if (opts.command == .mesh) {
-            if (std.mem.eql(u8, opts.mesh_sub, "status") and opts.mesh_arg1 == null and isMeshSub(a)) {
-                opts.mesh_sub = a;
+            if (std.mem.eql(u8, opts.mesh_sub, "status") and opts.mesh_arg1 == null) {
+                if (isMeshSub(a)) {
+                    opts.mesh_sub = a;
+                } else {
+                    setDiag(diag, a);
+                    if (cmd_out) |c| c.* = opts.command;
+                    return error.BadSubcommand;
+                }
             } else if (opts.mesh_arg1 == null) {
                 opts.mesh_arg1 = a;
             } else {
@@ -1816,6 +1835,7 @@ const specs = [_]Spec{
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
     .{ .command = .notify, .usage = "notify <peer> \"<message>\"", .blurb = "send a notification to a peer", .group = .peers },
     .{ .command = .phonebook, .usage = "phonebook", .blurb = "list peer agent cards", .group = .peers },
+    .{ .command = .mesh, .usage = "mesh [status|join|leave|pending|admit|deny]", .blurb = "join or leave the clanker mesh, or inspect it", .group = .peers, .flags = &.{.webui_port}, .detail = "Talks to the local `clanker serve` over loopback HTTP. It never opens a\nmesh socket; serve owns those. `--webui-port` selects which serve when\nseveral run on one host (same protocol as two machines).\n\nstatus                 members, listen address, admission (default)\njoin <host:port>       dial that member\nleave [<peer-id>]      drop one peer, or leave the mesh yourself\npending                JOIN requests waiting for admit/deny\nadmit <peer-id>        accept a pending JOIN\ndeny <peer-id>         refuse a pending JOIN\n\n--webui-port <port>    local serve port (default 17921, or [serve].webui_port)\n\nRefuses if serve is not up, naming `clanker serve` and `modules.mesh`.\nSharing a workspace is a later verb (`workspace_share`); this command is\ninstance membership only." },
 
     .{ .command = .setup, .usage = "setup", .blurb = "guided first run: check config, keys and tools", .group = .maintain, .detail = "Scaffolds what is missing, says which provider this environment can\nactually reach, and finishes with the same checks `clanker doctor` runs." },
     .{ .command = .prune, .usage = "janitor [--yes]", .blurb = "sweep up what old runs left behind", .group = .maintain, .flags = &.{.yes}, .detail = "Also reachable as `clanker prune`.\n\nReports by default and deletes nothing. --yes removes: staging copies left by\nimprove runs that were killed, run graphs beyond the newest 200, improve logs\nbeyond the newest 20, and the worktrees of goals that have been archived or\nabandoned whose branch is already merged. Sessions, goals, learnings and chat\nhistory are never touched, and neither is a worktree whose branch still holds\ncommits the base does not." },
@@ -1914,6 +1934,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .schedule => try cmdSchedule(init, opts),
         .reports => try cmdReports(init, opts),
         .research => try cmdResearch(init, opts),
+        .mesh => try cmdMesh(init, opts),
     }
 }
 
