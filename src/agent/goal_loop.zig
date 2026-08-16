@@ -112,6 +112,10 @@ pub fn evaluatorTask(alloc: std.mem.Allocator, condition: []const u8, answer: []
 
 /// Parse the evaluator's small JSON contract. Malformed or incomplete output
 /// is conservative: it keeps working and names the failure to the next turn.
+fn statusTrimByte(b: u8) bool {
+    return b == ' ' or b == '\t' or b == '\r' or b == '\n';
+}
+
 pub fn parseDecision(alloc: std.mem.Allocator, text: []const u8) Decision {
     const Parsed = struct { status: []const u8 = "", reason: []const u8 = "" };
     const parsed = std.json.parseFromSliceLeaky(Parsed, alloc, text, .{ .ignore_unknown_fields = true }) catch
@@ -121,7 +125,12 @@ pub fn parseDecision(alloc: std.mem.Allocator, text: []const u8) Decision {
     // verified fix or genuine blocker is recognized instead of misread as continue,
     // which would burn the turn budget re-attempting work already judged. Empty and
     // unknown statuses stay conservative below.
-    const status_norm = alloc.dupe(u8, parsed.status) catch return .{ .verdict = .continue_, .reason = "the evaluator returned an unknown status; verify the condition directly and continue working" };
+    var status_start: usize = 0;
+    while (status_start < parsed.status.len and statusTrimByte(parsed.status[status_start])) status_start += 1;
+    var status_end: usize = parsed.status.len;
+    while (status_end > status_start and statusTrimByte(parsed.status[status_end - 1])) status_end -= 1;
+    const status_trimmed = parsed.status[status_start..status_end];
+    const status_norm = alloc.dupe(u8, status_trimmed) catch return .{ .verdict = .continue_, .reason = "the evaluator returned an unknown status; verify the condition directly and continue working" };
     defer alloc.free(status_norm);
     for (status_norm) |*c| c.* = std.ascii.toLower(c.*);
     const verdict = verdict_names.get(status_norm) orelse
