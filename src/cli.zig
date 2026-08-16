@@ -48,6 +48,7 @@ const repl = @import("tui/repl.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const phonebook = @import("peers/phonebook.zig");
 const mesh = @import("peers/mesh.zig");
+const mesh_cmd = @import("peers/command.zig");
 const mesh_net = @import("serve/mesh_net.zig");
 const live = @import("serve/live.zig");
 const skills_logic = @import("skills_logic");
@@ -117,6 +118,9 @@ pub const Command = enum {
     chat,
     stats,
     phonebook,
+    /// `mesh status|join|leave|pending|admit|deny`: loopback client of the
+    /// local serve mesh control plane (PRD 0011). Never opens a mesh socket.
+    mesh,
     serve,
     /// The libvaxis-backed REPL (docs/ROADMAP.md migration). `src/tui/repl.zig`.
     repl,
@@ -837,6 +841,8 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.command = .schedule;
             } else if (std.mem.eql(u8, a, "reports") or std.mem.eql(u8, a, "report")) {
                 opts.command = .reports;
+            } else if (std.mem.eql(u8, a, "mesh")) {
+                opts.command = .mesh;
             } else if (std.mem.eql(u8, a, "research")) {
                 opts.command = .research;
             } else if (std.mem.eql(u8, a, "version")) {
@@ -958,6 +964,15 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.schedule_arg1 = a;
             } else if (opts.schedule_arg2 == null) {
                 opts.schedule_arg2 = a;
+            } else {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
+        } else if (opts.command == .mesh) {
+            if (std.mem.eql(u8, opts.mesh_sub, "status") and opts.mesh_arg1 == null and isMeshSub(a)) {
+                opts.mesh_sub = a;
+            } else if (opts.mesh_arg1 == null) {
+                opts.mesh_arg1 = a;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
