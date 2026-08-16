@@ -21,8 +21,9 @@ through a gated loop. Follow these conventions when changing this codebase.
 - `zig build proxy` — build `clanker-proxy`, the OpenAI/Anthropic
   compatibility proxy as a standalone binary (no web UI, agent, TUI, or tool
   host). Not part of the default install.
-- `clanker gate` — run build, test, tools, fmt, lint, tools-ts-toolchain,
-  and release-contract gates. Release policy and version source of truth:
+- `clanker gate` — run build, test, tools, fmt, lint, provider-kind,
+  tools-ts-toolchain, and release-contract gates. Release policy and version
+  source of truth:
   [RELEASES.md](RELEASES.md); consumer-visible changes: [CHANGELOG.md](CHANGELOG.md).
 - A `zig build test` step that fails while naming no test is usually the tree
   moving under the build (another session editing, or a second test binary
@@ -79,6 +80,10 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   minting behind it (service-account JWT or gcloud ADC `authorized_user`,
   no subprocess). Adding a provider is one file, one registry row, and one
   `ProviderKind` tag in `config.zig` — never a new `switch (provider.kind)`.
+  The `provider-kind` gate in `src/gate/checks.zig` scans the tree for
+  kind-switches and kind comparisons outside `src/llm/providers/` and fails
+  `clanker gate` on one; the proxy's Vertex Gemini model-name sniff is the one
+  allowed comparison (it decides on the model name, not the kind).
   The OpenAI/Anthropic proxy reads `Provider.proxy` (family, speaks,
   enabled, chat-only, vtable URL, Vertex body rewrite, Anthropic header
   overlay); `auth.Spec.quota_from_project` is the Vertex quota header. The

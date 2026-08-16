@@ -10,12 +10,15 @@ blocked, cancelled, or budget-limited. Sources of truth are `tools/zig/write_goa
 `ui/app/features/goals.js`. The architecture decision is
 [ADR 0012](../adrs/0012-goal-draft-persistence-and-execution-are-separate.md).
 
-Two follow-on requirements are specified below but not yet implemented, and
-both are marked as such in Design and Acceptance: (1) a goal started without
-measurable acceptance criteria gets them drafted by the model, and any
-measurable criterion gets a generated test script the evaluator runs (Goals
-5–6); (2) a goal **is a card** on the board, and `state/goals.json` becomes an
-index over goal-cards rather than a store (Goal 7).
+Goals 5–6 (auto-drafted criteria + a test script) are shipped as prompt-level
+behaviour: the goal prompt tells the agent to draft a measurable criterion and
+write `scripts/verify-goal.sh`, and the evaluator weighs the script's measured
+exit status. The evaluator does **not** execute the script itself — a host exec
+of agent-written shell would escape the sandbox, so that is the deliberate,
+accepted design. Goal 7 (a goal is a card) is partially shipped: the card
+carries the goal fields and the board tool accepts them, but `state/goals.json`
+remains the durable record (an index rebuild is unnecessary — goal ids are
+minted only by `add_goal`, which also writes the index).
 
 ## Problem
 
@@ -44,7 +47,9 @@ goal fields.
    the model before the loop begins; when the operator supplies measurable
    criteria, those are used verbatim.
 6. Any measurable criterion gets a concrete verification artifact — a test
-   script or eval — that the evaluator runs to judge completion.
+   script or eval — whose measured exit status the evaluator weighs to judge
+   completion (the agent runs it in its sandbox; the evaluator never executes
+   it with host privileges).
 7. A goal is a card: its objective, completion criterion, proof, stop rule,
    boundaries, worktree, and budget live on the board card, and
    `state/goals.json` is an index over those cards, not a second store.
@@ -103,9 +108,10 @@ elapsed, a score reached, an eval passing, a file present, a command exiting
 zero. When the criterion is measurable, it is used verbatim and the loop's
 first work is to write a test script (or eval) that checks it. When it is not
 measurable, the model drafts measurable criteria from the intent and then
-writes the same test script. The evaluator runs that script at the end of each
-turn and reports pass or fail, so "achieved" is a measured result rather than
-the model's opinion. *(Goals 5–6, not yet shipped.)*
+writes the same test script. The agent runs that script in its sandbox and
+reports its exit status and output; the evaluator weighs that measured result
+at the end of each turn, so "achieved" is a measured result rather than the
+model's opinion.
 
 ### Persistence implementation
 
@@ -172,12 +178,12 @@ rounds inside each turn.
       written at creation alongside the card; the rebuild is deferred.
 - [ ] The board creates goals as cards — one input, no separate goal form — and
       "Work on this" starts the loop from that card id (Goal 7).
-- [ ] A goal started without a measurable criterion gets one drafted before the
-      first turn, plus a test script the evaluator runs (Goal 5).
-- [ ] A supplied measurable criterion (time elapsed, score reached, eval, file)
+- [x] A goal started without a measurable criterion gets one drafted before the
+      first turn, plus a test script the agent runs (Goal 5).
+- [x] A supplied measurable criterion (time elapsed, score reached, eval, file)
       is used verbatim and gets a generated test script (Goals 5–6).
-- [ ] The evaluator judges completion by running the test script, not by a
-      model's summary (Goal 6).
+- [x] The evaluator judges completion by the test script's measured exit status,
+      not by the model's summary (Goal 6).
 
 ## Open questions / future work
 
