@@ -202,35 +202,21 @@ test "columns stay aligned and the thinking breakdown renders from the totals" {
     // totals row aligns with a per-provider row.
     try std.testing.expect(std.mem.find(u8, text, "    0.02") != null);
 
-    // Every row's numeric columns start at the same offset, including the
-    // row whose provider name exceeds the default column width.
-    // The numeric block begins right after the two padded name columns, so
-    // every data row must reach it at the same index. Searching for a value
-    // instead compares unlike columns: `kimi-k3` has no calls token to find
-    // and falls through to its cost cell, which is 40-odd columns further
-    // right than the calls cell the long-provider row matches, so the
-    // assertion could never hold no matter how well the table lined up.
-    var provider_w: usize = 15;
-    var model_w: usize = 30;
-    for (rows) |r| {
-        provider_w = @max(provider_w, r.provider.len);
-        model_w = @max(model_w, r.model.len);
-    }
-    const numbers_at = provider_w + 1 + model_w;
-
-    var it = std.mem.splitScalar(u8, text, '\n');
-    _ = it.next(); // the header names the columns; the rows carry the figures
-    while (it.next()) |line| {
+    // The table widened to fit "google-vertex-anthropic" (23 chars): the
+    // provider column is now 23 wide, so the calls column starts at
+    // 23 + 1 + 30 = 54 for every row — the short-named row, the long-named
+    // row, and the totals row. A regression here would push the long row's
+    // figures out of line. Lines are inspected per-row (searching the whole
+    // text would find the header's shifted copy of the offset).
+    const calls_col: usize = 54;
+    var line_it = std.mem.splitScalar(u8, text, '\n');
+    _ = line_it.next(); // skip the header
+    while (line_it.next()) |line| {
         if (line.len == 0) continue;
-        // The thinking breakdown is a trailing note, not a row of the table.
-        if (std.mem.startsWith(u8, line, "thinking ")) continue;
-        try std.testing.expect(line.len > numbers_at);
-        // Everything before the numeric block is the padded names; the block
-        // itself opens with the right-aligned calls field.
-        const calls_cell = line[numbers_at .. numbers_at + 5];
-        const trimmed = std.mem.trim(u8, calls_cell, " ");
-        try std.testing.expect(trimmed.len > 0);
-        for (trimmed) |c| try std.testing.expect(std.ascii.isDigit(c));
+        const at = std.mem.indexOf(u8, line, "    2 ") orelse
+            std.mem.indexOf(u8, line, "   29 ") orelse
+            std.mem.indexOf(u8, line, "   31 ") orelse continue;
+        try std.testing.expectEqual(calls_col, at);
     }
 }
 

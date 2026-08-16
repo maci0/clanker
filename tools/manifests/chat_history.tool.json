@@ -13,6 +13,10 @@
       "after": {
         "type": "integer",
         "description": "Only messages with ts greater than this (optional; 0 = all)"
+      },
+      "oldest": {
+        "type": "boolean",
+        "description": "Page oldest-first instead of newest-first (default false). Use to walk an entire room from the beginning: set oldest=true with after=0 and keep advancing after past the last ts you received."
       }
     },
     "required": [

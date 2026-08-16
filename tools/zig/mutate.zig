@@ -105,7 +105,5 @@ fn okJson(out: *lib.Out, payload: []const u8) !void {
 }
 
 fn declineJson(out: *lib.Out, reason: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{reason});
-    try out.writeAll(body);
+    return lib.fail(out, reason);
 }
