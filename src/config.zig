@@ -2549,8 +2549,14 @@ pub const Config = struct {
         if (src.web_present) dst.web = src.web;
         // Only override the instance when the local file actually named one:
         // a bare config.local.toml must not replace a stable name with a
-        // pid-based default on every restart.
-        if (src.instance_present) dst.instance = src.instance;
+        // pid-based default on every restart. The present flag is OR-ed too:
+        // load()'s persist-on-first-boot path keys off it, so a local-only
+        // [instance] must count as "named" or every boot appends a duplicate
+        // table to the local file.
+        if (src.instance_present) {
+            dst.instance = src.instance;
+            dst.instance_present = true;
+        }
         // Field-merged rather than whole-section: every field is optional, so
         // a local file that only moves the port must leave a host set by the
         // base file alone instead of resetting it to "unset".
@@ -3076,6 +3082,52 @@ test "config.local.toml can add a model without repeating providers" {
     try std.testing.expect(ds.models.get("deepseek-chat") != null);
     try std.testing.expect(ds.models.get("deepseek-v4-flash") != null);
     try std.testing.expectEqual(@as(u32, 2048), ds.models.get("deepseek-chat").?.max_tokens);
+}
+
+test "config.local.toml [instance] is not re-persisted when base lacks one" {
+    // merge() copies the local instance value but must also mark it present;
+    // otherwise load()'s persist-on-first-boot path appends a second
+    // [instance] table to config.local.toml on every startup (the vendored
+    // TOML parser tolerates the duplicate, so the only symptom is a file
+    // that grows an [instance] block per boot).
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "deepseek"
+        \\
+        \\[providers.deepseek]
+        \\base_url = "https://api.deepseek.com"
+        \\
+        \\[models."deepseek/deepseek-chat"]
+        \\provider = "deepseek"
+        \\
+        ,
+    });
+    try dir.writeFile(io, .{
+        .sub_path = "config.local.toml",
+        .data =
+        \\[instance]
+        \\name = "clanker-robot-arms"
+        \\id = "robot-arms"
+        \\
+        ,
+    });
+    const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqualStrings("clanker-robot-arms", cfg.instance.name);
+    const written = try dir.readFileAlloc(io, "config.local.toml", arena, .limited(1 << 20));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, written, "[instance]"));
 }
 
 test "model temperature outside 0..2 fails at load" {
