@@ -239,7 +239,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
         const joined = join_buf[0..w.end];
         for (policy.patterns) |pat| {
-            if (patternNamesCmd(pat, "git")) governed = true;
+            if (!patternNamesCmd(pat, "git")) continue; // only git-scoped patterns may authorize or lift the deny list
+            governed = true;
             if (globMatch(pat, joined)) allowed = true;
         }
     }
