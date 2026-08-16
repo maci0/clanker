@@ -104,6 +104,8 @@ const FileWorkflow = struct {
     name: []const u8,
     description: []const u8,
     arg_hint: []const u8,
+    tags: []const []const u8 = &.{},
+    chain: bool = false,
     body: []const u8,
     rel_path: []const u8,
 };
@@ -116,6 +118,8 @@ fn parseWorkflow(alloc: std.mem.Allocator, stem: []const u8, rel_path: []const u
     var name = try alloc.dupe(u8, stem);
     var description: []const u8 = "";
     var arg_hint: []const u8 = "";
+    var tags: []const []const u8 = &.{};
+    var chain_json: ?[]const u8 = null;
     var body: []const u8 = raw;
     if (std.mem.startsWith(u8, raw, "---")) {
         const first_nl = std.mem.findScalar(u8, raw, '\n') orelse raw.len;
@@ -143,6 +147,16 @@ fn parseWorkflow(alloc: std.mem.Allocator, stem: []const u8, rel_path: []const u
                         description = try alloc.dupe(u8, val);
                     } else if ((std.ascii.eqlIgnoreCase(key, "argument-hint") or std.ascii.eqlIgnoreCase(key, "arg_hint") or std.ascii.eqlIgnoreCase(key, "args_hint")) and val.len > 0) {
                         arg_hint = try alloc.dupe(u8, val);
+                    } else if (std.ascii.eqlIgnoreCase(key, "tags") and val.len > 0) {
+                        var out_tags: std.ArrayList([]const u8) = .empty;
+                        var parts = std.mem.splitScalar(u8, val, ',');
+                        while (parts.next()) |part| {
+                            const t = std.mem.trim(u8, part, " \t");
+                            if (t.len > 0) out_tags.append(alloc, try alloc.dupe(u8, t)) catch {};
+                        }
+                        tags = out_tags.items;
+                    } else if (std.ascii.eqlIgnoreCase(key, "chain") and val.len > 0) {
+                        chain_json = try alloc.dupe(u8, val);
                     }
                 }
             }
@@ -151,7 +165,7 @@ fn parseWorkflow(alloc: std.mem.Allocator, stem: []const u8, rel_path: []const u
     body = std.mem.trim(u8, body, " \r\n");
     if (description.len == 0) description = try alloc.dupe(u8, inferDescription(body));
     if (description.len == 0) description = try alloc.dupe(u8, "no description");
-    return .{ .name = name, .description = description, .arg_hint = arg_hint, .body = try alloc.dupe(u8, body), .rel_path = try alloc.dupe(u8, rel_path) };
+    return .{ .name = name, .description = description, .arg_hint = arg_hint, .tags = tags, .chain = chain_json != null, .body = try alloc.dupe(u8, body), .rel_path = try alloc.dupe(u8, rel_path) };
 }
 
 fn inferDescription(body: []const u8) []const u8 {
@@ -214,6 +228,12 @@ fn writeList(out: *lib.Out, wfs: []const FileWorkflow) !void {
         try s.write(wf.description);
         try s.objectField("arg_hint");
         try s.write(wf.arg_hint);
+        try s.objectField("tags");
+        try s.beginArray();
+        for (wf.tags) |t| try s.write(t);
+        try s.endArray();
+        try s.objectField("chain");
+        try s.write(wf.chain);
         try s.objectField("rel_path");
         try s.write(wf.rel_path);
         try s.endObject();

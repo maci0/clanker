@@ -6232,7 +6232,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_skills) {
             handleSkills(io, gpa, cfg, acceptsGzip(headers_raw), stream);
         } else if (is_workflows) {
-            handleWorkflows(io, gpa, cfg, acceptsGzip(headers_raw), stream);
+            handleWorkflows(io, gpa, cfg, environ_map, stream);
         } else if (is_goals) {
             handleGoals(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_provider_models) {
@@ -10862,49 +10862,18 @@ fn handleSkills(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, a
     respondCompressible(arena, stream, accepts_gzip, out.written());
 }
 
-fn handleWorkflows(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+/// `GET /api/workflows` — the `workflows` guest owns the scan (workflows_dir
+/// from harness config, `.cursor/workflows` fallback, frontmatter parsing);
+/// this handler only relays its list answer.
+fn handleWorkflows(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const w_mod = @import("agent/workflows.zig");
-    const list = w_mod.loadAllMerged(arena, io, cfg.agent.workflows_dir) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"workflows scan failed\"}");
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "workflows", "{}") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"workflows tool unavailable\"}");
         return;
     };
-    var out: std.Io.Writer.Allocating = .init(arena);
-    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-    s.beginObject() catch return;
-    s.objectField("ok") catch return;
-    s.write(true) catch return;
-    s.objectField("workflows") catch return;
-    s.beginArray() catch return;
-    for (list) |wf| {
-        s.beginObject() catch return;
-        s.objectField("name") catch return;
-        s.write(wf.name) catch return;
-        s.objectField("description") catch return;
-        s.write(wf.description) catch return;
-        if (wf.llm_description.len > 0 and !std.mem.eql(u8, wf.llm_description, wf.description)) {
-            s.objectField("llm_description") catch return;
-            s.write(wf.llm_description) catch return;
-        }
-        if (wf.tags.len > 0) {
-            s.objectField("tags") catch return;
-            s.write(wf.tags) catch return;
-        }
-        s.objectField("arg_hint") catch return;
-        s.write(wf.arg_hint) catch return;
-        s.objectField("rel_path") catch return;
-        s.write(wf.rel_path) catch return;
-        if (wf.chain_json != null) {
-            s.objectField("chain") catch return;
-            s.write(true) catch return;
-        }
-        s.endObject() catch return;
-    }
-    s.endArray() catch return;
-    s.endObject() catch return;
-    respondCompressible(arena, stream, accepts_gzip, out.written());
+    respondTool(stream, raw);
 }
 
 test "scanSkills mirrors the system prompt's discovery" {
