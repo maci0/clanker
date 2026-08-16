@@ -29,13 +29,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const note = lib.optStr(req, "note") orelse "";
     var turn: ?usize = null;
     if (lib.optNum(req, "turn")) |n| {
-        if (n >= 0) turn = @intFromFloat(n);
+        if (n >= 0) turn = @trunc(n);
     }
 
     var buf: [2048]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     try logic.writeLine(&w, .{
-        .ts = @intFromFloat(lib.nowSeconds()),
+        .ts = @trunc(lib.nowSeconds()),
         .session = session_id,
         .turn = turn,
         .rating = rating,

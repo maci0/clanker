@@ -368,7 +368,7 @@ test "startExec reaps true and wait returns exit 0" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const got = try waitExec(arena_state.allocator(), id);
-    try std.testing.expect(std.mem.indexOf(u8, got, "\"done\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, got, "\"exit\":0") != null);
+    try std.testing.expect(std.mem.find(u8, got, "\"done\":true") != null);
+    try std.testing.expect(std.mem.find(u8, got, "\"exit\":0") != null);
     try std.testing.expect(reg.get("sess-job", id) == null);
 }

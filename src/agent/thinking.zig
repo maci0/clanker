@@ -144,7 +144,7 @@ test "classifyPrompt fences the user text as data and caps its size" {
     const big = try arena.alloc(u8, max_classify_input_bytes + 4096);
     @memset(big, 'a');
     const capped_prompt = try classifyPrompt(arena, big);
-    const end_marker = std.mem.lastIndexOfScalar(u8, capped_prompt, 'a') orelse return error.NoContent;
+    const end_marker = std.mem.findScalarLast(u8, capped_prompt, 'a') orelse return error.NoContent;
     try std.testing.expect(end_marker < capped_prompt.len);
     try std.testing.expect(std.mem.find(u8, capped_prompt, "</user_message>") != null);
 }

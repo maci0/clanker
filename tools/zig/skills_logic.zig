@@ -25,7 +25,7 @@ pub fn validSkillName(name: []const u8) bool {
     if (name.len == 0 or name.len > 128) return false;
     if (std.mem.findScalar(u8, name, '/') != null) return false;
     if (std.mem.findScalar(u8, name, '\\') != null) return false;
-    if (std.mem.indexOf(u8, name, "..") != null) return false;
+    if (std.mem.find(u8, name, "..") != null) return false;
     return true;
 }
 

@@ -5,7 +5,7 @@ const std = @import("std");
 pub const locator_prefix = "[spill id=";
 
 pub fn parseId(text: []const u8) ?[]const u8 {
-    const at = std.mem.indexOf(u8, text, locator_prefix) orelse return null;
+    const at = std.mem.find(u8, text, locator_prefix) orelse return null;
     const start = at + locator_prefix.len;
     if (start + 8 > text.len) return null;
     const id = text[start .. start + 8];

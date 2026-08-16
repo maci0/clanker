@@ -450,7 +450,7 @@ test "renderList prints the empty hint and a one-row table" {
     const now = cron.epochFromCivil(2026, 8, 13, 12, 0, 0);
 
     const empty = try renderList(arena, &.{}, now);
-    try testing.expect(std.mem.indexOf(u8, empty, "clanker schedule add") != null);
+    try testing.expect(std.mem.find(u8, empty, "clanker schedule add") != null);
 
     const rows = [_]store.Entry{.{
         .id = "sch-1",
@@ -459,10 +459,10 @@ test "renderList prints the empty hint and a one-row table" {
         .created = now,
     }};
     const table = try renderList(arena, &rows, now);
-    try testing.expect(std.mem.indexOf(u8, table, "sch-1") != null);
-    try testing.expect(std.mem.indexOf(u8, table, "0 * * * *") != null);
-    try testing.expect(std.mem.indexOf(u8, table, "on") != null);
-    try testing.expect(std.mem.indexOf(u8, table, "Times are UTC") != null);
+    try testing.expect(std.mem.find(u8, table, "sch-1") != null);
+    try testing.expect(std.mem.find(u8, table, "0 * * * *") != null);
+    try testing.expect(std.mem.find(u8, table, "on") != null);
+    try testing.expect(std.mem.find(u8, table, "Times are UTC") != null);
 }
 
 test "list and remove go through the schedule guest" {
@@ -475,11 +475,11 @@ test "list and remove go through the schedule guest" {
         fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
             const self: *@This() = @ptrCast(@alignCast(ctx));
             self.last = input;
-            if (std.mem.indexOf(u8, input, "\"action\":\"list\"") != null) {
+            if (std.mem.find(u8, input, "\"action\":\"list\"") != null) {
                 return "{\"ok\":true,\"entries\":[{\"id\":\"sch-1\",\"cron\":\"* * * * *\",\"task\":\"hi\",\"enabled\":true,\"created\":100,\"last_run\":0,\"last_status\":\"\",\"runs\":0,\"failures\":0,\"tz_offset_minutes\":0}],\"log\":[]}";
             }
-            if (std.mem.indexOf(u8, input, "\"action\":\"remove\"") != null) {
-                if (std.mem.indexOf(u8, input, "missing") != null)
+            if (std.mem.find(u8, input, "\"action\":\"remove\"") != null) {
+                if (std.mem.find(u8, input, "missing") != null)
                     return "{\"ok\":false,\"error\":\"no such entry\"}";
                 return "{\"ok\":true}";
             }
@@ -496,7 +496,7 @@ test "list and remove go through the schedule guest" {
     try testing.expectEqualStrings("hi", entries[0].task);
 
     _ = try callTool(arena, tool, "{\"action\":\"remove\",\"id\":\"sch-1\"}");
-    try testing.expect(std.mem.indexOf(u8, fake.last, "remove") != null);
+    try testing.expect(std.mem.find(u8, fake.last, "remove") != null);
 
     try testing.expectError(store.Error.NoSuchEntry, callTool(arena, tool, "{\"action\":\"remove\",\"id\":\"missing\"}"));
 }

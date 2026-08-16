@@ -220,7 +220,7 @@ pub fn renderPending(arena: std.mem.Allocator, obj: std.json.ObjectMap) ![]const
         const name = strField(item.object, "name");
         const age = if (item.object.get("age_s")) |v| switch (v) {
             .integer => v.integer,
-            .float => @as(i64, @intFromFloat(@trunc(v.float))),
+            .float => @as(i64, @trunc(v.float)),
             else => 0,
         } else 0;
         try out.writer.print("  {s}", .{if (id.len > 0) id else "?"});
@@ -263,11 +263,11 @@ test "renderStatus lists members and the listen line" {
     defer parsed.deinit();
     const text = try renderStatus(std.testing.allocator, parsed.value.object);
     defer std.testing.allocator.free(text);
-    try std.testing.expect(std.mem.indexOf(u8, text, "listening  127.0.0.1:7420") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "admission=allowlist") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "id=main") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "side  up") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "mac  laptop  down") != null);
+    try std.testing.expect(std.mem.find(u8, text, "listening  127.0.0.1:7420") != null);
+    try std.testing.expect(std.mem.find(u8, text, "admission=allowlist") != null);
+    try std.testing.expect(std.mem.find(u8, text, "id=main") != null);
+    try std.testing.expect(std.mem.find(u8, text, "side  up") != null);
+    try std.testing.expect(std.mem.find(u8, text, "mac  laptop  down") != null);
 }
 
 test "renderPending empty and one row" {

@@ -93,6 +93,6 @@ test "userPrompt carries both the observation tail and the mechanical draft" {
     const gpa = std.testing.allocator;
     const got = try userPrompt(gpa, "{\"type\":\"run\"}", "## Autolearn\n\n- draft\n");
     defer gpa.free(got);
-    try std.testing.expect(std.mem.indexOf(u8, got, "{\"type\":\"run\"}") != null);
-    try std.testing.expect(std.mem.indexOf(u8, got, "## Autolearn\n\n- draft\n") != null);
+    try std.testing.expect(std.mem.find(u8, got, "{\"type\":\"run\"}") != null);
+    try std.testing.expect(std.mem.find(u8, got, "## Autolearn\n\n- draft\n") != null);
 }

@@ -25,7 +25,7 @@ pub fn locatorLine(id: []const u8) [locator_prefix.len + 8 + 1]u8 {
 }
 
 pub fn parseId(text: []const u8) ?[]const u8 {
-    const at = std.mem.indexOf(u8, text, locator_prefix) orelse return null;
+    const at = std.mem.find(u8, text, locator_prefix) orelse return null;
     const start = at + locator_prefix.len;
     if (start + 8 > text.len) return null;
     const id = text[start .. start + 8];
@@ -84,7 +84,7 @@ pub fn collectSpills(
         if (dst.role != .tool) continue;
         const pc = dst.content orelse continue;
         const oc = src.content orelse continue;
-        if (std.mem.indexOf(u8, pc, marker) == null) continue;
+        if (std.mem.find(u8, pc, marker) == null) continue;
         if (parseId(pc) != null) continue;
         try out_list.append(arena, .{ .session = session_id, .id = idFor(oc, i), .content = oc, .index = i });
     }

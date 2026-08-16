@@ -464,7 +464,7 @@ fn writeNode(t: *const Tree, idx: u8, names: []const []const u8, w: *std.Io.Writ
         .c => {
             if (n.k == @floor(n.k) and @abs(n.k) < 1e6) {
                 const k: f64 = n.k;
-                try w.print("{d}", .{@as(i32, @intFromFloat(@trunc(k)))});
+                try w.print("{d}", .{@as(i32, @trunc(k))});
             } else {
                 try w.print("{d}", .{n.k});
             }

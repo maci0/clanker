@@ -198,7 +198,7 @@ pub fn providerKindLeakGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir,
         if (!std.mem.endsWith(u8, f, ".zig")) continue;
         // providers/ is the vtable's home; its own kind logic is what this
         // gate protects everywhere else.
-        if (std.mem.indexOf(u8, f, "src/llm/providers/") != null) continue;
+        if (std.mem.find(u8, f, "src/llm/providers/") != null) continue;
         const content = dir.readFileAlloc(io, f, gpa, .limited(1 << 20)) catch |err| {
             log.log(.warn, "provider-kind: could not read {s}: {s}", .{ f, @errorName(err) });
             return .{ .ok = false, .label = "provider-kind", .detail = "a changed file could not be scanned" };
@@ -212,7 +212,7 @@ pub fn providerKindLeakGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir,
                 var found: ?usize = null;
                 var used: usize = 0;
                 for (needles) |n| {
-                    if (std.mem.indexOfPos(u8, line, idx, n)) |pos| {
+                    if (std.mem.findPos(u8, line, idx, n)) |pos| {
                         if (found == null or pos < found.?) {
                             found = pos;
                             used = n.len;
@@ -228,14 +228,14 @@ pub fn providerKindLeakGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir,
                 }
                 const after = std.mem.trimStart(u8, line[pos + used ..], " \t");
                 const compares = std.mem.startsWith(u8, after, "==");
-                const switches = std.mem.indexOf(u8, line[0..pos], "switch (") != null;
+                const switches = std.mem.find(u8, line[0..pos], "switch (") != null;
                 if (!compares and !switches) {
                     idx = pos + used;
                     continue;
                 }
                 // The one legal comparison: the Vertex Gemini model-name
                 // sniff, which decides on the model name, not the kind.
-                if (std.mem.indexOf(u8, line, "isAnthropicModel") != null) break;
+                if (std.mem.find(u8, line, "isAnthropicModel") != null) break;
                 hit_w.print("{s}:{d}: {s}; ", .{ f, line_no, std.mem.trim(u8, line, " \t") }) catch {};
                 hits += 1;
                 break;

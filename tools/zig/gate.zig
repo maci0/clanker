@@ -53,7 +53,7 @@ fn failureWindow(res: []const u8) []const u8 {
     // sees the failed test's name and its assertion output. (There can be
     // several in one run because suites interleave; the first is the one the
     // build actually stopped on.)
-    if (std.mem.indexOf(u8, res, "\u{2718}")) |m| {
+    if (std.mem.find(u8, res, "\u{2718}")) |m| {
         var line_start = m;
         while (line_start > 0 and res[line_start - 1] != '\n') line_start -= 1;
         const from = line_start;

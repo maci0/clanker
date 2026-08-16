@@ -850,7 +850,7 @@ pub fn chatStream(
         // Process complete frames (data: ... blank line), starting the search
         // at the parse cursor so consumed bytes are never rescanned.
         var frame_start = sse_consumed;
-        while (std.mem.indexOf(u8, sse.items[frame_start..], "\n\n")) |off| {
+        while (std.mem.find(u8, sse.items[frame_start..], "\n\n")) |off| {
             const frame_end = frame_start + off;
             const frame = sse.items[frame_start..frame_end];
             var frame_done = false;

@@ -256,7 +256,7 @@ pub fn parseHostPort(s: []const u8) !struct { host: []const u8, port: u16 } {
         if (end + 2 > s.len or s[end + 1] != ':') return error.BadAddress;
         return .{ .host = s[1..end], .port = std.fmt.parseInt(u16, s[end + 2 ..], 10) catch return error.BadAddress };
     }
-    const colon = std.mem.lastIndexOfScalar(u8, s, ':') orelse return error.BadAddress;
+    const colon = std.mem.findScalarLast(u8, s, ':') orelse return error.BadAddress;
     return .{ .host = s[0..colon], .port = std.fmt.parseInt(u16, s[colon + 1 ..], 10) catch return error.BadAddress };
 }
 

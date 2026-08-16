@@ -20,7 +20,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     var max_steps: usize = logic.max_steps_default;
     if (lib.optNum(req, "max_steps")) |n| {
-        if (n > 0) max_steps = @intFromFloat(n);
+        if (n > 0) max_steps = @trunc(n);
     }
     max_steps = logic.clampMax(max_steps);
 

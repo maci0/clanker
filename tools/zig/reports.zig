@@ -261,7 +261,7 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     const expected = try lib.alloc.dupe(u8, try lib.hash(text));
 
     var date_buf: [16]u8 = undefined;
-    const date = doc.isoDate(@intFromFloat(lib.nowSeconds()), &date_buf);
+    const date = doc.isoDate(@trunc(lib.nowSeconds()), &date_buf);
     const line = if (note.len > 0)
         try std.fmt.allocPrint(lib.alloc, "{s} on {s}. {s}", .{ label, date, note })
     else

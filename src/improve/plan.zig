@@ -121,8 +121,8 @@ fn parsePlanJson(arena: std.mem.Allocator, text: []const u8) !?std.json.Value {
 /// Parse the plan response, tolerating prose wrapped around the JSON.
 fn parsePlanValue(arena: std.mem.Allocator, cleaned: []const u8) !?std.json.Value {
     if (try parsePlanJson(arena, cleaned)) |v| return v;
-    const first = std.mem.indexOfScalar(u8, cleaned, '{') orelse return null;
-    const last = std.mem.lastIndexOfScalar(u8, cleaned, '}') orelse return null;
+    const first = std.mem.findScalar(u8, cleaned, '{') orelse return null;
+    const last = std.mem.findScalarLast(u8, cleaned, '}') orelse return null;
     if (last < first) return null;
     return parsePlanJson(arena, cleaned[first .. last + 1]);
 }

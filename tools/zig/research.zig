@@ -258,7 +258,7 @@ fn sweep(obj: std.json.Value, out: *lib.Out) !void {
     var per_query: usize = default_per_query;
     if (lib.optNum(obj, "max_results")) |n| {
         if (n < 1) return lib.fail(out, "max_results must be at least 1");
-        per_query = @min(@as(usize, @intFromFloat(@trunc(n))), max_per_query);
+        per_query = @min(@as(usize, @trunc(n)), max_per_query);
     }
 
     const year = currentYear();
@@ -553,7 +553,7 @@ fn objInt(v: std.json.Value, name: []const u8) ?i64 {
     if (v != .object) return null;
     return switch (v.object.get(name) orelse return null) {
         .integer => |n| n,
-        .float => |f| @intFromFloat(f),
+        .float => |f| @trunc(f),
         else => null,
     };
 }
@@ -720,7 +720,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     const template = try lib.alloc.dupe(u8, raw_template);
 
     var date_buf: [16]u8 = undefined;
-    const date = try lib.alloc.dupe(u8, doc.isoDate(@intFromFloat(lib.nowSeconds()), &date_buf));
+    const date = try lib.alloc.dupe(u8, doc.isoDate(@trunc(lib.nowSeconds()), &date_buf));
 
     var rendered: std.Io.Writer.Allocating = .init(lib.alloc);
     defer rendered.deinit();
@@ -920,7 +920,7 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     const expected = try lib.alloc.dupe(u8, try lib.hash(text));
 
     var date_buf: [16]u8 = undefined;
-    const date = doc.isoDate(@intFromFloat(lib.nowSeconds()), &date_buf);
+    const date = doc.isoDate(@trunc(lib.nowSeconds()), &date_buf);
     const line = if (note.len > 0)
         try std.fmt.allocPrint(lib.alloc, "{s} — searched {s}. {s}", .{ label, date, note })
     else
@@ -1010,5 +1010,5 @@ fn mutationResult(out: *lib.Out, action: []const u8, path: []const u8) !void {
 }
 
 fn currentYear() i64 {
-    return doc.civilFromUnix(@intFromFloat(lib.nowSeconds())).year;
+    return doc.civilFromUnix(@trunc(lib.nowSeconds())).year;
 }

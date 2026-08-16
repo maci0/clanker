@@ -11151,9 +11151,9 @@ test "skills route maps list and toggle onto the guest" {
     try std.testing.expect(skillsRouteToToolInput(arena, "POST", "{\"name\":\"research\"}") == null);
 
     const off = skillsRouteToToolInput(arena, "POST", "{\"name\":\"research\",\"enabled\":false}").?;
-    try std.testing.expect(std.mem.indexOf(u8, off, "\"action\":\"set_enabled\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, off, "\"name\":\"research\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, off, "\"enabled\":false") != null);
+    try std.testing.expect(std.mem.find(u8, off, "\"action\":\"set_enabled\"") != null);
+    try std.testing.expect(std.mem.find(u8, off, "\"name\":\"research\"") != null);
+    try std.testing.expect(std.mem.find(u8, off, "\"enabled\":false") != null);
 }
 
 /// `GET /api/workflows` — the `workflows` guest owns the scan (workflows_dir
@@ -12345,12 +12345,12 @@ test "schedule route maps list and toggle onto the guest" {
     try std.testing.expect(scheduleRouteToToolInput(arena, "POST", "/api/schedule/../etc", "{\"enabled\":true}") == null);
 
     const on = scheduleRouteToToolInput(arena, "POST", "/api/schedule/sch-1", "{\"enabled\":true}").?;
-    try std.testing.expect(std.mem.indexOf(u8, on, "\"action\":\"set_enabled\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, on, "\"id\":\"sch-1\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, on, "\"enabled\":true") != null);
+    try std.testing.expect(std.mem.find(u8, on, "\"action\":\"set_enabled\"") != null);
+    try std.testing.expect(std.mem.find(u8, on, "\"id\":\"sch-1\"") != null);
+    try std.testing.expect(std.mem.find(u8, on, "\"enabled\":true") != null);
 
     const off = scheduleRouteToToolInput(arena, "POST", "/api/schedule/sch-2", "{\"enabled\":false}").?;
-    try std.testing.expect(std.mem.indexOf(u8, off, "\"enabled\":false") != null);
+    try std.testing.expect(std.mem.find(u8, off, "\"enabled\":false") != null);
 }
 
 /// `GET /api/compare` lists past comparisons; `GET /api/compare/<id>` returns
@@ -12596,9 +12596,9 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
 /// strings may contain brackets; only the outer two are ever at those spots.
 fn goalsArrayFromList(raw: []const u8) ?[]const u8 {
     const key = "\"goals\":";
-    const kpos = std.mem.indexOf(u8, raw, key) orelse return null;
-    const open_rel = std.mem.indexOfScalar(u8, raw[kpos + key.len ..], '[') orelse return null;
-    const close = std.mem.lastIndexOfScalar(u8, raw, ']') orelse return null;
+    const kpos = std.mem.find(u8, raw, key) orelse return null;
+    const open_rel = std.mem.findScalar(u8, raw[kpos + key.len ..], '[') orelse return null;
+    const close = std.mem.findScalarLast(u8, raw, ']') orelse return null;
     if (close < kpos + key.len + open_rel) return null;
     return raw[kpos + key.len + open_rel .. close + 1];
 }

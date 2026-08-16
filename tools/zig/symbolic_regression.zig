@@ -38,7 +38,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         const n = logic.asNumber(v) orelse return lib.fail(out, "iterations must be a number");
         if (n < 1 or n != @floor(n)) return lib.fail(out, "iterations must be a positive integer");
         const as_f: f64 = @min(n, 65535);
-        gens = logic.clampGenerations(@as(u16, @intFromFloat(@trunc(as_f))));
+        gens = logic.clampGenerations(@as(u16, @trunc(as_f)));
     }
 
     var seed: u64 = 1;
@@ -46,7 +46,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         const n = logic.asNumber(v) orelse return lib.fail(out, "seed must be a number");
         if (n < 0 or n != @floor(n)) return lib.fail(out, "seed must be a non-negative integer");
         const cap: f64 = @floatFromInt(std.math.maxInt(u32));
-        seed = @as(u64, @intFromFloat(@trunc(@min(n, cap))));
+        seed = @as(u64, @trunc(@min(n, cap)));
     }
 
     var opbuf: [10]logic.Op = undefined;

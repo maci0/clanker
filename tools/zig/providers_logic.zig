@@ -187,15 +187,15 @@ test "writeList emits the picker contract and keeps check aliases" {
     try std.testing.expect(try writeList(&s, cfg, ""));
 
     const raw = out.written();
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"default\":\"zai\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"default_provider\":\"zai\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"default_model\":\"glm-5\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"model\":\"glm-5\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"display\":\"GLM-5\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"context_window\":128000") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"category\":\"flagship\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"rpm\":30") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"tool_use\"") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"default\":\"zai\"") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"default_provider\":\"zai\"") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"default_model\":\"glm-5\"") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"model\":\"glm-5\"") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"display\":\"GLM-5\"") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"context_window\":128000") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"category\":\"flagship\"") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"rpm\":30") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"tool_use\"") != null);
     try std.testing.expect(!listNeedsLiveModelsAlloc(arena, raw));
 }
 

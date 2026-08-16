@@ -210,7 +210,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     const template = try lib.alloc.dupe(u8, raw_template);
 
     var date_buf: [16]u8 = undefined;
-    const date = try lib.alloc.dupe(u8, doc.isoDate(@intFromFloat(lib.nowSeconds()), &date_buf));
+    const date = try lib.alloc.dupe(u8, doc.isoDate(@trunc(lib.nowSeconds()), &date_buf));
 
     const references = if (research_path.len > 0)
         try std.fmt.allocPrint(
@@ -577,7 +577,7 @@ fn recommend(obj: std.json.Value, out: *lib.Out) !void {
         return lib.fail(out, "recommend needs a confidence from 0 to 10");
     if (confidence_raw < 0 or confidence_raw > 10)
         return lib.fail(out, "confidence must be between 0 and 10");
-    const confidence: u8 = @intFromFloat(@round(confidence_raw));
+    const confidence: u8 = @round(confidence_raw);
     const rationale = lib.str(obj, "rationale") catch
         return lib.fail(out, "recommend needs a rationale: why this beats the runner-up against the stated constraints");
     const moves = lib.optStr(obj, "moves_confidence") orelse "";
@@ -649,7 +649,7 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     const expected = try lib.alloc.dupe(u8, try lib.hash(text));
 
     var date_buf: [16]u8 = undefined;
-    const date = doc.isoDate(@intFromFloat(lib.nowSeconds()), &date_buf);
+    const date = doc.isoDate(@trunc(lib.nowSeconds()), &date_buf);
     const line = if (note.len > 0)
         try std.fmt.allocPrint(lib.alloc, "{s} — {s}. {s}", .{ label, date, note })
     else

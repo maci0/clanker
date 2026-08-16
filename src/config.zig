@@ -2659,7 +2659,7 @@ pub const Config = struct {
     }
 
     fn lineForSetting(raw: []const u8, path: []const u8) usize {
-        const leaf_start = if (std.mem.lastIndexOfScalar(u8, path, '.')) |index| index + 1 else 0;
+        const leaf_start = if (std.mem.findScalarLast(u8, path, '.')) |index| index + 1 else 0;
         var leaf = path[leaf_start..];
         if (std.mem.findScalar(u8, leaf, '[')) |index| leaf = leaf[0..index];
         var lines = std.mem.splitScalar(u8, raw, '\n');
@@ -2686,7 +2686,7 @@ pub const Config = struct {
         const line = lineForSetting(source.raw, full_path);
         var corrected_example_buf: [512]u8 = undefined;
         const corrected_example = if (std.mem.startsWith(u8, example, "setting =")) blk: {
-            const leaf_start: usize = if (std.mem.lastIndexOfScalar(u8, full_path, '.')) |index| index + 1 else 0;
+            const leaf_start: usize = if (std.mem.findScalarLast(u8, full_path, '.')) |index| index + 1 else 0;
             var leaf = full_path[leaf_start..];
             if (std.mem.findScalar(u8, leaf, '[')) |index| leaf = leaf[0..index];
             break :blk std.fmt.bufPrint(&corrected_example_buf, "{s}{s}", .{ leaf, example["setting".len..] }) catch example;
