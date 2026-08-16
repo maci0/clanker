@@ -70,7 +70,7 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
-- [research status action never updates the README inventory entry](bugs/2026-08-16-research-status-leaves-inventory-draft.md) — Open
+- [research status action never updates the README inventory entry](bugs/2026-08-16-research-status-leaves-inventory-draft.md) — Resolved
 
 - [Worker parallel sandbox omitted tool_self_name, failing capability evals in improve-self](bugs/2026-08-16-worker-sandbox-missing-tool-self-name.md) — Resolved
 
