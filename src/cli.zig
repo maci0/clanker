@@ -6728,6 +6728,12 @@ fn handleChatReact(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing emoji\"}");
         return;
     };
+    // Same cap as the guest `chat react` op (chatrooms.max_emoji_len), so a
+    // reaction can never carry a whole payload or an empty label.
+    if (emoji.len == 0 or emoji.len > chatrooms.max_emoji_len) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"emoji must be 1-64 characters\"}");
+        return;
+    }
     _ = room;
     const added = chatrooms.toggleReaction(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, emoji, cfg.instance.name) catch |err| switch (err) {
         error.NotFound => {
@@ -6768,6 +6774,17 @@ fn handleChatEdit(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing text\"}");
         return;
     };
+    // Same text contract as POST /api/chat/send and the guest `chat edit` op
+    // (src/sandbox/host.zig): empty or over-cap edits must not be storable,
+    // or a message could exceed the documented max_text_len.
+    if (text.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"empty message\"}");
+        return;
+    }
+    if (text.len > chatrooms.max_text_len) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"text too long\"}");
+        return;
+    }
     _ = room;
     _ = chatrooms.editMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, text, cfg.instance.name) catch |err| switch (err) {
         error.NotFound => {
@@ -6870,6 +6887,12 @@ fn handleChatTopic(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing topic\"}");
         return;
     };
+    // Same cap as the guest `chat set_topic` op (chatrooms.max_topic_len):
+    // without it a topic could overflow the fixed room_meta.json frame.
+    if (topic.len > chatrooms.max_topic_len) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"topic too long\"}");
+        return;
+    }
     chatrooms.setTopic(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, topic) catch |err| {
         log.log(.error_, "POST /api/chat/topic: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"topic failed\"}");

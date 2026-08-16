@@ -44,3 +44,23 @@ cp -a "$(readlink -f state)/../backups/<timestamp>/state/." state/
 
 Stopping the service or `clanker` first avoids overwriting a live tree
 mid-write.
+
+## Software bill of materials
+
+`scripts/sbom.py` emits a CycloneDX 1.5 inventory of everything clanker ships
+or builds against, read only from in-tree manifests (no network, no installs):
+`build.zig.zon` (zwasm, vaxis), `vendor/toml/` (zig-toml),
+`tools/ts/package-lock.json` (assemblyscript + transitive deps),
+`ui/vendor/README.md` (vendored web UI), and
+`scripts/setup-python-wasi.sh` (optional kernel interpreter). Every component
+carries the pin that actually fixes it — the zig content hash, the npm
+`integrity` digest, or the committed vendored file path.
+
+```bash
+./scripts/sbom.py -o sbom.cdx.json
+```
+
+Output is deterministic (sorted components, stable serial number, no
+timestamp unless `SOURCE_DATE_EPOCH` is set, which CI does), so the same tag
+always produces the same document. CI smoke-tests generation on every run and
+attaches `sbom.cdx.json` to each GitHub Release.

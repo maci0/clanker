@@ -48,6 +48,15 @@ pub const log_path = "chatrooms.jsonl";
 pub const sub_path = "chatrooms-sub.json";
 pub const cursor_path = "chatrooms-cursor.json";
 pub const max_text_len = 4096;
+/// Room topic length cap. Enforced by the guest `chat` tool host function
+/// (src/sandbox/host.zig) and by POST /api/chat/topic, so both entry points
+/// reject the same input and a topic cannot overflow the room_meta.json
+/// buffer (saveMeta's 64 KiB fixed frame).
+pub const max_topic_len = 1024;
+/// Reaction emoji length cap (bytes). Enforced by the guest `chat` tool host
+/// function (src/sandbox/host.zig) and by POST /api/chat/react, so both entry
+/// points reject the same input.
+pub const max_emoji_len = 64;
 /// Room list last-message preview. Distinct from max_text_len (the send cap).
 const last_text_preview_bytes = 120;
 /// Newest messages injected into the agent inbox per run.

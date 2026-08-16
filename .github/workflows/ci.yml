@@ -63,6 +63,12 @@ jobs:
           npm audit --audit-level=high
           ./verify.sh
 
+      # Smoke-tests scripts/sbom.py against every manifest it reads, so a
+      # format change in build.zig.zon, the lockfile, or a vendored README
+      # surfaces here instead of at release time.
+      - name: Check SBOM generation
+        run: python3 scripts/sbom.py -o /tmp/sbom.cdx.json
+
       - name: Run deterministic gate
         run: |
           zig build
@@ -203,6 +209,12 @@ jobs:
             found { print }
           ' CHANGELOG.md > release-notes.md
           [ -s release-notes.md ] || { echo "no CHANGELOG.md section for $version" >&2; exit 1; }
+
+      # One SBOM per immutable tag, generated from the tagged source tree so
+      # it always describes exactly what that release shipped. `dist/*` below
+      # attaches it to the GitHub Release alongside the binaries.
+      - name: Generate software bill of materials
+        run: python3 scripts/sbom.py -o dist/sbom.cdx.json
 
       - name: Create GitHub Release
         env:

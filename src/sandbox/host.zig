@@ -2048,7 +2048,7 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     } else if (std.mem.eql(u8, op, "react")) {
         const msg_id = parsed.msg_id orelse return Err.invalid;
         const emoji = parsed.emoji orelse return Err.invalid;
-        if (emoji.len == 0 or emoji.len > 64) return Err.invalid;
+        if (emoji.len == 0 or emoji.len > chatrooms_mod.max_emoji_len) return Err.invalid;
         const was_added = chatrooms_mod.toggleReaction(
             base,
             h.sandbox.io,
@@ -2131,7 +2131,7 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     } else if (std.mem.eql(u8, op, "set_topic")) {
         const room = parsed.room orelse return Err.invalid;
         const new_topic = parsed.topic orelse return Err.invalid;
-        if (new_topic.len > 1024) return Err.invalid;
+        if (new_topic.len > chatrooms_mod.max_topic_len) return Err.invalid;
         chatrooms_mod.setTopic(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room, new_topic) catch |err| {
             log.log(.warn, "[chat] set_topic failed: {s}", .{@errorName(err)});
             return Err.invalid;

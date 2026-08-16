@@ -80,7 +80,7 @@ def zig_dependencies() -> list:
     ):
         name, url, zhash = m.group(1), m.group(2), m.group(3)
         version = None
-        tag = re.search(r"tags/v([0-9][0-9A-Za-z._-]*)", url)
+        tag = re.search(r"tags/v([0-9][0-9A-Za-z._-]*?)(?:\.tar\.gz|$)", url)
         if tag:
             version = tag.group(1)
         else:
@@ -142,13 +142,13 @@ def npm_components() -> list:
 def vendored_web() -> list:
     text = read("ui/vendor/README.md")
     rows = re.findall(
-        r"\| `([^`]+)` \| \[([^\]]+)\]\(([^)]*)\) \| `([^`]*)` \| ([A-Za-z0-9 .-]+) \|",
+        r"\| `([^`]+)` \| \[([^\]]+)\]\(([^)]*)\)[^|]*\| ([^|`]+) \| ([A-Za-z0-9 .-]+) \|",
         text,
     )
     return [
         {
             "file": f, "upstream": u, "url": url,
-            "version": v, "license": lic.strip(),
+            "version": v.strip(), "license": lic.strip(),
         }
         for f, u, url, v, lic in rows
     ]
@@ -266,24 +266,55 @@ def build() -> dict:
         if as_index is not None and i != as_index:
             pass  # relationship recorded below
 
-    # Vendored web UI files
+    # Vendored web UI files; several rows share one upstream package (the two
+    # patternfly files, the two three.js files), so group rows per package and
+    # carry each committed file path as a property.
+    web = {}
     for w in vendored_web():
         name = w["upstream"].strip()
-        if name.startswith("@patternfly/"):
-            npm_name = name
-            purl_name = name.replace("@", "%40")
+        version_cell = w["version"].strip()
+        # Sanitize version cells like "r180 module" / "10.x ESM" into a
+        # version plus a kind note; keep the committed file as the real pin.
+        kind = ""
+        m = re.fullmatch(r"r(\d+)\s*(.*)", version_cell)
+        if m:
+            version, kind = m.group(1), m.group(2).strip()
         else:
-            npm_name = name
-            purl_name = name
+            m = re.fullmatch(r"([0-9]+\.x|[0-9][0-9A-Za-z._]*)\s*(.*)", version_cell)
+            if m:
+                version, kind = m.group(1), m.group(2).strip()
+            else:
+                version = version_cell
+        key = (name, version)
+        entry = web.setdefault(key, {
+            "name": name,
+            "version": version,
+            "license": w["license"].strip(),
+            "files": [],
+            "urls": [],
+            "kinds": [],
+        })
+        entry["files"].append("ui/vendor/" + w["file"])
+        entry["urls"].append(w["url"])
+        if kind:
+            entry["kinds"].append(kind)
+
+    for key, e in sorted(web.items()):
+        props = []
+        for f in sorted(set(e["files"])):
+            props.append({"name": "clanker:vendor-path", "value": f})
+        for u in sorted(set(e["urls"])):
+            props.append({"name": "clanker:upstream-url", "value": u})
+        for k in sorted(set(e["kinds"])):
+            props.append({"name": "clanker:vendor-kind", "value": k})
+        name = e["name"]
+        purl_name = name.replace("@", "%40")
         comps.append(component({
-            "name": npm_name,
-            "version": w["version"],
-            "license": w["license"],
-            "purl": f"pkg:npm/{purl_name}@{w['version']}",
-            "properties": [
-                {"name": "clanker:vendor-path", "value": "ui/vendor/" + w["file"]},
-                {"name": "clanker:upstream-url", "value": w["url"]},
-            ],
+            "name": name,
+            "version": e["version"],
+            "license": e["license"],
+            "purl": f"pkg:npm/{purl_name}@{e['version']}",
+            "properties": props,
         }))
 
     # Optional kernel interpreter (not shipped; fetched + sha256-verified)
@@ -292,7 +323,6 @@ def build() -> dict:
         comps.append(component({
             "name": pw["name"],
             "version": pw["version"],
-            "license": "Apache-2.0",
             "purl": f"pkg:generic/python-wasi@{pw['version']}",
             "scope": "optional",
             "externalReferences": [{"type": "distribution", "url": pw["url"]}],
