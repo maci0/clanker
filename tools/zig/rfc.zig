@@ -278,6 +278,25 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     try s.write(indexed);
     try s.objectField("options_seeded");
     try s.write(@as(u64, options.items.len));
+
+    // An RFC created without `research` is the common way the link is lost:
+    // the caller has to remember a note exists, and nothing here used to say
+    // otherwise. Every RFC in this repository was written that way, so none of
+    // them link a note. List what is there instead of failing — a decision may
+    // legitimately have no research behind it, but it should not silently
+    // ignore research that does exist.
+    if (research_path.len == 0) {
+        const unlinked = try researchNotes();
+        if (unlinked.len > 0) {
+            try s.objectField("research_available");
+            try s.beginArray();
+            for (unlinked) |n| try s.write(n);
+            try s.endArray();
+            try s.objectField("research_note");
+            try s.write("this RFC links no research note, and docs/research/ has notes that may cover this decision; open the relevant one and, if it does, recreate the RFC with research set to its path (create links it and seeds its option headings as unverified stubs)");
+        }
+    }
+
     if (!indexed) {
         try s.objectField("note");
         try s.write("the RFC was created but the inventory changed concurrently or lacks its markers; add the link to docs/rfcs/README.md by hand");
@@ -370,6 +389,22 @@ fn setInventoryStatus(link: []const u8, label: []const u8) !bool {
         else => return err,
     };
     return true;
+}
+
+/// Paths of every research note that exists, for a `create` that linked none.
+/// An unreadable or absent directory is a normal state, not an error: the
+/// answer is then simply "there are none".
+fn researchNotes() ![]const []const u8 {
+    var paths: std.ArrayList([]const u8) = .empty;
+    const raw = lib.fsList(research_dir) catch return paths.items;
+    const listing = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch return paths.items;
+    if (listing != .array) return paths.items;
+    for (listing.array.items) |item| {
+        if (item != .string) continue;
+        if (!doc.isDocFile(item.string)) continue;
+        try paths.append(lib.alloc, try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ research_dir, item.string }));
+    }
+    return paths.items;
 }
 
 /// The inventory links an RFC by file name; every RFC sits directly in
