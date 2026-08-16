@@ -1410,6 +1410,8 @@ function errorRecoveryHint(msg) {
     return " (check API key; run clanker doctor)";
   if (m.indexOf("429") !== -1 || m.indexOf("rate limit") !== -1 || m.indexOf("rate_limit") !== -1)
     return " (rate limited; wait or switch model)";
+  if (m.indexOf("http 400") !== -1 || m.indexOf("bad request") !== -1)
+    return " (provider rejected the request; the model may not exist, or the request is invalid; pick another in the model pill)";
   if (m.indexOf("not found") !== -1 || m.indexOf("model_not_found") !== -1)
     return " (model not found; pick another in the model pill)";
   if (m.indexOf("timeout") !== -1 || m.indexOf("timed out") !== -1)

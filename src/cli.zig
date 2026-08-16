@@ -3767,7 +3767,12 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
         }) catch |err| {
             const detail = enrichRunError(arena, provider.name, false, err_detail orelse @errorName(err));
             log.log(.error_, "goal loop stopped: {s}", .{detail});
-            return err;
+            // The timestamped log line above is for log consumers; the last
+            // line a person sees must carry the same detail. Returning the
+            // error makes main.zig print only the bare error name, which
+            // names neither the provider nor the failure.
+            printUsageError(init.io, "{s}", .{detail});
+            std.process.exit(1);
         };
         log.log(.info, "goal loop {s} after {d} turn(s): {s}", .{ @tagName(outcome.verdict), outcome.turns, outcome.reason });
         if (resolved_task.goal_id) |gid| {
@@ -3790,7 +3795,12 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
             }
             const detail = enrichRunError(arena, provider.name, false, err_detail orelse @errorName(err));
             log.log(.error_, "{s}", .{detail});
-            return err;
+            // Same as the goal loop above: fall through and main.zig prints
+            // only "error: ApiError". Exit here with the enriched detail as
+            // the final human line so the provider, the reason, and the
+            // recovery hint survive the trip through the error switch.
+            printUsageError(init.io, "{s}", .{detail});
+            std.process.exit(1);
         };
 
         const streamed = a.on_token != null and cfg.modules.streaming;
@@ -12989,6 +12999,8 @@ fn enrichRunError(arena: std.mem.Allocator, provider_name: []const u8, had_image
         "; with image attachment, the provider/model may not support vision, or the image is invalid; check that the selected model is vision-capable and that modules.multimodal is enabled"
     else if (containsAnyCaseInsensitive(detail, &.{ "401", "unauthorized", "invalid_api_key", "authentication" }))
         "; check that the API key is set and valid (`clanker doctor`)"
+    else if (containsAnyCaseInsensitive(detail, &.{ "http 400", "bad request", "invalid request" }))
+        "; provider rejected the request; the model name may be wrong for this provider (try `clanker providers models`), or the request body is invalid"
     else if (containsAnyCaseInsensitive(detail, &.{ "429", "rate limit", "rate_limit", "too many requests", "quota" }))
         "; rate limited, wait a moment or switch model"
     else if (containsAnyCaseInsensitive(detail, &.{ "not found", "does not exist", "no such model", "model_not_found" }))

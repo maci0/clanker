@@ -114,6 +114,8 @@ fn errorRecoveryHint(err: anyerror, detail: ?[]const u8) []const u8 {
             return " (check API key; run `clanker doctor`)";
         if (find(d, "429") != null or find(d, "rate limit") != null or find(d, "rate_limit") != null)
             return " (rate limited; wait or /model to switch)";
+        if (find(d, "http 400") != null or find(d, "bad request") != null)
+            return " (provider rejected the request; the model may not exist here, or the request body is invalid; /model to switch)";
         if (find(d, "not found") != null or find(d, "model_not_found") != null)
             return " (model not found; /model to pick another)";
         if (find(d, "timeout") != null or find(d, "timed out") != null)
@@ -4397,7 +4399,7 @@ const Model = struct {
             }
             if (row < bottom) row += 1;
             if (row < bottom) {
-                writeWrapped(surface, &row, bottom, text_width, "Tab completes /commands. Ctrl-P opens the palette. /plan and /research match the web UI toggles.", dim);
+                writeWrapped(surface, &row, bottom, text_width, "Tab completes /commands. Ctrl-P opens the palette. Ctrl-C quits when idle.", dim);
             }
         }
         // Transcript layout: the visible block is bottom-aligned, chat-style,
