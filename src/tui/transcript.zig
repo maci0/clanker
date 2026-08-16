@@ -16,6 +16,7 @@ const width = @import("width.zig");
 const theme_mod = @import("theme.zig");
 const syntax = @import("syntax.zig");
 const sanitize = @import("sanitize.zig");
+const loop_mod = @import("../agent/loop.zig");
 pub const Theme = theme_mod.Theme;
 
 const strippedControl = sanitize.isControl;
@@ -325,10 +326,11 @@ pub const card_open = "\u{256d}\u{2500}";
 pub const card_bar = "\u{2502}";
 pub const card_close = "\u{2570}\u{2500}";
 
-/// Byte cap on a card body preview, matching loop.zig's argsPreview: enough
-/// of the arguments to judge the call, never all of them, a whole file
-/// write would drown the transcript.
-pub const card_preview_cap = 400;
+/// Byte cap on a card body preview: the agent's shared tool-args preview
+/// budget (loop.zig's args_preview_cap, also used by the confirm prompt and
+/// the web stream). Enough of the arguments to judge the call, never all of
+/// them, a whole file write would drown the transcript.
+pub const card_preview_cap = loop_mod.args_preview_cap;
 
 /// One-line bounded preview of untrusted text for a card line. Controls are
 /// dropped under the same rule writeSanitized enforces (CWE-150), except
