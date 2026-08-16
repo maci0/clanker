@@ -176,6 +176,14 @@ pub const Sandbox = struct {
     /// Directory prefixes (relative to root_dir) the tool may read/write.
     /// Empty means filesystem access is denied entirely.
     fs_prefixes: []const []const u8 = &.{},
+    /// Whether a component of an already-granted path may be a symlink
+    /// (`agent.sandbox_follow_symlinks`, ADR 0017). Off by default: the
+    /// no-follow walk in `safeJoinSecure` is what stops a link inside a
+    /// granted prefix from reaching the rest of the filesystem. Deployments
+    /// that deliberately place a granted prefix behind a link -- a checkout
+    /// whose `state/` lives in external storage so it can be backed up --
+    /// turn it on. It never widens which prefixes are granted.
+    follow_symlinks: bool = false,
     max_http_bytes: usize = 1 << 20,
     max_fs_bytes: usize = 1 << 20,
     /// Instruction budget (wasm fuel) for one call of this tool, from the
@@ -320,6 +328,7 @@ pub fn sandboxFor(
         .io = io,
         .root_dir = cfg.agent.sandbox_root,
         .shared_root = cfg.agent.shared_root,
+        .follow_symlinks = cfg.agent.sandbox_follow_symlinks,
         .network_allow = net,
         .llm = llm_access,
         .exec_allow = tool.exec_allow,
@@ -4881,6 +4890,11 @@ fn safeJoinSecure(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
     const full = try safeJoin(sb, sub_path);
     errdefer sb.gpa.free(full);
 
+    // Opted in (ADR 0017): the prefix grant from safeJoin above still decides
+    // what may be touched; this only allows a component of that granted path
+    // to be a link.
+    if (sb.follow_symlinks) return full;
+
     // Check components from the root down. Once a component is absent, all
     // remaining components are absent too; write operations may create them.
     // This is deliberately no-follow so the symlink itself is visible.
@@ -6525,6 +6539,55 @@ test "fsWriteIfImpl writes when hash matches and rejects on mismatch" {
     const after3 = try tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
     defer gpa.free(after3);
     try std.testing.expectEqualStrings("updated", after3);
+}
+
+test "safeJoinSecure refuses a symlinked component unless the sandbox opts in" {
+    // ADR 0017: a checkout whose `state/` is a symlink into external storage
+    // is a supported layout, but following it is off by default so the
+    // escape check stays the same for every deployment that did not ask.
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // A real directory, and a symlink standing in for it the way `state` does.
+    try tmp.dir.createDirPath(io, "real_state/runs");
+    try tmp.dir.symLink(io, "real_state", "state", .{});
+
+    // safeJoinSecure stats through `std.Io.Dir.cwd()`, so the root has to be a
+    // path that resolves from the process cwd rather than a handle. tmpDir
+    // creates its directory at this fixed place.
+    const root = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer gpa.free(root);
+
+    var sb = Sandbox{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        .fs_prefixes = &.{"state/"},
+        .environ_map = undefined,
+    };
+
+    // Default: the symlinked component is refused even though the manifest
+    // grants the prefix.
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoinSecure(&sb, "state/runs/x.json"));
+
+    // Opted in: the same granted path resolves.
+    sb.follow_symlinks = true;
+    const full = try safeJoinSecure(&sb, "state/runs/x.json");
+    defer gpa.free(full);
+    try std.testing.expect(std.mem.endsWith(u8, full, "state/runs/x.json"));
+
+    // The grant itself is unchanged: a path outside every prefix is still
+    // refused, flag or no flag.
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoinSecure(&sb, "elsewhere/x.json"));
 }
 
 test "fsWriteIfImpl survives racing creates of a not-yet-existing lock file" {
