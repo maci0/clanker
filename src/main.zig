@@ -73,7 +73,6 @@ comptime {
     _ = @import("agent/workspace.zig");
     _ = @import("agent/prune.zig");
     _ = @import("agent/spill.zig");
-    _ = @import("agent/rewind.zig");
     _ = @import("agent/jobs.zig");
     _ = @import("agent/graph.zig");
     _ = @import("agent/subagent.zig");

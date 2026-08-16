@@ -3308,14 +3308,17 @@ fn gitVerbAllowed(argv: []const []const u8, remote_ops: bool) bool {
     return remote_ops and (std.mem.eql(u8, v, "push") or std.mem.eql(u8, v, "merge") or std.mem.eql(u8, v, "checkout"));
 }
 
-/// The rewind guest may `git stash apply <hash>` (and `stash create` is
-/// taken by the host). Other git verbs stay on the normal allowlist.
+/// The rewind guest may `git stash apply|show <hash>` to restore a checkpoint
+/// and `git stash create` to take one. `create` makes a dangling commit and
+/// leaves the working tree and refs untouched, so it is strictly less
+/// invasive than the `apply` already granted. Other git verbs stay on the
+/// normal allowlist.
 fn rewindGitAllowed(tool_name: []const u8, argv: []const []const u8) bool {
     if (!std.mem.eql(u8, tool_name, "rewind")) return false;
     if (argv.len < 3) return false;
     if (!std.mem.eql(u8, argv[0], "git") and !std.mem.endsWith(u8, argv[0], "/git")) return false;
     if (!std.mem.eql(u8, argv[1], "stash")) return false;
-    if (!std.mem.eql(u8, argv[2], "apply") and !std.mem.eql(u8, argv[2], "show")) return false;
+    if (!std.mem.eql(u8, argv[2], "apply") and !std.mem.eql(u8, argv[2], "show") and !std.mem.eql(u8, argv[2], "create")) return false;
     return true;
 }
 
@@ -6170,6 +6173,7 @@ test "subagent and swarm host channels are scoped to the tools that spawn them" 
     try std.testing.expect(jobAccessAllowed("subagent"));
     try std.testing.expect(!jobAccessAllowed("read_file"));
     try std.testing.expect(rewindGitAllowed("rewind", &.{ "git", "stash", "apply", "0123456789abcdef0123456789abcdef01234567" }));
+    try std.testing.expect(rewindGitAllowed("rewind", &.{ "git", "stash", "create", "clanker-rewind" }));
     try std.testing.expect(!rewindGitAllowed("git", &.{ "git", "stash", "apply", "x" }));
     try std.testing.expect(!rewindGitAllowed("rewind", &.{ "git", "stash", "drop" }));
     try std.testing.expect(swarmAccessAllowed("swarm"));

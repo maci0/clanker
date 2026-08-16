@@ -1,13 +1,15 @@
 {
   "name": "rewind",
-  "description": "List or restore git checkpoints taken before mutating tools. {\"list\":true,\"session\":\"...\"} or {\"restore\":\"<hash>\",\"session\":\"...\"}. Restore runs git stash apply on the dangling snapshot (working tree changes). Pair with session branch to rewind the transcript.",
+  "description": "List, restore, or snapshot git checkpoints. {\"list\":true,\"session\":\"...\"} lists state/rewinds, {\"restore\":\"<hash>\",\"session\":\"...\"} runs git stash apply on a dangling snapshot, {\"snapshot\":true,\"session\":\"...\",\"tool\":\"...\"} runs git stash create and appends the record (the host calls this before a mutating tool). Restore changes the working tree; pair with a session branch to rewind the transcript.",
   "llm_description": "List or restore a git checkpoint. {list:true, session?} lists state/rewinds. {restore:<hash>, session?} applies that snapshot to the working tree. Does not rewrite the conversation; fork/branch the session separately if you need the old transcript.",
   "wasm": "zig-out/tools/rewind.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
       "list": { "type": "boolean" },
+      "snapshot": { "type": "boolean", "description": "git stash create and append a record" },
       "restore": { "type": "string", "description": "git stash create hash" },
+      "tool": { "type": "string", "description": "tool name for a snapshot record" },
       "session": { "type": "string" }
     }
   },

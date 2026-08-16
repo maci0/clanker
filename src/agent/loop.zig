@@ -25,7 +25,6 @@ const mock_server = @import("../llm/mock_server.zig");
 const advisor = @import("advisor.zig");
 const prune = @import("prune.zig");
 const spill_mod = @import("spill.zig");
-const rewind_mod = @import("rewind.zig");
 const loop_guard = @import("loop_guard.zig");
 const hooks_config = @import("../hooks/config.zig");
 const hooks_runner = @import("../hooks/runner.zig");
@@ -2560,6 +2559,40 @@ pub const Agent = struct {
         return wrote;
     }
 
+    /// Snapshots the working tree through the sandboxed `rewind` WASM tool
+    /// (exec_allow: ["git"], fs_prefixes: ["state/rewinds/"]) instead of a
+    /// native git subprocess and record append, the same split as
+    /// `persistSpills`: the decision to snapshot runs natively (it sits in
+    /// the pre-execute batch loop), the bounded git call and the jsonl append
+    /// go to the guest. Best-effort: a snapshot failure must never fail the
+    /// tool call it guards. Returns the dangling-stash hash, or "" for a
+    /// clean tree (nothing to snapshot).
+    fn snapshotRewind(self: *Agent, tool: []const u8) ?[]const u8 {
+        const session_id = if (self.session_id.len > 0) self.session_id else "default";
+        const mod = runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, self.reg, "rewind", null) catch return null;
+        defer mod.deinit();
+
+        var enc: std.Io.Writer.Allocating = .init(self.arena);
+        var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
+        s.beginObject() catch return null;
+        s.objectField("snapshot") catch return null;
+        s.write(true) catch return null;
+        s.objectField("session") catch return null;
+        s.write(session_id) catch return null;
+        s.objectField("tool") catch return null;
+        s.write(tool) catch return null;
+        s.endObject() catch return null;
+
+        const raw = mod.executeTool(enc.written()) catch |err| {
+            log.log(.warn, "rewind snapshot failed: {s}", .{@errorName(err)});
+            return null;
+        };
+        defer self.ctx.gpa.free(raw);
+        const resp = std.json.parseFromSliceLeaky(struct { ok: bool = false, hash: []const u8 = "" }, self.arena, raw, .{ .ignore_unknown_fields = true }) catch return null;
+        if (!resp.ok) return null;
+        return resp.hash;
+    }
+
     fn executeTool(self: *Agent, tc: types.ToolCall) ![]const u8 {
         const tool = self.reg.get(tc.name) orelse {
             log.log(.warn, "agent called unknown tool '{s}'", .{tc.name});
@@ -2719,19 +2752,9 @@ pub const Agent = struct {
             if (results[i] != null) continue;
             if (self.reg.get(tc.name)) |t| {
                 if (t.enabled and t.needsConfirm()) {
-                    if (rewind_mod.createSnapshot(self.ctx.io, self.ctx.gpa, self.arena)) |hash_opt| {
-                        if (hash_opt) |hash| {
-                            rewind_mod.appendRecord(
-                                self.ctx.io,
-                                self.ctx.gpa,
-                                std.Io.Dir.cwd(),
-                                if (self.session_id.len > 0) self.session_id else "default",
-                                hash,
-                                tc.name,
-                            ) catch {};
-                            snapped = true;
-                        }
-                    } else |_| {}
+                    if (self.snapshotRewind(tc.name)) |hash| {
+                        if (hash.len > 0) snapped = true;
+                    }
                 }
             }
         }
