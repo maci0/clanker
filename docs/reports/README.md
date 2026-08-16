@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [resolveExecPath leaks PATH-candidate allocations through ckStdApi](bugs/2026-08-17-resolveexecpath-candidate-leak.md) — Open
+
 - [A commit on origin/main did not compile, and the break surfaced in an unrelated session's push](bugs/2026-08-16-pushed-main-did-not-compile.md) — Resolved
 
 - [reports status updates the Status section but not the TL;DR](bugs/2026-08-16-reports-status-leaves-the-tldr-saying-open.md) — Resolved
