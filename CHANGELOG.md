@@ -37,6 +37,37 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker research`: the `research` tool on the CLI, with `list`, `plan`,
+  `sweep`, `search`, `open`, `create`, `append`, `update` and `status`. It
+  calls the same sandboxed tool the agent uses, so the notes in
+  `docs/research/`, their inventory and the compare-and-swap writes are shared
+  rather than reimplemented.
+- Google as the research sweep's third web backend, after DuckDuckGo Lite and
+  Bing, reached through the Programmable Search JSON API and enabled by setting
+  both `GOOGLE_SEARCH_KEY` and `GOOGLE_SEARCH_CX`. With either unset the
+  backend is skipped and the sweep says so once. It is the API rather than a
+  scraper because `www.google.com/search` answers a plain HTTP client with a
+  "turn on JavaScript" page carrying no result links, whatever user agent it is
+  asked with, including the legacy `gbv=1` no-JavaScript parameter.
+- `clanker reports status <path> <state> <note>` and a matching `status` action
+  on the `reports` tool: `open`, `investigating`, `resolved`, `reopened` or
+  `closed` on a bug report or investigation. It rewrites the record's `## Status`
+  section and its `docs/reports/README.md` inventory line in one call.
+  `resolved` requires a note naming the fix and what verified it.
+- A bare `--` ends flag parsing on every command; everything after it is a
+  positional. Markdown content routinely begins with `-`, which previously made
+  `clanker reports append <path> "- new evidence"` a parse error rather than an
+  append.
+- `rfc create` reports the research notes it could have linked, as
+  `research_available`, when it was given no `research` path.
+- `agent.sandbox_follow_symlinks` (default `false`): allow a component of an
+  already-granted sandbox path to be a symlink. Following a link out of the
+  sandbox root is a known security risk, so it stays off unless the operator
+  asks for it, and it never widens which prefixes a tool is granted. Without
+  it, a checkout whose `state/` is a symlink into external storage had every
+  guest read and write under `state/` refused — `clanker schedule` failed and
+  run graphs were never persisted. See
+  [ADR 0017](docs/adrs/0017-sandbox-symlink-traversal-is-opt-in.md).
 - `clanker rfc [list|search|open|checklist|create|append|update|recommend|status]`:
   the requests for comment under `docs/rfcs/` from a terminal, over the same
   sandboxed `rfc` tool the agent calls. `list` reads each status from the
@@ -534,6 +565,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   first turn docks the composer back to the bottom. Turn actions (Copy
   answer, Run again, Edit & resend, Branch, Apply plan) already matched
   the convention and are unchanged.
+
+### Fixed
+
+- A status change now carries the store's README inventory with it, in the
+  `research`, `rfc` and `reports` tools alike. Previously only `create` ever
+  wrote the inventory's copy of the status, so every research note stayed
+  `Draft` and every RFC stayed `Draft` however often its own status moved, and
+  the reports inventory listed resolved bugs as `Open` indefinitely. All three
+  now share one helper, and each reports whether the index write landed.
 
 ## [0.1.0] - 2026-08-14
 

@@ -196,6 +196,13 @@ learnings_file = "state/learnings.md"
 workflows_dir = "workflows"
 chains_dir = "chains"
 sandbox_root = "."
+# Allow a component of an already-granted sandbox path to be a symlink.
+# Following a link out of the sandbox root is a known security risk, so this is
+# off unless you ask for it: with it on, a link planted inside a granted prefix
+# reaches whatever it points at. Turn it on when a granted prefix deliberately
+# lives elsewhere -- a `state/` symlinked into backed-up storage, where leaving
+# it off refuses every guest read and write under state/. See ADR 0017.
+sandbox_follow_symlinks = false
 seed = 0
 # 0 = compact when history reaches half the model context window; a positive
 # value is a byte cap converted to tokens (see docs/configuration.md).

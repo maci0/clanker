@@ -1,0 +1,91 @@
+{
+  "name": "adr",
+  "description": "Record and maintain architecture decisions under docs/adrs/. An ADR is a decision that has already been made: the constraint that forced it, the choice, and what the choice costs. The RFC that may precede it argues the alternatives; neither store requires the other. Actions: list shows every ADR with its real status and the next free number; search {query} covers the ADRs, the RFCs and the PRDs together, so a settled decision surfaces before it is re-litigated and a feature spec that would contradict one is caught early. create {title, context, decision, consequences, rfc?, slug?} allocates the number, renders docs/adrs/TEMPLATE.md and indexes it; consequences is required because an ADR that only argues for its own decision is useless to the one reader it is written for, whoever is deciding whether to revisit it. Passing an RFC path links it from Status and lifts that RFC's recommendation in as a quoted line under the Decision, so a divergence between what was recommended and what was chosen is visible while it is being written. open, append, update maintain the body; status {path, status, note?} moves it between proposed, accepted, superseded and deprecated. A superseded ADR needs a note naming what replaced it: link forward rather than editing the history out of the record, because the reasoning is the only thing that survives to tell a later reader whether the original constraint still holds.",
+  "llm_description": "Architecture decision records under docs/adrs/ — decisions already made, as opposed to the open questions in docs/rfcs/. {action:\"list\"} shows status and the next number; {action:\"search\",query} covers ADRs, RFCs and PRDs (an ADR match means it is already decided — read it before re-litigating). {action:\"create\",title,context,decision,consequences,rfc?,slug?} numbers, renders and indexes it; title is phrased as the choice made, not the question, and consequences must name the honest downside. A docs/rfcs/ path is linked from Status and its recommendation quoted under Decision. Then open/append/update, {action:\"status\",path,status:\"proposed\"|\"accepted\"|\"superseded\"|\"deprecated\",note?}; superseded and deprecated need a note. Mutations are compare-and-swap — re-open after a conflict.",
+  "wasm": "zig-out/tools/adr.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "list",
+          "create",
+          "open",
+          "search",
+          "append",
+          "update",
+          "status"
+        ],
+        "description": "list is the default; search before create so a decision is not recorded twice."
+      },
+      "title": {
+        "type": "string",
+        "description": "The decision phrased as the choice made, e.g. 'Providers are a native vtable, not WASM'. Not a question. Required for create."
+      },
+      "context": {
+        "type": "string",
+        "description": "The situation that forced a choice: the constraint, the alternatives seriously considered, and why the status quo did not work. Required for create."
+      },
+      "decision": {
+        "type": "string",
+        "description": "The choice itself, plainly, in one or two sentences. Not the implementation detail. Required for create."
+      },
+      "consequences": {
+        "type": "string",
+        "description": "What this makes easy, what it forecloses, and what it costs if the context changes. Must include the honest downside. Required for create."
+      },
+      "rfc": {
+        "type": "string",
+        "description": "Optional path of the docs/rfcs/ RFC this decision came from. Linked from Status, and its recommendation quoted under the Decision."
+      },
+      "slug": {
+        "type": "string",
+        "description": "Filename stem after the number: lowercase letters, digits and hyphens. Derived from the title when omitted."
+      },
+      "path": {
+        "type": "string",
+        "description": "Markdown path directly below docs/adrs/. Required for open, append, update and status."
+      },
+      "content": {
+        "type": "string",
+        "description": "Markdown to append to an existing ADR. Required for append."
+      },
+      "old": {
+        "type": "string",
+        "description": "Exact, uniquely occurring current text to replace. Required for update; obtain it with open."
+      },
+      "new": {
+        "type": "string",
+        "description": "Replacement text for update. May be empty to remove old text."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "proposed",
+          "accepted",
+          "superseded",
+          "deprecated"
+        ],
+        "description": "New status. Required for status; superseded and deprecated also need a note."
+      },
+      "note": {
+        "type": "string",
+        "description": "Sentence appended to the status line: what supersedes this ADR, or what stopped being true."
+      },
+      "query": {
+        "type": "string",
+        "description": "Text to search for across the ADRs, RFCs and PRDs. Required for search."
+      }
+    },
+    "required": []
+  },
+  "fs_prefixes": [
+    "docs/adrs/",
+    "docs/rfcs/",
+    "docs/prds/"
+  ],
+  "network_allow": [],
+  "category": "knowledge",
+  "confirm": false
+}

@@ -376,6 +376,14 @@ pub const Agent = struct {
     /// chatroom logs, run records, cursors.
     state_dir: []const u8 = "state",
     sandbox_root: []const u8 = ".",
+    /// Allow a component of an already-granted sandbox path to be a symlink
+    /// (ADR 0017). Off by default, which is what keeps a link planted inside a
+    /// granted prefix from reaching the rest of the filesystem. Turn it on for
+    /// a checkout that deliberately keeps a granted prefix in external storage
+    /// -- a `state/` symlinked into a backed-up directory is the case this
+    /// exists for; without it every guest write under `state/` is refused.
+    /// It never changes which prefixes a tool is granted.
+    sandbox_follow_symlinks: bool = false,
 
     /// Absolute path of the checkout an isolated run was started from, set at
     /// runtime by `run --worktree` (see cmdRun) and deliberately NOT readable
@@ -566,6 +574,7 @@ pub const AgentFields = struct {
     global_instructions_file: bool = false,
     state_dir: bool = false,
     sandbox_root: bool = false,
+    sandbox_follow_symlinks: bool = false,
     workflows_dir: bool = false,
     chains_dir: bool = false,
     git_commit: bool = false,
@@ -1947,17 +1956,17 @@ pub const Config = struct {
         var a = Agent{};
         var f = AgentFields{};
         warnUnknownKeys(obj, &.{
-            "max_iterations",               "max_goal_turns",                 "compact_threshold_bytes",        "tool_result_prune_bytes",
-            "tool_result_prune_head_bytes", "tool_result_prune_tail_bytes",   "repeat_tool_thresholds",         "repeat_tool_exclude",
-            "max_total_tokens",             "max_tokens_per_turn",            "max_history_tokens",             "tool_catalog",
-            "hot_tools",                    "tools_dir",                      "skills_dir",                     "system_prompt_file",
-            "learnings_file",               "global_instructions_file",       "state_dir",                      "sandbox_root",
-            "workflows_dir",                "chains_dir",                     "git_commit",                     "git_remote_ops",
-            "exec_pattern_allow",           "repl_exec_allow",                "seed",                           "ask_timeout_seconds",
-            "confirm_writes",               "provider_check_timeout_seconds", "fallback_provider",              "fallback_providers",
-            "auto_thinking",                "thinking_classifier_model",      "thinking_classifier_timeout_ms", "worktree",
-            "goal_worktree",                "git_worktree_on",                "isolated_cli",                   "isolated_tui",
-            "isolated_webui",
+            "max_iterations",               "max_goal_turns",               "compact_threshold_bytes",        "tool_result_prune_bytes",
+            "tool_result_prune_head_bytes", "tool_result_prune_tail_bytes", "repeat_tool_thresholds",         "repeat_tool_exclude",
+            "max_total_tokens",             "max_tokens_per_turn",          "max_history_tokens",             "tool_catalog",
+            "hot_tools",                    "tools_dir",                    "skills_dir",                     "system_prompt_file",
+            "learnings_file",               "global_instructions_file",     "state_dir",                      "sandbox_root",
+            "sandbox_follow_symlinks",      "workflows_dir",                "chains_dir",                     "git_commit",
+            "git_remote_ops",               "exec_pattern_allow",           "repl_exec_allow",                "seed",
+            "ask_timeout_seconds",          "confirm_writes",               "provider_check_timeout_seconds", "fallback_provider",
+            "fallback_providers",           "auto_thinking",                "thinking_classifier_model",      "thinking_classifier_timeout_ms",
+            "worktree",                     "goal_worktree",                "git_worktree_on",                "isolated_cli",
+            "isolated_tui",                 "isolated_webui",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -2044,6 +2053,10 @@ pub const Config = struct {
         if (obj.get("sandbox_root")) |k| {
             a.sandbox_root = try jsonStr(k, "sandbox_root");
             f.sandbox_root = true;
+        }
+        if (obj.get("sandbox_follow_symlinks")) |k| {
+            a.sandbox_follow_symlinks = try jsonBool(k, "sandbox_follow_symlinks");
+            f.sandbox_follow_symlinks = true;
         }
         if (obj.get("workflows_dir")) |k| {
             a.workflows_dir = try jsonStr(k, "workflows_dir");
@@ -2200,6 +2213,7 @@ pub const Config = struct {
         if (fields.global_instructions_file) dst.global_instructions_file = src.global_instructions_file;
         if (fields.state_dir) dst.state_dir = src.state_dir;
         if (fields.sandbox_root) dst.sandbox_root = src.sandbox_root;
+        if (fields.sandbox_follow_symlinks) dst.sandbox_follow_symlinks = src.sandbox_follow_symlinks;
         if (fields.workflows_dir) dst.workflows_dir = src.workflows_dir;
         if (fields.chains_dir) dst.chains_dir = src.chains_dir;
         if (fields.git_commit) dst.git_commit = src.git_commit;
@@ -3143,6 +3157,57 @@ test "config.local.toml web.allow replaces the global web allowlist" {
     const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(@as(usize, 1), cfg.web.allow.len);
     try std.testing.expectEqualStrings("local.example", cfg.web.allow[0]);
+}
+
+test "config.local.toml sandbox_follow_symlinks reaches the merged config" {
+    // Agent is field-merged, so a key that is parsed into the local Agent but
+    // not copied by applyAgentFields is read from the file, recorded as set,
+    // and then silently dropped. That is what happened here: the sandbox kept
+    // refusing a symlinked `state/` while config.local.toml plainly said to
+    // allow it, and nothing reported an unknown key because the key was known.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+        \\[agent]
+        \\max_iterations = 10
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
+        \\[agent]
+        \\sandbox_follow_symlinks = true
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expect(cfg.agent.sandbox_follow_symlinks);
+    // The local file set one key; the base value must survive.
+    try std.testing.expectEqual(@as(u32, 10), cfg.agent.max_iterations);
+}
+
+test "sandbox_follow_symlinks defaults to false with no config saying otherwise" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+        \\[agent]
+        \\max_iterations = 10
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    // ADR 0017: following a link out of the sandbox root is a security risk,
+    // so it is off unless the operator asked for it.
+    try std.testing.expect(!cfg.agent.sandbox_follow_symlinks);
 }
 
 test "config.local.toml can clear serve_as" {

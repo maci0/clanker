@@ -184,7 +184,15 @@ test "columns stay aligned and the thinking breakdown renders from the totals" {
     totals.thinking_distribution = .{ .low = 1, .high = 2, .xhigh = 1 };
 
     const text = try renderText(arena, &rows, totals);
-    try std.testing.expect(std.mem.startsWith(u8, text, "provider"));
+    // The header widens with the table. `google-vertex-anthropic` is longer
+    // than the default provider column, so pinning the exact spacing here
+    // would assert the width this very fixture is meant to widen; what has to
+    // hold is that the header leads with the two name columns and ends with
+    // the numeric titles.
+    const header = text[0 .. std.mem.findScalar(u8, text, '\n') orelse text.len];
+    try std.testing.expect(std.mem.startsWith(u8, header, "provider "));
+    try std.testing.expect(std.mem.find(u8, header, " model ") != null);
+    try std.testing.expect(std.mem.endsWith(u8, header, "calls  prompt  output   total  cache%  tok/s     cost$  fail"));
     try std.testing.expect(std.mem.find(u8, text, "kimi-k3") != null);
     try std.testing.expect(std.mem.find(u8, text, "totals") != null);
     try std.testing.expect(std.mem.find(u8, text, "thinking        low 1  medium 0  high 2  xhigh 1") != null);

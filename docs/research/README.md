@@ -83,6 +83,21 @@ passing an explicit `queries` array, and check the first results either way.
 returned, 32,768 delivered, the middle pruned), so narrow `sources` or
 `max_results` rather than reading a truncated answer as the whole one.
 
+## Before setting a note Current
+
+Two checks, because both have caught real errors in finished notes:
+
+- **Open every link.** A citation can name a page that no longer answers for the
+  claim, or that cannot be opened at all — one note cited a per-character
+  benchmark to a page that returns 403 to every fetcher, so the number rested on
+  a search summary rather than the source it was credited to. Downgrade the
+  confidence rather than quietly keeping the link.
+- **Re-check line numbers and re-fetch anything marked `unverified`.** The tree
+  moves while a note is being written, and an `unverified` lead is often wrong in
+  a way that changes the conclusion: one option in the same note was recorded
+  from discussion threads as replicating over NATS, and its repository said it
+  does not use NATS at all — which withdrew an argument built on top of it.
+
 ## Inventory
 
 <!-- inventory:research:start -->

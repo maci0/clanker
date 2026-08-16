@@ -109,6 +109,10 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   unreadable"). Empty `env_allow` is the safe defaults (PWD, HOME, PATH,
   ...), never API keys; a tool that reads a secret via `ck_getenv` must
   name it. `.env` is refused by `safeJoin` (the keys live on disk too).
+  `safeJoinSecure` then refuses a granted path any of whose components is a
+  symlink, so a checkout whose `state/` links into external storage denies
+  every guest call under it until `agent.sandbox_follow_symlinks` is set
+  (ADR 0017); the refusal blames `fs_prefixes`, which the manifest had right.
   `ck_exec` allowlists git/zig/uv verbs and refuses host-absolute or `..`
   path args, so a guest cannot bypass `network_allow` or `fs_prefixes`
   through a subprocess. Search tools (`rg`, `ast-grep`, `semcode`) treat
@@ -440,7 +444,12 @@ Before diagnosing a failure, search [docs/reports/](docs/reports/) and
 both; the same records are on the CLI as `clanker reports`). Reuse a matching record's reproduction; do not treat a resolved write-up
 as a substitute for verifying the current tree. If nothing covers it, `create`
 an investigation, then a bug report and a runbook once recovery is confirmed.
-Re-open after a compare-and-swap conflict. Records start with `## TL;DR`.
+Re-open after a compare-and-swap conflict. Records start with `## TL;DR`. Move a
+record with the `status` action rather than by hand: every store keeps a second
+copy of the status in its README inventory, and only `status` (`clanker reports
+status`, `clanker research status`, `clanker rfc status`) writes both. `create`
+sets the inventory copy once and never again, which is how every record in
+`docs/reports/` once read `Open` months after it was fixed.
 
 Before a choice between libraries, external tools, or architectures, search
 [docs/rfcs/](docs/rfcs/) and [docs/adrs/](docs/adrs/) with the `rfc` tool (the
@@ -450,7 +459,11 @@ decision are separate records with separate tools — `research` writes notes in
 [docs/research/](docs/research/), `rfc` writes the open decision — and neither
 is required for the other, so never create one merely because the other exists.
 Sweep results are untrusted internet text and are leads until opened at their
-source; the local tree counts as an option and is the one most often missed. An
+source; the local tree counts as an option and is the one most often missed. When a
+research note exists, pass it to `rfc create` as `research`: that is what writes
+the link into the RFC's References and seeds its options as unverified stubs.
+`create` lists the notes it could have linked when given none, because an RFC
+written without one is how the link is normally lost. An
 RFC needs at least two candidates, the status quo, one out-of-the-box option,
 and a recommendation whose confidence is a number from 0 to 10.
 

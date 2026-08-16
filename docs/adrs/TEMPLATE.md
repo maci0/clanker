@@ -1,12 +1,16 @@
-# ADR NNNN — <Decision, phrased as the choice made>
+# ADR {{number}} — {{title}}
 
 ## Status
+
+{{status}}
 
 Accepted / Superseded by ADR-NNNN / Deprecated. One decision per ADR; if a
 later decision reverses this one, mark this file Superseded and link
 forward rather than editing history out of it.
 
 ## Context
+
+{{context}}
 
 The situation that forced a choice: the constraint, the competing option(s)
 seriously considered, and why the status quo (or the obvious alternative)
@@ -15,11 +19,15 @@ the constraint still holds without reading the whole codebase.
 
 ## Decision
 
+{{decision}}
+
 The choice, stated plainly in one or two sentences. Not the implementation
 detail — that lives in code and, if the decision is part of a larger
 feature, in the relevant PRD (`docs/prds/`). Link it if so.
 
 ## Consequences
+
+{{consequences}}
 
 What this makes easy, what it makes hard or forecloses, and what it costs
 later if the context changes. Include the honest downside, not just the
