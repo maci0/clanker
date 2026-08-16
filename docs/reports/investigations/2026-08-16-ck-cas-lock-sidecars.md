@@ -68,7 +68,12 @@ macOS/APFS), and the `catch` at host.zig:3209 turns a valid CAS write into
 explicit failure rather than a silently dropped record, so this is a loud-but-
 wrong error, not corruption. Essentially unreachable on Linux.
 
-**2. The sidecar and the parent directory are created before the compare.** A
+**2. The sidecar and the parent directory are created before the compare.**
+Correction: this is not reorderable, and calling it a defect was wrong. The
+lock has to be held before the read or the read-compare-write is not atomic,
+and the parent directory has to exist before a sidecar beside the target can
+be created. The ordering is required by the mechanism. What remains true is
+the consequence, and it is a placement question rather than a sequence one: a
 CAS that returns `Err.mismatch` — the ordinary contention outcome — has already
 created the lock file next to a target it never wrote, and `createDirPath` at
 step 1 can materialise a parent directory tree for that same never-written
@@ -84,10 +89,16 @@ would be a regression.
 Open for defect 1: route host.zig:3208 through `file_lock.createFileRetry` so
 the lock create honours the invariant its own helper documents.
 
-Optional for defect 2: keeping sidecars out of the source tree entirely would
-mean locking on a path-derived name under `state/` rather than beside the
-target. That is a design change, not a fix, and it is not required for
-correctness.
+Defect 1 is fixed: host.zig now takes the lock through
+`file_lock.createFileRetry`, with a concurrency test that races eight threads
+at a not-yet-existing lock name and asserts no attempt comes back
+`Err.invalid`.
+
+The placement question is open as
+[RFC 0006](../../rfcs/0006-where-ck-cas-lock-sidecars-live.md), recommending a
+hashed name under `state/locks/` at confidence 6/10. It is a design change,
+not a fix, and not required for correctness — which is why it is an RFC rather
+than a patch.
 
 ## References
 

@@ -67,3 +67,59 @@ test "operator journey: schedule add then list shows the task" {
     try std.testing.expect(std.mem.find(u8, listed.stdout, spec) != null);
     std.debug.print("pass: operator journey: schedule add then list shows the task\n", .{});
 }
+
+test "operator journey: rfc create then list shows the decision" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // No LLM: rfc goes through the sandboxed rfc guest, like reports does.
+    try harness.writeMockConfig(io, tmp.dir, gpa, 9);
+    try harness.linkZigOut(io, tmp.dir);
+
+    // create renders docs/rfcs/TEMPLATE.md, so the store has to exist here the
+    // way it does in the repo. The tool refuses rather than inventing a
+    // skeleton, which is the behaviour being relied on, not worked around.
+    try tmp.dir.createDirPath(io, "docs/rfcs");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "docs/rfcs/TEMPLATE.md",
+        .data =
+        \\# RFC {{number}} — {{title}}
+        \\
+        \\## Status
+        \\
+        \\{{status}} — opened {{date}}.
+        \\
+        \\## Overview
+        \\
+        \\{{overview}}
+        \\
+        \\## Recommendation
+        \\
+        \\**Confidence:** {{confidence}}/10
+        \\
+        \\## References
+        \\
+        \\{{references}}
+        \\
+        ,
+    });
+
+    const title = "e2e-rfc HTTP client for the proxy";
+    const overview = "The proxy needs one HTTP client and the choice is not recorded.";
+    var created = try harness.run(gpa, io, tmp.dir, &.{ "rfc", "create", title, overview });
+    defer created.deinit(gpa);
+    if (!created.ok()) std.debug.print("rfc create failed.\nstdout: {s}\nstderr: {s}\n", .{ created.stdout, created.stderr });
+    try std.testing.expect(created.ok());
+    try std.testing.expect(std.mem.find(u8, created.stdout, "docs/rfcs/") != null);
+
+    var listed = try harness.run(gpa, io, tmp.dir, &.{ "rfc", "list" });
+    defer listed.deinit(gpa);
+    if (!listed.ok()) std.debug.print("rfc list failed.\nstdout: {s}\nstderr: {s}\n", .{ listed.stdout, listed.stderr });
+    try std.testing.expect(listed.ok());
+    try std.testing.expect(std.mem.find(u8, listed.stdout, title) != null);
+    std.debug.print("pass: operator journey: rfc create then list shows the decision\n", .{});
+}
