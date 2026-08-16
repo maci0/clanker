@@ -66,10 +66,38 @@ Rebasing in the shared checkout is impossible with unstaged changes present,
 and stashing is what loses other sessions work. Neither is the answer.
 
 **A shared inventory file with several sessions hunks in it** — stage only
-your own hunk and leave the rest for its owner:
+your own hunk and leave the rest for its owner. `git add -p` cannot do this
+from an agent session: it is interactive, and this harness refuses
+interactive git flags outright. Two non-interactive routes cover it.
+
+When your change is one or more whole hunks, dump the diff, cut it down to
+your hunks, and apply that to the index alone:
 
 ```bash
-git add -p docs/reports/README.md
+git diff docs/reports/README.md > /tmp/mine.patch
+```
+
+```bash
+git apply --cached /tmp/mine.patch
+```
+
+When your change is a single line inside a hunk another session also
+touched, no patch can separate the two. Rebuild the file from HEAD carrying
+only your edit, then write that blob straight into the index:
+
+```bash
+git show HEAD:docs/reports/README.md > /tmp/mine.md
+```
+
+```bash
+git update-index --cacheinfo 100644,$(git hash-object -w /tmp/mine.md),docs/reports/README.md
+```
+
+Either way the working tree keeps every session changes untouched; only the
+index is narrowed to yours. Verify before committing:
+
+```bash
+git diff --cached docs/reports/README.md
 ```
 
 **The tree is already tangled.** Message every session and ask three
@@ -90,6 +118,58 @@ written to disk. Wait for all of them to answer. Then:
    `git show <sha>:<path>` — then the session own out-of-repo backup. A file
    deleted while the session believed it untracked, when it had in fact just
    been committed by someone else, is only in git if it was committed.
+
+## Recovering work that was swept into someone else's commit or stash
+
+Symptom: a file you were editing is gone, or an `Edit` returns *File does not
+exist* for a path you wrote minutes ago.
+
+**First, copy anything you can still see to a path outside the working tree.**
+
+```bash
+mkdir -p /tmp/rescue-$USER && cp --parents <your files> /tmp/rescue-$USER/
+```
+
+Do this before any other step, and before deleting anything to unblock a
+rebase. Your view of the index can predate another session's commit, so a file
+that `git status` shows as untracked may already be tracked — and a file it
+shows as tracked may hold *their* version rather than yours. Neither state is
+evidence about what git actually holds for your content.
+
+**Then find which half survived where.** A `git stash` taken without `-u`
+keeps your tracked edits and drops your untracked files on the floor; a sweep
+commit does the opposite. Check both:
+
+```bash
+git stash list
+```
+
+```bash
+git stash show --include-untracked --name-only stash@{0}
+```
+
+**Before restoring from a stash, prove it only adds.** Diff the stash against
+HEAD for exactly the files you intend to take back:
+
+```bash
+git diff HEAD stash@{0} --stat -- <your files>
+```
+
+A report of insertions and **zero deletions** means the stash differs from HEAD
+only by your additions: no other session has competing changes in those files,
+and restoring them wholesale is safe. Any deletion count means someone else's
+work is in there too — restore by hand, hunk by hunk, or you will revert them
+silently while recovering yourself.
+
+With that confirmed, write each file back individually rather than popping the
+stash, which would restore every session's work at once:
+
+```bash
+git show stash@{0}:<path> > <path>
+```
+
+`git show` is read-only and touches no `.git` state, so this is safe to run
+while another session holds a rebase or merge in progress.
 
 ## Verify
 
