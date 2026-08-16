@@ -469,6 +469,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker autolearn` no longer fails with "no observations to synthesize"
+  (with `--model`) or silently aggregates nothing (without) once
+  `state/autolearn.jsonl` exceeds 1 MiB. The guest read the whole log with a
+  single `ck_fs_read`, which returns TooLarge past the 1 MiB host arena, and
+  a `catch null` turned that into an empty log. It now tails the newest
+  256 KiB via `ck_fs_read_range`, like the `reasoning` and `improve_history`
+  guests.
+- TUI: Ctrl+C is no longer swallowed while the model/theme picker, command
+  palette (Ctrl+P), or transcript search (Ctrl+R) is open. It now closes the
+  modal like Escape, and with a turn streaming it also interrupts the turn —
+  previously those two modals consumed every unmatched key, so a streaming
+  turn could not be stopped until the modal was dismissed by hand. The ask
+  modal already handled this.
 - `clanker commit` works again. It called the `smart_commit` guest through a
   helper that wraps its argument as `{"args": "<string>"}` and requires a
   `text` field in the reply; the guest emits neither, so the verb always

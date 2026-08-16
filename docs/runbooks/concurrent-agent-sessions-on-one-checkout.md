@@ -68,10 +68,35 @@ read it; `pgrep -af improve-self` is a snapshot that also matches the shell
 running the guard, and on 2026-08-16 it produced a process id that did not
 exist and an instruction that was not the one running — twice, in two
 different sessions, each time cited as evidence for a conclusion about who
-owned the tree. Wait for the holder to exit (`--iters` bounds it) rather than
-committing or discarding its staged work: committing races a process that will
-overwrite the index, and discarding pulls the tree out from under a gate in
-flight.
+owned the tree.
+
+**Do not wait for the holder to exit.** `--iters` bounds one `improve-self`
+invocation, but `scripts/imp-autorecover-loop/loop.py` respawns it, so on a
+machine running that loop the tree never goes quiet and "wait for a still
+tree" waits forever. Three sessions lost an hour to that advice on
+2026-08-16. Work around the loop instead of against it: pushing and creating
+branches only read refs and objects, so they are safe at any moment, and the
+loop's own promotions are already gated before it commits them.
+
+What the loop owns is the **working tree and index**, so treat its staged
+candidate as transient rather than as anyone's decision. Preserve before you
+discard — this writes a commit object and modifies neither tree nor index:
+
+```bash
+git stash create
+```
+
+```bash
+git branch preserve/<what>-<date> <sha-from-stash-create>
+```
+
+Then push that branch. A dangling commit no ref points at is one `git gc`
+from being unrecoverable, which is the failure this avoids.
+
+"Everything is pushed" is an instant on such a machine, never a state: the
+loop commits every few minutes, so a sweep is true when it runs and stale
+by the next one. Report it with its timestamp and the tip you verified
+against, not as a standing claim.
 
 ## Recover
 
@@ -211,6 +236,74 @@ other sessions references are stale.
 Then confirm ownership rather than assuming it: ask each session to name its
 own files and say whether they are present. "Nothing was lost" is only true
 when each owner has said so about their own work.
+
+**"My work is pushed" is not "nothing is disk-only."** On 2026-08-16 three
+sessions each verified their own state as clean, each truthfully, while
+eleven branches of Aug 11–14 work, a stash, and a dangling commit sat on the
+disk — every one of us had answered "is *my* work pushed" rather than "is
+this repository's work safe". Ask the second question with one command:
+
+```bash
+git log --branches --tags --not --remotes --oneline
+```
+
+```bash
+git stash list
+```
+
+Empty output from the first means no commit on any branch or tag is missing
+upstream — and unlike a per-branch loop it also catches loose and dangling
+commits that no ref points at. A stash is a separate store again: it is a
+commit, but no branch points at it, so a branch enumeration misses it
+entirely. Preserve either with the `git stash create` recipe above rather
+than pushing the stash in place.
+
+Distinguish **missing ref** from **lost work** before acting on the count.
+A branch absent from origin whose commits are all upstream by content is a
+stale pointer, not a risk; pushing it adds a ref and no bytes. Compare by
+patch id or `git rev-list --count origin/main..<branch>`, not by name.
+
+**Check the branch still exists on the remote before analysing it.** A clone
+accumulates remote-tracking refs for branches the remote deleted after merging
+their PRs — this one had 124 tracking refs against 27 real ones. Those refs
+look like unmerged work and are not:
+
+```bash
+git ls-remote --heads origin <name>
+```
+
+They read as unmerged because a **squash merge rewrites the commit**, so its
+patch id no longer matches anything on `main` even though every line landed.
+Confirm by finding the squash commit's subject on `main`, not by patch id.
+This is the same failure as grepping for code across an API rename: a
+mechanical identity check reports **absent** for content that is present in a
+different form, and "absent" is the answer that makes you re-land work that
+already exists. On 2026-08-16 it turned twelve real branches into a
+thirty-one-branch panic.
+
+### Closing out a branch whose content already landed
+
+A branch that is superseded, obsolete, or salvaged still shows as unmerged
+forever, and the next sweep re-investigates it. Close it instead of leaving
+the signal:
+
+```bash
+git merge -s ours -m "merge: close out <branch>" origin/<branch>
+```
+
+`-s ours` records the merge while keeping **the current tree byte for byte** —
+verify with `git rev-parse <merge>^{tree}` against `<merge>^1^{tree}`, which
+must be equal. So it cannot revert anything, and the branch's snapshot stays
+permanently reachable as the merge's second parent (`git show <merge>^2`),
+surviving `gc` and the deletion of the branch ref — which a bare unmerged
+branch does not. Once merged, the remote ref can be deleted without losing
+the content.
+
+Only do this when the content is genuinely accounted for, per-commit and not
+per-branch: a feature landing does not prove every commit riding along was
+part of it. And unique content is necessary but not sufficient — a commit
+whose own message says `wip` or `build error` should not be cherry-picked
+on uniqueness alone.
 
 ## Escalate or follow up
 

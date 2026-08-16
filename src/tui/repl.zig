@@ -3323,6 +3323,23 @@ const Model = struct {
     }
 
     fn handleSearchKey(self: *Model, ctx: *vxfw.EventContext, key: vaxis.Key) !void {
+        // Ctrl+C closes search like Escape, and with a turn streaming it
+        // also stops the turn — the modal must not swallow the interrupt
+        // (modalCtrlCAction).
+        const ctrl_c = blk: {
+            bridge_mutex.lockUncancelable(bridge_io);
+            const streaming = bridge_streaming;
+            bridge_mutex.unlock(bridge_io);
+            break :blk modalCtrlCAction(key, streaming);
+        };
+        if (ctrl_c != .none) {
+            try self.closeSearch(ctx, false);
+            if (ctrl_c == .close_and_stop) {
+                bridge_stop_flag.store(true, .release);
+                askCancelPending();
+            }
+            return ctx.consumeAndRedraw();
+        }
         if (key.matches(vaxis.Key.escape, .{})) {
             try self.closeSearch(ctx, false);
             return ctx.consumeAndRedraw();
@@ -3505,6 +3522,25 @@ const Model = struct {
     }
 
     fn handlePickerKey(self: *Model, ctx: *vxfw.EventContext, key: vaxis.Key) !void {
+        // Ctrl+C must not be swallowed by the modal: it closes the picker
+        // like Escape, and with a turn streaming it also stops the turn —
+        // same rationale as the ask modal, a run must stay stoppable no
+        // matter which modal holds the keyboard (modalCtrlCAction).
+        const ctrl_c = blk: {
+            bridge_mutex.lockUncancelable(bridge_io);
+            const streaming = bridge_streaming;
+            bridge_mutex.unlock(bridge_io);
+            break :blk modalCtrlCAction(key, streaming);
+        };
+        if (ctrl_c != .none) {
+            if (self.picker_kind == .theme) self.theme_override = self.theme_saved;
+            try self.closeModelPicker(ctx);
+            if (ctrl_c == .close_and_stop) {
+                bridge_stop_flag.store(true, .release);
+                askCancelPending();
+            }
+            return ctx.consumeAndRedraw();
+        }
         if (key.matches(vaxis.Key.escape, .{})) {
             // Theme preview is undone; a model pick has no preview to undo.
             if (self.picker_kind == .theme) self.theme_override = self.theme_saved;
@@ -5925,6 +5961,30 @@ fn extractSelectionText(alloc: std.mem.Allocator, surface: vxfw.Surface, a: vxfw
 fn isCopyChord(key: vaxis.Key, streaming: bool, has_selection: bool) bool {
     if (key.matches('c', .{ .ctrl = true, .shift = true })) return true;
     return !streaming and has_selection and key.matches('c', .{ .ctrl = true });
+}
+
+/// What Ctrl+C means inside a keyboard-owning modal (picker, search). The
+/// ask modal has its own handler because it must also wake the parked run
+/// thread; the other two must not swallow the interrupt: with a turn
+/// streaming the chord closes the modal *and* stops the turn (a run must
+/// stay stoppable no matter which modal holds the keyboard), idle it closes
+/// the modal like Escape. Ctrl+Shift+C is the copy chord, not an interrupt,
+/// and every other key belongs to the modal.
+const ModalCtrlC = enum { none, close, close_and_stop };
+
+fn modalCtrlCAction(key: vaxis.Key, streaming: bool) ModalCtrlC {
+    if (!key.matches('c', .{ .ctrl = true })) return .none;
+    return if (streaming) .close_and_stop else .close;
+}
+
+test "modalCtrlCAction stops a streaming turn from inside picker/search and closes when idle" {
+    const ctrl_c = vaxis.Key{ .codepoint = 'c', .mods = .{ .ctrl = true } };
+    try std.testing.expectEqual(ModalCtrlC.close_and_stop, modalCtrlCAction(ctrl_c, true));
+    try std.testing.expectEqual(ModalCtrlC.close, modalCtrlCAction(ctrl_c, false));
+    // Ctrl+Shift+C is the copy chord; a bare 'c' is modal input.
+    const shift = vaxis.Key{ .codepoint = 'c', .mods = .{ .ctrl = true, .shift = true } };
+    try std.testing.expectEqual(ModalCtrlC.none, modalCtrlCAction(shift, true));
+    try std.testing.expectEqual(ModalCtrlC.none, modalCtrlCAction(.{ .codepoint = 'c' }, true));
 }
 
 test "isCopyChord recovers the collapsed Ctrl+Shift+C byte only with a selection and no stream" {

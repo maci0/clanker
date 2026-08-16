@@ -350,3 +350,17 @@ test "listJson is the bare array todo_list embeds, ready to splice into an event
     try std.testing.expectEqualStrings("{\"ok\":true,\"todos\":" ++ "", listed[0.."{\"ok\":true,\"todos\":".len]);
     try std.testing.expect(std.mem.find(u8, listed, json) != null);
 }
+
+test "todo_add rejects titles over the max length" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var list = List{ .alloc = t_alloc };
+    defer list.deinit();
+
+    const long_title = try arena.alloc(u8, max_title_len + 1);
+    @memset(long_title, 'x');
+    const result = try applyTodoOp(&list, arena, "todo_add", long_title, null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"ok\":false") != null);
+}

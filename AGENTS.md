@@ -202,7 +202,7 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   a log of only successes cannot answer "is the provider down?".
   `ck_stats` returns the host-side aggregate, not the raw log: shipping every
   record through the 1 MiB guest arena fails once the log has a few thousand
-  lines. `improve_history` / `reasoning` guests tail their jsonl the same way.
+  lines. `improve_history` / `reasoning` / `autolearn` guests tail their jsonl the same way.
 - `src/toolhost/` — the native tool infrastructure: `registry.zig` (loads
   `*.tool.json` descriptors), `manifest.zig` (validates them),
   `builder.zig` (compiles WASM tools), `usage.zig` (tool call accounting).
@@ -214,6 +214,10 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   through `patches/vaxis-sixel-graphics.patch`, so `sixel_supported` in
   `mascot.zig` compiles the whole path out on an unpatched dependency.
   `turn_stats.writeSession` matches the web `#run-metrics` fields.
+  A keyboard-owning modal in `repl.zig` (picker, search) must route Ctrl+C
+  through `modalCtrlCAction` (the ask modal has its own stop path): a
+  fall-through `consumeAndRedraw` swallows the interrupt and a streaming
+  turn cannot be stopped while the modal is open.
 - `src/mcp/` — MCP server. `src/acp/` — ACP v1 stdio. `src/hooks/` —
   Claude-compatible lifecycle hooks. `src/debug/` — DAP.
 - `src/peers/` — mesh + chatrooms. Fleet's lamp map is `GET /api/mesh/map`

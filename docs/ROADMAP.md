@@ -344,3 +344,4 @@ run/ask/steer command surface, and the three recorder write paths.
 Automatically observed from usage patterns (state/autolearn.jsonl, last 7 days). Refresh with `clanker autolearn`.
 
 - No actionable observations yet — run a few tasks, then `clanker autolearn`.
+

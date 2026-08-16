@@ -41,6 +41,9 @@ config.local.toml
 # regular Git entry.
 /.local
 
+# User-local agent coordination and machine state (task board, locks, scratch)
+.local/
+
 # Editor / OS junk
 .DS_Store
 *.swp

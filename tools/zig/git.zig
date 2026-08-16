@@ -105,7 +105,21 @@ fn gitVerb(args: []const []const u8) ?[]const u8 {
 /// verbs git_remote_ops grants (`push`, `merge`, `checkout`) are skipped, the
 /// same lift the host applies — the deny message must not pre-empt the config.
 fn deniedVerb(args: []const []const u8, git_remote_ops: bool) ?[]const u8 {
+    // Skip the value of a value-taking global option (e.g. the worktree path
+    // after -C) so its data is not scanned for deny tokens; only real argv
+    // positions are candidates. Mirrors how gitVerb locates the verb.
+    var skip_next = false;
     for (args) |a| {
+        if (skip_next) {
+            skip_next = false;
+            continue;
+        }
+        for (git_value_options) |o| {
+            if (std.mem.eql(u8, o, a)) {
+                skip_next = true;
+                break;
+            }
+        }
         for (denied_tokens) |t| {
             if (git_remote_ops and isGitRemoteOpToken(t)) continue;
             if (argDenied(a, t)) return t;
@@ -234,7 +248,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
         const joined = join_buf[0..w.end];
         for (policy.patterns) |pat| {
-            if (patternNamesCmd(pat, "git")) governed = true;
+            if (!patternNamesCmd(pat, "git")) continue;
+            governed = true;
             if (globMatch(pat, joined)) allowed = true;
         }
     }

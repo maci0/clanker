@@ -63,8 +63,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var notice: []const u8 = "";
     const synthesizing = req.provider.len > 0 or req.model.len > 0;
     // Read before reset so `--model` can still see the observations being
-    // archived. A reset without synthesis stays empty on purpose.
-    const prior = lib.fsRead(event_path) catch null;
+    // archived. A reset without synthesis stays empty on purpose. Tail, not
+    // fsRead: a whole-file read fails TooLarge once the log outgrows the
+    // 1 MiB host arena, and `catch null` would report it as no observations.
+    const prior = lib.fsReadTail(event_path, 256 * 1024) catch null;
     if (req.reset) {
         lib.fsRename(event_path, archive_path) catch |err| switch (err) {
             error.NotFound => notice = "No event log to reset (state/autolearn.jsonl not found)",
