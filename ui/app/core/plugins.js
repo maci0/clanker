@@ -92,8 +92,10 @@ export function loadWebuiPlugins() {
   return fetch("/api/webui/plugins")
     .then(_readJson)
     .then(function (d) {
-      renderWebuiPlugins(d.plugins || []);
-      return loadPluginAssets(d.plugins || []);
+      // The webui_addon guest owns the registry now; its list answer is
+      // `addons` (with has_css), passed through verbatim by the HTTP route.
+      renderWebuiPlugins(d.addons || []);
+      return loadPluginAssets(d.addons || []);
     })
     .catch(function (err) {
       var msg = "Could not load plugins: " + err.message;
@@ -128,9 +130,9 @@ export function renderWebuiPlugins(list) {
         .then(_readJson)
         .then(function (d) {
           var nowOn = box.checked;
-          renderWebuiPlugins(d.plugins || []);
+          renderWebuiPlugins(d.addons || []);
           if (nowOn) {
-            return loadPluginAssets(d.plugins || []).then(function () {
+            return loadPluginAssets(d.addons || []).then(function () {
               _el.webuiPluginsStatus.textContent = (p.title || p.name) + " enabled.";
             });
           }

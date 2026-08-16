@@ -74,10 +74,12 @@ van.derive(function () {
 });
 ```
 
-Plugins are off until turned on in System → Web UI plugins, except Files,
-which is on when `state/webui_plugins.json` has never been written (the
-Work rail’s workspace browser). Enabled ones are recorded in
-`state/webui_plugins.json`.
+Plugins are off until turned on in System → Web UI plugins, except Files
+(the Work rail's workspace browser) and Music, which are on when
+`state/webui_plugins.json` has never been written. Enabled ones are recorded
+in `state/webui_plugins.json`. The registry — scan, seed, and toggle — lives
+in the `webui_addon` tool; the `/api/webui/plugins` route relays to it, so
+the page and the tool always see the same enabled list.
 
 A disabled plugin's assets are not served: `GET /webui/plugins/<name>/app.js`
 answers `404` with `{"ok":false,"error":"plugin is not enabled"}` before it

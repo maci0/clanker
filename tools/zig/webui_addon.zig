@@ -58,6 +58,7 @@ fn actionList(out: *lib.Out) !void {
                 .description = m.description,
                 .group = if (m.group.len > 0) m.group else "Watch",
                 .enabled = isEnabled(state, name),
+                .has_css = hasCss(name),
             });
         }
     }
@@ -70,7 +71,13 @@ const Listed = struct {
     description: []const u8,
     group: []const u8,
     enabled: bool,
+    has_css: bool,
 };
+
+fn hasCss(name: []const u8) bool {
+    const css_path = std.fmt.allocPrint(lib.alloc, "{s}/{s}/app.css", .{ plugins_dir, name }) catch return false;
+    if (lib.fsStat(css_path)) |_| return true else |_| return false;
+}
 
 fn writeList(out: *lib.Out, addons: []const Listed, state: State) !void {
     var w = lib.writer(out);
@@ -94,6 +101,8 @@ fn writeList(out: *lib.Out, addons: []const Listed, state: State) !void {
         try s.write(a.group);
         try s.objectField("enabled");
         try s.write(a.enabled);
+        try s.objectField("has_css");
+        try s.write(a.has_css);
         try s.endObject();
     }
     try s.endArray();
@@ -248,7 +257,15 @@ fn writeManifestJson(name: []const u8, title: []const u8, description: []const u
 }
 
 fn loadState() State {
-    const raw = lib.fsRead(state_path) catch return .{};
+    const raw = lib.fsRead(state_path) catch |err| {
+        // Fresh checkout: the state file has never been written. The native
+        // HTTP handler used to seed the same defaults here, and the two
+        // disagreeing copies were the bug: on a fresh checkout the page showed
+        // files+music on while the guest saw them off, and the first enable
+        // then wrote a list without them. One owner, one seed.
+        if (err == error.NotFound) return .{ .enabled = &logic.default_enabled };
+        return .{};
+    };
     return std.json.parseFromSliceLeaky(State, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch .{};
 }
 

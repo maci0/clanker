@@ -10,6 +10,12 @@ pub const max_desc_len: usize = 240;
 
 pub const groups = [_][]const u8{ "Work", "Watch", "Set up" };
 
+/// Fresh `state/webui_plugins.json` is missing: Files is the Work surface
+/// (workspace browser) and ships on, and Music is the demo addon. A written
+/// file — including an empty enabled list after the operator turned them all
+/// off — is respected; only a missing file seeds.
+pub const default_enabled = [_][]const u8{ "files", "music" };
+
 pub fn validName(name: []const u8) bool {
     if (name.len == 0 or name.len > max_name_len) return false;
     for (name) |c| {
@@ -116,4 +122,16 @@ test "mergeEnabled toggles a name without duplicating it" {
     const c = try mergeEnabled(std.testing.allocator, b, "music", false);
     defer std.testing.allocator.free(c);
     try std.testing.expectEqual(@as(usize, 2), c.len);
+}
+
+test "first toggle on the fresh-checkout seed keeps the default addons on" {
+    // The registry lives in one place (the webui_addon guest). A fresh
+    // checkout seeds files+music; enabling a brand-new addon must not drop
+    // them, or the page would silently turn Files off on first use.
+    const a = try mergeEnabled(std.testing.allocator, &default_enabled, "office", true);
+    defer std.testing.allocator.free(a);
+    try std.testing.expectEqual(@as(usize, 3), a.len);
+    try std.testing.expectEqualStrings("files", a[0]);
+    try std.testing.expectEqualStrings("music", a[1]);
+    try std.testing.expectEqualStrings("office", a[2]);
 }

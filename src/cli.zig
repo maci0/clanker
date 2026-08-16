@@ -6248,9 +6248,9 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_board) {
             handleBoard(io, gpa, cfg, environ_map, method, target, body, stream);
         } else if (is_webui_plugins) {
-            handleWebuiPlugins(io, gpa, method, body, stream);
+            handleWebuiPlugins(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_webui_plugin_asset) {
-            handleWebuiPluginAsset(io, gpa, path, acceptsGzip(headers_raw), stream);
+            handleWebuiPluginAsset(io, gpa, cfg, environ_map, path, acceptsGzip(headers_raw), stream);
         } else if (is_files) {
             handleFiles(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (is_logs) {
@@ -9870,18 +9870,6 @@ fn writeListingModels(
 }
 
 const webui_plugins_dir = "ui/plugins";
-const webui_plugins_state = "state/webui_plugins.json";
-
-const WebuiPlugin = struct {
-    name: []const u8 = "",
-    title: []const u8 = "",
-    description: []const u8 = "",
-    group: []const u8 = "Watch",
-};
-
-const WebuiPluginState = struct {
-    enabled: []const []const u8 = &.{},
-};
 
 const WebuiPluginPost = struct {
     name: ?[]const u8 = null,
@@ -9931,40 +9919,44 @@ test pluginAssetType {
     try std.testing.expect(pluginAssetType("../sprites.png") == null);
 }
 
-fn pluginEnabled(state: WebuiPluginState, name: []const u8) bool {
-    for (state.enabled) |e| {
-        if (std.mem.eql(u8, e, name)) return true;
+/// True when the `webui_addon` guest's list output puts `name` on its enabled
+/// array. The guest owns the registry (scan, fresh-checkout seed, toggle), so
+/// the listing route and the asset gate read the same answer from there
+/// instead of keeping a second native copy that can drift.
+fn listedEnabled(arena: std.mem.Allocator, raw: []const u8, name: []const u8) bool {
+    const v = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return false;
+    if (v != .object) return false;
+    const enabled = v.object.get("enabled") orelse return false;
+    if (enabled != .array) return false;
+    for (enabled.array.items) |item| {
+        if (item == .string and std.mem.eql(u8, item.string, name)) return true;
     }
     return false;
 }
 
-/// Fresh `state/webui_plugins.json` is missing: Files is the Work surface
-/// (workspace browser) and ships on. A written enabled list is respected,
-/// including an empty one after the operator turned Files off.
-fn seedWebuiPluginState(had_file: bool, state: *WebuiPluginState, arena: std.mem.Allocator) void {
-    if (had_file) return;
-    const seeded = arena.dupe([]const u8, &.{ "files", "music" }) catch return;
-    state.enabled = seeded;
-}
-
-test "missing webui plugin state enables files" {
-    var seeded: WebuiPluginState = .{};
-    seedWebuiPluginState(false, &seeded, std.testing.allocator);
-    defer if (seeded.enabled.len > 0) std.testing.allocator.free(seeded.enabled);
-    try std.testing.expect(pluginEnabled(seeded, "files"));
-    try std.testing.expect(pluginEnabled(seeded, "music"));
-    try std.testing.expect(!pluginEnabled(seeded, "office"));
-    var written: WebuiPluginState = .{ .enabled = &.{} };
-    seedWebuiPluginState(true, &written, std.testing.allocator);
-    try std.testing.expect(!pluginEnabled(written, "files"));
+test listedEnabled {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try std.testing.expect(listedEnabled(arena, "{\"ok\":true,\"enabled\":[\"files\",\"music\"]}", "files"));
+    try std.testing.expect(!listedEnabled(arena, "{\"ok\":true,\"enabled\":[\"files\",\"music\"]}", "office"));
+    try std.testing.expect(!listedEnabled(arena, "{\"ok\":false,\"error\":\"boom\"}", "files"));
+    try std.testing.expect(!listedEnabled(arena, "not json", "files"));
 }
 
 /// Which plugins exist and which are turned on. A plugin is off until someone
 /// turns it on: it contributes script to the page, so its presence on disk is
-/// not consent to run it.
+/// not consent to run it. The `webui_addon` guest owns the registry — the
+/// scan, the fresh-checkout seed, and the toggle all live there — and this
+/// handler only relays the request and its answer, so the page and the tool
+/// cannot drift apart (the historical bug: native seeded files+music on a
+/// missing state file while the guest did not, so the first enable silently
+/// dropped them).
 fn handleWebuiPlugins(
     io: std.Io,
     gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
     method: []const u8,
     body: []const u8,
     stream: std.Io.net.Stream,
@@ -9973,14 +9965,7 @@ fn handleWebuiPlugins(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var had_plugin_state = true;
-    const raw_state = std.Io.Dir.cwd().readFileAlloc(io, webui_plugins_state, arena, .limited(1 << 16)) catch blk: {
-        had_plugin_state = false;
-        break :blk "{}";
-    };
-    var state = std.json.parseFromSliceLeaky(WebuiPluginState, arena, raw_state, .{ .ignore_unknown_fields = true }) catch WebuiPluginState{};
-    seedWebuiPluginState(had_plugin_state, &state, arena);
-
+    var input: []const u8 = "{}";
     if (std.mem.eql(u8, method, "POST")) {
         const req = std.json.parseFromSliceLeaky(WebuiPluginPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
@@ -9990,83 +9975,38 @@ fn handleWebuiPlugins(
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing name\"}");
             return;
         };
-        if (!validPluginName(name)) {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad plugin name\"}");
-            return;
-        }
-        const on = req.enabled orelse !pluginEnabled(state, name);
-        var next: std.ArrayList([]const u8) = .empty;
-        for (state.enabled) |e| {
-            if (std.mem.eql(u8, e, name)) continue;
-            next.append(arena, e) catch {};
-        }
-        if (on) next.append(arena, name) catch {};
-        state.enabled = next.items;
-
-        var enc: std.Io.Writer.Allocating = .init(arena);
-        std.json.Stringify.value(state, .{}, &enc.writer) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
-            return;
+        // No explicit target preserves the old toggle semantics, resolved
+        // against the guest-owned registry rather than a second native copy.
+        const on = req.enabled orelse blk: {
+            const listed = toolJson(io, gpa, arena, cfg, environ_map, "webui_addon", "{}") catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui_addon tool unavailable\"}");
+                return;
+            };
+            break :blk !listedEnabled(arena, listed, name);
         };
-        atomic_write.writeFile(io, std.Io.Dir.cwd(), webui_plugins_state, enc.written()) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"write failed\"}");
-            return;
-        };
+        var w: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &w.writer };
+        s.beginObject() catch return;
+        s.objectField("action") catch return;
+        s.write(if (on) "enable" else "disable") catch return;
+        s.objectField("name") catch return;
+        s.write(name) catch return;
+        s.endObject() catch return;
+        input = w.written();
     }
 
-    var out: std.Io.Writer.Allocating = .init(arena);
-    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-    s.beginObject() catch return;
-    s.objectField("ok") catch return;
-    s.write(true) catch return;
-    s.objectField("plugins") catch return;
-    s.beginArray() catch return;
-
-    var dir = std.Io.Dir.cwd().openDir(io, webui_plugins_dir, .{ .iterate = true }) catch {
-        s.endArray() catch return;
-        s.endObject() catch return;
-        respond(stream, 200, "OK", out.written());
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "webui_addon", input) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui_addon tool unavailable\"}");
         return;
     };
-    defer dir.close(io);
-    var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
-        if (entry.kind != .directory) continue;
-        if (!validPluginName(entry.name)) continue;
-        const manifest_path = std.fmt.allocPrint(arena, "{s}/{s}/plugin.json", .{ webui_plugins_dir, entry.name }) catch continue;
-        const manifest_raw = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, arena, .limited(1 << 16)) catch continue;
-        var plugin = std.json.parseFromSliceLeaky(WebuiPlugin, arena, manifest_raw, .{ .ignore_unknown_fields = true }) catch continue;
-        // The directory is the identity: a manifest naming itself something
-        // else would serve assets from a path that does not exist.
-        plugin.name = entry.name;
-        const css_path = std.fmt.allocPrint(arena, "{s}/{s}/app.css", .{ webui_plugins_dir, entry.name }) catch continue;
-        const has_css = std.Io.Dir.cwd().statFile(io, css_path, .{}) catch null;
-
-        s.beginObject() catch return;
-        s.objectField("name") catch return;
-        s.write(plugin.name) catch return;
-        s.objectField("title") catch return;
-        s.write(if (plugin.title.len > 0) plugin.title else plugin.name) catch return;
-        s.objectField("description") catch return;
-        s.write(plugin.description) catch return;
-        s.objectField("group") catch return;
-        s.write(plugin.group) catch return;
-        s.objectField("enabled") catch return;
-        s.write(pluginEnabled(state, entry.name)) catch return;
-        s.objectField("has_css") catch return;
-        s.write(has_css != null) catch return;
-        s.endObject() catch return;
-    }
-    s.endArray() catch return;
-    s.endObject() catch return;
-    respond(stream, 200, "OK", out.written());
+    respondTool(stream, raw);
 }
 
 /// `GET /webui/plugins/<name>/app.js|app.css`. Served from disk rather than
 /// embedded: a plugin can be dropped in without rebuilding clanker, which is
 /// the point of it being a plugin. Only an enabled plugin's assets are served,
 /// so turning one off actually stops its code reaching the browser.
-fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -10087,14 +10027,14 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8
         return;
     };
 
-    var had_plugin_state = true;
-    const raw_state = std.Io.Dir.cwd().readFileAlloc(io, webui_plugins_state, arena, .limited(1 << 16)) catch blk: {
-        had_plugin_state = false;
-        break :blk "{}";
+    // The `webui_addon` guest owns the enabled list (scan, seed, toggle), so
+    // the gate reads it from there too; a native re-read with its own seed
+    // is exactly the drift the registry consolidation removed.
+    const listed = toolJson(io, gpa, arena, cfg, environ_map, "webui_addon", "{}") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui_addon tool unavailable\"}");
+        return;
     };
-    var state = std.json.parseFromSliceLeaky(WebuiPluginState, arena, raw_state, .{ .ignore_unknown_fields = true }) catch WebuiPluginState{};
-    seedWebuiPluginState(had_plugin_state, &state, arena);
-    if (!pluginEnabled(state, name)) {
+    if (!listedEnabled(arena, listed, name)) {
         respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"plugin is not enabled\"}");
         return;
     }
