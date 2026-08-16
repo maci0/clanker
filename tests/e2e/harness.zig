@@ -206,6 +206,21 @@ pub fn spawnServe(io: std.Io, cwd: std.Io.Dir, webui_port: u16) !Serve {
     return .{ .child = child, .webui_port = webui_port, .mesh_port = 0 };
 }
 
+pub fn waitTcp(io: std.Io, port: u16, timeout_ms: u64) !void {
+    const start = std.Io.Timestamp.now(io, .awake).nanoseconds;
+    const budget = timeout_ms * std.time.ns_per_ms;
+    const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
+    while (true) {
+        if (addr.connect(io, .{ .mode = .stream })) |c| {
+            c.close(io);
+            return;
+        } else |_| {}
+        const now = std.Io.Timestamp.now(io, .awake).nanoseconds;
+        if (now - start > budget) return error.ServeTimeout;
+        std.Io.sleep(io, .{ .nanoseconds = 40 * std.time.ns_per_ms }, .awake) catch {};
+    }
+}
+
 pub fn waitHttp(io: std.Io, gpa: std.mem.Allocator, url: []const u8, timeout_ms: u64) !void {
     const start = std.Io.Timestamp.now(io, .awake).nanoseconds;
     const budget = timeout_ms * std.time.ns_per_ms;

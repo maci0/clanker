@@ -33,8 +33,8 @@ text).
    always produces the same bytes. No external deps; a pure-Zig pixel-font
    renderer.
 3. The PNG is inserted as a multimodal message (image content block) in place of
-   the truncated messages. The image carries a preamble line: `[conversation
-   history: <N> messages, rendered at <timestamp>]`.
+   the truncated messages. The image carries a preamble line: `[history: N
+   messages, compacted <ISO8601 timestamp>]`.
 4. The strategy is skipped (falls back to LLM summarization) if the configured
    model does not support image input. Detection reuses the existing mechanism:
    the model's `capabilities` list (`src/config.zig`) containing `"image_in"`,

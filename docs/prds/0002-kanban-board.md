@@ -109,7 +109,7 @@ is told the op is not real first.
 **Views, not permissions.** `kanban_list` accepts `who` to narrow the answer
 to what one clanker is concerned with. It narrows the answer, not the reach.
 
-## Data model (per card)
+**Data model (per card).**
 
 `id` (the message id of the add), `title`, `body`, `column`, `status`
 (derived), `priority`, `assignee`, `assigned_by`, `created_by`, `created`,

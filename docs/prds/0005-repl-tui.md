@@ -324,7 +324,7 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
 
 ## Open questions / future work
 
-- Order of the remaining open items (multi-line input, plan mode, truecolor
+- Order of the remaining open items (multi-line input, truecolor
   autodetection, multimodal) is operator preference; ask/confirm is no longer
   the surprise gap relative to the web UI.
 - **`Agent.on_compact` hook.** Mid-turn compaction is currently *detected*

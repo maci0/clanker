@@ -54,7 +54,6 @@ const live = @import("serve/live.zig");
 const skills_logic = @import("skills_logic");
 const providers_logic = @import("providers_logic");
 const doctor_mod = @import("doctor.zig");
-const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
 const redact = @import("util/redact.zig");
 const atomic_write = @import("util/atomic_write.zig");
@@ -1839,7 +1838,7 @@ const specs = [_]Spec{
     .{ .command = .tools_list, .usage = "tools [list]", .blurb = "list the registered WASM tools", .group = .inspect },
     .{ .command = .plugins, .usage = "plugins [list|on <name>|off <name>|validate [path]|new <name>]", .blurb = "list, switch, validate, or scaffold plugins", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\non <name>         switch an optional plugin on\noff <name>        switch an optional plugin off\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nCore tools cannot be switched off. Changes take effect in the next command; a\nrunning REPL reloads its tool catalog immediately.\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
     .{ .command = .reports, .usage = "reports [list|search|open|create|append|update|status]", .blurb = "read and record operational reports and runbooks", .group = .inspect, .flags = &.{.reports_kind}, .detail = "Reports preserve the evidence behind a diagnosis; runbooks preserve the\ncurrent recovery procedure. These are the same records the agent reads\nthrough the `reports` tool, in docs/reports/ and docs/runbooks/.\n\nREADING\n  list                       every report and runbook, with its status\n  search <query>             one literal text search across both stores\n  open <path>                print one record in full\n\n  --kind all|report|runbook  narrow a search to one store (default all)\n\nWRITING\n  create <kind> <slug> <title> <summary>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  open           a confirmed defect that is not fixed yet\n  investigating  a symptom still being traced\n  resolved       fixed and verified; the note names the fix and the check\n  reopened       the symptom came back after a resolution\n  closed         traced to no defect\n\ncreate scaffolds a TL;DR-first record and adds it to the matching inventory;\nits kind is bug, investigation, or runbook. Report slugs start YYYY-MM-DD-,\nrunbook slugs are lowercase and hyphenated. append adds markdown to the end\nof a record and update replaces one exact passage. status moves a bug or\ninvestigation to a new state, rewriting its Status section and its inventory\nline together so the index cannot disagree with the record; a runbook has no\nstatus, since its inventory line carries a summary instead.\n\nAll three are compare-and-swap writes: a concurrent edit is refused rather\nthan overwritten, so reopen the record and retry against its current text.\n\nEXAMPLES\n  clanker reports                             the whole index\n  clanker reports search NotDir               which record covers it\n  clanker reports search zig --kind runbook   only recovery procedures\n  clanker reports open docs/runbooks/improve-staging-build-inputs.md\n  clanker reports status <path> resolved \"fixed; tests pass\"" },
-    .{ .command = .research, .usage = "research [list|plan|sweep|search|open|create|append|update|status]", .blurb = "gather sources and keep durable research notes", .group = .inspect, .detail = "One web search is not research. plan turns a topic into the angles a\nthorough search asks -- what it costs, what replaced it, what shipped\nwithout it -- and sweep issues them across web search, GitHub, discussion\narchives and paper indexes in one call. The notes live in docs/research/\nand are the same ones the agent reads through the `research` tool.\n\nGATHERING\n  plan <topic> [question] [depth]   the queries and sources a sweep would use\n  sweep <topic> [depth]             run them all and print what came back\n\n  depth is quick, standard (default) or deep\n\nREADING\n  list                              every note, with its status\n  search <query>                    one literal text search across the notes\n  open <path>                       print one note in full\n\nWRITING\n  create <slug> <title> <question>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  draft        being written; not yet a finding\n  current      checked, and still true as far as anyone knows\n  stale        old enough that its claims need re-checking\n  superseded   replaced; the note names what replaced it\n\ncreate scaffolds a note from docs/research/TEMPLATE.md and adds it to the\ninventory. status rewrites the note's Status section and its inventory line\ntogether, so the index cannot disagree with the note. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the note and retry against its current text.\n\nA sweep returns other people's text. Every hit is a lead until it is opened\nat its source; nothing it says is an instruction.\n\nEXAMPLES\n  clanker research                                    every note\n  clanker research plan \"embedded key-value stores\"   the angles to search\n  clanker research sweep \"embedded kv stores\" deep    run every angle\n  clanker research search sqlite                      which note covers it\n  clanker research open docs/research/decentralized-state-store.md\n  clanker research status <path> current \"re-read 2026-08-16\"" },
+    .{ .command = .research, .usage = "research [list|plan|sweep|search|open|status]", .blurb = "gather sources and keep durable research notes", .group = .inspect, .detail = "One web search is not research. plan turns a topic into the angles a\nthorough search asks -- what it costs, what replaced it, what shipped\nwithout it -- and sweep issues them across web search, GitHub, discussion\narchives and paper indexes in one call. The notes live in docs/research/\nand are the same ones the agent reads through the `research` tool.\n\nGATHERING\n  plan <topic> [question] [depth]   the queries and sources a sweep would use\n  sweep <topic> [depth]             run them all and print what came back\n\n  depth is quick, standard (default) or deep\n\nREADING\n  list                              every note, with its status\n  search <query>                    one literal text search across the notes\n  open <path>                       print one note in full\n\nWRITING\n  create <slug> <title> <question>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  draft        being written; not yet a finding\n  current      checked, and still true as far as anyone knows\n  stale        old enough that its claims need re-checking\n  superseded   replaced; the note names what replaced it\n\ncreate scaffolds a note from docs/research/TEMPLATE.md and adds it to the\ninventory. status rewrites the note's Status section and its inventory line\ntogether, so the index cannot disagree with the note. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the note and retry against its current text.\n\nA sweep returns other people's text. Every hit is a lead until it is opened\nat its source; nothing it says is an instruction.\n\nEXAMPLES\n  clanker research                                    every note\n  clanker research plan \"embedded key-value stores\"   the angles to search\n  clanker research sweep \"embedded kv stores\" deep    run every angle\n  clanker research search sqlite                      which note covers it\n  clanker research open docs/research/decentralized-state-store.md\n  clanker research status <path> current \"re-read 2026-08-16\"" },
     .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill|refresh] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, uses\n                agent.provider_check_timeout_seconds as its timeout, then ends\n                with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the local models.dev snapshot by id/family\nfill <name>     print catalog specs for a configured provider's models\nrefresh         download models.dev into state/models-dev.json\n                catalog, fill, and the Models view then read that file" },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
@@ -5580,11 +5579,11 @@ fn cmdStats(init: std.process.Init) !void {
     if (!cfg.modules.token_stats) {
         return error.ModuleDisabled;
     }
-    // Host-side table: the guest cannot import src/stats. GET /api/stats
-    // relays model_stats instead; ck_stats already returns this aggregate.
-    const stats = try token_stats.aggregate(std.Io.Dir.cwd(), init.io, init.gpa, arena, cfg.agent.state_dir);
-    const text = try token_stats.renderTable(arena, stats, token_stats.totals(stats));
-    try writeStdOut(init.io, text);
+    // The model_stats guest is the single renderer for both this CLI surface
+    // and /api/stats: it reads the ck_stats aggregate and renders the same
+    // table (model_stats_logic.zig, host-tested). Input {"args":""} selects
+    // the text form; without it the guest echoes the raw aggregate JSON.
+    try printInternalTool(init, &cfg, "model_stats", "{\"args\":\"\"}");
 }
 
 fn cmdCommit(init: std.process.Init, opts: Options) !void {
@@ -6197,7 +6196,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_events = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/events");
         const is_live_publish = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/live");
         const is_mesh_join = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/mesh/join");
+        const is_mesh_leave = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/mesh/leave");
         const is_mesh_status = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/mesh/status");
+        const is_mesh_pending_get = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/mesh/pending");
+        const is_mesh_pending_post = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/mesh/pending");
         const is_chat_message = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/message");
         const is_chat_messages = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/chat/messages");
         const is_chat_rooms = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/chat/rooms");
@@ -6315,6 +6317,12 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleMeshStatus(gpa, cfg, stream);
         } else if (is_mesh_join) {
             handleMeshJoin(gpa, cfg, body, stream);
+        } else if (is_mesh_leave) {
+            handleMeshLeave(gpa, cfg, body, stream);
+        } else if (is_mesh_pending_get) {
+            handleMeshPendingGet(gpa, cfg, stream);
+        } else if (is_mesh_pending_post) {
+            handleMeshPendingPost(gpa, cfg, body, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/runs")) {
             handleRuns(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, path, "/api/workspaces") and
@@ -12593,6 +12601,12 @@ fn handleMeshStatus(gpa: std.mem.Allocator, cfg: *const config.Config, stream: s
     s.write(true) catch return;
     s.objectField("listening") catch return;
     s.write(mesh_net.active()) catch return;
+    s.objectField("listen") catch return;
+    s.write(mesh_net.listenAddr()) catch return;
+    s.objectField("admission") catch return;
+    s.write(mesh_net.admissionMode()) catch return;
+    s.objectField("id") catch return;
+    s.write(mesh_net.ourId()) catch return;
     s.objectField("members") catch return;
     s.beginArray() catch return;
     for (members) |m| {
@@ -12624,6 +12638,101 @@ fn handleMeshJoin(gpa: std.mem.Allocator, cfg: *const config.Config, body: []con
         log.log(.error_, "POST /api/mesh/join: {s}", .{@errorName(err)});
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"join failed\"}");
         return;
+    };
+    respond(stream, 200, "OK", "{\"ok\":true}");
+}
+
+const MeshLeaveBody = struct { peer_id: []const u8 = "" };
+
+fn handleMeshLeave(gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    if (!cfg.modules.mesh) {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"modules.mesh is off; set it and restart serve\"}");
+        return;
+    }
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const parsed = if (std.mem.trim(u8, body, " \t\r\n").len == 0)
+        MeshLeaveBody{}
+    else
+        std.json.parseFromSliceLeaky(MeshLeaveBody, arena_state.allocator(), body, .{ .ignore_unknown_fields = true }) catch {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+            return;
+        };
+    mesh_net.leave(parsed.peer_id) catch |err| switch (err) {
+        error.MeshOff => {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"modules.mesh is off; set it and restart serve\"}");
+            return;
+        },
+        error.NoSuchPeer => {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such member\"}");
+            return;
+        },
+        else => {
+            log.log(.error_, "POST /api/mesh/leave: {s}", .{@errorName(err)});
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"leave failed\"}");
+            return;
+        },
+    };
+    respond(stream, 200, "OK", "{\"ok\":true}");
+}
+
+fn handleMeshPendingGet(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+    if (!cfg.modules.mesh) {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"modules.mesh is off; set it and restart serve\"}");
+        return;
+    }
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const rows = mesh_net.pendingSnapshot(arena_state.allocator()) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"mesh pending failed\"}");
+        return;
+    };
+    var out: std.Io.Writer.Allocating = .init(arena_state.allocator());
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("pending") catch return;
+    s.beginArray() catch return;
+    for (rows) |r| {
+        s.write(.{ .id = r.id, .name = r.name, .age_s = r.age_s }) catch continue;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
+}
+
+const MeshPendingBody = struct { id: []const u8 = "", allow: bool = false };
+
+fn handleMeshPendingPost(gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    if (!cfg.modules.mesh) {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"modules.mesh is off; set it and restart serve\"}");
+        return;
+    }
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const parsed = std.json.parseFromSliceLeaky(MeshPendingBody, arena_state.allocator(), body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    if (parsed.id.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing id\"}");
+        return;
+    }
+    mesh_net.resolvePending(parsed.id, parsed.allow) catch |err| switch (err) {
+        error.MeshOff => {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"modules.mesh is off; set it and restart serve\"}");
+            return;
+        },
+        error.NoSuchPeer => {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such pending join\"}");
+            return;
+        },
+        else => {
+            log.log(.error_, "POST /api/mesh/pending: {s}", .{@errorName(err)});
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"pending resolve failed\"}");
+            return;
+        },
     };
     respond(stream, 200, "OK", "{\"ok\":true}");
 }
@@ -14819,35 +14928,6 @@ test "bare tools lists, session without export names the next step" {
     try std.testing.expectEqualStrings("conversation id", diag);
     try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "revert" }, &diag));
     try std.testing.expectEqualStrings("improvement id", diag);
-}
-
-test "stats table names the empty case and keeps columns aligned" {
-    const empty = try token_stats.renderTable(std.testing.allocator, &.{}, .{ .provider = "", .model = "" });
-    try std.testing.expectEqualStrings("no token usage recorded yet (run an agent task first)\n", empty);
-
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const rows = [_]token_stats.Stat{
-        .{
-            .provider = "kimi-k3",
-            .model = "kimi-k3",
-            .calls = 2,
-            .prompt_tokens = 300,
-            .completion_tokens = 50,
-            .total_tokens = 350,
-            .cache_hit = 280,
-            .cache_miss = 20,
-            .cost = 0.02,
-            .duration_ms = 200,
-            .ok_calls = 2,
-            .error_calls = 0,
-        },
-    };
-    const text = try token_stats.renderTable(arena_state.allocator(), &rows, token_stats.totals(&rows));
-    try std.testing.expect(std.mem.startsWith(u8, text, "provider        model                          calls"));
-    try std.testing.expect(std.mem.find(u8, text, "kimi-k3") != null);
-    try std.testing.expect(std.mem.find(u8, text, "totals") != null);
-    try std.testing.expect(std.mem.endsWith(u8, text, "\n"));
 }
 
 test "a bare prompt runs, a mistyped command does not" {

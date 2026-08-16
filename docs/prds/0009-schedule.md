@@ -243,6 +243,17 @@ so on every add, and `schedule --help` gives the crontab line:
 * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due
 ```
 
+## Known issues
+
+- A run that ends in `error.MaxIterationsExceeded` or
+  `error.SessionTokenBudgetExceeded` calls `std.process.exit(1)` inside
+  `cmdRun` (`src/cli.zig`), so it takes the whole sweep down with it: the
+  outcome of the entry that hit the cap is never recorded, and entries after
+  it in the same sweep never run. Their windows are not lost — nothing claimed
+  them — so the next `run-due` picks them up. The fix belongs in `cmdRun`,
+  which should return the error rather than exiting when it is not the
+  outermost command.
+
 ## Failure modes
 
 | Condition | Behaviour |
@@ -261,17 +272,6 @@ so on every add, and `schedule --help` gives the crontab line:
 | The run hits `MaxIterationsExceeded` | `cmdRun` exits the process, which ends the sweep. Later entries in that sweep are not fired and will be picked up next invocation — see Known issues |
 | Web UI `POST /api/schedule/<id>` for an unknown id | `404` with `{"ok":false,"error":"no such entry"}` |
 | Web UI enable/disable of a non-slug id | `400` with `{"ok":false,"error":"bad entry id"}` |
-
-## Known issues
-
-- A run that ends in `error.MaxIterationsExceeded` or
-  `error.SessionTokenBudgetExceeded` calls `std.process.exit(1)` inside
-  `cmdRun` (`src/cli.zig`), so it takes the whole sweep down with it: the
-  outcome of the entry that hit the cap is never recorded, and entries after
-  it in the same sweep never run. Their windows are not lost — nothing claimed
-  them — so the next `run-due` picks them up. The fix belongs in `cmdRun`,
-  which should return the error rather than exiting when it is not the
-  outermost command.
 
 ## Acceptance criteria
 

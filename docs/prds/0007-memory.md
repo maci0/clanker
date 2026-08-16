@@ -87,8 +87,8 @@ tool actually implements:
 - **Hash embedding** (`hashEmbedInto`): token-bag plus adjacent-bigram
   hashing via Wyhash into `dim` dimensions (default 384, clamped to
   16..1024), L2-normalized, deterministic, offline. Tokens are lowercased
-  alphanumeric runs capped at 128 bytes. The bigram construction still
-  carries a buffer overflow (Known issues 1).
+  alphanumeric runs capped at 128 bytes. The bigram buffer is derived from
+  that cap and the maximum-length pair is host-tested (Known issues 1).
 - **Scoring**: `cosine` over two vectors (f64 accumulation) for vector mode;
   `keywordScore` for keyword mode, the fraction of the query's tokens (two
   or more chars) found as case-insensitive substrings of the chunk text.

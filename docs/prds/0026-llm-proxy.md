@@ -590,7 +590,7 @@ serve [--host <addr>] [--serve-as <name>]... [--webui-port <port>]
 
 `Options` gains `proxy: ?bool = null` and `proxy_port: ?u16 = null` (null = flag absent, so config/env still apply). `ListenPolicy` gains `proxy_enabled: bool` and `proxy_port: u16`.
 
-The serve `Spec` `detail` string and the `--webui-port` parser comment (`src/cli.zig` `~L436-440`, `~L1331`) currently say a future split-out API port "would be `--api-port`". This surface is `--proxy-port` (the existing `/api/*` stays on `webui_port`). Those two sentences are rewritten in PR 1, the living-document slice AGENTS.md asks for when a turn surfaces a stale name.
+The serve `Spec` `detail` string and the `--webui-port` parser comment (`src/cli.zig` `~L436-440`, `~L1331`) said a future split-out API port "would be `--api-port`". This surface is `--proxy-port` (the existing `/api/*` stays on `webui_port`). Those two sentences were rewritten in PR 1, the living-document slice AGENTS.md asks for when a turn surfaces a stale name.
 
 `config.Serve`:
 
@@ -614,7 +614,7 @@ pub const Serve = struct {
     proxy: bool = false,
     proxy_port: ?u16 = null,
     proxy_token_env: ?[]const u8 = null,
-    proxy_aliases: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
+    proxy_aliases: std.json.ArrayHashMap([]const u8) = .{},
     /// Seconds to wait for the first upstream body byte. Null means the
     /// 300s default. 0 means no ceiling.
     proxy_first_byte_timeout_s: ?u32 = null,
@@ -735,7 +735,6 @@ Exposed on the existing `GET /api/metrics` of the web UI port, not on the proxy 
 | `openai_compat` model on `POST /v1/messages` | Transcode to OpenAI chat/completions. Anthropic JSON or `event:` SSE comes back. |
 | Claude Code model `claude-3-5-sonnet-…` with `[serve.proxy_aliases] sonnet = "moonshotai/kimi-k3"` | Routes to that backend. |
 | `POST /v1/messages/count_tokens` | Local `{input_tokens}` estimate. No upstream. |
-| `openai_compat` model on `POST /v1/messages` | `400 protocol_mismatch`. No upstream call. |
 | Unknown `model` | `400 model_not_found`. |
 | Body not JSON, or `model` missing/not a string | `400 malformed_request` / `missing_required_parameter` (agave envelope from `proxy.handle`). |
 | `stream` present and not a JSON bool | `400 malformed_request`. No upstream call. Vertex verb and inbound framing are not guessed. |

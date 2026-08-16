@@ -39,7 +39,7 @@ worth copying even though clanker's v1 supports only the Claude Code dialect.
 1. `[hooks]` config: `enabled = false` (default), `config_path` naming a
    `hooks.json` file (or a settings file with a `hooks` key), loaded once at
    agent construction — not watched, not hot-reloaded.
-2. Support four extension points in v1, each mapped onto an existing point in
+2. Support five extension points in v1, each mapped onto an existing point in
    `Agent`'s loop:
    - `PreToolUse` — before a tool call dispatches; can deny.
    - `PostToolUse` — after a tool call returns; can inject context or block

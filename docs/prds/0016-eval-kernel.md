@@ -204,19 +204,6 @@ the feature default-on without quotas is not.
 8. **Deferred / pre-default-on**: cgroups quotas; stdout streaming over
    `/api/run`; rich matplotlib/Vega output.
 
-## Failure modes
-
-| Condition | Behaviour |
-|---|---|
-| `python3` not found on PATH | Tool returns `{"ok": false, "error": "python3 not found; install Python 3.10+"}` |
-| `bun` not found on PATH | Same for the JS kernel |
-| Cell execution exceeds `timeout_ms` | Kernel process is killed; tool returns a timeout error; kernel is restarted fresh on next call |
-| Kernel process crashes (non-zero exit) | Tool returns stderr content and `ok: false`; a fresh kernel starts on the next call |
-| Loopback bridge returns an error for a tool call | The error text is returned to the kernel as an exception/rejected promise; the cell fails with the bridge error |
-| `reset: true` while a cell is mid-execution | Not possible: the tool call is synchronous; `reset` only applies at the start of a new call |
-| `state/kernels/` directory not writable | Tool returns a setup error; kernel does not start |
-| `kernel.enabled = false` | Tool returns a disabled error; no process started |
-
 ## Known issues
 
 - **JS/Bun supervisor is not started.** The guest returns a clear error.
@@ -229,6 +216,19 @@ the feature default-on without quotas is not.
   after `cleanup_delay_ms`.** Directories stay for inspection.
 - **WASI one-shot (`python_wasi.zig`) is unused by the persist path.**
   Persist is a host `python3` supervisor so `__main__` can live across cells.
+
+## Failure modes
+
+| Condition | Behaviour |
+|---|---|
+| `python3` not found on PATH | Tool returns `{"ok": false, "error": "python3 not found; install Python 3.10+"}` |
+| `bun` not found on PATH | Same for the JS kernel |
+| Cell execution exceeds `timeout_ms` | Kernel process is killed; tool returns a timeout error; kernel is restarted fresh on next call |
+| Kernel process crashes (non-zero exit) | Tool returns stderr content and `ok: false`; a fresh kernel starts on the next call |
+| Loopback bridge returns an error for a tool call | The error text is returned to the kernel as an exception/rejected promise; the cell fails with the bridge error |
+| `reset: true` while a cell is mid-execution | Not possible: the tool call is synchronous; `reset` only applies at the start of a new call |
+| `state/kernels/` directory not writable | Tool returns a setup error; kernel does not start |
+| `kernel.enabled = false` | Tool returns a disabled error; no process started |
 
 ## Acceptance criteria
 

@@ -125,6 +125,8 @@ test "two serves join over loopback and leave" {
     try harness.waitHttp(io, gpa, try liveUrl(&url_buf, web_b), 8000);
     try harness.waitHttp(io, gpa, try statusUrl(&url_buf, web_a), 4000);
     try harness.waitHttp(io, gpa, try statusUrl(&url_buf, web_b), 4000);
+    try harness.waitTcp(io, mesh_a, 4000);
+    try harness.waitTcp(io, mesh_b, 4000);
 
     var addr_buf: [32]u8 = undefined;
     var port_buf: [8]u8 = undefined;
@@ -144,9 +146,10 @@ test "two serves join over loopback and leave" {
     defer gpa.free(map_body);
     try std.testing.expect(std.mem.find(u8, map_body, "alpha") != null);
 
-    var left = try harness.run(gpa, io, tmp_b.dir, &.{ "mesh", "leave", "--webui-port", web_b_s });
-    defer left.deinit(gpa);
-    try std.testing.expect(left.ok());
+    const leave_url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/api/mesh/leave", .{web_b});
+    const left_body = try harness.httpPost(io, gpa, leave_url, "{}");
+    defer gpa.free(left_body);
+    try std.testing.expect(std.mem.find(u8, left_body, "\"ok\":true") != null);
 }
 
 test "prompt admission queues a join until admit" {
@@ -192,32 +195,44 @@ test "prompt admission queues a join until admit" {
     try harness.waitHttp(io, gpa, try liveUrl(&url_buf, web_b), 8000);
     try harness.waitHttp(io, gpa, try statusUrl(&url_buf, web_a), 4000);
     try harness.waitHttp(io, gpa, try statusUrl(&url_buf, web_b), 4000);
+    try harness.waitTcp(io, mesh_a, 4000);
+    try harness.waitTcp(io, mesh_b, 4000);
 
     var addr_buf: [32]u8 = undefined;
-    var port_buf: [8]u8 = undefined;
     const addr = try meshAddr(&addr_buf, mesh_a);
-    const web_b_s = try portFlag(&port_buf, web_b);
-    const argv = [_][]const u8{ harness.bin(), "mesh", "join", addr, "--webui-port", web_b_s };
-    var joining = try std.process.spawn(io, .{
-        .argv = &argv,
-        .cwd = .{ .dir = tmp_b.dir },
-        .stdin = .ignore,
-        .stdout = .ignore,
-        .stderr = .ignore,
-    });
-    var join_waited = false;
-    defer {
-        if (!join_waited) {
-            joining.kill(io);
-            _ = joining.wait(io) catch {};
+    const join_payload = try std.fmt.allocPrint(gpa, "{{\"address\":{f}}}", .{std.json.fmt(addr, .{})});
+    defer gpa.free(join_payload);
+    var join_url_buf: [80]u8 = undefined;
+    const join_url = try std.fmt.bufPrint(&join_url_buf, "http://127.0.0.1:{d}/api/mesh/join", .{web_b});
+
+    const JoinJob = struct {
+        io: std.Io,
+        gpa: std.mem.Allocator,
+        url: []const u8,
+        payload: []const u8,
+        done: std.atomic.Value(bool) = .init(false),
+        ok: std.atomic.Value(bool) = .init(false),
+
+        fn run(self: *@This()) void {
+            if (harness.httpPost(self.io, self.gpa, self.url, self.payload)) |body| {
+                self.gpa.free(body);
+                self.ok.store(true, .release);
+            } else |_| {}
+            self.done.store(true, .release);
         }
-    }
+    };
+    var job = JoinJob{ .io = io, .gpa = gpa, .url = join_url, .payload = join_payload };
+    const th = try std.Thread.spawn(.{}, JoinJob.run, .{&job});
+    defer th.join();
 
     const start = std.Io.Timestamp.now(io, .awake).nanoseconds;
     var saw_pending = false;
-    while (std.Io.Timestamp.now(io, .awake).nanoseconds - start < 6 * std.time.ns_per_s) {
+    var last_pending: []u8 = &.{};
+    defer if (last_pending.len > 0) gpa.free(last_pending);
+    while (std.Io.Timestamp.now(io, .awake).nanoseconds - start < 8 * std.time.ns_per_s) {
         if (harness.httpGet(io, gpa, try pendingUrl(&url_buf, web_a))) |body| {
-            defer gpa.free(body);
+            if (last_pending.len > 0) gpa.free(last_pending);
+            last_pending = body;
             if (std.mem.find(u8, body, "guest") != null) {
                 saw_pending = true;
                 break;
@@ -225,17 +240,18 @@ test "prompt admission queues a join until admit" {
         } else |_| {}
         std.Io.sleep(io, .{ .nanoseconds = 80 * std.time.ns_per_ms }, .awake) catch {};
     }
+    if (!saw_pending) std.debug.print("pending never listed guest.\nlast: {s}\n", .{last_pending});
     try std.testing.expect(saw_pending);
 
     const admitted = try harness.httpPost(io, gpa, try pendingUrl(&url_buf, web_a), "{\"id\":\"guest\",\"allow\":true}");
     defer gpa.free(admitted);
 
-    const term = joining.wait(io) catch return error.JoinWait;
-    join_waited = true;
-    try std.testing.expect(switch (term) {
-        .exited => |c| c == 0,
-        else => false,
-    });
+    const wait_join = std.Io.Timestamp.now(io, .awake).nanoseconds;
+    while (!job.done.load(.acquire)) {
+        if (std.Io.Timestamp.now(io, .awake).nanoseconds - wait_join > 8 * std.time.ns_per_s) break;
+        std.Io.sleep(io, .{ .nanoseconds = 40 * std.time.ns_per_ms }, .awake) catch {};
+    }
+    try std.testing.expect(job.ok.load(.acquire));
 
     const status_body = try harness.httpGet(io, gpa, try statusUrl(&url_buf, web_a));
     defer gpa.free(status_body);

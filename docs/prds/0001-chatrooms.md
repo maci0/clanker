@@ -151,7 +151,7 @@ a restart is needed.
 - [x] A message sent in a room appears in `state/chatrooms.jsonl` and at
       every subscribed peer.
 - [x] `dm:<a>|<b>` requires no special-casing by senders.
-- [x] Thirteen descriptors share one wasm module via descriptor `config`
+- [x] Fourteen descriptors share one wasm module via descriptor `config`
       (`chat_*` plus `todo_*`); each pins its op in config and is marked
       `sequential` so concurrent calls never race the log file.
 - [x] Sub-agent private todos never leak to a room.

@@ -6,7 +6,7 @@ In progress. `clanker acp` (`cmdAcp` in `src/cli.zig`) and
 `src/acp/server.zig` exist: stdio JSON-RPC framing, `initialize`
 (protocol v1, baseline-only prompt capabilities), `authenticate` (empty
 success), and `session/cancel` as a silent notification. Gated by
-`modules.acp` (default true, same as `modules.mcp`). `session/new`,
+`modules.acp` (default false). `session/new`,
 `session/prompt`, `session/update`, and `session/request_permission` are
 not wired; unknown methods return `-32601`. Modeled on
 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)'s
@@ -145,21 +145,10 @@ structural template (shipped). No other Draft PRD blocks starting.
 | Client disconnects mid-turn | Session cancelled, `stop_flag` set, thread joined before process exit |
 | `session/new` names a non-existent or relative `cwd` | Rejected at session creation, absolute `cwd` required |
 
-## Known issues
-
-- **Status used to say "No source files yet".** `src/acp/server.zig` and
-  `cmdAcp` shipped as a stdio stub (initialize / authenticate / cancel
-  no-op). This section is the remaining session-method gap, not an
-  empty tree.
-- **`modules.acp` defaults true**, matching `modules.mcp`. Acceptance
-  originally asked for default-off; flipping it now would break anyone
-  already launching `clanker acp`. Keep the mcp-sibling default; refuse
-  only when the operator sets `modules.acp = false`.
-
 ## Acceptance criteria
 
 - [x] `modules.acp = false` refuses to start (`cmdAcp` returns
-      `ModuleDisabled`). Default is true, same as `modules.mcp`.
+      `ModuleDisabled`). Default is false.
 - [x] `initialize` negotiates a version and advertises baseline-only prompt
       capability.
 - [ ] `session/new` creates an `Agent` bound to the given `cwd`; a relative

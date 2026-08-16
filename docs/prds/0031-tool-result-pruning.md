@@ -81,8 +81,9 @@ the tool result clanker actually got, not a pruned stand-in.
 **Where it plugs into the pressure check.** `Agent.maybeCompactMessages`
 already decides, per turn, whether the estimated size exceeds
 `compact_threshold_bytes` and, if so, calls the LLM summarizer. This PRD
-subtracts `reclaimableBytes / 4` from that decision without mutating the
-canonical messages. If the request-only rewrite brings the estimate under
+subtracts `reclaimableBytes / 4` — the reclaim in bytes, converted to the
+token estimate the decision compares — without mutating the canonical
+messages. If the request-only rewrite brings the estimate under
 budget, the summarizer branch is skipped. Immediately before the provider
 call, `requestMessages` makes and prunes the shallow copy described above.
 
@@ -133,7 +134,7 @@ gate, no other Draft PRD required.
 | `head_bytes + marker + tail_bytes >= threshold_bytes` | Config load error; the run does not start with a pruning config that cannot shrink anything |
 | Cut point lands mid-codepoint | Boundary search backs off to the nearest valid codepoint start |
 | Pruning alone brings the estimate under budget | Summarizer branch is skipped for that turn |
-| Pruning does not bring the estimate under budget | Summarizer branch still runs, now over an already-shrunk set of messages |
+| Pruning does not bring the estimate under budget | Summarizer branch still runs, over the unpruned canonical messages (pruning is request-side, after compaction) |
 
 ## Acceptance criteria
 

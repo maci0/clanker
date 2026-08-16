@@ -26,12 +26,12 @@ taking an action, not after.
 ## Goals
 
 1. After each main-agent turn completes (after `on_tool_result` fires), launch a
-   concurrent `ck_llm` call on a configurable provider/model with the turn
+   concurrent `client.chatWithTimeout` call on a configurable provider/model with the turn
    transcript and a fixed advisor system prompt.
 2. The advisor returns a structured JSON response: `{"severity": "note" |
    "concern" | "blocker", "text": "..."}`.
 3. At `severity = "blocker"`, the agent loop pauses before the next turn and
-   presents the blocker text via the existing `ask_user` path. The human can
+   presents the blocker text via the existing `ask_fn` path. The human can
    proceed or abort. Without a channel (headless run), the blocker is logged and
    the turn proceeds, with the blocker injected into context.
 4. At `severity = "note"` or `"concern"`, the advisor text is injected into the
@@ -42,8 +42,9 @@ taking an action, not after.
    `config.toml`. Fails open (disabled) if the advisor model call errors.
 6. Advisor runs on its own context (no tool access, no shared session history
    with the main agent). It receives only the text of the last completed turn:
-   the user message, the assistant's response, and any tool names called (not
-   tool arguments, to avoid leaking sensitive fs paths to a different provider).
+   the user message, the assistant's response, any tool results, and the tool
+   calls made — with fs/exec tool arguments redacted to `<redacted>` (to avoid
+   leaking sensitive fs paths to a different provider).
 
 ## Non-goals
 
@@ -51,8 +52,8 @@ taking an action, not after.
   inform the next turn. A blocker is a request for human confirmation, not a
   hard refusal at the tool boundary. Hard refusals belong to `confirm_writes` and
   the sandbox descriptor.
-- Not a second agent with tools. The advisor calls `ck_llm` (one bounded
-  completion), not `ck_subagent`. It cannot read files, run commands, or issue
+- Not a second agent with tools. The advisor makes one bounded completion
+  (`client.chatWithTimeout`), not a `ck_subagent` call. It cannot read files, run commands, or issue
   corrections as tool calls.
 - Not always-on telemetry. The advisor is session-scoped. Advisory notes are
   only visible in the current run's transcript. Token accounting may record an
@@ -133,7 +134,7 @@ turn.
 the tag is deferred (see Non-goals); the injection still happens in system
 context.
 
-`blocker`: The advisor text is presented via the `ask_user` path with two
+`blocker`: The advisor text is presented via the `ask_fn` path with two
 options: `proceed` and `abort`. If `proceed` is chosen (or if there is no channel
 to ask), the text is injected as a concern-level note for the next turn. If
 `abort` is chosen, the run stops and the advisor text is the final message.
@@ -159,7 +160,7 @@ The main agent loop never sees an exception from the advisor path.
 - Soft dependency on PRD 0020 (auto-thinking): shared fail-open, budgeted,
   per-turn side-channel call to a secondary model. Whichever ships first should
   extract the timeout/budget wrapper; the other reuses it.
-- `src/agent/loop.zig` think/join points; existing `ask_user` path for blockers.
+- `src/agent/loop.zig` think/join points; existing `ask_fn` path for blockers.
 - Stats `Record` schema (`src/stats/tokens.zig`) for optional `advisor_tokens`.
 - Distinct from `improve.arena_advisory` / Arena (PRD 0008).
 
@@ -186,7 +187,7 @@ The main agent loop never sees an exception from the advisor path.
 |---|---|
 | Advisor provider not configured or key missing | `advisor.enabled = true` is treated as `false`; log a startup warning; main loop unaffected |
 | Advisor call times out | Result dropped; loop proceeds; logged at debug level |
-| Advisor returns malformed JSON | Treated as a `note` with `text = "<raw response truncated to 150 chars>"`; loop proceeds |
+| Advisor returns malformed JSON | Dropped; logged at debug level; loop proceeds with no injection |
 | Advisor returns `blocker` in a headless run | Blocker text injected as a concern note; loop proceeds; logged as `[advisor blocker: proceeding headless]` |
 | Main agent's turn itself errors | Advisor is not called; it reviews only completed turns |
 | Advisor call itself calls a tool (not possible by design, but malformed JSON could claim one) | Ignored; the advisor completion is non-tool `ck_llm`, which returns text only |
@@ -195,7 +196,7 @@ The main agent loop never sees an exception from the advisor path.
 
 - [x] `[advisor]` section parsed from `config.toml`; missing or invalid fields
       produce a clear startup error.
-- [x] With `advisor.enabled = true`, an advisor `ck_llm` call is made after
+- [x] With `advisor.enabled = true`, an advisor `client.chatWithTimeout` call is made after
       each completed turn; the provider and model match config.
 - [x] A `note` or `concern` response is visible in the next turn's system
       context injection and absent from the user message and from

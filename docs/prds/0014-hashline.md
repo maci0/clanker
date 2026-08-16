@@ -78,8 +78,9 @@ uses 4 hex chars) while remaining sufficient to catch accidental mismatches in
 practice; a deliberate collision attack is irrelevant here because the attacker
 is the LLM itself and would have to corrupt its own patch.
 
-**Tolerance (decided).** Search window is `edit.hashline_tolerance` (default
-±10 lines around `anchor_line`). Configured once; not per call in v1.
+**Tolerance (decided).** Search window is ±10 lines around `anchor_line`,
+hardcoded in v1 (not per call). A `edit.hashline_tolerance` config key is still
+open if a later eval needs it retuned.
 
 **`read_file` output with `hashes: true`.**
 
@@ -168,12 +169,8 @@ manifests gain a new `hashline` entry in their `description` and the
 model-facing text in each manifest's `llm_description` field is updated to
 mention `hashes: true` and the `hashline` operation.
 
-**Config.**
-
-```toml
-[edit]
-hashline_tolerance = 10
-```
+**Config.** v1 has no config key: the ±10 tolerance is hardcoded in
+`tools/zig/edit_file.zig` (see Tolerance above).
 
 **Dependencies.**
 

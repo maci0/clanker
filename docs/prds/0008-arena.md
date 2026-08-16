@@ -276,7 +276,7 @@ way its own non-goal requires.
   concession sinks and dims, an elimination shatters the solid into
   particles that spiral into the centre — the compactor as a vortex); the
   winner gets an orbiting halo. Camera slow-orbits, drag to steer, wheel to
-  zoom. three.js 0.180 is vendored (`ui/app/vendor/three.module.min.js`
+  zoom. three.js 0.180 is vendored (`ui/vendor/three.module.min.js`
   + `three.core.min.js` — the minified module build is split in two and the
   first imports the second), served under `/webui/vendor/` like mermaid,
   and loaded by dynamic `import()` on first toggle only, so a session that

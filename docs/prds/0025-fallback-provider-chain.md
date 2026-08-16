@@ -167,7 +167,7 @@ no call site.
 
 **`self.provider` becomes swappable mid-run.** Today it is set once at
 `Agent.init` and never reassigned (`src/agent/loop.zig:68`, every read site
-listed in Problem). This PRD requires the field (or the call sites that read
+listed in Design). This PRD requires the field (or the call sites that read
 it) to tolerate a provider that changes between turns — the harness already
 does this exact swap once, pre-emptively, in `cli.zig`'s vision-fallback path
 (swap happens *before* `Agent.init`, so `self.provider` is simply
