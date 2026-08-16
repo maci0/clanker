@@ -52,7 +52,21 @@ fn actionList(out: *lib.Out) !void {
             if (!logic.validName(name)) continue;
             const manifest_path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}/plugin.json", .{ plugins_dir, name });
             const raw_m = lib.fsRead(manifest_path) catch continue;
-            const m = std.json.parseFromSliceLeaky(Manifest, lib.alloc, raw_m, .{ .ignore_unknown_fields = true }) catch continue;
+            const m = std.json.parseFromSliceLeaky(Manifest, lib.alloc, raw_m, .{ .ignore_unknown_fields = true }) catch |err| {
+                // Surface the broken manifest instead of silently dropping it:
+                // an addon whose plugin.json does not parse is listed with a
+                // diagnostic description so its owner can see why it vanished.
+                const diag = std.fmt.allocPrint(lib.alloc, "plugin.json failed to parse ({s})", .{@errorName(err)}) catch continue;
+                try addons.append(lib.alloc, .{
+                    .name = name,
+                    .title = name,
+                    .description = diag,
+                    .group = "Watch",
+                    .enabled = logic.addonEnabled(state.enabled, state.disabled, name),
+                    .has_css = hasCss(name),
+                });
+                continue;
+            };
             if (logic.capabilitiesRejected(m.capabilities)) |_| continue;
             try addons.append(lib.alloc, .{
                 .name = name,
