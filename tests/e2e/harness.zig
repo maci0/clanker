@@ -8,6 +8,7 @@ const e2e_options = @import("e2e_options");
 const clanker_bin = e2e_options.clanker_bin;
 const zig_out_dir = e2e_options.zig_out_dir;
 const tools_manifests_dir = e2e_options.tools_manifests_dir;
+const docs_dir = e2e_options.docs_dir;
 
 pub const Run = struct {
     term: std.process.Child.Term,
@@ -65,6 +66,38 @@ pub fn writeMockConfig(io: std.Io, dir: std.Io.Dir, gpa: std.mem.Allocator, port
 /// is shared, and it is read-only build output, not the checkout itself.
 pub fn linkZigOut(io: std.Io, dir: std.Io.Dir) !void {
     try dir.symLink(io, zig_out_dir, "zig-out", .{});
+}
+
+/// Copies each record store's scaffolding — its `README.md` inventory and,
+/// where the store has one, its `TEMPLATE.md` — from the real `docs/` tree
+/// into `dir`, plus the two `docs/reports/` record subdirectories. The guests
+/// resolve `docs/<store>/` against cwd, so this is what makes a create over
+/// `/api/<store>` land in the temp dir instead of failing on missing
+/// scaffolding. Copying beats writing a fixture by hand: a fixture would be a
+/// second copy of the inventory format, which is exactly what the guests own.
+pub fn copyRecordStores(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir) !void {
+    const stores = [_][]const u8{ "reports", "runbooks", "rfcs", "adrs", "prds", "research" };
+    var src_root = try std.Io.Dir.cwd().openDir(io, docs_dir, .{});
+    defer src_root.close(io);
+    try dir.createDirPath(io, "docs");
+    for (stores) |store| {
+        const sub = try std.fmt.allocPrint(gpa, "docs/{s}", .{store});
+        defer gpa.free(sub);
+        try dir.createDirPath(io, sub);
+        for ([_][]const u8{ "README.md", "TEMPLATE.md" }) |name| {
+            const src = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ store, name });
+            defer gpa.free(src);
+            const dst = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ sub, name });
+            defer gpa.free(dst);
+            // docs/reports/ has no TEMPLATE.md: its records are scaffolded
+            // from the kind, not from a file.
+            const data = src_root.readFileAlloc(io, src, gpa, .limited(1 << 20)) catch continue;
+            defer gpa.free(data);
+            try dir.writeFile(io, .{ .sub_path = dst, .data = data });
+        }
+    }
+    try dir.createDirPath(io, "docs/reports/bugs");
+    try dir.createDirPath(io, "docs/reports/investigations");
 }
 
 /// Makes `dir` a minimal Git checkout with one commit. `run --worktree` cuts
@@ -286,6 +319,47 @@ pub fn httpPost(io: std.Io, gpa: std.mem.Allocator, url: []const u8, payload: []
         return error.HttpError;
     }
     return body.toOwnedSlice();
+}
+
+/// One HTTP answer with its status kept. `httpGet` / `httpPost` turn a 4xx
+/// into an error, which is the right default for a journey that only cares
+/// that the call worked — but a refusal *is* the assertion for an endpoint
+/// whose contract is "404 for a missing record, 400 for everything else".
+pub const Answer = struct {
+    status: u16,
+    body: []u8,
+
+    pub fn deinit(self: *Answer, gpa: std.mem.Allocator) void {
+        gpa.free(self.body);
+    }
+
+    pub fn has(self: *const Answer, needle: []const u8) bool {
+        return std.mem.find(u8, self.body, needle) != null;
+    }
+};
+
+pub fn httpRequest(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    method: std.http.Method,
+    url: []const u8,
+    payload: ?[]const u8,
+) !Answer {
+    var http: std.http.Client = .{ .allocator = gpa, .io = io };
+    defer http.deinit();
+    var body: std.Io.Writer.Allocating = .init(gpa);
+    errdefer body.deinit();
+    const res = try http.fetch(.{
+        .location = .{ .url = url },
+        .method = method,
+        .payload = payload,
+        .headers = .{
+            .user_agent = .{ .override = "clanker-e2e" },
+            .content_type = .{ .override = "application/json" },
+        },
+        .response_writer = &body.writer,
+    });
+    return .{ .status = @intFromEnum(res.status), .body = try body.toOwnedSlice() };
 }
 
 /// Polls GET `url` until the body contains `needle` or the budget expires.

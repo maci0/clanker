@@ -94,6 +94,7 @@ projects, and the strongest case against the recommendation.
 
 <!-- inventory:rfc:start -->
 - [RFC 0008 — How an agent claims a shared resource before writing it](0008-claims-on-shared-resources.md) — Discussion
+- [RFC 0007 — HTTP surface for the five record-store tools](0007-records-http-surface.md) — Decided
 - [RFC 0006 — Where ck_cas lock sidecars live](0006-where-ck-cas-lock-sidecars-live.md) — Discussion
 - [RFC 0001 — Workspace, room, board, and folder hierarchy](0001-workspace-room-board-hierarchy.md) — Discussion
 - [RFC 0002: Chat file upload into Knowledge / memory](0002-chat-upload-into-knowledge.md) — Decided (ADR 0014)

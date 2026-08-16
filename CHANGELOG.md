@@ -37,6 +37,29 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- HTTP endpoints for the five record stores on `clanker serve`:
+  `GET|POST /api/reports`, `/api/rfc`, `/api/adr`, `/api/prd` and
+  `/api/research`. Each relays the tool of the same name, so the CLI, the
+  agent and HTTP share one implementation and one set of field names — the
+  request fields are the tool's own `input_schema`. `GET` serves the reads
+  (`list`, `search`, `open`, plus `checklist` on `rfc`/`prd` and `plan` on
+  `research`), taking its fields from the query string and defaulting
+  `action` to `list`; `POST` serves the writes (`create`, `append`,
+  `update`, `status`, plus `recommend` on `rfc`), taking the guest's input
+  object as its JSON body. One endpoint per *tool*, not per store: `reports`
+  covers `docs/reports/` and `docs/runbooks/` both.
+  - A write action named on `GET`, a read action named on `POST`, and a
+    `POST` with no `action` are refused with 400 before the guest runs, so no
+    safe method can change a record; any other method is 405.
+  - Refusals keep the neighbouring endpoints' mapping: a missing record is
+    404 and every other refusal is 400. A write against text the record no
+    longer has comes back as the guest's own "open it again and retry"
+    refusal, never a silent overwrite and never a 500.
+  - `research sweep` is not exposed: it performs network egress and can run
+    for tens of seconds. It stays on `clanker research sweep` and the agent.
+  - No new `modules.*` flag, matching the ungated `/api/skills`,
+    `/api/logs`, `/api/knowledge` and `/api/prompts`. The web UI view over
+    these endpoints is a separate follow-up.
 - `clanker adr` and `clanker prd`, plus the `adr` and `prd` tools behind them:
   the two record stores that had no verb and were maintained by hand. `adr`
   covers `list`, `search`, `open`, `create`, `append`, `update` and `status`

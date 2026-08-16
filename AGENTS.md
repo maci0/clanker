@@ -275,7 +275,14 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   system prompt, helper in `skills_logic.zig`; the prompt inlines
   title+description only); goal status writes go through `goal_update`,
   including run-completion (`from` compare-and-swap), loop outcome, and
-  the worktree branch a run was assigned.
+  the worktree branch a run was assigned. The five record stores are
+  `GET|POST /api/{reports,rfc,adr,prd,research}`, one endpoint per *tool*
+  (`reports` covers `docs/reports/` and `docs/runbooks/` both), relaying
+  the guest's own field names: GET carries the read actions in the query
+  string and defaults `action` to `list`, POST carries the write actions
+  as the body, and `recordsRouteToToolInput` refuses the other pairing
+  before the guest loads (ADR 0019). `research sweep` is on neither
+  method — it is the one action that leaves the machine.
 - Every `.zig` file lives under a subsystem directory; only `main.zig`,
   `cli.zig`, `config.zig`, `doctor.zig`, and `proxy_main.zig` sit directly
   in `src/`.
