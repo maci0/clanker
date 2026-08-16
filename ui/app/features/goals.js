@@ -108,6 +108,21 @@ function syncGoalPublicTasks(g, card) {
   }
 }
 
+/* The goal's public tasks, read-only in the Goals view. The board card is the
+   interactive checklist; this only makes the first-class task store visible
+   here too. Private tasks never render in this shared card. */
+function goalPublicTasksBlock(g) {
+  var tasks = publicTasksOf(g);
+  if (!tasks.length) return null;
+  return T.details({ class: "goal-detail goal-tasks" },
+    T.summary("Tasks (" + tasks.length + ")"),
+    T.div({ class: "goal-task-list" }, tasks.map(function (t) {
+      return T.div({ class: "goal-task" + (t.done ? " is-done" : "") },
+        T.span({ class: "goal-task-check" }, t.done ? "\u2713" : "\u25cb"),
+        T.span({ class: "goal-task-text" }, t.text));
+    })));
+}
+
 /* Mirrors goals onto the board so live work is visible there. Idempotent by
    construction: a goal whose card exists is only reconciled (link persisted
    if missing, column corrected when the status pins one), and a goal without
@@ -255,6 +270,7 @@ function goalCard(g) {
       T.dl(fields.map(function (pair) {
         return [T.dt(pair[0]), T.dd(pair[1])];
       }))) : null,
+    goalPublicTasksBlock(g),
     g.id ? renderGoalRunPanel(g) : null,
     actions.length ? T.div({ class: "goal-actions" }, actions) : null);
 }

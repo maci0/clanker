@@ -113,7 +113,7 @@ export function loadBoardRooms() {
       if (defRoom !== "board" && rooms.indexOf(defRoom) === -1) rooms.unshift(defRoom);
       var keep = el.boardRoom.value;
       el.boardRoom.textContent = "";
-      add(el.boardRoom, rooms.map(function (name) { return T.option({ value: name }, name); }));
+      add(el.boardRoom, rooms.map(function (name) { return T.option({ value: name }, roomLabel(name)); }));
       if (keep && rooms.indexOf(keep) !== -1) el.boardRoom.value = keep;
       else el.boardRoom.value = defRoom;
       return loadBoard();
@@ -129,6 +129,13 @@ function workspaceBoardRoom() {
   var ws = "";
   try { ws = window.clankerWorkspace || ""; } catch (e) { ws = ""; }
   return ws ? ("ws:" + ws) : "board";
+}
+
+/* The current workspace's board room is displayed as `#general` (RFC 0001);
+   every other room keeps its wire name. */
+function roomLabel(name) {
+  if (name && name !== "board" && name === workspaceBoardRoom()) return "#general";
+  return name;
 }
 
 function boardRoom() {

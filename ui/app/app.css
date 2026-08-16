@@ -2346,6 +2346,10 @@ button.tool-name:hover { color: var(--accent-text); }
 .goal[data-status="blocked"] .goal-status { color: var(--danger); font-weight: 700; }
 /* The worktree marker in a goal's meta row: icon and word, one unit. */
 .goal-worktree { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--accent-text); }
+.goal-task-list { margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.goal-task { display: flex; align-items: baseline; gap: 0.45rem; color: var(--fg-muted); overflow-wrap: anywhere; }
+.goal-task-check { flex: 0 0 auto; font-family: var(--mono); color: var(--fg-muted); }
+.goal-task.is-done .goal-task-text { text-decoration: line-through; color: var(--fg-muted); }
 .goal-field { margin-top: 0.35rem; font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); overflow-wrap: anywhere; }
 .goal-field b { color: var(--fg); font-weight: 700; }
 /* A goal run's own panel: streamed output, status and Stop, one per run, so
