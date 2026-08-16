@@ -123,6 +123,13 @@ pub const readable_roots = [_][]const u8{
     "skills/",
     "tests/",
     "docs/",
+    // Web-UI data the ui/app/core/*.test.mjs suites read from the repo root:
+    // the named-palette tokens (theme/layout) and the slash catalog. These are
+    // read + staged but deliberately absent from allowed_prefixes, so the
+    // improve loop can judge UI work against the real data without being able
+    // to patch it.
+    "themes/",
+    "commands/",
     "README.md",
     "AGENTS.md",
     "CHANGELOG.md",
@@ -459,6 +466,16 @@ test "the readable surface is wider than the writable one, and still closed" {
     try std.testing.expect(validatePath("ui/app/core/scroll.test.mjs"));
     try std.testing.expect(validatePath("ui/app/core/scroll.mjs"));
     try std.testing.expect(validateReadPath("config.toml"));
+
+    // The ui/app/core/*.test.mjs suites read repo-root data (the named
+    // palettes, the slash catalog) relative to their own directory. Those
+    // roots are readable + staged so the improve loop can judge UI work
+    // against the real data, but they are not writable prefixes: data the
+    // loop must never hand-patch stays that way.
+    try std.testing.expect(validateReadPath("themes/dark.json"));
+    try std.testing.expect(validateReadPath("commands/slash.json"));
+    try std.testing.expect(!validatePath("themes/dark.json"));
+    try std.testing.expect(!validatePath("commands/slash.json"));
 
     // A granted path is read and echoed straight back into a model request, so
     // the secrets and the run state have to stay out however they are spelled.

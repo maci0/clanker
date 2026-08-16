@@ -3,7 +3,10 @@
 ## TL;DR
 
 - **Use when:** An improve-self staging build reports a missing local source
-  file, especially a `file_hash FileNotFound` error.
+  file, especially a `file_hash FileNotFound` error; or an unrelated UI
+  proposal fails staging with `node --test ... exit code 1` because the
+  `ui/app/core/*.test.mjs` suites cannot find repo-root data (`themes/`,
+  `commands/`).
 - **Recover by:** Keep repository build inputs in the shared improve-readable
   roots; add a separately declared build-only dependency to `staging_roots`.
 - **Verify with:** Build an isolated copy of the staging roots and confirm the
@@ -19,6 +22,15 @@ source file.
 
 The underlying incident is [Improve staging misses UI build inputs](../reports/bugs/2026-08-14-improve-staging-misses-ui-build-inputs.md), resolved by
 [`e10c868`](../src/improve/engine.zig).
+
+A sibling of the same family: the `ui/app/core/*.test.mjs` suites run under
+`node --test` during the staging tests and read repo-root data *relative to
+their own directory* — `themes/*.json` (named palettes) and
+`commands/slash.json` (the slash catalog). When those roots are absent from
+`readable_roots` the stage is copied without them and every UI proposal fails
+staging with `node --test ... exit code 1` even though the proposal itself is
+fine. The roots are staged but deliberately kept out of `allowed_prefixes`, so
+the loop can judge UI work against the real data without patching it.
 
 ## Diagnose
 
@@ -64,4 +76,4 @@ linked bug report with the new root and verification evidence.
 
 - Reports: [UI build input omission](../reports/bugs/2026-08-14-improve-staging-misses-ui-build-inputs.md), [release-contract omission](../reports/bugs/2026-08-14-improve-staging-omits-release-contract-files.md)
 - Code: [`src/improve/engine.zig`](../src/improve/engine.zig), [`build.zig`](../build.zig)
-- Last verified: 2026-08-14, `e10c868`
+- Last verified: 2026-08-14, `e10c868`; node UI-test data roots (`themes/`, `commands/`) added 2026-08-15.
