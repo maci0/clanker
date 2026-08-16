@@ -3192,7 +3192,7 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
     // Lock on a separate file, not on the file being rewritten (a replace
     // invalidates a lock held on the replaced inode).
     // Parent dirs first: the lock sits next to the target, so a first write
-    // into a missing directory (`state/schedule.json`) must not FileNotFound
+    // into a missing directory (`sub/dir/schedule.json`) must not FileNotFound
     // the lock file.
     if (std.mem.findScalarLast(u8, full, '/')) |slash| {
         if (slash > 0) base.createDirPath(sb.io, full[0..slash]) catch {};
@@ -6543,9 +6543,13 @@ test "fsWriteIfImpl creates missing parent directories" {
         .environ_map = undefined,
     };
 
-    const rc = fsWriteIfImpl(&sb, tmp.dir, "state/schedule.json", "", "{\"entries\":[]}");
+    // Use a path with no shared/cwd component: `state/` is a symlink in
+    // improve staging worktrees (linkSharedState), so safeJoinSecure reports
+    // it as an escape and the test fails every improve-self run. A throwaway
+    // nested path still exercises the missing-parent-directory creation.
+    const rc = fsWriteIfImpl(&sb, tmp.dir, "sub/dir/schedule.json", "", "{\"entries\":[]}");
     try std.testing.expectEqual(Err.ok, rc);
-    const got = try tmp.dir.readFileAlloc(io, "state/schedule.json", gpa, .limited(1 << 20));
+    const got = try tmp.dir.readFileAlloc(io, "sub/dir/schedule.json", gpa, .limited(1 << 20));
     defer gpa.free(got);
     try std.testing.expectEqualStrings("{\"entries\":[]}", got);
 }
