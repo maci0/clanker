@@ -127,6 +127,15 @@
 
 ## Everything-is-a-plugin audit (2026-08-16)
 
+**Resolved same day:** the webui plugin registry now lives in one place —
+`webui_addon.zig` seeds `files`+`music` on a missing `state/webui_plugins.json`
+(host-pinned in `webui_addon_logic.zig`), and `/api/webui/plugins` +
+`/webui/plugins/<name>/app.*` relay to the guest (`src/cli.zig` scan/toggle/seed
+copies deleted; UI reads the guest's `addons` answer). `/api/workflows` now
+bridges to the `workflows` guest (guest list emits `tags`/`chain` so the UI
+contract holds). `/api/goals` GET reads through `update_goal`'s new
+`action:list`; only the transient `running` overlay stays native.
+
 The whole tree reviewed against the philosophy README/AGENTS.md now state.
 Reference pattern for migrations: `tools/zig/logs.zig` (native handler
 deleted, guest owns the logic, pure helper host-tested) and the three

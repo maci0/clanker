@@ -1,10 +1,14 @@
 {
   "name": "update_goal",
-  "description": "change or remove one persisted goal in state/goals.json",
+  "description": "change or remove one persisted goal in state/goals.json, or list the whole store with action=list",
   "wasm": "zig-out/tools/update_goal.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["list"]
+      },
       "id": {
         "type": "string"
       },
@@ -22,10 +26,7 @@
       "remove": {
         "type": "boolean"
       }
-    },
-    "required": [
-      "id"
-    ]
+    }
   },
   "fs_prefixes": [
     "state/goals.json"

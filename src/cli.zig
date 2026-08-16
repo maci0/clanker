@@ -12414,9 +12414,20 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
         return;
     }
 
-    const raw = std.Io.Dir.cwd().readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch {
-        // No file yet is the ordinary state on a fresh checkout, not an error.
-        respond(stream, 200, "OK", "{\"ok\":true,\"goals\":[]}");
+    // The goals store is guest-owned (add_goal/update_goal write it), so the
+    // read goes through the update_goal guest's list action too rather than a
+    // native copy of the file. Only the `running` overlay is composed here: it
+    // is transient host state (the steer slots) no guest can see.
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "update_goal", "{\"action\":\"list\"}") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"goal store unavailable\"}");
+        return;
+    };
+    if (toolResultFailed(raw)) {
+        respondTool(stream, raw);
+        return;
+    }
+    const goals_arr = goalsArrayFromList(raw) orelse {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"goal store answered bad JSON\"}");
         return;
     };
     var out: std.Io.Writer.Allocating = .init(arena);
@@ -12424,9 +12435,7 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
-    // Passed through verbatim: it is already the array this endpoint returns,
-    // and re-encoding it would only add a way for the two to drift.
-    out.writer.writeAll(std.mem.trim(u8, raw, " \t\r\n")) catch {
+    out.writer.writeAll(goals_arr) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
@@ -12443,6 +12452,27 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
         return;
     };
     respond(stream, 200, "OK", out.written());
+}
+
+/// The goals array verbatim from the guest's `{"ok":true,"goals":[...]}` list
+/// answer — the bytes from the first `[` after `"goals":` through the closing
+/// `]`, which is always the last bracket in that output. Content inside
+/// strings may contain brackets; only the outer two are ever at those spots.
+fn goalsArrayFromList(raw: []const u8) ?[]const u8 {
+    const key = "\"goals\":";
+    const kpos = std.mem.indexOf(u8, raw, key) orelse return null;
+    const open_rel = std.mem.indexOfScalar(u8, raw[kpos + key.len ..], '[') orelse return null;
+    const close = std.mem.lastIndexOfScalar(u8, raw, ']') orelse return null;
+    if (close < kpos + key.len + open_rel) return null;
+    return raw[kpos + key.len + open_rel .. close + 1];
+}
+
+test goalsArrayFromList {
+    try std.testing.expectEqualStrings("[1,2]", goalsArrayFromList("{\"ok\":true,\"goals\":[1,2]}").?);
+    try std.testing.expectEqualStrings("[]", goalsArrayFromList("{\"ok\":true,\"goals\":[]}").?);
+    try std.testing.expect(goalsArrayFromList("{\"ok\":false,\"error\":\"x\"}") == null);
+    // A `]` inside a string must not confuse the close bracket.
+    try std.testing.expectEqualStrings("[{\"objective\":\"a]b\"}]", goalsArrayFromList("{\"ok\":true,\"goals\":[{\"objective\":\"a]b\"}]}").?);
 }
 
 /// Every configured peer with the A2A agent card it is serving right now:

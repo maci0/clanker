@@ -19,6 +19,8 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const req = lib.object(input) catch return lib.fail(out, "input must be a JSON object");
+    const action = lib.optStr(req, "action");
+    if (action != null and std.mem.eql(u8, action.?, "list")) return actionList(out);
     const id = lib.optStr(req, "id") orelse return lib.fail(out, "update_goal needs an id (get it from add_goal or the board)");
     if (id.len == 0) return lib.fail(out, "update_goal needs an id (get it from add_goal or the board)");
 
@@ -62,6 +64,33 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.write(true);
     try s.objectField("goals");
     try s.write(updated);
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
+/// `{"action":"list"}` — the goals store's read side. The mutation guests own
+/// the file, so the HTTP GET route reads it through this same owner instead of
+/// a native copy; the array is passed through verbatim (re-encoding would only
+/// add a way for the two to drift) after a shape check.
+fn actionList(out: *lib.Out) !void {
+    const raw = lib.fsRead(goals_path) catch |err| switch (err) {
+        error.NotFound => return writeGoals(out, "[]"),
+        else => return lib.failErr(out, err, "reading state/goals.json"),
+    };
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    _ = std.json.parseFromSliceLeaky([]store.Goal, lib.alloc, trimmed, .{ .ignore_unknown_fields = true }) catch
+        return lib.fail(out, "state/goals.json is not a JSON array");
+    return writeGoals(out, trimmed);
+}
+
+fn writeGoals(out: *lib.Out, goals_json: []const u8) !void {
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("goals");
+    try s.writer.writeAll(goals_json);
     try s.endObject();
     lib.commit(out, &w);
 }
