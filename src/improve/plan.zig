@@ -36,31 +36,58 @@ pub fn parsePlan(
     max_files: usize,
 ) !?[]const Idea {
     const cleaned = proposal.stripMarkdownFence(raw);
-    const v = json.parseFromSliceLeaky(json.Value, arena, cleaned, .{ .ignore_unknown_fields = true }) catch return null;
-    const obj = switch (v) {
-        .object => |o| o,
+    // Some local models answer with prose around the JSON ("Here are some
+    // ideas: {...}") despite being told not to. Parse the bare object first;
+    // on failure, pull the first {...} block out of the prose and retry so a
+    // good plan is not thrown away into the unplanned patch path, where the
+    // model is likelier to wander outside the writable surface.
+    const v = (try parsePlanValue(arena, cleaned)) orelse return null;
+    // Accept the promised {"ideas":[...]} object, a bare single-idea object
+    // {"idea":"...","files":[...]} (models frequently drop the array wrapper
+    // even when the prompt asks for it), and a bare array of ideas. Treating
+    // any of those as "not a usable idea list" throws away a good plan and
+    // forces the unplanned patch path, where the model is likelier to wander
+    // outside the writable surface (the PathNotAllowed failures this module
+    // guards).
+    var idea_objs: []const std.json.Value = &.{};
+    switch (v) {
+        .array => |a| idea_objs = a.items,
+        .object => |o| {
+            if (o.get("ideas")) |ideas_val| {
+                idea_objs = switch (ideas_val) {
+                    .array => |a| a.items,
+                    else => return null,
+                };
+            } else if (o.get("idea") != null) {
+                idea_objs = &.{v};
+            } else return null;
+        },
         else => return null,
-    };
-    const arr = switch (obj.get("ideas") orelse return null) {
-        .array => |a| a,
-        else => return null,
-    };
+    }
 
     var out: std.ArrayList(Idea) = .empty;
-    for (arr.items) |item| {
-        const iobj = switch (item) {
-            .object => |o| o,
-            else => continue,
-        };
-        const text_raw = switch (iobj.get("idea") orelse continue) {
-            .string => |s| s,
-            else => continue,
-        };
+    for (idea_objs) |item| {
+        // An idea is {"idea":"...","files":[...]}, or a plain string when the
+        // model returned an array of ideas without the object wrapper.
+        var text_src: ?[]const u8 = null;
+        var files_val: ?std.json.Value = null;
+        switch (item) {
+            .object => |o| {
+                if (o.get("idea")) |iv| text_src = switch (iv) {
+                    .string => |s| s,
+                    else => null,
+                };
+                files_val = o.get("files");
+            },
+            .string => |s| text_src = s,
+            else => {},
+        }
+        const text_raw = text_src orelse continue;
         const text = std.mem.trim(u8, text_raw, " \t\r\n");
         if (text.len == 0) continue;
 
         var files: std.ArrayList([]const u8) = .empty;
-        if (iobj.get("files")) |fv| switch (fv) {
+        if (files_val) |fv| switch (fv) {
             .array => |fa| for (fa.items) |f| {
                 const p = switch (f) {
                     .string => |s| s,
@@ -83,6 +110,38 @@ pub fn parsePlan(
     }
     if (out.items.len == 0) return null;
     return try out.toOwnedSlice(arena);
+}
+
+/// Parse `text` as a single JSON value, returning null on any parse error so
+/// the caller can fall back to retrying on the prose-extracted block.
+fn parsePlanJson(arena: std.mem.Allocator, text: []const u8) !?std.json.Value {
+    return json.parseFromSliceLeaky(std.json.Value, arena, text, .{ .ignore_unknown_fields = true }) catch null;
+}
+
+/// Parse the plan response, tolerating prose wrapped around the JSON.
+fn parsePlanValue(arena: std.mem.Allocator, cleaned: []const u8) !?std.json.Value {
+    if (try parsePlanJson(arena, cleaned)) |v| return v;
+    const first = std.mem.indexOfScalar(u8, cleaned, '{') orelse return null;
+    const last = std.mem.lastIndexOfScalar(u8, cleaned, '}') orelse return null;
+    if (last < first) return null;
+    return parsePlanJson(arena, cleaned[first .. last + 1]);
+}
+
+/// Whether a plan idea names at least one file the improve loop is allowed to
+/// modify. The planning model sometimes pins the very files the surface
+/// excludes (e.g. `src/improve/plan.zig` or `src/evals/`), so every attempt
+/// then dies in `proposal.validateWritePath` with `PathNotAllowed` and the
+/// whole iteration exhausts. Skipping such an idea up front turns that into a
+/// single unproductive plan round instead of a full failed iteration.
+pub fn hasWritableTarget(files: []const []const u8) bool {
+    // An idea that names no files has nothing to pre-reject; the patch call
+    // picks the target. Only reject when it names at least one file and every
+    // one of them is outside the writable surface.
+    if (files.len == 0) return true;
+    for (files) |p| {
+        if (proposal.validatePath(p)) return true;
+    }
+    return false;
 }
 
 /// Whether history already records an attempt at (approximately) this idea.
@@ -158,6 +217,43 @@ test "parsePlan reads ideas, drops unreadable paths, caps the list" {
     try std.testing.expectEqualStrings("third", ideas[2].text);
 }
 
+test "parsePlan accepts a single-idea object without the ideas array" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const raw =
+        \\\\{"idea": "cache the tool registry between attempts", "files": ["src/toolhost/registry.zig"]}
+    ;
+    const ideas = (try parsePlan(arena, raw, 6, 4)).?;
+    try std.testing.expectEqual(@as(usize, 1), ideas.len);
+    try std.testing.expectEqualStrings("cache the tool registry between attempts", ideas[0].text);
+    try std.testing.expectEqual(@as(usize, 1), ideas[0].files.len);
+    try std.testing.expectEqualStrings("src/toolhost/registry.zig", ideas[0].files[0]);
+}
+
+test "parsePlan still rejects a bare patch proposal object" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // A patch proposal (no idea/ideas key) must stay null so the caller
+    // falls back to the unplanned path instead of misreading a patch as a plan.
+    try std.testing.expect((try parsePlan(arena, "{\"patch\":\"...\"}", 6, 4)) == null);
+}
+
+test "hasWritableTarget accepts an editable path and rejects only-excluded ones" {
+    // src/improve/plan.zig and src/evals/ are outside the modifiable surface.
+    try std.testing.expect(!hasWritableTarget(&.{"src/improve/plan.zig"}));
+    try std.testing.expect(!hasWritableTarget(&.{"src/evals/"}));
+    // A writable file among excluded ones counts.
+    try std.testing.expect(hasWritableTarget(&.{ "src/improve/plan.zig", "src/main.zig" }));
+    try std.testing.expect(hasWritableTarget(&.{"src/main.zig"}));
+    // An idea that names no files has nothing to pre-reject; the patch call
+    // picks the target, so it must not be skipped.
+    try std.testing.expect(hasWritableTarget(&.{}));
+}
+
 test "parsePlan strips a markdown fence" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -181,6 +277,40 @@ test "parsePlan returns null for a patch proposal or an empty list" {
     );
     try std.testing.expectEqual(@as(?[]const Idea, null), try parsePlan(arena, "{\"ideas\": []}", 6, 4));
     try std.testing.expectEqual(@as(?[]const Idea, null), try parsePlan(arena, "not json at all", 6, 4));
+}
+
+test "parsePlan digs a plan out of prose around the JSON" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const raw = "Here are some ideas I had: {\"ideas\": [{\"idea\": \"do the thing\", \"files\": [\"src/main.zig\"]}]} Hope that helps!";
+    const ideas = (try parsePlan(arena, raw, 6, 4)).?;
+    try std.testing.expectEqual(@as(usize, 1), ideas.len);
+    try std.testing.expectEqualStrings("do the thing", ideas[0].text);
+    try std.testing.expectEqual(@as(usize, 1), ideas[0].files.len);
+    try std.testing.expectEqualStrings("src/main.zig", ideas[0].files[0]);
+}
+
+test "parsePlan accepts a bare array of idea objects or plain strings" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const raw =
+        \\[{"idea": "cache the tool registry", "files": ["src/toolhost/registry.zig"]}, {"idea": "retry transient provider errors", "files": []}]
+    ;
+    const ideas = (try parsePlan(arena, raw, 6, 4)).?;
+    try std.testing.expectEqual(@as(usize, 2), ideas.len);
+    try std.testing.expectEqualStrings("cache the tool registry", ideas[0].text);
+    try std.testing.expectEqualStrings("retry transient provider errors", ideas[1].text);
+
+    // An array of plain strings also counts as an idea list.
+    const str_raw = "[\"cache the tool registry\", \"retry transient provider errors\"]";
+    const str_ideas = (try parsePlan(arena, str_raw, 6, 4)).?;
+    try std.testing.expectEqual(@as(usize, 2), str_ideas.len);
+    try std.testing.expectEqualStrings("cache the tool registry", str_ideas[0].text);
+    try std.testing.expectEqual(@as(usize, 0), str_ideas[0].files.len);
 }
 
 test "tried matches a paraphrase of a past summary, not a novel idea" {

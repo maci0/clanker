@@ -6,6 +6,13 @@ set -euo pipefail
 DEFAULT_INTERVAL_SECONDS=900
 DEFAULT_INTERVAL_DISPLAY="15m"
 
+# Paths the pass depends on. A relative value is resolved against the repo
+# root; an absolute value is used as given. Override with the matching flag
+# or environment variable.
+DEFAULT_BOARD="scripts/ywy50/TODO.md"
+DEFAULT_SESSION_ID_SCRIPT="scripts/ywy50/scripts/new-session-id.sh"
+DEFAULT_LOG_DIR=".local/agent-autopush"
+
 usage() {
 	printf '%s\n' \
 		"USAGE" \
@@ -18,7 +25,18 @@ usage() {
 		"  --once                Run one agent pass and exit." \
 		"  --interval DURATION   Wait time between passes. Default: ${DEFAULT_INTERVAL_DISPLAY} (${DEFAULT_INTERVAL_SECONDS}s)." \
 		"                        Accepts Ns/Nm/Nh/Nd (e.g. 5s, 10m, 3h, 1d) or bare seconds." \
+		"  --board PATH          Task board to claim the session on." \
+		"  --session-id-script PATH" \
+		"                        Script that mints the session id." \
+		"  --log-dir PATH        Directory for per-pass agent logs." \
 		"  -h, --help            Show this help." \
+		"" \
+		"PATHS" \
+		"  A relative path is resolved against the repo root." \
+		"" \
+		"  board               ${DEFAULT_BOARD}" \
+		"  session id script   ${DEFAULT_SESSION_ID_SCRIPT}" \
+		"  log dir             ${DEFAULT_LOG_DIR}" \
 		"" \
 		"WORKFLOW" \
 		"  maci0/clanker is a direct-push repository: every agent commits" \
@@ -32,6 +50,10 @@ usage() {
 		"ENVIRONMENT" \
 		"  AUTOCOMMIT_AGENT            Same as --agent; skips the interactive prompt." \
 		"  AUTOCOMMIT_INTERVAL         Same as --interval; skips the interactive prompt." \
+		"  AUTOCOMMIT_BOARD            Same as --board." \
+		"  AUTOCOMMIT_SESSION_ID_SCRIPT" \
+		"                              Same as --session-id-script." \
+		"  AUTOCOMMIT_LOG_DIR          Same as --log-dir." \
 		"  AUTOCOMMIT_AGENT_MODEL      Optional model passed as --model (ignored by dsh;" \
 		"                              the headless run uses the harness default model)." \
 		"  AUTOCOMMIT_AGENT_PROVIDER   Optional provider passed as --provider (clanker)." \
@@ -103,6 +125,9 @@ interval="$DEFAULT_INTERVAL_SECONDS"
 interval_set=false
 once=false
 agent="${AUTOCOMMIT_AGENT:-}"
+board="${AUTOCOMMIT_BOARD:-$DEFAULT_BOARD}"
+session_id_script="${AUTOCOMMIT_SESSION_ID_SCRIPT:-$DEFAULT_SESSION_ID_SCRIPT}"
+log_dir="${AUTOCOMMIT_LOG_DIR:-$DEFAULT_LOG_DIR}"
 
 if [[ -n "${AUTOCOMMIT_INTERVAL:-}" ]]; then
 	if ! interval="$(parse_duration "$AUTOCOMMIT_INTERVAL")"; then
@@ -136,6 +161,30 @@ while [[ $# -gt 0 ]]; do
 				exit 2
 			fi
 			interval_set=true
+			shift 2
+			;;
+		--board)
+			if [[ $# -lt 2 ]]; then
+				printf 'ERROR: --board requires a path.\n' >&2
+				exit 2
+			fi
+			board="$2"
+			shift 2
+			;;
+		--session-id-script)
+			if [[ $# -lt 2 ]]; then
+				printf 'ERROR: --session-id-script requires a path.\n' >&2
+				exit 2
+			fi
+			session_id_script="$2"
+			shift 2
+			;;
+		--log-dir)
+			if [[ $# -lt 2 ]]; then
+				printf 'ERROR: --log-dir requires a path.\n' >&2
+				exit 2
+			fi
+			log_dir="$2"
 			shift 2
 			;;
 		-h|--help)
@@ -243,11 +292,30 @@ if [[ "$agent" != "clanker" && "$agent" != "dsh" ]] && ! command -v "$agent" >/d
 	exit 1
 fi
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# The repo root is the work tree holding this script, not a fixed number of
+# parent directories: the script is reachable both at its real path and
+# through the .local/scripts symlink, which sit at different depths.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)" || [[ -z "$root" ]]; then
+	printf 'ERROR: %s is not inside a git work tree.\n' "$script_dir" >&2
+	exit 1
+fi
 cd "$root"
 
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-	printf 'ERROR: %s is not inside a git work tree.\n' "$root" >&2
+# Relative path -> repo root; absolute path -> as given.
+resolve_path() {
+	case "$1" in
+		/*) printf '%s\n' "$1" ;;
+		*) printf '%s\n' "$root/$1" ;;
+	esac
+}
+
+board="$(resolve_path "$board")"
+session_id_script="$(resolve_path "$session_id_script")"
+log_dir="$(resolve_path "$log_dir")"
+
+if [[ ! -x "$session_id_script" ]]; then
+	printf 'ERROR: session id script not executable: %s\n' "$session_id_script" >&2
 	exit 1
 fi
 
@@ -328,7 +396,6 @@ if [[ "$agent" == "claude" ]]; then
 	fi
 fi
 
-log_dir="$root/.local/agent-autopush"
 mkdir -p "$log_dir"
 
 # claude only streams under --output-format stream-json, which is JSON lines.
@@ -476,15 +543,14 @@ PROMPT
 	fi
 }
 
-# Record this session on the hub task board (gitignored, never committed).
+# Record this session on the hub task board ($board).
 # Best-effort: create the board if absent, never duplicate the session line.
 claim_on_board() {
 	local session_id="$1"
-	local board="$root/.local/TODO.md"
-	mkdir -p "$root/.local"
+	mkdir -p "$(dirname "$board")"
 	if [[ ! -f "$board" ]]; then
 		cat >"$board" <<'EOF'
-# Local agent task board (gitignored — do not commit)
+# Local agent task board
 
 Markers: `[ ]` open · `[-]` in progress · `[x]` done
 
@@ -509,7 +575,7 @@ EOF
 run_pass() {
 	local session_id branch rc ahead
 
-	session_id="$("$root/.local/scripts/new-session-id.sh" "$agent")"
+	session_id="$("$session_id_script" "$agent")"
 	printf '[%s] session: %s\n' "$(date -Is)" "$session_id"
 
 	claim_on_board "$session_id"

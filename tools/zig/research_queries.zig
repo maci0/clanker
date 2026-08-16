@@ -109,6 +109,72 @@ pub const Depth = enum {
     }
 };
 
+/// Above this many words, a topic has stopped being a search phrase and has
+/// become a sentence. The angle templates append keywords to `{topic}`, so a
+/// sentence topic produces queries like "<whole paragraph> alternatives
+/// comparison", which no search backend matches usefully.
+///
+/// Measured, not guessed: a 199-byte 27-word topic (under the 200-byte cap that
+/// already existed, so it passed) drove a deep sweep whose Bing fallback
+/// answered `embedded SQLite shared state store multi-process agent
+/// coordination` with six dictionary definitions of the word "embedded". The
+/// byte cap was the wrong axis; word count is the one that predicts the
+/// failure. See docs/research/README.md.
+pub const topic_word_advice_threshold: usize = 8;
+
+/// Words in `topic`, splitting on ASCII whitespace and ignoring runs.
+pub fn topicWordCount(topic: []const u8) usize {
+    var n: usize = 0;
+    var in_word = false;
+    for (topic) |c| {
+        const is_space = c == ' ' or c == '\t' or c == '\n' or c == '\r';
+        if (is_space) {
+            in_word = false;
+        } else if (!in_word) {
+            in_word = true;
+            n += 1;
+        }
+    }
+    return n;
+}
+
+/// Advice to attach to a `plan` or `sweep` answer whose topic is shaped like a
+/// sentence, or null when the topic is a usable search phrase.
+///
+/// Advisory rather than an error on purpose: the caller may know the backend
+/// will cope, and refusing a search outright is worse than running a weak one
+/// and saying so. The point is that the weakness is *visible* in the answer
+/// instead of being discovered three drafts later.
+pub fn topicShapeWarning(topic: []const u8) ?[]const u8 {
+    if (topicWordCount(topic) <= topic_word_advice_threshold) return null;
+    return "topic reads as a sentence rather than a search phrase, so the generated angle queries " ++
+        "(\"<topic> alternatives comparison\") will match poorly. Shorten it to a few keywords, or " ++
+        "pass an explicit `queries` array and check the first results before trusting the sweep.";
+}
+
+test "topicWordCount counts words, not spaces" {
+    try std.testing.expectEqual(@as(usize, 0), topicWordCount(""));
+    try std.testing.expectEqual(@as(usize, 0), topicWordCount("   "));
+    try std.testing.expectEqual(@as(usize, 1), topicWordCount("zig"));
+    try std.testing.expectEqual(@as(usize, 3), topicWordCount("embedded key-value stores"));
+    // Runs of whitespace, and leading/trailing, do not inflate the count.
+    try std.testing.expectEqual(@as(usize, 2), topicWordCount("  two\t\twords \n"));
+}
+
+test "topicShapeWarning fires on a sentence and stays quiet on a phrase" {
+    // The shape a topic is supposed to have.
+    try std.testing.expect(topicShapeWarning("embedded key-value stores for Zig") == null);
+    try std.testing.expect(topicShapeWarning("decentralized agent state store") == null);
+    // Exactly at the threshold is still fine; one past it is not.
+    try std.testing.expect(topicShapeWarning("one two three four five six seven eight") == null);
+    try std.testing.expect(topicShapeWarning("one two three four five six seven eight nine") != null);
+    // The real topic that produced dictionary results, 199 bytes: under the
+    // pre-existing byte cap, so only the word check catches it.
+    const sentence = "decentralized state management for a multi-agent harness: centralized backend with concurrency control, accessible from sandboxed worktrees and across mesh hosts";
+    try std.testing.expect(sentence.len < 200);
+    try std.testing.expect(topicShapeWarning(sentence) != null);
+}
+
 /// Fills `{topic}` and `{year}` in an angle template. Truncates rather than
 /// failing: a query is a hint to a search engine, not a contract.
 pub fn renderQuery(template: []const u8, topic: []const u8, year: i64, buf: []u8) []const u8 {

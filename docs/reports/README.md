@@ -70,13 +70,17 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [research status action never updates the README inventory entry](bugs/2026-08-16-research-status-leaves-inventory-draft.md) — Open
+
+- [Worker parallel sandbox omitted tool_self_name, failing capability evals in improve-self](bugs/2026-08-16-worker-sandbox-missing-tool-self-name.md) — Resolved
+
 - [Compaction repeats forever when the history it cannot move exceeds the threshold](bugs/2026-08-16-compaction-cannot-shrink-immovable-history.md) — Resolved
 
 - [The compaction summary always fails on a thinking model](bugs/2026-08-16-compaction-summary-budget-spent-on-reasoning.md) — Resolved
 
-- [Unknown goal id runs unscoped task](bugs/2026-08-15-unknown-goal-id-runs-unscoped.md) — Open
+- [Unknown goal id runs unscoped task](bugs/2026-08-15-unknown-goal-id-runs-unscoped.md) — Resolved
 
-- [Goal lifecycle capabilities were conflated](bugs/2026-08-15-goal-lifecycle-capabilities-conflated.md) — Open
+- [Goal lifecycle capabilities were conflated](bugs/2026-08-15-goal-lifecycle-capabilities-conflated.md) — Resolved
 
 - [Worktree setup rejects a symlinked checkout state directory](bugs/2026-08-14-worktree-state-symlink-notdir.md) — Resolved
 
@@ -89,15 +93,15 @@ Project agents receive this workflow through the harness prompt and
 <!-- inventory:investigation:start -->
 - [`clanker run` never finishes, compacting on every iteration](investigations/2026-08-16-run-livelock-compaction-thrash.md) — Resolved
 
-- [improve-self gate tool build failure (appendWriteFn) and follow-up](investigations/2026-04-15-improve-self-gate-build.md) — Investigating
+- [improve-self gate tool build failure (appendWriteFn) and follow-up](investigations/2026-04-15-improve-self-gate-build.md) — Resolved
 
-- [improve-self iterations exhaust attempts on config.toml documentation test](investigations/2026-06-13-improve-staging-config-doc.md) — Investigating
+- [improve-self iterations exhaust attempts on config.toml documentation test](investigations/2026-06-13-improve-staging-config-doc.md) — Resolved
 
-- [improve-self iterations wasted on @errorUpdate in WASM guest](investigations/2026-06-12-improve-self-erroreupdate-guest.md) — Investigating
+- [improve-self iterations wasted on @errorUpdate in WASM guest](investigations/2026-06-12-improve-self-erroreupdate-guest.md) — Resolved
 
-- [improve-self iterations fail on hallucinated @errorUpdate](investigations/2025-08-17-improve-self-errorupdate.md) — Investigating
+- [improve-self iterations fail on hallucinated @errorUpdate](investigations/2025-08-17-improve-self-errorupdate.md) — Closed
 
-- [Goal command lifecycle contract](investigations/2026-08-15-goal-command-lifecycle-contract.md) — Investigating
+- [Goal command lifecycle contract](investigations/2026-08-15-goal-command-lifecycle-contract.md) — Resolved
 
 - [Unexpected worktree from isolated_cli and NotDir shared-state warning](investigations/2026-08-14-isolated-cli-worktree-notdir.md) — Resolved
 

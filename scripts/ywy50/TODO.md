@@ -19,3 +19,4 @@ Markers: `[ ]` open · `[-]` in progress · `[x]` done
 - [x] Backport repository workflow rule modules and template to Project Kit
 [-] Auto-commit-and-push pass — in progress — claude, 2026-08-15; session: claude-20260815-050009-f2fb1a2df8ea
 [-] Auto-commit-and-push pass — in progress — claude, 2026-08-15; session: claude-20260815-060559-fef831157ea9
+[-] Auto-commit-and-push pass — in progress — claude, 2026-08-16; session: claude-20260816-044458-2c040e2fb7e3

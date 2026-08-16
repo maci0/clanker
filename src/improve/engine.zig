@@ -954,7 +954,16 @@ pub const Engine = struct {
         const gate_new_texts = try proposalNewTexts(self.ctx.gpa, proposal.changes);
         defer self.ctx.gpa.free(gate_new_texts);
 
-        const git_deny = gate_checks.gitDenyGuardGate(self.ctx.gpa, gate_files, gate_new_texts);
+        // The TOML gates parse `new`, which for a block-replace edit of a
+        // config file is only the replaced fragment (a single `git_remote_ops
+        // = true` line), not a standalone TOML document, so a benign in-place
+        // edit is rejected as "config change is not valid TOML" and the run
+        // burns every attempt on the false positive. Evaluate the TOML gates
+        // against the assembled staged file, which is what the next run
+        // actually loads; every other file keeps its `new` text.
+        const gate_texts = try stagedConfigGateTexts(self.arena, self.ctx.io, staged_dir, proposal.changes, gate_new_texts);
+
+        const git_deny = gate_checks.gitDenyGuardGate(self.ctx.gpa, gate_files, gate_texts);
         if (!git_deny.ok) {
             log.log(.warn, "proposal rejected: {s}", .{git_deny.detail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, gate_files, 0, 0, git_deny.detail, fingerprints, null);
@@ -963,7 +972,7 @@ pub const Engine = struct {
             return .failed;
         }
 
-        const cfg_weak = gate_checks.configWeakeningGate(self.ctx.gpa, gate_files, gate_new_texts);
+        const cfg_weak = gate_checks.configWeakeningGate(self.ctx.gpa, gate_files, gate_texts);
         if (!cfg_weak.ok) {
             log.log(.warn, "proposal rejected: {s}", .{cfg_weak.detail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, gate_files, 0, 0, cfg_weak.detail, fingerprints, null);
@@ -1159,6 +1168,10 @@ pub const Engine = struct {
                 self.plan_next += 1;
                 if (plan_mod.tried(self.arena, idea.text, summaries) catch false) {
                     log.log(.info, "plan: skipping an idea history already records: {s}", .{idea.text});
+                    continue;
+                }
+                if (!plan_mod.hasWritableTarget(idea.files)) {
+                    log.log(.info, "plan: skipping an idea with no writable file target: {s}", .{idea.text});
                     continue;
                 }
                 self.adoptIdea(idea) catch |err| {
@@ -2541,6 +2554,31 @@ fn proposalNewTexts(gpa: std.mem.Allocator, changes: []const proposal_mod.Change
     return out;
 }
 
+/// Gate texts for the TOML-parsing gates, with config files carrying the full
+/// assembled staged file instead of the proposal's `new` fragment. A
+/// block-replace edit of config.toml yields a `new` that is only the replaced
+/// lines, so parsing it as a standalone document fails even when the loaded
+/// config is fine. The staged file is what the next run compiles, so the
+/// guards should read it whole; on a read failure fall back to `new` so the
+/// gate still runs. Owned by `arena`.
+fn stagedConfigGateTexts(
+    arena: std.mem.Allocator,
+    io: std.Io,
+    staged_dir: std.Io.Dir,
+    changes: []const proposal_mod.Change,
+    new_texts: []const []const u8,
+) ![][]const u8 {
+    const out = try arena.alloc([]const u8, changes.len);
+    for (changes, 0..) |c, i| {
+        if (!(std.mem.eql(u8, c.file, "config.toml") or std.mem.eql(u8, c.file, "config.local.toml"))) {
+            out[i] = new_texts[i];
+            continue;
+        }
+        out[i] = staged_dir.readFileAlloc(io, c.file, arena, .limited(1 << 22)) catch new_texts[i];
+    }
+    return out;
+}
+
 /// The excerpt always owns its memory. It used to alias `s` whenever the input
 /// was short enough to need no trimming, and every caller passes the `detail`
 /// of a gate result it frees on scope exit, so the one caller that returns the
@@ -3028,6 +3066,14 @@ const improve_system =
     \\- Only touch files shown in the context. Never change the eval machinery
     \\  (src/evals/, src/improve/, src/toolhost/builder.zig).
     \\- Changes must compile with Zig 0.16 std APIs. Prefer minimal diffs.
+    \\- Files under tools/zig/ and tools/ts/ are sandboxed WASM guests built for
+    \\  wasm32-freestanding. No libc, no host-only builtins, and no filesystem,
+    \\  process or network access except through the ck_* host imports declared
+    \\  in tools/zig/lib.zig. A builtin you cannot find in the Zig language
+    \\  reference does not exist: inventing one fails the tools gate on every
+    \\  attempt of the iteration, and @errorUpdate has cost this loop several
+    \\  whole batches that way. To add context to a guest error, return a
+    \\  different error or report it through lib.fail/lib.failErr.
     \\- A patch has to change what the program does. Two shapes are refused
     \\  outright, whatever their summary says:
     \\    - adding a function, plus a test for that function, and no caller. If

@@ -186,6 +186,9 @@ config-validation warning when the system prompt approaches the cap.
 ## References
 
 - Investigation: [`2026-08-16-run-livelock-compaction-thrash.md`](../investigations/2026-08-16-run-livelock-compaction-thrash.md)
+- Runbook: [Agent run compaction thrash](../../runbooks/agent-run-compaction-thrash.md) —
+  the current recovery procedure for an operator who meets the symptom
+- Documentation: [History budget and compaction](../../configuration.md#history-budget-and-compaction)
 - Code: `src/agent/loop.zig` (`maybeCompactMessages`, `historyTokens`, `immovableTokens`,
   `raisedThreshold`, `compactionSucceeded`, `CompactionState`), `src/cli.zig`
   (`reportUnfinishedRun`), `src/config.zig` (`max_history_tokens`)

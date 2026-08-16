@@ -51,6 +51,9 @@ both are compare-and-swap writes, so reopen the record after a conflict.
 ## Inventory
 
 <!-- inventory:runbook:start -->
+- [Agent run compaction thrash](agent-run-compaction-thrash.md) — Give
+  compaction room when a run compacts on every iteration or stops with
+  `CompactionStalled`.
 - [Improve staging build inputs](improve-staging-build-inputs.md) — Verify the
   staging root list covers every local module declared by `build.zig`.
 <!-- inventory:runbook:end -->

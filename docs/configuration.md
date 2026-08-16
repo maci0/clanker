@@ -331,7 +331,7 @@ Run-loop and path settings. The commonly-touched keys:
 | `compact_threshold_bytes` | 24000 | Compact conversation history past this size (`0` uses the model window). |
 | `tool_result_prune_bytes`, `tool_result_prune_head_bytes`, `tool_result_prune_tail_bytes` | 8192, 4096, 1024 | Request-only head/tail pruning for oversized tool results. Threshold `0` disables it; saved transcripts remain exact. |
 | `repeat_tool_thresholds`, `repeat_tool_exclude` | `[3, 5, 8]`, todo tools | Advisory reminders for consecutive canonical-equivalent tool calls. Excluded name patterns (with optional `*`) neither increment nor reset a chain. |
-| `max_total_tokens`, `max_tokens_per_turn`, `max_history_tokens` | -, 4096, 16000 | Token budgets that drive compaction. |
+| `max_total_tokens`, `max_tokens_per_turn`, `max_history_tokens` | -, 4096, 16000 | Token budgets that drive compaction. `max_history_tokens` is lifted for a run when it sits below what compaction cannot remove — see [History budget and compaction](#history-budget-and-compaction). |
 | `tool_catalog` | true | Send full schemas only for hot tools; let the model request the rest by name (saves thousands of tokens/request with many tools). |
 | `hot_tools` | 10 | How many most-used tools keep their schemas loaded unasked. |
 | `tools_dir` | `tools/manifests` | One directory or a list. Later-listed wins on a tool `name` collision. |
@@ -348,6 +348,37 @@ Run-loop and path settings. The commonly-touched keys:
 | `isolated_tui` | `false` | The terminal REPL starts in a private worktree for the whole session. |
 | `isolated_webui` | `false` | Web UI chat runs use a private worktree and do not implicitly attach the newest active goal. |
 | `seed` | 0 | RNG seed for reproducibility (`0` = time-seeded). |
+
+### History budget and compaction
+
+Compaction keeps the system message and the last six messages and replaces
+everything between them with a summary. Those kept parts are immovable: no
+setting makes compaction able to drop them.
+
+That matters when the budget is set below what they cost. `max_history_tokens`
+is an absolute number, not a share of the model's window, so a 16000-token
+default applies unchanged to a model with a 1M-token window — and a system
+prompt of 14000 tokens (a large `AGENTS.md` plus a grown `state/learnings.md`
+will do it) leaves almost nothing for the conversation. Compaction would then be
+demanded on every iteration and free nothing on any of them.
+
+A run therefore lifts its own threshold when the configured one sits below that
+floor, with headroom, and never past what the model's context window allows. It
+says so once:
+
+```
+[WARN] history threshold 16000 is below the 20774 tokens compaction cannot remove
+       (system prompt plus the 6 kept messages); using 31161 for this run
+```
+
+Treat that line as a prompt to set the budget properly: the lift keeps the run
+alive, it does not make 16000 a sensible cap for a large-window model.
+
+A run that still needs to compact on five consecutive iterations ends with
+`error.CompactionStalled` rather than continuing to the iteration cap, and prints
+both ceilings — the configured cap and what the model's window leaves compaction
+— because raising the cap only helps when the model has the room. The recovery
+is [the compaction thrash runbook](runbooks/agent-run-compaction-thrash.md).
 
 ## `[hooks]`
 

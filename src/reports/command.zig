@@ -18,14 +18,16 @@ const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
 
 pub const Options = struct {
-    /// "list" (default), "search", "open", "create", "append" or "update".
+    /// "list" (default), "search", "open", "create", "append", "update" or
+    /// "status".
     sub: []const u8 = "list",
-    /// `search`: the query. `open`/`append`/`update`: the path. `create`: the
-    /// record kind.
+    /// `search`: the query. `open`/`append`/`update`/`status`: the path.
+    /// `create`: the record kind.
     arg1: ?[]const u8 = null,
     /// `create`: the slug. `append`: the content. `update`: the old text.
+    /// `status`: the new state.
     arg2: ?[]const u8 = null,
-    /// `create`: the title. `update`: the new text.
+    /// `create`: the title. `update`: the new text. `status`: the note.
     arg3: ?[]const u8 = null,
     /// `create`: the TL;DR summary.
     arg4: ?[]const u8 = null,
@@ -78,8 +80,9 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     if (std.mem.eql(u8, sub, "create")) return create(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "append")) return append(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "update")) return update(io, arena, opts, tool);
+    if (std.mem.eql(u8, sub, "status")) return setStatus(io, arena, opts, tool);
 
-    log.log(.error_, "unknown reports subcommand '{s}' (expected list, search, open, create, append or update)", .{sub});
+    log.log(.error_, "unknown reports subcommand '{s}' (expected list, search, open, create, append, update or status)", .{sub});
     return Error.BadSubcommand;
 }
 
@@ -240,6 +243,46 @@ fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
 
     const result = try callTool(arena, tool, input.written());
     try out(io, try std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
+}
+
+fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+    const path = opts.arg1 orelse return missingStatusArg("a record path");
+    const wanted = opts.arg2 orelse return missingStatusArg("a state: open, investigating, resolved, reopened or closed");
+    // The tool requires a note for "resolved", but every state reads better
+    // with one, and asking here names the missing argument rather than
+    // spending a tool call to be told.
+    const note = opts.arg3 orelse "";
+
+    var input: std.Io.Writer.Allocating = .init(arena);
+    defer input.deinit();
+    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("action");
+    try s.write("status");
+    try s.objectField("path");
+    try s.write(path);
+    try s.objectField("status");
+    try s.write(wanted);
+    try s.objectField("note");
+    try s.write(note);
+    try s.endObject();
+
+    const result = try callTool(arena, tool, input.written());
+    var w: std.Io.Writer.Allocating = .init(arena);
+    defer w.deinit();
+    try w.writer.print("{s} is now {s}\n", .{
+        json_util.strFieldOrEmpty(result.object, "path"),
+        json_util.strFieldOrEmpty(result.object, "status"),
+    });
+    if (!boolField(result, "indexed")) {
+        try w.writer.writeAll("\nThe inventory line was not updated (the entry is missing or the index\nchanged concurrently). Set its status by hand in docs/reports/README.md so\nthe index does not disagree with the record.\n");
+    }
+    try out(io, w.written());
+}
+
+fn missingStatusArg(what: []const u8) Error {
+    log.log(.error_, "reports status needs {s}: clanker reports status docs/reports/bugs/<name>.md resolved \"Fixed in <commit>; verified by <check>\"", .{what});
+    return Error.MissingArg;
 }
 
 // ----------------------------------------------------------------- the tool --

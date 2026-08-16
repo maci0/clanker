@@ -201,6 +201,11 @@ caught this failure, because the livelocked run never stopped printing.
 
 - Related bugs: [compaction floor](../bugs/2026-08-16-compaction-cannot-shrink-immovable-history.md),
   [summary budget](../bugs/2026-08-16-compaction-summary-budget-spent-on-reasoning.md)
+- Runbook: [Agent run compaction thrash](../../runbooks/agent-run-compaction-thrash.md)
+- Documentation: [History budget and compaction](../../configuration.md#history-budget-and-compaction);
+  the wrapper's own watchdog in `scripts/imp-autorecover-loop/README.md` and
+  `docs/decisions.md` there
+- Line numbers below are as of the investigation, before the fix moved them.
 - Code: `src/agent/loop.zig` (1284, 1313, 1357, 1373, 1387, 1531), `src/config.zig` (245, 262),
   `src/llm/providers/common.zig` (46, 54), `src/llm/providers/openai.zig` (223-278)
 - Logs or run: production excerpt `request_id=run-1786776644` (iterations 170-173),

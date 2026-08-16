@@ -13,10 +13,13 @@
 //!          "content":"\n## New evidence\n\n...\n"}
 //!         {"action":"update", "path":"docs/runbooks/foo.md",
 //!          "old":"old text", "new":"new text"}
+//!         {"action":"status", "path":"docs/reports/bugs/foo.md",
+//!          "status":"resolved", "note":"Fixed in <commit>."}
 //! Output: {"ok":true, ...}
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const doc = @import("doc_scaffold.zig");
 
 const reports_dir = "docs/reports";
 const runbooks_dir = "docs/runbooks";
@@ -35,7 +38,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (std.mem.eql(u8, action, "create")) return create(obj, out);
     if (std.mem.eql(u8, action, "append")) return append(obj, out);
     if (std.mem.eql(u8, action, "update")) return update(obj, out);
-    return lib.fail(out, "action must be search, list, open, create, append, or update");
+    if (std.mem.eql(u8, action, "status")) return status(obj, out);
+    return lib.fail(out, "action must be search, list, open, create, append, update, or status");
 }
 
 /// Return both indexes so the caller learns the available report/runbook kinds
@@ -226,6 +230,113 @@ fn update(obj: std.json.Value, out: *lib.Out) !void {
         else => return lib.failErr(out, err, "updating the report or runbook"),
     };
     return mutationResult(out, "update", path);
+}
+
+/// Moves a record through its lifecycle: the `## Status` line and the index
+/// entry, in one call.
+///
+/// Those are two copies of one fact, and before this action only `create` ever
+/// wrote the index one. Every record therefore stayed `Open`/`Investigating`
+/// in the inventory no matter what its own body said, and the inventory is
+/// what a reader skims first — a resolved bug still listed as open is a
+/// standing invitation to re-diagnose finished work.
+fn status(obj: std.json.Value, out: *lib.Out) !void {
+    const path = lib.str(obj, "path") catch
+        return lib.fail(out, "status needs the path of a bug report or investigation");
+    const kind = reportKindOf(path) orelse
+        return lib.fail(out, "status applies to docs/reports/bugs/ and docs/reports/investigations/ records; a runbook is current or superseded by its own text, and its inventory line carries a summary rather than a status");
+    const wanted = lib.str(obj, "status") catch
+        return lib.fail(out, "status needs one of open, investigating, resolved, reopened, or closed");
+    const label = labelFor(wanted) orelse
+        return lib.fail(out, "status must be open, investigating, resolved, reopened, or closed");
+    const note = lib.optStr(obj, "note") orelse "";
+    if (note.len > 500) return lib.fail(out, "note is too long (maximum 500 bytes)");
+    if (std.mem.eql(u8, label, "Resolved") and note.len == 0)
+        return lib.fail(out, "a resolved record needs a note naming the fix and what verified it; put the evidence in the Resolution and Verification sections with append or update first");
+
+    // `hash` reuses the shared host response arena, so keep a guest-owned copy
+    // of the text before asking for its CAS hash.
+    const raw = lib.fsRead(path) catch |err| return lib.failErr(out, err, "opening the record before a status change");
+    const text = try lib.alloc.dupe(u8, raw);
+    const expected = try lib.alloc.dupe(u8, try lib.hash(text));
+
+    var date_buf: [16]u8 = undefined;
+    const date = doc.isoDate(@intFromFloat(lib.nowSeconds()), &date_buf);
+    const line = if (note.len > 0)
+        try std.fmt.allocPrint(lib.alloc, "{s} on {s}. {s}", .{ label, date, note })
+    else
+        try std.fmt.allocPrint(lib.alloc, "{s} on {s}.", .{ label, date });
+
+    var updated: std.Io.Writer.Allocating = .init(lib.alloc);
+    defer updated.deinit();
+    if (!try doc.replaceFirstLine(&updated.writer, text, "## Status", line))
+        return lib.fail(out, "the record has no '## Status' section; add one or edit it with update");
+    lib.fsWriteIf(path, expected, updated.written()) catch |err| switch (err) {
+        error.Mismatch => return lib.fail(out, "the record changed while setting its status; open it again and retry"),
+        else => return lib.failErr(out, err, "setting the record status"),
+    };
+
+    // Record and index are separate files, so this is not one atomic write. A
+    // CAS miss leaves the record correct and says which line to reconcile.
+    const indexed = setInventoryStatus(kind, path[reports_dir.len + 1 ..], label) catch false;
+
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("action");
+    try s.write("status");
+    try s.objectField("path");
+    try s.write(path);
+    try s.objectField("status");
+    try s.write(label);
+    try s.objectField("indexed");
+    try s.write(indexed);
+    if (!indexed) {
+        try s.objectField("note");
+        try s.write("the record's status changed, but its docs/reports/README.md inventory line could not be updated (missing entry or markers, or a concurrent edit); set that line's status by hand so the index does not disagree with the record");
+    }
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
+/// The inventory kind a path belongs to, or null when the path is not a
+/// status-carrying record.
+fn reportKindOf(path: []const u8) ?[]const u8 {
+    if (!isAllowedPath(path)) return null;
+    if (std.mem.startsWith(u8, path, reports_dir ++ "/bugs/")) return "bug";
+    if (std.mem.startsWith(u8, path, reports_dir ++ "/investigations/")) return "investigation";
+    return null;
+}
+
+/// Written out rather than derived, so adding a status has to touch both the
+/// accepted vocabulary and its display spelling, which is what keeps the two
+/// in step.
+fn labelFor(wanted: []const u8) ?[]const u8 {
+    if (std.ascii.eqlIgnoreCase(wanted, "open")) return "Open";
+    if (std.ascii.eqlIgnoreCase(wanted, "investigating")) return "Investigating";
+    if (std.ascii.eqlIgnoreCase(wanted, "resolved")) return "Resolved";
+    if (std.ascii.eqlIgnoreCase(wanted, "reopened")) return "Reopened";
+    if (std.ascii.eqlIgnoreCase(wanted, "closed")) return "Closed";
+    return null;
+}
+
+fn setInventoryStatus(kind: []const u8, link: []const u8, label: []const u8) !bool {
+    const raw = try lib.fsRead(reports_dir ++ "/README.md");
+    const index = try lib.alloc.dupe(u8, raw);
+    const expected = try lib.alloc.dupe(u8, try lib.hash(index));
+    const start_marker = try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:start -->", .{kind});
+    const end_marker = try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:end -->", .{kind});
+
+    var updated: std.Io.Writer.Allocating = .init(lib.alloc);
+    defer updated.deinit();
+    if (!try doc.setInventoryStatus(&updated.writer, index, start_marker, end_marker, link, label)) return false;
+    lib.fsWriteIf(reports_dir ++ "/README.md", expected, updated.written()) catch |err| switch (err) {
+        error.Mismatch => return false,
+        else => return err,
+    };
+    return true;
 }
 
 fn mutationResult(out: *lib.Out, action: []const u8, path: []const u8) !void {

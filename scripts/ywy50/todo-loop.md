@@ -1,3 +1,7 @@
+und hab vergessen was ich fuer repair von improve self und repair von repair ausgewaehlt habe. muss da noch so minimales logging hinzufuegen, oder auch metrics um zu schauen mit welchen models das am besten geht
+
+
+===
 file:///home/yannick/Pictures/clank_Screenshot_20260816_004152.png
 
   the clanker tui crashed irrecoverably when I resized my terminal. I cannot even

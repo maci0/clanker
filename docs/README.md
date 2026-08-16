@@ -308,7 +308,10 @@ was started, not something the agent can opt into mid-run.
 1. Collect relevant source files as context. With `improve.plan_phase` on
    (default) the model first proposes a short plan of ideas for the run and
    each iteration implements one, with ideas deduplicated against the run's
-   own plan and against past history (`plan.zig`).
+   own plan and against past history (`plan.zig`). Parsing tolerates prose
+   wrapped around the JSON, a bare single-idea object, and an array of plain
+   strings; an idea whose named files are all outside the writable surface is
+   skipped up front instead of dying in `validateWritePath`.
 2. Ask the model for a patch proposal (JSON with `summary`, `rationale`, `changes`).
    The context is a byte-budgeted slice of a much larger tree, so the model may
    instead answer `{"need": ["src/cli.zig", "docs/ROADMAP.md"], "reason": "..."}`
@@ -947,7 +950,7 @@ Fields:
   - `max_iterations`: tool-call rounds per turn before the run stops (default 50). Hitting it errors the turn, so keep it generous for multi-file work.
   - `compact_threshold_bytes`: if conversation exceeds this, compact history.
   - `max_total_tokens`: total token budget across the run.
-  - `max_tokens_per_turn`, `max_history_tokens`: per-turn input cap and total history budget before compaction kicks in.
+  - `max_tokens_per_turn`, `max_history_tokens`: per-turn input cap and total history budget before compaction kicks in. `max_history_tokens` is an absolute number rather than a share of the model's window, so its 16000 default is small for a large-window model; a run lifts it for itself (and logs that it did) when it falls below what compaction cannot remove — the system message and the six kept messages — and ends with `CompactionStalled` rather than compacting on every iteration when even that is not enough. See [History budget and compaction](configuration.md#history-budget-and-compaction).
   - `tools_dir`: one directory or a list of them (default `tools/manifests`). Later-listed wins on a tool name collision. `skills_dir`, `system_prompt_file`, `learnings_file`, `state_dir`: other paths the agent reads/writes at runtime.
   - `global_instructions_file`: optional path to device-global operator instructions. When empty (default), clanker loads `$HOME/.agents/AGENTS.md` if present. Missing or empty files are skipped.
   - `sandbox_root`: the run's root. `ck_fs_*` paths resolve under it and `ck_exec`

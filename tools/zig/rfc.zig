@@ -354,6 +354,31 @@ fn addToInventory(entry: []const u8) !bool {
     return true;
 }
 
+/// The index carries its own copy of the status word. Only `create` used to
+/// write it, so every RFC stayed `Draft` in the inventory however often its
+/// own Status line moved; the status action carries the index with it.
+fn setInventoryStatus(link: []const u8, label: []const u8) !bool {
+    const raw = try lib.fsRead(index_path);
+    const index = try lib.alloc.dupe(u8, raw);
+    const expected = try lib.alloc.dupe(u8, try lib.hash(index));
+
+    var updated: std.Io.Writer.Allocating = .init(lib.alloc);
+    defer updated.deinit();
+    if (!try doc.setInventoryStatus(&updated.writer, index, inventory_start, inventory_end, link, label)) return false;
+    lib.fsWriteIf(index_path, expected, updated.written()) catch |err| switch (err) {
+        error.Mismatch => return false,
+        else => return err,
+    };
+    return true;
+}
+
+/// The inventory links an RFC by file name; every RFC sits directly in
+/// `docs/rfcs/`.
+fn basename(path: []const u8) []const u8 {
+    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse return path;
+    return path[slash + 1 ..];
+}
+
 // -------------------------------------------------------------------- reads
 
 fn list(out: *lib.Out) !void {
@@ -639,6 +664,10 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
         else => return lib.failErr(out, err, "setting the RFC status"),
     };
 
+    // RFC and index are separate files, so this cannot be one atomic write. A
+    // CAS miss leaves the RFC correct and names the line to reconcile.
+    const indexed = setInventoryStatus(basename(path), label) catch false;
+
     var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();
@@ -650,8 +679,12 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     try s.write(path);
     try s.objectField("status");
     try s.write(label);
-    try s.objectField("note");
-    try s.write("The inventory in docs/rfcs/README.md carries its own status word; update that line too so the index does not drift.");
+    try s.objectField("indexed");
+    try s.write(indexed);
+    if (!indexed) {
+        try s.objectField("note");
+        try s.write("the RFC's status changed, but its docs/rfcs/README.md inventory line could not be updated (missing entry or markers, or a concurrent edit); set that line's status word by hand so the index does not disagree with the RFC");
+    }
     try s.endObject();
     lib.commit(out, &w);
 }
