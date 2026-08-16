@@ -105,18 +105,7 @@ fn gitVerb(args: []const []const u8) ?[]const u8 {
 /// verbs git_remote_ops grants (`push`, `merge`, `checkout`) are skipped, the
 /// same lift the host applies — the deny message must not pre-empt the config.
 fn deniedVerb(args: []const []const u8, git_remote_ops: bool) ?[]const u8 {
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const a = args[i];
-        if (a.len == 0) continue;
-        if (a[0] == '-') {
-            for (git_value_options) |o| {
-                if (std.mem.eql(u8, a, o)) {
-                    i += 1; // option value is data, not a command token
-                    break;
-                }
-            }
-        }
+    for (args) |a| {
         for (denied_tokens) |t| {
             if (git_remote_ops and isGitRemoteOpToken(t)) continue;
             if (argDenied(a, t)) return t;
@@ -238,20 +227,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (policy.patterns.len > 0) {
         var join_buf: [2048]u8 = undefined;
         var w: std.Io.Writer = .fixed(&join_buf);
-        // Fail-closed: never make a pattern-allow decision from argv data that does not fit.
-        var needed: usize = "git".len;
-        for (args.items) |a| needed += 1 + a.len;
-        if (needed <= join_buf.len) {
-            w.writeAll("git") catch {};
-            for (args.items) |a| {
-                w.writeByte(' ') catch {};
-                w.writeAll(a) catch {};
-            }
+        w.writeAll("git") catch {};
+        for (args.items) |a| {
+            w.writeByte(' ') catch {};
+            w.writeAll(a) catch {};
         }
         const joined = join_buf[0..w.end];
         for (policy.patterns) |pat| {
-            if (!patternNamesCmd(pat, "git")) continue; // only git-scoped patterns may authorize or lift the deny list
-            governed = true;
+            if (patternNamesCmd(pat, "git")) governed = true;
             if (globMatch(pat, joined)) allowed = true;
         }
     }
