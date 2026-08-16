@@ -672,7 +672,7 @@ project actually needs its own board; keep `board` as the empty-id workspace's
 - [ADR 0001 — The Kanban board is a chatroom](../adrs/0001-board-is-a-chatroom.md)
 - [ADR 0002 — Private run todos vs the shared board](../adrs/0002-private-todos-vs-shared-board.md)
 - [ADR 0012 — Goal draft, persistence, and execution are separate](../adrs/0012-goal-draft-persistence-and-execution-are-separate.md)
-- [RFC 0003: File attachments on a goal card](0003-goal-card-file-attachments.md)
+- [RFC 0003: Attachments on a goal card (files and links)](0003-goal-card-file-attachments.md)
 - Arena match `state/arena/arena-1786861439-dad384e4` (6 positions, DeepSeek,
   3 rounds, self-judge; official draw; adopted reasoning is p6)
 - [PRD 0001 — Chatrooms](../prds/0001-chatrooms.md)
