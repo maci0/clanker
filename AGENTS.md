@@ -472,6 +472,18 @@ status`, `clanker research status`, `clanker rfc status`) writes both. `create`
 sets the inventory copy once and never again, which is how every record in
 `docs/reports/` once read `Open` months after it was fixed.
 
+**Write only what you checked.** A record is read as established fact by
+someone who cannot tell which sentences were verified and which were inferred,
+so an inference stated flatly becomes the next reader's premise. Give the
+mechanism and the command that shows it, not the motive: `abcc85ba` "changed
+`writeWorkspaceJson`'s signature and left two call sites unreconciled, author
+from `git log -1 --format='%an <%ae>'`" is checkable, where "was pushed without
+running the gate" is a guess about a person that the commits do not support.
+This binds hardest when a record blames someone — an author landing a
+work-in-progress commit on their own `main` is ordinary, and the reportable
+defect is usually the one downstream of it. Mark what you could not verify as
+unverified, or leave it out.
+
 Before a choice between libraries, external tools, or architectures, search
 [docs/rfcs/](docs/rfcs/) and [docs/adrs/](docs/adrs/) with the `rfc` tool (the
 same records are on the CLI as `clanker rfc`): a matching ADR means it is
