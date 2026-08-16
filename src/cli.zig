@@ -1151,6 +1151,16 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
         setDiag(diag, "<message>");
         return error.MissingArg;
     }
+    if (opts.command == .mesh and opts.mesh_arg1 == null) {
+        if (std.mem.eql(u8, opts.mesh_sub, "join")) {
+            setDiag(diag, "<host:port>");
+            return error.MissingArg;
+        }
+        if (std.mem.eql(u8, opts.mesh_sub, "admit") or std.mem.eql(u8, opts.mesh_sub, "deny")) {
+            setDiag(diag, "<peer-id>");
+            return error.MissingArg;
+        }
+    }
     // `arena --match <id>` reads a stored match and takes no question or
     // stances; anything else is starting one, which needs all three. Caught
     // here so a missing side costs a usage error rather than a refusal from
@@ -1940,9 +1950,9 @@ pub fn run(init: std.process.Init, opts: Options) !void {
 
 /// The one piece of `schedule` that cannot live in `src/schedule/`: turning a
 /// stored entry into an actual agent run means calling `cmdRun`, which is
-/// here. Everything else, the store, the cron arithmetic, the due/claim/
-/// ledger logic, the printing, is behind `schedule_cmd.cmd`, which takes this
-/// as a callback so its tests can drive the whole path without a provider.
+/// here. List/add/remove/enable/disable/log go through the `schedule` guest
+/// via `ScheduleTool`. `run` / `run-due` stay native and take this Fire
+/// callback so tests can drive the fire path without a provider.
 const ScheduleFire = struct {
     init: std.process.Init,
     opts: Options,
@@ -1981,16 +1991,52 @@ const ScheduleFire = struct {
 };
 
 fn cmdSchedule(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+
     var fire = ScheduleFire{ .init = init, .opts = opts };
-    try schedule_cmd.cmd(init, .{
+    var caller: ScheduleTool = .{ .init = init, .cfg = &cfg };
+    schedule_cmd.cmd(init, .{
         .sub = opts.schedule_sub orelse "list",
         .arg1 = opts.schedule_arg1,
         .arg2 = opts.schedule_arg2,
         .provider = opts.provider,
         .model = opts.model,
         .tz_offset = opts.schedule_tz,
-    }, fire.callback());
+    }, fire.callback(), caller.tool()) catch |err| switch (err) {
+        schedule_cmd.Error.BadSubcommand, schedule_cmd.Error.MissingArg => {
+            printUsageHintFor(io, "schedule");
+            std.process.exit(2);
+        },
+        schedule_cmd.Error.ToolFailed => std.process.exit(1),
+        else => return err,
+    };
 }
+
+/// Binds `toolJson` to the `schedule` guest, so `src/schedule/command.zig`
+/// can call the tool without importing the sandbox.
+const ScheduleTool = struct {
+    init: std.process.Init,
+    cfg: *const config.Config,
+
+    fn tool(self: *ScheduleTool) schedule_cmd.Tool {
+        return .{ .ctx = self, .call = call };
+    }
+
+    fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
+        const self: *ScheduleTool = @ptrCast(@alignCast(ctx));
+        return toolJson(
+            self.init.io,
+            self.init.gpa,
+            self.init.arena.allocator(),
+            self.cfg,
+            self.init.environ_map,
+            "schedule",
+            input,
+        );
+    }
+};
 
 fn writeStdErr(io: std.Io, bytes: []const u8) !void {
     try std.Io.File.stderr().writeStreamingAll(io, bytes);
@@ -5483,6 +5529,20 @@ const subscribe_on = std.StaticStringMap(void).initComptime(.{
     .{ "1", {} },
     .{ "yes", {} },
 });
+
+fn cmdMesh(init: std.process.Init, opts: Options) !void {
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    const listen = resolveListen(&cfg, init.environ_map, opts);
+    mesh_cmd.cmd(init, .{ .sub = opts.mesh_sub, .arg1 = opts.mesh_arg1 }, listen.host, listen.port) catch |err| switch (err) {
+        mesh_cmd.Error.BadSubcommand => return error.BadSubcommand,
+        mesh_cmd.Error.MissingArg => return error.MissingArg,
+        mesh_cmd.Error.MeshOff => return error.ModuleDisabled,
+        mesh_cmd.Error.ServeNotRunning => return error.ServeNotRunning,
+        mesh_cmd.Error.RequestFailed => return error.HttpError,
+        else => return err,
+    };
+}
 
 fn cmdChat(init: std.process.Init, opts: Options) !void {
     const io = init.io;
@@ -14388,6 +14448,7 @@ test "parseWithCommand resolves the real command when a global flag precedes it"
         .{ "session", Command.session_export },
         .{ "chat", Command.chat },
         .{ "schedule", Command.schedule },
+        .{ "mesh", Command.mesh },
     }) |case| {
         var d: []const u8 = "";
         var c: Command = .help;
@@ -14913,6 +14974,38 @@ test "-m and -c are the short forms every other agent CLI uses" {
     const opts = try parse(&.{ "clanker", "run", "-m", "zai/glm-5.2", "-c", "keep going" }, null);
     try std.testing.expectEqualStrings("zai/glm-5.2", opts.model.?);
     try std.testing.expect(opts.continue_last);
+}
+
+test "mesh subcommands parse and default to status" {
+    const bare = try parse(&.{ "clanker", "mesh" }, null);
+    try std.testing.expectEqual(Command.mesh, bare.command);
+    try std.testing.expectEqualStrings("status", bare.mesh_sub);
+    try std.testing.expect(bare.mesh_arg1 == null);
+
+    const join = try parse(&.{ "clanker", "mesh", "join", "127.0.0.1:7420" }, null);
+    try std.testing.expectEqualStrings("join", join.mesh_sub);
+    try std.testing.expectEqualStrings("127.0.0.1:7420", join.mesh_arg1.?);
+
+    const leave = try parse(&.{ "clanker", "mesh", "leave" }, null);
+    try std.testing.expectEqualStrings("leave", leave.mesh_sub);
+    try std.testing.expect(leave.mesh_arg1 == null);
+
+    const leave_one = try parse(&.{ "clanker", "mesh", "leave", "side" }, null);
+    try std.testing.expectEqualStrings("side", leave_one.mesh_arg1.?);
+
+    const ported = try parse(&.{ "clanker", "mesh", "status", "--webui-port", "17922" }, null);
+    try std.testing.expectEqual(@as(u16, 17922), ported.webui_port.?);
+
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.BadSubcommand, parse(&.{ "clanker", "mesh", "bogus" }, &diag));
+    try std.testing.expectEqualStrings("bogus", diag);
+
+    var join_diag: []const u8 = "";
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "mesh", "join" }, &join_diag));
+    try std.testing.expectEqualStrings("<host:port>", join_diag);
+    var admit_diag: []const u8 = "";
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "mesh", "admit" }, &admit_diag));
+    try std.testing.expectEqualStrings("<peer-id>", admit_diag);
 }
 
 test "every command is listed in the help table" {

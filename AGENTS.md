@@ -146,8 +146,9 @@ through a gated loop. Follow these conventions when changing this codebase.
 - `src/schedule/` — `clanker schedule`. Cron arithmetic is pure (no allocator,
   clock, or `std.Io`) and lives in `tools/zig/schedule_cron.zig` so the
   `schedule` guest shares it. The guest owns list/toggle/add/remove;
-  `runner.zig`'s Fire callback stays native. Nothing fires on its own; the
-  system's cron calls `clanker schedule run-due`.
+  `clanker schedule list|add|remove|enable|disable|log` and `/api/schedule`
+  call it. `runner.zig`'s Fire callback stays native. Nothing fires on its
+  own; the system's cron calls `clanker schedule run-due`.
 - `src/research/` — autoresearch driver (ledger + harness + loop). Outside the
   protected surface so clanker can improve its own research capabilities.
 - `src/stats/` — per-(provider, model) token usage tracking (`tokens.zig`),
@@ -185,7 +186,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   the fan-out path. Two `clanker serve` processes on one host mesh the
   same way as two machines (loopback is an address): they need distinct
   `instance.id`, mesh port, web UI port, and `agent.state_dir`. Sharing
-  one `state/` is not a mesh.
+  one `state/` is not a mesh. `clanker mesh` is a loopback HTTP client
+  of local serve (`--webui-port` picks which one); it never opens a
+  mesh socket.
 - `src/util/` — logging, dotenv, `ensureDir` (the one way to create `state/`
   when it may be a `--worktree` symlink; `createDirPath` reports NotDir),
   and the one UTF-8 byte-cap (`util/utf8.zig` `cap`, `@import("utf8")` in

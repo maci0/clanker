@@ -185,21 +185,32 @@ global room with model output.
   clanker — another process on the same host or a networked instance — becomes
   a member by entering the same shared offer.
 
-  ```
-  workspace "relumea" (stable id, home = instance "main")
-    roots:     { core: ~/Desktop/Projects/relumea-core,
-                 web:  ~/Desktop/Projects/relumea-web }
-    rooms:
-      ws:relumea              #general — chat + board updates (board is this room's fold)
-      ws:relumea:goal:<id>    optional, one per goal — the goal's model output
-    goals:     tagged relumea
-    sessions:  tagged relumea
-    members:   main (home), laptop
-  mesh
-    join / leave     mesh membership (instance)
-    share / unshare  home offers (or withdraws) one workspace id
-    enter / leave    a member joins / leaves the project
-    bind             member maps roots to local checkouts
+  ```mermaid
+  flowchart TD
+      subgraph Inst["instances (mesh members)"]
+          Main["instance main — home / owner"]
+          Laptop["instance laptop — peer"]
+      end
+
+      subgraph WS["workspace relumea — one project"]
+          W["workspace id<br/>(stable, never a path)"]
+          W --> Roots["roots — named folders: core, web"]
+          W --> Gen["ws:relumea · #general<br/>chat + board updates<br/>(board = fold of this room)"]
+          W --> GoalRoom["ws:relumea:goal:&lt;id&gt;<br/>per-goal model output<br/>(optional, lossy feed)"]
+          W --> Goals["goals — tagged relumea"]
+          W --> Sessions["sessions — tagged relumea"]
+          W --> Members["members — main (home), laptop"]
+      end
+
+      subgraph Fleet["fleet rooms — not projects"]
+          DM["dm:&lt;a&gt;|&lt;b&gt;<br/>direct messages"]
+          Ops["ops / other fleet rooms"]
+      end
+
+      Main --- W
+      Laptop -.->|enter/leave| Members
+      Main --- Fleet
+      Laptop --- Fleet
   ```
 
   **A room namespace, not one log.** ADR 0001 already made the board a chatroom
@@ -219,6 +230,20 @@ global room with model output.
   goal room is a shared projection/feed of that work, allowed to be lossy
   summaries. Making the goal room another canonical store would re-create the
   two-stores-for-one-idea problem ADR 0001 closed.
+
+  ```mermaid
+  sequenceDiagram
+      participant Goal as Goal loop (agent)
+      participant GR as ws:relumea:goal:&lt;id&gt;
+      participant Gen as ws:relumea (#general)
+      participant Peers as Entered members
+
+      Goal->>GR: post model output (turns, decisions, diffs)
+      GR->>Peers: fan-out to subscribers
+      Goal->>Gen: card action — @todo move / claim / log
+      Gen->>Peers: fan-out board update to subscribers
+      Note over Gen,Peers: the board is the fold of #general (ADR 0001)
+  ```
 
   **Membership is uniform.** The home process owns its workspaces and is always
   in them — no local join needed. A second process on the same host is a loopback
@@ -514,29 +539,68 @@ project actually needs its own board; keep `board` as the empty-id workspace's
 
 ## Appendix
 
-### Hierarchy (Option B)
+### Object relationships (cardinality)
 
+Cardinality reads left → right. The three many-to-many edges are the ones with
+a real join record; the rest are foreign keys or derived views.
+
+| Left | Right | Cardinality | Join / where it lives |
+|---|---|---|---|
+| Instance | Workspace | **N:N** | membership roster on the workspace's home — home owns it, peers enter/leave |
+| Instance | Root | **N:N** | bind record: (instance, root) → local checkout path on the member |
+| Instance | Room | **N:N** | per-instance subscription (`chatrooms-sub.json`) |
+| Workspace | Root | 1:N | `workspace.roots[]` |
+| Workspace | Room | 1:N | room namespace: `ws:<id>` (#general) and `ws:<id>:goal:<id>` |
+| Workspace | Goal | 1:N | `goal.workspace` |
+| Workspace | Session | 1:N | `session.workspace` |
+| Room | Board | 1:0..1 | only `#general` folds a board (ADR 0001); goal and fleet rooms do not |
+| Board | Card | 1:N | cards are `@todo` messages in the board's room |
+| Goal | Card | 1:0..1 | `card.goal` links them; the web UI mirrors a goal to one board card |
+| Goal | Room | 1:0..1 | `ws:<id>:goal:<goal-id>`, created on demand, chat/status only |
+
+Fleet rooms (`dm:<a>|<b>`, `ops`) are rooms with no folder, so they map to zero
+workspaces — the 0-side of `Workspace : Room`. Session replication is the same
+1:N from the home instance to its sessions, with read-only replicas on entered
+peers under `state/mesh/<home-id>/sessions/` (PRD 0011), not a second
+relationship type.
+
+### User journey — two instances enter and leave a project
+
+```mermaid
+sequenceDiagram
+    participant Main as instance main (home)
+    participant Laptop as instance laptop (peer)
+
+    Note over Main,Laptop: both admitted to the mesh (join already handled)
+    Main->>Laptop: share relumea
+    Laptop->>Main: enter relumea
+    Main-->>Laptop: membership row (home = main)
+    Laptop->>Laptop: subscribe ws:relumea + goal rooms
+    Main-->>Laptop: replica sessions under state/mesh/main/sessions/
+    Laptop->>Main: bind core, web (local checkouts)
+    Note over Main,Laptop: laptop sees board, #general, goals, and folders
+    Laptop->>Main: leave relumea
+    Note over Main,Laptop: drop membership + unsubscribe; home data stays
 ```
-Fleet / mesh
-└─ instance "main"                           instance "laptop"
-   └─ workspace relumea (home, owner)         (no relumea until enter)
-      roots: core -> ~/Desktop/Projects/relumea-core
-             web  -> ~/Desktop/Projects/relumea-web
-      rooms: ws:relumea            (#general: chat + board updates)
-             ws:relumea:goal:<id>  (optional, per-goal model output)
-      sessions  (canonical)
-      goals     (tagged relumea)
-      members:  main (home)
 
-operator on main:   share relumea
-operator on laptop: enter relumea
-                    → membership row, home=main
-                    → subscribe ws:relumea + goal rooms
-                    → replica sessions under state/mesh/<main-id>/sessions/
-                    → optional bind core -> ~/code/relumea-core, web -> ~/code/relumea-web
-operator on laptop: leave relumea
-                    → drop membership, unsubscribe
-                    → home data stays; laptop stays on the mesh
+### User journey — local operator starts a goal
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator (main)
+    participant WS as workspace relumea
+    participant Goal as Goal loop
+    participant GR as ws:relumea:goal:&lt;id&gt;
+    participant Gen as ws:relumea (#general)
+
+    Op->>WS: create project (roots core + web)
+    Op->>Goal: start goal
+    Goal->>GR: create goal room (on demand)
+    loop each turn
+        Goal->>GR: post model output
+        Goal->>Gen: update board card
+    end
+    Goal->>Gen: card moved to Done
 ```
 
 Same picture, two processes on one host. Loopback is the address; nothing else

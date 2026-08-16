@@ -101,7 +101,7 @@ fn findMember(rt: *Runtime, key: []const u8) ?*Member {
 }
 
 fn nowNs(rt: *Runtime) i64 {
-    return std.Io.Timestamp.now(rt.io, .real).nanoseconds;
+    return @intCast(std.Io.Timestamp.now(rt.io, .real).nanoseconds);
 }
 
 pub fn pendingTimedOut(arrived_ns: i64, now_ns: i64, timeout_ns: i64) bool {

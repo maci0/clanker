@@ -37,6 +37,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker mesh` talks to local serve over loopback HTTP: `status`,
+  `join <host:port>`, `leave [<peer-id>]`, `pending`, `admit <id>`,
+  `deny <id>`. `--webui-port` selects which serve when several run on
+  one host. Serve grows matching `/api/mesh/leave` and
+  `/api/mesh/pending`. The CLI never opens a mesh socket.
 - Tool-result spill: when the request pruner omits a tool middle, the
   original is stored under `state/spills/<session>/` and the request
   carries `[spill id=........]`. The `spill` guest reads it back. The

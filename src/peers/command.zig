@@ -7,7 +7,6 @@
 //! one host.
 
 const std = @import("std");
-const config = @import("../config.zig");
 const log = @import("../util/log.zig");
 
 pub const version = @import("build_options").version;

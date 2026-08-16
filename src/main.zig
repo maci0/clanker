@@ -66,6 +66,7 @@ comptime {
     _ = @import("agent/kernel.zig");
     _ = @import("debug/dap.zig");
     _ = @import("peers/mesh.zig");
+    _ = @import("peers/command.zig");
     _ = @import("serve/live.zig");
     _ = @import("serve/mesh_net.zig");
     _ = @import("agent/session.zig");
@@ -221,6 +222,10 @@ pub fn main(init: std.process.Init) !void {
                 cli.printUsageError(init.io, "`clanker improve-self` needs instructions", .{})
             else if (std.mem.eql(u8, diag, "<peer>"))
                 cli.printUsageError(init.io, "`clanker notify` needs a peer name", .{})
+            else if (std.mem.eql(u8, diag, "<host:port>"))
+                cli.printUsageError(init.io, "`clanker mesh join` needs a host:port: clanker mesh join 127.0.0.1:7420", .{})
+            else if (std.mem.eql(u8, diag, "<peer-id>"))
+                cli.printUsageError(init.io, "`clanker mesh admit`/`deny` needs a peer id", .{})
             else if (std.mem.eql(u8, diag, "<message>"))
                 cli.printUsageError(init.io, "`clanker notify` needs a message", .{})
             else if (std.mem.eql(u8, diag, "<question>"))
@@ -303,6 +308,7 @@ pub fn main(init: std.process.Init) !void {
             error.DefaultProviderUnknown => "default_provider names a provider not in config; run `clanker doctor`",
             error.ToolWasmMissing => "a tool's .wasm module is missing; run `zig build tools`",
             error.ModuleDisabled => "this module is disabled in config.toml",
+            error.ServeNotRunning => "clanker serve is not running; start it with modules.mesh = true",
             error.UnknownProvider => "no provider by that name in config.toml; run `clanker providers check` for the list",
             error.ProviderCheckFailed => "provider check failed; run `clanker doctor` to diagnose",
             error.InvalidSessionId => "invalid session id; use 1-64 letters, numbers, dashes, or underscores",

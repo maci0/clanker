@@ -3,9 +3,11 @@
 //! Lives here rather than in `cli.zig` for the same reason `doctor.zig` and
 //! `peers/phonebook.zig` do: `cli.zig` owns argument parsing and dispatch, and
 //! a subsystem's own printing is not argument parsing. What `cli.zig` keeps is
-//! the flag table, one dispatch arm, and the `Fire` callback that turns an
-//! entry into an actual agent run, the one piece that has to reach back into
-//! the run path.
+//! the flag table, one dispatch arm, the `Fire` callback that turns an entry
+//! into an actual agent run, and the `Tool` callback that reaches the
+//! `schedule` guest. List, add, remove, enable, disable, and log go through
+//! that guest (the same one `/api/schedule` already calls). `run` / `run-due`
+//! stay native: those fire the agent.
 
 const std = @import("std");
 const cron = @import("schedule_cron");
@@ -13,6 +15,7 @@ const store = @import("store.zig");
 const runner = @import("runner.zig");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
+const json_util = @import("../util/json.zig");
 
 pub const Options = struct {
     /// "list" (default), "add", "remove", "enable", "disable", "run-due",
@@ -38,14 +41,26 @@ pub const Error = error{
     /// the command itself failing: everything was recorded, and the non-zero
     /// exit is what tells the cron that invoked it to look.
     ScheduledRunFailed,
+    /// The `schedule` guest ran and refused the request, or answered
+    /// something this command cannot read. The detail is already logged.
+    ToolFailed,
 };
 
-/// Records kept by the default `schedule log`.
-const default_log_limit: usize = 20;
+/// How this command reaches the `schedule` WASM tool. `cli.zig` owns the
+/// registry, the sandbox and the config needed to load a tool, so it passes
+/// the call in rather than this module reaching back into it. Tests pass a
+/// canned answer through the same seam.
+pub const Tool = struct {
+    ctx: *anyopaque,
+    /// Takes the tool's JSON input, returns its JSON output. The result is
+    /// owned by the caller's arena.
+    call: *const fn (ctx: *anyopaque, input: []const u8) anyerror![]const u8,
+};
+
 /// Task text is a prompt; a table is not the place to print all of it.
 const task_column_bytes: usize = 44;
 
-pub fn cmd(init: std.process.Init, opts: Options, fire: runner.Fire) !void {
+pub fn cmd(init: std.process.Init, opts: Options, fire: runner.Fire, tool: Tool) !void {
     const io = init.io;
     const gpa = init.gpa;
     const arena = init.arena.allocator();
@@ -53,12 +68,12 @@ pub fn cmd(init: std.process.Init, opts: Options, fire: runner.Fire) !void {
     const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
 
     const sub = opts.sub;
-    if (std.mem.eql(u8, sub, "list")) return list(io, arena, base, now);
-    if (std.mem.eql(u8, sub, "log")) return showLog(io, arena, base);
-    if (std.mem.eql(u8, sub, "add")) return add(io, gpa, arena, base, opts, now);
-    if (std.mem.eql(u8, sub, "remove")) return remove(io, gpa, arena, base, opts);
-    if (std.mem.eql(u8, sub, "enable")) return setEnabled(io, gpa, arena, base, opts, true);
-    if (std.mem.eql(u8, sub, "disable")) return setEnabled(io, gpa, arena, base, opts, false);
+    if (std.mem.eql(u8, sub, "list")) return list(io, arena, now, tool);
+    if (std.mem.eql(u8, sub, "log")) return showLog(io, arena, tool);
+    if (std.mem.eql(u8, sub, "add")) return add(io, arena, opts, now, tool);
+    if (std.mem.eql(u8, sub, "remove")) return remove(io, arena, opts, tool);
+    if (std.mem.eql(u8, sub, "enable")) return setEnabled(io, arena, opts, true, tool);
+    if (std.mem.eql(u8, sub, "disable")) return setEnabled(io, arena, opts, false, tool);
     if (std.mem.eql(u8, sub, "run-due")) return runDue(io, gpa, arena, base, now, fire);
     if (std.mem.eql(u8, sub, "run")) return runNow(io, gpa, arena, base, opts, now, fire);
 
@@ -68,51 +83,10 @@ pub fn cmd(init: std.process.Init, opts: Options, fire: runner.Fire) !void {
 
 // ------------------------------------------------------------------ reading --
 
-fn list(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, now: i64) !void {
-    const entries = try store.read(io, arena, base);
-    if (entries.len == 0) {
-        try out(io, "no scheduled entries. Add one with:\n  clanker schedule add \"*/30 * * * *\" \"summarize today's commits\"\n");
-        return;
-    }
-
-    var w: std.Io.Writer.Allocating = .init(arena);
-    defer w.deinit();
-    try w.writer.print("{s: <8}{s: <6}{s: <16}{s: <18}{s: <13}{s: <7}{s}\n", .{ "ID", "STATE", "CRON", "NEXT", "LAST", "RUNS", "TASK" });
-    for (entries) |e| {
-        var next_buf: [32]u8 = undefined;
-        var last_buf: [32]u8 = undefined;
-        const next = nextText(&next_buf, e, now);
-        const last = if (e.last_run > 0)
-            cron.formatStamp(&last_buf, e.last_run, e.tz_offset_minutes)[5..]
-        else
-            "-";
-        var runs_buf: [16]u8 = undefined;
-        const runs = if (e.failures > 0)
-            std.fmt.bufPrint(&runs_buf, "{d}/{d}!", .{ e.runs, e.failures }) catch "?"
-        else
-            std.fmt.bufPrint(&runs_buf, "{d}", .{e.runs}) catch "?";
-        try w.writer.print("{s: <8}{s: <6}{s: <16}{s: <18}{s: <13}{s: <7}{s}\n", .{
-            e.id,
-            if (e.enabled) "on" else "off",
-            e.cron,
-            next,
-            last,
-            runs,
-            ellipsize(e.task, task_column_bytes),
-        });
-    }
-
-    // The offsets are per entry, so the table cannot carry one time zone in
-    // its header; say it once here instead of on every row.
-    var any_offset = false;
-    for (entries) |e| {
-        if (e.tz_offset_minutes != 0) any_offset = true;
-    }
-    try w.writer.writeAll(if (any_offset)
-        "\nTimes are each entry's own --tz-offset. Fire the due ones with `clanker schedule run-due`.\n"
-    else
-        "\nTimes are UTC. Fire the due ones with `clanker schedule run-due`.\n");
-    try out(io, w.written());
+fn list(io: std.Io, arena: std.mem.Allocator, now: i64, tool: Tool) !void {
+    const result = try callTool(arena, tool, "{\"action\":\"list\"}");
+    const entries = try parseEntries(arena, result);
+    try out(io, try renderList(arena, entries, now));
 }
 
 fn nextText(buf: []u8, e: store.Entry, now: i64) []const u8 {
@@ -124,35 +98,15 @@ fn nextText(buf: []u8, e: store.Entry, now: i64) []const u8 {
     return cron.formatStamp(buf, next, e.tz_offset_minutes);
 }
 
-fn showLog(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) !void {
-    const recs = try store.readRecords(io, arena, base, default_log_limit);
-    if (recs.len == 0) {
-        try out(io, "no scheduled runs recorded yet (" ++ store.ledger_path ++ ")\n");
-        return;
-    }
-    var w: std.Io.Writer.Allocating = .init(arena);
-    defer w.deinit();
-    for (recs) |r| {
-        var when: [32]u8 = undefined;
-        try w.writer.print("{s}  {s: <8}{s: <8}{s: <7}{d: >6}ms  {s}", .{
-            cron.formatStamp(&when, r.ts, 0),
-            r.id,
-            r.trigger,
-            if (r.ok) "ok" else "FAILED",
-            r.duration_ms,
-            ellipsize(r.task, task_column_bytes),
-        });
-        if (r.skipped > 0) try w.writer.print("  (+{d} windows skipped)", .{r.skipped});
-        if (r.err.len > 0) try w.writer.print("  [{s}]", .{r.err});
-        try w.writer.writeByte('\n');
-    }
-    try w.writer.writeAll("\nTimes are UTC, newest first.\n");
-    try out(io, w.written());
+fn showLog(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
+    const result = try callTool(arena, tool, "{\"action\":\"list\"}");
+    const recs = try parseLog(arena, result);
+    try out(io, try renderLog(arena, recs));
 }
 
 // ------------------------------------------------------------------ writing --
 
-fn add(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, opts: Options, now: i64) !void {
+fn add(io: std.Io, arena: std.mem.Allocator, opts: Options, now: i64, tool: Tool) !void {
     const spec_text = opts.arg1 orelse {
         log.log(.error_, "schedule add needs a cron spec and a task: clanker schedule add \"0 9 * * 1-5\" \"review yesterday's runs\"", .{});
         return Error.MissingArg;
@@ -187,24 +141,40 @@ fn add(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.I
         return Error.NeverFires;
     };
 
-    var s = try store.open(io, gpa, arena, base);
-    defer s.close();
-    const id = try store.nextId(arena, s.entries.items);
-    try s.entries.append(arena, .{
-        .id = id,
-        .cron = spec_text,
-        .task = task,
-        .provider = opts.provider,
-        .model = opts.model,
-        .tz_offset_minutes = offset,
-        .created = now,
-    });
-    try s.save();
+    var input: std.Io.Writer.Allocating = .init(arena);
+    defer input.deinit();
+    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("action");
+    try s.write("add");
+    try s.objectField("cron");
+    try s.write(spec_text);
+    try s.objectField("task");
+    try s.write(task);
+    if (opts.provider) |p| {
+        try s.objectField("provider");
+        try s.write(p);
+    }
+    if (opts.model) |m| {
+        try s.objectField("model");
+        try s.write(m);
+    }
+    if (offset != 0) {
+        try s.objectField("tz_offset_minutes");
+        try s.write(offset);
+    }
+    try s.endObject();
+
+    const result = try callTool(arena, tool, input.written());
+    const id = if (result.object.get("entry")) |e|
+        (if (e == .object) json_util.strFieldOrEmpty(e.object, "id") else "")
+    else
+        "";
 
     var buf: [32]u8 = undefined;
     var line: [512]u8 = undefined;
     const msg = std.fmt.bufPrint(&line, "added {s}: {s}, first run {s}{s}\n", .{
-        id,
+        if (id.len > 0) id else "entry",
         spec_text,
         cron.formatStamp(&buf, first, offset),
         if (offset == 0) " UTC" else "",
@@ -213,39 +183,38 @@ fn add(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.I
     try out(io, "Nothing fires on its own: have cron (or a timer) call `clanker schedule run-due`.\n");
 }
 
-fn remove(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, opts: Options) !void {
+fn remove(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
     const id = try requireId(opts, "remove");
-    var s = try store.open(io, gpa, arena, base);
-    defer s.close();
-
-    var kept: std.ArrayList(store.Entry) = .empty;
-    var hit = false;
-    for (s.entries.items) |e| {
-        if (std.mem.eql(u8, e.id, id)) {
-            hit = true;
-            continue;
-        }
-        try kept.append(arena, e);
-    }
-    if (!hit) return noSuchEntry(id);
-    s.entries = kept;
-    try s.save();
+    var input: std.Io.Writer.Allocating = .init(arena);
+    defer input.deinit();
+    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("action");
+    try s.write("remove");
+    try s.objectField("id");
+    try s.write(id);
+    try s.endObject();
+    _ = try callTool(arena, tool, input.written());
     // The ledger keeps the removed entry's history on purpose: what ran is a
     // fact about the past, and deleting the schedule does not unmake it.
     var line: [128]u8 = undefined;
     try out(io, std.fmt.bufPrint(&line, "removed {s} (its ledger history stays in {s})\n", .{ id, store.ledger_path }) catch "removed\n");
 }
 
-fn setEnabled(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, opts: Options, on: bool) !void {
+fn setEnabled(io: std.Io, arena: std.mem.Allocator, opts: Options, on: bool, tool: Tool) !void {
     const id = try requireId(opts, if (on) "enable" else "disable");
-    var s = try store.open(io, gpa, arena, base);
-    defer s.close();
-    const e = s.find(id) orelse return noSuchEntry(id);
-    // Re-enabling counts the window from now, not from whenever it was last
-    // switched off: an entry parked for a month must not come back owing a run.
-    if (on and !e.enabled) e.last_run = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
-    e.enabled = on;
-    try s.save();
+    var input: std.Io.Writer.Allocating = .init(arena);
+    defer input.deinit();
+    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("action");
+    try s.write("set_enabled");
+    try s.objectField("id");
+    try s.write(id);
+    try s.objectField("enabled");
+    try s.write(on);
+    try s.endObject();
+    _ = try callTool(arena, tool, input.written());
     var line: [128]u8 = undefined;
     try out(io, std.fmt.bufPrint(&line, "{s} is now {s}\n", .{ id, if (on) "enabled" else "disabled" }) catch "done\n");
 }
@@ -307,6 +276,133 @@ fn noSuchEntry(id: []const u8) store.Error {
     return store.Error.NoSuchEntry;
 }
 
+fn callTool(arena: std.mem.Allocator, tool: Tool, input: []const u8) !std.json.Value {
+    const raw = try tool.call(tool.ctx, input);
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
+        log.log(.error_, "schedule: the tool answered something that is not JSON", .{});
+        return Error.ToolFailed;
+    };
+    if (parsed != .object) {
+        log.log(.error_, "schedule: the tool answered something that is not a JSON object", .{});
+        return Error.ToolFailed;
+    }
+    const ok = parsed.object.get("ok");
+    if (ok == null or ok.? != .bool or !ok.?.bool) {
+        const detail = if (parsed.object.get("error")) |e|
+            (if (e == .string) e.string else "the tool refused the request")
+        else
+            "the tool refused the request";
+        if (std.mem.eql(u8, detail, "no such entry") or std.mem.eql(u8, detail, "bad entry id")) {
+            log.log(.error_, "no scheduled entry; `clanker schedule list` shows them", .{});
+            return store.Error.NoSuchEntry;
+        }
+        log.log(.error_, "schedule: {s}", .{detail});
+        return Error.ToolFailed;
+    }
+    return parsed;
+}
+
+fn parseEntries(arena: std.mem.Allocator, result: std.json.Value) ![]store.Entry {
+    const v = result.object.get("entries") orelse return &.{};
+    if (v != .array) return &.{};
+    var out_list: std.ArrayList(store.Entry) = .empty;
+    for (v.array.items) |item| {
+        if (item != .object) continue;
+        var buf: std.Io.Writer.Allocating = .init(arena);
+        defer buf.deinit();
+        var s = std.json.Stringify{ .writer = &buf.writer, .options = .{ .emit_null_optional_fields = false } };
+        s.write(item) catch continue;
+        const e = std.json.parseFromSliceLeaky(store.Entry, arena, buf.written(), .{ .ignore_unknown_fields = true }) catch continue;
+        try out_list.append(arena, e);
+    }
+    return out_list.toOwnedSlice(arena);
+}
+
+fn parseLog(arena: std.mem.Allocator, result: std.json.Value) ![]store.Record {
+    const v = result.object.get("log") orelse return &.{};
+    if (v != .array) return &.{};
+    var out_list: std.ArrayList(store.Record) = .empty;
+    for (v.array.items) |item| {
+        if (item != .object) continue;
+        var buf: std.Io.Writer.Allocating = .init(arena);
+        defer buf.deinit();
+        var s = std.json.Stringify{ .writer = &buf.writer, .options = .{ .emit_null_optional_fields = false } };
+        s.write(item) catch continue;
+        const r = std.json.parseFromSliceLeaky(store.Record, arena, buf.written(), .{ .ignore_unknown_fields = true }) catch continue;
+        try out_list.append(arena, r);
+    }
+    return out_list.toOwnedSlice(arena);
+}
+
+fn renderList(arena: std.mem.Allocator, entries: []const store.Entry, now: i64) ![]const u8 {
+    if (entries.len == 0) {
+        return "no scheduled entries. Add one with:\n  clanker schedule add \"*/30 * * * *\" \"summarize today's commits\"\n";
+    }
+
+    var w: std.Io.Writer.Allocating = .init(arena);
+    errdefer w.deinit();
+    try w.writer.print("{s: <8}{s: <6}{s: <16}{s: <18}{s: <13}{s: <7}{s}\n", .{ "ID", "STATE", "CRON", "NEXT", "LAST", "RUNS", "TASK" });
+    for (entries) |e| {
+        var next_buf: [32]u8 = undefined;
+        var last_buf: [32]u8 = undefined;
+        const next = nextText(&next_buf, e, now);
+        const last = if (e.last_run > 0)
+            cron.formatStamp(&last_buf, e.last_run, e.tz_offset_minutes)[5..]
+        else
+            "-";
+        var runs_buf: [16]u8 = undefined;
+        const runs = if (e.failures > 0)
+            std.fmt.bufPrint(&runs_buf, "{d}/{d}!", .{ e.runs, e.failures }) catch "?"
+        else
+            std.fmt.bufPrint(&runs_buf, "{d}", .{e.runs}) catch "?";
+        try w.writer.print("{s: <8}{s: <6}{s: <16}{s: <18}{s: <13}{s: <7}{s}\n", .{
+            e.id,
+            if (e.enabled) "on" else "off",
+            e.cron,
+            next,
+            last,
+            runs,
+            ellipsize(e.task, task_column_bytes),
+        });
+    }
+
+    // The offsets are per entry, so the table cannot carry one time zone in
+    // its header; say it once here instead of on every row.
+    var any_offset = false;
+    for (entries) |e| {
+        if (e.tz_offset_minutes != 0) any_offset = true;
+    }
+    try w.writer.writeAll(if (any_offset)
+        "\nTimes are each entry's own --tz-offset. Fire the due ones with `clanker schedule run-due`.\n"
+    else
+        "\nTimes are UTC. Fire the due ones with `clanker schedule run-due`.\n");
+    return w.written();
+}
+
+fn renderLog(arena: std.mem.Allocator, recs: []const store.Record) ![]const u8 {
+    if (recs.len == 0) {
+        return "no scheduled runs recorded yet (" ++ store.ledger_path ++ ")\n";
+    }
+    var w: std.Io.Writer.Allocating = .init(arena);
+    errdefer w.deinit();
+    for (recs) |r| {
+        var when: [32]u8 = undefined;
+        try w.writer.print("{s}  {s: <8}{s: <8}{s: <7}{d: >6}ms  {s}", .{
+            cron.formatStamp(&when, r.ts, 0),
+            r.id,
+            r.trigger,
+            if (r.ok) "ok" else "FAILED",
+            r.duration_ms,
+            ellipsize(r.task, task_column_bytes),
+        });
+        if (r.skipped > 0) try w.writer.print("  (+{d} windows skipped)", .{r.skipped});
+        if (r.err.len > 0) try w.writer.print("  [{s}]", .{r.err});
+        try w.writer.writeByte('\n');
+    }
+    try w.writer.writeAll("\nTimes are UTC, newest first.\n");
+    return w.written();
+}
+
 fn out(io: std.Io, bytes: []const u8) !void {
     try std.Io.File.stdout().writeStreamingAll(io, bytes);
 }
@@ -345,4 +441,62 @@ test "nextText says which kind of not-scheduled an entry is" {
     // The stamp is rendered at the entry's own offset, so a UTC+2 entry shows
     // the local hour its spec was written in.
     try testing.expectEqualStrings("2026-08-13 15:00", nextText(&buf, .{ .id = "a", .cron = "0 * * * *", .task = "t", .created = now, .tz_offset_minutes = 120 }, now));
+}
+
+test "renderList prints the empty hint and a one-row table" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const now = cron.epochFromCivil(2026, 8, 13, 12, 0, 0);
+
+    const empty = try renderList(arena, &.{}, now);
+    try testing.expect(std.mem.indexOf(u8, empty, "clanker schedule add") != null);
+
+    const rows = [_]store.Entry{.{
+        .id = "sch-1",
+        .cron = "0 * * * *",
+        .task = "review yesterday's runs",
+        .created = now,
+    }};
+    const table = try renderList(arena, &rows, now);
+    try testing.expect(std.mem.indexOf(u8, table, "sch-1") != null);
+    try testing.expect(std.mem.indexOf(u8, table, "0 * * * *") != null);
+    try testing.expect(std.mem.indexOf(u8, table, "on") != null);
+    try testing.expect(std.mem.indexOf(u8, table, "Times are UTC") != null);
+}
+
+test "list and remove go through the schedule guest" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const Fake = struct {
+        last: []const u8 = "",
+        fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.last = input;
+            if (std.mem.indexOf(u8, input, "\"action\":\"list\"") != null) {
+                return "{\"ok\":true,\"entries\":[{\"id\":\"sch-1\",\"cron\":\"* * * * *\",\"task\":\"hi\",\"enabled\":true,\"created\":100,\"last_run\":0,\"last_status\":\"\",\"runs\":0,\"failures\":0,\"tz_offset_minutes\":0}],\"log\":[]}";
+            }
+            if (std.mem.indexOf(u8, input, "\"action\":\"remove\"") != null) {
+                if (std.mem.indexOf(u8, input, "missing") != null)
+                    return "{\"ok\":false,\"error\":\"no such entry\"}";
+                return "{\"ok\":true}";
+            }
+            return "{\"ok\":false,\"error\":\"no such entry\"}";
+        }
+    };
+    var fake = Fake{};
+    const tool = Tool{ .ctx = &fake, .call = Fake.call };
+
+    const listed = try callTool(arena, tool, "{\"action\":\"list\"}");
+    const entries = try parseEntries(arena, listed);
+    try testing.expectEqual(@as(usize, 1), entries.len);
+    try testing.expectEqualStrings("sch-1", entries[0].id);
+    try testing.expectEqualStrings("hi", entries[0].task);
+
+    _ = try callTool(arena, tool, "{\"action\":\"remove\",\"id\":\"sch-1\"}");
+    try testing.expect(std.mem.indexOf(u8, fake.last, "remove") != null);
+
+    try testing.expectError(store.Error.NoSuchEntry, callTool(arena, tool, "{\"action\":\"remove\",\"id\":\"missing\"}"));
 }

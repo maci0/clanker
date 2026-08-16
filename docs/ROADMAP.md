@@ -159,8 +159,9 @@ instead of raw `fetch`/`localStorage`/`window.clankerWorkspace`.
 `schedule` guest (`tools/zig/schedule.zig` + `schedule_logic.zig`). Cron
 arithmetic moved to `tools/zig/schedule_cron.zig` (host-tested helper) so
 the guest and `run-due` share one dialect. The guest owns list, toggle,
-add, and remove over `state/schedule.json`; `runner.zig`'s Fire callback
-stays native.
+add, and remove over `state/schedule.json`; `clanker schedule` list/add/
+remove/enable/disable/log and `/api/schedule` both call it.
+`runner.zig`'s Fire callback stays native.
 
 **Resolved 2026-08-16 (sessions listing):** `GET /api/sessions` relays to
 the `sessions` guest (`format=json`). Header parse and picker JSON live
