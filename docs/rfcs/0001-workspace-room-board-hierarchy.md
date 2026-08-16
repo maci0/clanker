@@ -3,8 +3,8 @@
 ## Status
 
 Discussion — opened 2026-08-16, revised same day for the multi-component
-project model, then for the goal/task split (a goal has many tasks; a task
-is public to the goal or private to named clankers).
+project model, then for the goal/task split, then after a 6-combatant
+arena (`arena-1786861439-dad384e4`) that rejected goal-is-a-card.
 
 An RFC is a *request for comment*: it presents the options and a recommendation
 so a decision can be made, and it is not itself the decision record. When it is
@@ -43,17 +43,19 @@ that the next change has to migrate.
 
 **Drivers.**
 
-- Do not re-litigate ADR 0001 (the board is a chatroom fold). A goal **is a
-  card**, not a separate record: objective, completion criterion, proof, stop
-  rule, and status are card fields, and `state/goals.json` becomes an index over
-  goal-cards rather than a store. ADR 0012's draft / persist / run split is
-  retained; only what "persist" writes changes, create the card, not append
-  `goals.json`.
-- A goal has **many tasks**. A task is work under that goal, not a second
-  goal and not a run-scratch todo (ADR 0002). Public tasks are visible to
-  every member working the goal. Private tasks are visible only to the
-  clankers they name (`instance.id`). Run-private `todo_*` items still die
-  with the run and never attach to a goal.
+- Do not re-litigate ADR 0001 (the board is a chatroom fold) or ADR 0012
+  (draft / persist / run stay separate). A goal is **not** a card. Objective,
+  criterion, proof, stop rule, and status live in `state/goals.json`. The
+  board card is a projection of that record onto `#general`, the same way a
+  goal room is a projection of the session. Folding the goal into `@todo`
+  makes one idea live in chat and in `goals.json` at once, so drafts cannot
+  persist without publishing, and edits fork (arena p6).
+- A goal has **many tasks**, first-class records under that goal, not
+  checklist deltas on a card. Public tasks are visible to every member
+  working the goal. Private tasks are visible only to the clankers they
+  name (`instance.id`). A public task may *project* onto the card
+  checklist; the card is not the store. Run-private `todo_*` items still
+  die with the run (ADR 0002) and never attach to a goal.
 - A workspace **is** a project: one stable id over one or more named folders
   (components). The single-folder model fails the suite case by construction.
 - A project owns a small **room namespace**, not one log: a default `#general`
@@ -288,8 +290,8 @@ Four hazards follow, and each is resolved explicitly.
           W --> Roots["roots — named folders: core, web"]
           W --> Gen["ws:relumea · #general<br/>chat + card actions<br/>(board = fold of this room)"]
           W --> GoalRoom["ws:relumea:goal:&lt;id&gt;<br/>per-goal model output<br/>(optional, lossy feed)"]
-          W --> Goals["goals — cards on the board (#general)"]
-          W --> PubTasks["public tasks: checklist on the goal-card"]
+          W --> Goals["goals — state/goals.json, tagged to this id"]
+          W --> PubTasks["public tasks: first-class on the goal"]
           W --> PrivTasks["private tasks: visible_to named instance.id"]
           W --> Sessions["sessions — tagged relumea"]
           W --> Members["members — main (home), laptop"]
@@ -314,40 +316,36 @@ Four hazards follow, and each is resolved explicitly.
   picks out, operator chat is everything else. A goal may get an optional
   `ws:<id>:goal:<goal-id>` room for its actual model output — turns, decisions,
   diffs — so a long goal loop does not flood the feed. The board stays one fold
-  over `#general`; goal rooms are output feeds, and a goal **is** a card on the
-  board (objective, criterion, proof, and status are card fields; there is no
-  separate goal record to mirror). The empty-id (cwd)
+  over `#general`; goal rooms are output feeds. A goal is a `goals.json`
+  record tagged to the workspace; the board card (if any) is a projection of
+  that record, not the record. The empty-id (cwd)
   workspace keeps today's `board` room as its `#general`, so existing logs do
   not move.
 
-  **A goal has many tasks.** The card is the goal; the tasks are the work
-  under it. Two visibilities, one parent:
+  **A goal has many tasks.** The goal is the parent; the tasks are the work
+  under it. Two visibilities, one store:
 
   | Kind | Who sees it | Where it lives | Survives the run? |
   |---|---|---|---|
-  | Public task | every member who can see the goal | checklist item on the goal-card (`@todo` in `#general`) | yes |
-  | Private task | only the named `instance.id`s | home-held on the goal, `visible_to: []instance.id`; **not** in the `#general` fold | yes |
+  | Public task | every member who can see the goal | first-class on the goal record; may project onto the card checklist | yes |
+  | Private task | only the named `instance.id`s | same goal record, `visible_to: []instance.id`; **not** in the `#general` fold | yes |
   | Run scratch | the run that created it | in-memory `todo_*` (ADR 0002) | no |
 
-  Public tasks are today's card checklist: a tree, with independent
-  dependency edges, and they block the card entering Done
-  (`cards.checklistComplete`). Private tasks attach to the same goal so a
-  clanker can keep durable work that other members must not claim or even
-  list. They are not written as `@todo` in `#general`: the board fold is
-  public, and a private item there would leak. Home stores them next to the
-  goal-card and replicates only to the named members. ADR 0002 run scratch
-  stays the third layer: a turn's "check the gate then patch" notes still
-  die with the run and never become a goal task unless someone promotes them
-  with an explicit public or private add.
+  Public tasks can appear as a checklist on the projection card so the
+  board still shows shared work. The card is not the store: creating a
+  draft (`write-goal`) must not publish `@todo` fields, and a persist
+  (`add-goal`) writes `goals.json` without requiring a card action.
+  Private tasks never land in `#general`. ADR 0002 run scratch stays the
+  third layer: a turn's "check the gate then patch" notes die with the run
+  unless someone promotes them with an explicit public or private add.
 
   **Two different canonical rules.** The board's room *is* the board's source
-  of truth (ADR 0001: there is no `board.json`), and a goal is a card in that
-  room — so the card is the goal's canonical record for objective, criterion,
-  proof, and status. A goal's *output* is not on the card: the session
-  transcript is the durable record (PRD 0011 home writes it), and the goal room
-  is a shared projection/feed of that output, allowed to be lossy summaries.
-  Making the goal room (or `state/goals.json`) another canonical store would
-  re-create the two-stores-for-one-idea problem ADR 0001 closed.
+  of truth (ADR 0001: there is no `board.json`). A goal's source of truth is
+  `state/goals.json`. The card and the goal room are both projections: the
+  card of the goal record, the room of the session transcript (PRD 0011
+  home). Making the card the goal (or making the goal room canonical for
+  output) re-creates the two-stores-for-one-idea problem ADR 0001 closed,
+  and it also breaks ADR 0012: a draft cannot stay off the board.
 
   ```mermaid
   sequenceDiagram
@@ -496,8 +494,8 @@ Four hazards follow, and each is resolved explicitly.
 - **If B:** add `workspace` on goals; default the board room to `ws:<id>`
   (`#general`) when a non-empty workspace is selected (empty-id keeps `board`
   so today's log does not move); add a membership roster row (owner + entered
-  members); treat the card checklist as the goal's public tasks and keep
-  private tasks off that fold. **Spike the sandbox root set before anything else**:
+  members); keep `goals.json` as the store, tasks first-class on the goal,
+  card as a projection of public tasks only. **Spike the sandbox root set before anything else**:
   it is the only irreversible-enough change and the only security-sensitive one.
 - **If A:** add `workspace` on goals; default `board:<id>`; extra-attach stays
   an open question.
@@ -537,19 +535,23 @@ Four hazards follow, and each is resolved explicitly.
 
 ## Recommendation
 
-**Recommended option:** Option B, multi-root project workspace: a stable
-workspace id over one or more named roots; a small room namespace — `ws:<id>`
-(`#general`: chat + card actions) and optional `ws:<id>:goal:<id>` rooms for
-model output; goal-cards and sessions tagged to that id; a goal with many
-tasks (public on the card, private to named clankers); and mesh share / enter /
-leave / bind kept distinct from mesh join / leave.
+**Recommended option:** Option B for the project (multi-root workspace, `#general`
+plus optional per-goal rooms, share/enter/leave/bind), **without**
+goal-is-a-card. `state/goals.json` stays the store. Tasks are first-class
+records on the goal (public, or private to named `instance.id`s). The board
+card is an optional projection of the goal, never the record.
 
-**Confidence:** 6/10
+**Confidence:** 7/10
 
-**Why this confidence.** The product requirement is now explicit and
-unambiguous — a project is several folders with one board, one `#general` feed,
-and per-goal output rooms, and any clanker joins it the same way. That points
-straight at B. What holds the score at 6 is that B carries the first
+**Why this confidence.** A 6-combatant arena
+(`state/arena/arena-1786861439-dad384e4`) argued the suite, sandbox-root,
+and two-stores cases. Official HP was a draw (several empty-reply forfeits
+inflated p4/p5). The argument that survived contact is p6: multi-root B
+holds the suite, and making the goal a card splits one idea across
+`goals.json` and `@todo`, which breaks ADR 0012. p4 (collapse) and p5
+(cwd+git identity) still fail non-git trees, DMs-without-folders, and
+home-ordered sessions, so they stay rejected. What holds the score at 7
+is that B still carries the first
 security-sensitive change in this RFC: the sandbox's single root becomes a root
 set, and `fs_prefixes` "relative to the sandbox root" must be redefined against
 N roots. Confidence rises to 7–8 if a spike shows a root set can be enforced
@@ -628,11 +630,9 @@ project actually needs its own board; keep `board` as the empty-id workspace's
     happens to non-git roots? Bias: one worktree per git root; non-git roots
     stay shared read-only, and a run that must write a non-git root takes an
     explicit lock.
-13. **Goal fields on the card.** Which goal fields (completion criterion, proof,
-    stop rule, boundaries, max_iterations, worktree) become structured card
-    fields vs. card-body content, and how does the `state/goals.json` index get
-    rebuilt from cards? Bias: criterion, proof, and stop_rule are card fields;
-    the index is rebuilt from cards on startup, no migration.
+13. **What does the projection card show?** Bias: title, status, and public
+    task progress. Criterion, proof, and stop_rule stay on `goals.json`.
+    The card is rebuilt from the goal, never the other way around.
 14. **Do private tasks block Done?** Public checklist items already do
     (`cards.checklistComplete`). Bias: a member cannot mark the goal Done
     while it still has *that member's* open private tasks; other members do
@@ -654,9 +654,11 @@ project actually needs its own board; keep `board` as the empty-id workspace's
       its session.
 - [ ] Spike: add `workspace` to `goal_add` / `goal_update` as an optional field
       defaulting to the current rail id.
-- [ ] Spike: public tasks stay card checklist items; private tasks attach to
-      the goal with `visible_to: []instance.id` and never land in the
-      `#general` fold. Confirm Done-blocking (question 14).
+- [ ] Spike: public and private tasks live on the goal record; the card
+      checklist is a projection of public tasks only. Confirm Done-blocking
+      (question 14).
+- [x] Arena on this RFC (`arena-1786861439-dad384e4`, 6 positions): keep
+      multi-root B, drop goal-is-a-card.
 - [ ] Add a per-workspace membership roster (owner + entered members) as part of
       mesh Phase 3; share / enter / leave / bind are operator verbs on
       `workspace_share`, not new frame kinds.
@@ -669,6 +671,8 @@ project actually needs its own board; keep `board` as the empty-id workspace's
 - [ADR 0001 — The Kanban board is a chatroom](../adrs/0001-board-is-a-chatroom.md)
 - [ADR 0002 — Private run todos vs the shared board](../adrs/0002-private-todos-vs-shared-board.md)
 - [ADR 0012 — Goal draft, persistence, and execution are separate](../adrs/0012-goal-draft-persistence-and-execution-are-separate.md)
+- Arena match `state/arena/arena-1786861439-dad384e4` (6 positions, DeepSeek,
+  3 rounds, self-judge; official draw; adopted reasoning is p6)
 - [PRD 0001 — Chatrooms](../prds/0001-chatrooms.md)
 - [PRD 0002 — Shared Kanban board](../prds/0002-kanban-board.md)
 - [PRD 0011 — Clanker mesh](../prds/0011-clanker-mesh.md) (Phase 3
@@ -704,13 +708,13 @@ a real join record; the rest are foreign keys or derived views.
 | Instance | Room | **N:N** | per-instance subscription (`chatrooms-sub.json`) |
 | Workspace | Root | 1:N | `workspace.roots[]` |
 | Workspace | Room | 1:N | room namespace: `ws:<id>` (#general) and `ws:<id>:goal:<id>` |
-| Workspace | Goal (card) | 1:N | a goal is a card in the workspace's `#general` board |
+| Workspace | Goal | 1:N | `goal.workspace` on the `goals.json` record |
 | Workspace | Session | 1:N | `session.workspace` |
 | Instance (home) | Session | 1:N | home owns the canonical transcript; entered peers hold read-only replicas (PRD 0011) |
 | Room | Board | 1:0..1 | only `#general` folds a board (ADR 0001); goal and fleet rooms do not |
 | Board | Card | 1:N | cards are `@todo` messages in the board's room |
-| Goal | Card | **1:1 (identity)** | a goal is a card with its goal fields set; `state/goals.json` is an index over those cards, not a store |
-| Goal | Task | **1:N** | public tasks are checklist items on that card; private tasks attach to the same goal with `visible_to` |
+| Goal | Card | **1:0..1 (projection)** | optional board card in `#general` mirrors the goal; `goals.json` is the store |
+| Goal | Task | **1:N** | first-class records on the goal; public may project to the card checklist; private use `visible_to` |
 | Task | Instance | N:N | public: every project member; private: only the named `instance.id`s |
 | Goal | Room | 1:0..1 | `ws:<id>:goal:<card-id>`, created on demand, chat/status only |
 
@@ -739,8 +743,8 @@ flowchart TD
 ```mermaid
 flowchart TD
     T["a task is added under a goal"] --> Q{"who should see it?"}
-    Q -->|"everyone on the goal"| Pub["public task<br/>checklist item on the goal-card<br/>@todo in #general"]
-    Q -->|"only these clankers"| Priv["private task<br/>visible_to: instance.id list<br/>home stores it, not the #general fold"]
+    Q -->|"everyone on the goal"| Pub["public task<br/>first-class on the goal record<br/>may project to the card checklist"]
+    Q -->|"only these clankers"| Priv["private task<br/>visible_to: instance.id list<br/>never in the #general fold"]
     Q -->|"only this run"| Scratch["run scratch todo_*<br/>in-memory, discarded (ADR 0002)"]
     Pub --> Done["blocks the card entering Done"]
     Priv --> Open["see open question 14: block Done?"]
@@ -819,16 +823,17 @@ sequenceDiagram
     participant Op as Operator
     participant Main as instance main
     participant Side as instance side
-    participant Card as goal-card (public)
-    participant Home as home private store
+    participant Card as projection card (optional)
+    participant Goal as goals.json (store)
 
-    Op->>Card: public task "merge the PR"
+    Op->>Goal: public task "merge the PR"
+    Goal->>Card: project public tasks onto the checklist
     Note over Card: both main and side see it on the board
-    Main->>Home: private task "draft the commit msg"<br/>visible_to = [main]
+    Main->>Goal: private task "draft the commit msg"<br/>visible_to = [main]
     Note over Side: side never lists that item
-    Side->>Home: private task "local repro notes"<br/>visible_to = [side]
+    Side->>Goal: private task "local repro notes"<br/>visible_to = [side]
     Note over Main: main never lists side's notes
-    Main->>Home: private task "shared scratch"<br/>visible_to = [main, side]
+    Main->>Goal: private task "shared scratch"<br/>visible_to = [main, side]
     Note over Main,Side: only those two see it; #general does not
 ```
 

@@ -285,6 +285,13 @@ crept back outside `providers/`)**
 - `auth.zig`'s `quotaProject` switch — done (`Spec.quota_from_project`).
   `catalog.zig`'s anthropic `/v1` fixup — done (`NpmRow.path_if_api_ends_v1`
   and `needs_base`; `classify` has no `row.kind ==`).
+- Remaining `p.kind == .vertex or .vertex_anthropic` predicates — done:
+  `config.zig`'s project/location validation and `doctor.zig`'s two
+  credential-file checks, plus the `check-provider` sweep in `cli.zig`
+  (`base_url is empty`), now read `auth.Spec.needs_project_location` /
+  `auth.Spec.file_credential` off the vtable (set by the two vertex
+  registrations; pinned by a registry test). Only the proxy's Vertex
+  Gemini model-name sniff stays, which is the model, not the kind.
 
 **Data that is still code**
 
