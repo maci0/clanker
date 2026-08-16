@@ -59,7 +59,7 @@ pub fn logPath(session_id: []const u8, buf: []u8) ![]u8 {
 
 test "isGitHash accepts sha1 and sha256 and rejects noise" {
     try std.testing.expect(isGitHash("0123456789abcdef0123456789abcdef01234567"));
-    try std.testing.expect(isGitHash("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567"));
+    try std.testing.expect(isGitHash("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"));
     try std.testing.expect(!isGitHash("not-a-hash"));
     try std.testing.expect(!isGitHash(""));
     try std.testing.expect(!isGitHash("0123456789abcdef0123456789abcdef0123456g"));
