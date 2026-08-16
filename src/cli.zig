@@ -15183,9 +15183,9 @@ test "built-in command help stays within 80 columns" {
         }
     }
     if (offending.items.len > 0) {
-        var io = std.Io.Threaded.init(std.testing.allocator, .{});
-        defer io.deinit();
-        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "state/help-offenders.txt", .data = offending.items }) catch {};
+        var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+        defer threaded.deinit();
+        std.Io.Dir.cwd().writeFile(threaded.io(), .{ .sub_path = "state/help-offenders.txt", .data = offending.items }) catch {};
         std.debug.print("{s}", .{offending.items});
         return error.TestUnexpectedResult;
     }
