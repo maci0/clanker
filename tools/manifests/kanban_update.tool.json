@@ -44,6 +44,30 @@
         "type": "string",
         "description": "Goal id (state/goals.json) to link this card to, or empty to unlink"
       },
+      "completion_criterion": {
+        "type": "string",
+        "description": "Measurable completion criterion when this card is a goal"
+      },
+      "proof": {
+        "type": "string",
+        "description": "Test script or artifact that proves the criterion (path or command)"
+      },
+      "stop_rule": {
+        "type": "string",
+        "description": "When to abandon the goal attempt"
+      },
+      "boundaries": {
+        "type": "string",
+        "description": "What stays untouched"
+      },
+      "max_iterations": {
+        "type": "integer",
+        "description": "Per-goal iteration budget (1..1000)"
+      },
+      "worktree": {
+        "type": "string",
+        "description": "Git worktree (branch/path) this goal belongs to"
+      },
       "labels": {
         "type": "array",
         "maxItems": 10,

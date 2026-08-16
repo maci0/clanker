@@ -1,13 +1,69 @@
-//! autoresearch: list runs or tail a run's ledger.
+//! autoresearch: list runs, tail a run's ledger, or append a run's ledger
+//! entry. `op: "append"` is the ledger write the native engine loop
+//! (`src/research/auto_research.zig`) calls once per iteration, fs-scoped to
+//! state/autoresearch/ like the read ops; the entry shape and the stdout/
+//! stderr tail live in autoresearch_logic.zig, shared with the native loop.
 const std = @import("std");
 const lib = @import("lib.zig");
+const logic = @import("autoresearch_logic.zig");
+
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
+
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const alloc = lib.alloc;
     const root = try std.json.parseFromSliceLeaky(std.json.Value, alloc, input, .{});
     const obj = if (root == .object) root.object else return lib.fail(out, "expected JSON object");
+    const op: []const u8 = blk: {
+        if (obj.get("op")) |v| if (v == .string) break :blk v.string;
+        break :blk "";
+    };
+    if (std.mem.eql(u8, op, "append")) return appendEntry(out, obj);
+    if (op.len > 0 and !std.mem.eql(u8, op, "list") and !std.mem.eql(u8, op, "tail")) {
+        return lib.fail(out, "unknown op");
+    }
+    return readLedger(out, obj);
+}
+
+fn appendEntry(out: *lib.Out, obj: std.json.ObjectMap) !void {
+    const alloc = lib.alloc;
+    const run_id: []const u8 = blk: {
+        if (obj.get("run")) |v| if (v == .string and v.string.len > 0) break :blk v.string;
+        break :blk "";
+    };
+    if (run_id.len == 0) return lib.fail(out, "append needs a run id");
+    const metric: ?f64 = blk: {
+        if (obj.get("metric")) |v| switch (v) {
+            .float => |f| break :blk f,
+            .integer => |i| break :blk @floatFromInt(i),
+            .number_string => |s| {
+                const f = std.fmt.parseFloat(f64, s) catch break :blk null;
+                break :blk f;
+            },
+            else => break :blk null,
+        } else break :blk null;
+    };
+    const entry = logic.Entry{
+        .iter = @intCast(@min(jsonUnsigned(obj, "iter"), std.math.maxInt(u32))),
+        .ts = jsonInt(obj, "ts"),
+        .summary = jsonString(obj, "summary"),
+        .ok = jsonBool(obj, "ok"),
+        .metric = metric,
+        .metric_name = jsonString(obj, "metric_name"),
+        .duration_ms = jsonUnsigned(obj, "duration_ms"),
+        .detail = jsonString(obj, "detail"),
+        .stdout_tail = logic.tail(jsonString(obj, "stdout"), logic.output_tail_bytes),
+        .stderr_tail = logic.tail(jsonString(obj, "stderr"), logic.output_tail_bytes),
+    };
+    const line = try logic.entryLine(alloc, entry);
+    const path = try std.fmt.allocPrint(alloc, "state/autoresearch/{s}/ledger.jsonl", .{run_id});
+    lib.fsAppend(path, line) catch return lib.fail(out, "append failed");
+    return lib.okText(out, "{\"ok\":true}");
+}
+
+fn readLedger(out: *lib.Out, obj: std.json.ObjectMap) !void {
+    const alloc = lib.alloc;
     var last: usize = 20;
     if (obj.get("last")) |v| if (v == .integer and v.integer > 0) {
         last = @intCast(v.integer);
@@ -39,4 +95,24 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     if (buf.items.len == 0) return lib.fail(out, "ledger empty");
     return lib.okText(out, buf.items);
+}
+
+fn jsonString(obj: std.json.ObjectMap, key: []const u8) []const u8 {
+    if (obj.get(key)) |v| if (v == .string) return v.string;
+    return "";
+}
+
+fn jsonInt(obj: std.json.ObjectMap, key: []const u8) i64 {
+    if (obj.get(key)) |v| if (v == .integer) return v.integer;
+    return 0;
+}
+
+fn jsonUnsigned(obj: std.json.ObjectMap, key: []const u8) u64 {
+    if (obj.get(key)) |v| if (v == .integer) return @intCast(@max(v.integer, 0));
+    return 0;
+}
+
+fn jsonBool(obj: std.json.ObjectMap, key: []const u8) bool {
+    if (obj.get(key)) |v| if (v == .bool) return v.bool;
+    return false;
 }

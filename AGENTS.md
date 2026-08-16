@@ -165,8 +165,16 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   `clanker schedule list|add|remove|enable|disable|log` and `/api/schedule`
   call it. `runner.zig`'s Fire callback stays native. Nothing fires on its
   own; the system's cron calls `clanker schedule run-due`.
-- `src/research/` — autoresearch driver (ledger + harness + loop). Outside the
+- `src/research/` — autoresearch driver (harness + loop). Outside the
   protected surface so clanker can improve its own research capabilities.
+  The run ledger write is the `autoresearch` tool's `op: "append"` (fs-scoped
+  to `state/autoresearch/`); the loop calls it through the sandbox like
+  `patch_apply`, sharing `tools/zig/autoresearch_logic.zig` (host-tested) for
+  the entry shape, the stdout/stderr tails, and the best-metric compare.
+  `src/research/harness.zig` stays native: the harness contract is a
+  user-supplied shell command, and `ck_exec` grants a fixed command
+  allowlist plus shell-operator deny tokens, so a guest cannot faithfully
+  run it.
 - `src/stats/` — per-(provider, model) token usage tracking (`tokens.zig`),
   appended at the LLM client choke point to `state/token_stats.jsonl`.
   Failed completions are recorded too (`ok:false`, `http_status`, `err`);

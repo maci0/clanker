@@ -5,7 +5,7 @@ const config = @import("../config.zig");
 const types = @import("../llm/types.zig");
 const client = @import("../llm/client.zig");
 const proposal_mod = @import("../improve/proposal.zig");
-const ledger_mod = @import("ledger.zig");
+const ledger = @import("autoresearch_logic");
 const harness_mod = @import("harness.zig");
 const registry = @import("../toolhost/registry.zig");
 const runtime = @import("../sandbox/runtime.zig");
@@ -91,7 +91,7 @@ pub const Loop = struct {
         var best: ?f64 = null;
         for (0..opts.iters) |iter| {
             log.log(.info, "--- autoresearch iter {d}/{d} ---", .{ iter + 1, opts.iters });
-            const ok = try self.iterOnce(opts, @intCast(iter), base, &best);
+            const ok = try self.iterOnce(opts, @intCast(iter), owned_id, base, &best);
             if (!ok) log.log(.warn, "iter {d}: no improvement", .{iter + 1});
         }
         if (best) |b| log.log(.info, "autoresearch {s} done: best {s} = {d}", .{ owned_id, opts.metric_name, b }) else log.log(.info, "autoresearch {s} done: no metric recorded", .{owned_id});
@@ -131,7 +131,57 @@ pub const Loop = struct {
             return error.PatchApplyFailed;
         if (!resp.ok) return error.PatchApplyFailed;
     }
-    fn iterOnce(self: *Loop, opts: Options, iter: u32, run_dir_path: []const u8, best: *?f64) !bool {
+    /// Writes one iteration result into the run's ledger through the
+    /// sandboxed `autoresearch` WASM tool (`op: "append"`, fs-scoped to
+    /// state/autoresearch/) instead of a native read-modify-write: the ledger
+    /// is a bounded, per-run fs append, the same shape that already moved out
+    /// of the engine into the tool. The entry format and the stdout/stderr
+    /// tail live in `autoresearch_logic.zig`, shared with the guest.
+    fn appendLedgerEntry(self: *Loop, run_id: []const u8, entry: ledger.Entry) !void {
+        const gpa = self.ctx.gpa;
+        const io = self.ctx.io;
+        var reg = try registry.Registry.load(io, self.arena, std.Io.Dir.cwd(), self.cfg.agent.tools_dir);
+        const mod = try runtime.loadNamedTool(gpa, io, self.arena, self.ctx.environ_map, self.cfg, &reg, "autoresearch", null);
+        defer mod.deinit();
+
+        var enc: std.Io.Writer.Allocating = .init(self.arena);
+        var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
+        try s.beginObject();
+        try s.objectField("op");
+        try s.write("append");
+        try s.objectField("run");
+        try s.write(run_id);
+        try s.objectField("iter");
+        try s.print("{d}", .{entry.iter});
+        try s.objectField("ts");
+        try s.print("{d}", .{entry.ts});
+        try s.objectField("summary");
+        try s.write(entry.summary);
+        try s.objectField("ok");
+        try s.write(entry.ok);
+        if (entry.metric) |m| {
+            try s.objectField("metric");
+            try s.print("{d}", .{m});
+            try s.objectField("metric_name");
+            try s.write(entry.metric_name);
+        }
+        try s.objectField("duration_ms");
+        try s.print("{d}", .{entry.duration_ms});
+        try s.objectField("detail");
+        try s.write(entry.detail);
+        try s.objectField("stdout");
+        try s.write(entry.stdout_tail);
+        try s.objectField("stderr");
+        try s.write(entry.stderr_tail);
+        try s.endObject();
+
+        const raw = try mod.executeTool(enc.written());
+        defer gpa.free(raw);
+        const resp = std.json.parseFromSliceLeaky(struct { ok: bool = false, @"error": []const u8 = "" }, self.arena, raw, .{ .ignore_unknown_fields = true }) catch
+            return error.LedgerAppendFailed;
+        if (!resp.ok) return error.LedgerAppendFailed;
+    }
+    fn iterOnce(self: *Loop, opts: Options, iter: u32, run_id: []const u8, run_dir_path: []const u8, best: *?f64) !bool {
         const gpa = self.ctx.gpa;
         const io = self.ctx.io;
         var ctx_buf: std.ArrayList(u8) = .empty;
@@ -203,10 +253,19 @@ pub const Loop = struct {
         defer if (stage_dir_opt != null) stage_dir.close(io);
         var harness_res = try harness_mod.runHarness(gpa, io, stage_dir, opts.harness_argv, opts.metric_name, opts.metric_pattern);
         defer harness_res.deinit(gpa);
-        const improved = if (harness_res.metric) |m| ledger_mod.isBetter(m, best.*, opts.direction) else false;
-        var run_dir = std.Io.Dir.cwd().openDir(io, run_dir_path, .{}) catch return false;
-        defer run_dir.close(io);
-        try ledger_mod.appendEntry(gpa, io, run_dir, .{ .iter = iter, .ts = @as(i64, @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000))), .summary = proposal.summary, .ok = harness_res.ok and harness_res.metric != null, .metric = harness_res.metric, .metric_name = opts.metric_name, .duration_ms = harness_res.duration_ms, .detail = harness_res.detail, .stdout_tail = harness_res.stdout, .stderr_tail = harness_res.stderr });
+        const improved = if (harness_res.metric) |m| ledger.isBetter(m, best.*, opts.direction) else false;
+        try self.appendLedgerEntry(run_id, .{
+            .iter = iter,
+            .ts = @as(i64, @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000))),
+            .summary = proposal.summary,
+            .ok = harness_res.ok and harness_res.metric != null,
+            .metric = harness_res.metric,
+            .metric_name = opts.metric_name,
+            .duration_ms = harness_res.duration_ms,
+            .detail = harness_res.detail,
+            .stdout_tail = ledger.tail(harness_res.stdout, ledger.output_tail_bytes),
+            .stderr_tail = ledger.tail(harness_res.stderr, ledger.output_tail_bytes),
+        });
         if (improved) {
             best.* = harness_res.metric;
             for (proposal.changes) |ch| {

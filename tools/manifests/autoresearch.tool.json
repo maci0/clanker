@@ -6,8 +6,15 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "run": { "type": "string" },
-      "last": { "type": "integer" }
+      "op": {
+        "type": "string"
+      },
+      "run": {
+        "type": "string"
+      },
+      "last": {
+        "type": "integer"
+      }
     }
   },
   "fs_prefixes": ["state/autoresearch/"],

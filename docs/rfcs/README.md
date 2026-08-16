@@ -89,4 +89,5 @@ projects, and the strongest case against the recommendation.
 - [RFC 0002: Chat file upload into Knowledge / memory](0002-chat-upload-into-knowledge.md) — Decided (ADR 0014)
 - [RFC 0003: Attachments on a goal card (files and links)](0003-goal-card-file-attachments.md) — Discussion
 - [RFC 0004: Pipe LLM inputs and outputs into MuninnDB](0004-llm-io-into-muninndb.md) — Decided (ADR 0015)
+- [RFC 0005: First-run onboarding](0005-first-run-onboarding.md) — Decided (ADR 0016)
 <!-- inventory:rfc:end -->
