@@ -56,6 +56,7 @@ pub fn makeId(now_ns: u64, buf: []u8) []const u8 {
     while (i > 0) {
         i -= 1;
         if (i >= buf.len) continue;
+        // Hex digit: only the low nibble is used, high bits are dropped on purpose.
         buf[i] = hex[@as(u4, @truncate(n))];
         n >>= 4;
     }

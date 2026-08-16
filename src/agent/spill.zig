@@ -43,6 +43,7 @@ pub fn idFor(content: []const u8, salt: u64) [8]u8 {
         h ^= c;
         h *%= 16777619;
     }
+    // Mix in the low 32 bits of the salt; the high half is dropped on purpose.
     h ^= @truncate(salt);
     h *%= 16777619;
     var out: [8]u8 = undefined;
