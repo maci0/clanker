@@ -25,7 +25,38 @@ Open the scaffold and fill it in:
 {"action":"create","slug":"embedded-kv-stores","title":"Embedded key-value stores","question":"Which embedded KV store runs in a wasm32-freestanding guest with no libc?"}
 ```
 
-All three are actions of the `research` tool. Everything below is detail.
+All three are actions of the `research` tool. The same three from a shell:
+
+```bash
+clanker research plan "embedded key-value stores for Zig"
+clanker research sweep "embedded key-value stores for Zig" standard
+clanker research create embedded-kv-stores "Embedded key-value stores" "Which embedded KV store runs in a wasm32-freestanding guest with no libc?"
+```
+
+`clanker research` calls that same tool, so the notes, the inventory below and
+the compare-and-swap writes are shared rather than reimplemented. Everything
+below is detail.
+
+## Web backends
+
+A sweep tries DuckDuckGo Lite first, Bing next when it comes back empty, and
+Google last.
+
+Google is reached through the [Programmable Search JSON
+API](https://developers.google.com/custom-search/v1/overview), never by
+scraping: `www.google.com/search` answers a plain HTTP client with a "turn on
+JavaScript" page carrying no result links, whatever user agent it is asked
+with, and including the legacy `gbv=1` no-JavaScript parameter. Set both of
+these to enable it, in `.env` or the environment:
+
+```bash
+export GOOGLE_SEARCH_KEY=<api key>
+export GOOGLE_SEARCH_CX=<programmable search engine id>
+```
+
+With either unset the backend is skipped and the sweep says so once. The free
+tier is 100 queries a day, and a sweep only reaches Google for a query the
+other two answered with nothing, so it is rarely spent.
 
 ## What belongs here
 
