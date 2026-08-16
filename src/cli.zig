@@ -11874,16 +11874,19 @@ fn handleWorkspaces(
             };
             const name: ?[]const u8 = if (req.name.len > 0) req.name else null;
             const folder: ?[]const u8 = if (req.path.len > 0) req.path else null;
-            if (name == null and folder == null) {
-                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing name or path\"}");
+            if (name == null and folder == null and req.roots.len == 0) {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing name, path or roots\"}");
                 return;
             }
-            const updated = workspace_mod.update(io, gpa, arena, std.Io.Dir.cwd(), id, name, folder) catch |err| switch (err) {
+            const updated = (if (req.roots.len > 0)
+                workspace_mod.updateRoots(io, gpa, arena, std.Io.Dir.cwd(), id, name, req.roots)
+            else
+                workspace_mod.update(io, gpa, arena, std.Io.Dir.cwd(), id, name, folder)) catch |err| switch (err) {
                 error.NoSuchWorkspace => {
                     respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such workspace\"}");
                     return;
                 },
-                error.BadName => {
+                error.BadName, error.BadRootName => {
                     respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid workspace name\"}");
                     return;
                 },
@@ -11913,8 +11916,12 @@ fn handleWorkspaces(
             return;
         };
         const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-        const created = workspace_mod.add(io, gpa, arena, std.Io.Dir.cwd(), req.name, req.path, now) catch |err| switch (err) {
-            error.BadName => {
+        const owner = selfInstanceId(cfg);
+        const created = (if (req.roots.len > 0)
+            workspace_mod.addRoots(io, gpa, arena, std.Io.Dir.cwd(), req.name, req.roots, owner, now)
+        else
+            workspace_mod.add(io, gpa, arena, std.Io.Dir.cwd(), req.name, req.path, owner, now)) catch |err| switch (err) {
+            error.BadName, error.BadRootName => {
                 respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"workspace name must be 1-64 characters and contain no separators\"}");
                 return;
             },
@@ -11952,9 +11959,9 @@ fn handleWorkspaces(
     s.objectField("workspaces") catch return;
     s.beginArray() catch return;
 
-    writeWorkspaceJson(&s, "", cwd_name, cwd_abs, true, false, countChats(sessions, "")) catch return;
+    writeWorkspaceJson(&s, "", cwd_name, cwd_abs, null, true, false, countChats(sessions, "")) catch return;
     for (registered) |w| {
-        writeWorkspaceJson(&s, w.id, w.name, w.path, false, false, countChats(sessions, w.id)) catch return;
+        writeWorkspaceJson(&s, w.id, w.name, workspacePrimaryPath(w), w.roots, false, false, countChats(sessions, w.id)) catch return;
     }
     // Label-only folders that predate the registry still appear so their
     // chats stay reachable until a path is attached.
@@ -11971,7 +11978,7 @@ fn handleWorkspaces(
         }
         if (already) continue;
         seen_orphans.append(arena, m.workspace) catch continue;
-        writeWorkspaceJson(&s, m.workspace, m.workspace, "", false, true, countChats(sessions, m.workspace)) catch continue;
+        writeWorkspaceJson(&s, m.workspace, m.workspace, "", null, false, true, countChats(sessions, m.workspace)) catch continue;
     }
 
     s.endArray() catch return;
