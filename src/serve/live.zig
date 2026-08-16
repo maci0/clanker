@@ -167,6 +167,15 @@ pub fn noteRun(working: bool) void {
     publish(.run, json);
 }
 
+/// Membership and pending JOINs. Fleet and the Mesh plugin reload on `t:mesh`.
+pub fn noteMesh(kind: []const u8, id: []const u8) void {
+    var buf: [event_cap]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.write(.{ .t = "mesh", .kind = kind, .id = id }) catch return;
+    publish(.mesh, buf[0..w.end]);
+}
+
 /// Snapshot already includes `"t":"metrics"`. Throttle lives at the caller
 /// so a page load of static assets does not fill the bus.
 pub fn noteMetrics(json: []const u8) void {
@@ -287,6 +296,18 @@ test "writeSse frames one event" {
     var buf: [64]u8 = undefined;
     const got = writeSse(&buf, "{\"t\":\"ping\"}") orelse return error.Short;
     try std.testing.expectEqualStrings("event: live\ndata: {\"t\":\"ping\"}\n\n", got);
+}
+
+test "noteMesh publishes on the mesh topic" {
+    const a = subscribe(topicBit(.mesh)) orelse return error.NoSlot;
+    defer unsubscribe(a);
+    noteMesh("pending", "guest");
+    var buf: [event_cap]u8 = undefined;
+    const ev = take(a, &buf) orelse return error.Missing;
+    try std.testing.expectEqual(Topic.mesh, ev.topic);
+    try std.testing.expect(std.mem.find(u8, ev.json, "\"t\":\"mesh\"") != null);
+    try std.testing.expect(std.mem.find(u8, ev.json, "\"kind\":\"pending\"") != null);
+    try std.testing.expect(std.mem.find(u8, ev.json, "\"id\":\"guest\"") != null);
 }
 
 test "noteMetrics publishes on the metrics topic" {

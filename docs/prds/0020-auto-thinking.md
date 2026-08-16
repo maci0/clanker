@@ -29,7 +29,7 @@ a separate, small model call — fast and inexpensive.
    `xhigh`. This selects which sampling-profile row (PRD 0024) applies for
    that turn's `reasoning_effort`.
 3. The classifier model is configurable as `agent.thinking_classifier_model`
-   (provider name and model name). Defaults to the cheapest/fastest configured
+   (provider name and model name). Defaults to the cheapest configured
    provider if unset.
 4. The classifier system prompt is built into the host and is not configurable
    per-run (to prevent the main agent from manipulating the effort it gets).
@@ -107,7 +107,7 @@ to a second writer of `reasoning_effort`:
 | `low` | select the table's low-effort row (or provider minimum) |
 | `medium` | select the medium row |
 | `high` | select the high row |
-| `xhigh` | select `high`, unless the provider sets `max_reasoning_effort` to a higher tier (e.g. `"xhigh"`); then that value is used |
+| `xhigh` | select `high` |
 
 The selection applies only for the current turn. It does not mutate the
 provider config.
@@ -164,7 +164,7 @@ per-(provider, model) usage, not per-turn events, so a distribution of
 classifier results has nothing to read until the `thinking_level` field from
 the Logging schema change lands in `Record`. With that in place, the endpoint
 and `clanker stats` expose the distribution (how many turns at each level) as
-a `thinking_distribution` field in the session summary.
+a `totals.thinking_distribution` field in the `/api/stats` response.
 
 **Dependencies.**
 
@@ -189,17 +189,13 @@ a `thinking_distribution` field in the session summary.
    effort. Prefer extracting a shared side-channel wrapper if 0015 lands
    nearby.
 3. Wire into `src/agent/loop.zig` pre-turn: when `auto_thinking`, run
-   classifier, map result to a 0024 profile-row selector (including
-   `xhigh` → `high` unless `max_reasoning_effort` is set), pass that into the
+   classifier, map result to a 0024 profile-row selector (`xhigh` → `high`), pass that into the
    sampling-profile lookup. Do not write `reasoning_effort` here.
-4. Optional `provider.max_reasoning_effort` config key for providers that
-   expose a tier above `high`.
-5. Extend `src/stats/tokens.zig` `Record` with optional `thinking_level` and
-   `thinking_classifier_ms`; surface `thinking_distribution` in
+4. Extend `src/stats/tokens.zig` `Record` with optional `thinking_level` and
+   `thinking_classifier_ms`; surface `totals.thinking_distribution` in
    `GET /api/stats` / `clanker stats`.
-6. Tests: effort mapping (incl. `max_reasoning_effort`), timeout fallback,
-   unexpected-response → `medium`, empty-message skip, opt-in default (zero
-   classifier calls when disabled).
+5. Tests: effort mapping, timeout fallback, unexpected-response → `medium`,
+   empty-message skip, opt-in default (zero classifier calls when disabled).
 
 ## Failure modes
 
@@ -221,7 +217,7 @@ a `thinking_distribution` field in the session summary.
       the classifier result via PRD 0024's writer.
 - [x] A message classified as `low` selects the low-effort profile row; a
       message classified as `high` selects `"high"`.
-- [x] `xhigh` selects `"high"` unless `max_reasoning_effort` is set higher.
+- [x] `xhigh` selects `"high"`.
 - [x] A classifier timeout aborts the armed HTTP connection through
       `client.chatWithTimeout`; the turn proceeds with the default
       `reasoning_effort` and no error surfaced to the user.

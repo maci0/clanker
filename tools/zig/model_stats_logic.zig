@@ -106,8 +106,9 @@ fn compactCount(alloc: std.mem.Allocator, value: u64) ![]const u8 {
 // ------------------------------------------------------------------- tests --
 
 test "empty stats name the empty case" {
+    // The empty case returns a string literal, not an allocation, so it is
+    // asserted but never freed.
     const got = try renderText(std.testing.allocator, &.{}, .{});
-    defer std.testing.allocator.free(got);
     try std.testing.expectEqualStrings("no token usage recorded yet (run an agent task first)\n", got);
 }
 
@@ -165,5 +166,5 @@ test "compactCount keeps small numbers exact and shortens the rest" {
 test "thinking distribution totals across all buckets" {
     const t = Thinking{ .low = 1, .medium = 2, .high = 3, .xhigh = 4 };
     try std.testing.expectEqual(@as(u64, 10), t.total());
-    try std.testing.expectEqual(@as(u64, 0), Thinking{}.total());
+    try std.testing.expectEqual(@as(u64, 0), (Thinking{}).total());
 }

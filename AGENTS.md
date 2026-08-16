@@ -175,7 +175,8 @@ through a gated loop. Follow these conventions when changing this codebase.
   (`mesh.buildMap`): self + `[[peers]]` + chat wires. Served even when
   `modules.mesh` is off so HTTP peers still draw; chat `last_ts` is unix
   seconds, so the pulse clock must be too. The page watches `GET /api/events`
-  (SSE in `src/serve/live.zig`); HTTP `POST /api/*` stays the command path.
+  (SSE in `src/serve/live.zig`); membership and pending JOINs publish `t:mesh`
+  the same way chat talk does. HTTP `POST /api/*` stays the command path.
   `chatrooms.fanOut` POSTs each message to every peer's `/api/chat/message`
   (per-peer backoff on failure). A local append seeks onto the jsonl when
   the log is still under `max_history`; only a trim rewrites the file.

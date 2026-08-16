@@ -9,7 +9,9 @@ clanker.registerView({
   title: "Mesh",
   group: "Watch",
   mount: function (container, api) {
-    var state = { status: null, pending: [], busy: "", error: "" };
+    var state = { status: null, pending: [], busy: "", error: "", loadedAt: 0 };
+    var poll = null;
+    var tick = null;
 
     var head = api.el("div", "section-head");
     head.appendChild(api.el("h2", null, "Mesh"));
@@ -25,6 +27,10 @@ clanker.registerView({
     intro.appendChild(document.createTextNode(". Loopback HTTP to this serve; serve owns the sockets."));
     container.appendChild(intro);
 
+    var facts = api.el("dl", "mesh-facts");
+    facts.id = "mesh-facts";
+    container.appendChild(facts);
+
     var statusLine = api.el("p", "meta");
     statusLine.id = "mesh-status";
     statusLine.setAttribute("role", "status");
@@ -35,6 +41,7 @@ clanker.registerView({
     container.appendChild(errHost);
 
     var membersHead = api.el("h3", "detail-head subsection-head", "Members");
+    membersHead.id = "mesh-members-head";
     container.appendChild(membersHead);
     var members = api.el("div", "mesh-members");
     members.id = "mesh-members";
@@ -42,6 +49,9 @@ clanker.registerView({
 
     var joinHead = api.el("h3", "detail-head subsection-head", "Join");
     container.appendChild(joinHead);
+    var joinHint = api.el("p", "meta");
+    joinHint.id = "mesh-join-hint";
+    container.appendChild(joinHint);
     var form = document.createElement("form");
     form.className = "mesh-join-form";
     form.id = "mesh-join-form";
@@ -64,6 +74,7 @@ clanker.registerView({
     container.appendChild(form);
 
     var pendHead = api.el("h3", "detail-head subsection-head", "Pending joins");
+    pendHead.id = "mesh-pending-head";
     container.appendChild(pendHead);
     var pending = api.el("div", "mesh-pending");
     pending.id = "mesh-pending";
@@ -72,6 +83,7 @@ clanker.registerView({
     var leaveSelf = api.el("button", "secondary", "Leave the mesh");
     leaveSelf.type = "button";
     leaveSelf.id = "mesh-leave-self";
+    leaveSelf.hidden = true;
     container.appendChild(leaveSelf);
 
     function showErr(msg, retry) {
@@ -88,6 +100,37 @@ clanker.registerView({
       errHost.appendChild(p);
     }
 
+    function fact(term, value, extra) {
+      var dt = api.el("dt", null, term);
+      var dd = api.el("dd");
+      if (value) dd.appendChild(document.createTextNode(value));
+      if (extra) dd.appendChild(extra);
+      facts.appendChild(dt);
+      facts.appendChild(dd);
+      return dd;
+    }
+
+    function copyListen(text) {
+      var btn = api.el("button", "secondary mesh-copy", "Copy");
+      btn.type = "button";
+      btn.setAttribute("aria-label", "Copy listen address");
+      btn.addEventListener("click", function () {
+        var clip = typeof navigator !== "undefined" && navigator.clipboard;
+        if (!clip || !window.isSecureContext) {
+          api.prompt("Listen address", text);
+          return;
+        }
+        clip.writeText(text).then(function () {
+          btn.textContent = "Copied";
+          api.toast("copied " + text, "ok");
+          setTimeout(function () { btn.textContent = "Copy"; }, 1200);
+        }).catch(function () {
+          api.toast("The browser refused the clipboard.", "error");
+        });
+      });
+      return btn;
+    }
+
     function memberRow(m) {
       var row = api.el("article", "mesh-member");
       if (!m.up) row.dataset.down = "true";
@@ -100,6 +143,7 @@ clanker.registerView({
       row.appendChild(chip);
       var drop = api.el("button", "secondary", "Leave");
       drop.type = "button";
+      drop.disabled = !!state.busy;
       drop.setAttribute("aria-label", "Leave " + name);
       drop.addEventListener("click", function () {
         act(function () { return api.postJSON("/api/mesh/leave", { peer_id: m.id || name }); }, "left " + name);
@@ -108,19 +152,27 @@ clanker.registerView({
       return row;
     }
 
+    function pendingAge(p) {
+      var base = typeof p.age_s === "number" ? p.age_s : 0;
+      var extra = state.loadedAt ? Math.floor((Date.now() - state.loadedAt) / 1000) : 0;
+      return base + extra;
+    }
+
     function pendingRow(p) {
       var row = api.el("article", "mesh-pending-row");
       var id = p.id || "?";
       row.appendChild(api.el("code", "mesh-member-id", id));
       if (p.name && p.name !== id) row.appendChild(api.el("span", "meta", p.name));
-      if (p.age_s != null) row.appendChild(api.el("span", "meta", p.age_s + "s"));
+      row.appendChild(api.el("span", "meta", pendingAge(p) + "s"));
       var admit = api.el("button", "primary", "Admit");
       admit.type = "button";
+      admit.disabled = !!state.busy;
       admit.addEventListener("click", function () {
         act(function () { return api.postJSON("/api/mesh/pending", { id: id, allow: true }); }, "admitted " + id);
       });
       var deny = api.el("button", "secondary", "Deny");
       deny.type = "button";
+      deny.disabled = !!state.busy;
       deny.addEventListener("click", function () {
         act(function () { return api.postJSON("/api/mesh/pending", { id: id, allow: false }); }, "denied " + id);
       });
@@ -131,31 +183,51 @@ clanker.registerView({
 
     function draw() {
       var s = state.status;
+      var list = (s && s.members) || [];
+      facts.textContent = "";
+      if (s) {
+        fact("id", s.id || "unset");
+        if (s.listen) fact("listen", s.listen, copyListen(s.listen));
+        fact("admission", s.admission || "unset");
+        fact("state", s.listening ? "listening" : "not listening");
+      }
+
       if (!s) {
         statusLine.textContent = state.busy || "";
       } else {
         var bits = [];
-        bits.push(s.listening ? "listening" : "not listening");
-        if (s.listen) bits.push(s.listen);
-        if (s.admission) bits.push("admission=" + s.admission);
-        if (s.id) bits.push("id=" + s.id);
-        statusLine.textContent = bits.join("  ");
+        bits.push(list.length + (list.length === 1 ? " member" : " members"));
+        if (state.pending.length) bits.push(state.pending.length + " pending");
+        if (state.busy) bits.push(state.busy);
+        statusLine.textContent = bits.join(" · ");
       }
 
+      membersHead.textContent = list.length ? "Members (" + list.length + ")" : "Members";
       members.textContent = "";
-      var list = (s && s.members) || [];
       if (!list.length) {
         members.appendChild(api.el("p", "run-empty", "No members. Join a listen address below, or wait for someone to join you."));
       } else {
         list.forEach(function (m) { members.appendChild(memberRow(m)); });
       }
 
+      joinHint.textContent = (s && s.listen)
+        ? "This instance listens on " + s.listen + ". Give that address to another clanker, or join one below."
+        : "Join another instance by its mesh listen address (host:port), not its web UI port.";
+
+      pendHead.textContent = state.pending.length
+        ? "Pending joins (" + state.pending.length + ")"
+        : "Pending joins";
       pending.textContent = "";
       if (!state.pending.length) {
         pending.appendChild(api.el("p", "run-empty", "No pending joins."));
       } else {
         state.pending.forEach(function (p) { pending.appendChild(pendingRow(p)); });
       }
+
+      leaveSelf.hidden = !list.length;
+      leaveSelf.disabled = !!state.busy;
+      joinBtn.disabled = !!state.busy;
+      refresh.disabled = !!state.busy;
     }
 
     function load() {
@@ -170,6 +242,7 @@ clanker.registerView({
         state.status = pair[0];
         state.pending = (pair[1] && pair[1].pending) || [];
         state.busy = "";
+        state.loadedAt = Date.now();
         draw();
       }).catch(function (e) {
         state.status = null;
@@ -186,6 +259,9 @@ clanker.registerView({
     }
 
     function act(fn, okMsg) {
+      if (state.busy && state.busy !== "Loading…") return Promise.resolve();
+      state.busy = "Working…";
+      draw();
       return fn().then(function () {
         api.toast(okMsg, "ok");
         return load();
@@ -212,6 +288,15 @@ clanker.registerView({
       if (!ev) return;
       if (ev.t === "mesh" || ev.t === "talk") load();
     });
+
+    poll = setInterval(function () {
+      if (state.busy) return;
+      load();
+    }, 4000);
+    tick = setInterval(function () {
+      if (!state.pending.length) return;
+      draw();
+    }, 1000);
 
     load();
   },

@@ -651,13 +651,18 @@ Phase 1 (Goals 1, 2, 5, 6, 7):
       `instance.id` listens on `listen_host:listen_port`. `clanker run`
       and `clanker mesh status` do not open that port; they talk to
       serve over loopback. (G7)
-- [ ] Two instances whose `[[peers]]` name each other by `id` can
+- [x] Two instances whose `[[peers]]` name each other by `id` can
       `clanker mesh join` at runtime (no restart, no config edit after
       start) and both show the other as `reachable`. (G2)
-- [ ] Under `admission = "allowlist"`, a JOIN from an id in nobody's
+      Covered by `tests/e2e/mesh_test.zig` ("two serves join over loopback
+      and leave") without a pre-seeded `[[peers]]` table: open admission
+      plus `clanker mesh join` is the runtime path.
+- [x] Under `admission = "allowlist"`, a JOIN from an id in nobody's
       `[[peers]]` is refused. Under `open`, the same JOIN is accepted.
       Under `prompt`, it sits in `clanker mesh pending` until
       `admit` / `deny` / timeout. (G2)
+      Open + prompt admit/deny are `tests/e2e/mesh_test.zig`. Allowlist
+      refuse remains a `src/peers/mesh.zig` unit test (`admit(.allowlist, …)`).
 - [ ] A member that sends `LEAVE` disappears from `mesh status` on
       every other member. A member whose process is killed becomes
       `unreachable` (not absent) within one liveness interval, and is

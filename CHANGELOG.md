@@ -37,11 +37,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
-- Mesh web UI plugin (`ui/plugins/mesh/`): join, leave, members, and
-  pending admit/deny. On by default. Fleet's map shows listen/admission,
-  a pending-join banner, and a Manage mesh control.
+- Mesh web UI plugin (`ui/plugins/mesh/`): identity (id, listen, admission),
+  copyable listen address, join, leave, members, and pending admit/deny.
+  On by default. Fleet's map shows listen/admission, a pending-join
+  banner that opens Mesh, and a Manage mesh control. Membership and
+  pending JOINs publish `t:mesh` on `GET /api/events`.
 - `zig build e2e` covers two-process loopback join/leave, prompt
-  admission, and the CLI when serve is down or mesh is off.
+  admit and deny, and the CLI when serve is down or mesh is off.
 - `clanker mesh` talks to local serve over loopback HTTP: `status`,
   `join <host:port>`, `leave [<peer-id>]`, `pending`, `admit <id>`,
   `deny <id>`. `--webui-port` selects which serve when several run on

@@ -843,6 +843,11 @@ export function initFleet() {
     openMesh._fleetBound = true;
     openMesh.addEventListener("click", navToMesh);
   }
+  var banner = byId("mesh-pending-banner");
+  if (banner && !banner._fleetBound) {
+    banner._fleetBound = true;
+    banner.addEventListener("click", navToMesh);
+  }
   doRefresh();
   if (_meshTimer) clearInterval(_meshTimer);
   if (!initFleet._liveBound) {

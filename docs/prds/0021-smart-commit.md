@@ -27,9 +27,9 @@ primary path when the heuristic collapses, not a rare error.
 
 ## Goals
 
-1. A `smart_commit` WASM tool that reads the full working tree diff (staged and
-   unstaged, excluding lock files) and calls `ck_llm` to group hunks into atomic
-   logical changes.
+1. A `smart_commit` WASM tool that reads the working tree diff (staged by
+   default, or staged + unstaged with `scope = "all"`; excluding lock files)
+   and calls `ck_llm` to group hunks into atomic logical changes.
 2. The LLM grouping returns an ordered list of proposed commits, each with a list
    of file paths and a conventional commit message.
 3. The guest builds a dependency graph from the groupings (group A depends on

@@ -95,7 +95,7 @@ has for free.
 similar), mapping `(use_case, model.capabilities)` to a
 `{temperature: ?f64, top_p: ?f64, reasoning_effort: ?[]const u8}`
 recommendation. Keyed off `capabilities` (already on every `Model`, e.g.
-`"thinking"`, `"tool_use"`, `src/config.zig:83`) rather than provider/model
+`"thinking"`, `"tool_use"`, `src/config.zig:186`) rather than provider/model
 name. v1 ships a **hardcoded** table (no `config.toml` surface for the
 rows):
 

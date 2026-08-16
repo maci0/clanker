@@ -122,7 +122,7 @@ used to narrow the search, not as the authoritative location. The host:
 
 1. Opens the file and computes hashes for all lines.
 2. For each hunk, searches for `anchor_hash` starting at `anchor_line` with
-   window `edit.hashline_tolerance` (default ±10) to handle minor shifts.
+   a hardcoded ±10 window to handle minor shifts.
 3. Verifies that `old_count` consecutive lines starting at the found anchor all
    match the hashes the model would have seen (recomputed from the file's current
    bytes).
@@ -188,9 +188,9 @@ mention `hashes: true` and the `hashline` operation.
 2. **`read_file`**: add `hashes: true` output format; binary-file error path
    unchanged.
 3. **`edit_file`**: add `op` dispatch; implement `hashline` validate-then-apply
-   with `edit.hashline_tolerance`; return write-back hashes on success.
+   with the hardcoded ±10 window; return write-back hashes on success.
 4. **Manifests + system prompt**: always mention hashes/hashline.
-5. **Config**: parse `edit.hashline_tolerance` (default 10).
+5. **Config**: no config key in v1; the ±10 window is hardcoded (see Tolerance).
 6. **Tests / evals**: tolerance window, multi-hunk reverse apply, mismatch
    rejection, returned hashes, no regression on plain edits.
 

@@ -12,6 +12,8 @@ const spec = readFileSync(join(dir, "plugin.json"), "utf8");
 test("Mesh is a Watch plugin over the mesh HTTP control plane", function () {
   assert.match(spec, /"name": "mesh"/);
   assert.match(spec, /"group": "Watch"/);
+  assert.match(spec, /"toast"/);
+  assert.match(spec, /"prompt"/);
   assert.match(js, /clanker\.registerView/);
   assert.match(js, /\/api\/mesh\/status/);
   assert.match(js, /\/api\/mesh\/join/);
@@ -30,6 +32,14 @@ test("mesh-off and empty member lists are visible, not only a status line", func
 
 test("self-leave asks before dropping every member", function () {
   assert.match(js, /api\.confirm\("Leave the mesh\?/);
+  assert.match(js, /leaveSelf\.hidden = !list\.length/);
+});
+
+test("identity facts include a copyable listen address", function () {
+  assert.match(js, /copyListen/);
+  assert.match(js, /This instance listens on /);
+  assert.match(js, /mesh-facts/);
+  assert.match(js, /api\.prompt\("Listen address"/);
 });
 
 test("join field stays 16px on a phone so iOS does not zoom", function () {

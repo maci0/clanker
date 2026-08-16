@@ -69,10 +69,6 @@ pub const Stat = struct {
     thinking_high: u64 = 0,
     thinking_xhigh: u64 = 0,
 
-    pub fn thinkingTotal(self: *const Stat) u64 {
-        return self.thinking_low + self.thinking_medium + self.thinking_high + self.thinking_xhigh;
-    }
-
     pub fn errorRate(self: *const Stat) f64 {
         if (self.calls == 0) return 0;
         return @as(f64, @floatFromInt(self.error_calls)) / @as(f64, @floatFromInt(self.calls)) * 100.0;
@@ -566,8 +562,9 @@ test "thinking metadata aggregates into CLI and API distributions" {
     try std.testing.expectEqual(@as(u64, 2), total.thinking_high);
     try std.testing.expectEqual(@as(u64, 1), total.thinking_xhigh);
 
-    const table = try renderTable(arena, stats, total);
-    try std.testing.expect(std.mem.find(u8, table, "thinking        low 1  medium 0  high 2  xhigh 1") != null);
+    // The table rendering of the distribution lives in the model_stats guest
+    // (tools/zig/model_stats_logic.zig, host-tested); the host surface of the
+    // distribution is the totals row and the statsJSON serialization below.
     const json_out = try statsJSON(arena, stats, total);
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, json_out, .{});
     const dist = parsed.object.get("totals").?.object.get("thinking_distribution").?.object;

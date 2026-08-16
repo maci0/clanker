@@ -4032,12 +4032,20 @@ h2#session-title {
 }
 .mesh-map-head h3 { margin: 0; }
 .mesh-pending-banner {
+  display: block;
+  width: 100%;
   margin: 0 0 var(--space-2);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--accent, var(--rule));
   border-radius: var(--radius);
   background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-height: 32px;
 }
+.mesh-pending-banner:hover { background: var(--surface-2, var(--surface)); }
 .mesh-map-section h3 {
   font-family: var(--sans);
   font-size: 11px;

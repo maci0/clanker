@@ -395,7 +395,10 @@ fn acceptOne(arg: *Conn) void {
         const join_name = json_util.strFieldOrEmpty(p, "name");
         const decision = mesh.admit(rt.admission, rt.our_id, join_id, join_name, rt.seeds);
         if (decision == .pending) {
-            if (enqueuePending(rt, join_id, join_name, header.id, stream)) return;
+            if (enqueuePending(rt, join_id, join_name, header.id, stream)) {
+                live.noteMesh("pending", join_id);
+                return;
+            }
             _ = writeJoinAck(rt, fd, header.id, false);
             break;
         }
@@ -405,6 +408,7 @@ fn acceptOne(arg: *Conn) void {
         rt.mu.lock();
         remember(rt, join_id, join_name, fd);
         rt.mu.unlock();
+        live.noteMesh("join", join_id);
         joined = true;
         const rest = acc.items[got.consumed..];
         std.mem.copyForwards(u8, acc.items[0..rest.len], rest);
@@ -536,6 +540,7 @@ pub fn join(gpa: std.mem.Allocator, address: []const u8) !void {
     rt.mu.lock();
     remember(rt, peer_from, peer_from, stream.socket.handle);
     rt.mu.unlock();
+    live.noteMesh("join", peer_from);
     try spawnRead(rt, stream);
 }
 
@@ -574,20 +579,24 @@ pub fn ourId() []const u8 {
 
 pub fn leave(peer_id: []const u8) !void {
     const rt = runtime orelse return error.MeshOff;
-    rt.mu.lock();
-    defer rt.mu.unlock();
-    if (peer_id.len == 0) {
-        for (&rt.members) |*m| {
-            if (!m.used) continue;
-            if (m.fd >= 0) {
-                writeLeave(rt, m.fd);
-                _ = std.c.close(m.fd);
+    const note_id = blk: {
+        rt.mu.lock();
+        defer rt.mu.unlock();
+        if (peer_id.len == 0) {
+            for (&rt.members) |*m| {
+                if (!m.used) continue;
+                if (m.fd >= 0) {
+                    writeLeave(rt, m.fd);
+                    _ = std.c.close(m.fd);
+                }
+                m.* = .{};
             }
-            m.* = .{};
+            break :blk rt.our_id;
         }
-        return;
-    }
-    if (!forgetMemberLocked(rt, peer_id)) return error.NoSuchPeer;
+        if (!forgetMemberLocked(rt, peer_id)) return error.NoSuchPeer;
+        break :blk peer_id;
+    };
+    live.noteMesh("leave", note_id);
 }
 
 pub const PendingRow = struct { id: []const u8, name: []const u8, age_s: i64 };
@@ -636,6 +645,7 @@ pub fn resolvePending(id: []const u8, allow: bool) !void {
     if (!allow) {
         _ = writeJoinAck(rt, st.socket.handle, ack_buf[0..ack_len], false);
         st.close(rt.io);
+        live.noteMesh("deny", id_buf[0..id_len]);
         return;
     }
     _ = writeJoinAck(rt, st.socket.handle, ack_buf[0..ack_len], true);
@@ -646,6 +656,7 @@ pub fn resolvePending(id: []const u8, allow: bool) !void {
         st.close(rt.io);
         return error.JoinWrite;
     };
+    live.noteMesh("join", id_buf[0..id_len]);
 }
 
 pub const Row = struct { id: []const u8, name: []const u8, up: bool };

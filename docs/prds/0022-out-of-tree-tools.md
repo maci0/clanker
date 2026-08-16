@@ -261,7 +261,7 @@ behavior). No per-directory `enabled` toggle (remove the entry from
 - [x] A missing directory in the list logs a warning and does not prevent the
       remaining directories from loading.
 - [x] Every existing call site (`cli.zig`, `repl.zig`, `subagent.zig`,
-      `phonebook.zig`, `mcp/server.zig`, `autoresearch.zig`, `doctor.zig`,
+      `phonebook.zig`, `mcp/server.zig`, `auto_research.zig`, `doctor.zig`,
       `improve/engine.zig`, `gate/checks.zig`) compiles against the new
       signature with no added branching on directory count.
 - [x] `plugins` reads the configured directory list via

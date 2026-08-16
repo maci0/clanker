@@ -174,7 +174,7 @@ The main agent loop never sees an exception from the advisor path.
 3. **Loop integration**: spawn after completed turn; join with
    `advisor.timeout_ms` before next think; inject into system context for one
    turn only (not user message / not `session.messages`).
-4. **Blocker path**: wire `ask_user` proceed/abort; headless falls through as
+4. **Blocker path**: wire `ask_fn` proceed/abort; headless falls through as
    concern.
 5. **Stats**: optional `advisor_tokens` on `Record`.
 6. **Shared side-channel (with 0020)**: extract or adopt the timeout/budget
@@ -190,7 +190,7 @@ The main agent loop never sees an exception from the advisor path.
 | Advisor returns malformed JSON | Dropped; logged at debug level; loop proceeds with no injection |
 | Advisor returns `blocker` in a headless run | Blocker text injected as a concern note; loop proceeds; logged as `[advisor blocker: proceeding headless]` |
 | Main agent's turn itself errors | Advisor is not called; it reviews only completed turns |
-| Advisor call itself calls a tool (not possible by design, but malformed JSON could claim one) | Ignored; the advisor completion is non-tool `ck_llm`, which returns text only |
+| Advisor call itself calls a tool (not possible by design, but malformed JSON could claim one) | Ignored; the advisor completion is a non-tool `client.chatWithTimeout` call, which returns text only |
 
 ## Acceptance criteria
 
@@ -203,7 +203,7 @@ The main agent loop never sees an exception from the advisor path.
       `session.messages`; cleared after that one think call.
 - [x] Under `scope = "session"`, prior `[advisor: ...]` blocks are stripped
       from history before the advisor call.
-- [x] A `blocker` response triggers the `ask_user` flow with `proceed`/`abort`
+- [x] A `blocker` response triggers the `ask_fn` path with `proceed`/`abort`
       options in an interactive session.
 - [x] A `blocker` in a headless run is logged and treated as a `concern` (loop
       does not hang).

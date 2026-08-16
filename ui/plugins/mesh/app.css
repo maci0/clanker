@@ -1,5 +1,29 @@
 /* Mesh operator view. */
 
+.mesh-facts {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 4px var(--space-3);
+  margin: 0 0 var(--space-3);
+  font-size: 13px;
+}
+
+.mesh-facts dt {
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+
+.mesh-facts dd {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.mesh-copy { padding: 2px 8px; }
+
 .mesh-members,
 .mesh-pending {
   display: flex;
@@ -18,6 +42,7 @@
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   padding: var(--space-3) var(--space-4);
+  min-height: 32px;
 }
 
 .mesh-member[data-down="true"] { border-style: dashed; }
@@ -54,10 +79,11 @@
   color: var(--fg);
 }
 
-#mesh-leave-self { margin-top: var(--space-2); }
+#mesh-leave-self { margin-top: var(--space-2); min-height: 32px; }
 
 .mesh-error .run-empty { margin-top: 0; }
 
 @media (max-width: 40rem) {
   .mesh-join-form input { font-size: 16px; }
+  .mesh-facts { grid-template-columns: 5.5rem 1fr; }
 }
