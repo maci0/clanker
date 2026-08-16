@@ -171,28 +171,34 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             // `res` is the host's exec wrapper (`{"ok":false,"code":1,"stdout":
             // "...\n..."}`), so the transcript is JSON-escaped — window the
             // decoded stdout, not the wrapper.
-            const stdout = blk: {
-                var saw_stdout: ?[]const u8 = null;
-                if (std.json.parseFromSliceLeaky(std.json.Value, alloc, res, .{})) |exec_parsed| {
-                    if (exec_parsed == .object) {
-                        if (exec_parsed.object.get("stdout")) |v| {
-                            if (v == .string) saw_stdout = v.string;
-                        }
+            var stdout: []const u8 = res;
+            var stderr: []const u8 = "";
+            if (std.json.parseFromSliceLeaky(std.json.Value, alloc, res, .{})) |exec_parsed| {
+                if (exec_parsed == .object) {
+                    if (exec_parsed.object.get("stdout")) |v| {
+                        if (v == .string) stdout = v.string;
                     }
-                } else |_| {}
-                break :blk saw_stdout orelse res;
+                    if (exec_parsed.object.get("stderr")) |v| {
+                        if (v == .string) stderr = v.string;
+                    }
+                }
+            } else |_| {}
+            // A failed `zig build test` prints its `✘`/compile diagnostics on
+            // stdout; a test binary that crashes (panic, unreachable) prints
+            // its trace on stderr while stdout may hold only passing tests.
+            // Prefer the stream that actually carries a diagnostic.
+            const diagnostic = blk: {
+                if (std.mem.find(u8, stdout, "\u{2718}") != null or
+                    std.mem.find(u8, stdout, "error:") != null) break :blk stdout;
+                if (stderr.len > 0) break :blk stderr;
+                break :blk stdout;
             };
-            // Debug helper: also spill the full decoded transcript so the raw
-            // compile error survives display truncation. Spill for a compile
-            // error (`error:`) and a failed test (`✘`) alike; the file lands in
-            // the (gitignored) build output dir so a debugger can read the whole
-            // transcript even when the windowed slice is truncated in display.
-            if (std.mem.find(u8, stdout, "error:") != null or
-                std.mem.find(u8, stdout, "\u{2718}") != null)
-            {
-                _ = lib.fsWrite("zig-out/gate-failure.txt", stdout) catch {};
-            }
-            const text = failureWindow(stdout);
+            // Debug helper: spill the decoded diagnostic so the raw error
+            // survives display truncation. The file lands in the (gitignored)
+            // build output dir so a debugger can read the whole transcript
+            // even when the windowed slice is truncated in display.
+            _ = lib.fsWrite("zig-out/gate-failure.txt", diagnostic) catch {};
+            const text = failureWindow(diagnostic);
             report.clearRetainingCapacity();
             var w: std.Io.Writer.Allocating = .init(alloc);
             defer w.deinit();

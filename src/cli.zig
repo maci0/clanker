@@ -5483,6 +5483,28 @@ fn cmdNotify(init: std.process.Init, opts: Options) !void {
     log.log(.info, "notify {s}: sent", .{peer_name});
 }
 
+/// `clanker mesh <sub>`: the operator surface over local serve's mesh control
+/// plane. The CLI never opens a mesh socket — only `clanker serve` owns those —
+/// so this dials the local serve over loopback HTTP via `peers/command.zig`.
+/// `--webui-port` (and config/env, through `resolveListen`) selects which serve
+/// when several run on one host.
+fn cmdMesh(init: std.process.Init, opts: Options) !void {
+    const cfg = try config.Config.load(init.io, init.arena.allocator(), std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    const listen = resolveListen(&cfg, init.environ_map, opts);
+    const control_host = mesh_cmd.controlHost(listen.host);
+    mesh_cmd.cmd(init, .{
+        .sub = opts.mesh_sub,
+        .arg1 = opts.mesh_arg1,
+    }, control_host, listen.port) catch |err| switch (err) {
+        mesh_cmd.Error.BadSubcommand => return error.BadSubcommand,
+        mesh_cmd.Error.MissingArg => return error.MissingArg,
+        mesh_cmd.Error.MeshOff => return error.ModuleDisabled,
+        mesh_cmd.Error.ServeNotRunning => return error.ServeNotRunning,
+        mesh_cmd.Error.RequestFailed => return error.HttpError,
+        else => return err,
+    };
+}
+
 fn cmdMcp(init: std.process.Init, opts: Options) !void {
     _ = opts;
     const gpa = init.gpa;
@@ -5510,23 +5532,6 @@ const subscribe_on = std.StaticStringMap(void).initComptime(.{
     .{ "1", {} },
     .{ "yes", {} },
 });
-
-/// `clanker mesh <sub>`: loopback HTTP to local serve. Never opens a mesh
-/// socket. `--webui-port` (and config/env via `resolveListen`) picks which
-/// serve when several run on one host.
-fn cmdMesh(init: std.process.Init, opts: Options) !void {
-    const arena = init.arena.allocator();
-    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
-    const listen = resolveListen(&cfg, init.environ_map, opts);
-    mesh_cmd.cmd(init, .{ .sub = opts.mesh_sub, .arg1 = opts.mesh_arg1 }, listen.host, listen.port) catch |err| switch (err) {
-        mesh_cmd.Error.BadSubcommand => return error.BadSubcommand,
-        mesh_cmd.Error.MissingArg => return error.MissingArg,
-        mesh_cmd.Error.MeshOff => return error.ModuleDisabled,
-        mesh_cmd.Error.ServeNotRunning => return error.ServeNotRunning,
-        mesh_cmd.Error.RequestFailed => return error.HttpError,
-        else => return err,
-    };
-}
 
 fn cmdChat(init: std.process.Init, opts: Options) !void {
     const io = init.io;
@@ -15163,15 +15168,26 @@ test "usage hints prefer a recognized command's own help" {
 
 test "built-in command help stays within 80 columns" {
     var buf: [16384]u8 = undefined;
+    var offending: std.ArrayList(u8) = .empty;
+    defer offending.deinit(std.testing.allocator);
     for (specs) |spec| {
         const help = renderCommandHelp(&buf, spec.command);
         var lines = std.mem.splitScalar(u8, help, '\n');
         while (lines.next()) |line| {
             if (line.len > 80) {
-                std.debug.print("{s} help line is {d} columns: {s}\n", .{ @tagName(spec.command), line.len, line });
-                return error.TestUnexpectedResult;
+                offending.appendSlice(std.testing.allocator, @tagName(spec.command)) catch {};
+                offending.appendSlice(std.testing.allocator, " | ") catch {};
+                offending.appendSlice(std.testing.allocator, line) catch {};
+                offending.append(std.testing.allocator, '\n') catch {};
             }
         }
+    }
+    if (offending.items.len > 0) {
+        var io = std.Io.Threaded.init(std.testing.allocator, .{});
+        defer io.deinit();
+        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "state/help-offenders.txt", .data = offending.items }) catch {};
+        std.debug.print("{s}", .{offending.items});
+        return error.TestUnexpectedResult;
     }
 }
 
