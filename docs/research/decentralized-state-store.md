@@ -234,8 +234,8 @@ candidates rather than above them.
   directory's own convention. The tier-1 finding is the only one that has
   survived unchanged throughout.
 - **Known gaps, stated so the next reader does not mistake breadth for depth.**
-  Marmot was never fetched at source. Licences for Consul, CockroachDB,
-  YugabyteDB and Turso are unverified. No candidate was compiled, deployed or
+  Licences for Consul, CockroachDB, YugabyteDB and Turso are unverified, as is
+  the Loro per-character figure (its source 403s). No candidate was compiled, deployed or
   benchmarked. `pg.zig` against YugabyteDB is a guess. Every performance figure
   is quoted.
 
@@ -982,29 +982,54 @@ insufficient, which is very nearly the transition this question is asking about.
   [QCon talk](https://qconlondon.com/presentation/apr2025/fast-eventual-consistency-inside-corrosion-distributed-system-powering-flyio),
   read 2026-08-16.
 
-### M. Marmot — multi-master SQLite replication over NATS JetStream
+### M. Marmot — leaderless multi-master SQLite with HLC last-write-wins
 
-- **What it is:** a distributed SQLite layer that replicates changes across nodes
-  **without application changes**, using NATS JetStream as the transport. v2 adds
-  an automatic anti-entropy system that continuously monitors and repairs
-  replication lag. Explicitly multi-master, in contrast to rqlite's single-leader
-  model.
-- **Topology / consistency:** full replication, AP-leaning.
-- **Fit:** interesting mainly because it **composes two candidates already in
-  this note**. If NATS is chosen for events (option E), Marmot gives replicated
-  SQLite on the same infrastructure with no additional server — which is a
-  materially better answer than either alone.
-- **Pros:** multi-master; no application changes; reuses NATS if it is already
-  there; SQLite semantics.
-- **Cons:** smaller project than the others here; couples the state store to NATS
-  specifically; conflict resolution semantics not verified in this pass.
-- **Unknowns:** maturity, licence, star count and conflict semantics — **not
-  fetched**, this option is the least verified in the note and is recorded as a
-  lead rather than a finding.
-- **Evidence:** [Marmot repo](https://github.com/maxpert/marmot),
-  [HN discussion](https://news.ycombinator.com/item?id=38600743),
-  [Lobsters discussion](https://lobste.rs/s/f9slcf/marmot_distributed_sqlite_replication),
-  read 2026-08-16, all `unverified` at the source.
+**Corrected on verification.** Earlier drafts described Marmot as replicating
+over NATS JetStream and recorded it as `unverified` from discussion threads. The
+repo says otherwise: **v2 does not use NATS at all.** The "composes with option
+E" argument the previous draft made for it was wrong and is withdrawn.
+
+- **What it is:** a *leaderless, distributed SQLite replication system* — any
+  node accepts writes. Replication is row-level Change Data Capture encoded with
+  msgpack, coordinated by **two-phase commit**, with the transaction log streamed
+  over **gRPC** (delta sync plus snapshot transfer) and a **gossip protocol** for
+  cluster communication. It also presents a MySQL wire-compatible interface.
+- **Topology / consistency:** full replication, AP with **tunable write
+  consistency — ONE, QUORUM or ALL** — which makes it the only candidate in this
+  note where the CP/AP choice is a per-write knob rather than a property of the
+  system. Conflicts resolve **last-write-wins on Hybrid Logical Clock
+  timestamps**, and split brain is repaired by anti-entropy.
+- **Maturity:** MIT, ~2.8k stars, 737 commits. Positions itself as production
+  ready and ships a SQL parser and WordPress support, but v2 is a young rewrite.
+  Fetched 2026-08-16.
+- **Fit:** on topology and on the stated requirement, strong — leaderless full
+  replication with per-write consistency covers both the "keep working when
+  isolated" and "do not diverge on this particular write" cases from one system.
+  HLC-based LWW is a more principled conflict story than fold-order over a
+  message log (PRD 0011) and a weaker one than CRDT convergence (option L).
+- **Pros:** any node writes; tunable consistency per write; SQLite semantics, so
+  the schema sketch maps over; automatic split-brain recovery; no separate
+  message broker to run, contrary to what the previous draft claimed.
+- **Cons — the project's own stated limitations:**
+  - **All tables in a database are replicated**; there is no selective table
+    watching. clanker would need a separate database for anything host-local,
+    which cuts against putting all of `state/` in one place.
+  - **Rows may sync out of order.** For the append-only logs, where order is the
+    only thing that matters, this needs thought.
+  - Eventually consistent; concurrent DDL on the same database should be avoided,
+    which interacts badly with a self-modifying harness that might migrate its
+    own schema.
+  - gRPC on the wire, so unlike etcd and Corrosion it is not reachable from
+    clanker's existing HTTP client.
+- **Unknowns:** whether "rows may sync out of order" is acceptable for the event
+  logs; how the 2PC write path behaves at the agent counts in question; Zig
+  client availability (none searched — the MySQL wire interface may be the
+  practical answer).
+- **Evidence:** [Marmot repo](https://github.com/maxpert/marmot), fetched
+  2026-08-16 for licence, stars, architecture, consistency model and the stated
+  limitations; [HN](https://news.ycombinator.com/item?id=38600743) and
+  [Lobsters](https://lobste.rs/s/f9slcf/marmot_distributed_sqlite_replication)
+  discuss the older v1 design and are now out of date.
 
 ### N. Consul — gossip membership plus a Raft-replicated KV
 
@@ -1206,7 +1231,7 @@ know everything".
 | N. Consul | **Full per host** | CP | none needed (HTTP) | Quorum | No — KV store | Multi-datacenter is first-class; licence unverified |
 | K. rqlite / dqlite | **Full per host** | CP | rqlite: none (HTTP); dqlite: C lib | 1 process, or embedded | Yes | dqlite embeds — no second daemon |
 | **L. Corrosion + cr-sqlite** | **Full per host** | **AP** | none needed (HTTP) | 1 Rust daemon | Mostly — blobs poorly | Proven at 800+ nodes; docs WIP |
-| M. Marmot | **Full per host** | AP-ish | via NATS | NATS + Marmot | Yes | Composes with E; least verified here |
+| M. Marmot | **Full per host** | **AP, tunable per write** | none found (gRPC; MySQL wire) | 1 daemon | Yes | Leaderless; all tables replicated; rows may sync out of order |
 | I. PRD 0011 mesh | **Full per host** | CP-ish (refuses) | n/a, native | **Nothing** | No — logs unreplicated | `max_members = 32`; per-entity SPOF |
 | E. NATS JetStream | Per-stream replicas | Tunable | `nats.zig`, official, 0.16 | 1 server | No — blobs missing | Client pre-1.0, API unstable |
 | F2. FoundationDB | Sharded cluster | CP | none; `libfdb_c` + FFI | Process cluster | **No — 100 KB values** | Half of existing sessions exceed it |
@@ -1228,7 +1253,7 @@ Four observations for whoever writes the RFC, none of them a recommendation:
    earlier drafts treated as decisive, separates the field much less than
    expected.
 4. **Composition beats selection in several places.** etcd for claims plus
-   Postgres for bulk; NATS plus Marmot; anything plus S3 for blobs. The survey
+   Postgres for bulk; anything plus S3 for blobs. The survey
    is not obliged to produce a single winner.
 
 ## Evidence log
@@ -1283,7 +1308,8 @@ Four observations for whoever writes the RFC, none of them a recommendation:
 | Fly.io runs Corrosion across 800+ nodes at p99 ~1 s, after replacing a central Consul state database | [Fly blog](https://fly.io/blog/corrosion/), [QCon](https://qconlondon.com/presentation/apr2025/fast-eventual-consistency-inside-corrosion-distributed-system-powering-flyio) | 2026-08-16 | medium |
 | cr-sqlite: MIT, ~3.8k stars; LWW registers, fractional indices, OR-sets, multi-value registers; inserts 2.5x slower than plain SQLite, reads unchanged; build against a release tag | [repo](https://github.com/vlcn-io/cr-sqlite), fetched | 2026-08-16 | high |
 | rqlite is Raft SQLite with an HTTP API and tunable read consistency; dqlite is the same idea as an embeddable library | [comparison](https://onidel.com/blog/sqlite-replication-vps-2025), [mvsqlite wiki](https://github.com/losfair/mvsqlite/wiki/Comparison-with-dqlite-and-rqlite) | 2026-08-16 | medium |
-| Marmot is multi-master SQLite replication over NATS JetStream with v2 anti-entropy | discussion threads only, repo not fetched | 2026-08-16 | low — unverified |
+| Marmot v2 is leaderless multi-master SQLite: gossip + msgpack CDC + 2PC + gRPC, HLC last-write-wins, tunable ONE/QUORUM/ALL, anti-entropy; MIT, 2.8k stars. **Does not use NATS** | [repo](https://github.com/maxpert/marmot), fetched | 2026-08-16 | high |
+| Marmot replicates all tables in a database, rows may sync out of order, concurrent DDL discouraged | same, stated limitations | 2026-08-16 | high |
 | Consul uses Serf gossip for membership and Raft for the KV catalog, with first-class multi-datacenter | [HashiCorp](https://www.hashicorp.com/en/resources/everybody-talks-gossip-serf-memberlist-raft-swim-hashicorp-consul) | 2026-08-16 | medium |
 | Postgres HA is failover-and-recovery (Patroni/repmgr); YugabyteDB's is resilience, and it is PG wire-compatible | [Yugabyte](https://www.yugabyte.com/blog/yugabytedb-resiliency-vs-postgresql-ha-solutions/) — vendor | 2026-08-16 | medium — vendor source, direction credible |
 | TigerBeetle is a Zig DBMS, VSR-replicated, upfront allocation, direct I/O, install-the-binary deployment — and its schema is fixed to accounts and transfers | [architecture](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/ARCHITECTURE.md), [dbdb.io](https://dbdb.io/db/tigerbeetle) | 2026-08-16 | high |
@@ -1467,7 +1493,7 @@ only ones that block choosing a tier-2 backend.
 - [Corrosion](https://github.com/superfly/corrosion) · [Fly blog](https://fly.io/blog/corrosion/) · [docs](https://superfly.github.io/corrosion/) · [CRDT docs](https://superfly.github.io/corrosion/crdts.html) · [QCon talk](https://qconlondon.com/presentation/apr2025/fast-eventual-consistency-inside-corrosion-distributed-system-powering-flyio)
 - [cr-sqlite](https://github.com/vlcn-io/cr-sqlite) — the CRDT SQLite extension underneath it
 - [rqlite](https://github.com/rqlite/rqlite) · [dqlite](https://dqlite.io/) · [SQLite replication comparison](https://onidel.com/blog/sqlite-replication-vps-2025) · [mvsqlite's dqlite/rqlite comparison](https://github.com/losfair/mvsqlite/wiki/Comparison-with-dqlite-and-rqlite)
-- [Marmot](https://github.com/maxpert/marmot) — unverified; [HN](https://news.ycombinator.com/item?id=38600743), [Lobsters](https://lobste.rs/s/f9slcf/marmot_distributed_sqlite_replication)
+- [Marmot](https://github.com/maxpert/marmot) — verified at source 2026-08-16; the [HN](https://news.ycombinator.com/item?id=38600743) and [Lobsters](https://lobste.rs/s/f9slcf/marmot_distributed_sqlite_replication) threads describe the older v1 and are out of date
 - [HashiCorp on gossip, Serf, memberlist, Raft and SWIM](https://www.hashicorp.com/en/resources/everybody-talks-gossip-serf-memberlist-raft-swim-hashicorp-consul)
 
 **Distributed SQL**
