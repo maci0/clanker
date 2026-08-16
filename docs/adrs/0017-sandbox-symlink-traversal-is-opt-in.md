@@ -30,4 +30,7 @@ Symlink traversal stays refused by default. A config option under [agent] enable
 
 The default posture is unchanged, so a security review sees the same refusal it saw before and the flag is the single thing to audit. Operators with external state opt in once in config.toml.
 
+Evidence and the two defects this came out of:
+[docs/reports/bugs/2026-08-16-guest-writes-refused-under-symlinked-state.md](../reports/bugs/2026-08-16-guest-writes-refused-under-symlinked-state.md).
+
 The honest downside: with the flag on, a symlink planted inside a granted prefix can point anywhere the process can write, so the grant is then only as strong as the tree it names, and a tool that can create symlinks inside its own prefix can widen its own reach. That is why it is off by default and why the option is named for what it actually permits rather than for the symptom it fixes.

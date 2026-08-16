@@ -2213,6 +2213,7 @@ pub const Config = struct {
         if (fields.global_instructions_file) dst.global_instructions_file = src.global_instructions_file;
         if (fields.state_dir) dst.state_dir = src.state_dir;
         if (fields.sandbox_root) dst.sandbox_root = src.sandbox_root;
+        if (fields.sandbox_follow_symlinks) dst.sandbox_follow_symlinks = src.sandbox_follow_symlinks;
         if (fields.workflows_dir) dst.workflows_dir = src.workflows_dir;
         if (fields.chains_dir) dst.chains_dir = src.chains_dir;
         if (fields.git_commit) dst.git_commit = src.git_commit;
@@ -3156,6 +3157,57 @@ test "config.local.toml web.allow replaces the global web allowlist" {
     const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(@as(usize, 1), cfg.web.allow.len);
     try std.testing.expectEqualStrings("local.example", cfg.web.allow[0]);
+}
+
+test "config.local.toml sandbox_follow_symlinks reaches the merged config" {
+    // Agent is field-merged, so a key that is parsed into the local Agent but
+    // not copied by applyAgentFields is read from the file, recorded as set,
+    // and then silently dropped. That is what happened here: the sandbox kept
+    // refusing a symlinked `state/` while config.local.toml plainly said to
+    // allow it, and nothing reported an unknown key because the key was known.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+        \\[agent]
+        \\max_iterations = 10
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
+        \\[agent]
+        \\sandbox_follow_symlinks = true
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expect(cfg.agent.sandbox_follow_symlinks);
+    // The local file set one key; the base value must survive.
+    try std.testing.expectEqual(@as(u32, 10), cfg.agent.max_iterations);
+}
+
+test "sandbox_follow_symlinks defaults to false with no config saying otherwise" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+        \\[agent]
+        \\max_iterations = 10
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    // ADR 0017: following a link out of the sandbox root is a security risk,
+    // so it is off unless the operator asked for it.
+    try std.testing.expect(!cfg.agent.sandbox_follow_symlinks);
 }
 
 test "config.local.toml can clear serve_as" {
