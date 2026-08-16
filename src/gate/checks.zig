@@ -229,6 +229,7 @@ test "providerKindLeakGate: vtable, forKind and tagName pass; comparisons and sw
     defer tmp.cleanup();
 
     try tmp.dir.createDirPath(io, "src/llm/providers");
+    try tmp.dir.createDirPath(io, "src/serve");
     // A switch on provider.kind inside the vtable dir is exactly where kind
     // logic belongs; it must not trip the gate. The pattern is concatenated
     // so checks.zig's own bytes do not match the gate's needles (the lintGate

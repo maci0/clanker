@@ -717,6 +717,69 @@ test concerns {
     try std.testing.expect(concerns(&theirs, "x")); // its author still sees it
 }
 
+/// The `state/goals.json` index entry derived from a folded goal-card. This is
+/// the canonical shape the goal loop reads; `goal_add` writes it today, and a
+/// future startup rebuild derives it from the board via `goalIndexEntries`.
+pub const GoalIndexEntry = struct {
+    id: []const u8,
+    objective: []const u8,
+    completion_criterion: []const u8,
+    proof: []const u8,
+    boundaries: []const u8,
+    stop_rule: []const u8,
+    max_iterations: ?u32,
+    worktree: []const u8,
+};
+
+/// Cards whose `goal` link is non-empty are goals. Return their index entries
+/// in board order (oldest created first, as `derive` returns).
+pub fn goalIndexEntries(arena: std.mem.Allocator, cards: []const Card) ![]GoalIndexEntry {
+    var out: std.ArrayListUnmanaged(GoalIndexEntry) = .empty;
+    for (cards) |c| {
+        if (c.goal.len == 0) continue;
+        try out.append(arena, .{
+            .id = c.goal,
+            .objective = c.title,
+            .completion_criterion = c.completion_criterion,
+            .proof = c.proof,
+            .boundaries = c.boundaries,
+            .stop_rule = c.stop_rule,
+            .max_iterations = c.max_iterations,
+            .worktree = c.worktree,
+        });
+    }
+    return out.items;
+}
+
+test "goalIndexEntries extracts only linked goal-cards" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const goal_card = Card{
+        .id = "m1",
+        .title = "ship it",
+        .created_by = "x",
+        .ts = 1,
+        .goal = "g1",
+        .completion_criterion = "tests pass",
+        .proof = "scripts/verify.sh",
+        .stop_rule = "abort on gate",
+        .boundaries = "leave the CLI",
+        .max_iterations = 5,
+        .worktree = "clanker/g1",
+    };
+    const plain_card = Card{ .id = "m2", .title = "chore", .created_by = "x", .ts = 2 };
+    const entries = try goalIndexEntries(arena, &.{ goal_card, plain_card });
+    try std.testing.expectEqual(@as(usize, 1), entries.len);
+    try std.testing.expectEqualStrings("g1", entries[0].id);
+    try std.testing.expectEqualStrings("ship it", entries[0].objective);
+    try std.testing.expectEqualStrings("tests pass", entries[0].completion_criterion);
+    try std.testing.expectEqualStrings("scripts/verify.sh", entries[0].proof);
+    try std.testing.expectEqual(@as(?u32, 5), entries[0].max_iterations);
+    try std.testing.expectEqualStrings("clanker/g1", entries[0].worktree);
+}
+
 /// Whether every card this one waits on is done. A card whose dependencies are
 /// unmet is not blocked from moving — the board reports it rather than refusing,
 /// because the log has no transaction in which to refuse.
