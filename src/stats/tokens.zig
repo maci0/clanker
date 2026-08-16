@@ -198,12 +198,12 @@ fn trimLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.
 
 // -------------------------------------------------------------- aggregation --
 
-/// Parses the whole log (arena-owned Records). Empty/missing log -> empty.
-pub fn loadAll(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8) ![]Record {
-    _ = gpa;
-    const path = subPath(arena, state_dir) catch return &[_]Record{};
-    const raw = base.readFileAlloc(io, path, arena, .limited(max_log_bytes)) catch return &[_]Record{};
+/// Reads the whole log, skipping unparseable lines, as arena-owned Records.
+/// Empty/missing log -> empty. Shared by `loadAll` and `aggregate` so the
+/// read + line-split + parse loop cannot drift between them.
+fn parseRecords(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, path: []const u8) ![]Record {
     var out: std.ArrayList(Record) = .empty;
+    const raw = base.readFileAlloc(io, path, arena, .limited(max_log_bytes)) catch return &[_]Record{};
     var lines = std.mem.splitScalar(u8, raw, '\n');
     while (lines.next()) |line| {
         if (line.len == 0) continue;
@@ -213,16 +213,20 @@ pub fn loadAll(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
     return out.toOwnedSlice(arena);
 }
 
+/// Parses the whole log (arena-owned Records). Empty/missing log -> empty.
+pub fn loadAll(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8) ![]Record {
+    _ = gpa;
+    const path = subPath(arena, state_dir) catch return &[_]Record{};
+    return parseRecords(base, io, arena, path);
+}
+
 /// Groups records by (provider, model), newest-first by total tokens.
 pub fn aggregate(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8) ![]Stat {
     _ = gpa;
     const path = subPath(arena, state_dir) catch return &.{};
-    const raw = base.readFileAlloc(io, path, arena, .limited(max_log_bytes)) catch return &.{};
+    const recs = try parseRecords(base, io, arena, path);
     var by_key: std.StringArrayHashMapUnmanaged(Stat) = .empty;
-    var lines = std.mem.splitScalar(u8, raw, '\n');
-    while (lines.next()) |line| {
-        if (line.len == 0) continue;
-        const r = std.json.parseFromSliceLeaky(Record, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
+    for (recs) |r| {
         const key = std.fmt.allocPrint(arena, "{s}/{s}", .{ r.provider, r.model }) catch continue;
         const gop = try by_key.getOrPut(arena, key);
         if (!gop.found_existing) {

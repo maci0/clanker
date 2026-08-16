@@ -592,6 +592,10 @@ pub const RoomMeta = struct {
 };
 
 fn metaPath(arena: std.mem.Allocator, state_dir: []const u8) ![]const u8 {
+    // Same empty-state_dir rule as subPath/writeCursor: an unguarded "" would
+    // produce "/room_meta.json", which openat resolves at the filesystem root
+    // instead of the working directory.
+    if (state_dir.len == 0) return "room_meta.json";
     return std.fmt.allocPrint(arena, "{s}/room_meta.json", .{state_dir});
 }
 
@@ -1237,6 +1241,32 @@ test "subscribe does not overwrite malformed state" {
     try std.testing.expectError(error.InvalidSubscriptionState, subscribe(tmp.dir, io, std.testing.allocator, arena, "", "ops", true));
     const preserved = try tmp.dir.readFileAlloc(io, sub_path, arena, .limited(1024));
     try std.testing.expectEqualStrings(malformed, preserved);
+}
+
+test "meta ops with empty state_dir stay in the working directory" {
+    // metaPath used to build "/room_meta.json" for state_dir == "", which
+    // openat resolves at the filesystem root. The module's contract is that
+    // every state file lives under base + state_dir, and "" means cwd.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try setTopic(tmp.dir, io, std.testing.allocator, arena, "", "dev", "topic");
+    const topic = try getTopic(tmp.dir, io, arena, "", "dev");
+    try std.testing.expectEqualStrings("topic", topic.?);
+
+    // The meta file must exist under the base dir, never at "/room_meta.json".
+    try tmp.dir.access(io, "room_meta.json", .{});
+    const pinned = try togglePin(tmp.dir, io, std.testing.allocator, arena, "", "dev", "m1");
+    try std.testing.expect(pinned);
+    const pins = try getPins(tmp.dir, io, arena, "", "dev");
+    try std.testing.expectEqual(@as(usize, 1), pins.?.len);
 }
 
 test "receive filters by subscription" {
