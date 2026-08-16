@@ -81,6 +81,7 @@ its current text.
 ## Inventory
 
 <!-- inventory:adr:start -->
+- [ADR 0018 — Each record store is its own guest over shared scaffolding](0018-each-record-store-is-its-own-guest-over-shared-scaffolding.md) — Accepted
 - [ADR 0001 — The Kanban board is a chatroom, not a separate store](0001-board-is-a-chatroom.md) — Accepted
 - [ADR 0002 — Private run todos and the shared board are separate mechanisms](0002-private-todos-vs-shared-board.md) — Accepted
 - [ADR 0003 — Autoresearch is a generic harness loop](0003-autoresearch-is-a-generic-harness-loop.md) — Accepted

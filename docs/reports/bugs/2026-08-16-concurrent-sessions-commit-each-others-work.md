@@ -133,3 +133,60 @@ piece of work was accounted for.
 - Commits: `f7995c6b` the sweep, `4c170a41` the merge that integrated it,
   `8b885c8c` the CLI wiring that closed the README mismatch.
 - Investigation: none; the trace is in this record.
+## The overwritten session's account
+
+Filed by the session whose work was swept, to add the parts visible only from
+that side.
+
+**What the deletion looked like from inside.** The work was a feature in two
+halves: WASM guests plus manifests, and the CLI verbs that call them. The
+guests were written first and left on disk untracked while the CLI half was
+being written — normal, since a helper whose only caller is a test is exactly
+what `src/improve/inert_check.zig` classifies as inert, so both halves belong
+in one commit. Between writing the guests and writing the CLI half, an
+`Edit` to `tools/zig/adr.zig` returned *File does not exist*. That is the
+first and only signal anything was wrong. The tool call did not fail because
+of a permission or a path error; the file had simply stopped being there.
+
+**Why the recovery was not obvious.** `git status` showed my remaining files
+as untracked and my tracked edits as absent. `git stash list` showed a
+`claude-session-wip` entry, and `git stash show --include-untracked` on it
+listed my `doc_scaffold.zig`, `cli.zig` and `main.zig` — but not the guests,
+because the stash had been taken without `-u` and the guests were untracked at
+the time. So the tracked half of my work was recoverable from the stash and the
+untracked half existed nowhere in git at all. It was recoverable only because
+the sweeping commit had already captured it, which is the same commit that
+caused the problem.
+
+**The check that made the stash safe to take.** Before restoring anything I ran
+`git diff HEAD stash@{0} --stat` on just the three files I wanted. It reported
+426 insertions and **zero deletions**, which is what made it safe: the stash
+differed from HEAD only by my additions, so no other session had competing
+changes in those files and I could take them wholesale rather than merging by
+hand. A non-zero deletion count would have meant the opposite, and restoring
+wholesale would have silently reverted someone else's work. That diff is worth
+making a required step in the runbook — it is the difference between recovering
+and overwriting.
+
+**One trap specific to this failure mode.** After the sweep, my in-memory view
+of the index was stale, so a file that was by then *tracked* looked untracked
+to me. I deleted my newer copy of `tools/zig/adr.zig` to unblock what I thought
+was a rebase collision. Because the file was tracked, `git` held the swept
+version — but not mine, which was newer by one change (a search filter
+excluding `README.md` and `TEMPLATE.md` from grep hits). That change existed
+in no commit and in no stash. It survived only because I had copied the file
+outside the repository first. **Copy to a path outside the working tree before
+deleting anything you cannot see in `git log`** — `git status` is not evidence
+about a file when your index view predates another session's commit.
+
+**Correction to the follow-up list.** The research Google Programmable Search
+fallback *does* have a CHANGELOG entry, under `## [Unreleased]` → `### Added`,
+beginning "Google as the research sweep's third web backend". That item can be
+struck.
+
+**Cross-session messaging worked.** The coordination that resolved this was
+peer messages, not the repository: an explicit ownership split (which paths
+belong to which session), an explicit hold on `.git`-writing commands while one
+session finished a rebase, and an explicit release afterwards. Nothing in the
+checkout communicates that, which is why the collision happened before the
+messaging started rather than after.

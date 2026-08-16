@@ -94,6 +94,7 @@ and Implementation lists checkable file-level phases.
 | [0034](0034-session-subprocs.md) | Session subprocess inspector | Draft | Lists/kills 0016 registry rows from doctor + a guest |
 | [0035](0035-goal-lifecycle.md) | Goal lifecycle capabilities | Shipped | Draft, persist, and execute are independent |
 | [0036](0036-sixel-mascot-rendering.md) | SIXEL mascot rendering | In progress | Kitty → SIXEL → Unicode cells implemented; manual terminal matrix open |
+| [0037](0037-decision-and-spec-stores-on-the-cli.md) | Decision and spec stores on the CLI | Shipped |  |
 <!-- inventory:prd:end -->
 
 ## Recommended build order (Drafts)
