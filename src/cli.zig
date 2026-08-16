@@ -11766,8 +11766,25 @@ test validWorkspace {
     try std.testing.expect(validWorkspace("web ui"));
     try std.testing.expect(!validWorkspace("a/b"));
     try std.testing.expect(!validWorkspace("a\\b"));
+    try std.testing.expect(!validWorkspace("a:b"));
     try std.testing.expect(!validWorkspace("a\nb"));
     try std.testing.expect(!validWorkspace("x" ** 65));
+}
+
+/// The effective instance id: `[instance] id` when set, else `[instance] name`
+/// (first boot persists one), else a stable fallback. This is the identity the
+/// membership roster and worktree branch ids use, so two instances cannot
+/// generate the same branch name by accident (RFC 0001).
+fn selfInstanceId(cfg: *const config.Config) []const u8 {
+    if (cfg.instance.id.len > 0) return cfg.instance.id;
+    if (cfg.instance.name.len > 0) return cfg.instance.name;
+    return "self";
+}
+
+/// The primary (first) root's path, for callers that still assume one folder.
+fn workspacePrimaryPath(w: workspace_mod.Workspace) []const u8 {
+    if (w.roots.len > 0) return w.roots[0].path;
+    return "";
 }
 
 const WorkspaceRoot = struct {
@@ -11799,6 +11816,9 @@ fn openWorkspaceRoot(io: std.Io, arena: std.mem.Allocator, id: []const u8) !Work
 const WorkspaceBody = struct {
     name: []const u8 = "",
     path: []const u8 = "",
+    /// Optional multi-root form: `[{"name":"core","path":"..."}, ...]`. When
+    /// present it wins over the single `path` field.
+    roots: []const workspace_mod.Root = &.{},
 };
 
 fn handleWorkspaces(
