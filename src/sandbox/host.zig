@@ -3165,6 +3165,13 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
 
     // Lock on a separate file, not on the file being rewritten (a replace
     // invalidates a lock held on the replaced inode).
+    // Parent dirs first: the lock sits next to the target, so a first write
+    // into a missing directory (`state/schedule.json`) must not FileNotFound
+    // the lock file.
+    if (std.mem.findScalarLast(u8, full, '/')) |slash| {
+        if (slash > 0) base.createDirPath(sb.io, full[0..slash]) catch {};
+    }
+
     const lock_path = std.fmt.allocPrint(sb.gpa, "{s}.ck_cas.lock", .{full}) catch return Err.invalid;
     defer sb.gpa.free(lock_path);
     const lock_file = base.createFile(sb.io, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| {
@@ -3193,11 +3200,6 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
         // Creating a new file, hash matches (both empty).
     } else if (expected_hex.len != hex.len or !std.mem.eql(u8, expected_hex, &hex)) {
         return Err.mismatch;
-    }
-
-    // Create parent directories.
-    if (std.mem.findScalarLast(u8, full, '/')) |slash| {
-        if (slash > 0) base.createDirPath(sb.io, full[0..slash]) catch {};
     }
 
     // Write (replace) the file.
@@ -6412,6 +6414,34 @@ test "fsWriteIfImpl writes when hash matches and rejects on mismatch" {
     const after3 = try tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
     defer gpa.free(after3);
     try std.testing.expectEqualStrings("updated", after3);
+}
+
+test "fsWriteIfImpl creates missing parent directories" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var sb = Sandbox{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = undefined,
+    };
+
+    const rc = fsWriteIfImpl(&sb, tmp.dir, "state/schedule.json", "", "{\"entries\":[]}");
+    try std.testing.expectEqual(Err.ok, rc);
+    const got = try tmp.dir.readFileAlloc(io, "state/schedule.json", gpa, .limited(1 << 20));
+    defer gpa.free(got);
+    try std.testing.expectEqualStrings("{\"entries\":[]}", got);
 }
 
 test "a tool may run only the commands its manifest names" {
