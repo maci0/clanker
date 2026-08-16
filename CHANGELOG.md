@@ -62,13 +62,28 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   calls the same sandboxed tool the agent uses, so the notes in
   `docs/research/`, their inventory and the compare-and-swap writes are shared
   rather than reimplemented.
+- Brave Search and Marginalia as the research sweep's fourth and fifth web
+  backends. Brave is keyed on `BRAVE_SEARCH_KEY` (sent as a header, so it stays
+  out of any log that records the URL) and runs its own crawl rather than
+  reselling another index. Marginalia is the public API, needs no key at all,
+  and is last so a sweep always has one more thing to try however little is
+  configured; its index is independent and biased towards small non-commercial
+  pages, so it surfaces what the mainstream engines rank away.
+- Scraped titles and snippets have their internal whitespace collapsed. A
+  title laid out for a browser arrives carrying newlines — Marginalia returns
+  ziglang.org as "Home\n  ⚡\n  Zig Programming Language" — which printed as
+  three ragged lines in the middle of a result list.
 - Google as the research sweep's third web backend, after DuckDuckGo Lite and
   Bing, reached through the Programmable Search JSON API and enabled by setting
   both `GOOGLE_SEARCH_KEY` and `GOOGLE_SEARCH_CX`. With either unset the
   backend is skipped and the sweep says so once. It is the API rather than a
   scraper because `www.google.com/search` answers a plain HTTP client with a
   "turn on JavaScript" page carrying no result links, whatever user agent it is
-  asked with, including the legacy `gbv=1` no-JavaScript parameter.
+  asked with, including the legacy `gbv=1` no-JavaScript parameter. The same
+  holds for Baidu (百度安全验证, its security-verification page, with a browser
+  user agent and Chinese `Accept-Language` alike), Ecosia, Startpage, Mojeek
+  and the public searx instances, none of which publish a usable web search
+  API either — which is why the mainstream backends are keyed APIs.
 - `clanker reports status <path> <state> <note>` and a matching `status` action
   on the `reports` tool: `open`, `investigating`, `resolved`, `reopened` or
   `closed` on a bug report or investigation. It rewrites the record's `## Status`

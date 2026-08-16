@@ -146,7 +146,38 @@ pub fn parseDdgLite(html: []const u8, out: []WebResult, max: usize) usize {
     return count;
 }
 
-/// Parses a Google Programmable Search JSON response into results.
+/// Field names of one result in a JSON search API's array.
+const Fields = struct { title: []const u8, url: []const u8, snippet: []const u8 };
+
+/// Copies an array of JSON result objects into `out`, skipping any that lack a
+/// title or a URL. Shared because three of the four keyed backends differ only
+/// in where the array sits and what the three fields are called; a per-backend
+/// copy of this loop is a per-backend place to get the skip rule wrong.
+fn collectResults(items: std.json.Value, fields: Fields, out: []WebResult, max: usize) usize {
+    if (items != .array) return 0;
+    var count: usize = 0;
+    for (items.array.items) |item| {
+        if (count >= max) break;
+        if (item != .object) continue;
+        const title = strOf(item.object, fields.title) orelse continue;
+        const url = strOf(item.object, fields.url) orelse continue;
+        if (title.len == 0 or url.len == 0) continue;
+        out[count] = .{ .title = title, .url = url, .snippet = strOf(item.object, fields.snippet) orelse "" };
+        count += 1;
+    }
+    return count;
+}
+
+/// Parses a JSON document and hands the array at `key` to `collectResults`.
+/// An error response carries no such array, which is not a failure to report
+/// from here: the caller counts zero results and moves to the next backend.
+fn parseJsonResults(alloc: std.mem.Allocator, document: []const u8, key: []const u8, fields: Fields, out: []WebResult, max: usize) usize {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, document, .{}) catch return 0;
+    if (parsed != .object) return 0;
+    return collectResults(parsed.object.get(key) orelse return 0, fields, out, max);
+}
+
+/// Parses a Google Programmable Search JSON response.
 ///
 /// Not a scraper. `www.google.com/search` answers every plain HTTP client with
 /// a "turn on JavaScript" interstitial — verified against the legacy `gbv=1`
@@ -159,24 +190,41 @@ pub fn parseDdgLite(html: []const u8, out: []WebResult, max: usize) usize {
 /// everything written to `out` slices into that parse, which the caller keeps
 /// alive. Returns the number of results written (capped by `max`).
 pub fn parseGoogleApi(alloc: std.mem.Allocator, document: []const u8, out: []WebResult, max: usize) usize {
+    return parseJsonResults(alloc, document, "items", .{ .title = "title", .url = "link", .snippet = "snippet" }, out, max);
+}
+
+/// Parses a Brave Search API response: `{"web":{"results":[{"title","url",
+/// "description"}, ...]}}`. The array is nested one level down, so this cannot
+/// go through `parseJsonResults`.
+///
+/// Brave is here because the mainstream engines cannot be reached any other
+/// way from a sandboxed guest: Google, Baidu, Ecosia, Startpage, Mojeek and
+/// the public searx instances all answer a plain HTTP client with a consent
+/// wall, a captcha or a JavaScript challenge. An API with a key is what is
+/// left, and Brave runs its own index rather than reselling one.
+pub fn parseBraveApi(alloc: std.mem.Allocator, document: []const u8, out: []WebResult, max: usize) usize {
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, document, .{}) catch return 0;
     if (parsed != .object) return 0;
-    // An error response ({"error":{...}}) has no items and is not a failure to
-    // report from here: the caller counts zero results and moves on.
-    const items = parsed.object.get("items") orelse return 0;
-    if (items != .array) return 0;
+    const web = parsed.object.get("web") orelse return 0;
+    if (web != .object) return 0;
+    return collectResults(
+        web.object.get("results") orelse return 0,
+        .{ .title = "title", .url = "url", .snippet = "description" },
+        out,
+        max,
+    );
+}
 
-    var count: usize = 0;
-    for (items.array.items) |item| {
-        if (count >= max) break;
-        if (item != .object) continue;
-        const title = strOf(item.object, "title") orelse continue;
-        const link = strOf(item.object, "link") orelse continue;
-        if (title.len == 0 or link.len == 0) continue;
-        out[count] = .{ .title = title, .url = link, .snippet = strOf(item.object, "snippet") orelse "" };
-        count += 1;
-    }
-    return count;
+/// Parses a Marginalia public API response: `{"results":[{"title","url",
+/// "description"}, ...]}`.
+///
+/// The only backend in the chain that needs no key at all, which is why it is
+/// last: whatever else is configured, a sweep always has one more thing to try.
+/// Its index is independent and deliberately biased towards small,
+/// non-commercial pages, so it finds what the mainstream engines rank away
+/// rather than the same first page again.
+pub fn parseMarginalia(alloc: std.mem.Allocator, document: []const u8, out: []WebResult, max: usize) usize {
+    return parseJsonResults(alloc, document, "results", .{ .title = "title", .url = "url", .snippet = "description" }, out, max);
 }
 
 fn strOf(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
@@ -315,6 +363,36 @@ fn decodeEntity(src: []const u8, dst: []u8) ?EntityDecode {
 /// Cleans a raw HTML/XML text field into `dst` (which must hold >= src.len
 /// bytes): strips `<...>` markup and unescapes the common character
 /// references. Never grows its input, so dst of src.len bytes is always enough.
+/// Collapses every run of whitespace into one space and trims the ends,
+/// writing into `dst` (which must hold >= src.len bytes; the result never
+/// grows).
+///
+/// A scraped title is laid out for a browser, not for a line of terminal
+/// output: Marginalia returned "Home\n  \u{26A1}\n  Zig Programming Language"
+/// for ziglang.org, which printed as three ragged lines in the middle of a
+/// result list. Newlines inside a field are a layout bug wherever that field
+/// is rendered, so they are removed once here rather than in each renderer.
+pub fn collapseSpace(src: []const u8, dst: []u8) []const u8 {
+    var j: usize = 0;
+    var pending = false;
+    for (src) |c| {
+        if (c == ' ' or c == '\t' or c == '\n' or c == '\r') {
+            // Only emit a separator once something follows it, so trailing
+            // whitespace never reaches the output at all.
+            pending = j > 0;
+            continue;
+        }
+        if (pending) {
+            dst[j] = ' ';
+            j += 1;
+            pending = false;
+        }
+        dst[j] = c;
+        j += 1;
+    }
+    return dst[0..j];
+}
+
 pub fn cleanInto(src: []const u8, dst: []u8) []const u8 {
     var j: usize = 0;
     var i: usize = 0;
@@ -454,6 +532,71 @@ test "parseGoogleApi returns nothing for an error, an empty result or junk" {
     try std.testing.expectEqual(@as(usize, 0), parseGoogleApi(a, "", &out, 4));
 }
 
+test "parseBraveApi reads the nested web.results array" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const body =
+        \\{"web":{"results":[
+        \\ {"title":"Zig","url":"https://ziglang.org/","description":"a language"},
+        \\ {"title":"Docs","url":"https://ziglang.org/documentation/","description":"the docs"}]}}
+    ;
+    var out: [4]WebResult = undefined;
+    try std.testing.expectEqual(@as(usize, 2), parseBraveApi(a, body, &out, 4));
+    try std.testing.expectEqualStrings("Zig", out[0].title);
+    try std.testing.expectEqualStrings("https://ziglang.org/", out[0].url);
+    try std.testing.expectEqualStrings("a language", out[0].snippet);
+
+    var one: [1]WebResult = undefined;
+    try std.testing.expectEqual(@as(usize, 1), parseBraveApi(a, body, &one, 1));
+}
+
+test "parseBraveApi returns nothing for its documented error shape" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var out: [4]WebResult = undefined;
+    // Exactly what the API answers a request with no subscription token.
+    const err =
+        \\{"error":{"code":"VALIDATION","detail":"Unable to validate request parameter(s)","status":422},"type":"ErrorResponse"}
+    ;
+    try std.testing.expectEqual(@as(usize, 0), parseBraveApi(a, err, &out, 4));
+    // A web object with no results array, and a web field of the wrong type.
+    try std.testing.expectEqual(@as(usize, 0), parseBraveApi(a, "{\"web\":{}}", &out, 4));
+    try std.testing.expectEqual(@as(usize, 0), parseBraveApi(a, "{\"web\":[]}", &out, 4));
+    try std.testing.expectEqual(@as(usize, 0), parseBraveApi(a, "not json", &out, 4));
+}
+
+test "parseMarginalia reads the keyless public API response" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // Trimmed from a real api.marginalia.nu/public/search response.
+    const body =
+        \\{"license":"CC-BY-NC-SA 4.0","page":1,"pages":11,"query":"zig programming","results":[
+        \\ {"url":"https://andrewkelley.me/post/intro-to-zig.html","title":"Introduction to the Zig Programming Language","description":"creating a new programming language"},
+        \\ {"url":"https://ziglang.org/","title":"Zig","description":""}]}
+    ;
+    var out: [4]WebResult = undefined;
+    try std.testing.expectEqual(@as(usize, 2), parseMarginalia(a, body, &out, 4));
+    try std.testing.expectEqualStrings("https://andrewkelley.me/post/intro-to-zig.html", out[0].url);
+    try std.testing.expectEqualStrings("Introduction to the Zig Programming Language", out[0].title);
+    // An empty description is not a reason to drop a usable result.
+    try std.testing.expectEqualStrings("", out[1].snippet);
+}
+
+test "parseMarginalia and parseGoogleApi skip results missing a title or url" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var out: [4]WebResult = undefined;
+    try std.testing.expectEqual(@as(usize, 1), parseMarginalia(a,
+        \\{"results":[{"title":"no url"},{"url":"https://a.dev"},{"title":"ok","url":"https://b.dev"}]}
+    , &out, 4));
+    try std.testing.expectEqualStrings("ok", out[0].title);
+    try std.testing.expectEqual(@as(usize, 0), parseMarginalia(a, "{\"results\":[]}", &out, 4));
+}
+
 test "isBotChallenge detects the anomaly page" {
     try std.testing.expect(isBotChallenge(
         "Unfortunately, bots use DuckDuckGo too.<div class=\"anomaly-modal\">",
@@ -467,6 +610,19 @@ test "percentEncode encodes reserved, leaves unreserved" {
     try std.testing.expectEqualStrings("zig%20st.%20%2Blang", enc);
     const back = percentDecode(enc, &buf);
     try std.testing.expectEqualStrings("zig st. +lang", back);
+}
+
+test "collapseSpace folds runs of whitespace and trims the ends" {
+    var buf: [128]u8 = undefined;
+    // The shape Marginalia returned for ziglang.org.
+    try std.testing.expectEqualStrings(
+        "Home Zig Programming Language",
+        collapseSpace("Home\n  \n  Zig Programming Language\n", &buf),
+    );
+    try std.testing.expectEqualStrings("a b", collapseSpace("  a \t\r\n b  ", &buf));
+    try std.testing.expectEqualStrings("", collapseSpace("   \n\t ", &buf));
+    try std.testing.expectEqualStrings("", collapseSpace("", &buf));
+    try std.testing.expectEqualStrings("solid", collapseSpace("solid", &buf));
 }
 
 test "cleanInto strips tags and unescapes entities" {
