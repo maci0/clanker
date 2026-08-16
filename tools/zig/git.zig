@@ -105,7 +105,18 @@ fn gitVerb(args: []const []const u8) ?[]const u8 {
 /// verbs git_remote_ops grants (`push`, `merge`, `checkout`) are skipped, the
 /// same lift the host applies — the deny message must not pre-empt the config.
 fn deniedVerb(args: []const []const u8, git_remote_ops: bool) ?[]const u8 {
-    for (args) |a| {
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const a = args[i];
+        if (a.len == 0) continue;
+        if (a[0] == '-') {
+            for (git_value_options) |o| {
+                if (std.mem.eql(u8, a, o)) {
+                    i += 1; // option value is data, not a command token
+                    break;
+                }
+            }
+        }
         for (denied_tokens) |t| {
             if (git_remote_ops and isGitRemoteOpToken(t)) continue;
             if (argDenied(a, t)) return t;
