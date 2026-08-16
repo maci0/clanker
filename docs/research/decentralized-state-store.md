@@ -2,7 +2,7 @@
 
 ## Status
 
-Current — searched 2026-08-16. Verified against the tree on 2026-08-16; the daemon option (A) still needs the loopback spike in Open Questions.
+Current — searched 2026-08-16. Revised after reading PRD 0011 (clanker mesh): the multi-host half is already decided by the home-instance rule, so the open problem is single-host process concurrency.
 
 Research is evidence, not a decision: it records what exists, how good it is,
 and how confident the finding is. The decision that follows belongs in an
@@ -22,7 +22,47 @@ Three constraints make the question answerable rather than open-ended:
 2. **The harness is Zig 0.16 with two fetched dependencies** (`zwasm`, `vaxis`)
    plus vendored TOML. A candidate's cost includes what it adds to that list.
 3. **Concurrency is real, not hypothetical.** The target is tens to thousands of
-   concurrent agents, across more than one host once mesh lands.
+   concurrent agents. The next section establishes that this is a *single-host*
+   figure — many short-lived processes sharing one `state/` — because mesh caps
+   membership at 32.
+
+## Constraints locked by PRD 0011 (clanker mesh)
+
+Read after the first draft of this note and it changed several conclusions, so
+it goes before the evidence rather than in a footnote.
+[PRD 0011](../prds/0011-clanker-mesh.md) is marked *design locked*, Phase 1
+partly built. Five of its decisions bound this question:
+
+1. **Loopback HTTP to serve is already the house pattern.** Locked decision 1:
+   *"Serve owns sockets. Everyone else is a loopback HTTP client."* `clanker
+   mesh`, `ck_mesh` inside `clanker run` and the REPL, and `chatrooms.fanOut` in
+   any process all reach the mesh by POSTing to the local serve. Option A below
+   is therefore not a new architecture — it is the existing one, extended from
+   mesh control to state.
+2. **The door is a named host channel, not a guest network grant.** `ck_mesh` is
+   registered next to `ck_chat` and gated on `tool_self_name`; *"the host
+   function is the sandbox door; the I/O is not raw TCP."* The guest never holds
+   the socket and never needs `network_allow`. This is a better answer than the
+   one the first draft reached, and it removes the loopback-authorization
+   objection to option A.
+3. **No second daemon.** An explicit non-goal. Whatever owns state must be
+   `clanker serve`, not a new process.
+4. **No CRDT, no merge — explicitly.** Non-goal: *"Automatic conflict resolution
+   beyond the home-instance rule. No CRDT, no merge."* Concurrency across hosts
+   is resolved by **ownership**: the member that first shares a session is its
+   *home*, home writes the canonical record, everyone else holds a read-only
+   replica under `state/mesh/<home-id>/`, and continuing a session whose home is
+   unreachable is **refused** (`home_unreachable`) rather than forked.
+5. **Mesh is 32 members, not 10⁴.** `max_members = 32`, full mesh, *"32·31/2 =
+   496 connections, which is the point of the cap."* So the thousands-of-agents
+   figure in the question is **within one host** — many short-lived `clanker
+   run` processes against one serve — and *not* across mesh peers. The two
+   scales need different mechanisms, and conflating them was the first draft's
+   main error.
+
+The net effect: the multi-host half of the question is already decided, and
+decided *against* a shared store. What remains genuinely open is the local half —
+how many processes on one machine safely share one `state/`.
 
 ## TL;DR
 
@@ -40,15 +80,19 @@ Three constraints make the question answerable rather than open-ended:
   `state/token_stats.jsonl` is already 3.2 MB — CAS on the hot append-only logs
   fails `too_large` before contention is even reached — `high` confidence,
   verified in tree.
-- **The cheapest credible architecture is already 80% built and needs no new
-  dependency: a local state daemon over the existing HTTP surface.** `clanker
-  serve` exposes 43 distinct `/api/*` routes, `ck_http` is granted per-manifest
-  by `network_allow`, and `networkAllowed` (`src/sandbox/host.zig:2350`)
-  glob-matches the **hostname only** — the port is never examined — so a
-  `network_allow: ["127.0.0.1"]` grant admits a daemon on any port. An HTTP
-  write path is immune to
-  `safeJoinSecure` hardening by construction, because it is not a path —
-  `high` confidence, verified in tree.
+- **The answer is already the house pattern: a `ck_state` host channel that
+  talks loopback HTTP to `clanker serve`.** PRD 0011 locks *"serve owns sockets,
+  everyone else is a loopback HTTP client"* and routes `ck_mesh` exactly this
+  way; `clanker serve` already exposes 43 distinct `/api/*` routes. An HTTP
+  write path is immune to `safeJoinSecure` hardening by construction, because it
+  is not a path — `high` confidence, verified in tree and against
+  [PRD 0011](../prds/0011-clanker-mesh.md).
+- **Route it through a name-gated channel, not a guest `network_allow` grant.**
+  `networkAllowed` (`src/sandbox/host.zig:2350`) glob-matches the hostname and
+  never examines the port, so a `["127.0.0.1"]` grant would admit *any* local
+  port — including other services on the box. `ck_mesh`'s design avoids this by
+  making the host do the I/O behind a `tool_self_name` gate. State should copy
+  that, not `ck_http` — `high` confidence.
 - **SQLite is not ruled out by the "no libc" rule.** `build.zig` already sets
   `link_libc = true` for the host binary (`build.zig:126`, `:406`, `:412`). The
   real objection to SQLite is its write model, not its C-ness: WAL gives many
@@ -57,23 +101,30 @@ Three constraints make the question answerable rather than open-ended:
   all three, or it fails under load — `high` confidence
   ([tenthousandmeters](https://tenthousandmeters.com/blog/sqlite-concurrent-writes-and-database-is-locked-errors/),
   [berthub](https://berthub.eu/articles/posts/a-brief-post-on-sqlite3-database-locked-despite-timeout/)).
-- **CRDTs are the wrong shape for most of clanker's state.** The bulk of
-  `state/` is append-only logs and single-owner records, where last-writer-wins
-  on an ordered append is already correct. Text CRDTs cost 16–32 bytes of
-  metadata per character and pull in a Rust/WASM runtime — `medium` confidence
-  ([Loro benchmarks](https://loro.dev/docs/performance),
-  [PkgPulse comparison](https://www.pkgpulse.com/guides/yjs-vs-automerge-vs-loro-crdt-libraries-2026)).
-- **Turso/libSQL embedded replicas are the closest off-the-shelf match to the
-  stated shape** — local reads, forwarded writes, periodic sync — but they are
-  a hosted-primary product with first-to-sync-wins conflict handling, which is a
-  dependency and a business relationship, not a library — `medium` confidence
-  ([Turso docs](https://docs.turso.tech/features/embedded-replicas/introduction)).
+- **CRDTs are ruled out by decision, not just by fit.** PRD 0011 lists
+  *"No CRDT, no merge"* as a non-goal and resolves cross-host concurrency by
+  home-instance ownership instead. The technical case agrees — the bulk of
+  `state/` is append-only logs and single-owner records, and text CRDTs cost
+  16–32 bytes of metadata per character — but the decision is already made —
+  `high` confidence on the decision, `medium` on the numbers
+  ([Loro benchmarks](https://loro.dev/docs/performance)).
+- **The cross-host store candidates are off-model.** Turso, NATS KV, etcd,
+  FoundationDB and S3 conditional writes all assume many writers converging on
+  one store. PRD 0011 instead gives every shared entity a single owning host and
+  **refuses** the write when that host is unreachable. They are surveyed below
+  because the survey has value if that decision is ever revisited, not because
+  any of them is a live candidate — `high` confidence.
+- **The real open problem is local, not distributed.** Mesh caps at 32 members;
+  the 10³–10⁴ agent figure is short-lived processes on *one* machine sharing one
+  `state/`. That is a single-host concurrency problem, and it is the half no
+  locked decision covers — `high` confidence.
 
 ## Scope and method
 
 - **Searched:** the local tree first (`src/sandbox/host.zig`,
   `src/improve/worktree.zig`, `src/util/file_lock.zig`, `src/peers/`,
-  `build.zig`, `build.zig.zon`, `docs/reports/`), then web search on six axes —
+  `build.zig`, `build.zig.zon`, `docs/reports/`), then
+  [PRD 0011](../prds/0011-clanker-mesh.md) in full, then web search on six axes —
   embedded SQLite concurrency, libSQL/Turso embedded replicas, CRDT library
   comparison, NATS JetStream KV vs etcd vs FoundationDB, S3 conditional writes,
   and agent-harness worktree architectures. The `research` tool's `plan` and
@@ -86,7 +137,13 @@ Three constraints make the question answerable rather than open-ended:
   measured.
 - **Freshness:** sweep and verification both 2026-08-16. Newest sources are the
   2026 comparison pages; the SQLite concurrency material is stable and older by
-  design. Turso pricing and product shape age fastest.
+  design. Turso pricing and product shape age fastest. The PRD is the fastest-
+  moving input of all: it is marked *in progress*, so a Phase 1 landing or a
+  revised non-goal dates this note before any external source does.
+- **Revision:** the first draft was written without PRD 0011 and reached the
+  right candidate for the wrong reasons — it treated the loopback-to-serve
+  design as a new proposal and the 10⁴ figure as a cross-host requirement. Both
+  are corrected above. The option survey itself did not change.
 
 ## The problem, stated in terms of the current tree
 
@@ -143,47 +200,59 @@ rejects it for plain runs, which is why `linkCheckoutState` exists at all.
 
 ## Options found
 
-### A. Local state daemon over the existing HTTP surface — no new dependency
+### A. `ck_state` host channel to serve, over loopback — the house pattern extended
 
-- **What it is:** promote `clanker serve` to the owner of `state/`. Guests reach
-  it through `ck_http` to `127.0.0.1:<port>` under a `network_allow` grant in
-  their manifest; the daemon does every `state/` write natively, on the machine
-  where `state/` actually lives. A worktree needs no symlink and no
-  `shared_root` special case, because it never names a path outside itself.
-- **Maturity:** in-tree. 43 distinct `/api/*` routes exist today, including
-  `/api/goals`, `/api/sessions`, `/api/runs`, `/api/stats`, `/api/board`,
-  `/api/chat/*`, `/api/events` (SSE). `src/peers/chatrooms.zig:790` already
-  fans a write out to peers over HTTP with per-peer backoff. Read 2026-08-16 in
-  tree.
-- **Fit:** exact. It is the only candidate that removes the fragile mechanism
-  rather than adding a second one beside it. `networkAllowed` already handles
-  `127.0.0.1` (`src/sandbox/host.zig:525`), and a network grant is declared per
-  tool in the manifest — the same plugin boundary everything else uses.
+**Strongest candidate.** It is the only one that removes the fragile mechanism
+instead of adding a second beside it, and PRD 0011 has already committed to its
+shape for a neighbouring problem.
+
+- **What it is:** make `clanker serve` the owner of `state/`. A guest calls
+  `ck_state`, a name-gated privileged channel registered next to `ck_chat` and
+  `ck_mesh`; the **host** turns that into a loopback HTTP request to the local
+  serve, which does the write natively on the machine where `state/` lives. The
+  guest holds no socket and needs no `network_allow`. A worktree needs no
+  symlink and no `shared_root` special case, because it never names a path
+  outside itself.
+- **Maturity:** in-tree and, for the mesh half, already specified. 43 distinct
+  `/api/*` routes exist today, including `/api/goals`, `/api/sessions`,
+  `/api/runs`, `/api/stats`, `/api/board`, `/api/chat/*`, `/api/events` (SSE).
+  `src/peers/chatrooms.zig:790` already fans a write out over HTTP with per-peer
+  backoff. PRD 0011 routes `clanker mesh`, `ck_mesh` and `fanOut` through
+  loopback-to-serve as locked decision 1. Read 2026-08-16.
+- **Fit:** exact, and it is the same shape three existing subsystems already
+  have. It also satisfies PRD 0011's non-goal "no second daemon", because the
+  owner is serve, which already stays up.
 - **Pros:**
   - Kills the `shared_root` special case in the path checker. A hardening pass
     on `safeJoinSecure` can no longer break state access, because state access
-    stops being a path.
+    stops being a path. This is the whole point.
   - Concurrency control moves into one native process that can hold real locks,
     coalesce appends, and batch — instead of N guests racing on a filesystem.
-  - It is the same API a mesh peer on another host already has to speak, so the
-    local and remote cases stop being different code.
-  - Failure is legible: an HTTP status, not a silent write into a worktree-local
+    This is what makes the many-processes-on-one-host scale tractable.
+  - The name-gated channel avoids the authorization hole a `network_allow`
+    grant would open: `tool_self_name` decides, and the port never appears in a
+    manifest.
+  - Same door for the local and mesh cases, so `state/mesh/<peer-id>/` replicas
+    and local state stop being different code paths.
+  - Failure is legible: a status code, not a silent write into a worktree-local
     `state/` nobody reads.
 - **Cons:**
-  - A run now depends on a daemon being up. Needs a defined behaviour when it is
-    not — refuse, or fall back to direct filesystem writes (and a fallback
-    reintroduces the divergence the daemon exists to prevent).
-  - Loopback HTTP is an authorization surface. Any process on the host can hit
-    it unless there is a token; `ck_http` grants are per-manifest but the socket
-    is not.
+  - A run now depends on serve being up. PRD 0011 already had to answer this for
+    mesh — *"Actionable error: start `clanker serve`"* — but state is not
+    optional the way mesh is, so refusing every run without a daemon is a much
+    bigger behaviour change. A fallback to direct filesystem writes reintroduces
+    exactly the divergence the channel exists to prevent.
   - Latency per state write goes from a syscall to a request. Matters for the
-    hot append logs, which is an argument for batching them.
-- **Unknowns:** whether `ck_http` currently permits a port on loopback without
-  additional policy; whether the existing routes cover enough of `state/` to
-  avoid a large new API surface; what the per-write latency actually is.
-- **Evidence:** `src/sandbox/host.zig:508-525` (loopback in `networkAllowed`),
-  `src/cli.zig` route table, `src/peers/chatrooms.zig:790` (HTTP fan-out
-  precedent).
+    hot append logs, which is an argument for batching them behind the channel.
+  - It is a new host channel and a new API surface: real work, not just wiring.
+- **Unknowns:** whether the existing routes cover enough of `state/` to avoid a
+  large new API; per-write latency; what happens to `clanker run` on a machine
+  where the operator never starts serve — which is the design's central
+  question, not a detail.
+- **Evidence:** [PRD 0011](../prds/0011-clanker-mesh.md) locked decisions 1 and
+  the "Serve owns the mesh" caller table; `src/cli.zig` route table;
+  `src/peers/chatrooms.zig:790`; `src/sandbox/host.zig:2350` (why the channel is
+  preferable to a network grant).
 
 ### B. Harden and generalize the existing `ck_fs_write_if` CAS — smallest change
 
@@ -254,6 +323,16 @@ rejects it for plain runs, which is why `linkCheckoutState` exists at all.
   [SkyPilot](https://blog.skypilot.co/abusing-sqlite-to-handle-concurrency/)
   (production write-up of pushing SQLite at concurrency), all read 2026-08-16.
 
+---
+
+**Options D through H are surveyed against a decision already taken.** Each is a
+shared multi-writer store for the cross-host case, and PRD 0011 resolves that
+case by single-owner ("home instance") writes with an explicit refusal when the
+owner is unreachable. They are recorded in full because a survey that omits the
+rejected candidates cannot be re-audited, and because the home-instance rule is
+a v1 choice that a later phase could revisit — not because any of them is a live
+candidate today.
+
 ### D. libSQL / Turso embedded replicas — local reads, forwarded writes
 
 - **What it is:** a local SQLite file kept in sync from a remote primary. Reads
@@ -263,9 +342,12 @@ rejects it for plain runs, which is why `linkCheckoutState` exists at all.
 - **Maturity:** commercial product with public docs and an examples repo; offline
   sync reached public beta. Exact version and licence not read in this pass —
   `unverified`.
-- **Fit:** this is the closest published architecture to the shape the question
-  describes, and it maps onto the mesh roadmap almost directly: every host holds
-  a replica, one primary owns the writes.
+- **Fit:** the closest published architecture to the shape the *question*
+  describes — every host holds a replica, one primary owns the writes. But PRD
+  0011 already implements that idea without the dependency: "home instance" is
+  a per-entity primary, and `state/mesh/<home-id>/` is the read-only replica.
+  Turso would centralize the primary for the whole mesh instead of per session,
+  which is a different and larger commitment.
 - **Pros:** the read path is a local file, so per-host read latency is
   unaffected by mesh size; the write path is already the "centralized backend"
   the question asks for; sync is a solved, supported feature rather than
@@ -346,12 +428,18 @@ rejects it for plain runs, which is why `linkCheckoutState` exists at all.
   stars); Automerge has `automerge-repo` for sync; Loro is newest, Rust+WASM,
   and leads the benchmark suite on size and speed. Read 2026-08-16, from
   secondary comparison pages — `medium` confidence on the numbers.
-- **Fit:** poor for clanker's actual state, good for one narrow slice. The
-  append-only logs need ordering, not merging. The single-owner directories have
-  no concurrent writers by construction. The small documents have a natural
-  owner. The one place a CRDT would genuinely earn its keep is collaborative
-  editing of a shared artifact — a Kanban card, a goal description — edited by
-  two agents at once.
+- **Fit:** **excluded by decision.** PRD 0011 lists *"Automatic conflict
+  resolution beyond the home-instance rule. No CRDT, no merge"* among its
+  non-goals. Reversing that is an ADR, not a research finding.
+
+  The independent technical case reaches the same place, which is worth
+  recording because it means the non-goal is not merely a scoping convenience:
+  the append-only logs need ordering, not merging; the single-owner directories
+  have no concurrent writers by construction; the small documents have a natural
+  owner. The one slice where a CRDT would genuinely earn its keep is
+  collaborative editing of a shared artifact — a Kanban card, a goal description
+  — edited by two agents at once, which is exactly the case PRD 0011 chose to
+  refuse rather than merge.
 - **Pros:** removes the need for a central writer entirely; offline-first by
   construction; the strongest possible answer to "thousands of agents on
   different hosts" *if* the data is merge-shaped.
@@ -402,13 +490,16 @@ rejects it for plain runs, which is why `linkCheckoutState` exists at all.
 
 Each prompt answered explicitly, including the ones that do not apply.
 
-- **Already in the tree.** Three things, and this is the most important section
-  of the note. (1) `clanker serve`'s HTTP API is a state service that is not yet
-  used as one — option A is mostly wiring, not building. (2) `ck_fs_write_if` is
-  a working CAS primitive that is under-generalized rather than missing. (3)
-  `src/peers/chatrooms.zig` already does durable append + HTTP fan-out to peers
-  with per-peer backoff, which is a working prototype of replicated state that
-  nobody has named as one.
+- **Already in the tree.** Four things, and this is the most important section of
+  the note. (1) `clanker serve`'s HTTP API is a state service that is not yet
+  used as one. (2) `ck_fs_write_if` is a working CAS primitive that is
+  under-generalized rather than missing. (3) `src/peers/chatrooms.zig` already
+  does durable append + HTTP fan-out with per-peer backoff — a working prototype
+  of replicated state that nobody has named as one. (4) **PRD 0011 has already
+  designed the access path**: `ck_mesh` as a name-gated host channel whose host
+  side speaks loopback HTTP to serve. Option A is that design applied to a
+  second noun. The out-of-the-box answer here was not a library at all; it was a
+  decision already written down in another document.
 - **Standard library / OS primitive.** Two are underused. `O_APPEND` writes below
   `PIPE_BUF` are atomic on local filesystems, which is the correct and nearly
   free answer for row 1 of the table — no CAS, no lock, no daemon. And a **unix
@@ -421,9 +512,11 @@ Each prompt answered explicitly, including the ones that do not apply.
 - **Do nothing.** The current symlink + `shared_root` pair works when both halves
   agree. The cost is a recurring class of breakage — two records in
   `docs/reports/`, one hardening rollback in `git log` (`44071710`), and a live
-  refusal observed during this session — plus the fact that it has no cross-host
-  answer at all, so mesh would have to solve this problem anyway. Doing nothing
-  is viable until mesh, and not after.
+  refusal observed during this session. Note that PRD 0011 does *not* force the
+  issue: mesh replicates into `state/mesh/<peer-id>/` from serve, which already
+  runs outside any worktree, so mesh can ship without this being solved. Doing
+  nothing stays viable longer than the first draft of this note assumed — the
+  forcing function is local agent count, not mesh.
 - **Narrow the requirement.** The strongest option on the list. The table above
   shows only ~16 KB of `state/` — the small mutable documents — actually needs
   compare-and-swap. Everything else needs atomic append or has a single owner.
@@ -446,21 +539,27 @@ Each prompt answered explicitly, including the ones that do not apply.
 
 ## Comparison
 
-| Option | Maturity | Licence | Fit | Main risk |
+| Option | Maturity | Licence | Fit vs PRD 0011 | Main risk |
 |---|---|---|---|---|
-| A. Local state daemon over existing HTTP | In-tree | own | **Best** — removes the fragile mechanism, same code path as mesh | Daemon becomes a hard dependency; loopback authz |
-| B. Generalize `ck_fs_write_if` | In-tree | own | Partial — small docs only | Does not address the sandbox-path fragility at all |
-| C. SQLite / WAL | Very high | Public domain | Good engine, needs A in front | One writer at a time; `SQLITE_BUSY` under load |
-| D. libSQL / Turso embedded replicas | Medium-high | unverified | Closest published match to the shape | Vendor dependency; first-to-sync-wins loses writes |
-| E. NATS JetStream KV | High | Apache-2.0 | Good for coordination subset only | A server to run; no Zig client found |
-| F. etcd / FoundationDB | Very high | Apache-2.0 | Technically right, operationally wrong | Requires a cluster to start an agent |
-| G. CRDTs (Yjs / Automerge / Loro) | High (Yjs) | MIT-ish | Poor — clanker's state is not merge-shaped | Per-char metadata; nested wasm runtime; convergence ≠ correctness |
-| H. S3-style conditional writes | High | n/a (service) | Good for multi-host claims, wrong for hot local state | Round-trip per op; needs cloud credentials |
+| A. `ck_state` channel → serve over loopback | In-tree | own | **Best** — is locked decision 1, extended from mesh to state | Serve becomes a hard dependency of every run |
+| B. Generalize `ck_fs_write_if` | In-tree | own | Compatible, but partial — small docs only | Does not address the sandbox-path fragility at all |
+| C. SQLite / WAL | Very high | Public domain | Compatible — an engine *behind* A, not a rival to it | One writer at a time; `SQLITE_BUSY` under load |
+| D. libSQL / Turso embedded replicas | Medium-high | unverified | Off-model — duplicates the home-instance rule with a vendor | Vendor dependency; first-to-sync-wins loses writes |
+| E. NATS JetStream KV | High | Apache-2.0 | Off-model — good for claims, but a shared multi-writer store | A server to run (0011 non-goal); no Zig client found |
+| F. etcd / FoundationDB | Very high | Apache-2.0 | Off-model — requires a cluster to start an agent | Operationally inverts how clanker ships |
+| G. CRDTs (Yjs / Automerge / Loro) | High (Yjs) | MIT-ish | **Excluded** — explicit 0011 non-goal | Reversing it is an ADR; also per-char metadata, nested wasm |
+| H. S3-style conditional writes | High | n/a (service) | Off-model for state; the *claim/lease* idea survives | Round-trip per op; needs cloud credentials |
 
 ## Evidence log
 
 | Claim | Source | Read on | Confidence |
 |---|---|---|---|
+| Serve owns sockets; CLI, REPL, `clanker run` and `fanOut` are loopback HTTP clients of it | [PRD 0011](../prds/0011-clanker-mesh.md), "Serve owns the mesh" table + locked decision 1 | 2026-08-16 | high |
+| `ck_mesh` is a name-gated host channel; the guest never holds the socket | same, "`ck_mesh` is a privileged channel" + goal 6 | 2026-08-16 | high |
+| "No CRDT, no merge" is an explicit non-goal; cross-host concurrency is the home-instance rule | same, Non-goals + "Shared workspaces (Phase 3)" | 2026-08-16 | high |
+| Continuing a session whose home is unreachable is refused, not forked | same, `home_unreachable` in Failure modes | 2026-08-16 | high |
+| Mesh caps at `max_members = 32` (496 connections worst case), so 10³–10⁴ agents is a single-host figure | same, "Topology is a full mesh" + Config | 2026-08-16 | high |
+| A second daemon is an explicit non-goal | same, Non-goals | 2026-08-16 | high |
 | Worktree state sharing is two halves that must agree | `src/improve/worktree.zig:288-318`, `src/sandbox/host.zig:4714-4750` | 2026-08-16 | high |
 | The pair has broken in practice | [bug](../reports/bugs/2026-08-14-worktree-state-symlink-notdir.md), [investigation](../reports/investigations/2026-08-14-isolated-cli-worktree-notdir.md), `git log 44071710` | 2026-08-16 | high |
 | A sandbox refusal on a state write reproduces today | `graph write ... refused by this tool's sandbox policy`, emitted by every `clanker run` in this session | 2026-08-16 | high |
@@ -504,47 +603,65 @@ Each prompt answered explicitly, including the ones that do not apply.
 
 ## Open questions
 
-1. **Does `ck_http` reach a loopback port today, end to end?** The *policy* half
-   is settled: `networkAllowed` glob-matches the hostname and ignores the port,
-   so a `["127.0.0.1"]` grant passes. What was read but not run is the
-   *client* half — whether `httpImpl` connects to a plaintext loopback origin
-   without TLS assumptions. One spike settles it: a throwaway guest with
-   `network_allow: ["127.0.0.1"]` that POSTs to a running `clanker serve`.
-   Decides whether option A is wiring or building.
-2. **What is the per-write latency of the daemon path versus a direct write?**
-   Decides whether the hot append logs need batching or can go through the same
-   route as everything else.
-3. **Can the unix-socket variant work at all under the sandbox,** or does the
-   descriptor of a socket outside the worktree hit the same wall as a path
-   outside it? If an inherited fd works, it is strictly better than loopback:
-   no port, no authorization problem.
-4. **Would a hand-written LWW-register plus OR-set cover goals and Kanban
-   cards** at a small fraction of a full CRDT library's cost? This is the
-   cheapest unexplored option in the note.
+Ordered by what blocks a decision, most blocking first.
+
+1. **What happens to `clanker run` when serve is not running?** This is option
+   A's central question and nothing in the tree or PRD 0011 answers it. Mesh
+   could refuse (*"start `clanker serve`"*) because mesh is optional; state is
+   not. Refuse, auto-start, or fall back to direct writes — each is a different
+   product, and a fallback reintroduces the divergence the channel exists to
+   prevent.
+2. **What is the per-write latency of the channel path versus a direct write?**
+   Decides whether the hot append logs need batching behind `ck_state` or can go
+   through the same route as everything else.
+3. **Is the transport loopback HTTP or a unix socket?** PRD 0011 says loopback
+   HTTP for mesh, but mesh is inherently networked and state is not. A socket
+   needs no port and no authorization story — if a sandboxed process can reach
+   one at all, which is the same wall a path outside the worktree hits unless
+   the descriptor is inherited. Worth a spike before copying the mesh answer by
+   default.
+4. **Does the mesh cap of 32 members hold as the fleet grows?** The question
+   posits 10³–10⁴ agents; PRD 0011 caps mesh at 32 and calls the cap deliberate.
+   If those agents are all local processes the cap is irrelevant, and option A
+   is sufficient. If they are meant to be hosts, `max_members` is the binding
+   constraint and D/E/F re-enter — so this question decides whether half this
+   note is live or archival.
 5. **Should `state/` be a git repository?** git is already a hard dependency, the
    worktree machinery already exists, and per-agent branches with an explicit
    merge is a well-understood model. Not searched at all; noted because it is the
    kind of answer the "adjacent domain" prompt exists to surface.
-6. **What is the actual concurrency ceiling needed?** The question posits 10⁴
-   agents. The measured contention today is single digits. The gap between those
-   numbers changes which options are viable, and nothing in this note establishes
-   which one to design for.
+6. **Is there a claim/lease primitive worth taking from option H** even though
+   the store is off-model? PRD 0011 has no notion of an agent claiming a
+   resource with a timeout and a fence token, and at any fleet size above a
+   handful that gap shows up as two agents doing the same work.
+7. **Would a hand-written LWW-register plus OR-set cover goals and Kanban
+   cards** at a fraction of a CRDT library's cost? Parked, not open: PRD 0011's
+   "no merge" non-goal makes this an ADR question rather than a research one.
 
 ## What would change the answer
 
-- **Mesh shipping.** Every option's ranking assumes single-host is the common
-  case. Once state must cross hosts routinely, D, E, and H rise sharply and B
-  becomes untenable.
-- **A measured contention problem.** If lost updates start appearing at the
-  current agent counts, C moves from "engine behind A" to "urgent".
+- **PRD 0011's `max_members = 32` being raised, or the home-instance rule being
+  revisited.** These are the two decisions that keep options D through H
+  archival. Either one moving makes them live again.
+- **A measured contention problem on one host.** If lost updates start appearing
+  at current agent counts, C moves from "engine behind A" to urgent.
+- **`clanker serve` becoming a required process.** Would remove option A's only
+  serious objection and make it nearly free.
 - **A pure-Zig embedded transactional store reaching maturity.** Would remove
   the only real objection to C.
-- **Turso's licence or hosting model changing.** D is the option most exposed to
-  a vendor decision.
 - **A sandbox hardening pass that removes `shared_root`.** Would convert the
   recurring breakage into a permanent one and force this decision immediately.
 
 ## References
+
+**Locked design**
+
+- [PRD 0011 — Clanker Mesh (TCP peer-to-peer clustering)](../prds/0011-clanker-mesh.md)
+  — serve-owns-sockets, `ck_mesh` as a host channel, home-instance consistency,
+  `max_members = 32`, and the "no CRDT, no merge" / "no second daemon" non-goals
+- [PRD 0001 — chatrooms](../prds/0001-chatrooms.md) — append-then-fan-out and
+  id-dedup, the precedent 0011 builds on
+- [ADR 0001 — the board is a chatroom](../adrs/0001-board-is-a-chatroom.md)
 
 **Local tree**
 
@@ -624,6 +741,10 @@ output was not usable.
 Recorded here as evidence of what the data actually looks like, not as a
 decision. Every option above has to express these four shapes.
 
+`home` throughout is PRD 0011's home-instance id — the member that owns the row
+and is the only one allowed to write it. On a single host it is always the local
+instance, which is why the local and mesh cases can share one schema.
+
 **Events** — append-only, no CAS, ordering per stream only:
 
 ```
@@ -636,7 +757,7 @@ Covers `token_stats.jsonl`, `improvements.jsonl`, `autolearn.jsonl`,
 **Documents** — CAS on `revision`, the only shape that needs it:
 
 ```
-doc(key, revision, ts_unix_ms, owner, body_json)
+doc(key, revision, ts_unix_ms, home, body_json)
 ```
 
 Covers `goals.json`, `worktrees.json`, `tool_usage.json`, `webui_plugins.json`,
@@ -646,14 +767,16 @@ today, at file granularity instead of key granularity.
 **Blobs** — single-owner, write-once, content-addressed:
 
 ```
-blob(id, ts_unix_ms, owner, bytes)
+blob(id, ts_unix_ms, home, bytes)
 ```
 
 Covers `sessions/`, `runs/`, `history/`, `arena/`. These need replication, not
-concurrency control — nothing else writes them.
+concurrency control — nothing else writes them. This is exactly PRD 0011's
+Phase 3 shape: home writes `state/sessions/<id>.json`, every other member holds
+a read-only replica under `state/mesh/<home-id>/sessions/<id>.json`.
 
-**Claims** — leases, the primitive a 10⁴-agent fleet needs and clanker has no
-form of today:
+**Claims** — leases. The one shape with no counterpart anywhere in the tree or
+in PRD 0011, and the one a fleet of any real size needs:
 
 ```
 claim(resource, holder, acquired_ts, expires_ts, fence_token)
