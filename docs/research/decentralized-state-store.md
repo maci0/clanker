@@ -1240,21 +1240,33 @@ know everything".
 | G. CRDTs (Yjs/Automerge/Loro) | **Full per host** | **AP** | none | Nothing | n/a | Library, not a store; see L for the applied form |
 | P. TigerBeetle | Full per host (VSR) | CP | native Zig | Binary per node | **No — fixed schema** | Unusable here; best Zig reference |
 
-Four observations for whoever writes the RFC, none of them a recommendation:
+Five observations for whoever writes the RFC, none of them a recommendation:
 
 1. **Full replication and "no server to run" are not exclusive.** dqlite embeds
    as a library, and PRD 0011 needs nothing. Both keep clanker a single binary.
-2. **The CP options all stall a minority partition.** etcd, Consul, rqlite and
-   PRD 0011 all refuse writes when cut off. Whether an isolated agent should
-   stop recording, or keep working and converge, is a product question that
-   selects the row.
+2. **CP versus AP is not always a property of the system — sometimes it is a
+   knob.** Most of the CP options stall a minority partition: etcd, Consul,
+   rqlite and PRD 0011 all refuse writes when cut off. But Marmot makes write
+   consistency tunable per write (ONE / QUORUM / ALL), so "converge quietly" and
+   "do not diverge on *this* record" can coexist in one system. Whether an
+   isolated agent should stop recording or keep working is still the product
+   question that selects the row — Marmot just means the row need not be chosen
+   once for everything.
 3. **Two candidates need no client library at all** — etcd and Corrosion both
    speak HTTP — and two have native Zig clients. Client availability, which the
    earlier drafts treated as decisive, separates the field much less than
-   expected.
+   expected. Note the inverse for Marmot: no Zig client and gRPC on the wire,
+   which is a real cost against otherwise strong fundamentals.
 4. **Composition beats selection in several places.** etcd for claims plus
-   Postgres for bulk; anything plus S3 for blobs. The survey
-   is not obliged to produce a single winner.
+   Postgres for bulk; anything plus S3 for blobs. The survey is not obliged to
+   produce a single winner.
+5. **Ordering is the axis the append-only logs care about, and almost nothing
+   guarantees it.** Marmot states outright that rows may sync out of order;
+   CRDT convergence says nothing about order either; PRD 0011's board and goals
+   resolve by fold order over a deduped log. Since the largest part of `state/`
+   by volume is append-only logs where order *is* the meaning, an RFC should
+   test each candidate against that specifically rather than against
+   compare-and-swap, which is what the small documents need and they are 16 KB.
 
 ## Evidence log
 
