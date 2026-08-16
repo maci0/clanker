@@ -93,6 +93,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [ck_cas lock sidecars are never removed and bypass the create retry](investigations/2026-08-16-ck-cas-lock-sidecars.md) — Closed
+
 - [`clanker run` never finishes, compacting on every iteration](investigations/2026-08-16-run-livelock-compaction-thrash.md) — Resolved
 
 - [improve-self gate tool build failure (appendWriteFn) and follow-up](investigations/2026-04-15-improve-self-gate-build.md) — Resolved
