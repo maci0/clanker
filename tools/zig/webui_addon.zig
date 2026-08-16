@@ -52,21 +52,7 @@ fn actionList(out: *lib.Out) !void {
             if (!logic.validName(name)) continue;
             const manifest_path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}/plugin.json", .{ plugins_dir, name });
             const raw_m = lib.fsRead(manifest_path) catch continue;
-            const m = std.json.parseFromSliceLeaky(Manifest, lib.alloc, raw_m, .{ .ignore_unknown_fields = true }) catch |err| {
-                // Surface the broken manifest instead of silently dropping it:
-                // an addon whose plugin.json does not parse is listed with a
-                // diagnostic description so its owner can see why it vanished.
-                const diag = std.fmt.allocPrint(lib.alloc, "plugin.json failed to parse ({s})", .{@errorName(err)}) catch continue;
-                try addons.append(lib.alloc, .{
-                    .name = name,
-                    .title = name,
-                    .description = diag,
-                    .group = "Watch",
-                    .enabled = logic.addonEnabled(state.enabled, state.disabled, name),
-                    .has_css = hasCss(name),
-                });
-                continue;
-            };
+            const m = std.json.parseFromSliceLeaky(Manifest, lib.alloc, raw_m, .{ .ignore_unknown_fields = true }) catch continue;
             if (logic.capabilitiesRejected(m.capabilities)) |_| continue;
             try addons.append(lib.alloc, .{
                 .name = name,
@@ -199,10 +185,6 @@ fn actionPut(obj: std.json.Value, out: *lib.Out) !void {
         const m = std.json.parseFromSliceLeaky(Manifest, lib.alloc, content, .{ .ignore_unknown_fields = true }) catch
             return lib.fail(out, "plugin.json is not valid JSON");
         if (logic.capabilitiesRejected(m.capabilities)) |why| return lib.fail(out, why);
-        if (!std.mem.eql(u8, m.name, name)) return lib.fail(out, "plugin.json name must match the addon directory");
-        if (m.title.len == 0 or m.title.len > logic.max_title_len) return lib.fail(out, "title must be 1-64 characters");
-        if (m.description.len > logic.max_desc_len) return lib.fail(out, "description is too long");
-        if (!logic.validGroup(m.group)) return lib.fail(out, "group must be Work, Watch, or Set up");
     }
     const dir = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ plugins_dir, name });
     if (lib.fsStat(dir)) |_| {} else |_| return lib.fail(out, "no such addon (create it first)");
