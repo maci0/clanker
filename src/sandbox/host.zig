@@ -169,6 +169,11 @@ pub const Sandbox = struct {
     /// Empty (the default, and every non-isolated run) means one root for
     /// everything, so nothing here changes unless a run asked to be isolated.
     shared_root: []const u8 = "",
+    /// Named extra sandbox roots for a multi-root workspace (RFC 0001). A
+    /// relative guest path whose first component matches a root name resolves
+    /// the remainder under that root's directory; a bare path resolves under
+    /// `root_dir` as before. Empty for every single-root run.
+    extra_roots: []const config_mod.SandboxRoot = &.{},
     /// Hosts allowed for ck_http. Entries are exact hostnames or glob
     /// patterns (`*.example.com`, `sub?.example.com`); a bare `*` allows every
     /// host. See networkAllowed.
@@ -328,6 +333,7 @@ pub fn sandboxFor(
         .io = io,
         .root_dir = cfg.agent.sandbox_root,
         .shared_root = cfg.agent.shared_root,
+        .extra_roots = cfg.agent.sandbox_roots,
         .follow_symlinks = cfg.agent.sandbox_follow_symlinks,
         .network_allow = net,
         .llm = llm_access,
@@ -349,11 +355,9 @@ pub fn sandboxFor(
         // An exec-capable tool sees the harness's exec policy in its own
         // `config` so the git.zig / gh.zig guests can mirror the host's deny
         // decision instead of pre-empting it (e.g. a hardcoded in-tool "merge
-        // is denied" would block what git_remote_ops just granted).
-        .config_json = if (tool.exec_allow.len > 0)
-            try execPolicyConfig(arena, tool.config_json, cfg)
-        else
-            tool.config_json,
+        // is denied" would block what git_remote_ops just granted). Board
+        // tools get the project's `#general` room the same way (RFC 0001).
+        .config_json = try toolConfigFor(arena, tool, cfg),
     };
 }
 
@@ -426,6 +430,49 @@ pub fn execPolicyConfig(
     return out.toOwnedSlice();
 }
 
+/// The board tools are one wasm (`board.wasm`) with a `kanban` multiplexed
+/// entry and one op per `kanban_*` tool. The project's `#general` room is
+/// `ws:<id>` (RFC 0001); a non-empty workspace defaults these tools to that
+/// room so card actions land in the project feed instead of the global `board`.
+fn isBoardTool(name: []const u8) bool {
+    return std.mem.eql(u8, name, "kanban") or std.mem.startsWith(u8, name, "kanban_");
+}
+
+/// Adds `"room": "ws:<id>"` to a board tool's descriptor config so board.zig
+/// picks the project's `#general` room when the caller does not name one. The
+/// descriptor's own keys (the pinned `op`) are kept; only `room` is overridden.
+pub fn boardConfig(
+    arena: std.mem.Allocator,
+    tool_config: []const u8,
+    workspace_id: []const u8,
+) ![]const u8 {
+    const room = try std.fmt.allocPrint(arena, "ws:{s}", .{workspace_id});
+    var obj: std.json.ObjectMap = if (std.json.parseFromSliceLeaky(std.json.Value, arena, tool_config, .{})) |v| blk: {
+        if (v == .object) break :blk v.object;
+        break :blk std.json.ObjectMap.empty;
+    } else |_| std.json.ObjectMap.empty;
+    try obj.put(arena, "room", .{ .string = room });
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+    try s.write(std.json.Value{ .object = obj });
+    return out.toOwnedSlice();
+}
+
+/// The effective `config` object a tool sees in `ck_config`: the harness's exec
+/// policy for exec-capable tools, the project board room for the kanban tools,
+/// and the descriptor's own config otherwise. One function so the sequential
+/// sandbox and the parallel worker inject the same thing.
+pub fn toolConfigFor(
+    arena: std.mem.Allocator,
+    tool: *const registry.Tool,
+    cfg: *const config_mod.Config,
+) ![]const u8 {
+    if (tool.exec_allow.len > 0) return execPolicyConfig(arena, tool.config_json, cfg);
+    if (isBoardTool(tool.name) and cfg.agent.workspace_id.len > 0)
+        return boardConfig(arena, tool.config_json, cfg.agent.workspace_id);
+    return tool.config_json;
+}
+
 fn appendNetworkAllow(
     arena: std.mem.Allocator,
     current: []const []const u8,
@@ -447,6 +494,18 @@ fn isResearchTool(name: []const u8) bool {
     return std.mem.eql(u8, name, "web_fetch") or
         std.mem.eql(u8, name, "web_search") or
         std.mem.eql(u8, name, "research");
+}
+
+test "boardConfig injects the project room and keeps the pinned op" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const with_op = try boardConfig(arena, "{\"op\":\"list\"}", "relumea");
+    try std.testing.expectEqualStrings("{\"op\":\"list\",\"room\":\"ws:relumea\"}", with_op);
+
+    const bare = try boardConfig(arena, "{}", "7dtd");
+    try std.testing.expectEqualStrings("{\"room\":\"ws:7dtd\"}", bare);
 }
 
 test "execPolicyConfig injects git_remote_ops and exec_pattern_allow for exec tools" {
@@ -4973,6 +5032,52 @@ fn isSecretDotenv(sub_path: []const u8) bool {
     return false;
 }
 
+/// Whether any `fs_prefixes` entry authorizes `sub_path` relative to one root.
+/// "." authorizes the whole root; a bare prefix authorizes itself and every
+/// path beneath it. Extracted from `safeJoin` so the multi-root branch checks
+/// the same grant list against a named root's remainder.
+fn fsPrefixAllows(prefixes: []const []const u8, sub_path: []const u8) bool {
+    for (prefixes) |p| {
+        if (std.mem.eql(u8, p, ".") or std.mem.eql(u8, p, "./")) return true;
+        if (std.mem.startsWith(u8, sub_path, p)) {
+            // The match must end at a path boundary: a bare prefix ("notes")
+            // authorizes the directory itself and paths beneath it, but never
+            // a sibling that merely shares the leading bytes ("notes2/x").
+            if (p.len == 0 or p[p.len - 1] == '/' or sub_path.len == p.len or sub_path[p.len] == '/') return true;
+        }
+        // A prefix of "state/runs/" also authorizes "state/runs" itself,
+        // otherwise a tool allowed to read inside a directory cannot list the
+        // directory to find out what is in it.
+        if (p.len > 1 and p[p.len - 1] == '/' and std.mem.eql(u8, sub_path, p[0 .. p.len - 1])) return true;
+    }
+    return false;
+}
+
+/// The named extra root whose name is the first path component of `sub_path`,
+/// if any. `rest` is the remainder after the name ("" when the guest named the
+/// root directory itself).
+const RootSelect = struct {
+    root: config_mod.SandboxRoot,
+    rest: []const u8,
+};
+
+fn selectExtraRoot(sb: *const Sandbox, sub_path: []const u8) ?RootSelect {
+    if (sb.extra_roots.len == 0) return null;
+    var first = sub_path;
+    var rest: []const u8 = "";
+    if (std.mem.findScalar(u8, sub_path, '/')) |slash| {
+        first = sub_path[0..slash];
+        rest = sub_path[slash + 1 ..];
+    }
+    if (first.len == 0) return null;
+    for (sb.extra_roots) |r| {
+        if (std.mem.eql(u8, r.name, first)) {
+            return .{ .root = r, .rest = rest };
+        }
+    }
+    return null;
+}
+
 fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
     if (sub_path.len > 0 and sub_path[0] == '/') return safeJoinAbsolute(sb, sub_path);
     // .env is where the process loads API keys. env_allow exists so those
@@ -4998,44 +5103,23 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
         if (std.mem.eql(u8, comp, "..") or std.mem.eql(u8, comp, ".")) return error.PathOutsideSandbox;
         if (comp.len == 0) return error.PathOutsideSandbox;
     }
-    {
-        // An empty list is no authority, not unlimited authority. This used to
-        // skip the check entirely, so a descriptor written as "fs_prefixes":
-        // [] - which reads as "this tool touches no files" and is what the
-        // documentation says it means - handed the tool every file under the
-        // sandbox root instead. Least privilege has to be the default that
-        // costs nothing to ask for.
-        var allowed = false;
-        for (sb.fs_prefixes) |p| {
-            // "." means the sandbox root itself: every relative path under it
-            // is inside. Without this a descriptor written as ["."] matched
-            // nothing at all, since no relative path starts with a dot, and
-            // the tool was denied every file in the project it was pointed at.
-            if (std.mem.eql(u8, p, ".") or std.mem.eql(u8, p, "./")) {
-                allowed = true;
-                break;
-            }
-            if (std.mem.startsWith(u8, sub_path, p)) {
-                // The match must end at a path boundary: a bare prefix
-                // ("notes") authorizes the directory itself and paths
-                // beneath it, but never a sibling that merely shares the
-                // leading bytes ("notes2/x"). Trailing-slash prefixes
-                // ("notes/") only match beneath the directory, as before.
-                if (p.len == 0 or p[p.len - 1] == '/' or sub_path.len == p.len or sub_path[p.len] == '/') {
-                    allowed = true;
-                    break;
-                }
-            }
-            // A prefix of "state/runs/" also authorizes "state/runs" itself,
-            // otherwise a tool allowed to read inside a directory cannot list
-            // the directory to find out what is in it.
-            if (p.len > 1 and p[p.len - 1] == '/' and std.mem.eql(u8, sub_path, p[0 .. p.len - 1])) {
-                allowed = true;
-                break;
-            }
-        }
-        if (!allowed) return error.PathOutsideSandbox;
+    // Multi-root: a first component naming one of the workspace's extra roots
+    // selects that root; the rest is checked against the same prefix list and
+    // resolved under the root's own directory. A bare path keeps resolving
+    // under `root_dir`, so a single-root run is byte-for-byte the old path.
+    if (selectExtraRoot(sb, sub_path)) |sel| {
+        if (!fsPrefixAllows(sb.fs_prefixes, sel.rest)) return error.PathOutsideSandbox;
+        const base = std.mem.trimEnd(u8, sel.root.path, "/");
+        if (sel.rest.len == 0) return sb.gpa.dupe(u8, base);
+        return std.fmt.allocPrint(sb.gpa, "{s}/{s}", .{ base, sel.rest });
     }
+    // An empty list is no authority, not unlimited authority. This used to
+    // skip the check entirely, so a descriptor written as "fs_prefixes":
+    // [] - which reads as "this tool touches no files" and is what the
+    // documentation says it means - handed the tool every file under the
+    // sandbox root instead. Least privilege has to be the default that
+    // costs nothing to ask for.
+    if (!fsPrefixAllows(sb.fs_prefixes, sub_path)) return error.PathOutsideSandbox;
     return std.fmt.allocPrint(sb.gpa, "{s}/{s}", .{ std.mem.trimEnd(u8, rootForPath(sb, sub_path), "/"), sub_path });
 }
 
@@ -5088,6 +5172,64 @@ test "secure filesystem paths refuse symlink escapes" {
         .environ_map = &env,
     };
     try std.testing.expectError(error.PathOutsideSandbox, safeJoinSecure(&sb, "allowed/link/secret"));
+}
+
+test "a named extra root resolves the remainder under that root" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "core/src");
+    try tmp.dir.createDirPath(io, "web/src");
+
+    const core = try tmp.dir.realPathFileAlloc(io, "core", std.testing.allocator);
+    defer std.testing.allocator.free(core);
+    const web = try tmp.dir.realPathFileAlloc(io, "web", std.testing.allocator);
+    defer std.testing.allocator.free(web);
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = core,
+        .extra_roots = &.{.{ .name = "web", .path = web }},
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = &env,
+    };
+
+    // Bare paths still resolve under the primary root.
+    const core_src = try safeJoinSecure(&sb, "src");
+    defer sb.gpa.free(core_src);
+    try std.testing.expect(std.mem.endsWith(u8, core_src, "/core/src"));
+
+    // A root-named path resolves under the extra root.
+    const web_src = try safeJoinSecure(&sb, "web/src");
+    defer sb.gpa.free(web_src);
+    try std.testing.expect(std.mem.endsWith(u8, web_src, "/web/src"));
+
+    // The root directory itself is listable for a tool granted ".".
+    const web_root = try safeJoinSecure(&sb, "web");
+    defer sb.gpa.free(web_root);
+    try std.testing.expect(std.mem.endsWith(u8, web_root, "/web"));
+
+    // Traversal is refused before any root is selected.
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoinSecure(&sb, "web/../core"));
+
+    // A prefix-restricted tool reaches the same prefix under the named root.
+    var narrow = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = core,
+        .extra_roots = &.{.{ .name = "web", .path = web }},
+        .network_allow = &.{},
+        .fs_prefixes = &.{"src"},
+        .environ_map = &env,
+    };
+    const narrow_web = try safeJoinSecure(&narrow, "web/src");
+    defer narrow.gpa.free(narrow_web);
+    try std.testing.expect(std.mem.endsWith(u8, narrow_web, "/web/src"));
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoinSecure(&narrow, "web/other"));
 }
 
 // ------------------------------------------------------------------- tests --

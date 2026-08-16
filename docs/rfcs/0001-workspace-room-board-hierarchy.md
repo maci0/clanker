@@ -646,26 +646,34 @@ project actually needs its own board; keep `board` as the empty-id workspace's
       admit / deny) over local serve. Workspace enter/leave is still Phase 3.
 - [ ] Comment on this RFC, especially Option B (multi-root) vs A (single-root +
       extra-attach) given suites are a hard requirement.
-- [ ] Spike: sandbox root set — can N roots be enforced without weakening
-      `fs_prefixes`? This is the gate for Option B.
-- [ ] Spike: default the board room to `ws:<id>` (`#general`) when the selected
+- [x] Spike: sandbox root set — can N roots be enforced without weakening
+      `fs_prefixes`? This is the gate for Option B. Implemented: `workspace.roots`
+      is a named set; the run sandbox carries `agent.sandbox_roots`, and a
+      relative guest path whose first component names a root resolves under that
+      root with the same `fs_prefixes` grant checked against the remainder.
+      `workspace.validName` now rejects `:` (question 1).
+- [x] Spike: default the board room to `ws:<id>` (`#general`) when the selected
       workspace is non-empty, leave `board` for the cwd workspace, confirm the
-      existing fold still reads. Also confirm `ws:<id>:goal:<id>` naming against
-      the `:` collision question, and that a goal room can be a lossy feed over
-      its session.
-- [ ] Spike: add `workspace` to `goal_add` / `goal_update` as an optional field
+      existing fold still reads. Implemented: `agent.workspace_id` injects the
+      room into the board tool's config; the empty workspace keeps `board`.
+- [x] Spike: add `workspace` to `goal_add` / `goal_update` as an optional field
       defaulting to the current rail id.
-- [ ] Spike: public and private tasks live on the goal record; the card
-      checklist is a projection of public tasks only. Confirm Done-blocking
-      (question 14).
+- [x] Spike: public and private tasks live on the goal record (`Goal.tasks`,
+      `visible_to`); the store and `goal_update` task ops are first-class, and
+      the web UI board mirror projects public tasks onto the card checklist
+      (stable task-id `subtask_add`/`subtask_toggle`). Done-blocking for
+      private tasks stays open (question 14).
 - [x] Arena on this RFC (`arena-1786861439-dad384e4`, 6 positions): keep
       multi-root B, drop goal-is-a-card.
 - [ ] Add a per-workspace membership roster (owner + entered members) as part of
       mesh Phase 3; share / enter / leave / bind are operator verbs on
-      `workspace_share`, not new frame kinds.
-- [ ] Do not migrate the current `board` room.
+      `workspace_share`, not new frame kinds. The `members` roster field is on
+      the record (owner first); enter/leave/bind are still Phase 3.
+- [x] Do not migrate the current `board` room.
 - [ ] Spike: refuse (or mark read-only) a same-path bind that would make two
-      processes edit one working tree; add `instance.id` to worktree branch ids.
+      processes edit one working tree (Phase 3); `instance.id` is now folded
+      into worktree branch ids (`branchInstanceTag`), so two instances cannot
+      generate the same branch.
 
 ## References
 

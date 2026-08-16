@@ -132,8 +132,10 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   lines): a `*` walk used to serialize every path or fail the call with
   `too_large`.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
-  workspace registry (`workspace.zig`: folder + chat-history set; empty id is
-  the serve cwd), execution graphs, sub-agents, autolearn, workflows. The
+  workspace registry (`workspace.zig`: a project id over one or more named
+  roots + the chat-history set; empty id is the serve cwd; ids reject `/`,
+  `\` and `:` so the `ws:<id>:goal:<id>` room namespace stays unambiguous,
+  RFC 0001), execution graphs, sub-agents, autolearn, workflows. The
   auto-thinking classifier's prompt/parse/effort map is
   `tools/zig/thinking_logic.zig` (host-tested); `thinking.zig` keeps
   provider resolution and the fail-open `client.chat` call. The
@@ -471,6 +473,18 @@ copy of the status in its README inventory, and only `status` (`clanker reports
 status`, `clanker research status`, `clanker rfc status`) writes both. `create`
 sets the inventory copy once and never again, which is how every record in
 `docs/reports/` once read `Open` months after it was fixed.
+
+**Write only what you checked.** A record is read as established fact by
+someone who cannot tell which sentences were verified and which were inferred,
+so an inference stated flatly becomes the next reader's premise. Give the
+mechanism and the command that shows it, not the motive: `abcc85ba` "changed
+`writeWorkspaceJson`'s signature and left two call sites unreconciled, author
+from `git log -1 --format='%an <%ae>'`" is checkable, where "was pushed without
+running the gate" is a guess about a person that the commits do not support.
+This binds hardest when a record blames someone — an author landing a
+work-in-progress commit on their own `main` is ordinary, and the reportable
+defect is usually the one downstream of it. Mark what you could not verify as
+unverified, or leave it out.
 
 Before a choice between libraries, external tools, or architectures, search
 [docs/rfcs/](docs/rfcs/) and [docs/adrs/](docs/adrs/) with the `rfc` tool (the

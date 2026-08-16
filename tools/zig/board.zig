@@ -34,9 +34,10 @@ const cards = @import("cards.zig");
 const max_pages = cards.max_pages;
 const pageCapExceeded = cards.pageCapExceeded;
 
-/// The room a board lives in when the caller does not name one. A room per
-/// board, so a team can keep more than one without them bleeding together.
-const default_room = "board";
+/// The legacy room a board lives in when neither the caller nor the host names
+/// one: the empty default workspace keeps `board` so today's log does not move
+/// (RFC 0001). A non-empty workspace gets `ws:<id>` via the injected config.
+const legacy_board_room = "board";
 
 const Req = struct {
     op: []const u8 = "",
@@ -80,7 +81,7 @@ const Req = struct {
     run_id: ?[]const u8 = null,
 };
 
-const Config = struct { op: ?[]const u8 = null };
+const Config = struct { op: ?[]const u8 = null, room: ?[]const u8 = null };
 
 const History = struct {
     ok: bool = false,
@@ -274,6 +275,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // rest); the internal entry point the web UI calls names it in the request.
     const cfg = std.json.parseFromSliceLeaky(Config, alloc, lib.config(), .{ .ignore_unknown_fields = true }) catch Config{};
     const op = if (cfg.op) |o| o else if (req.op.len > 0) req.op else "list";
+    // The project's `#general` room (`ws:<id>`, RFC 0001) when the host named
+    // one; the legacy `board` room for the empty default workspace, so today's
+    // log does not move.
+    const default_room = if (cfg.room) |r| (if (r.len > 0) r else legacy_board_room) else legacy_board_room;
     const room = if (req.room) |r| (if (r.len > 0) r else default_room) else default_room;
     // A list can be narrowed to what one clanker is concerned with. It narrows
     // the answer, not the reach: everyone subscribed to the room holds the same
@@ -425,7 +430,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             }
             if (!found) return lib.fail(out, "no such parent checklist item on this card");
         }
-        break :blk .{ .action = "subtask_add", .todo = req.id, .text = text, .parent = req.parent_subtask_id };
+        break :blk .{ .action = "subtask_add", .todo = req.id, .text = text, .subtask = subtask_id, .parent = req.parent_subtask_id };
     } else if (std.mem.eql(u8, op, "subtask_toggle")) blk: {
         const sid = subtask_id orelse return lib.fail(out, "which subtask?");
         if ((req.done orelse true) and !cards.checklistItemReady(cards.get(list, req.id).?, sid))

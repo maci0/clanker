@@ -536,7 +536,10 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
         } else if (std.mem.eql(u8, act.action, "subtask_add")) {
             const text = act.text orelse continue;
             if (text.len == 0) continue;
-            _ = try c.subtask(arena, m.id, text, act.parent orelse "");
+            // A caller may pin a stable id (a goal task id, RFC 0001) so the
+            // projection can re-add the same item without duplicating it; the
+            // fold dedups by id. Without one, the message id is the id.
+            _ = try c.subtask(arena, act.subtask orelse m.id, text, act.parent orelse "");
         } else if (std.mem.eql(u8, act.action, "subtask_toggle")) {
             const sid = act.subtask orelse continue;
             const s = try c.subtask(arena, sid, "", "");
@@ -1039,6 +1042,24 @@ test "subtasks, dependencies and cost fold" {
 
     const blocked = try blockedBy(cards, parent, arena);
     try std.testing.expectEqual(@as(usize, 1), blocked.len);
+}
+
+test "a subtask_add with a pinned id re-folds to one item" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Two adds with the same pinned id (the goal task id, RFC 0001) converge
+    // on one checklist item, so a re-running projection cannot duplicate it.
+    const msgs = [_]Message{
+        msg("m1", "x", 100, try encodeAdd(arena, "goal")),
+        msg("a1", "x", 101, try encode(arena, .{ .action = "subtask_add", .todo = "m1", .subtask = "task-1", .text = "merge the PR" })),
+        msg("a2", "x", 102, try encode(arena, .{ .action = "subtask_add", .todo = "m1", .subtask = "task-1", .text = "merge the PR" })),
+    };
+    const folded = try derive(arena, &msgs);
+    try std.testing.expectEqual(@as(usize, 1), folded[0].subtasks.len);
+    try std.testing.expectEqualStrings("task-1", folded[0].subtasks[0].id);
+    try std.testing.expectEqualStrings("merge the PR", folded[0].subtasks[0].text);
 }
 
 test "checklist items nest and carry independent dependency edges" {

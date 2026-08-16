@@ -140,6 +140,11 @@ pub fn build(b: *std.Build) void {
                     .target = exe_target,
                     .optimize = optimize,
                 }) },
+                .{ .name = "spill_logic", .module = b.createModule(.{
+                    .root_source_file = b.path("tools/zig/spill_logic.zig"),
+                    .target = exe_target,
+                    .optimize = optimize,
+                }) },
             },
         }),
     });
@@ -237,6 +242,11 @@ pub fn build(b: *std.Build) void {
             }) },
             .{ .name = "workflows_logic", .module = b.createModule(.{
                 .root_source_file = b.path("tools/zig/workflows_logic.zig"),
+                .target = test_target,
+                .optimize = optimize,
+            }) },
+            .{ .name = "spill_logic", .module = b.createModule(.{
+                .root_source_file = b.path("tools/zig/spill_logic.zig"),
                 .target = test_target,
                 .optimize = optimize,
             }) },

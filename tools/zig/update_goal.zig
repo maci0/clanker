@@ -30,6 +30,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var patch = store.Patch{ .id = id };
     if (lib.optStr(req, "from")) |from| patch.from_status = from;
     if (lib.optStr(req, "status")) |s| patch.status = s;
+    if (lib.optStr(req, "workspace")) |w| patch.workspace = w;
     if (lib.optNum(req, "max_iterations")) |n| {
         if (n < 0 or @floor(n) != n)
             return lib.fail(out, "max_iterations must be an integer from 1 to 1000");
@@ -50,6 +51,34 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     patch.remove = lib.optBool(req, "remove", false);
 
+    // Task mutations (RFC 0001): one per call, applied after the field edits.
+    if (req.object.get("task_add")) |v| {
+        if (v != .object) return lib.fail(out, "task_add must be an object");
+        const text = lib.optStr(v, "text") orelse return lib.fail(out, "task_add needs text");
+        if (std.mem.trim(u8, text, " \t\r\n").len == 0) return lib.fail(out, "task_add text must not be empty");
+        const task_id = lib.optStr(v, "id") orelse (std.fmt.allocPrint(lib.alloc, "task-{d}", .{lib.nowNanos()}) catch return lib.fail(out, "alloc"));
+        var visible_to: std.ArrayList([]const u8) = .empty;
+        if (v.object.get("visible_to")) |vv| {
+            if (vv != .array) return lib.fail(out, "visible_to must be an array of instance ids");
+            for (vv.array.items) |item| {
+                if (item != .string or item.string.len == 0) return lib.fail(out, "visible_to entries must be non-empty strings");
+                visible_to.append(lib.alloc, item.string) catch return lib.fail(out, "alloc");
+            }
+        }
+        patch.task = .{ .add = .{ .id = task_id, .text = text, .visible_to = visible_to.items } };
+    } else if (req.object.get("task_toggle")) |v| {
+        if (v != .object) return lib.fail(out, "task_toggle must be an object");
+        const task_toggle_id = lib.optStr(v, "id") orelse return lib.fail(out, "task_toggle needs id");
+        patch.task = .{ .toggle = .{ .id = task_toggle_id, .done = lib.optBool(v, "done", true) } };
+    } else if (req.object.get("task_remove")) |v| {
+        const task_remove_id = switch (v) {
+            .string => |s| s,
+            else => return lib.fail(out, "task_remove must be a string id"),
+        };
+        if (task_remove_id.len == 0) return lib.fail(out, "task_remove needs id");
+        patch.task = .{ .remove = task_remove_id };
+    }
+
     const now: i64 = @intCast(@divTrunc(lib.nowNanos(), std.time.ns_per_s));
     var attempt: u32 = 0;
     while (attempt < 3) : (attempt += 1) {
@@ -63,6 +92,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
         const updated = store.apply(lib.alloc, existing, patch, now) catch |err| switch (err) {
             error.NoSuchGoal => return lib.fail(out, "no such goal"),
+            error.NoSuchTask => return lib.fail(out, "no such task on that goal"),
+            error.BadTask => return lib.fail(out, "task text must not be empty"),
             error.BadStatus => return lib.fail(out, "status must be active, review, done, archived, abandoned or blocked"),
             error.BadBudget => return lib.fail(out, "max_iterations must be an integer from 1 to 1000"),
             // A finished run must not overwrite a hand move. Same body as a

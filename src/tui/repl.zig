@@ -6378,7 +6378,9 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         const root_z = try std.process.currentPathAlloc(io, gpa);
         defer gpa.free(root_z);
         const root = try arena.dupe(u8, root_z);
-        const wt_id = try std.fmt.allocPrint(gpa, "tui-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
+        const inst_id = if (cfg.instance.id.len > 0) cfg.instance.id else if (cfg.instance.name.len > 0) cfg.instance.name else "self";
+        var tag_buf: [48]u8 = undefined;
+        const wt_id = try std.fmt.allocPrint(gpa, "tui-{d}-{s}", .{ std.Io.Timestamp.now(io, .real).nanoseconds, worktree_mod.branchInstanceTag(&tag_buf, inst_id) });
         defer gpa.free(wt_id);
         if (worktree_mod.createOn(gpa, io, wt_id, "clanker/tui-", .run)) |created| {
             if (std.process.setCurrentPath(io, created.path)) {

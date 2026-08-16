@@ -3282,6 +3282,9 @@ const GoalContext = struct {
     /// cfg.agent.max_iterations fallback" for runs of this goal unless the
     /// caller supplies a per-run override that beats it.
     max_iterations: ?u32,
+    /// Workspace (project) id the goal belongs to; "" is the default workspace
+    /// (RFC 0001). Used to name the goal's output room and its board.
+    workspace: []const u8 = "",
     /// Task-prompt preamble (`## Active goal` …). Arena-owned.
     section: []const u8,
 };
@@ -3345,6 +3348,7 @@ fn goalFromObject(arena: std.mem.Allocator, obj: std.json.ObjectMap) !?GoalConte
         .boundaries = boundaries,
         .stop_rule = stop_rule,
         .max_iterations = goalMaxIterations(obj),
+        .workspace = json_util.strFieldOrEmpty(obj, "workspace"),
         .section = try formatGoalSection(arena, objective, completion, proof, boundaries, stop_rule),
     };
 }
@@ -3691,7 +3695,8 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
             log.log(.error_, "run --worktree: could not read the current directory: {s}", .{@errorName(err)});
             return err;
         };
-        const wt_id = try std.fmt.allocPrint(gpa, "{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
+        var tag_buf: [48]u8 = undefined;
+        const wt_id = try std.fmt.allocPrint(gpa, "{d}-{s}", .{ std.Io.Timestamp.now(io, .real).nanoseconds, worktree_mod.branchInstanceTag(&tag_buf, selfInstanceId(&cfg)) });
         defer gpa.free(wt_id);
         var created = worktree_mod.createOn(gpa, io, wt_id, "clanker/run-", .run) catch |err| {
             if (!isolation_required) {
@@ -5598,7 +5603,8 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     defer if (original_cwd) |p| gpa.free(p[0 .. p.len + 1]);
     var wt: ?worktree_mod.Worktree = null;
     if (!opts.dry_run and original_cwd != null) {
-        const wt_id = try std.fmt.allocPrint(gpa, "{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
+        var tag_buf: [48]u8 = undefined;
+        const wt_id = try std.fmt.allocPrint(gpa, "{d}-{s}", .{ std.Io.Timestamp.now(io, .real).nanoseconds, worktree_mod.branchInstanceTag(&tag_buf, selfInstanceId(&cfg)) });
         defer gpa.free(wt_id);
         if (worktree_mod.create(gpa, io, wt_id)) |created| {
             wt = created;
@@ -12113,8 +12119,25 @@ test validWorkspace {
     try std.testing.expect(validWorkspace("web ui"));
     try std.testing.expect(!validWorkspace("a/b"));
     try std.testing.expect(!validWorkspace("a\\b"));
+    try std.testing.expect(!validWorkspace("a:b"));
     try std.testing.expect(!validWorkspace("a\nb"));
     try std.testing.expect(!validWorkspace("x" ** 65));
+}
+
+/// The effective instance id: `[instance] id` when set, else `[instance] name`
+/// (first boot persists one), else a stable fallback. This is the identity the
+/// membership roster and worktree branch ids use, so two instances cannot
+/// generate the same branch name by accident (RFC 0001).
+fn selfInstanceId(cfg: *const config.Config) []const u8 {
+    if (cfg.instance.id.len > 0) return cfg.instance.id;
+    if (cfg.instance.name.len > 0) return cfg.instance.name;
+    return "self";
+}
+
+/// The primary (first) root's path, for callers that still assume one folder.
+fn workspacePrimaryPath(w: workspace_mod.Workspace) []const u8 {
+    if (w.roots.len > 0) return w.roots[0].path;
+    return "";
 }
 
 const WorkspaceRoot = struct {
@@ -12127,6 +12150,23 @@ fn workspaceSandboxPath(io: std.Io, arena: std.mem.Allocator, id: []const u8) ?[
     if (id.len == 0) return null;
     const list = workspace_mod.load(io, arena, std.Io.Dir.cwd()) catch return null;
     return workspace_mod.pathFor(list, id);
+}
+
+/// The named roots a run sandbox may reach for a non-empty workspace, as the
+/// runtime-only `agent.sandbox_roots` list (RFC 0001). The primary root stays
+/// `agent.sandbox_root`; these are the named components a guest reaches by
+/// prefixing its relative path with the component name. Null means the empty
+/// default workspace (no extra roots).
+fn workspaceSandboxRoots(io: std.Io, arena: std.mem.Allocator, id: []const u8) ?[]const config.SandboxRoot {
+    if (id.len == 0) return null;
+    const list = workspace_mod.load(io, arena, std.Io.Dir.cwd()) catch return &.{};
+    const roots = workspace_mod.rootsFor(list, id) orelse return &.{};
+    var out: std.ArrayList(config.SandboxRoot) = .empty;
+    for (roots) |r| {
+        if (r.name.len == 0) continue;
+        out.append(arena, .{ .name = r.name, .path = r.path }) catch continue;
+    }
+    return out.toOwnedSlice(arena) catch &.{};
 }
 
 fn openWorkspaceRoot(io: std.Io, arena: std.mem.Allocator, id: []const u8) !WorkspaceRoot {
@@ -12146,6 +12186,9 @@ fn openWorkspaceRoot(io: std.Io, arena: std.mem.Allocator, id: []const u8) !Work
 const WorkspaceBody = struct {
     name: []const u8 = "",
     path: []const u8 = "",
+    /// Optional multi-root form: `[{"name":"core","path":"..."}, ...]`. When
+    /// present it wins over the single `path` field.
+    roots: []const workspace_mod.Root = &.{},
 };
 
 fn handleWorkspaces(
@@ -12201,16 +12244,19 @@ fn handleWorkspaces(
             };
             const name: ?[]const u8 = if (req.name.len > 0) req.name else null;
             const folder: ?[]const u8 = if (req.path.len > 0) req.path else null;
-            if (name == null and folder == null) {
-                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing name or path\"}");
+            if (name == null and folder == null and req.roots.len == 0) {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing name, path or roots\"}");
                 return;
             }
-            const updated = workspace_mod.update(io, gpa, arena, std.Io.Dir.cwd(), id, name, folder) catch |err| switch (err) {
+            const updated = (if (req.roots.len > 0)
+                workspace_mod.updateRoots(io, gpa, arena, std.Io.Dir.cwd(), id, name, req.roots)
+            else
+                workspace_mod.update(io, gpa, arena, std.Io.Dir.cwd(), id, name, folder)) catch |err| switch (err) {
                 error.NoSuchWorkspace => {
                     respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such workspace\"}");
                     return;
                 },
-                error.BadName => {
+                error.BadName, error.BadRootName => {
                     respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid workspace name\"}");
                     return;
                 },
@@ -12240,8 +12286,12 @@ fn handleWorkspaces(
             return;
         };
         const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-        const created = workspace_mod.add(io, gpa, arena, std.Io.Dir.cwd(), req.name, req.path, now) catch |err| switch (err) {
-            error.BadName => {
+        const owner = selfInstanceId(cfg);
+        const created = (if (req.roots.len > 0)
+            workspace_mod.addRoots(io, gpa, arena, std.Io.Dir.cwd(), req.name, req.roots, owner, now)
+        else
+            workspace_mod.add(io, gpa, arena, std.Io.Dir.cwd(), req.name, req.path, owner, now)) catch |err| switch (err) {
+            error.BadName, error.BadRootName => {
                 respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"workspace name must be 1-64 characters and contain no separators\"}");
                 return;
             },
@@ -12279,9 +12329,9 @@ fn handleWorkspaces(
     s.objectField("workspaces") catch return;
     s.beginArray() catch return;
 
-    writeWorkspaceJson(&s, "", cwd_name, cwd_abs, true, false, countChats(sessions, "")) catch return;
+    writeWorkspaceJson(&s, "", cwd_name, cwd_abs, null, true, false, countChats(sessions, "")) catch return;
     for (registered) |w| {
-        writeWorkspaceJson(&s, w.id, w.name, w.path, false, false, countChats(sessions, w.id)) catch return;
+        writeWorkspaceJson(&s, w.id, w.name, workspacePrimaryPath(w), w.roots, false, false, countChats(sessions, w.id)) catch return;
     }
     // Label-only folders that predate the registry still appear so their
     // chats stay reachable until a path is attached.
@@ -12298,7 +12348,7 @@ fn handleWorkspaces(
         }
         if (already) continue;
         seen_orphans.append(arena, m.workspace) catch continue;
-        writeWorkspaceJson(&s, m.workspace, m.workspace, "", false, true, countChats(sessions, m.workspace)) catch continue;
+        writeWorkspaceJson(&s, m.workspace, m.workspace, "", null, false, true, countChats(sessions, m.workspace)) catch continue;
     }
 
     s.endArray() catch return;
@@ -12319,6 +12369,7 @@ fn writeWorkspaceJson(
     id: []const u8,
     name: []const u8,
     path: []const u8,
+    roots: ?[]const workspace_mod.Root,
     is_builtin: bool,
     orphan: bool,
     chats: usize,
@@ -12330,6 +12381,19 @@ fn writeWorkspaceJson(
     try s.write(name);
     try s.objectField("path");
     try s.write(path);
+    try s.objectField("roots");
+    try s.beginArray();
+    if (roots) |rs| {
+        for (rs) |r| {
+            try s.beginObject();
+            try s.objectField("name");
+            try s.write(r.name);
+            try s.objectField("path");
+            try s.write(r.path);
+            try s.endObject();
+        }
+    }
+    try s.endArray();
     try s.objectField("builtin");
     try s.write(is_builtin);
     try s.objectField("orphan");
@@ -12350,7 +12414,18 @@ fn writeWorkspaceCreated(arena: std.mem.Allocator, stream: std.Io.net.Stream, w:
     s.objectField("name") catch return;
     s.write(w.name) catch return;
     s.objectField("path") catch return;
-    s.write(w.path) catch return;
+    s.write(workspacePrimaryPath(w)) catch return;
+    s.objectField("roots") catch return;
+    s.beginArray() catch return;
+    for (w.roots) |r| {
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(r.name) catch return;
+        s.objectField("path") catch return;
+        s.write(r.path) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", out.written());
 }
@@ -13877,6 +13952,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid workspace\"}");
         return;
     }
+    run_cfg.agent.workspace_id = run_workspace;
     const ws_root = workspaceSandboxPath(io, arena, run_workspace);
     var wt: ?worktree_mod.Worktree = null;
     defer if (wt) |*w| w.deinit(gpa);
@@ -13889,7 +13965,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
-        const wt_id = std.fmt.allocPrint(gpa, "webui-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds}) catch {
+        var tag_buf: [48]u8 = undefined;
+        const wt_id = std.fmt.allocPrint(gpa, "webui-{d}-{s}", .{ std.Io.Timestamp.now(io, .real).nanoseconds, worktree_mod.branchInstanceTag(&tag_buf, selfInstanceId(cfg)) }) catch {
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
@@ -13919,6 +13996,9 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         , .{ created.branch, created.path, created.base_branch, final_task }) catch final_task;
     } else if (ws_root) |p| {
         run_cfg.agent.sandbox_root = p;
+        if (workspaceSandboxRoots(io, arena, run_workspace)) |roots| {
+            run_cfg.agent.sandbox_roots = roots;
+        }
     }
 
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = &run_cfg };

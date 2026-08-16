@@ -3306,6 +3306,7 @@ const ToolWorker = struct {
             .io = io,
             .root_dir = self.cfg.agent.sandbox_root,
             .shared_root = self.cfg.agent.shared_root,
+            .extra_roots = self.cfg.agent.sandbox_roots,
             .network_allow = self.tool.network_allow,
             .fs_prefixes = self.tool.fs_prefixes,
             // The named host channels (ck_harness_config, ck_std_api,
@@ -3336,10 +3337,7 @@ const ToolWorker = struct {
             // config on the parallel path and reported "no exec_pattern_allow
             // patterns are configured" even though the config had them, the
             // two execution paths disagreed about the same tool's settings.
-            .config_json = if (self.tool.exec_allow.len > 0)
-                try host.execPolicyConfig(arena_state.allocator(), self.tool.config_json, self.cfg)
-            else
-                self.tool.config_json,
+            .config_json = try host.toolConfigFor(arena_state.allocator(), self.tool, self.cfg),
             .fuel = self.tool.fuel,
         };
 

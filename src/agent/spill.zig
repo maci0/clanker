@@ -11,52 +11,17 @@
 const std = @import("std");
 const types = @import("../llm/types.zig");
 const tool_out = @import("../util/tool_out.zig");
+const spill_logic = @import("spill_logic");
 
 pub const marker = tool_out.prune_marker;
-pub const locator_prefix = "[spill id=";
 
-/// One-line locator the model can hand to the `spill` guest.
-pub fn locatorLine(id: []const u8) [locator_prefix.len + 8 + 1]u8 {
-    var out: [locator_prefix.len + 8 + 1]u8 = undefined;
-    @memcpy(out[0..locator_prefix.len], locator_prefix);
-    @memcpy(out[locator_prefix.len..][0..8], id[0..8]);
-    out[out.len - 1] = ']';
-    return out;
-}
-
-pub fn parseId(text: []const u8) ?[]const u8 {
-    const at = std.mem.find(u8, text, locator_prefix) orelse return null;
-    const start = at + locator_prefix.len;
-    if (start + 8 > text.len) return null;
-    const id = text[start .. start + 8];
-    for (id) |c| {
-        const hex = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
-        if (!hex) return null;
-    }
-    return id;
-}
-
-/// 8 lowercase hex chars from a 32-bit FNV of the bytes plus a salt.
-pub fn idFor(content: []const u8, salt: u64) [8]u8 {
-    var h: u32 = 2166136261;
-    for (content) |c| {
-        h ^= c;
-        h *%= 16777619;
-    }
-    // Mix in the low 32 bits of the salt; the high half is dropped on purpose.
-    h ^= @truncate(salt);
-    h *%= 16777619;
-    var out: [8]u8 = undefined;
-    const hex = "0123456789abcdef";
-    var i: usize = 8;
-    var n = h;
-    while (i > 0) {
-        i -= 1;
-        out[i] = hex[n & 0xf];
-        n >>= 4;
-    }
-    return out;
-}
+/// The spill id format (locator line, id derivation, id parsing) lives in
+/// `spill_logic`, the same host-tested module the `spill` guest reads results
+/// back through; the harness imports it rather than carrying a second copy.
+pub const locator_prefix = spill_logic.locator_prefix;
+pub const locatorLine = spill_logic.locatorLine;
+pub const parseId = spill_logic.parseId;
+pub const idFor = spill_logic.idFor;
 
 /// One spill: what to preserve, where, and which pruned message it belongs to.
 pub const Spill = struct {
@@ -97,16 +62,6 @@ pub fn collectSpills(
 pub fn applyLocator(arena: std.mem.Allocator, dst: *types.Message, id: []const u8) !void {
     const pc = dst.content orelse return;
     dst.content = try std.fmt.allocPrint(arena, "{s}\n{s}", .{ pc, locatorLine(id) });
-}
-
-test "locator is 8 hex and round-trips" {
-    const id = idFor("hello tool output", 3);
-    try std.testing.expectEqual(@as(usize, 8), id.len);
-    const line = locatorLine(&id);
-    const parsed = parseId(&line) orelse return error.TestExpectedEqual;
-    try std.testing.expectEqualStrings(&id, parsed);
-    try std.testing.expect(parseId("no locator here") == null);
-    try std.testing.expect(parseId("[spill id=nothex!!]") == null);
 }
 
 test "collectSpills picks pruned tool results and applyLocator appends the locator" {
