@@ -134,6 +134,9 @@ stuck).
 - [x] `repeat_tool_thresholds` validation rejects an empty list, a
       non-integer, a value below 2, and a duplicate at config load.
 - [x] A denied call (plan mode or confirm decline) still advances the chain.
+- [x] The guard is advisory only: hitting a threshold injects a reminder but
+      never blocks, denies, or otherwise prevents the tool call from running.
+      (Goal 4)
 
 ## Open questions / future work
 

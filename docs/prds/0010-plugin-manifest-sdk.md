@@ -24,7 +24,7 @@ not exist was any of the things that make a format a format:
 
 - **No written spec.** `docs/README.md` had a ten-row table of "descriptor
   keys" against a loader that reads twenty-six of them. Two of those ten rows
-  were wrong (see Bugs fixed).
+  were wrong (see Design → Bugs fixed).
 - **No version.** Nothing in a manifest said which schema it was written
   against, so there was no way to add one later without either breaking every
   existing file or guessing.
@@ -164,9 +164,7 @@ The full table is `docs/manifest.md`, mirrored from `parseDescriptor` and
 the doc is the standing rule; `known_keys` is the list to update when the loader
 learns a key, or `validate` starts calling it unknown.
 
-## Bugs fixed
-
-Found by writing the reference against the code rather than against the
+**Bugs fixed.** Found by writing the reference against the code rather than against the
 existing docs:
 
 - **`exec_allow` empty did not mean what three places said it meant.**

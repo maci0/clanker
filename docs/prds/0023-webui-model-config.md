@@ -235,6 +235,8 @@ button or self-restart in v1.
 - [x] Writing a table that doesn't exist yet appends it; writing a
       top-level key that doesn't exist yet inserts it before the first
       `[` header.
+- [x] When `config.local.toml` does not exist, the write creates it fresh.
+      (Goal 4)
 - [x] Header match is literal against `renderModelSnippet` output (spacing
       variants are not treated as the same table).
 - [x] A killed process mid-write (simulated in a test) leaves the previous
@@ -244,6 +246,9 @@ button or self-restart in v1.
       the same header text is pinned by a test as **last table wins**.
 - [x] The Models view shows the exact block to be written and requires an
       explicit second action before the endpoint is called.
+- [x] The Models view exposes a "set as default" action that writes
+      `default_provider`/`default_model` via `POST /api/config/default`.
+      (Goal 6)
 - [x] A successful save's UI response is a text notice that the change
       applies on next restart (no restart button).
 

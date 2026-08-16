@@ -52,10 +52,11 @@ just GPU kernels.
 **Harness contract.** Any shell command must (a) exit 0, (b) emit the
 metric as `<pattern><number>` in stdout/stderr, or as `metric.json`
 `{"<name>": <number>}` (checked first), both implemented in
-`harness.zig`'s `extractMetric`. `--budget` is **logged advisory only in
-v1**: stored on `Options`, written into the run's `config.json` / logs, and
-not used as a wall-clock kill. The harness owns its own timeout; do not
-claim a subprocess cutoff until `runHarness` enforces one.
+`harness.zig`'s `extractMetric`. `--budget` is **advisory only in v1**:
+stored on `Options` and passed through to `Loop.run`, surfaced in the CLI
+`--dry-run` log but not written into the run's `config.json`, and not used
+as a wall-clock kill. The harness owns its own timeout; do not claim a
+subprocess cutoff until `runHarness` enforces one.
 
 **CLI flags** (`clanker autoresearch`, mirrored by REPL `/autoresearch` help):
 
@@ -117,15 +118,15 @@ surface.
 
 ## Acceptance criteria
 
-- [x] `clanker autoresearch --help` and `--dry-run` validate without an LLM call
+- [x] Goal 4 (CLI surface): `clanker autoresearch --help` and `--dry-run` validate without an LLM call
 - [x] Loop runs targets/harness/metric/direction/iters end to end, logging each iteration
 - [x] Change validation rejects out-of-target and disallowed paths before patching
 - [x] Metric extraction from `metric.json` or `<pattern><number>` in stdout/stderr
 - [x] Append-only ledger (`ledger.jsonl`), including the oversized-file edge case
 - [x] WASM tool `autoresearch` lists runs and tails a ledger, reachable from any agent conversation
 - [x] Skill (`skills/autoresearch.md`) + REPL `/autoresearch` + eval coverage (`evals/autoresearch_*.task.json`)
-- [x] `--budget` documented as logged advisory only in v1 (CLI help/docs match advisory semantics; not a kill switch — see Known issues)
-- [x] `zig build` / `zig build tools` / `zig fmt --check` green
+- [x] Goal 1 (loop pacing): `--budget` is accepted and passed through as an advisory pacing hint only, never a kill switch (CLI `--help` still says "wall seconds" — see Known issues)
+- [x] Goals 1–4 build and format clean: `zig build` / `zig build tools` / `zig fmt --check` green
 
 ## Open questions / future work
 

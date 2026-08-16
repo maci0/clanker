@@ -56,8 +56,11 @@ Soft: 0017 DAP and 0032 MCP client become extra `kind` values.
 
 - [ ] `subprocs list` / doctor shows every live registry row.
 - [ ] `subprocs kill` with session+kind SIGTERMs that row only.
+- [ ] `subprocs kill` with a session id only SIGTERMs every process for that
+      session (`terminateSession`).
 - [ ] Empty registry is silent, not an error.
-- [ ] Unit tests drive `Registry.snapshot` and `terminate`, not a mock.
+- [ ] Unit tests drive `Registry.snapshot`, `terminate`, and
+      `terminateSession` directly (Goals 1–2), not a mock registry.
 
 ## Open questions / future work
 

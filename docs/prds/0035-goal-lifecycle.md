@@ -44,7 +44,7 @@ made the web board bypass the persistence tool.
 | Draft | `clanker write-goal "<intent>"` | `/write-goal <intent>` | Returns a structured review draft | Persist or execute |
 | Persist | `clanker add-goal "<objective>" "<completion criterion>"` | `/add-goal <objective> :: <completion criterion>` | Appends a durable record and prints its id | Draft, execute, or imply approval to run |
 | Goal loop | `clanker goal "<condition>"` | `/goal <condition>` | Starts a goal loop immediately | Require a draft or saved id |
-| Saved goal loop | `clanker run --goal <id>` | Goal board “Work on this” | Starts the loop from exactly that stored record | Create a new goal |
+| Saved goal loop | `clanker run --goal <id>` | — | Starts the loop from exactly that stored record | Create a new goal |
 
 `clanker run "/goal <condition>"` is a goal-loop alias for `clanker goal
 "<condition>"`; it must never reach the model as a literal slash command.
@@ -112,9 +112,11 @@ goal. `agent.max_goal_turns` bounds completed agent turns separately from
 - [x] Each loop continues through successive turns until it is achieved,
   blocked, cancelled, or hits a configured limit.
 - [x] `run --goal <id>` starts a saved goal loop without creating another one.
+- [x] The web goal board's "Work on this" starts a stored goal's loop by id
+  (Goal 4).
 - [x] The web goal board creates through `add_goal` and does not auto-run.
 - [x] CLI help, TUI help, manifests, skills, PRDs, ADR, reports, and the
-  roadmap state the same loop semantics.
+  roadmap each state the same one-effect-per-operation contract (Goal 1).
 
 ## Open questions / future work
 

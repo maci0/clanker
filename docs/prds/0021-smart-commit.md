@@ -78,7 +78,7 @@ fully-guest tool; there is no host module.
 
 ```json
 {
-  "dry_run": false,
+  "dry_run": true,
   "max_commits": 10,
   "scope": "staged"
 }
@@ -253,6 +253,11 @@ were merged before confirming.
 - [x] A pre-commit hook failure is reported and the partial commit list is
       returned; subsequent groups are not attempted.
 - [x] `max_commits` cap merges excess groups into the last one.
+
+**Note:** the pre-commit-hook and `max_commits` boxes above verify
+Failure-mode / input-schema behavior rather than a Goal; they are retained as
+shipped schema/failure checks, not reworded, because no Goal covers them.
+
 - [ ] Optional `commit.model` is honored when set; unset uses the main provider.
 - [x] Unit tests cover: lock-file filtering, conventional commit regex, topological
       sort, partial cycle detection, degenerate-cycle fallback, source-before-tests

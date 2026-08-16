@@ -34,8 +34,8 @@ untouched.
 
 ## Goals
 
-1. A pure function, `pruneToolResults(messages, threshold_bytes, head_bytes,
-   tail_bytes) -> usize` (bytes reclaimed), that scans messages with
+1. A pure function, `pruneToolResults(messages, arena, threshold_bytes,
+   head_bytes, tail_bytes) !usize` (bytes reclaimed), that scans messages with
    `role == .tool` whose `content.len` exceeds `threshold_bytes` and rewrites
    `content` in place to `head ++ "\n\n[... tool result middle pruned
    ...]\n\n" ++ tail`.
@@ -140,6 +140,8 @@ gate, no other Draft PRD required.
 
 - [x] `pruneToolResults` is pure, unit-tested, and never allocates a second
       full copy of an unpruned result once it is done.
+- [x] The head/tail cut points never split a codepoint (UTF-8 boundary search
+      backs off to a valid lead byte).
 - [x] A `role == .tool` message over `tool_result_prune_bytes` is rewritten
       to head + marker + tail, and is under the threshold afterward.
 - [x] Assistant and user messages are never modified by pruning.
@@ -148,6 +150,8 @@ gate, no other Draft PRD required.
       request-side only.
 - [x] A second pruning pass over already-pruned content is a no-op (byte
       count unchanged).
+- [x] Defaults are 8192/4096/1024 for threshold/head/tail bytes; `0` on the
+      threshold disables pruning.
 - [x] A config where kept parts plus the marker exceed the threshold is
       rejected at load, not at first use.
 - [x] When pruning alone relieves compaction pressure, the LLM summarizer is

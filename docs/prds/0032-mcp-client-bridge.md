@@ -158,6 +158,9 @@ transport and dispatch-split work can start independently of 0016.
 
 ## Acceptance criteria
 
+- [ ] `[mcp_servers.<name>]` stanzas parse with `transport`, stdio
+      `command`/`args`/`env`/`cwd`, http `url`/`headers`, and
+      `tool_call_timeout_ms` defaulting to 60000 (Goal 1).
 - [ ] `modules.mcp_client = false` by default; zero behavior change with it
       off.
 - [ ] A configured stdio server's tools are discovered and callable under
@@ -169,8 +172,9 @@ transport and dispatch-split work can start independently of 0016.
 - [ ] A tool call forwards `{name, arguments}` and returns the server's
       result through the normal tool-result path — no `.wasm` instantiation
       occurs for an `mcp__*` entry.
-- [ ] An unreachable server at startup does not prevent clanker from
-      starting or from loading every other tool source.
+- [ ] Startup (Goal 2) connects to every configured server and registers
+      each discovered tool; one unreachable server is skipped without
+      blocking the others.
 - [ ] A server that crashes mid-session reconnects with backoff and its
       tools become callable again on recovery.
 - [ ] `clanker mcp-client list` (or its equivalent) shows every connected

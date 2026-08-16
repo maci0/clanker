@@ -151,6 +151,9 @@ requirement.
 
 ## Acceptance criteria
 
+- [ ] `preset.toml` carries `description`, `system_prompt_append`,
+      `tools_allow`/`tools_deny`, and optional
+      `default_provider`/`default_model` (Goal 1).
 - [ ] `--preset research` offers the model only read/search tools; a
       write-capable tool is neither offered nor callable.
 - [ ] `--preset full` (or no `--preset`) is a no-op: identical tool set to

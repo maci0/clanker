@@ -546,9 +546,7 @@ Soft:
    `SESSION_*` / `FILE_*`, guests `workspace_share` / `file_share`,
    replica root `state/mesh/<peer-id>/`, home-unreachable refuse.
 
-## Usage sketch
-
-Phase 1 control plane. Workspace share is still Phase 3.
+**Usage sketch.** Phase 1 control plane. Workspace share is still Phase 3.
 
 Two laptops on a LAN, allowlist:
 

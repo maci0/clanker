@@ -4,12 +4,15 @@
 
 **Web UI plugins: Shipped.** `ui/plugins/<name>/` (`plugin.json` +
 `app.js` + optional `app.css`), created from chat by the `webui_addon`
-tool, discovered by `handleWebuiPlugins`
-(`src/cli.zig:7206-7299`), served same-origin from `/webui/plugins/<name>/*`
-(`handleWebuiPluginAsset`, `src/cli.zig:7305-7355`), registered client-side
+tool, discovered by the `webui_addon` guest (`list` scans `ui/plugins/`
+fresh; `handleWebuiPlugins`, `src/cli.zig:9994-10042`, only relays to it),
+served same-origin from `/webui/plugins/<name>/*`
+(`handleWebuiPluginAsset`, `src/cli.zig:10048-10103`), registered client-side
 via `window.clanker.registerView()` (`ui/app/core/plugins.js:171-221`),
-toggled in System → Web UI plugins, state in `state/webui_plugins.json`. Four
-real plugins ship today: `activity`, `office`, `files`, `health`. No PRD or ADR
+toggled in System → Web UI plugins, state in `state/webui_plugins.json`.
+Nine plugin directories ship on disk today (`activity`, `files`, `health`,
+`mesh`, `music`, `office`, `schedule`, `search`, `compare`); a fresh checkout
+seeds `files`, `music`, `schedule`, `search`, `compare`, `mesh` on. No PRD or ADR
 covered the web UI half before this one; its prior documentation was
 `ui/plugins/README.md` plus the review log
 `docs/reviews/webui-plugins.md`, which is why its design decisions (CSP-only
@@ -104,30 +107,47 @@ one.
 ### Web UI plugins (documenting what is shipped)
 
 **Layout.** `ui/plugins/<name>/`: `plugin.json` (required),
-`app.js` (required), `app.css` (optional). Four ship today: `activity`,
-`office` (with `sprites.png`/`characters.png`), `files`, `health`.
+`app.js` (required), `app.css` (optional). Nine directories ship on disk:
+`activity`, `files`, `health`, `mesh`, `music`, `office`, `schedule`,
+`search`, `compare`. A fresh checkout seeds `files`, `music`, `schedule`,
+`search`, `compare`, `mesh` on (`webui_addon_logic.default_enabled`); the
+`schedule`/`search`/`compare`/`mesh` set also inherits on from an older
+state file that listed only `files`+`music` (`inherit_on`), so migrating the
+built-in views does not silently turn them off.
 
-**Manifest** (`WebuiPlugin`, `src/cli.zig:7126-7131`): `name`, `title`,
-`description`, `group` — `group` must be `Work`, `Watch`, or `Set up`,
-matching a real rail-nav heading. The manifest's own `name` is overwritten
-by the directory name (`src/cli.zig:7275-7277`), so a plugin cannot lie about
-its own identity.
+**Manifest** (`plugin.json`, parsed by the `webui_addon` guest,
+`tools/zig/webui_addon.zig:125-131`): `name`, `title`, `description`, `group`
+(default `Watch`), `capabilities` (default empty). `group` must be `Work`,
+`Watch`, or `Set up`, matching a real rail-nav heading
+(`webui_addon_logic.validGroup`). Identity is the **directory name**, not the
+manifest's `name` field: the guest's `list` walks `ui/plugins/` and keys
+everything off the directory name, so a plugin cannot lie about its own
+identity. `capabilities` is checked against a closed list
+(`webui_addon_logic.capabilities`) — an unknown name is a typo, not a grant.
 
-**Discovery.** `GET /api/webui/plugins` scans `ui/plugins/` fresh on
-every call (`handleWebuiPlugins`, `src/cli.zig:7206-7299`) — no rebuild
-needed to add, remove, or edit a plugin. Off by default; enabling one is
-recorded in `state/webui_plugins.json` (`{"enabled": [...]}`,
-`WebuiPluginState`, `src/cli.zig:7133-7135`) — presence on disk is not
-consent to run it (`src/cli.zig:7203-7205`).
+**Discovery and toggle — one owner.** The `webui_addon` guest owns the whole
+registry: `list` scans `ui/plugins/` fresh on every call, `create`/`put`
+write `plugin.json` + `app.js` (+ optional `app.css`), `enable`/`disable`
+toggle the name in `state/webui_plugins.json` (`{"enabled": [...],
+"disabled": [...]}`), and a missing state file seeds `default_enabled`. The
+host does **not** keep a second copy: `handleWebuiPlugins`
+(`src/cli.zig:9994-10042`) only relays `GET`/`POST /api/webui/plugins` to the
+guest, and `listedEnabled` (`src/cli.zig:9950-9971`) reads the guest's `list`
+answer to decide a name's on/off. The only native struct left is
+`WebuiPluginPost` (`{name, enabled}`, `src/cli.zig:9897-9900`) — the POST
+body shape; the old `WebuiPlugin` (manifest) and `WebuiPluginState`
+(enabled-list) structs are gone. A plugin is off until turned on — presence
+on disk is not consent to run it.
 
 **Asset serving.** `GET /webui/plugins/<name>/<file>`
-(`handleWebuiPluginAsset`, `src/cli.zig:7305-7355`), same-origin, read fresh
-from disk. `pluginAssetType` (`src/cli.zig:7172-7181`) allow-lists exactly
-`app.js`/`app.css`/`sprites.png`/`characters.png`; anything else 404s, and a
-disabled plugin's assets 404 too — toggling off actually stops the code from
-reaching the browser, not just from being invoked. Names pass `isSlug`/
-`validPluginName` (`src/cli.zig:7145-7155`) against path traversal
-(tested `src/cli.zig:7157-7165`).
+(`handleWebuiPluginAsset`, `src/cli.zig:10048-10103`), same-origin, read
+fresh from disk every request. `pluginAssetType` (`src/cli.zig:9921-9930`)
+allow-lists exactly `app.js`/`app.css`/`sprites.png`/`characters.png`;
+anything else 404s, and a disabled plugin's assets 404 too — toggling off
+actually stops the code from reaching the browser, not just from being
+invoked. Names pass `validPluginName` (`src/cli.zig:9902-9904`, which
+delegates to `session.validSessionId`) against path traversal (tested
+`src/cli.zig:9906-9914`).
 
 **Registration API.** `app.js` calls `window.clanker.registerView(spec)`
 (`ui/app/core/plugins.js:171-221`) with `{id, title, group, mount,
@@ -309,16 +329,18 @@ throw → tab error) if not already true in code.
 
 - [x] A web UI plugin directory with a valid `plugin.json` and `app.js`
       appears as a real rail-nav tab once enabled, indistinguishable from a
-      built-in view (already true today, `activity`/`office`/`files`/`health`).
+      built-in view (already true today). (G1)
 - [x] A disabled web UI plugin's assets are unreachable by direct URL, not
-      just absent from the nav (`src/cli.zig:7328-7331`).
+      just absent from the nav (`src/cli.zig:10076-10078`). (G1)
+- [x] Web UI plugins are discovered by scanning `ui/plugins/` at request
+      time (the `webui_addon` guest's `list`), not compiled in. (G4)
 - [ ] A TUI plugin manifest naming an existing tool becomes a working slash
-      command with no code change to `repl.zig`.
-- [ ] A TUI plugin cannot name a command that collides with a built-in.
+      command with no code change to `repl.zig`. (G2, G4)
+- [ ] A TUI plugin cannot name a command that collides with a built-in. (G2)
 - [ ] `clanker <name>` resolves a Tier 1 manifest before falling through to
-      a Tier 2 `PATH` binary, and never shadows a built-in `Command`.
+      a Tier 2 `PATH` binary, and never shadows a built-in `Command`. (G3)
 - [ ] `clanker help` lists discovered Tier 2 external plugins, marked as
-      external.
+      external. (G3, G4)
 
 ## Open questions / future work
 

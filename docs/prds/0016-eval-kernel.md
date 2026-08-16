@@ -14,7 +14,9 @@ the process and starts fresh; session end SIGTERMs via the registry.
 `kernel.enabled = false` (default) still refuses. JS/Bun, the loopback
 bridge, a dedicated venv for `%pip`, and WASI-sandboxed persistence are
 still open. The leftover WASI one-shot in `src/sandbox/python_wasi.zig` is
-not the persist path.
+not the persist path; ADR 0010 (revised) instead describes `runPythonCell`
+(`src/sandbox/host.zig`) as WASI-primary, which disagrees with the shipped
+`ck_kernel` → `kernel_mod.eval` host-`python3` path (see Known issues).
 
 ## Problem
 
@@ -216,6 +218,13 @@ the feature default-on without quotas is not.
   after `cleanup_delay_ms`.** Directories stay for inspection.
 - **WASI one-shot (`python_wasi.zig`) is unused by the persist path.**
   Persist is a host `python3` supervisor so `__main__` can live across cells.
+  ADR 0010 (revised) disagrees: it frames `runPythonCell`
+  (`src/sandbox/host.zig`) as the WASI-primary Python path, but that function
+  has no production caller — the `kernel` guest reaches `ck_kernel` →
+  `kernel_mod.eval` (`src/agent/kernel.zig`), a host `python3` subprocess,
+  and never `runPythonCell`. Resolution belongs in ADR 0010 (correct the
+  description) or `src/sandbox/host.zig` (wire `runPythonCell` into
+  `ck_kernel`).
 
 ## Failure modes
 

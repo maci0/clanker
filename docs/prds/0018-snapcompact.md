@@ -201,8 +201,9 @@ them means tagging them `event = "compact_llm"` under the same schema change.
 
 - [ ] `compaction.strategy = "snapcompact"` in config activates the new path;
       `"llm"` (default) is unchanged.
-- [ ] Default colors are `bg = "#1a1a1a"` and `fg = "#e0e0e0"`.
-- [ ] Non-ASCII bytes render as a box glyph.
+- [ ] The Goal 2 renderer uses the fixed dark theme: `bg = "#1a1a1a"` and
+      `fg = "#e0e0e0"`.
+- [ ] The Goal 2 pixel-font renderer draws non-ASCII bytes as a box glyph.
 - [ ] The renderer produces a valid PNG for a 10-message transcript; the PNG
       opens in a standard image viewer and the text is readable.
 - [ ] Determinism: two calls with identical input produce byte-for-byte identical
@@ -219,8 +220,8 @@ them means tagging them `event = "compact_llm"` under the same schema change.
       LLM compaction rather than failing the turn.
 - [ ] An oversized transcript is split across multiple images, each under
       `max_bytes`, capped by `snapcompact.max_images` (default 10).
-- [ ] `clanker stats` shows `compact_snap` events with `image_bytes` and
-      `messages_compacted`.
+- [ ] Goal 3's image insertion is observable in stats: `clanker stats` shows
+      `compact_snap` events carrying `image_bytes` and `messages_compacted`.
 - [ ] Unit tests cover: font bitmap blit (spot-check a known character), PNG
       chunk structure (IHDR/IDAT/IEND), image split logic, vision capability
       detection logic, provider-reject fallback.

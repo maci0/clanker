@@ -30,12 +30,22 @@ iteration cap the parent couldn't see how far it got).
 1. Make the harness's async/interactive capabilities (`ask_user`,
    confirm-before-write, image input) reachable from the browser without
    adding a socket or breaking the strict CSP.
-2. Session and context control matching what the CLI already offers: fork,
-   plan mode, visible compaction, provider/model switching.
-3. Visibility into multi-instance behavior (peers, subagents) that a browser
-   can show better than a terminal can.
-4. Keep the page a single comptime-embedded static asset: no bundler, no
-   build step, no new dependency beyond vendored files.
+2. Session, workspace, and context control matching what the CLI already
+   offers: fork, plan mode, visible compaction, provider/model switching,
+   folder-backed workspaces.
+3. Visibility into multi-instance and per-run behavior (peers, subagents,
+   run progress, and todos — the shared board view plus the private per-run
+   checklist) that a browser can show better than a terminal can.
+4. Keep the page a single comptime-embedded static asset under a strict,
+   offline-capable CSP — no bundler, no build step, no new dependency
+   beyond vendored files — and keep the shipped views accessible (no
+   axe-core violations).
+5. Chat UX parity with the Kimi Code web UI (branch, citation chips, model
+   pill, icon rail, Mermaid, run diffs, preview pane, research toggle).
+6. Kimi Code harness parity beyond chat: video input and the skills
+   catalogue.
+7. Goals↔board sync and mid-run steering.
+8. Blind side-by-side model comparison (the Compare view).
 
 ## Non-goals
 
@@ -74,7 +84,7 @@ the product:
 VanJS, Alpine.js, petite-vue, htmx, Preact, and React/Vue/Svelte/Solid
 against the constraints above. Vanilla stays the core because the real
 problem was never "no framework" — it was that `app.js` had become one
-178 KB, ~4,300-line file. Alpine and petite-vue solve sprinkling
+219 KB, 4,998-line file. Alpine and petite-vue solve sprinkling
 interactivity onto server-rendered HTML, not a stateful SPA with streaming
 events and graph rendering; htmx assumes the server returns HTML fragments,
 and ours returns JSON; compile-step frameworks are ruled out by constraint 1
@@ -91,8 +101,8 @@ here as the design rationale it is, not kept as a separate file.
 `<script type="module">`, no bundler, one file per concern, embedded and
 routed the same way `app.css`/`app.js` already were —
 `ui/webui.zig`'s `assetFor` is a lookup table, adding a module is
-mechanical. `app.js` dropped from 5,511 lines to 3,545 right after the
-`board.js`/`goals.js` split, and sits at 5,341 today from later inline growth
+mechanical. `app.js` dropped from 4,998 lines to 3,545 right after the
+`board.js`/`goals.js` split, and sits at 6,499 today from later inline growth
 (Phase 6, Kimi-parity); the Models/Schedule/Search views landed as real
 modules (`features/models.js`, `features/schedule.js`, `features/search.js`,
 each routed and individually cached in `src/cli.zig`); `core/icons.js`,
@@ -288,6 +298,8 @@ every document; "judged" is what a single ledger row can honestly say.
 
 ## Acceptance criteria
 
+Goal traceability: Goal 1 → Phase 1 · Goal 2 → Phase 2 · Goal 3 → Phases 3–5 · Goal 4 → Infrastructure · Goal 5 → Phase 6 · Goal 6 → Kimi Code harness parity · Goal 7 → Goals↔board sync + mid-run steering · Goal 8 → Compare view.
+
 Phase 1 — make it interactive:
 
 - [x] 1.1 `ask_user` bridge
@@ -348,8 +360,8 @@ Compare view (blind side-by-side, #9):
 
 Infrastructure:
 
-- [x] ES module split (`app.js` 5,511 → 3,545 lines at the `board.js`/
-      `goals.js` split, 5,341 today; all `core/*`/`lib/*`/`features/*`
+- [x] ES module split (`app.js` 4,998 → 3,545 lines at the `board.js`/
+      `goals.js` split, 6,499 today; all `core/*`/`lib/*`/`features/*`
       modules embedded, routed, and individually cached)
 - [x] `lib.out_cap` comptime guard passes with headroom
 - [x] Strict CSP verified live (`curl -si`): no inline script, and inline style only from the vendored mermaid renderer (`style-src 'self' 'unsafe-inline'`, `script-src 'self'` unchanged)
@@ -364,7 +376,7 @@ Infrastructure:
 - **Pixel floor** now ships as a minimal decorative canvas (see Design above); richer art (Kenney CC0, `vendor/ART.md` provenance) and live `\x01` glow can be layered later without changing the contract (`aria-hidden` + status text, `prefers-reduced-motion` still frame).
 - **Phase 5 progress** now streams over the existing `/api/run` `\x01` channel; history/revert detail can be added per-run without a new transport.
 - **Remaining `app.js` decomposition** — `board.js` and `goals.js` split out
-  already (see Design), but `app.js` grew back from 3,545 to 5,341 lines as
+  already (see Design), but `app.js` grew back from 3,545 to 6,499 lines as
   later work (Phase 6, Kimi-parity) landed inline; no specific
   next module is scoped, but splitting is cheaper now that the import graph
   is real instead of window-bridge globals.

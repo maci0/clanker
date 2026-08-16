@@ -235,6 +235,10 @@ Shipped:
       tracking the visible window (`drawScrollbar`)
 - [x] Prompt echo and status line coloured (accent brand/model, green idle
       phase, the user's `clanker>` line in bold prompt-green)
+- [x] Themed output consistent with `clanker run`: `repl.zig` selects the
+      active theme through `theme_mod.select` and styles markdown via
+      `syntax.Style.fromTheme`, the same `theme.zig`/`syntax.zig` mapping
+      `clanker run`'s `MdStream` (`tui/transcript.zig`) renders with
 - [x] Multi-line transcript output renders one row per line (was collapsing
       onto one row: `/help` and completed replies; `row += 1` per Line)
 - [x] Per-turn stats line and visible compaction (`src/tui/turn_stats.zig`,

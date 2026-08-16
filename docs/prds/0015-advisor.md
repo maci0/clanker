@@ -32,8 +32,9 @@ taking an action, not after.
    "concern" | "blocker", "text": "..."}`.
 3. At `severity = "blocker"`, the agent loop pauses before the next turn and
    presents the blocker text via the existing `ask_fn` path. The human can
-   proceed or abort. Without a channel (headless run), the blocker is logged and
-   the turn proceeds, with the blocker injected into context.
+   proceed or abort. Without a channel (headless run), the blocker is
+   downgraded to a `concern` and the turn proceeds, with the blocker injected
+   into context.
 4. At `severity = "note"` or `"concern"`, the advisor text is injected into the
    system context for the next think call only (one turn), as a fenced block
    (`[advisor: concern] ...`). It is not added to the user message or to
@@ -141,8 +142,10 @@ to ask), the text is injected as a concern-level note for the next turn. If
 
 **Tool argument redaction.** When building the advisor's input, tool call
 arguments are replaced with `<redacted>` for any tool whose manifest has
-`"fs_prefixes"` or `"exec_allow"` non-empty. Tool names and result summaries
-(first 200 bytes of result) are included unredacted.
+`"fs_prefixes"` or `"exec_allow"` non-empty (the redaction list is built in
+`reviewTurn`). Tool names are included unredacted. Message content — including
+tool-result text — is included capped at 400 bytes; tool arguments for
+non-redacted tools are capped at 200 bytes (`tools/zig/advisor_logic.zig`).
 
 **Stats (decided).** Add an optional `advisor_tokens` field on the closed
 `Record` struct in `src/stats/tokens.zig`. Omitted when unset so existing
@@ -188,7 +191,7 @@ The main agent loop never sees an exception from the advisor path.
 | Advisor provider not configured or key missing | `advisor.enabled = true` is treated as `false`; log a startup warning; main loop unaffected |
 | Advisor call times out | Result dropped; loop proceeds; logged at debug level |
 | Advisor returns malformed JSON | Dropped; logged at debug level; loop proceeds with no injection |
-| Advisor returns `blocker` in a headless run | Blocker text injected as a concern note; loop proceeds; logged as `[advisor blocker: proceeding headless]` |
+| Advisor returns `blocker` in a headless run | The `ask_fn` branch is skipped (no channel); the blocker is downgraded to a `concern` note and injected for the next turn; the loop proceeds. No log line is emitted for the downgrade |
 | Main agent's turn itself errors | Advisor is not called; it reviews only completed turns |
 | Advisor call itself calls a tool (not possible by design, but malformed JSON could claim one) | Ignored; the advisor completion is a non-tool `client.chatWithTimeout` call, which returns text only |
 
@@ -205,8 +208,8 @@ The main agent loop never sees an exception from the advisor path.
       from history before the advisor call.
 - [x] A `blocker` response triggers the `ask_fn` path with `proceed`/`abort`
       options in an interactive session.
-- [x] A `blocker` in a headless run is logged and treated as a `concern` (loop
-      does not hang).
+- [x] A `blocker` in a headless run is downgraded to a `concern` (loop does
+      not hang); no log line is emitted.
 - [x] Advisor timeout (`advisor.timeout_ms`) aborts the armed HTTP connection
       through `client.chatWithTimeout`; the loop continues without injection.
 - [x] Tool arguments for tools with `fs_prefixes` or `exec_allow` are redacted
@@ -215,7 +218,8 @@ The main agent loop never sees an exception from the advisor path.
       main loop.
 - [x] `advisor.enabled = false` (default) causes zero advisor calls; no
       performance impact on the main loop.
-- [x] Optional `advisor_tokens` may appear on stats `Record` when advisor ran.
+- [x] Goal 1's advisor completion may be recorded as an optional
+      `advisor_tokens` field on the stats `Record`.
 - [x] Unit tests in `src/agent/advisor.zig` cover: severity parsing, argument
       redaction, injection formatting, prior-note stripping.
 

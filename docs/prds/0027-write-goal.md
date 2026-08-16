@@ -54,9 +54,19 @@ The same tool is exposed on both direct surfaces:
 
 ## Acceptance criteria
 
-- [x] CLI and TUI invoke the same direct draft-only tool.
-- [x] A draft is never persisted or executed as a side effect.
-- [x] Goal-loop execution and persistence work without a prior draft.
+- [x] A rough intent yields a structured, readable draft — the `record`
+      (objective, completion criteria, verification, boundaries, stop rules,
+      assumptions, unresolved questions) plus a Markdown rendering. (Goal 1)
+- [x] Only the material open forks are asked, at most four questions; when no
+      answer is reachable, assumptions and unresolved questions are recorded
+      instead of silently invented. (Goal 2)
+- [x] Drafting never writes `state/goals.json`, creates a card, or executes an
+      agent run. (Goal 3)
+- [x] CLI (`clanker write-goal`), TUI (`/write-goal`), and the agent tool all
+      invoke the same `write_goal` tool and receive the same draft. (Goal 1)
+- [x] Persisting (`add_goal`) and executing (`goal` / `run --goal`) work
+      without a prior draft — drafting is optional, never a prerequisite.
+      (Goal 3)
 
 ## Open questions / future work
 

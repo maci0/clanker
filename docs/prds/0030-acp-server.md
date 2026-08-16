@@ -151,6 +151,8 @@ structural template (shipped). No other Draft PRD blocks starting.
       `ModuleDisabled`). Default is false.
 - [x] `initialize` negotiates a version and advertises baseline-only prompt
       capability.
+- [x] `clanker acp` serves JSON-RPC 2.0 over stdin/stdout; protocol frames go
+      to stdout only and all logging goes to stderr. (Goal 1)
 - [ ] `session/new` creates an `Agent` bound to the given `cwd`; a relative
       or missing `cwd` is rejected.
 - [ ] `session/prompt` runs a turn to quiescence and reports `end_turn` on
@@ -164,6 +166,8 @@ structural template (shipped). No other Draft PRD blocks starting.
 - [ ] Client disconnect cancels every session the connection owns and the
       process exits with no orphaned threads.
 - [ ] A second `session/prompt` on a session already mid-prompt is rejected.
+- [ ] One connection may own several sessions, each independently prompt-able
+      and cancellable. (Goal 3)
 
 ## Open questions / future work
 

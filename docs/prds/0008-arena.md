@@ -244,6 +244,44 @@ with "here is my implementation/wording, defend it" and the other with
 than two abstract stances — the match needs something real to point at on
 both sides, not just opinions.
 
+**Worked example (phase 7).** Re-running one of `docs/prompts/wasm-review.md`'s
+own move-or-stay decisions as a match, to check the mode against a verdict the
+repo already reached:
+
+```
+clanker arena "Should the deterministic gate runner stay native in
+  src/gate/checks.zig, or move to a WASM tool?" \
+  --defend src/gate/checks.zig \
+  --alternative "Reimplement the gate as a sandboxed WASM tool ..." --rounds 2
+```
+
+`--defend` was given a path, so the real file was read in and travels with the
+match; the finding can then name it. Both sides quoted actual identifiers
+(`runZigArgs`, `resolveZigBin`, `configWeakeningGate`, `skipIfNoSpawnableZig`),
+which is the point of seeding with artifacts rather than stances.
+
+The verdict, in the review shape:
+
+```
+Verdict: for
+Reason: The alternative's "togglable like any other plugin" breaks the gate's
+  non-circumventable safety, which the current implementation preserves by
+  staying outside the protected surface.
+Where: The phrase "togglable like any other plugin" in the proposed approach.
+Respect: The losing side's unaddressed point that runZigArgs uses unsandboxed
+  std.process.run, allowing cache writes or network access; for's counter only
+  disputed the binary-resolution fallbacks, not the lack of isolation.
+Confidence: high
+```
+
+That agrees with the decision already in the tree (`checks.zig` is a trust root
+and stays native, per the review prompt's own step 1). The part a single-pass
+reviewer does not produce is the `Respect` line: the losing side landed a real
+objection about `std.process.run` being unsandboxed that the winner never
+answered, and the finding says so instead of smoothing it over. Two caveats on
+reading too much into one match: both sides shared a provider here, and one
+combatant forfeited a round to an empty completion.
+
 **Web UI: the arena view.** Extends the Fleet floor's canvas technique into
 a dedicated view, not a mode of Fleet itself — a match is an event with a
 start and an end, Fleet's floor is an ambient always-on backdrop, and
@@ -404,7 +442,7 @@ reader diffing doc against code knows they are decisions, not drift:
 | A peer goes unreachable mid-match (room-backed mode) | That combatant forfeits remaining rounds the same as a timeout; the match file records it explicitly rather than hanging |
 | Third-party judge configured but no extra provider available | Falls back to self-reported judging, logged as a downgrade so the verdict's confidence can be read accordingly |
 | A match is asked to start with only 1 position, or with a duplicate position | Refused at the tool boundary — a debate needs at least two distinct sides |
-| Battle Royale `positions` length | `<2` → too few; `>8` → `"at most 8 positions"`; blank or duplicate stance refused the same way |
+| `positions` length at match start (any mode) | `<2` → too few; `>8` → `"at most 8 positions"`; blank or duplicate stance refused the same way. `validatePositions` accepts 2..8 — pairwise is exactly 2, and 3-8 is Battle Royale mode |
 | Invalid `--defend` / design-review input | Tool refuses unless both `defend` and `alternative` are present; do not also pass `for`/`against`/`positions`. A `--defend` value that looks path-shaped but is missing is treated as literal text (CLI `arenaArtifact`), not an error |
 | Match file write fails (`state/arena/<id>.json`) | Logged (`persist` catch); the in-process match continues / finishes and still returns a verdict. Spectators polling the file see a stall or a missing final |
 | Peer move missing past timeout (Phase 3) | Forfeit for that combatant (see Design partition decision); no reorder |
@@ -481,45 +519,6 @@ Phase 8 — Battle Royale mode ("with cheese," 3-8 combatants):
       negates only the attack it names, the rest lands in full (see Design →
       Battle Royale mode; `arena_match.zig`'s `Board` and its focus-fire
       tests pin it)
-
-## Worked example (phase 7)
-
-Re-running one of `docs/prompts/wasm-review.md`'s own move-or-stay decisions as
-a match, to check the mode against a verdict the repo already reached:
-
-```
-clanker arena "Should the deterministic gate runner stay native in
-  src/gate/checks.zig, or move to a WASM tool?" \
-  --defend src/gate/checks.zig \
-  --alternative "Reimplement the gate as a sandboxed WASM tool ..." --rounds 2
-```
-
-`--defend` was given a path, so the real file was read in and travels with the
-match; the finding can then name it. Both sides quoted actual identifiers
-(`runZigArgs`, `resolveZigBin`, `configWeakeningGate`, `skipIfNoSpawnableZig`),
-which is the point of seeding with artifacts rather than stances.
-
-The verdict, in the review shape:
-
-```
-Verdict: for
-Reason: The alternative's "togglable like any other plugin" breaks the gate's
-  non-circumventable safety, which the current implementation preserves by
-  staying outside the protected surface.
-Where: The phrase "togglable like any other plugin" in the proposed approach.
-Respect: The losing side's unaddressed point that runZigArgs uses unsandboxed
-  std.process.run, allowing cache writes or network access; for's counter only
-  disputed the binary-resolution fallbacks, not the lack of isolation.
-Confidence: high
-```
-
-That agrees with the decision already in the tree (`checks.zig` is a trust root
-and stays native, per the review prompt's own step 1). The part a single-pass
-reviewer does not produce is the `Respect` line: the losing side landed a real
-objection about `std.process.run` being unsandboxed that the winner never
-answered, and the finding says so instead of smoothing it over. Two caveats on
-reading too much into one match: both sides shared a provider here, and one
-combatant forfeited a round to an empty completion.
 
 ## Open questions / future work
 

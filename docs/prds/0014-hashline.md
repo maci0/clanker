@@ -221,9 +221,10 @@ mention `hashes: true` and the `hashline` operation.
       full; the file is not modified.
 - [x] Plain `{path, old, new}` edits and plain `read_file` (no `hashes`)
       continue to work unchanged; no regression in existing eval coverage.
-- [x] `edit.hashline_tolerance` (default ±10) finds an anchor that shifted by 5
-      lines from `anchor_line`. (v1 uses the default; the config key is still
-      open if a later eval needs it retuned.)
+- [x] Hash-tag anchoring (Goal 2) tolerates ±10 lines of drift: an anchor that
+      shifted 5 lines from `anchor_line` still resolves. v1 hardcodes ±10; an
+      `edit.hashline_tolerance` key remains open if an eval later needs it
+      retuned.
 - [x] System prompt and tool manifests always mention `hashes: true` /
       `hashline` (not opt-in advertising).
 - [x] Unit tests cover: hash computation, read output format, single-hunk apply,

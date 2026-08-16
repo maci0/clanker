@@ -95,7 +95,7 @@ has for free.
 similar), mapping `(use_case, model.capabilities)` to a
 `{temperature: ?f64, top_p: ?f64, reasoning_effort: ?[]const u8}`
 recommendation. Keyed off `capabilities` (already on every `Model`, e.g.
-`"thinking"`, `"tool_use"`, `src/config.zig:186`) rather than provider/model
+`"thinking"` (and `"always_thinking"`), `"tool_use"`, `src/config.zig:186`) rather than provider/model
 name. v1 ships a **hardcoded** table (no `config.toml` surface for the
 rows):
 
@@ -106,9 +106,12 @@ rows):
 | chat | thinking | `null` | `null` | `"medium"` |
 | tool_use | thinking | `null` | `null` | `"high"` |
 
-A `"thinking"` model gets no explicit temperature (most reasoning-model APIs
-reject or ignore it) and a use-case-appropriate `reasoning_effort` instead; a
-plain chat-completions model gets the temperature/`top_p` pair above.
+A model whose capabilities include `"thinking"` or `"always_thinking"` gets no
+explicit temperature (most reasoning-model APIs reject or ignore it) and a
+use-case-appropriate `reasoning_effort` instead; a plain chat-completions model
+gets the temperature/`top_p` pair above. The table's "thinking" capability
+column includes both strings (`sampling_profiles.hasThinking` treats either as
+thinking).
 
 Boundary against [PRD 0020 (auto-thinking)](0020-auto-thinking.md): this PRD
 owns writing `reasoning_effort` (the capability-keyed table is the one place
@@ -181,7 +184,7 @@ relocating the picker fields must not reach into it.
 | Model has an explicit `config.toml` `temperature`/`top_p` | Unchanged: that value ships, the use-case table never consulted |
 | Model has neither, tools offered this turn | Use-case table's `.tool_use` row for this model's capabilities ships |
 | Model has neither, no tools offered | Use-case table's `.chat` row ships |
-| Model declares `"thinking"` capability | Table sends `reasoning_effort` (chat=`medium`, tool_use=`high`), not `temperature` |
+| Model declares a thinking capability (`"thinking"` or `"always_thinking"`) | Table sends `reasoning_effort` (chat=`medium`, tool_use=`high`), not `temperature` |
 | Per-run override set (`RunRequest.temperature`) | Unchanged: still wins over everything, including the use-case table |
 
 ## Acceptance criteria
@@ -192,8 +195,9 @@ relocating the picker fields must not reach into it.
       the built request body in a unit test.
 - [x] A model with an explicit `config.toml` `temperature` ships that value
       unchanged regardless of use case.
-- [x] A `"thinking"`-capability model never gets an automatic `temperature`;
-      chat gets `reasoning_effort = "medium"`, tool_use gets `"high"`.
+- [x] A model whose capabilities include `"thinking"` or `"always_thinking"`
+      never gets an automatic `temperature`; chat gets
+      `reasoning_effort = "medium"`, tool_use gets `"high"`.
 - [x] The webui default chat/composer flow no longer shows manual
       temperature/top_p fields; they remain reachable from an explicit
       advanced control.

@@ -218,6 +218,11 @@ a `totals.thinking_distribution` field in the `/api/stats` response.
 - [x] A message classified as `low` selects the low-effort profile row; a
       message classified as `high` selects `"high"`.
 - [x] `xhigh` selects `"high"`.
+- [x] `agent.thinking_classifier_model` accepts a bare provider name or a
+      `provider/model` pair and selects the classifier provider/model; when
+      unset, the cheapest configured provider (by `cost_per_1m_input`, ties and
+      missing cost falling back to the first provider alphabetically) is used.
+      (Goal 3)
 - [x] A classifier timeout aborts the armed HTTP connection through
       `client.chatWithTimeout`; the turn proceeds with the default
       `reasoning_effort` and no error surfaced to the user.

@@ -111,7 +111,7 @@ printing a table cannot block behind a run that takes minutes.
 | `cron` | the 5-field spec, stored as written |
 | `task` | the prompt, 1–4000 bytes; what `clanker run` would take |
 | `provider` / `model` | optional overrides, absent when unset (no `null` keys in the file) |
-| `goal` | optional goal id (string) or `null`/absent. When set to an id, that goal steers the fired run. When unset/`null`, inherit active-goal steering identical to `clanker run` (see Design decisions) |
+| `goal` | *(planned, not yet a field on `Entry` — follow-through; see Design decisions)* optional goal id (string) or `null`/absent once it lands. Today there is no `goal` field, and every entry inherits active-goal steering through `cmdRun` |
 | `tz_offset_minutes` | minutes east of UTC the fields are read at |
 | `enabled` | a disabled entry is never due |
 | `created` | when it was added; the first window is computed from here |
@@ -208,7 +208,7 @@ otherwise an ordinary run, including goal steering (see Design decisions).
   instance's active goal is useful, and inventing a second "unsteered run"
   kind would diverge from every other entry point. The inherit-active path
   is already live today. Per-entry control is the optional `goal` field
-  (locked schema above): a string id pins that goal for the fire; omit the
+  (locked in this design; not yet on `Entry` — see the store table above): a string id pins that goal for the fire; omit the
   field (or set it `null`) to inherit whatever is active at fire time,
   identical to CLI. Operators see the binding: `schedule list` shows the
   entry's `goal` (or `(active)` when unset), `schedule add` accepts
