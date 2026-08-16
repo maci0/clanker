@@ -222,6 +222,16 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   through `modalCtrlCAction` (the ask modal has its own stop path): a
   fall-through `consumeAndRedraw` swallows the interrupt and a streaming
   turn cannot be stopped while the modal is open.
+  The composer `vxfw.TextField` is single-line: a raw '\n' in its buffer
+  would be written into a terminal cell at render, so line breaks live in it
+  as `newline_marker` (`⏎`) and only `takeComposerText` decodes them —
+  any new path that reads or fills the field goes through the encode/decode
+  helpers, never the buffer directly. Shift+Enter arrives as enter+shift
+  (kitty protocol) or as kp_enter (`ESC O M`, mapped by
+  `patches/vaxis-ss3-keypad-enter.patch`). Vendored deps log via `std.log`,
+  which `std_options.logFn` in `src/main.zig` routes into `util/log.zig`;
+  without that route their warnings bypass the repl's `.error_` threshold
+  and paint over the alt-screen.
 - `src/mcp/` — MCP server. `src/acp/` — ACP v1 stdio. `src/hooks/` —
   Claude-compatible lifecycle hooks. `src/debug/` — DAP.
 - `src/peers/` — mesh + chatrooms. Fleet's lamp map is `GET /api/mesh/map`

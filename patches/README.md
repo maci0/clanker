@@ -51,6 +51,28 @@ PR to `rockorager/libvaxis` would come from. Until that lands and the pin in
 it from that branch with `git diff 82cec0db..sixel-graphics -- src/`, where
 `82cec0db` is the commit `build.zig.zon` pins.
 
+## vaxis-ss3-keypad-enter.patch
+
+Target: vaxis 0.6.0 (`zig-pkg/vaxis-0.6.0-*`). Apply with `patch -p1` inside
+that directory.
+
+Adds `'M' => kp_enter` to `Parser.zig`'s SS3 table. `ESC O M` is keypad Enter,
+and it is also what Konsole's default keytab sends for Shift+Return
+(`key Return+Shift : "\EOM"`); the unpatched parser drops the sequence with
+`warning(vaxis_parser): unhandled ss3: 4d` and no key event, so Shift+Enter in
+`clanker repl` on Konsole could never reach the line-break handler and each
+press painted a stderr warning over the alt-screen instead (that painting is
+fixed separately by `std_options.logFn` in `src/main.zig`, which this patch
+does not depend on).
+
+Without the patch nothing in clanker breaks: on terminals speaking the kitty
+keyboard protocol Shift+Enter arrives as `enter` + shift mods and the repl's
+line-break handler fires; the repl also matches `kp_enter` so the patched
+legacy path lands in the same branch. A fresh clone or CI merely loses
+Shift+Enter on legacy-Konsole-style terminals.
+
+Status: local-only, upstreamable as-is to `rockorager/libvaxis`.
+
 ## zwasm-lazy-mem-cksum.patch
 
 Target: zwasm 2.4.1 (`zig-pkg/zwasm-2.4.1-*`). Apply with `patch -p1` inside

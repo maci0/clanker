@@ -27,6 +27,35 @@ fn handlePanic(msg: []const u8, ret_addr: ?usize) noreturn {
     std.debug.defaultPanic(msg, ret_addr);
 }
 
+// clanker's own code logs through util/log.zig, but vendored dependencies
+// (vaxis, its `.vaxis_parser` scope included) log through `std.log`, whose
+// default handler writes raw multi-line text to stderr with no level control
+// from us. During `clanker repl` that tears up the alt-screen: every
+// unparsed key sequence painted a `warning(vaxis_parser)` line over the UI.
+// Routing std.log into util/log.zig makes dependency logs honor the same
+// runtime threshold (the repl raises it to `.error_` before the alt-screen
+// exists) and the same one-physical-line format. `log_level = .debug`
+// compiles every level in so the runtime threshold is the only filter.
+pub const std_options: std.Options = .{
+    .log_level = .debug,
+    .logFn = stdLogFn,
+};
+
+fn stdLogFn(
+    comptime level: std.log.Level,
+    comptime scope: @EnumLiteral(),
+    comptime fmt: []const u8,
+    args: anytype,
+) void {
+    const mapped: log.Level = switch (level) {
+        .debug => .debug,
+        .info => .info,
+        .warn => .warn,
+        .err => .error_,
+    };
+    log.log(mapped, "({s}) " ++ fmt, .{@tagName(scope)} ++ args);
+}
+
 // Zig 0.16 only runs test blocks in the root file; reference every module
 // containing tests so `zig build test` picks them all up.
 comptime {

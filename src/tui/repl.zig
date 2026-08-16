@@ -1389,6 +1389,8 @@ const shell_escape_help =
 
 const keys_help =
     \\Keys:
+    \\  Shift-Enter       insert a line break (shown as ⏎, submitted as a
+    \\                    real newline; keypad Enter does the same)
     \\  Tab               complete a /command
     \\  Ctrl-P            command palette (matches names and descriptions)
     \\  Ctrl-R            search transcript; Up/Down step through matches
@@ -2412,7 +2414,7 @@ const Model = struct {
             return;
         }
 
-        const task = try self.text_field.toOwnedSlice();
+        const task = try self.takeComposerText();
         defer self.gpa.free(task);
         self.text_field.reset();
         // A line with nothing on it is not a task. The idle path only tested
@@ -2461,7 +2463,7 @@ const Model = struct {
     /// the steer queue or self.lines, because the run thread's finishTurn /
     /// tuiSteerPoll touch the same two under that same lock.
     fn steerWhileRunning(self: *Model, ctx: *vxfw.EventContext) void {
-        const task = self.text_field.toOwnedSlice() catch return;
+        const task = self.takeComposerText() catch return;
         defer self.gpa.free(task);
         if (std.mem.trim(u8, task, " \t\r\n").len == 0) return;
         self.text_field.reset();
@@ -3856,9 +3858,26 @@ const Model = struct {
                 if (key.matches(vaxis.Key.tab, .{}) and try self.completeSlashCommand(ctx)) {
                     return ctx.consumeAndRedraw();
                 }
+                // Shift+Enter inserts a line break instead of submitting.
+                // Terminals speaking the kitty keyboard protocol report the
+                // chord as enter + shift; Konsole's default keytab sends
+                // SS3 M (`\EOM`), which vaxis parses as kp_enter
+                // (patches/vaxis-ss3-keypad-enter.patch), so keypad Enter
+                // lands here too. The break is stored and drawn as ⏎ and
+                // becomes a real newline at submit (see newline_marker).
+                if (key.matches(vaxis.Key.enter, .{ .shift = true }) or
+                    key.matches(vaxis.Key.kp_enter, .{}) or
+                    key.matches(vaxis.Key.kp_enter, .{ .shift = true }))
+                {
+                    try self.text_field.insertSliceAtCursor(newline_marker);
+                    return ctx.consumeAndRedraw();
+                }
                 if (key.matches(vaxis.Key.enter, .{})) {
                     if (self.in_paste) {
-                        try self.text_field.insertSliceAtCursor(" ");
+                        // A bracketed paste delivers its newlines as raw
+                        // Enter presses; fold each to a ⏎ marker so the
+                        // pasted structure survives to submit.
+                        try self.text_field.insertSliceAtCursor(newline_marker);
                         ctx.redraw = true;
                         return;
                     }
@@ -3882,14 +3901,15 @@ const Model = struct {
             .paste_start => self.in_paste = true,
             .paste_end => self.in_paste = false,
             // Answer to our OSC 52 clipboard request (Ctrl+Shift+V). The
-            // payload is terminal-supplied text, so newlines are folded to
-            // spaces, the TextField is single-line and a raw newline would
-            // otherwise submit mid-paste.
+            // payload is terminal-supplied text; its newlines become ⏎
+            // markers (the TextField is single-line, a raw newline would
+            // otherwise submit mid-paste) and turn back into real newlines
+            // at submit, so a multi-line paste survives intact.
             .paste => |text| {
                 defer ctx.alloc.free(text);
                 self.in_paste = false;
                 self.awaiting_clipboard = false;
-                const flat = singleLinePaste(ctx.alloc, text);
+                const flat = encodeComposerNewlines(ctx.alloc, text);
                 defer if (flat.ptr != text.ptr) ctx.alloc.free(flat);
                 // Clipboard content is untrusted too, and it is the one
                 // untrusted source the user cannot preview first: whatever
@@ -4010,8 +4030,12 @@ const Model = struct {
             ctx.redraw = true;
             return;
         }
-        const input = self.text_field.buf.dupe() catch return;
-        defer self.text_field.buf.allocator.free(input);
+        const raw = self.text_field.buf.dupe() catch return;
+        defer self.text_field.buf.allocator.free(raw);
+        // The clipboard gets what submit would send: ⏎ markers decode to
+        // real newlines (on OOM the marker text is still a faithful copy).
+        const input = std.mem.replaceOwned(u8, self.gpa, raw, newline_marker, "\n") catch raw;
+        defer if (input.ptr != raw.ptr) self.gpa.free(input);
         if (input.len > 0) try ctx.copyToClipboard(input);
         if (input.len > 0) clipboard.copyBestEffort(self.gpa, self.io, self.ctx.environ_map, input);
     }
@@ -4046,7 +4070,22 @@ const Model = struct {
 
     fn loadInputFrom(self: *Model, text: []const u8) void {
         self.text_field.clearRetainingCapacity();
-        self.text_field.insertSliceAtCursor(text) catch {};
+        // History entries hold what was submitted — real newlines included —
+        // so restoring one re-encodes them as ⏎ markers for the field.
+        const shown = encodeComposerNewlines(self.gpa, text);
+        defer if (shown.ptr != text.ptr) self.gpa.free(shown);
+        self.text_field.insertSliceAtCursor(shown) catch {};
+    }
+
+    /// `TextField.toOwnedSlice` plus marker decoding: every path that takes
+    /// text out of the composer (task submit, mid-run steering) goes through
+    /// here so a drawn ⏎ and a submitted '\n' can never disagree. Returned
+    /// slice is gpa-owned either way.
+    fn takeComposerText(self: *Model) ![]const u8 {
+        const raw = try self.text_field.toOwnedSlice();
+        if (std.mem.find(u8, raw, newline_marker) == null) return raw;
+        defer self.gpa.free(raw);
+        return std.mem.replaceOwned(u8, self.gpa, raw, newline_marker, "\n");
     }
 
     /// Tab: complete the input line against `command_registry`, readline
@@ -6015,22 +6054,56 @@ test "isCopyChord recovers the collapsed Ctrl+Shift+C byte only with a selection
     try std.testing.expect(!isCopyChord(.{ .codepoint = 'c' }, false, true));
 }
 
-/// Folds CR/LF runs in clipboard text to single spaces so a multi-line
-/// paste lands on one line of the single-line TextField instead of
-/// submitting early (Enter submits). Returns the input unchanged when
-/// there's nothing to fold, caller frees only when the pointer differs.
-fn singleLinePaste(alloc: std.mem.Allocator, text: []const u8) []const u8 {
-    var out: ?[]u8 = null;
-    defer if (out) |o| alloc.free(o);
-    for (text, 0..) |c, i| {
-        if (c != '\r' and c != '\n') continue;
-        if (out == null) {
-            const buf = alloc.dupe(u8, text) catch return text;
-            out = buf;
+/// The composer's on-screen stand-in for a line break. `vxfw.TextField` is a
+/// single-line widget: a raw '\n' in its buffer would be written into a
+/// terminal cell at render time and walk the cursor off the row. So a line
+/// break is stored and drawn as this one visible grapheme and swapped for a
+/// real newline only when text leaves the composer (`takeComposerText`). A
+/// literal U+23CE typed or pasted into the field is indistinguishable and
+/// becomes a newline too; the character exists to mean exactly that.
+const newline_marker = "\u{23CE}"; // ⏎
+
+/// Rewrites "\r\n", '\r' and '\n' each to one `newline_marker` so multi-line
+/// text can enter the single-line composer without corrupting the render or
+/// submitting early. Returns the input unchanged when there is nothing to
+/// encode (or on OOM, when the text is at worst shown with raw breaks
+/// folded by the sanitizer); caller frees only when the pointer differs.
+fn encodeComposerNewlines(alloc: std.mem.Allocator, text: []const u8) []const u8 {
+    if (std.mem.findAny(u8, text, "\r\n") == null) return text;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(alloc);
+    var i: usize = 0;
+    while (i < text.len) : (i += 1) {
+        const c = text[i];
+        if (c == '\r' or c == '\n') {
+            if (c == '\r' and i + 1 < text.len and text[i + 1] == '\n') i += 1;
+            out.appendSlice(alloc, newline_marker) catch return text;
+        } else {
+            out.append(alloc, c) catch return text;
         }
-        out.?[i] = ' ';
     }
-    return out orelse text;
+    return out.toOwnedSlice(alloc) catch text;
+}
+
+test "newline markers round-trip: what encode shows, submit's decode returns" {
+    const alloc = std.testing.allocator;
+    const original = "line one\nline two\n\nline four";
+    const shown = encodeComposerNewlines(alloc, original);
+    defer if (shown.ptr != original.ptr) alloc.free(shown);
+    const back = try std.mem.replaceOwned(u8, alloc, shown, newline_marker, "\n");
+    defer alloc.free(back);
+    try std.testing.expectEqualStrings(original, back);
+}
+
+test "encodeComposerNewlines folds every break spelling to one marker" {
+    const alloc = std.testing.allocator;
+    // No breaks: the same pointer comes back, nothing to free.
+    const plain = "one line";
+    try std.testing.expectEqual(plain.ptr, encodeComposerNewlines(alloc, plain).ptr);
+
+    const mixed = encodeComposerNewlines(alloc, "a\nb\r\nc\rd");
+    defer alloc.free(mixed);
+    try std.testing.expectEqualStrings("a" ++ newline_marker ++ "b" ++ newline_marker ++ "c" ++ newline_marker ++ "d", mixed);
 }
 
 /// The subset of `cli.Options` the REPL honors. `--provider`/`--model` pick

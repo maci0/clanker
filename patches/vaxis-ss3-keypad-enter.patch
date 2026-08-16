@@ -1,0 +1,13 @@
+--- a/src/Parser.zig
++++ b/src/Parser.zig
+@@ -164,6 +164,10 @@
+         'E' => .{ .codepoint = Key.kp_begin },
+         'F' => .{ .codepoint = Key.end },
+         'H' => .{ .codepoint = Key.home },
++        // Keypad Enter (DECKPAM), and what Konsole's default keytab sends
++        // for Shift+Return (`key Return+Shift : "\EOM"`). Dropping it with
++        // a warning made Shift+Enter unusable there.
++        'M' => .{ .codepoint = Key.kp_enter },
+         'P' => .{ .codepoint = Key.f1 },
+         'Q' => .{ .codepoint = Key.f2 },
+         'R' => .{ .codepoint = Key.f3 },

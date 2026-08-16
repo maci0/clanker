@@ -469,6 +469,22 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Shift+Enter in `clanker repl` inserts a line break instead of spraying
+  `warning(vaxis_parser): unhandled ss3: 4d` over the screen. Konsole's
+  default keytab sends Shift+Return as `ESC O M`, which the vendored vaxis
+  parser dropped (now mapped to keypad Enter by
+  `patches/vaxis-ss3-keypad-enter.patch`); terminals speaking the kitty
+  keyboard protocol report the chord as Enter+Shift and land in the same
+  handler. The break is shown as `⏎` in the single-line composer and becomes
+  a real newline in the submitted task. Multi-line pastes (bracketed and
+  Ctrl+Shift+V) now keep their line structure the same way instead of being
+  folded to spaces, and Up/Down history recall restores it. Documented in
+  the repl keys help
+  (docs/reports/investigations/2026-08-17-tui-shift-enter-ss3-unhandled.md).
+- `std.log` output from vendored dependencies (vaxis included) is routed
+  through clanker's leveled logger instead of std's raw stderr handler, so
+  it can no longer paint over the repl's alt-screen and follows the same
+  one-line format and runtime threshold everywhere else.
 - The web UI's run history and `clanker graph` no longer show months-old
   sub-agent runs as the newest ones. `state/runs/` holds top-level runs as
   `run-<unix seconds>` and nested ones as `sub-<unix nanoseconds>`, and both
