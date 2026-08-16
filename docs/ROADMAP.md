@@ -341,6 +341,9 @@ run/ask/steer command surface, and the three recorder write paths.
 
 ## Autolearn
 
-Automatically observed from usage patterns (state/autolearn.jsonl, last 7 days). Refresh with `clanker autolearn`.
+Automatically observed from usage patterns (state/autolearn.jsonl). Refresh with `clanker autolearn`.
 
-- No actionable observations yet — run a few tasks, then `clanker autolearn`.
+- [ ] Expand the sandbox manifest for workspace paths: repeated `file_ops`, `read_file`, `list_files`, and `edit_file` calls were refused for `.clanker-worktrees/*/state`, `state/`, `zig-out/`, `.local/`, `AGENTS.md`, `build.zig`, `themes/dark.json`, and `*.out` files.
+- [ ] Make `gate` test failures self-describing: after `gate` returned `test failed`, the model repeatedly tried to read `zig-out/gate-failure.txt` but was blocked by sandbox policy, hiding the actual failure.
+- [ ] Fix `git` sandbox policy and command surface: calls failed with `running git: refused by this tool's sandbox policy` and `git 'fetch' is refused`; grant repo path/exec permission and avoid retrying fetch once denied.
+- [

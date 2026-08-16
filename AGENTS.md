@@ -202,7 +202,7 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   a log of only successes cannot answer "is the provider down?".
   `ck_stats` returns the host-side aggregate, not the raw log: shipping every
   record through the 1 MiB guest arena fails once the log has a few thousand
-  lines. `improve_history` / `reasoning` guests tail their jsonl the same way.
+  lines. `improve_history` / `reasoning` / `autolearn` guests tail their jsonl the same way.
 - `src/toolhost/` — the native tool infrastructure: `registry.zig` (loads
   `*.tool.json` descriptors), `manifest.zig` (validates them),
   `builder.zig` (compiles WASM tools), `usage.zig` (tool call accounting).
