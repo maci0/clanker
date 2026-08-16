@@ -33,6 +33,9 @@ config.local.toml
 # User-local Claude project rules (e.g. symlink into .agents/)
 .claude/
 
+# User-local Grok project rules (e.g. symlink into .agents/)
+.grok/
+
 # User-local agent coordination and machine state (task board, locks, scratch).
 # No trailing slash: this can be a symlink and must not be stageable as a
 # regular Git entry.

@@ -3,8 +3,12 @@
 ## Status
 
 Shipped. Sources of truth: `src/research/auto_research.zig` (`Loop`) +
-`src/research/ledger.zig` + `src/research/harness.zig`, and `src/cli.zig`'s
-`cmdAutoresearch` (`Command.autoresearch`). Surface: CLI `clanker
+`src/research/harness.zig`, and `src/cli.zig`'s
+`cmdAutoresearch` (`Command.autoresearch`). The ledger entry shape and the
+stdout/stderr tails live in `tools/zig/autoresearch_logic.zig`, shared with
+the `autoresearch` WASM tool; each iteration's ledger write goes through that
+tool's `op: "append"` (fs-scoped to `state/autoresearch/`). Surface: CLI
+`clanker
 autoresearch` (runs the loop directly), REPL `/autoresearch` (re-submits the
 line as an agent chat message, see Design), WASM tool `autoresearch`
 (list/tail a run's ledger only, does not drive the loop). Eval:
