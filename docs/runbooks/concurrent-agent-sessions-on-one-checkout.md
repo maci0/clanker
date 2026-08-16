@@ -68,10 +68,35 @@ read it; `pgrep -af improve-self` is a snapshot that also matches the shell
 running the guard, and on 2026-08-16 it produced a process id that did not
 exist and an instruction that was not the one running — twice, in two
 different sessions, each time cited as evidence for a conclusion about who
-owned the tree. Wait for the holder to exit (`--iters` bounds it) rather than
-committing or discarding its staged work: committing races a process that will
-overwrite the index, and discarding pulls the tree out from under a gate in
-flight.
+owned the tree.
+
+**Do not wait for the holder to exit.** `--iters` bounds one `improve-self`
+invocation, but `scripts/imp-autorecover-loop/loop.py` respawns it, so on a
+machine running that loop the tree never goes quiet and "wait for a still
+tree" waits forever. Three sessions lost an hour to that advice on
+2026-08-16. Work around the loop instead of against it: pushing and creating
+branches only read refs and objects, so they are safe at any moment, and the
+loop's own promotions are already gated before it commits them.
+
+What the loop owns is the **working tree and index**, so treat its staged
+candidate as transient rather than as anyone's decision. Preserve before you
+discard — this writes a commit object and modifies neither tree nor index:
+
+```bash
+git stash create
+```
+
+```bash
+git branch preserve/<what>-<date> <sha-from-stash-create>
+```
+
+Then push that branch. A dangling commit no ref points at is one `git gc`
+from being unrecoverable, which is the failure this avoids.
+
+"Everything is pushed" is an instant on such a machine, never a state: the
+loop commits every few minutes, so a sweep is true when it runs and stale
+by the next one. Report it with its timestamp and the tip you verified
+against, not as a standing claim.
 
 ## Recover
 
@@ -211,6 +236,32 @@ other sessions references are stale.
 Then confirm ownership rather than assuming it: ask each session to name its
 own files and say whether they are present. "Nothing was lost" is only true
 when each owner has said so about their own work.
+
+**"My work is pushed" is not "nothing is disk-only."** On 2026-08-16 three
+sessions each verified their own state as clean, each truthfully, while
+eleven branches of Aug 11–14 work, a stash, and a dangling commit sat on the
+disk — every one of us had answered "is *my* work pushed" rather than "is
+this repository's work safe". Ask the second question with one command:
+
+```bash
+git log --branches --tags --not --remotes --oneline
+```
+
+```bash
+git stash list
+```
+
+Empty output from the first means no commit on any branch or tag is missing
+upstream — and unlike a per-branch loop it also catches loose and dangling
+commits that no ref points at. A stash is a separate store again: it is a
+commit, but no branch points at it, so a branch enumeration misses it
+entirely. Preserve either with the `git stash create` recipe above rather
+than pushing the stash in place.
+
+Distinguish **missing ref** from **lost work** before acting on the count.
+A branch absent from origin whose commits are all upstream by content is a
+stale pointer, not a risk; pushing it adds a ref and no bytes. Compare by
+patch id or `git rev-list --count origin/main..<branch>`, not by name.
 
 ## Escalate or follow up
 
