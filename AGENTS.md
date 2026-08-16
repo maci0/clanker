@@ -414,7 +414,12 @@ lines is a failed capability gate, not a pass.
 A substring needle still matches if the real work is skipped by an early
 `return .{ .ok = true }` left above it as dead code; `checksZigShapeBroken`
 (in `src/improve/engine.zig`) refuses that shape (same idea as
-`cmdEvalShapeBroken` for `cmdEval`).
+`cmdEvalShapeBroken` for `cmdEval`). `gate_invariants` also pins the module
+bindings themselves (`@import("../gate/checks.zig")` in `engine.zig`,
+`@import("gate/checks.zig")` in `cli.zig`): the call-site needles match a
+shadow module under a different file name just as well, and `checks.zig`
+is the only file `checksZigShapeBroken` inspects, so the import line is the
+tell that a rewire to `checks2.zig`-style stubs would otherwise leave.
 
 ## Living document
 

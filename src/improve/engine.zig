@@ -3421,6 +3421,10 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\pub fn gitDenyGuardGate() GateResult {
         \\    hasGitInExecAllow(
         \\}
+        \\pub fn providerKindLeakGate() GateResult {
+        \\    return .{ .ok = true, .label = "provider-kind" };
+        \\    hits += 1
+        \\}
         \\pub fn configWeakeningGate() GateResult {
         \\    weakensImprove(
         \\}
@@ -3447,6 +3451,9 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\pub fn lintGate() !GateResult { hits += 1 }
         \\pub fn toolDescriptorGate() !GateResult { if (problems.items.len > 0) {} }
         \\pub fn gitDenyGuardGate() GateResult { hasGitInExecAllow( }
+        \\pub fn providerKindLeakGate() GateResult { // hits += 1
+        \\    return .{ .ok = true, .label = "provider-kind" };
+        \\}
         \\pub fn configWeakeningGate() GateResult { weakensImprove( }
         \\fn runZigArgs() !GateResult { std.process.run( }
     ;
@@ -3473,6 +3480,9 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\}
         \\pub fn gitDenyGuardGate() GateResult {
         \\    hasGitInExecAllow(
+        \\}
+        \\pub fn providerKindLeakGate() GateResult {
+        \\    hits += 1
         \\}
         \\pub fn configWeakeningGate() GateResult {
         \\    weakensImprove(
@@ -4032,6 +4042,17 @@ test "a patch that drops a gate call from the engine is rejected before it compi
     try staged.writeFile(io, .{ .sub_path = "src/improve/engine.zig", .data = dropped });
     const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
     try std.testing.expectEqualStrings("self.capabilityGate(", bad.needle);
+
+    // The import binding is a needle of its own: a patch that rewires the
+    // engine to a shadow gate module (e.g. checks2.zig with stub gates) keeps
+    // every call-site needle above -- they match the `gate_checks.` binding
+    // name, not the file it points at -- and never touches src/gate/checks.zig,
+    // which is the only file checksZigShapeBroken inspects. The rewire is the
+    // tell, so the import path is what has to survive.
+    const rewired = try std.mem.replaceOwned(u8, arena, keeps.items, "@import(\"../gate/checks.zig\")", "@import(\"../gate/checks2.zig\")");
+    try staged.writeFile(io, .{ .sub_path = "src/improve/engine.zig", .data = rewired });
+    const bad_import = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
+    try std.testing.expectEqualStrings("@import(\"../gate/checks.zig\")", bad_import.needle);
 
     // A proposal that does not touch the file is not checked against it: the
     // rest of the tree is a verbatim copy where these already hold.
