@@ -25,9 +25,24 @@ for entry in state:state agents:.agents local:.local; do
     repo_name=${entry#*:}
     source=$(readlink -f -- "$repo_root/$repo_name")
     expected="$storage_root/$name"
-    if [ "$source" != "$expected" ]; then
+    # `state` and `.local` are the shared stores and must be where they are
+    # declared: backing up some other directory under their name would produce
+    # a snapshot that silently restores the wrong data. `.agents` is different.
+    # It is checkout-private (AGENTS.md), so a real directory inside the
+    # checkout is a legitimate arrangement, and its contents are worth keeping
+    # wherever they live -- the point is to preserve them, not to enforce a
+    # layout. Requiring it to resolve into the shared storage aborted the whole
+    # run on the first entry, so a checkout-local `.agents` stopped `state` and
+    # `.local` from being backed up at all.
+    if [ "$source" != "$expected" ] && [ "$repo_name" != ".agents" ]; then
         printf '%s\n' "$repo_name must resolve to $expected" >&2
         exit 1
+    fi
+    # A missing `.agents` is a soft skip, the same way the agent rules treat
+    # it; a missing shared store is a failure.
+    if [ ! -d "$source" ] && [ "$repo_name" = ".agents" ]; then
+        printf '%s\n' "note: $repo_name is absent; skipping it" >&2
+        continue
     fi
     [ -d "$source" ] || {
         printf '%s\n' "$source is not a directory" >&2

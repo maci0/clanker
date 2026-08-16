@@ -36,6 +36,16 @@ looks for it.
 | `docs/adrs/` | a decision that has been **made** | by hand, after the RFC |
 | `docs/research/` | the evidence a decision rests on | `clanker research` |
 | `docs/prds/` | what a feature is meant to be | by hand |
+| `docs/ROADMAP.md` | the Done/Planned narrative over those PRDs | by hand, `clanker autolearn` |
+| `docs/digests/` | what we can learn from an external project | by hand |
+| `docs/reviews/` | working review logs | by hand |
+
+Reference documents, not records: `docs/README.md` (architecture),
+`docs/configuration.md` (config reference — `src/config.zig` is the
+authoritative schema and the code wins on any disagreement),
+`docs/manifest.md` (every field a descriptor honors), and
+`docs/prompts/*-review.md` (the review prompts, which AGENTS.md marks as
+living documents to fold caveats back into).
 
 Search before diagnosing, and search before deciding. A matching report has
 the reproduction already; a matching ADR means the question is settled.
@@ -251,5 +261,34 @@ would be. `clanker plugins new <name>` scaffolds both halves and
 `clanker plugins validate` names the offending key; `docs/manifest.md` lists
 every field a descriptor honors, and the loader silently ignores an unknown
 one, so a typo'd grant fails only when the tool runs.
+
+## Finishing a change
+
+A consumer-visible change is not done when the code passes. Land it in the
+documents too, or the next reader learns the feature from source:
+
+- `CHANGELOG.md` — every consumer-visible change, Keep a Changelog format,
+  under `## [Unreleased]`. This is the one most often forgotten.
+- `RELEASES.md` — release and version policy. `build.zig.zon` is the single
+  source of truth for the version; a release needs an immutable
+  `vMAJOR.MINOR.PATCH` tag and a matching dated CHANGELOG section.
+- `README.md` and `docs/README.md` — a new operator verb belongs in both, the
+  second with its runnable commands and its store.
+- `AGENTS.md` and this file — when the change alters how an agent should
+  work, not merely what exists.
+
+AGENTS.md is a living document: when a turn surfaces a caveat, quirk, or
+failure mode worth remembering, fold it back before the turn ends. One slice
+per turn, the smallest true addition. When fewer words say the same thing,
+tighten the stale sentence instead of stacking a new one beside it.
+
+Verify with the gate rather than by eye:
+
+```bash
+clanker gate
+```
+
+It runs build, test, tools, fmt, lint, provider-kind, tools-ts-toolchain and
+release-contract. `zig build e2e` is separate and is not part of it.
 
 Every command takes `--help`; read it before guessing at flags.
