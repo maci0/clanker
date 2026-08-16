@@ -4,7 +4,7 @@
 
 - **What failed:** backup-state.sh required all three of state, .agents and .local to resolve into the shared storage root and exited 1 on the first mismatch, before any rsync. Once .agents became a checkout-local directory rather than a symlink into clanker-state/agents, every run aborted, so state and .local were never backed up either. The last snapshot was 2026-08-14T043008Z and the user timer had been failing every 30 minutes since.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-16. Location check narrowed to state and .local in scripts/backup-state.sh; verified by a fresh snapshot 20260816T105051Z and a successful systemd run.
 
 ## Status
 
