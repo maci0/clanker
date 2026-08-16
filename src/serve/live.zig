@@ -6,6 +6,7 @@
 //! queued event rather than blocking a sender.
 
 const std = @import("std");
+const raw_http = @import("../util/raw_http.zig");
 
 pub const Topic = enum { chat, mesh, arena, run, metrics, plugin };
 
@@ -211,18 +212,18 @@ pub fn notePlugin(from: []const u8, data_json: []const u8) void {
 pub fn serveSse(fd: std.posix.fd_t, topics: []const u8) void {
     const id = subscribe(parseTopics(topics)) orelse {
         const body = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 52\r\n\r\n{\"ok\":false,\"error\":\"too many live subscribers\"}";
-        writeAllOrErr(fd, body) catch {};
+        raw_http.writeAll(fd, body) catch {};
         return;
     };
     defer unsubscribe(id);
-    writeAllOrErr(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\nX-Accel-Buffering: no\r\n\r\nretry: 2000\n\n") catch return;
+    raw_http.writeAll(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\nX-Accel-Buffering: no\r\n\r\nretry: 2000\n\n") catch return;
     var evbuf: [event_cap]u8 = undefined;
     var ssebuf: [event_cap + 32]u8 = undefined;
     var idle: u32 = 0;
     while (true) {
         if (take(id, &evbuf)) |ev| {
             const framed = writeSse(&ssebuf, ev.json) orelse continue;
-            writeAllOrErr(fd, framed) catch return;
+            raw_http.writeAll(fd, framed) catch return;
             idle = 0;
             continue;
         }
@@ -230,18 +231,9 @@ pub fn serveSse(fd: std.posix.fd_t, topics: []const u8) void {
         _ = std.c.nanosleep(&ts, null);
         idle += 1;
         if (idle >= 300) {
-            writeAllOrErr(fd, ": ping\n\n") catch return;
+            raw_http.writeAll(fd, ": ping\n\n") catch return;
             idle = 0;
         }
-    }
-}
-
-pub fn writeAllOrErr(fd: std.posix.fd_t, bytes: []const u8) !void {
-    var off: usize = 0;
-    while (off < bytes.len) {
-        const n = std.c.write(fd, bytes[off..].ptr, bytes.len - off);
-        if (n <= 0) return error.Closed;
-        off += @intCast(n);
     }
 }
 

@@ -48,10 +48,6 @@ var execs: std.ArrayList(*ExecJob) = .empty;
 var gpa_ref: ?std.mem.Allocator = null;
 var id_seq: std.atomic.Value(u64) = std.atomic.Value(u64).init(1);
 
-pub fn kindPrefix() []const u8 {
-    return "job-";
-}
-
 pub fn makeId(now_ns: u64, buf: []u8) []const u8 {
     const mixed = now_ns ^ (id_seq.fetchAdd(1, .monotonic) << 8);
     const hex = "0123456789abcdef";

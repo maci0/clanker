@@ -1,5 +1,6 @@
-//! Minimal raw-socket HTTP framing shared by the webui server (cli.zig) and
-//! the test-only mock LLM server (llm/mock_server.zig).
+//! Minimal raw-socket HTTP framing shared by the webui server (cli.zig),
+//! the SSE bus (serve/live.zig), and the test-only mock LLM server
+//! (llm/mock_server.zig).
 //!
 //! Everything here reads bytes that arrived from a socket, so nothing here may
 //! trust a length, a number, or the presence of a delimiter. A panic in this
@@ -17,13 +18,25 @@ const std = @import("std");
 // that documented API payload while still bounding unauthenticated input.
 pub const max_body_bytes: usize = 24 << 20;
 
-pub fn writeAllFd(fd: std.posix.fd_t, bytes: []const u8) void {
+/// Writes `bytes` to `fd` in full; fails when the fd errors or the peer
+/// closes mid-way. The SSE bus (serve/live.zig) uses this to notice a
+/// subscriber went away; plain HTTP responses use the swallowing
+/// `writeAllFd` below.
+pub fn writeAll(fd: std.posix.fd_t, bytes: []const u8) !void {
     var off: usize = 0;
     while (off < bytes.len) {
         const n = std.c.write(fd, bytes[off..].ptr, bytes.len - off);
-        if (n < 0) return; // errno
+        if (n <= 0) return error.Closed; // errno or a closed peer
         off += @intCast(n);
     }
+}
+
+/// Best-effort variant: HTTP response bodies are fire-and-forget (the
+/// response status was already recorded, and a half-written body cannot be
+/// retried). Errors are swallowed; callers that must learn the peer went
+/// away use `writeAll`.
+pub fn writeAllFd(fd: std.posix.fd_t, bytes: []const u8) void {
+    writeAll(fd, bytes) catch {};
 }
 
 /// Whether `data` holds a whole request: headers, the blank line, and as many
