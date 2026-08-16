@@ -4,11 +4,11 @@
 
 - **What failed:** The research tool's `status` action rewrites a note's `## Status` line but not its `docs/research/README.md` inventory entry, which `create` hardcodes as `Draft`, so the index a reader skims permanently disagrees with every note it lists.
 - **Impact:** Every research note is listed as `Draft` forever, including notes that are Current, Stale, or Superseded. A reader who trusts the index reads a finished note as a draft and a stale note as a live one.
-- **Resolution:** Open.
+- **Resolution:** Fixed on 2026-08-16 with a shared inventory-status helper used by research, rfc and reports.
 
 ## Status
 
-Open.
+Resolved on 2026-08-16. doc_scaffold.setInventoryStatus now carries the index on every status change in research, rfc and reports; verified end to end with a probe note and six unit tests.
 
 ## Symptom and impact
 
@@ -65,7 +65,18 @@ by hand (`:749`) — so the gap is a missing case rather than a missing concept.
 
 ## Resolution
 
-Not yet fixed. The shape of the fix: give `status` the same inventory pass
+Fixed on 2026-08-16, as a shared helper rather than one patched call site.
+
+`doc_scaffold.setInventoryStatus` rewrites the status field of the inventory
+entry whose link matches, splitting at the em dash *after* the link so a title
+containing one survives. `research`'s `status` action now calls it and reports
+`indexed`, warning rather than failing when the entry or the markers are
+absent, matching `create`. The same helper closed the two other instances of
+this class: the `rfc` tool, whose status action told the caller to update the
+index by hand, and the `reports` tool, which had no status action at all and so
+left every record's inventory line at its creation value.
+
+The original shape of the fix, kept for the record: give `status` the same inventory pass
 `create` has, replacing the status field of the entry whose link matches `path`,
 and warn rather than fail when the entry or the markers are absent (matching
 `create`'s existing behaviour at `:749`). Both writes are compare-and-swap, so a
@@ -76,15 +87,31 @@ inventories of its own by the same pattern; it was not checked here.
 
 ## Verification
 
-None yet. A fix is verified when `create` followed by `status current` leaves the
-note header and its inventory line reading the same word, and when `status
-superseded` on a note whose inventory entry has been hand-edited still lands on
-the right row.
+Verified end to end through `clanker research`, the CLI surface added in the
+same change:
+
+- `create probe-inventory-sync` wrote the note and a `— Draft` inventory line.
+- `status ... current` left both the note header and the inventory line reading
+  `Current`.
+- `status ... superseded` moved both to `Superseded`.
+- The probe note and its inventory line were then removed.
+
+`doc_scaffold.zig` carries six unit tests for the helper: the matching entry
+only, an em dash inside the title, an entry with no status field yet, missing
+markers, a missing entry, and an entry past the end marker.
 
 ## Follow-up
 
-- Check whether `docs/reports/README.md` and `docs/runbooks/README.md` have the
-  same desync through the `reports` tool.
+- Checked: `docs/reports/README.md` had exactly the same desync, and worse —
+  the `reports` tool had no status action, so three resolved bugs and one
+  resolved investigation were still listed as Open/Investigating. The tool now
+  has a `status` action (record and inventory in one call), it is on the CLI as
+  `clanker reports status <path> <state> <note>`, and the stale lines were
+  corrected. `docs/runbooks/README.md` is not affected: a runbook inventory
+  line carries a summary rather than a status.
+- A third copy of the status still lives in each record's TL;DR
+  (`- **Resolution:** ...`). Nothing keeps it in step; it is hand-written prose
+  today.
 - The inventory status is derived data. A cheaper fix than keeping two copies in
   step is to have the listing read each note's `## Status` line at render time,
   which removes the class of bug rather than patching this instance.
