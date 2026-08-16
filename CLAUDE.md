@@ -224,7 +224,11 @@ Adding one is one file, one registry row, one `ProviderKind` tag — never a new
 into conventional commits, validates the messages, and topo-sorts them on a
 grep graph, falling back to one commit on a degenerate cycle
 ([PRD 0021](docs/prds/0021-smart-commit.md)). It dry-runs and confirms before
-executing.
+executing. Its apply path re-adds each group's files whole, so an index
+narrowed to one session's hunks (the concurrent-sessions runbook's route) gets
+widened with other sessions' unstaged edits — commit a narrowed index with
+`clanker git commit` directly instead
+([bug](docs/reports/bugs/2026-08-17-smart-commit-readds-worktree-files.md)).
 
 ### Cleaning up after runs
 
