@@ -30,6 +30,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var patch = store.Patch{ .id = id };
     if (lib.optStr(req, "from")) |from| patch.from_status = from;
     if (lib.optStr(req, "status")) |s| patch.status = s;
+    if (lib.optStr(req, "workspace")) |w| patch.workspace = w;
     if (lib.optNum(req, "max_iterations")) |n| {
         if (n < 0 or @floor(n) != n)
             return lib.fail(out, "max_iterations must be an integer from 1 to 1000");

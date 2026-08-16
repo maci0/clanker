@@ -28,6 +28,10 @@
       },
       "worktree": {
         "type": "string"
+      },
+      "workspace": {
+        "type": "string",
+        "description": "Workspace (project) id the goal belongs to; empty means the default workspace."
       }
     },
     "required": [

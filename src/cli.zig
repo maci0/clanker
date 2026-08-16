@@ -3282,6 +3282,9 @@ const GoalContext = struct {
     /// cfg.agent.max_iterations fallback" for runs of this goal unless the
     /// caller supplies a per-run override that beats it.
     max_iterations: ?u32,
+    /// Workspace (project) id the goal belongs to; "" is the default workspace
+    /// (RFC 0001). Used to name the goal's output room and its board.
+    workspace: []const u8 = "",
     /// Task-prompt preamble (`## Active goal` …). Arena-owned.
     section: []const u8,
 };
@@ -3345,6 +3348,7 @@ fn goalFromObject(arena: std.mem.Allocator, obj: std.json.ObjectMap) !?GoalConte
         .boundaries = boundaries,
         .stop_rule = stop_rule,
         .max_iterations = goalMaxIterations(obj),
+        .workspace = json_util.strFieldOrEmpty(obj, "workspace"),
         .section = try formatGoalSection(arena, objective, completion, proof, boundaries, stop_rule),
     };
 }
@@ -11799,6 +11803,23 @@ fn workspaceSandboxPath(io: std.Io, arena: std.mem.Allocator, id: []const u8) ?[
     return workspace_mod.pathFor(list, id);
 }
 
+/// The named roots a run sandbox may reach for a non-empty workspace, as the
+/// runtime-only `agent.sandbox_roots` list (RFC 0001). The primary root stays
+/// `agent.sandbox_root`; these are the named components a guest reaches by
+/// prefixing its relative path with the component name. Null means the empty
+/// default workspace (no extra roots).
+fn workspaceSandboxRoots(io: std.Io, arena: std.mem.Allocator, id: []const u8) ?[]const config.SandboxRoot {
+    if (id.len == 0) return null;
+    const list = workspace_mod.load(io, arena, std.Io.Dir.cwd()) catch return &.{};
+    const roots = workspace_mod.rootsFor(list, id) orelse return &.{};
+    var out: std.ArrayList(config.SandboxRoot) = .empty;
+    for (roots) |r| {
+        if (r.name.len == 0) continue;
+        out.append(arena, .{ .name = r.name, .path = r.path }) catch continue;
+    }
+    return out.toOwnedSlice(arena) catch &.{};
+}
+
 fn openWorkspaceRoot(io: std.Io, arena: std.mem.Allocator, id: []const u8) !WorkspaceRoot {
     if (id.len == 0) {
         return .{ .dir = std.Io.Dir.cwd(), .owned = false, .label = workspaceName(io, arena) };
@@ -13624,6 +13645,9 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         , .{ created.branch, created.path, created.base_branch, final_task }) catch final_task;
     } else if (ws_root) |p| {
         run_cfg.agent.sandbox_root = p;
+        if (workspaceSandboxRoots(io, arena, run_workspace)) |roots| {
+            run_cfg.agent.sandbox_roots = roots;
+        }
     }
 
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = &run_cfg };

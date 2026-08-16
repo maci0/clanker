@@ -11,6 +11,9 @@ pub const Goal = struct {
     boundaries: []const u8 = "",
     stop_rule: []const u8 = "",
     status: []const u8 = "active",
+    /// Workspace (project) id this goal belongs to (RFC 0001). "" is the
+    /// default workspace (the serve cwd).
+    workspace: []const u8 = "",
     goal_loop_reason: []const u8 = "",
     goal_loop_turns: u32 = 0,
     max_iterations: ?u32 = null,
@@ -28,6 +31,9 @@ pub const Patch = struct {
     /// deleted goal is left alone.
     from_status: ?[]const u8 = null,
     status: ?[]const u8 = null,
+    /// Re-points the goal's workspace (RFC 0001). Null leaves it; "" moves it
+    /// to the default workspace.
+    workspace: ?[]const u8 = null,
     max_iterations: ?u32 = null,
     worktree: Worktree = .leave,
     goal_loop_reason: ?[]const u8 = null,
@@ -73,6 +79,7 @@ pub fn apply(alloc: std.mem.Allocator, goals: []const Goal, patch: Patch, now: i
         if (patch.remove) continue;
         var updated = g;
         if (patch.status) |s| updated.status = s;
+        if (patch.workspace) |w| updated.workspace = w;
         if (patch.max_iterations) |n| updated.max_iterations = n;
         switch (patch.worktree) {
             .leave => {},
@@ -208,6 +215,23 @@ test "apply sets a worktree branch string" {
     defer gpa.free(patched);
     try std.testing.expectEqualStrings("clanker/webui-1", patched[0].worktree.?);
     try std.testing.expectEqual(@as(i64, 5), patched[0].updated);
+}
+
+test "apply re-points a goal's workspace and leaves it when absent" {
+    const gpa = std.testing.allocator;
+    const goals = [_]Goal{
+        .{ .id = "g1", .objective = "a", .workspace = "relumea", .created = 1, .updated = 1 },
+        .{ .id = "g2", .objective = "b", .created = 1, .updated = 1 },
+    };
+    const moved = try apply(gpa, &goals, .{ .id = "g1", .workspace = "7dtd" }, 4);
+    defer gpa.free(moved);
+    try std.testing.expectEqualStrings("7dtd", moved[0].workspace);
+    try std.testing.expectEqualStrings("", moved[1].workspace);
+
+    // A patch that says nothing about workspace keeps the current value.
+    const untouched = try apply(gpa, &goals, .{ .id = "g1", .status = "review" }, 5);
+    defer gpa.free(untouched);
+    try std.testing.expectEqualStrings("relumea", untouched[0].workspace);
 }
 
 test "apply removes a goal and clears a worktree flag" {

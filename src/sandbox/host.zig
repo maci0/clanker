@@ -169,6 +169,11 @@ pub const Sandbox = struct {
     /// Empty (the default, and every non-isolated run) means one root for
     /// everything, so nothing here changes unless a run asked to be isolated.
     shared_root: []const u8 = "",
+    /// Named extra sandbox roots for a multi-root workspace (RFC 0001). A
+    /// relative guest path whose first component matches a root name resolves
+    /// the remainder under that root's directory; a bare path resolves under
+    /// `root_dir` as before. Empty for every single-root run.
+    extra_roots: []const config_mod.SandboxRoot = &.{},
     /// Hosts allowed for ck_http. Entries are exact hostnames or glob
     /// patterns (`*.example.com`, `sub?.example.com`); a bare `*` allows every
     /// host. See networkAllowed.
@@ -328,6 +333,7 @@ pub fn sandboxFor(
         .io = io,
         .root_dir = cfg.agent.sandbox_root,
         .shared_root = cfg.agent.shared_root,
+        .extra_roots = cfg.agent.sandbox_roots,
         .follow_symlinks = cfg.agent.sandbox_follow_symlinks,
         .network_allow = net,
         .llm = llm_access,
@@ -4973,6 +4979,52 @@ fn isSecretDotenv(sub_path: []const u8) bool {
     return false;
 }
 
+/// Whether any `fs_prefixes` entry authorizes `sub_path` relative to one root.
+/// "." authorizes the whole root; a bare prefix authorizes itself and every
+/// path beneath it. Extracted from `safeJoin` so the multi-root branch checks
+/// the same grant list against a named root's remainder.
+fn fsPrefixAllows(prefixes: []const []const u8, sub_path: []const u8) bool {
+    for (prefixes) |p| {
+        if (std.mem.eql(u8, p, ".") or std.mem.eql(u8, p, "./")) return true;
+        if (std.mem.startsWith(u8, sub_path, p)) {
+            // The match must end at a path boundary: a bare prefix ("notes")
+            // authorizes the directory itself and paths beneath it, but never
+            // a sibling that merely shares the leading bytes ("notes2/x").
+            if (p.len == 0 or p[p.len - 1] == '/' or sub_path.len == p.len or sub_path[p.len] == '/') return true;
+        }
+        // A prefix of "state/runs/" also authorizes "state/runs" itself,
+        // otherwise a tool allowed to read inside a directory cannot list the
+        // directory to find out what is in it.
+        if (p.len > 1 and p[p.len - 1] == '/' and std.mem.eql(u8, sub_path, p[0 .. p.len - 1])) return true;
+    }
+    return false;
+}
+
+/// The named extra root whose name is the first path component of `sub_path`,
+/// if any. `rest` is the remainder after the name ("" when the guest named the
+/// root directory itself).
+const RootSelect = struct {
+    root: config_mod.SandboxRoot,
+    rest: []const u8,
+};
+
+fn selectExtraRoot(sb: *const Sandbox, sub_path: []const u8) ?RootSelect {
+    if (sb.extra_roots.len == 0) return null;
+    var first = sub_path;
+    var rest: []const u8 = "";
+    if (std.mem.findScalar(u8, sub_path, '/')) |slash| {
+        first = sub_path[0..slash];
+        rest = sub_path[slash + 1 ..];
+    }
+    if (first.len == 0) return null;
+    for (sb.extra_roots) |r| {
+        if (std.mem.eql(u8, r.name, first)) {
+            return .{ .root = r, .rest = rest };
+        }
+    }
+    return null;
+}
+
 fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
     if (sub_path.len > 0 and sub_path[0] == '/') return safeJoinAbsolute(sb, sub_path);
     // .env is where the process loads API keys. env_allow exists so those
@@ -4998,44 +5050,23 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
         if (std.mem.eql(u8, comp, "..") or std.mem.eql(u8, comp, ".")) return error.PathOutsideSandbox;
         if (comp.len == 0) return error.PathOutsideSandbox;
     }
-    {
-        // An empty list is no authority, not unlimited authority. This used to
-        // skip the check entirely, so a descriptor written as "fs_prefixes":
-        // [] - which reads as "this tool touches no files" and is what the
-        // documentation says it means - handed the tool every file under the
-        // sandbox root instead. Least privilege has to be the default that
-        // costs nothing to ask for.
-        var allowed = false;
-        for (sb.fs_prefixes) |p| {
-            // "." means the sandbox root itself: every relative path under it
-            // is inside. Without this a descriptor written as ["."] matched
-            // nothing at all, since no relative path starts with a dot, and
-            // the tool was denied every file in the project it was pointed at.
-            if (std.mem.eql(u8, p, ".") or std.mem.eql(u8, p, "./")) {
-                allowed = true;
-                break;
-            }
-            if (std.mem.startsWith(u8, sub_path, p)) {
-                // The match must end at a path boundary: a bare prefix
-                // ("notes") authorizes the directory itself and paths
-                // beneath it, but never a sibling that merely shares the
-                // leading bytes ("notes2/x"). Trailing-slash prefixes
-                // ("notes/") only match beneath the directory, as before.
-                if (p.len == 0 or p[p.len - 1] == '/' or sub_path.len == p.len or sub_path[p.len] == '/') {
-                    allowed = true;
-                    break;
-                }
-            }
-            // A prefix of "state/runs/" also authorizes "state/runs" itself,
-            // otherwise a tool allowed to read inside a directory cannot list
-            // the directory to find out what is in it.
-            if (p.len > 1 and p[p.len - 1] == '/' and std.mem.eql(u8, sub_path, p[0 .. p.len - 1])) {
-                allowed = true;
-                break;
-            }
-        }
-        if (!allowed) return error.PathOutsideSandbox;
+    // Multi-root: a first component naming one of the workspace's extra roots
+    // selects that root; the rest is checked against the same prefix list and
+    // resolved under the root's own directory. A bare path keeps resolving
+    // under `root_dir`, so a single-root run is byte-for-byte the old path.
+    if (selectExtraRoot(sb, sub_path)) |sel| {
+        if (!fsPrefixAllows(sb.fs_prefixes, sel.rest)) return error.PathOutsideSandbox;
+        const base = std.mem.trimEnd(u8, sel.root.path, "/");
+        if (sel.rest.len == 0) return sb.gpa.dupe(u8, base);
+        return std.fmt.allocPrint(sb.gpa, "{s}/{s}", .{ base, sel.rest });
     }
+    // An empty list is no authority, not unlimited authority. This used to
+    // skip the check entirely, so a descriptor written as "fs_prefixes":
+    // [] - which reads as "this tool touches no files" and is what the
+    // documentation says it means - handed the tool every file under the
+    // sandbox root instead. Least privilege has to be the default that
+    // costs nothing to ask for.
+    if (!fsPrefixAllows(sb.fs_prefixes, sub_path)) return error.PathOutsideSandbox;
     return std.fmt.allocPrint(sb.gpa, "{s}/{s}", .{ std.mem.trimEnd(u8, rootForPath(sb, sub_path), "/"), sub_path });
 }
 
@@ -5088,6 +5119,64 @@ test "secure filesystem paths refuse symlink escapes" {
         .environ_map = &env,
     };
     try std.testing.expectError(error.PathOutsideSandbox, safeJoinSecure(&sb, "allowed/link/secret"));
+}
+
+test "a named extra root resolves the remainder under that root" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "core/src");
+    try tmp.dir.createDirPath(io, "web/src");
+
+    const core = try tmp.dir.realPathFileAlloc(io, "core", std.testing.allocator);
+    defer std.testing.allocator.free(core);
+    const web = try tmp.dir.realPathFileAlloc(io, "web", std.testing.allocator);
+    defer std.testing.allocator.free(web);
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = core,
+        .extra_roots = &.{.{ .name = "web", .path = web }},
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = &env,
+    };
+
+    // Bare paths still resolve under the primary root.
+    const core_src = try safeJoinSecure(&sb, "src");
+    defer sb.gpa.free(core_src);
+    try std.testing.expect(std.mem.endsWith(u8, core_src, "/core/src"));
+
+    // A root-named path resolves under the extra root.
+    const web_src = try safeJoinSecure(&sb, "web/src");
+    defer sb.gpa.free(web_src);
+    try std.testing.expect(std.mem.endsWith(u8, web_src, "/web/src"));
+
+    // The root directory itself is listable for a tool granted ".".
+    const web_root = try safeJoinSecure(&sb, "web");
+    defer sb.gpa.free(web_root);
+    try std.testing.expect(std.mem.endsWith(u8, web_root, "/web"));
+
+    // Traversal is refused before any root is selected.
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoinSecure(&sb, "web/../core"));
+
+    // A prefix-restricted tool reaches the same prefix under the named root.
+    var narrow = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = core,
+        .extra_roots = &.{.{ .name = "web", .path = web }},
+        .network_allow = &.{},
+        .fs_prefixes = &.{"src"},
+        .environ_map = &env,
+    };
+    const narrow_web = try safeJoinSecure(&narrow, "web/src");
+    defer narrow.gpa.free(narrow_web);
+    try std.testing.expect(std.mem.endsWith(u8, narrow_web, "/web/src"));
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoinSecure(&narrow, "web/other"));
 }
 
 // ------------------------------------------------------------------- tests --

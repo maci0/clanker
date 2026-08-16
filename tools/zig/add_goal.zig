@@ -42,6 +42,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const stop_rule = fieldString(obj, "stop_rule") orelse "";
     // The git worktree this goal belongs to (branch/path), for worktree runs.
     const worktree = fieldString(obj, "worktree") orelse "";
+    // Workspace (project) id this goal belongs to (RFC 0001); "" is the default.
+    const workspace = fieldString(obj, "workspace") orelse "";
     const max_iterations: ?u32 = if (lib.optNum(parsed, "max_iterations")) |n| blk: {
         if (n < 1 or n > 1000 or @floor(n) != n) return lib.fail(out, "max_iterations must be an integer from 1 to 1000");
         break :blk @as(u32, @trunc(n));
@@ -52,7 +54,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     var obj_buf: std.ArrayList(u8) = .empty;
     defer obj_buf.deinit(lib.alloc);
-    try writeGoalObject(&obj_buf, id, objective, completion, proof, boundaries, stop_rule, max_iterations, worktree, now);
+    try writeGoalObject(&obj_buf, id, objective, completion, proof, boundaries, stop_rule, max_iterations, worktree, workspace, now);
 
     var existing: []const u8 = "";
     if (lib.fsRead("state/goals.json")) |cur| {
@@ -106,6 +108,7 @@ fn writeGoalObject(
     stop_rule: []const u8,
     max_iterations: ?u32,
     worktree: []const u8,
+    workspace: []const u8,
     now: u64,
 ) !void {
     const wbuf = try lib.alloc.alloc(u8, 32 * 1024);
@@ -132,6 +135,10 @@ fn writeGoalObject(
     if (worktree.len > 0) {
         try s.objectField("worktree");
         try s.write(worktree);
+    }
+    if (workspace.len > 0) {
+        try s.objectField("workspace");
+        try s.write(workspace);
     }
     try s.objectField("status");
     try s.write("active");

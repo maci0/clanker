@@ -21,6 +21,10 @@
       "status": {
         "type": "string"
       },
+      "workspace": {
+        "type": "string",
+        "description": "Re-point the goal to this workspace (project) id; empty moves it to the default workspace."
+      },
       "max_iterations": {
         "type": "integer",
         "minimum": 1,
