@@ -80,7 +80,7 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
-- [improve-self worktrees are never reclaimed when a run promotes nothing](bugs/2026-08-16-improve-worktree-merge-bound-to-promotion.md) — Open
+- [improve-self worktrees are never reclaimed when a run promotes nothing](bugs/2026-08-16-improve-worktree-merge-bound-to-promotion.md) — Resolved
 
 - [Every guest read and write under a symlinked state/ was refused](bugs/2026-08-16-guest-writes-refused-under-symlinked-state.md) — Resolved
 

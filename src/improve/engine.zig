@@ -550,6 +550,31 @@ pub const Engine = struct {
         const after = try self.gateScore();
         log.log(.info, "final gate: {d:.2}/{d} passing", .{ after.score, after.total });
         if (!promoted_any) log.log(.info, "no changes were promoted", .{});
+
+        // Commits can reach the isolated branch without going through
+        // promotion: the agent's own git tool, or a repair step driving the
+        // loop. Only `improveOnce` merges back, so before this those commits
+        // sat on an abandoned branch until someone re-landed them by hand --
+        // observed on 13 leftover worktrees, every one of them work that was
+        // wanted and had already been applied to the base branch manually.
+        //
+        // Conditioned on a fully passing gate, which is the same bar
+        // promotion clears. A commit that never went through promotion never
+        // proved anything about the tree, and two of the stranded branches
+        // were literally titled "broken"; merging those back unconditionally
+        // would publish a broken base branch. A failing tree keeps the
+        // worktree instead, which is what "manual recovery" is supposed to
+        // mean. Guarded by `agent.git_commit` for the same reason the
+        // promotion path is: an operator who turned committing off does not
+        // expect refs to move.
+        if (self.cfg.agent.git_commit and after.total > 0 and after.score >= @as(f64, @floatFromInt(after.total))) {
+            if (self.worktree) |wt| {
+                if (!wt.merged and wt.hasStrandedCommits(self.ctx.gpa, self.ctx.io)) {
+                    const msg = std.fmt.allocPrint(self.arena, "clanker: fold in {s} (no promotion; gate green)", .{wt.branch}) catch "clanker: fold in an isolated improve-self branch";
+                    wt.mergeBack(self.ctx.gpa, self.ctx.io, msg);
+                }
+            }
+        }
     }
 
     const Outcome = enum { accepted, no_change, failed, need_context };

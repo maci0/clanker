@@ -282,6 +282,13 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   `web`, `other`; the name prefix matches the group (`chat_*`,
   `kanban_*`), and `todo_*` stay in `agent` because they are the private
   run list, not board cards.
+  `Worktree.merged` answers "did a promotion land?", not "is there work
+  here": it is set only by `mergeBack`, whose only caller is the promotion
+  path. `cleanup` therefore asks `hasStrandedCommits` (git
+  `rev-list --count base..branch`) before keeping a worktree, and the end
+  of `Engine.run` merges unpromoted commits back only behind a fully green
+  gate. Commit inside a worktree outside the promotion path and nothing
+  else will land it.
 - `ui/` — web UI surface (not a tool): `ui/app/` (HTML/JS/CSS), `ui/plugins/` (plugin
   apps; drop-in views, no host rebuild), `ui/vendor/` (vendored JS), `ui/webui.zig`
   (internal WASM guest). The web UI is that guest: `clanker serve` loads

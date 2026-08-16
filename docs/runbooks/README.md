@@ -51,6 +51,8 @@ both are compare-and-swap writes, so reopen the record after a conflict.
 ## Inventory
 
 <!-- inventory:runbook:start -->
+- [Leftover improve-self worktrees pile up under .clanker-worktrees/](improve-worktree-backlog.md) — Current
+
 - [State backups are not running](state-backups-not-running.md) — Current
 
 - [improve-self staging tests blocked by cwd-dependent and Io.Io mismatches](improve-self-staging-test-blocker.md) — Current

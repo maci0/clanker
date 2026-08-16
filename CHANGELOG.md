@@ -411,6 +411,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `improve-self` reclaims its own worktree when a run promotes nothing.
+  `cleanup` used to keep every unmerged worktree "for manual recovery",
+  but the `merged` flag is only ever set by the promotion path, so a run
+  that promoted nothing left behind a worktree whose branch was
+  byte-identical to its base. Those accumulated indefinitely and
+  `clanker janitor` will not remove them. `cleanup` now asks git whether
+  the branch holds commits the base lacks, and keeps the worktree only
+  when it does.
+- `improve-self` folds commits made inside its worktree outside the
+  promotion path back into the base branch at the end of a run, instead
+  of stranding them on an abandoned branch. Conditioned on a fully
+  passing final gate — the same bar a promotion clears — and on
+  `agent.git_commit`; a run that ends on a failing gate still keeps its
+  worktree for manual recovery.
 - Lifecycle hooks that never read stdin (`printf`, `echo`) no longer fail
   the hook when the child exits before the payload write finishes. The
   decision on stdout still applies.
