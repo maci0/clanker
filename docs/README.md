@@ -387,6 +387,8 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
 
 `clanker notify <peer> "<message>"` sends a notification to a peer. `clanker phonebook` lists peer agent cards by fetching `/.well-known/agent.json` from each configured peer URL. Both CLI commands dispatch into the sandboxed `peers` WASM tool (`cmdNotify` in `src/cli.zig`, `cmdPhonebook` in `src/peers/phonebook.zig`) rather than a native HTTP client, so peer traffic is gated by that tool's `network_from_config` allowlist like any model-initiated call.
 
+Clustering (join, leave, live TCP) is `clanker mesh`, not these two. See [Mesh](#mesh-srcpeersmeshzig).
+
 ### Token usage stats (`src/stats/tokens.zig`)
 
 Every LLM completion is recorded at the client choke point to
@@ -402,7 +404,9 @@ Module flag: `modules.token_stats`.
 Clankers can subscribe to named chatrooms and talk to each other. A room is
 implicit — created on first message. Sending appends the message to the local
 log and fans it out to every configured peer's `POST /api/chat/message`; each
-peer keeps the message only when it subscribes to that room.
+peer keeps the message only when it subscribes to that room. A mesh
+`CHAT` frame is the planned pipe for members (PRD 0011); `trySendChat`
+exists, `fanOut` still uses HTTP.
 
 - State: `state/chatrooms.jsonl` (log), `state/chatrooms-sub.json` (runtime
   join/leave overrides), `state/chatrooms-cursor.json` (inbox cursor).
@@ -446,6 +450,38 @@ peer keeps the message only when it subscribes to that room.
   gated by `modules.chatrooms`.
 - Inbox: each agent run injects a `[chatroom inbox]` user message with messages
   newer than the cursor, so a subscribed clanker notices what its peers said.
+
+### Mesh (`src/peers/mesh.zig`)
+
+Equal `clanker serve` instances share a long-lived TCP pipe. Design:
+[PRD 0011](prds/0011-clanker-mesh.md). Hierarchy and share/enter/leave:
+[RFC 0001](rfcs/0001-workspace-room-board-hierarchy.md). Off by default
+(`modules.mesh = false`).
+
+Only serve owns mesh sockets. `clanker mesh` is a loopback HTTP client of
+that serve (`src/peers/command.zig`). `--webui-port` selects which local
+serve when several run on one host. Same-host multi-process is the same
+mesh as two machines: loopback is an address, not a mode. Each process
+needs its own `instance.id`, mesh `listen_port`, web UI port, and
+`agent.state_dir`. Sharing one `state/` is one instance, not a cluster.
+
+```
+clanker mesh                      # status
+clanker mesh join 127.0.0.1:7420
+clanker mesh leave [<peer-id>]    # omit = this instance leaves
+clanker mesh pending
+clanker mesh admit <id>
+clanker mesh deny <id>
+```
+
+HTTP: `GET /api/mesh/status`, `POST /api/mesh/join`, `POST /api/mesh/leave`,
+`GET`/`POST /api/mesh/pending`. `GET /api/mesh/map` answers even when the
+module is off so Fleet can still draw HTTP peers. Join/leave/pending 404
+naming `modules.mesh` when it is off.
+
+`admission` is `allowlist` (default), `prompt` (queue for `admit`/`deny`,
+timeout = refuse), or `open`. Workspace share / enter / bind is Phase 3
+and is not these verbs.
 
 ### Patch application (`tools/zig/patch_apply.zig`)
 
@@ -751,6 +787,7 @@ iter 2
 | `workflow [list\|show <name>\|run <name> [args]]` | List, inspect, or run reusable prompt workflows from `workflows/` |
 | `notify <peer> "<message>"` | Send a notification to a peer |
 | `phonebook` | List peer agent cards |
+| `mesh [status\|join\|leave\|pending\|admit\|deny]` | Join or leave the mesh, or inspect it. Loopback client of local serve; `--webui-port` picks which serve. See [Mesh](#mesh-srcpeersmeshzig) |
 | `chat send <room> "<text>"` | Send a message to a chatroom |
 | `chat history <room> [after]` | Read a chatroom's history (newest first) |
 | `chat rooms` | List chatrooms and this instance's subscriptions |
@@ -974,13 +1011,14 @@ Fields:
   - `confirm_writes`: gate write-capable tool calls (exec or filesystem access in the descriptor, or `"confirm": true`) on a human's allow/deny. `"never"` (default) asks nobody; `"browser"` asks streaming web runs; `"always"` also asks interactive REPL sessions — the call blocks on a modal in `clanker repl` (Enter allows, Esc denies, Ctrl-C denies and stops the turn), and anything short of an explicit allow, a timeout after `ask_timeout_seconds` included, refuses the call. Runs with no human channel — headless one-shots, the improve loop, nested sub-agents — are never gated. Read-only tools opt out with `"confirm": false` in their manifest.
   - `tool_catalog`: when true (default), send full schemas only for hot tools and let the model ask for the rest by name.
   - `hot_tools`: how many of the most-used tools keep their schemas loaded without being asked for (default 10).
-- `peers`: list of peer agents with `name` and `url`.
+- `peers`: list of peer agents with `name` and `url`, plus optional `id` (mesh allowlist key).
+- `mesh`: TCP cluster listen and admission. Off via `modules.mesh`. See [Mesh](#mesh-srcpeersmeshzig) and [docs/configuration.md](configuration.md#mesh).
 - `web`: research-host allowlist for `web_fetch` and `web_search` only.
   - `allow`: hostnames or glob patterns — no scheme, path, or port. Each entry matches the exact hostname or a `*`/`?` glob (e.g. `"*.github.com"` matches any subdomain, and a bare `"*"` allows every host). These are appended to each tool's descriptor `network_allow`, so the static hosts remain available. Put machine-specific grants in `config.local.toml`.
 - `instance`: identity of this agent.
 - `notify`: `on` / `topic` for peer notifications.
 - `chatrooms`: default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag.
-- `modules`: feature on/off flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`). All default to `true`. `goal_auto_steer` only controls automatic attachment of the newest active goal; explicit goals continue to work when it is off.
+- `modules`: feature on/off flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`, `acp`, `mesh`). All default to `true` except `acp` and `mesh`, which default `false`. `goal_auto_steer` only controls automatic attachment of the newest active goal; explicit goals continue to work when it is off.
 - `improve`: settings for self-improvement.
   - `max_context_bytes`: byte budget for the proposal context slice.
   - `max_context_requests`: how many `{"need": [...]}` context refills a run gets (default 3, 0 disables).
@@ -1043,7 +1081,7 @@ For the authoritative field list and defaults, see the doc comments on each stru
 
 `clanker serve` starts an HTTP server on `127.0.0.1:17921` (override the interface with `--host`, the port with `--webui-port`). It opens exactly one listening socket and serves every route below on it. Endpoints:
 
-Routes gated by a `modules.*` flag answer `404` with a body naming the flag when it is off. Those gates are `modules.webui` (the web UI and every `/webui/*` asset), `modules.a2a` (`/.well-known/agent.json`, `/api/a2a/message`), `modules.peers` (`/api/notify`, `/api/peers`), `modules.chatrooms` (all of `/api/chat/*`), `modules.token_stats` (`/api/stats`) and `modules.sessions` (all of `/api/sessions*` and `/api/workspaces*`).
+Routes gated by a `modules.*` flag answer `404` with a body naming the flag when it is off. Those gates are `modules.webui` (the web UI and every `/webui/*` asset), `modules.a2a` (`/.well-known/agent.json`, `/api/a2a/message`), `modules.peers` (`/api/notify`, `/api/peers`), `modules.chatrooms` (all of `/api/chat/*`), `modules.token_stats` (`/api/stats`), `modules.sessions` (all of `/api/sessions*` and `/api/workspaces*`), and `modules.mesh` (`/api/mesh/join`, `/leave`, `/status`, `/pending`; `GET /api/mesh/map` stays up so Fleet can draw HTTP peers).
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -1056,6 +1094,11 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/.well-known/agent.json` | GET | Agent card for A2A discovery |
 | `/api/status` | GET | Instance + peers status (JSON) |
 | `/api/peers` | GET | Every configured peer's live A2A agent card, via the sandboxed `peers` tool (JSON) |
+| `/api/mesh/map` | GET | Fleet lamp map: self + `[[peers]]` + chat wires. Served even when `modules.mesh` is off |
+| `/api/mesh/status` | GET | Mesh listen, admission, instance id, members |
+| `/api/mesh/join` | POST | `{"address":"host:port"}` — dial that member |
+| `/api/mesh/leave` | POST | `{"peer_id":"…"}` or `{}` for self-leave |
+| `/api/mesh/pending` | GET, POST | Prompt-mode JOIN queue; POST `{"id","allow"}` admits or denies |
 | `/api/sessions` | GET, POST | List saved conversations, newest first; POST `{import_chat:true,title,messages}` imports one |
 | `/api/workspaces` | GET, POST | List workspaces (default cwd plus registered folders) or create one `{name,path}` |
 | `/api/workspaces/<id>` | POST, DELETE | Rename/repath a workspace, or remove it (chats move to the default; the folder stays) |

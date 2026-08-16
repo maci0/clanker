@@ -31,7 +31,7 @@ and Implementation lists checkable file-level phases.
 | [0008](0008-arena.md) | Arena | In progress | Phase 3 (multi-instance) open |
 | [0009](0009-schedule.md) | Scheduled runs | Shipped | Sweep-exit Known issue |
 | [0010](0010-plugin-manifest-sdk.md) | Plugin manifest SDK | Shipped | Out-of-tree list → 0022 |
-| [0011](0011-clanker-mesh.md) | Clanker mesh | In progress | Codec/admission/Fleet map in; serve listener + ck_mesh open |
+| [0011](0011-clanker-mesh.md) | Clanker mesh | In progress | Serve listener + `clanker mesh` + HTTP join/leave/status/pending in; `ck_mesh` guests and Phase 3 share open |
 | [0012](0012-surface-plugins.md) | Surface plugins | Partial | Web UI shipped; TUI/CLI draft |
 | [0013](0013-ttsr.md) | TTSR | Shipped | Substring/`*` abort-and-retry |
 | [0014](0014-hashline.md) | Hashline edit format | Shipped | `hashes:true` + `op:hashline` |

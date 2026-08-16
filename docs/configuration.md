@@ -453,6 +453,8 @@ one off removes its tools, endpoints, and prompt surface: `mcp`, `peers`,
 `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`,
 `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`,
 `rlm`, `multimodal`, `chatrooms`, `token_stats`, `acp`, `mesh`.
+`mesh` is the TCP cluster (`clanker mesh`, `/api/mesh/*`); it is not the
+HTTP `[[peers]]` list. Off until you turn it on and restart serve.
 
 `goal_auto_steer` is the one that is not a whole subsystem: off, the goal module
 stays on — explicit `--goal`, `goal`, `/goal`, `write-goal`, `add-goal`, and
@@ -467,11 +469,54 @@ same loop from a saved goal. They are not aliases for one ordinary agent turn.
 mcp = true
 peers = false        # single-instance: no peer HTTP, no phonebook
 chatrooms = false
+mesh = false         # TCP cluster; clanker mesh talks to local serve
 ```
+
+## `[mesh]`
+
+TCP peer-to-peer cluster (PRD 0011). Serve owns the sockets.
+`clanker mesh` is a loopback HTTP client of that serve. `--webui-port`
+selects which local serve when several run on one host. Same-host
+processes use the same join/leave/status as two machines; they need
+distinct `instance.id`, `listen_port`, web UI port, and `agent.state_dir`.
+
+Empty `instance.id` is a startup error for the listener. Default bind is
+loopback so turning the module on is not a LAN socket.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `listen_host` | `"127.0.0.1"` | Mesh TCP bind, independent of `[serve].host` |
+| `listen_port` | `7420` | Mesh TCP port |
+| `ping_interval_seconds` | `15` | Liveness ping |
+| `admission` | `"allowlist"` | `allowlist`, `prompt` (queue for `clanker mesh admit`/`deny`), or `open` |
+| `max_members` | `32` | Cap on admitted members |
+| `max_pending_joins` | `8` | Prompt-mode queue depth |
+| `prompt_timeout_seconds` | `120` | Pending JOIN timeout (refuse) |
+| `max_frame_bytes` | `1048576` | Incoming frame cap |
+| `max_file_bytes` | `33554432` | Phase 3 file-share cap |
+| `file_chunk_bytes` | `32768` | Phase 3 chunk size |
+
+```toml
+[instance]
+id = "main"
+
+[modules]
+mesh = true
+
+[mesh]
+listen_host = "127.0.0.1"
+listen_port = 7420
+admission = "allowlist"
+```
+
+A second process on the same host uses another `id`, `listen_port`,
+`[serve].webui_port`, and `agent.state_dir`, then
+`clanker mesh join 127.0.0.1:7420 --webui-port 17922`.
 
 ## Other sections
 
-- **`[instance]`** — `name` and `id`, this clanker's identity to peers.
+- **`[instance]`** — `name` and `id`. Mesh addresses members by `id`,
+  not `name`. Empty `id` refuses to bind the mesh listener.
 - **`[serve]`** — what `clanker serve` binds, for a deployment that cannot pass
   flags: `host` (interface, default `127.0.0.1`), `webui_port` (default
   `17921`), and `serve_as` (a TOML array of hostnames the server may present
@@ -498,9 +543,10 @@ chatrooms = false
   proxy_token_env = "CLANKER_PROXY_TOKEN"
   ```
 - **`[[peers]]`** — repeated tables of `name` + `url`, other `clanker serve`
-  instances this one can notify and share chatrooms/board with. Outbound only:
-  a peer URL is something this process connects to, never a port it opens, so
-  nothing here is exposed by binding `serve` more widely.
+  instances this one can notify and share chatrooms/board with. Optional `id`
+  is the mesh allowlist key (PRD 0011). Outbound only: a peer URL is
+  something this process connects to, never a port it opens, so nothing
+  here is exposed by binding `serve` more widely.
 - **`[chatrooms]`** — `on`, `rooms` (default subscriptions), `max_history`.
 - **`[memory]`** — RAG backend. One key at the top level, `backend`
   (`hybrid`/`vector`/`keyword`); everything else lives in a sub-table, so the

@@ -33,6 +33,8 @@ const Entry = struct {
 const Record = struct {
     ts: i64 = 0,
     id: []const u8 = "",
+    cron: []const u8 = "",
+    task: []const u8 = "",
     trigger: []const u8 = "",
     ok: bool = false,
     duration_ms: u64 = 0,
@@ -225,6 +227,8 @@ fn writeEntry(s: *std.json.Stringify, e: Entry) !void {
     try s.write(e.tz_offset_minutes);
     try s.objectField("enabled");
     try s.write(e.enabled);
+    try s.objectField("created");
+    try s.write(e.created);
     try s.objectField("last_run");
     try s.write(e.last_run);
     try s.objectField("last_status");
@@ -258,6 +262,10 @@ fn writeLog(s: *std.json.Stringify) !void {
         try s.write(r.ts);
         try s.objectField("id");
         try s.write(r.id);
+        try s.objectField("cron");
+        try s.write(r.cron);
+        try s.objectField("task");
+        try s.write(r.task);
         try s.objectField("trigger");
         try s.write(r.trigger);
         try s.objectField("ok");

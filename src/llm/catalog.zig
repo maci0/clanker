@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const config = @import("../config.zig");
+const models_dev = @import("models_dev.zig");
 
 pub const Support = struct {
     kind: config.ProviderKind,
@@ -105,6 +106,188 @@ pub fn classifyEntry(entry: std.json.Value) ?Support {
     const npm = fieldStr(entry.object, "npm") orelse return null;
     const api = fieldStr(entry.object, "api") orelse "";
     return classify(npm, api, firstEnv(entry.object));
+}
+
+/// Cap shared by `GET /api/catalog` and any other search surface. A broader
+/// query is a paging problem the search box solves better than a giant body.
+pub const max_search_hits: usize = 200;
+
+/// One models.dev row the UI and `clanker providers catalog` both print.
+pub const SearchHit = struct {
+    provider: []const u8,
+    kind: []const u8,
+    auth: []const u8,
+    base_url: []const u8 = "",
+    api_key_env: []const u8 = "",
+    path: ?[]const u8 = null,
+    id: []const u8,
+    display: []const u8 = "",
+    context: ?i64 = null,
+    output: ?i64 = null,
+    cost_in: ?f64 = null,
+    cost_out: ?f64 = null,
+    reasoning: bool = false,
+    tool_call: bool = false,
+    temperature_ok: bool = false,
+    capabilities: []const []const u8 = &.{},
+};
+
+pub fn queryMatches(query: []const u8, provider_id: []const u8, model_id: []const u8, family: []const u8) bool {
+    if (query.len == 0) return false;
+    return std.ascii.findIgnoreCase(provider_id, query) != null or
+        std.ascii.findIgnoreCase(model_id, query) != null or
+        std.ascii.findIgnoreCase(family, query) != null;
+}
+
+fn jsonNum(obj: std.json.ObjectMap, key: []const u8) ?f64 {
+    const v = obj.get(key) orelse return null;
+    return switch (v) {
+        .integer => |i| @floatFromInt(i),
+        .float => |f| f,
+        .number_string => |s| std.fmt.parseFloat(f64, s) catch null,
+        .string => |s| std.fmt.parseFloat(f64, s) catch null,
+        else => null,
+    };
+}
+
+fn hitFrom(
+    arena: std.mem.Allocator,
+    provider_id: []const u8,
+    model_id: []const u8,
+    m: std.json.Value,
+    support: Support,
+) SearchHit {
+    var hit = SearchHit{
+        .provider = provider_id,
+        .kind = @tagName(support.kind),
+        .auth = @tagName(support.auth),
+        .base_url = support.base_url,
+        .api_key_env = support.api_key_env,
+        .path = support.path,
+        .id = model_id,
+    };
+    if (m != .object) return hit;
+    if (fieldStr(m.object, "name")) |disp| hit.display = disp;
+    if (m.object.get("limit")) |l| if (l == .object) {
+        if (jsonNum(l.object, "context")) |ctx| hit.context = @as(i64, @trunc(ctx));
+        if (jsonNum(l.object, "output")) |o| hit.output = @as(i64, @trunc(o));
+    };
+    if (m.object.get("cost")) |c| if (c == .object) {
+        if (jsonNum(c.object, "input")) |ci| hit.cost_in = ci;
+        if (jsonNum(c.object, "output")) |co| hit.cost_out = co;
+    };
+    if (m.object.get("reasoning")) |r| if (r == .bool) hit.reasoning = r.bool;
+    if (m.object.get("tool_call")) |t| if (t == .bool) hit.tool_call = t.bool;
+    if (m.object.get("temperature")) |t| if (t == .bool) hit.temperature_ok = t.bool;
+    hit.capabilities = models_dev.capabilities(arena, m) catch &.{};
+    return hit;
+}
+
+/// Supported catalog models whose id, provider, or family contains `query`.
+pub fn collectHits(
+    arena: std.mem.Allocator,
+    catalog: std.json.Value,
+    query: []const u8,
+    max: usize,
+) !struct { hits: []SearchHit, truncated: bool } {
+    var list: std.ArrayList(SearchHit) = .empty;
+    if (catalog != .object) return .{ .hits = &.{}, .truncated = false };
+    var it = catalog.object.iterator();
+    outer: while (it.next()) |kv| {
+        const support = classifyEntry(kv.value_ptr.*) orelse continue;
+        if (kv.value_ptr.* != .object) continue;
+        const models_v = kv.value_ptr.object.get("models") orelse continue;
+        if (models_v != .object) continue;
+        var mit = models_v.object.iterator();
+        while (mit.next()) |mkv| {
+            const family = if (mkv.value_ptr.* == .object)
+                fieldStr(mkv.value_ptr.object, "family") orelse ""
+            else
+                "";
+            if (!queryMatches(query, kv.key_ptr.*, mkv.key_ptr.*, family)) continue;
+            try list.append(arena, hitFrom(arena, kv.key_ptr.*, mkv.key_ptr.*, mkv.value_ptr.*, support));
+            if (list.items.len >= max) break :outer;
+        }
+    }
+    const truncated = list.items.len >= max;
+    return .{ .hits = try list.toOwnedSlice(arena), .truncated = truncated };
+}
+
+fn writeHit(s: *std.json.Stringify, h: SearchHit) !void {
+    try s.beginObject();
+    try s.objectField("provider");
+    try s.write(h.provider);
+    try s.objectField("kind");
+    try s.write(h.kind);
+    try s.objectField("auth");
+    try s.write(h.auth);
+    if (h.base_url.len > 0) {
+        try s.objectField("base_url");
+        try s.write(h.base_url);
+    }
+    if (h.api_key_env.len > 0) {
+        try s.objectField("api_key_env");
+        try s.write(h.api_key_env);
+    }
+    if (h.path) |path| {
+        try s.objectField("path");
+        try s.write(path);
+    }
+    try s.objectField("id");
+    try s.write(h.id);
+    if (h.display.len > 0) {
+        try s.objectField("display");
+        try s.write(h.display);
+    }
+    if (h.context) |ctx| {
+        try s.objectField("context");
+        try s.print("{d}", .{ctx});
+    }
+    if (h.output) |o| {
+        try s.objectField("output");
+        try s.print("{d}", .{o});
+    }
+    if (h.cost_in) |ci| {
+        try s.objectField("cost_in");
+        try s.print("{d:.2}", .{ci});
+    }
+    if (h.cost_out) |co| {
+        try s.objectField("cost_out");
+        try s.print("{d:.2}", .{co});
+    }
+    if (h.reasoning) {
+        try s.objectField("reasoning");
+        try s.write(true);
+    }
+    if (h.tool_call) {
+        try s.objectField("tool_call");
+        try s.write(true);
+    }
+    if (h.temperature_ok) {
+        try s.objectField("temperature_ok");
+        try s.write(true);
+    }
+    if (h.capabilities.len > 0) {
+        try s.objectField("capabilities");
+        try s.beginArray();
+        for (h.capabilities) |cap| try s.write(cap);
+        try s.endArray();
+    }
+    try s.endObject();
+}
+
+/// `{ok, models, truncated}` — the `/api/catalog` body.
+pub fn writeSearch(s: *std.json.Stringify, hits: []const SearchHit, truncated: bool) !void {
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("models");
+    try s.beginArray();
+    for (hits) |h| try writeHit(s, h);
+    try s.endArray();
+    try s.objectField("truncated");
+    try s.write(truncated);
+    try s.endObject();
 }
 
 test "openai-compatible with an api URL is openai_compat + api_key" {

@@ -4,8 +4,10 @@
 
 In progress. Design is locked. Phase 1 codec, admission, leave-vs-unreachable,
 simultaneous-open, CHAT id-dedup, and the Fleet lamp map (`GET /api/mesh/map`)
-live in `src/peers/mesh.zig` (host tests, no NIC). Serve listener, `ck_mesh`,
-CLI, and chat fan-out are still open.
+live in `src/peers/mesh.zig` (host tests, no NIC). Serve listener
+(`src/serve/mesh_net.zig`), HTTP join/leave/status/pending, and
+`clanker mesh` (`src/peers/command.zig`) are in. `ck_mesh` guest tools,
+CHAT_SYNC catch-up, and Phase 3 workspace/file share are still open.
 
 Single source of truth once built: `src/peers/mesh.zig` (host-side, the
 same "thin guest, honest host" shape as `src/peers/chatrooms.zig`) plus
@@ -416,13 +418,17 @@ loopback while the mesh listens on the LAN, or the reverse.
 **CLI**, under the existing `.peers` group, talking to local serve:
 
 ```
-clanker mesh join <host:port>
-clanker mesh leave [<peer-id>]
+clanker mesh                      # status (default)
 clanker mesh status
+clanker mesh join <host:port>
+clanker mesh leave [<peer-id>]    # omit = self-leave
 clanker mesh pending
 clanker mesh admit <peer-id>
 clanker mesh deny <peer-id>
 ```
+
+`--webui-port` selects which local serve when several run on one host.
+Same-host processes use these same verbs; they are not a second protocol.
 
 **Guest tools** (op pinned in the descriptor):
 
@@ -539,9 +545,9 @@ Soft:
    `SESSION_*` / `FILE_*`, guests `workspace_share` / `file_share`,
    replica root `state/mesh/<peer-id>/`, home-unreachable refuse.
 
-## Usage sketch (once built)
+## Usage sketch
 
-Illustrative. Nothing below exists yet.
+Phase 1 control plane. Workspace share is still Phase 3.
 
 Two laptops on a LAN, allowlist:
 
@@ -574,6 +580,25 @@ clanker serve
 # either side
 clanker mesh join 10.0.0.5:7420
 clanker mesh status
+```
+
+Two processes on one host (same verbs, loopback address):
+
+```
+# side's config.local.toml
+[instance]
+id = "side"
+[modules]
+mesh = true
+[mesh]
+listen_port = 7421
+[serve]
+webui_port = 17922
+[agent]
+state_dir = "state-side"
+
+clanker serve
+clanker mesh join 127.0.0.1:7420 --webui-port 17922
 ```
 
 A chat `send` on A to a room B subscribes to goes out as a `CHAT`
@@ -621,7 +646,7 @@ for each other cannot join. That is the default working. `open` or
 
 Phase 1 (Goals 1, 2, 5, 6, 7):
 
-- [ ] `clanker serve` with `modules.mesh = true` and a non-empty
+- [x] `clanker serve` with `modules.mesh = true` and a non-empty
       `instance.id` listens on `listen_host:listen_port`. `clanker run`
       and `clanker mesh status` do not open that port; they talk to
       serve over loopback. (G7)

@@ -87,7 +87,7 @@ clanker loads **[config.toml](config.toml)** (committed example) and merges **`c
 | `web` | Additional hosts the research tools may reach |
 | `tui` | REPL appearance, including the mascot mode, size, and direction |
 | `advisor`, `ttsr`, `kernel` | Post-turn critique, turn-time repair rules, and persistent eval kernels |
-| `modules` | Feature flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`) |
+| `modules` | Feature flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`, `acp`, `mesh`). `acp` and `mesh` default off |
 
 Agent instructions are layered: device-wide `$HOME/.agents/AGENTS.md`, shared repository `AGENTS.md`, then ignored project-local `.agents/AGENTS.md`. Put personal, checkout-specific additions such as a Git workflow in the last file; it supplements the shared conventions rather than replacing them. Instruction files also support Claude-style `@path` imports (missing files soft-skip), so a shared root `AGENTS.md` can contain `@.agents/AGENTS.md` for tools that only read the root file.
 
@@ -98,6 +98,7 @@ Provider `kind` is `openai_compat`, `anthropic`, `vertex_anthropic` (Anthropic-o
 - **WASM tools** – sandboxed tool execution via zwasm with an explicit ABI
 - **MCP server** – stdio JSON-RPC server exposing tools to MCP clients
 - **Peer notifications + phonebook** – send messages to other clanker instances and list agent cards
+- **Mesh** – `clanker mesh` joins, leaves, and inspects a TCP cluster of `clanker serve` processes (same host or LAN). Loopback HTTP to local serve; serve owns the sockets
 - **A2A agent cards** – `.well-known/agent.json` discovery (`modules.a2a`)
 - **Goal lifecycle** – `/write-goal` drafts without side effects, `/add-goal` saves without running, and `/goal` starts a goal loop that keeps working until its completion condition is met
 - **REPL with streaming** – interactive session with live token output, plus slash commands (`/help`, `/model`, `/workflows`, `/workflow`, `/sessions`, `/graph`, `/status`, `/plugins`, `/theme`, `/goal`, `/autoresearch`, `/arena`, `/compare`) with Tab-complete; some run in-process, the rest dispatch to an internal WASM tool
@@ -261,6 +262,7 @@ command, while `clanker <option> -h` explains that option (for example,
 | `schedule [list\|add\|remove\|enable\|disable\|run\|run-due\|log]` | Run the agent on a cron-like schedule (see below). Defaults to `list` |
 | `stats` | Token usage per provider/model |
 | `phonebook` | List peer agent cards |
+| `mesh [status\|join\|leave\|pending\|admit\|deny]` | Join or leave the mesh, or inspect it (`--webui-port` picks the local serve) |
 | `serve [--host <addr>] [--serve-as <name>]... [--webui-port <port>]` | HTTP API + web UI (loopback, port 17921 by default) |
 | `graph [run-id]` | List runs, or render one as an ASCII timeline |
 | `gate` | Run the full deterministic gate (build/test/tools/fmt/lint/release-contract) |

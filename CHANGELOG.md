@@ -42,6 +42,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `deny <id>`. `--webui-port` selects which serve when several run on
   one host. Serve grows matching `/api/mesh/leave` and
   `/api/mesh/pending`. The CLI never opens a mesh socket.
+  `mesh.admission = "prompt"` is accepted: unknown JOINs wait for
+  `admit`/`deny` or time out. Reference, config, PRD 0011, and the
+  roadmap describe the shipped control plane.
 - Tool-result spill: when the request pruner omits a tool middle, the
   original is stored under `state/spills/<session>/` and the request
   carries `[spill id=........]`. The `spill` guest reads it back. The

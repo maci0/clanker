@@ -5602,10 +5602,8 @@ fn cmdStats(init: std.process.Init) !void {
     if (!cfg.modules.token_stats) {
         return error.ModuleDisabled;
     }
-    // Host-side aggregate, not the model_stats guest: ck_stats ships every
-    // raw record through the WASM result buffer, so a log of a few thousand
-    // lines fails as "too large for one call" even though the table itself
-    // is a handful of rows. /api/stats already takes this path.
+    // Host-side table: the guest cannot import src/stats. GET /api/stats
+    // relays model_stats instead; ck_stats already returns this aggregate.
     const stats = try token_stats.aggregate(std.Io.Dir.cwd(), init.io, init.gpa, arena, cfg.agent.state_dir);
     const text = try token_stats.renderTable(arena, stats, token_stats.totals(stats));
     try writeStdOut(init.io, text);
@@ -6374,7 +6372,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_chat_pins) {
             handleChatPins(io, gpa, cfg, target, stream);
         } else if (is_stats) {
-            handleStats(io, gpa, cfg, stream);
+            handleStats(io, gpa, cfg, environ_map, stream);
         } else if (is_plugin_config) {
             handlePluginConfig(io, gpa, cfg, body, stream);
         } else if (is_config_model) {
@@ -7256,22 +7254,25 @@ fn handleChatRooms(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
 }
 
 /// GET /api/stats, aggregated token usage per provider/model.
-fn handleStats(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+/// The `model_stats` guest owns this JSON (ck_stats is the host aggregate).
+fn handleStats(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream) void {
+    if (!cfg.modules.token_stats) {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"token_stats module disabled\"}");
+        return;
+    }
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const stats = token_stats.aggregate(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir) catch |err| {
-        log.log(.error_, "GET /api/stats: aggregate failed: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"stats aggregate failed\"}");
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "model_stats", "{}") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"stats tool unavailable\"}");
         return;
     };
-    const json_out = token_stats.statsJSON(arena, stats, token_stats.totals(stats)) catch |err| {
-        log.log(.error_, "GET /api/stats: encode failed: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"stats encode failed\"}");
+    if (toolResultFailed(raw)) {
+        respondTool(stream, raw);
         return;
-    };
-    respond(stream, 200, "OK", json_out);
+    }
+    respond(stream, 200, "OK", raw);
 }
 
 /// Did this pass through the connection loop carry a request at all?
@@ -10058,13 +10059,26 @@ test pluginAssetType {
     try std.testing.expect(pluginAssetType("../sprites.png") == null);
 }
 
-/// True when the `webui_addon` guest's list output puts `name` on its enabled
-/// array. The guest owns the registry (scan, fresh-checkout seed, toggle), so
-/// the listing route and the asset gate read the same answer from there
-/// instead of keeping a second native copy that can drift.
+/// True when the `webui_addon` guest says `name` is on. Per-addon `enabled`
+/// includes `inherit_on` (schedule/search/compare after an older
+/// `state/webui_plugins.json` that only listed files+music). The top-level
+/// `enabled` array is the raw store and omits those names, so reading it
+/// here 404'd their assets while the System panel showed them on.
 fn listedEnabled(arena: std.mem.Allocator, raw: []const u8, name: []const u8) bool {
     const v = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return false;
     if (v != .object) return false;
+    if (v.object.get("addons")) |addons| {
+        if (addons == .array) {
+            for (addons.array.items) |item| {
+                if (item != .object) continue;
+                const n = item.object.get("name") orelse continue;
+                const en = item.object.get("enabled") orelse continue;
+                if (n == .string and en == .bool and std.mem.eql(u8, n.string, name) and en.bool)
+                    return true;
+            }
+            return false;
+        }
+    }
     const enabled = v.object.get("enabled") orelse return false;
     if (enabled != .array) return false;
     for (enabled.array.items) |item| {
@@ -10081,6 +10095,9 @@ test listedEnabled {
     try std.testing.expect(!listedEnabled(arena, "{\"ok\":true,\"enabled\":[\"files\",\"music\"]}", "office"));
     try std.testing.expect(!listedEnabled(arena, "{\"ok\":false,\"error\":\"boom\"}", "files"));
     try std.testing.expect(!listedEnabled(arena, "not json", "files"));
+    // inherit_on: the store list is files+music, the guest still marks schedule on.
+    try std.testing.expect(listedEnabled(arena, "{\"ok\":true,\"addons\":[{\"name\":\"schedule\",\"enabled\":true},{\"name\":\"files\",\"enabled\":true}],\"enabled\":[\"files\",\"music\"]}", "schedule"));
+    try std.testing.expect(!listedEnabled(arena, "{\"ok\":true,\"addons\":[{\"name\":\"schedule\",\"enabled\":false}],\"enabled\":[\"files\"]}", "schedule"));
 }
 
 /// Which plugins exist and which are turned on. A plugin is off until someone

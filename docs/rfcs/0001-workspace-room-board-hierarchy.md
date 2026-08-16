@@ -64,6 +64,10 @@ that the next change has to migrate.
   set, not one root), and that is a security review, not a rename. File bytes
   that cross the mesh land under `state/mesh/<home-id>/files/`, never over a
   local path of the same name (PRD 0011).
+- Files merge by git, state merges by home. Sharing a workspace never grants
+  concurrent write access to one working tree: two live editors use distinct
+  checkouts or distinct worktrees, and there is no cross-instance file lock
+  (see Concurrent git access).
 - One obvious way to do a thing. Mesh join/leave must not be overloaded as
   project enter/leave.
 - Suites (one product, several repos) and leaves (one repo) both have to be
@@ -102,6 +106,7 @@ missing entirely.
 | Bind record | *does not exist* | nothing maps a remote project's folders to local checkouts |
 | Private todos | in-memory, per run (ADR 0002) | the run, never a room |
 | Mesh member | `state/mesh/members.json` (PRD 0011) | an `instance.id`. JOIN may *advertise* `share.workspaces[]` but sharing is not implied |
+| Mesh CLI | `clanker mesh` (`src/peers/command.zig`) | loopback HTTP to local serve: status, join, leave, pending, admit, deny. `--webui-port` picks which serve. Not workspace enter/leave |
 | Remote replica | `state/mesh/<home-id>/sessions/` (Phase 3, not built) | home instance owns the canonical transcript |
 
 The web UI rail (`#workspace-pick`) already treats a workspace as "a folder
@@ -118,6 +123,61 @@ The status quo is viable for one operator, one machine, one checkout, one
 folder. It fails as soon as a project spans two folders, or a second instance
 needs the same board and feed, or a long goal loop starts flooding the one
 global room with model output.
+
+## Concurrent git access
+
+Two instances — same host or meshed — never share a live working tree. File
+content is git's job; clanker coordinates only its own state. That split is what
+keeps the workspace model from inventing a distributed-write mechanism.
+
+- **Files.** Each instance edits its own checkout, or its own worktree inside a
+  shared checkout. There is no live cross-instance file merge. Sharing a
+  workspace grants replicated state and a bind to a local checkout, never
+  concurrent write access to one tree. Across machines git is the merge (pull /
+  merge / PR through `git_remote_ops`); the mesh file share
+  (`state/mesh/<home-id>/files/`) is a read-only copy, not an editable mount
+  (PRD 0011).
+- **State.** Board, sessions, and goals merge by clanker's own rules, which do
+  not depend on file merge: the board is a room fold that dedupes by message id
+  (ADR 0001); sessions are home-ordered appends with read-only replicas and
+  home-unreachable refuses writes (PRD 0011); goals update by compare-and-swap
+  on `from`.
+- **Worktree isolation.** A run that must not touch the shared checkout works in
+  a private git worktree + branch (`src/improve/worktree.zig` `createOn`).
+  Merge-back is `git update-ref <ref> <new> <old>` — a compare-and-swap that
+  retries on contention and, on a real conflict, leaves the commit parked on the
+  side branch for a human or the next run. Isolation is the default for goal and
+  scheduled runs; a typed interactive run defaults to the shared checkout
+  because an isolated run cannot see uncommitted work (`src/cli.zig`
+  `isolateByDefault`).
+
+Four hazards follow, and each is resolved explicitly.
+
+1. **Same-host peers must not both edit one working tree.** Loopback is an
+   address, not a mode. If two processes both `bind` the *same absolute path*
+   and both run against it, they race on the working tree — git worktrees do not
+   help, because a worktree is a separate directory. The rule: bind a distinct
+   checkout, or bind distinct worktrees inside one shared checkout. Binding the
+   identical path as a second live editor is refused (or treated as read-only),
+   never silently raced.
+2. **Interactive concurrency is opt-in isolation.** A typed `clanker run`
+   defaults to the shared checkout, so two concurrent interactive runs on one
+   instance race on uncommitted work. The escape hatches are `--worktree`,
+   `[agent] isolated_cli`, `git_worktree_on`, and the `worktree` /
+   `goal_worktree` defaults (`src/cli.zig` `shouldIsolate`). A workspace that
+   expects concurrent work should set isolation on rather than rely on the
+   default.
+3. **Branch names must be instance-unique.** `createOn` builds the branch as
+   `prefix + caller-supplied id` (`src/improve/worktree.zig`). Two instances
+   sharing one checkout with distinct worktrees must not generate the same id,
+   so the id includes `instance.id` (or a timestamp). The webui caller already
+   uses a nanosecond timestamp; goal and scheduled callers must make the same
+   guarantee explicit.
+4. **No cross-instance file lock.** `state/improve.lock` serializes improve-self
+   runs only (`src/improve/worktree.zig`). Ordinary agent runs have no lock and
+   do not get one over the mesh: a mesh-wide file lock would reintroduce a home
+   dependency for file writes, which is exactly what worktrees + CAS merge-back
+   avoid.
 
 ## Options considered
 
@@ -250,8 +310,9 @@ global room with model output.
   mesh peer and enters exactly like a networked instance: `share` on home,
   `enter` on the peer (subscribe to the project's rooms, take replica sessions
   under `state/mesh/<home-id>/sessions/`, optionally `bind` local folders),
-  `leave` to unsubscribe. `bind` is always explicit, even when both processes
-  see the same absolute path.
+  `leave` to unsubscribe. `bind` is always explicit, and two processes on one
+  host must bind distinct checkouts or distinct worktrees — never the same
+  working tree as two live editors (see Concurrent git access).
 
   **Folders reach a member two ways.** For editing, the member `bind`s a local
   checkout (git is the file merge, PRD 0011). For reading without a checkout,
@@ -492,9 +553,20 @@ project actually needs its own board; keep `board` as the empty-id workspace's
 9. **Home-unreachable continues to refuse writes (PRD 0011), or do we want a
    later fork-and-reconcile?** Out of scope here; raising it so B's laptop story
    is not silently oversold.
+10. **Same-path bind: refuse or read-only?** When a peer tries to bind a path
+    that is already another instance's live sandbox root on the same host, do we
+    refuse the bind, or accept it read-only? Bias: refuse for a write bind;
+    read-only is a separate, later grant.
+11. **Should concurrent work force isolation?** Typed interactive runs default
+    to the shared checkout today. For a workspace that is expected to be worked
+    by more than one instance at once, should isolation become the default (or a
+    per-workspace setting)? Bias: a per-workspace `concurrent` flag, off by
+    default, on for meshed / shared projects.
 
 ## Next steps / action items
 
+- [x] `clanker mesh` instance membership (status / join / leave / pending /
+      admit / deny) over local serve. Workspace enter/leave is still Phase 3.
 - [ ] Comment on this RFC, especially Option B (multi-root) vs A (single-root +
       extra-attach) given suites are a hard requirement.
 - [ ] Spike: sandbox root set — can N roots be enforced without weakening
@@ -510,6 +582,8 @@ project actually needs its own board; keep `board` as the empty-id workspace's
       mesh Phase 3; share / enter / leave / bind are operator verbs on
       `workspace_share`, not new frame kinds.
 - [ ] Do not migrate the current `board` room.
+- [ ] Spike: refuse (or mark read-only) a same-path bind that would make two
+      processes edit one working tree; add `instance.id` to worktree branch ids.
 
 ## References
 
@@ -603,9 +677,11 @@ sequenceDiagram
     Goal->>Gen: card moved to Done
 ```
 
-Same picture, two processes on one host. Loopback is the address; nothing else
-changes. The home process is always a member of its own workspaces — no local
-join — and a second process on the same box enters exactly like a remote one.
+Same picture, two processes on one host. Loopback is the address; membership is
+unchanged — but the file rule still applies: two live editors on one host use
+distinct checkouts or distinct worktrees, never the same working tree. The home
+process is always a member of its own workspaces — no local join — and a second
+process on the same box enters exactly like a remote one.
 
 ```
 instance "main"                         instance "side"
@@ -617,8 +693,9 @@ instance "main"                         instance "side"
 from side:  mesh join 127.0.0.1:7420
 from main:  share relumea
 from side:  enter relumea
-            bind core /home/maci/Desktop/Projects/relumea-core
-            bind web  /home/maci/Desktop/Projects/relumea-web
+            bind core ~/code/relumea-core        # distinct checkout, not main's path
+            bind web  ~/code/relumea-web
+            # or: bind the same repo, then run in distinct worktrees
 ```
 
 Starting a second serve in the same checkout with no private `state_dir` is not

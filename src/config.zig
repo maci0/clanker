@@ -2366,18 +2366,8 @@ pub const Config = struct {
         if (obj.get("ping_interval_seconds")) |n| m.ping_interval_seconds = try jsonUnsigned(u32, n, "mesh.ping_interval_seconds");
         if (obj.get("admission")) |s| {
             m.admission = try jsonStr(s, "mesh.admission");
-            // PRD 0011 reserves "prompt" (queue the JOIN for the operator),
-            // but the queue, the /api/mesh/pending endpoints, and the
-            // `clanker mesh` subcommand do not exist yet, so the JOIN handler
-            // would silently refuse every unknown id with no trace. Reject it
-            // at load rather than let a mesh advertise a mode it cannot honor.
-            if (std.mem.eql(u8, m.admission, "prompt")) {
-                log.log(.error_, "mesh.admission \"prompt\" is not implemented yet (PRD 0011 pending-join queue is not built); a JOIN from an unknown id would be refused like \"allowlist\". Use \"allowlist\" or \"open\"", .{});
-                diagnostic_emitted = true;
-                last_load_diagnostic = true;
-                return error.MeshPromptAdmissionUnimplemented;
-            }
             if (!std.mem.eql(u8, m.admission, "allowlist") and
+                !std.mem.eql(u8, m.admission, "prompt") and
                 !std.mem.eql(u8, m.admission, "open"))
                 return error.MeshAdmissionInvalid;
         }
@@ -4194,6 +4184,33 @@ test "mesh section and peer id parse" {
     try std.testing.expectEqual(@as(usize, 1), cfg.peers.len);
     try std.testing.expectEqualStrings("aaa", cfg.peers[0].id);
     try std.testing.expect(!(Modules{}).mesh);
+}
+
+test "mesh.admission prompt is a valid load" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[modules]
+        \\mesh = true
+        \\[instance]
+        \\id = "main"
+        \\[mesh]
+        \\admission = "prompt"
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqualStrings("prompt", cfg.mesh.admission);
 }
 
 test "partial local agent keeps base tools_dir" {

@@ -13,6 +13,7 @@
 - **Self-improvement gates** — `zig build`, `zig build test`, `zig build tools`, `zig fmt`, and lint run on every staged change before promotion; exposed as `clanker gate` and reused by `improve-self`.
 - **Parallel tools / registry** — heterogeneous tool sources (Zig + AssemblyScript) with `clanker tools list`.
 - **Multi-instance peers** — peers in config, `clanker serve` (HTTP), `clanker notify <peer> "<msg>"`, `clanker phonebook`, agent cards at `/.well-known/agent.json`, A2A message handler.
+- **Mesh CLI + control plane** — `clanker mesh status|join|leave|pending|admit|deny` is a loopback HTTP client of local serve (`src/peers/command.zig`). Serve owns sockets (`src/serve/mesh_net.zig`). HTTP: `/api/mesh/status`, `/join`, `/leave`, `/pending`; `/api/mesh/map` stays up when the module is off. Same-host multi-process is the same mesh as two machines (`--webui-port` picks the serve). `admission = "prompt"` queues JOINs for admit/deny. Workspace share is still Phase 3 ([PRD 0011](prds/0011-clanker-mesh.md), [RFC 0001](rfcs/0001-workspace-room-board-hierarchy.md)).
 - **MCP server** — `clanker mcp`: stdio JSON-RPC server exposing the tool registry.
 - **Execution graphs** — every run recorded to `state/runs/`; ASCII timeline via `clanker graph [run-id]` and `/graph`.
 - **Plugins & transforms** — every tool is a WASM plugin; descriptors gate `internal`, `enabled`, `llm`, `config`, `transform`; `after`/`before` transform chains rewrite tool I/O; `/plugins` toggles them.
