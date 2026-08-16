@@ -9,7 +9,8 @@
       "id": { "type": "string", "description": "8 lowercase hex spill id" },
       "text": { "type": "string", "description": "Text containing [spill id=........]" },
       "session": { "type": "string" },
-      "list": { "type": "boolean" }
+      "list": { "type": "boolean" },
+      "write": { "type": "object", "description": "Host-internal: persist a pruned tool result under state/spills/<session>/<id>.txt (fields: session, id, content)" }
     }
   },
   "fs_prefixes": ["state/spills/"],

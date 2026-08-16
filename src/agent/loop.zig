@@ -1466,14 +1466,7 @@ pub const Agent = struct {
         const copy = try self.arena.dupe(types.Message, messages);
         const reclaimed = try prune.pruneToolResults(copy, self.arena, self.cfg.agent.tool_result_prune_bytes, self.cfg.agent.tool_result_prune_head_bytes, self.cfg.agent.tool_result_prune_tail_bytes);
         if (reclaimed > 0) {
-            const spilled = spill_mod.annotate(
-                self.ctx.io,
-                self.arena,
-                std.Io.Dir.cwd(),
-                if (self.session_id.len > 0) self.session_id else "default",
-                copy,
-                messages,
-            ) catch 0;
+            const spilled = self.persistSpills(copy, messages) catch 0;
             log.log(.info, "tool-result pruning reclaimed {d} bytes from the next request ({d} spilled)", .{ reclaimed, spilled });
         }
         return copy;
@@ -2521,6 +2514,50 @@ pub const Agent = struct {
         defer self.ctx.gpa.free(raw);
         const resp = std.json.parseFromSliceLeaky(struct { ok: bool = false, @"error": []const u8 = "" }, self.arena, raw, .{ .ignore_unknown_fields = true }) catch return;
         if (!resp.ok) log.log(.warn, "graph write: {s}", .{resp.@"error"});
+    }
+
+    /// Persists pruned tool results through the sandboxed `spill` WASM tool
+    /// (fs_prefixes: ["state/spills/"]) instead of a native file-write path,
+    /// the same split as `persistGraphOrErr`: the decision runs natively (it
+    /// sits in the per-turn request build), each bounded write goes to the
+    /// guest, and a locator is appended only after the guest confirmed its
+    /// write. Best-effort: a spill failure must never fail the request it is
+    /// trimming.
+    fn persistSpills(self: *Agent, pruned: []types.Message, originals: []const types.Message) !usize {
+        const session_id = if (self.session_id.len > 0) self.session_id else "default";
+        const spills = try spill_mod.collectSpills(self.arena, session_id, pruned, originals);
+        if (spills.len == 0) return 0;
+
+        const mod = try runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, self.reg, "spill", null);
+        defer mod.deinit();
+
+        var wrote: usize = 0;
+        for (spills) |sp| {
+            var enc: std.Io.Writer.Allocating = .init(self.arena);
+            var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
+            try s.beginObject();
+            try s.objectField("write");
+            try s.beginObject();
+            try s.objectField("session");
+            try s.write(sp.session);
+            try s.objectField("id");
+            try s.write(&sp.id);
+            try s.objectField("content");
+            try s.write(sp.content);
+            try s.endObject();
+            try s.endObject();
+
+            const raw = mod.executeTool(enc.written()) catch |err| {
+                log.log(.warn, "spill write failed: {s}", .{@errorName(err)});
+                continue;
+            };
+            defer self.ctx.gpa.free(raw);
+            const resp = std.json.parseFromSliceLeaky(struct { ok: bool = false }, self.arena, raw, .{ .ignore_unknown_fields = true }) catch continue;
+            if (!resp.ok) continue;
+            try spill_mod.applyLocator(self.arena, &pruned[sp.index], &sp.id);
+            wrote += 1;
+        }
+        return wrote;
     }
 
     fn executeTool(self: *Agent, tc: types.ToolCall) ![]const u8 {

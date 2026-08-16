@@ -1,12 +1,16 @@
 //! Persist an oversized tool result so the request-only pruner can drop the
 //! middle without losing the bytes. The saved transcript stays exact; only
 //! the next model request carries a locator.
+//!
+//! The write itself lives in the `spill` WASM tool ({"write": ...}), which
+//! owns state/spills/ on disk and reads it back on demand. The agent loop
+//! keeps the decision half native because it sits inside the per-turn request
+//! build: pick which pruned messages need spilling, derive the id, and append
+//! the locator only after the guest confirmed the write.
 
 const std = @import("std");
 const types = @import("../llm/types.zig");
 const tool_out = @import("../util/tool_out.zig");
-const ensure_dir = @import("../util/ensure_dir.zig");
-const session = @import("session.zig");
 
 pub const marker = tool_out.prune_marker;
 pub const locator_prefix = "[spill id=";
@@ -53,63 +57,45 @@ pub fn idFor(content: []const u8, salt: u64) [8]u8 {
     return out;
 }
 
-pub fn pathFor(session_id: []const u8, id: []const u8) ![32 + 8 + 8]u8 {
-    var buf: [32 + 8 + 8]u8 = undefined;
-    const sid = if (session.validSessionId(session_id)) session_id else "default";
-    const written = try std.fmt.bufPrint(&buf, "state/spills/{s}/{s}.txt", .{ sid, id });
-    var out: [32 + 8 + 8]u8 = undefined;
-    @memcpy(out[0..written.len], written);
-    return out;
-}
+/// One spill: what to preserve, where, and which pruned message it belongs to.
+pub const Spill = struct {
+    session: []const u8,
+    id: [8]u8,
+    /// Full pre-prune tool result, kept exact.
+    content: []const u8,
+    /// Index into the pruned message list the locator must be appended to.
+    index: usize,
+};
 
-/// Writes the original tool content and appends a locator to the pruned
-/// request copy. The original slice in `originals` is not mutated.
-pub fn annotate(
-    io: std.Io,
+/// The decision half of a spill pass: for every pruned tool message that
+/// carries a prune marker and no locator yet, pick the id and the content to
+/// preserve. Pure; the caller writes each spill through the `spill` guest and
+/// appends the locator only on success.
+pub fn collectSpills(
     arena: std.mem.Allocator,
-    base: std.Io.Dir,
     session_id: []const u8,
-    pruned: []types.Message,
+    pruned: []const types.Message,
     originals: []const types.Message,
-) !usize {
-    if (pruned.len != originals.len) return 0;
-    var wrote: usize = 0;
-    for (pruned, originals, 0..) |*dst, src, i| {
+) ![]Spill {
+    if (pruned.len != originals.len) return &.{};
+    var out_list: std.ArrayList(Spill) = .empty;
+    errdefer out_list.deinit(arena);
+    for (pruned, originals, 0..) |dst, src, i| {
         if (dst.role != .tool) continue;
         const pc = dst.content orelse continue;
         const oc = src.content orelse continue;
         if (std.mem.indexOf(u8, pc, marker) == null) continue;
         if (parseId(pc) != null) continue;
-        const id = idFor(oc, i);
-        try persist(io, base, session_id, &id, oc);
-        const loc = locatorLine(&id);
-        dst.content = try std.fmt.allocPrint(arena, "{s}\n{s}", .{ pc, loc });
-        wrote += 1;
+        try out_list.append(arena, .{ .session = session_id, .id = idFor(oc, i), .content = oc, .index = i });
     }
-    return wrote;
+    return out_list.toOwnedSlice(arena);
 }
 
-pub fn persist(
-    io: std.Io,
-    base: std.Io.Dir,
-    session_id: []const u8,
-    id: []const u8,
-    content: []const u8,
-) !void {
-    const sid = if (session.validSessionId(session_id)) session_id else "default";
-    var dir_buf: [64]u8 = undefined;
-    const dir_path = try std.fmt.bufPrint(&dir_buf, "state/spills/{s}", .{sid});
-    try ensure_dir.ensureDir(base, io, dir_path);
-    var name_buf: [16]u8 = undefined;
-    const name = try std.fmt.bufPrint(&name_buf, "{s}.txt", .{id});
-    var dir = try base.openDir(io, dir_path, .{});
-    defer dir.close(io);
-    var file = try dir.createFile(io, name, .{ .exclusive = false });
-    defer file.close(io);
-    var wbuf: [512]u8 = undefined;
-    var w = file.writer(io, &wbuf);
-    try w.interface.writeAll(content);
-    try w.interface.flush();
+/// Appends the locator line to a pruned message's content. Call only after
+/// the write succeeded, so a dangling locator is never left behind.
+pub fn applyLocator(arena: std.mem.Allocator, dst: *types.Message, id: []const u8) !void {
+    const pc = dst.content orelse return;
+    dst.content = try std.fmt.allocPrint(arena, "{s}\n{s}", .{ pc, locatorLine(id) });
 }
 
 test "locator is 8 hex and round-trips" {
@@ -122,23 +108,39 @@ test "locator is 8 hex and round-trips" {
     try std.testing.expect(parseId("[spill id=nothex!!]") == null);
 }
 
-test "annotate writes the original and appends a locator" {
-    const io = std.testing.io;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+test "collectSpills picks pruned tool results and applyLocator appends the locator" {
     const original = "HEAD" ++ ("x" ** 80) ++ "TAIL";
     const pruned_body = "HEAD" ++ marker ++ "TAIL";
     var originals = [_]types.Message{.{ .role = .tool, .content = original, .tool_call_id = "1" }};
     var pruned = [_]types.Message{.{ .role = .tool, .content = pruned_body, .tool_call_id = "1" }};
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
-    const n = try annotate(io, arena_state.allocator(), tmp.dir, "sess01ab", &pruned, &originals);
-    try std.testing.expectEqual(@as(usize, 1), n);
+    const arena = arena_state.allocator();
+
+    const spills = try collectSpills(arena, "sess01ab", &pruned, &originals);
+    try std.testing.expectEqual(@as(usize, 1), spills.len);
+    try std.testing.expectEqual(@as(usize, 0), spills[0].index);
+    try std.testing.expectEqualStrings("sess01ab", spills[0].session);
+    try std.testing.expectEqualStrings(original, spills[0].content);
+
+    // The message content is untouched until the locator is applied.
+    try std.testing.expectEqualStrings(pruned_body, pruned[0].content.?);
+    try applyLocator(arena, &pruned[0], &spills[0].id);
     const id = parseId(pruned[0].content.?) orelse return error.TestExpectedEqual;
-    var path_buf: [80]u8 = undefined;
-    const path = try std.fmt.bufPrint(&path_buf, "state/spills/sess01ab/{s}.txt", .{id});
-    const got = try tmp.dir.readFileAlloc(io, path, std.testing.allocator, .limited(4096));
-    defer std.testing.allocator.free(got);
-    try std.testing.expectEqualStrings(original, got);
-    try std.testing.expectEqual(@as(usize, 0), try annotate(io, arena_state.allocator(), tmp.dir, "sess01ab", &pruned, &originals));
+    try std.testing.expectEqualStrings(&spills[0].id, id);
+
+    // An already-located message and a message without the marker spill nothing.
+    var pruned2 = [_]types.Message{
+        .{ .role = .tool, .content = pruned[0].content.?, .tool_call_id = "1" },
+        .{ .role = .tool, .content = "no marker here", .tool_call_id = "2" },
+    };
+    try std.testing.expectEqual(@as(usize, 0), (try collectSpills(arena, "sess01ab", &pruned2, &originals)).len);
+}
+
+test "collectSpills is a no-op when the lists do not line up" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const pruned = [_]types.Message{.{ .role = .tool, .content = "x", .tool_call_id = "1" }};
+    const spills = try collectSpills(arena_state.allocator(), "sess01ab", &pruned, &[_]types.Message{});
+    try std.testing.expectEqual(@as(usize, 0), spills.len);
 }

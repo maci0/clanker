@@ -706,7 +706,9 @@ export function bindGoals(deps) {
     e.preventDefault();
     var objective = el.goalObjective.value.trim();
     var criterion = el.goalCriterion.value.trim();
-    if (!objective || !criterion) return;
+    // Criterion is optional: the goal loop's first turn drafts a measurable one
+    // when it is left blank (PRD 0035 Goal 5). Only the objective is required.
+    if (!objective) return;
     var budgetRaw = el.goalMaxIterations.value.trim();
     var budget = budgetRaw ? parseInt(budgetRaw, 10) : 0;
     var payload = { objective: objective, completion_criterion: criterion };

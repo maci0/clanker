@@ -166,9 +166,10 @@ rounds inside each turn.
   (Goal 4).
 - [x] CLI help, TUI help, manifests, skills, PRDs, ADR, reports, and the
   roadmap each state the same one-effect-per-operation contract (Goal 1).
-- [ ] `add_goal` creates a goal-card in `#general` (not a `state/goals.json`
-      append), and `state/goals.json` is an index rebuilt from cards (Goals 3,
-      7).
+- [x] `add_goal` creates a goal-card in the board room carrying the goal's
+      fields (Goal 7).
+- [ ] `state/goals.json` is an index rebuilt from cards, not a store — currently
+      written at creation alongside the card; the rebuild is deferred.
 - [ ] The board creates goals as cards — one input, no separate goal form — and
       "Work on this" starts the loop from that card id (Goal 7).
 - [ ] A goal started without a measurable criterion gets one drafted before the

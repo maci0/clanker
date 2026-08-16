@@ -154,6 +154,14 @@ pub const Card = struct {
     /// card is nobody's mirror. The web UI keeps a goal and its board card in
     /// step by this link; it folds like any other edit (last writer wins).
     goal: []const u8 = "",
+    /// Goal-as-card fields. Populated when this card is a goal record; empty
+    /// (or null) for an ordinary card.
+    completion_criterion: []const u8 = "",
+    proof: []const u8 = "",
+    stop_rule: []const u8 = "",
+    boundaries: []const u8 = "",
+    max_iterations: ?u32 = null,
+    worktree: []const u8 = "",
     labels: []const Label = &.{},
     subtasks: []const Subtask = &.{},
     depends_on: []const []const u8 = &.{},
@@ -191,6 +199,12 @@ pub const Action = struct {
     off: ?bool = null,
     what: ?[]const u8 = null,
     goal: ?[]const u8 = null,
+    completion_criterion: ?[]const u8 = null,
+    proof: ?[]const u8 = null,
+    stop_rule: ?[]const u8 = null,
+    boundaries: ?[]const u8 = null,
+    max_iterations: ?u32 = null,
+    worktree: ?[]const u8 = null,
     labels: ?[]const Label = null,
     prompt_tokens: ?u64 = null,
     completion_tokens: ?u64 = null,
@@ -262,6 +276,12 @@ const State = struct {
     assigned_by: []const u8 = "",
     deadline: i64 = 0,
     goal: []const u8 = "",
+    completion_criterion: []const u8 = "",
+    proof: []const u8 = "",
+    stop_rule: []const u8 = "",
+    boundaries: []const u8 = "",
+    max_iterations: ?u32 = null,
+    worktree: []const u8 = "",
     labels: []const Label = &.{},
 
     title_at: Stamp = .{},
@@ -270,6 +290,12 @@ const State = struct {
     priority_at: Stamp = .{},
     deadline_at: Stamp = .{},
     goal_at: Stamp = .{},
+    completion_criterion_at: Stamp = .{},
+    proof_at: Stamp = .{},
+    stop_rule_at: Stamp = .{},
+    boundaries_at: Stamp = .{},
+    max_iterations_at: Stamp = .{},
+    worktree_at: Stamp = .{},
     labels_at: Stamp = .{},
     /// Claims use the lowest-(ts, id) rule, so this records the winner rather
     /// than the latest writer; an `assign` later than it overrides it.
@@ -339,6 +365,40 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
                 gop.value_ptr.goal_at = .{ .ts = m.ts, .id = m.id };
             }
         }
+        if (act.completion_criterion) |v| {
+            if (v.len > 0) {
+                gop.value_ptr.completion_criterion = v;
+                gop.value_ptr.completion_criterion_at = .{ .ts = m.ts, .id = m.id };
+            }
+        }
+        if (act.proof) |v| {
+            if (v.len > 0) {
+                gop.value_ptr.proof = v;
+                gop.value_ptr.proof_at = .{ .ts = m.ts, .id = m.id };
+            }
+        }
+        if (act.stop_rule) |v| {
+            if (v.len > 0) {
+                gop.value_ptr.stop_rule = v;
+                gop.value_ptr.stop_rule_at = .{ .ts = m.ts, .id = m.id };
+            }
+        }
+        if (act.boundaries) |v| {
+            if (v.len > 0) {
+                gop.value_ptr.boundaries = v;
+                gop.value_ptr.boundaries_at = .{ .ts = m.ts, .id = m.id };
+            }
+        }
+        if (act.max_iterations) |v| {
+            gop.value_ptr.max_iterations = v;
+            gop.value_ptr.max_iterations_at = .{ .ts = m.ts, .id = m.id };
+        }
+        if (act.worktree) |v| {
+            if (v.len > 0) {
+                gop.value_ptr.worktree = v;
+                gop.value_ptr.worktree_at = .{ .ts = m.ts, .id = m.id };
+            }
+        }
         // Assignment at creation folds like an assign stamped with the add
         // itself, so a later assign or claim overrides it by the usual rule.
         if (act.who) |w| {
@@ -399,6 +459,42 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
                 if (c.goal_at.beaten(m.ts, m.id)) {
                     c.goal = v;
                     c.goal_at = .{ .ts = m.ts, .id = m.id };
+                }
+            }
+            if (act.completion_criterion) |v| {
+                if (c.completion_criterion_at.beaten(m.ts, m.id)) {
+                    c.completion_criterion = v;
+                    c.completion_criterion_at = .{ .ts = m.ts, .id = m.id };
+                }
+            }
+            if (act.proof) |v| {
+                if (c.proof_at.beaten(m.ts, m.id)) {
+                    c.proof = v;
+                    c.proof_at = .{ .ts = m.ts, .id = m.id };
+                }
+            }
+            if (act.stop_rule) |v| {
+                if (c.stop_rule_at.beaten(m.ts, m.id)) {
+                    c.stop_rule = v;
+                    c.stop_rule_at = .{ .ts = m.ts, .id = m.id };
+                }
+            }
+            if (act.boundaries) |v| {
+                if (c.boundaries_at.beaten(m.ts, m.id)) {
+                    c.boundaries = v;
+                    c.boundaries_at = .{ .ts = m.ts, .id = m.id };
+                }
+            }
+            if (act.max_iterations) |v| {
+                if (c.max_iterations_at.beaten(m.ts, m.id)) {
+                    c.max_iterations = v;
+                    c.max_iterations_at = .{ .ts = m.ts, .id = m.id };
+                }
+            }
+            if (act.worktree) |v| {
+                if (c.worktree_at.beaten(m.ts, m.id)) {
+                    c.worktree = v;
+                    c.worktree_at = .{ .ts = m.ts, .id = m.id };
                 }
             }
             if (act.labels) |v| {
@@ -559,6 +655,12 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             .assigned_by = c.assigned_by,
             .deadline = c.deadline,
             .goal = c.goal,
+            .completion_criterion = c.completion_criterion,
+            .proof = c.proof,
+            .stop_rule = c.stop_rule,
+            .boundaries = c.boundaries,
+            .max_iterations = c.max_iterations,
+            .worktree = c.worktree,
             .labels = c.labels,
             .subtasks = subs.items,
             .depends_on = deps.items,

@@ -156,7 +156,9 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   inject, tool result) has to land in the saved session, not only on
   the wire. Request-only prune persists the omitted middle under
   `state/spills/<session>/` and leaves a `[spill id=........]` locator
-  on the request copy; the `spill` guest reads it back.
+  on the request copy; the `spill` guest writes the file and reads it back
+  (the loop decides natively which messages to spill and only appends the
+  locator after the guest confirmed the write).
 - `src/schedule/` — `clanker schedule`. Cron arithmetic is pure (no allocator,
   clock, or `std.Io`) and lives in `tools/zig/schedule_cron.zig` so the
   `schedule` guest shares it. The guest owns list/toggle/add/remove;

@@ -221,6 +221,18 @@ fn respond(out: *lib.Out, room: []const u8, list: []cards.Card, only_for: []cons
         try s.write(c.deadline);
         try s.objectField("goal");
         try s.write(c.goal);
+        try s.objectField("completion_criterion");
+        try s.write(c.completion_criterion);
+        try s.objectField("proof");
+        try s.write(c.proof);
+        try s.objectField("stop_rule");
+        try s.write(c.stop_rule);
+        try s.objectField("boundaries");
+        try s.write(c.boundaries);
+        try s.objectField("max_iterations");
+        if (c.max_iterations) |n| try s.print("{d}", .{n}) else try s.write(null);
+        try s.objectField("worktree");
+        try s.write(c.worktree);
         try s.objectField("labels");
         try s.write(c.labels);
         try s.objectField("subtasks");

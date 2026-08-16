@@ -116,6 +116,7 @@ per-project roster yet.
 | Goal room | *does not exist* | a goal's model output lives in a session, with no room of its own |
 | Public task | checklist item on a card (`tools/zig/cards.zig` `subtask_*`) | the card. Folded from `@todo` in the board's room, so everyone who can see the board sees it. A card cannot enter Done until every item is complete |
 | Goal-private task | *does not exist* | no durable task scoped to a goal but hidden from some members |
+| Goal attach | *does not exist* | card has a `goal` link and no file or URL list (RFC 0003) |
 | Membership | `state/mesh/members.json` (PRD 0011) | **mesh** membership only. No per-project roster, no enter/leave |
 | Bind record | *does not exist* | nothing maps a remote project's folders to local checkouts |
 | Private todos | in-memory, per run (ADR 0002) | the run, never a room |
@@ -671,6 +672,7 @@ project actually needs its own board; keep `board` as the empty-id workspace's
 - [ADR 0001 — The Kanban board is a chatroom](../adrs/0001-board-is-a-chatroom.md)
 - [ADR 0002 — Private run todos vs the shared board](../adrs/0002-private-todos-vs-shared-board.md)
 - [ADR 0012 — Goal draft, persistence, and execution are separate](../adrs/0012-goal-draft-persistence-and-execution-are-separate.md)
+- [RFC 0003: File attachments on a goal card](0003-goal-card-file-attachments.md)
 - Arena match `state/arena/arena-1786861439-dad384e4` (6 positions, DeepSeek,
   3 rounds, self-judge; official draw; adopted reasoning is p6)
 - [PRD 0001 — Chatrooms](../prds/0001-chatrooms.md)
@@ -715,6 +717,7 @@ a real join record; the rest are foreign keys or derived views.
 | Board | Card | 1:N | cards are `@todo` messages in the board's room |
 | Goal | Card | **1:0..1 (projection)** | optional board card in `#general` mirrors the goal; `goals.json` is the store |
 | Goal | Task | **1:N** | first-class records on the goal; public may project to the card checklist; private use `visible_to` |
+| Goal | Knowledge collection | **1:0..1** | `goal-<id>` via `add_doc` (RFC 0003); file or URL; card lists names |
 | Task | Instance | N:N | public: every project member; private: only the named `instance.id`s |
 | Goal | Room | 1:0..1 | `ws:<id>:goal:<card-id>`, created on demand, chat/status only |
 
