@@ -5,6 +5,25 @@ hash-pinned in `build.zig.zon`). A fresh checkout fetches the pristine
 upstream tarball, so **none of these are active on a fresh clone or in CI**
 until re-applied or upstreamed. Each entry says what breaks without it.
 
+**The `.patch` file in this directory is the canonical record of each
+change.** It must always apply with `patch -p1` to the pristine upstream
+package at the pinned commit, with no other input — never treat a fork
+branch as the source: branches (the `ywy50/libvaxis` ones below included)
+are one-way mirrors pushed *from* these files so an upstream PR has
+somewhere to come from, and nothing keeps them alive or current. If a
+branch and its patch file ever disagree, the file wins; recreate the branch
+by applying the file to the pinned commit and committing the result.
+
+To verify the set is still self-contained: check out the pinned commit of
+the dependency (`build.zig.zon` names it), apply every patch that targets
+it in the order listed here, and `diff -r` the result's `src/` against the
+`zig-pkg/` copy — it must come back empty. Get pristine sources from a git
+checkout of the pinned commit, **not** from `zig fetch`: run inside this
+project, `zig fetch` of the pinned URL materializes the tarball from the
+already-patched `zig-pkg/` copy (the content hash is never re-verified
+after extraction), so it silently returns the patched tree. Verified for
+both vaxis patches against `82cec0db` on 2026-08-17.
+
 ## vaxis-sixel-graphics.patch
 
 Target: vaxis 0.6.0 (`zig-pkg/vaxis-0.6.0-*`). Apply with `patch -p1` inside
@@ -44,12 +63,13 @@ What the patch contains:
   around the payload, and drops every raster on resize and teardown because a
   payload is only valid for the cell geometry it was encoded at.
 
-Status: local-only, and upstreamable as-is. The same commit is pushed to
-`github.com/ywy50/libvaxis` on the `sixel-graphics` branch, which is where a
-PR to `rockorager/libvaxis` would come from. Until that lands and the pin in
-`build.zig.zon` moves, this file is what survives a `zig-pkg` wipe. Regenerate
-it from that branch with `git diff 82cec0db..sixel-graphics -- src/`, where
-`82cec0db` is the commit `build.zig.zon` pins.
+Status: local-only, and upstreamable as-is. This file is what survives a
+`zig-pkg` wipe until the fix lands upstream and the pin in `build.zig.zon`
+moves. A mirror of the same change is pushed to `github.com/ywy50/libvaxis`
+on the `sixel-graphics` branch, which is where a PR to `rockorager/libvaxis`
+would come from; the branch is derived from this file (apply it to
+`82cec0db`, the commit `build.zig.zon` pins, and commit), never the other
+way around.
 
 ## vaxis-ss3-keypad-enter.patch
 
@@ -73,17 +93,15 @@ Shift+Enter on legacy-Konsole-style terminals.
 
 The patch also carries a `parse: ss3 keypad enter` test beside the other
 parser tests. It never runs inside clanker's build (vendored dependency
-tests are not part of `zig build test`); it is there because the same commit
-is pushed to `github.com/ywy50/libvaxis` on the `ss3-keypad-enter` branch,
-which is where a PR to `rockorager/libvaxis` would come from — same
-arrangement as `sixel-graphics` above. Until that lands and the pin in
-`build.zig.zon` moves, this file is what survives a `zig-pkg` wipe.
-Regenerate it from that branch with
-`git diff 82cec0db..ss3-keypad-enter -- src/`, where `82cec0db` is the
-commit `build.zig.zon` pins (`zig build test` passes on the branch at that
-base).
+tests are not part of `zig build test`); it exists for the upstream PR, and
+vaxis's own `zig build test` passes with the patch applied at the pinned
+commit.
 
-Status: local-only, upstreamable as-is.
+Status: local-only, upstreamable as-is. This file is what survives a
+`zig-pkg` wipe until the fix lands upstream and the pin moves. A mirror is
+pushed to `github.com/ywy50/libvaxis` on the `ss3-keypad-enter` branch —
+same arrangement as `sixel-graphics` above: derived from this file, never
+its source.
 
 ## zwasm-lazy-mem-cksum.patch
 
