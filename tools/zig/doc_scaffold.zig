@@ -330,6 +330,61 @@ pub fn replaceSection(w: *std.Io.Writer, text: []const u8, heading: []const u8, 
     return true;
 }
 
+/// Rewrites one `- **Field:** ...` bullet of the TL;DR block.
+///
+/// A record states its state in three places: this bullet, the `## Status`
+/// section, and its inventory row. A status change used to write the last two,
+/// so a fixed bug still opened with `- **Resolution:** Open.` — and the TL;DR
+/// is the line every reader is told to trust first, which makes it the worst
+/// of the three to leave stale.
+///
+/// Scoped to the TL;DR section on purpose: a long record quotes its own
+/// bullets while explaining them, and only the summary at the top is the
+/// record's state. Returns false when there is no TL;DR or no such bullet, so
+/// the caller can report which rather than silently writing nothing.
+pub fn replaceTldrField(w: *std.Io.Writer, text: []const u8, field: []const u8, value: []const u8) !bool {
+    const found = findTldrField(text, field) orelse return false;
+    try w.writeAll(text[0..found.value_start]);
+    try w.writeAll(value);
+    try w.writeAll(text[found.line_end..]);
+    return true;
+}
+
+/// The current value of a TL;DR bullet, or null when there is none.
+///
+/// The caller that needs this is one deciding whether a bullet is still the
+/// scaffold's placeholder. An investigation's `- **Finding:**` starts as
+/// `Investigating.` and later holds the actual finding, which a status change
+/// must never overwrite — so "is it still the placeholder" is the question,
+/// not "does it exist".
+pub fn tldrField(text: []const u8, field: []const u8) ?[]const u8 {
+    const found = findTldrField(text, field) orelse return null;
+    return std.mem.trim(u8, text[found.value_start..found.line_end], " \t\r");
+}
+
+const TldrField = struct { value_start: usize, line_end: usize };
+
+fn findTldrField(text: []const u8, field: []const u8) ?TldrField {
+    const sec = findSection(text, "## TL;DR") orelse return null;
+    var marker_buf: [64]u8 = undefined;
+    const marker = std.fmt.bufPrint(&marker_buf, "- **{s}:**", .{field}) catch return null;
+
+    var scan = sec.body_start;
+    while (scan < sec.body_end) {
+        const line_end = @min(std.mem.findPos(u8, text, scan, "\n") orelse sec.body_end, sec.body_end);
+        const line = text[scan..line_end];
+        const indent = line.len - std.mem.trimStart(u8, line, " \t").len;
+        if (std.mem.startsWith(u8, line[indent..], marker)) {
+            const after = scan + indent + marker.len;
+            // The space after the marker belongs to the separator, not the
+            // value: a rewrite writes its own.
+            return .{ .value_start = @min(after + 1, line_end), .line_end = line_end };
+        }
+        scan = line_end + 1;
+    }
+    return null;
+}
+
 /// Replaces only the first non-blank line of a section, keeping the prose that
 /// explains the section underneath it. This is what a status change wants: the
 /// state changes, the explanation of what the state means does not.
@@ -1025,4 +1080,50 @@ test "setInventoryStatus does not reach past the end marker" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
     try std.testing.expect(!try setInventoryStatus(&out.writer, index, "<!-- s -->", "<!-- e -->", "b.md", "Current"));
+}
+
+test "replaceTldrField rewrites the bullet and leaves the others alone" {
+    const record =
+        "# Bug — x\n\n## TL;DR\n\n- **What failed:** it broke.\n- **Impact:** none.\n" ++
+        "- **Resolution:** Open.\n\n## Status\n\nOpen.\n";
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expect(try replaceTldrField(&out.writer, record, "Resolution", "Resolved on 2026-08-16. fixed in abc1234."));
+    try std.testing.expectEqualStrings(
+        "# Bug — x\n\n## TL;DR\n\n- **What failed:** it broke.\n- **Impact:** none.\n" ++
+            "- **Resolution:** Resolved on 2026-08-16. fixed in abc1234.\n\n## Status\n\nOpen.\n",
+        out.written(),
+    );
+}
+
+test "replaceTldrField reports a missing bullet or a missing TL;DR" {
+    const no_bullet = "# Bug — x\n\n## TL;DR\n\n- **What failed:** it broke.\n\n## Status\n\nOpen.\n";
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expect(!try replaceTldrField(&out.writer, no_bullet, "Resolution", "Resolved."));
+    try std.testing.expect(!try replaceTldrField(&out.writer, "# Bug\n\n## Status\n\nOpen.\n", "Resolution", "Resolved."));
+}
+
+test "tldrField reads a bullet's value and reports an absent one" {
+    const record = "# Bug\n\n## TL;DR\n\n- **Finding:** Investigating.\n- **Resolution:** Open.\n\n## Status\n\nOpen.\n";
+    try std.testing.expectEqualStrings("Investigating.", tldrField(record, "Finding").?);
+    try std.testing.expectEqualStrings("Open.", tldrField(record, "Resolution").?);
+    try std.testing.expect(tldrField(record, "Impact") == null);
+    try std.testing.expect(tldrField("# Bug\n\n## Status\n\nOpen.\n", "Finding") == null);
+}
+
+test "replaceTldrField ignores a matching bullet outside the TL;DR" {
+    // The body of a long record can quote the bullet it is describing; only
+    // the summary at the top is the record's own state.
+    const record =
+        "# Bug — x\n\n## TL;DR\n\n- **Resolution:** Open.\n\n## Root cause\n\n" ++
+        "- **Resolution:** Open. is what the TL;DR still says\n";
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expect(try replaceTldrField(&out.writer, record, "Resolution", "Resolved."));
+    try std.testing.expectEqualStrings(
+        "# Bug — x\n\n## TL;DR\n\n- **Resolution:** Resolved.\n\n## Root cause\n\n" ++
+            "- **Resolution:** Open. is what the TL;DR still says\n",
+        out.written(),
+    );
 }

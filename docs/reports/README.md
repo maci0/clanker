@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [reports status updates the Status section but not the TL;DR](bugs/2026-08-16-reports-status-leaves-the-tldr-saying-open.md) — Resolved
+
 - [Five agent sessions on one checkout committed and stashed each other's work](bugs/2026-08-16-concurrent-sessions-commit-each-others-work.md) — Open
 
 - [clanker commit always fails: smart_commit returns no text field](bugs/2026-08-16-clanker-commit-tool-output-has-no-text-field.md) — Resolved
@@ -113,6 +115,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [Improve staging omits node UI-test data roots](investigations/2026-08-15-improve-staging-node-ui-data.md) — Resolved
+
 - [ck_cas lock sidecars are never removed and bypass the create retry](investigations/2026-08-16-ck-cas-lock-sidecars.md) — Closed
 
 - [`clanker run` never finishes, compacting on every iteration](investigations/2026-08-16-run-livelock-compaction-thrash.md) — Resolved

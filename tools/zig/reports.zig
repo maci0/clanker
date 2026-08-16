@@ -271,7 +271,31 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     defer updated.deinit();
     if (!try doc.replaceFirstLine(&updated.writer, text, "## Status", line))
         return lib.fail(out, "the record has no '## Status' section; add one or edit it with update");
-    lib.fsWriteIf(path, expected, updated.written()) catch |err| switch (err) {
+
+    // The third copy of the same fact. `create` writes a TL;DR `Resolution`
+    // bullet, and leaving it at `Open.` on a resolved record is worse than
+    // leaving the inventory stale: CLAUDE.md tells a reader to start at the
+    // TL;DR. Not fatal — a record whose summary was reshaped by hand is still
+    // worth a status change — so the reply reports it instead.
+    var summarized: std.Io.Writer.Allocating = .init(lib.alloc);
+    defer summarized.deinit();
+    const tldr = try doc.replaceTldrField(&summarized.writer, updated.written(), "Resolution", line);
+    var body = if (tldr) summarized.written() else updated.written();
+
+    // An investigation's TL;DR carries a second state bullet. `Finding` starts
+    // as the scaffold's `Investigating.` and later holds the actual finding,
+    // so it is rewritten only while it is still that placeholder — overwriting
+    // a real finding to record a status change would lose the answer the
+    // record exists for.
+    var found: std.Io.Writer.Allocating = .init(lib.alloc);
+    defer found.deinit();
+    if (doc.tldrField(body, "Finding")) |current| {
+        if (std.mem.eql(u8, current, "Investigating.")) {
+            if (try doc.replaceTldrField(&found.writer, body, "Finding", line)) body = found.written();
+        }
+    }
+
+    lib.fsWriteIf(path, expected, body) catch |err| switch (err) {
         error.Mismatch => return lib.fail(out, "the record changed while setting its status; open it again and retry"),
         else => return lib.failErr(out, err, "setting the record status"),
     };

@@ -4,7 +4,7 @@
 
 - **What failed:** clanker commit routes smart_commit through toolText, which returns error.ToolBadOutput unless the reply carries a 'text' string (src/cli.zig:4872). smart_commit emits {ok, dry_run, note?, excluded?, commits[]} and no text, so every invocation ends in 'the internal tool returned unreadable output' after paying for the grouping LLM call.
 - **Impact:** `clanker commit` is unusable in every mode, on every tree, with any wasm build. It is the documented way to group a working tree into conventional commits, so its failure pushes every agent and operator back to hand-rolled `git commit` — exactly what the tooling mandate exists to prevent. Each attempt pays for the grouping LLM call before failing.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-16. cmdCommit now calls toolJson with a structured body and renders via the pure commit_logic.renderPlan (4 new host tests). Verified: clanker commit --dry-run prints a proposal instead of erroring; answering y at the prompt moved HEAD 0e216cd5 -> 612d8079 with the expected single commit, so defect 2 (the post-confirmation dry run) is gone; the applied wording reads 'committed' where the proposal reads 'would write'.
 
 ## Status
 

@@ -4,7 +4,7 @@
 
 - **What failed:** safeJoinSecure refuses any path component that is a symlink, so a checkout whose state/ is a symlink into external storage had every guest call under state/ denied: clanker schedule list and add failed outright and run graphs were never persisted. Fixed by ADR 0017's agent.sandbox_follow_symlinks opt-in; the flag then did not work because applyAgentFields never copied it into the merged config.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-16. agent.sandbox_follow_symlinks (ADR 0017) plus the missing applyAgentFields copy; verified by schedule round-trip and a persisted run graph.
 
 ## Status
 
