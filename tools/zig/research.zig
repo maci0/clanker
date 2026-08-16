@@ -126,6 +126,10 @@ fn plan(obj: std.json.Value, out: *lib.Out) !void {
     }
     try s.objectField("depth");
     try s.write(@tagName(depth));
+    if (rq.topicShapeWarning(topic)) |warn| {
+        try s.objectField("warning");
+        try s.write(warn);
+    }
 
     try s.objectField("queries");
     try s.beginArray();
@@ -578,6 +582,10 @@ fn emitSweep(out: *lib.Out, topic: []const u8, depth: rq.Depth, queries: []const
     try s.write(@as(u64, st.fetches));
     try s.objectField("duplicates_dropped");
     try s.write(@as(u64, st.duplicates));
+    if (rq.topicShapeWarning(topic)) |warn| {
+        try s.objectField("warning");
+        try s.write(warn);
+    }
 
     try s.objectField("queries");
     try s.beginArray();
@@ -926,7 +934,54 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
         error.Mismatch => return lib.fail(out, "the note changed while setting its status; open it again and retry"),
         else => return lib.failErr(out, err, "setting the research note status"),
     };
-    return mutationResult(out, "status", path);
+
+    // The note and the index are two files, so this cannot be one atomic
+    // write. Leaving the index behind is what made every note read `Draft`
+    // forever, so the status change carries it; a CAS miss is reported rather
+    // than overwriting a concurrent edit to the index.
+    const indexed = setInventoryStatus(basename(path), label) catch false;
+
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("action");
+    try s.write("status");
+    try s.objectField("path");
+    try s.write(path);
+    try s.objectField("status");
+    try s.write(label);
+    try s.objectField("indexed");
+    try s.write(indexed);
+    if (!indexed) {
+        try s.objectField("note");
+        try s.write("the note's status changed, but its docs/research/README.md inventory line could not be updated (missing entry or markers, or a concurrent edit); set that line's status by hand so the index does not disagree with the note");
+    }
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
+/// The inventory links a note by file name, since every note sits directly in
+/// `docs/research/`.
+fn basename(path: []const u8) []const u8 {
+    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse return path;
+    return path[slash + 1 ..];
+}
+
+fn setInventoryStatus(link: []const u8, label: []const u8) !bool {
+    const raw = try lib.fsRead(index_path);
+    const index = try lib.alloc.dupe(u8, raw);
+    const expected = try lib.alloc.dupe(u8, try lib.hash(index));
+
+    var updated: std.Io.Writer.Allocating = .init(lib.alloc);
+    defer updated.deinit();
+    if (!try doc.setInventoryStatus(&updated.writer, index, inventory_start, inventory_end, link, label)) return false;
+    lib.fsWriteIf(index_path, expected, updated.written()) catch |err| switch (err) {
+        error.Mismatch => return false,
+        else => return err,
+    };
+    return true;
 }
 
 /// The display spelling of an accepted status, or null when it is not one.
