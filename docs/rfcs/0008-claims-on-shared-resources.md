@@ -227,7 +227,11 @@ resource that is not a file.
 - **Cons:** does not generalise past resources that can be copied. Two agents
   claiming the same goal, the same card, or the same remote branch cannot each
   have their own; the merge back to a shared branch is still contended; and
-  disk cost is real for a large checkout.
+  disk cost is real for a large checkout. The sharpest counterexample is
+  already observed: two sessions writing inventory rows into the same
+  `docs/*/README.md` collided at merge time *despite* working in separate
+  worktrees, because the contended thing is a list under one pair of markers,
+  not a file either of them could own.
 - **Cost to adopt:** small. Mostly documentation and one guard.
 - **Cost to leave:** nothing to leave.
 - **Evidence:** the incident report and
@@ -325,6 +329,14 @@ own. What would sink it: finding that most contended resources in practice are
 D is a footnote and the decision is really about which lease backend to run,
 which is a different RFC with B and C as the finalists.
 
+**Held at 6 after the first round of comment.** A second day of evidence
+(open questions 1 and 2) confirmed D holds for the working tree and produced
+the first observed resource it cannot cover — inventory rows under shared
+markers, which collided between two separate worktrees. That sharpens where A
+is needed first without changing what is recommended, and it is still one
+project over two days, which is not enough to move the number in either
+direction.
+
 **Rationale.** D is the only option that removes the failure instead of
 mediating it, costs nothing to be wrong about, and is already proven on the
 incident that prompted this RFC — the two pushes that succeeded used a
@@ -362,10 +374,28 @@ do not let `state/claims/*.json` become something a consumer reads directly.
    Nobody has audited for the rest. Answerable by a sweep of `src/` for writes
    to a resource another session could hold — and until it is done, the
    enforcement surface is an estimate.
+
+   **One class already found, and it is not native.** Each of the five record
+   stores keeps a second copy of a record status in its `README.md` inventory
+   and writes it with a compare-and-swap over the whole file. That is per-file
+   CAS, not a claim: it refuses a lost update but gives the loser nothing to
+   wait on, so two sessions creating records in the same store in the same
+   second serialize by retry. Those are guest writers rather than native ones,
+   which widens the question — if the enforcement surface includes guests,
+   then `claim` cannot be only a host-side check at a handful of call sites,
+   and the five inventory writers are its first real consumers.
 2. **Is the contended resource usually copyable?** The whole D-first shape
-   depends on yes. One incident says the git tree; intuition says goals and
-   cards will follow. Answerable by counting real collisions over a few weeks
-   rather than by argument.
+   depends on yes. **Partially answered, from a second day of evidence.** A
+   session that did all its git work in a throwaway worktree off `origin/main`
+   never wrote the shared index, and three other sessions uncommitted work
+   survived untouched — so D holds for the working tree. But the two things
+   that actually contended were *not* copyable: the git index, which is one
+   per checkout by construction, and the `docs/*/README.md` inventory rows,
+   where two sessions append to the same list under the same markers. Two RFC
+   rows written in different worktrees still collided at merge time. That
+   sharpens rather than settles the question: isolation covers the resource
+   that broke first, and the claim mechanism is most needed exactly where
+   isolation cannot reach. Still worth counting collisions over a few weeks.
 3. **Who is the holder?** A session id, an instance id, or a run id. They have
    different lifetimes, and the fence token means nothing until this is
    pinned. `.local/TODO.md` already uses a session id, the mesh uses

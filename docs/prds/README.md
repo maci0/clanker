@@ -95,6 +95,7 @@ and Implementation lists checkable file-level phases.
 | [0035](0035-goal-lifecycle.md) | Goal lifecycle capabilities | Shipped | Draft, persist, and execute are independent |
 | [0036](0036-sixel-mascot-rendering.md) | SIXEL mascot rendering | In progress | Kitty → SIXEL → Unicode cells implemented; manual terminal matrix open |
 | [0037](0037-decision-and-spec-stores-on-the-cli.md) | Decision and spec stores on the CLI | Shipped |  |
+| [0038](0038-http-endpoints-for-the-record-stores.md) | HTTP endpoints for the record stores | Shipped |  |
 <!-- inventory:prd:end -->
 
 ## Recommended build order (Drafts)

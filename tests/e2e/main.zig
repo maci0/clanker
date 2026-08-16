@@ -9,4 +9,5 @@ comptime {
     _ = @import("hooks_test.zig");
     _ = @import("mesh_test.zig");
     _ = @import("journeys_test.zig");
+    _ = @import("records_api_test.zig");
 }
