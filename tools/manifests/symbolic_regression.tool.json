@@ -1,0 +1,63 @@
+{
+  "name": "symbolic_regression",
+  "description": "Search for a closed-form expression that fits numeric data (symbolic regression). Use this when the operator wants a formula, a law, or an equation that explains a table of numbers — not to evaluate a known expression (that is calculator) and not for a statistical summary (mean, r). Pass the points in JSON. Returns a Pareto front of {expr, complexity, mse}: simpler expressions first. Caps: 200 rows, 6 input columns. Default operators + - * / neg sin cos.",
+  "llm_description": "Discover a formula that fits numbers. {x,y} or {rows} (last col is y) or {csv}. Returns Pareto {expr,complexity,mse}. Use to find a law; calculator evaluates a known expr.",
+  "wasm": "zig-out/tools/symbolic_regression.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "x": {
+        "description": "Inputs. A list of numbers (one feature) or a list of rows (each row is one sample's features)."
+      },
+      "y": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        },
+        "description": "Targets, same length as x."
+      },
+      "rows": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "description": "Each row is [x1, x2, ..., y]. Last column is the target."
+      },
+      "csv": {
+        "type": "string",
+        "description": "CSV text, last column is y. No header."
+      },
+      "variables": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Names for x0, x1, ... in the printed expressions."
+      },
+      "operators": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Subset of + - * / neg sin cos exp log. Default + - * / neg sin cos."
+      },
+      "iterations": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 60,
+        "description": "Search generations. Default 28, max 60."
+      },
+      "seed": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "RNG seed. Same seed, same front."
+      }
+    }
+  },
+  "network_allow": [],
+  "fuel": 400000000,
+  "category": "compute"
+}

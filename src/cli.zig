@@ -10137,6 +10137,7 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, cfg: *const config
     const out = gzipped orelse bytes;
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [512]u8 = undefined;
+    request_status = 200;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
     raw_http.writeAllFd(stream.socket.handle, out);
@@ -12592,6 +12593,9 @@ test goalsArrayFromList {
     try std.testing.expect(goalsArrayFromList("{\"ok\":false,\"error\":\"x\"}") == null);
     // A `]` inside a string must not confuse the close bracket.
     try std.testing.expectEqualStrings("[{\"objective\":\"a]b\"}]", goalsArrayFromList("{\"ok\":true,\"goals\":[{\"objective\":\"a]b\"}]}").?);
+    // The list guest used to omit the colon (`"goals"[...]`). That is not a
+    // goals array; GET /api/goals must not treat it as one.
+    try std.testing.expect(goalsArrayFromList("{\"ok\":true,\"goals\"[1,2]}") == null);
 }
 
 /// Every configured peer with the A2A agent card it is serving right now:

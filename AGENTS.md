@@ -240,7 +240,11 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   live in `cli.zig`:
   `toolRefusalStatus` maps a tool JSON `no such` / `not found` to 404 and
   every other refusal to 400; `requestPath` strips the query before a
-  resource id is read off the target. `GET /api/logs` is the `logs` guest
+  resource id is read off the target. A handler that writes the HTTP
+  response itself (`writeAllFd`) must set `request_status`; leaving it
+  0 logs ERROR even when the client got 200 (`/webui/plugins/*`).
+  `std.json.Stringify.objectField` writes only the key; a raw JSON
+  value after it needs `beginWriteRaw` (the colon lives there). `GET /api/logs` is the `logs` guest
   (`state/logs/` only); `GET /api/sessions` is the `sessions` guest
   (`format=json`; helper in `sessions_logic.zig`); `GET /api/providers`
   is the `providers` guest (`action:list`; helper in `providers_logic.zig`;

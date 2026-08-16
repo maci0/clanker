@@ -113,12 +113,6 @@ fn actionList(out: *lib.Out) !void {
 
 fn writeGoals(out: *lib.Out, goals_json: []const u8) !void {
     var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("goals");
-    try s.writer.writeAll(goals_json);
-    try s.endObject();
+    try store.writeListEnvelope(&w, goals_json);
     lib.commit(out, &w);
 }

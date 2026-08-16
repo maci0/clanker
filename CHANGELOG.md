@@ -37,6 +37,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `symbolic_regression` compute tool: search a closed-form expression that
+  fits numeric data and return a Pareto front of `{expr, complexity, mse}`.
+  For discovering a formula. `calculator` still evaluates a known one.
 - Mesh web UI plugin (`ui/plugins/mesh/`): identity (id, listen, admission),
   copyable listen address, join, leave, members, and pending admit/deny.
   On by default. Fleet's map shows listen/admission, a pending-join
@@ -370,6 +373,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `GET /api/goals` no longer 500s on a valid store. The list guest wrote
+  `"goals"` then the array without a colon (`{"ok":true,"goals"[...]}`),
+  so the HTTP handler rejected it as bad JSON.
+- Plugin `app.js` / `app.css` responses are logged as 200. The handler
+  already sent 200 but never set `request_status`, so every load looked
+  like a status-0 error.
 - `GET /webui/core/slash.js` no longer serves `app.js`. The slash module
   was on the asset list but reused `app.js`'s render/gzip slot, so a
   gzip client executed `app.js` at the slash URL and then requested

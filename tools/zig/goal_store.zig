@@ -89,6 +89,32 @@ pub fn apply(alloc: std.mem.Allocator, goals: []const Goal, patch: Patch, now: i
     return out.toOwnedSlice(alloc);
 }
 
+/// `{"ok":true,"goals":<array bytes>}`. The array is already JSON, so it
+/// is written raw; `objectField` only emits the key, and `beginWriteRaw`
+/// is what writes the colon. A bare `writer.writeAll` after the field
+/// produced `{"ok":true,"goals"[...]}` and GET /api/goals 500'd.
+pub fn writeListEnvelope(w: *std.Io.Writer, goals_json: []const u8) !void {
+    var s = std.json.Stringify{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("goals");
+    try s.beginWriteRaw();
+    try s.writer.writeAll(goals_json);
+    s.endWriteRaw();
+    try s.endObject();
+}
+
+test writeListEnvelope {
+    var buf: [64]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try writeListEnvelope(&w, "[1,2]");
+    try std.testing.expectEqualStrings("{\"ok\":true,\"goals\":[1,2]}", buf[0..w.end]);
+    w.end = 0;
+    try writeListEnvelope(&w, "[]");
+    try std.testing.expectEqualStrings("{\"ok\":true,\"goals\":[]}", buf[0..w.end]);
+}
+
 test validStatus {
     try std.testing.expect(validStatus("active"));
     try std.testing.expect(validStatus("done"));

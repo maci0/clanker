@@ -954,6 +954,41 @@ test "goal link folds like an edit, in either order" {
     try std.testing.expectEqualStrings("", cp[0].goal);
 }
 
+test "goal-as-card fields fold with add and update" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const add = try encode(arena, .{
+        .action = "add",
+        .title = "goal card",
+        .goal = "g1",
+        .completion_criterion = "tests pass",
+        .proof = "scripts/verify-goal.sh",
+        .stop_rule = "abort on failing gate",
+        .boundaries = "leave the CLI alone",
+        .max_iterations = 7,
+        .worktree = "clanker/goal-g1",
+    });
+    const update = try encode(arena, .{ .action = "update", .todo = "m1", .completion_criterion = "e2e green" });
+    const folded = try derive(arena, &.{ msg("m1", "x", 100, add), msg("m2", "y", 200, update) });
+    try std.testing.expectEqual(@as(usize, 1), folded.len);
+    const c = folded[0];
+    try std.testing.expectEqualStrings("g1", c.goal);
+    try std.testing.expectEqualStrings("e2e green", c.completion_criterion);
+    try std.testing.expectEqualStrings("scripts/verify-goal.sh", c.proof);
+    try std.testing.expectEqualStrings("abort on failing gate", c.stop_rule);
+    try std.testing.expectEqualStrings("leave the CLI alone", c.boundaries);
+    try std.testing.expectEqual(@as(?u32, 7), c.max_iterations);
+    try std.testing.expectEqualStrings("clanker/goal-g1", c.worktree);
+
+    // A card born without goal fields carries none of them.
+    const plain = [_]Message{msg("m1", "x", 100, try encodeAdd(arena, "task"))};
+    const cp = try derive(arena, &plain);
+    try std.testing.expectEqualStrings("", cp[0].completion_criterion);
+    try std.testing.expectEqual(@as(?u32, null), cp[0].max_iterations);
+}
+
 test "labels fold as one last-writer-wins card field" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
