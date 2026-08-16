@@ -373,6 +373,8 @@ fn acceptOne(arg: *Conn) void {
     defer acc.deinit(rt.gpa);
     var tmp: [4096]u8 = undefined;
     const fd = stream.socket.handle;
+    // Residual posix: raw TCP mesh socket recv-timeout option, same hand-rolled
+    // socket family as readLoop above.
     const tv: std.posix.timeval = .{ .sec = 10, .usec = 0 };
     std.posix.setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
     var joined = false;
@@ -503,6 +505,8 @@ pub fn join(gpa: std.mem.Allocator, address: []const u8) !void {
     var acc: std.ArrayList(u8) = .empty;
     defer acc.deinit(gpa);
     var tmp: [4096]u8 = undefined;
+    // Residual posix: raw TCP mesh socket recv-timeout option, same hand-rolled
+    // socket family as readLoop above.
     const tv: std.posix.timeval = .{ .sec = 10, .usec = 0 };
     std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
     var accepted = false;

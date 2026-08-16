@@ -857,9 +857,9 @@ Write them:
 
 ```bash
 clanker rfc create "HTTP client for the proxy" "The proxy needs one client and the choice is not recorded"
-clanker rfc append docs/rfcs/0006-example.md "## Option C"
-clanker rfc recommend docs/rfcs/0006-example.md "Adopt option B" 7 "Why, and what would move it"
-clanker rfc status docs/rfcs/0006-example.md decided "Chose option B; see the ADR"
+clanker rfc append docs/rfcs/0007-http-client-for-the-proxy.md "## Option C"
+clanker rfc recommend docs/rfcs/0007-http-client-for-the-proxy.md "Adopt option B" 7 "Why, and what would move it"
+clanker rfc status docs/rfcs/0007-http-client-for-the-proxy.md decided "Chose option B; see the ADR"
 ```
 
 `create` allocates the next number, renders [docs/rfcs/TEMPLATE.md](rfcs/TEMPLATE.md) and indexes it; it refuses when that template is missing rather than inventing a skeleton. An RFC needs real options: at least two candidates, the status quo, and one out-of-the-box possibility. `recommend` takes a confidence from 0 to 10 — a recommendation without one is an opinion. Statuses are `draft`, `discussion`, `decided`, `deferred`, `withdrawn` and `superseded`. `append`, `update`, `recommend` and `status` are compare-and-swap writes: a concurrent edit is refused rather than overwritten, so reopen the RFC and retry against its current text. A refused write exits 1, a usage mistake exits 2.

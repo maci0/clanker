@@ -153,6 +153,7 @@ pub fn startExec(
         mu.lock();
         defer mu.unlock();
         execs.append(gpa, job) catch {
+            // Residual posix: signal delivery has no std.Io equivalent.
             std.posix.kill(pid, std.posix.SIG.TERM) catch {};
             if (job.thread) |th| th.join();
             gpa.free(job.id);
@@ -300,6 +301,7 @@ pub fn kill(reg: ?*subprocess.Registry, session_id: []const u8, id: []const u8) 
     }
     if (found) |job| {
         if (!job.done.load(.acquire)) {
+            // Residual posix: signal delivery has no std.Io equivalent.
             std.posix.kill(job.pid, std.posix.SIG.TERM) catch {};
         }
         if (job.thread) |th| {

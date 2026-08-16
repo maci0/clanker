@@ -50,6 +50,7 @@ config.local.toml
 # Local run artifacts (backups, logs, scratch output)
 *.bak
 *.log
+*.out
 run.json
 chatrooms.jsonl
 

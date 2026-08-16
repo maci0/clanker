@@ -138,6 +138,8 @@ fn handleRequest(conn: *Conn) !void {
     defer data.deinit(conn_gpa);
     var chunk: [16 * 1024]u8 = undefined;
     while (!raw_http.requestComplete(data.items)) {
+        // Residual posix: raw proxy socket pump, same hand-rolled HTTP family
+        // as the webui server in cli.zig.
         const n = try std.posix.read(conn.stream.socket.handle, &chunk);
         if (n == 0) return;
         if (data.items.len + n > max_request_bytes) {
