@@ -109,17 +109,30 @@ export function loadBoardRooms() {
       // The listing calls the field "room", not "name".
       var rooms = (d.rooms || []).map(function (r) { return typeof r === "string" ? r : r.room; });
       if (rooms.indexOf("board") === -1) rooms.unshift("board");
+      var defRoom = workspaceBoardRoom();
+      if (defRoom !== "board" && rooms.indexOf(defRoom) === -1) rooms.unshift(defRoom);
       var keep = el.boardRoom.value;
       el.boardRoom.textContent = "";
       add(el.boardRoom, rooms.map(function (name) { return T.option({ value: name }, name); }));
       if (keep && rooms.indexOf(keep) !== -1) el.boardRoom.value = keep;
+      else el.boardRoom.value = defRoom;
       return loadBoard();
     })
     .catch(function () { return loadBoard(); });
 }
 
+/* The board's default room for the currently selected workspace (RFC 0001):
+   `ws:<id>` — the project's `#general` feed — for a non-empty workspace, and
+   the legacy `board` room for the default workspace so today's log does not
+   move. */
+function workspaceBoardRoom() {
+  var ws = "";
+  try { ws = window.clankerWorkspace || ""; } catch (e) { ws = ""; }
+  return ws ? ("ws:" + ws) : "board";
+}
+
 function boardRoom() {
-  return (el.boardRoom && el.boardRoom.value) || "board";
+  return (el.boardRoom && el.boardRoom.value) || workspaceBoardRoom();
 }
 
 export function loadBoard() {
