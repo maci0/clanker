@@ -1,9 +1,9 @@
-//! goal_add: persist a structured goal without running it.
+//! goal_add: persist a structured goal to state/goals.json without running it.
 //!
-//! A goal is a card (RFC 0001 / PRD 0035 Goal 7): this tool posts a card
-//! action to the board room so the goal appears as a card carrying its goal
-//! fields, and also appends a `state/goals.json` index entry so the existing
-//! goal-loop read path keeps working while the index is migrated off the card.
+//! The board card is the goal's visible work surface; the web UI mirrors the
+//! goal onto the board through the board tool (see ui/app/features/goals.js
+//! mirrorGoalsToBoard). This tool only appends the durable record; it never
+//! creates the card itself, so the mirror stays the single card writer.
 //! `completion_criterion` is optional: a raw goal without one is allowed and
 //! the goal loop's first turn drafts it (PRD 0035 Goal 5).
 //!
@@ -12,7 +12,6 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
-const cards = @import("cards.zig");
 
 extern fn ck_now() u64;
 
@@ -51,11 +50,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const now = ck_now();
     const id = std.fmt.allocPrint(lib.alloc, "{d}", .{now}) catch return lib.fail(out, "alloc");
 
-    // Goal-as-card: the card in the board room is the canonical goal record.
-    // This is best-effort — the goals.json index below remains the read path
-    // the goal loop currently uses.
-    sendGoalCard(lib.alloc, id, objective, completion, proof, boundaries, stop_rule, max_iterations, worktree) catch {};
-
     var obj_buf: std.ArrayList(u8) = .empty;
     defer obj_buf.deinit(lib.alloc);
     try writeGoalObject(&obj_buf, id, objective, completion, proof, boundaries, stop_rule, max_iterations, worktree, now);
@@ -93,46 +87,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try out.writeAll("{\"ok\":true,\"goal\":");
     try out.writeAll(obj_buf.items);
     try out.writeAll("}");
-}
-
-/// Posts the goal as a card `add` action to the board room. Failure is not
-/// fatal: the goals.json index still records the goal.
-fn sendGoalCard(
-    alloc: std.mem.Allocator,
-    goal_id: []const u8,
-    objective: []const u8,
-    completion: []const u8,
-    proof: []const u8,
-    boundaries: []const u8,
-    stop_rule: []const u8,
-    max_iterations: ?u32,
-    worktree: []const u8,
-) !void {
-    const text = try cards.encode(alloc, .{
-        .action = "add",
-        .title = objective,
-        .goal = goal_id,
-        .completion_criterion = if (completion.len > 0) completion else null,
-        .proof = if (proof.len > 0) proof else null,
-        .stop_rule = if (stop_rule.len > 0) stop_rule else null,
-        .boundaries = if (boundaries.len > 0) boundaries else null,
-        .max_iterations = max_iterations,
-        .worktree = if (worktree.len > 0) worktree else null,
-    });
-
-    var req: std.Io.Writer.Allocating = .init(alloc);
-    defer req.deinit();
-    var s = std.json.Stringify{ .writer = &req.writer };
-    try s.beginObject();
-    try s.objectField("op");
-    try s.write("send");
-    try s.objectField("room");
-    try s.write("board");
-    try s.objectField("text");
-    try s.write(text);
-    try s.endObject();
-
-    _ = lib.chat(req.written()) catch return error.CardSendFailed;
 }
 
 fn fieldString(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {

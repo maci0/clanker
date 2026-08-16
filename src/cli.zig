@@ -2121,6 +2121,10 @@ fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !vo
     defer lint.deinit(gpa);
     try reportGate(io, "lint", lint);
 
+    var provider_kind = try gate_checks.providerKindLeakGate(gpa, io, std.Io.Dir.cwd(), files);
+    defer provider_kind.deinit(gpa);
+    try reportGate(io, "provider-kind", provider_kind);
+
     var tools_ts = try gate_checks.toolsTsToolchainGate(gpa, io, std.Io.Dir.cwd());
     defer tools_ts.deinit(gpa);
     try reportGate(io, "tools-ts-toolchain", tools_ts);

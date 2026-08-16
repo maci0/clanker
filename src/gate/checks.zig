@@ -167,6 +167,97 @@ test "lintGate flags forbidden markers only in changed .zig files" {
     try std.testing.expectEqualStrings("lint", hacky.label);
 }
 
+/// The provider vtable (`src/llm/providers/`) is the one place `provider.kind`
+/// may decide behaviour; the registry exists to abolish kind-switches
+/// everywhere else, and the audits re-scan for them by hand. This gate makes
+/// that scan deterministic for the two shapes the audits search for: a
+/// comparison against a kind tag, or a kind-switch on the provider.
+///
+/// One comparison is legal and is allowed structurally rather than by path:
+/// the proxy's Vertex Gemini model-name sniff, which decides on the *model*
+/// name (`isAnthropicModel`), not the kind. Any other line that compares or
+/// switches on the provider kind (full `provider.kind` or short `p.kind`)
+/// outside `src/llm/providers/` trips the gate. `forKind(...)` lookups and
+/// `@tagName(...)` messages are not kind-switches and pass.
+pub fn providerKindLeakGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, files: []const []const u8) !GateResult {
+    var hits: usize = 0;
+    var hit_buf: [4096]u8 = undefined;
+    var hit_w: std.Io.Writer = .fixed(&hit_buf);
+    for (files) |f| {
+        if (!std.mem.endsWith(u8, f, ".zig")) continue;
+        // providers/ is the vtable's home; its own kind logic is what this
+        // gate protects everywhere else.
+        if (std.mem.indexOf(u8, f, "src/llm/providers/") != null) continue;
+        const content = dir.readFileAlloc(io, f, gpa, .limited(1 << 20)) catch |err| {
+            log.log(.warn, "provider-kind: could not read {s}: {s}", .{ f, @errorName(err) });
+            return .{ .ok = false, .label = "provider-kind", .detail = "a changed file could not be scanned" };
+        };
+        defer gpa.free(content);
+        var lines = std.mem.splitScalar(u8, content, '\n');
+        var line_no: usize = 1;
+        while (lines.next()) |line| : (line_no += 1) {
+            const names_kind = std.mem.indexOf(u8, line, "provider.kind") != null or
+                std.mem.indexOf(u8, line, "p.kind") != null;
+            if (!names_kind) continue;
+            const compares = std.mem.indexOf(u8, line, "==") != null;
+            const switches = std.mem.indexOf(u8, line, "switch (") != null;
+            if (!compares and !switches) continue;
+            // The one legal comparison: the Vertex Gemini model-name sniff,
+            // which decides on the model name, not the kind.
+            if (std.mem.indexOf(u8, line, "isAnthropicModel") != null) continue;
+            hit_w.print("{s}:{d}: {s}; ", .{ f, line_no, std.mem.trim(u8, line, " \t") }) catch {};
+            hits += 1;
+        }
+    }
+    if (hits > 0) {
+        const written = hit_buf[0..hit_w.end];
+        // hit_buf is this frame's stack. Same aliasing convention as lintGate:
+        // detail and stderr share one owned copy, freed exactly once by deinit.
+        const owned = try gpa.dupe(u8, written);
+        return .{ .ok = false, .label = "provider-kind", .detail = owned, .stderr = owned };
+    }
+    return .{ .ok = true, .label = "provider-kind" };
+}
+
+test "providerKindLeakGate: vtable, forKind and tagName pass; comparisons and switches leak" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "src/llm/providers");
+    // A switch on provider.kind inside the vtable dir is exactly where kind
+    // logic belongs; it must not trip the gate. The pattern is concatenated
+    // so checks.zig's own bytes do not match the gate's needles (the lintGate
+    // "TO" ++ "DO" precedent).
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/llm/providers/openai.zig", .data = "switch (provider." ++ "kind) { .openai => 1 }\n" });
+    // Vtable lookups and tagName messages are not kind-switches.
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/cli.zig", .data = "const impl = providers.forKind(provider.kind);\nlog(@tagName(provider.kind));\n" });
+    // The proxy's Vertex Gemini model-name sniff is the one legal comparison:
+    // it decides on the model name, not the kind.
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/serve/proxy.zig", .data = "if (resolved.provider." ++ "kind == .vertex and !vertex_ai.isAnthropicModel(resolved.provider.wireModelName())) {}\n" });
+
+    const clean = try providerKindLeakGate(gpa, io, tmp.dir, &.{ "src/llm/providers/openai.zig", "src/cli.zig", "src/serve/proxy.zig" });
+    try std.testing.expect(clean.ok);
+
+    // A comparison outside providers/ leaks, in both the full and short name.
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/cli.zig", .data = "if (p." ++ "kind == .vertex) {}\n" });
+    var dirty = try providerKindLeakGate(gpa, io, tmp.dir, &.{"src/cli.zig"});
+    defer dirty.deinit(gpa);
+    try std.testing.expect(!dirty.ok);
+    try std.testing.expectEqualStrings("provider-kind", dirty.label);
+    try std.testing.expect(std.mem.find(u8, dirty.detail, "src/cli.zig") != null);
+
+    // A switch on provider.kind outside providers/ is the worst leak shape.
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/cli.zig", .data = "switch (provider." ++ "kind) { else => {} }\n" });
+    var dirty_switch = try providerKindLeakGate(gpa, io, tmp.dir, &.{"src/cli.zig"});
+    defer dirty_switch.deinit(gpa);
+    try std.testing.expect(!dirty_switch.ok);
+}
+
 /// Consistency check over the tool manifests in a staged tree.
 ///
 /// The registry (`src/toolhost/registry.zig`) loads `tools/manifests/*.tool.json`

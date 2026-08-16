@@ -74,6 +74,7 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.fmtGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.lintGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.toolDescriptorGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.providerKindLeakGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.gitDenyGuardGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.configWeakeningGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "self.capabilityGate(" },
@@ -945,6 +946,20 @@ pub const Engine = struct {
             log.log(.error_, "staging lint failed: {s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints, null);
             self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the lint gate rejected it:\n{s}\nFix exactly that and re-propose.", .{tail});
+            self.removeTree(staging);
+            return .failed;
+        }
+
+        // A proposal that moves provider kind logic out of the vtable (a
+        // kind-switch or a comparison on provider.kind in src/) is a registry
+        // leak, not an improvement. Same changed-file scope as lintGate.
+        var kind_check = try gate_checks.providerKindLeakGate(self.ctx.gpa, self.ctx.io, staged_dir, fmt_files);
+        defer kind_check.deinit(self.ctx.gpa);
+        if (!kind_check.ok) {
+            const tail = try errorTail(self.arena, kind_check.detail);
+            log.log(.error_, "staging provider-kind check failed: {s}", .{tail});
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints, null);
+            self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but it switches on provider.kind outside src/llm/providers/:\n{s}\nPut kind logic on the vtable instead and re-propose.", .{tail});
             self.removeTree(staging);
             return .failed;
         }

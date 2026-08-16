@@ -355,9 +355,15 @@ function boardColumn(col, s) {
   });
   function doCreate(){
     var t = qaTextarea.value.trim(); if (!t) return;
-    el.goalObjective.value = t;
     closeQuickAdd();
-    el.boardStatus.textContent = "Goal card ready — press Create goal card (the completion criterion is optional).";
+    el.boardStatus.textContent = "Creating goal card…";
+    postGoal({ objective: t }, "Goal card saved. It has not started.").then(function (d) {
+      if (!d) {
+        el.boardStatus.textContent = "Could not create the goal card.";
+        return;
+      }
+      el.boardStatus.textContent = "Goal card added to Backlog.";
+    });
   }
   qaSave.addEventListener("click", function(e){ e.stopPropagation(); doCreate(); });
   var colEl = T.section({

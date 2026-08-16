@@ -2223,10 +2223,6 @@ fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
     // ignores a failed chat call, so being denied here cost it its
     // announcements silently rather than failing the prune.
     if (std.mem.eql(u8, tool_name, "janitor")) return std.mem.eql(u8, op, "send");
-    // goal_add posts the goal as a card (RFC 0001). Like the board and janitor
-    // it treats a failed send as non-fatal, so a denial here would silently
-    // drop the card rather than fail the persist.
-    if (std.mem.eql(u8, tool_name, "goal_add")) return std.mem.eql(u8, op, "send");
 
     const allowed_ops: ?[]const []const u8 = if (std.mem.eql(u8, tool_name, "chat_send") or
         std.mem.eql(u8, tool_name, "chat_dm"))

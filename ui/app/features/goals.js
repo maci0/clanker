@@ -115,7 +115,13 @@ function mirrorGoalsToBoard(goals) {
         title: title,
         body: g.completion_criterion || "",
         column: goalPinnedColumn(g, isGoalRunning(g.id)) || "backlog",
-        goal: g.id
+        goal: g.id,
+        completion_criterion: g.completion_criterion || "",
+        proof: g.proof || "",
+        stop_rule: g.stop_rule || "",
+        boundaries: g.boundaries || "",
+        max_iterations: g.max_iterations || null,
+        worktree: g.worktree || ""
       }, null).then(function (ok) {
         // Only a confirmed create keeps the debounce flag. On failure the flag
         // is dropped so the next loadGoals retries; otherwise a transient
