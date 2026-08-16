@@ -80,6 +80,16 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/improve/engine.zig", .needle = "self.capabilityGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "proposal_mod.isAppendOnly(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_invariants" },
+    // The module binding is the one link between the call sites above and the
+    // checks.zig file the checks.zig needles below inspect. Nothing else pins
+    // it: a patch could create `src/gate/checks2.zig` with stub gates, rewire
+    // this one import (keeping the `gate_checks.` binding, so every call-site
+    // needle above still matches), and never touch checks.zig itself -- which
+    // is the only file checksZigShapeBroken inspects and the only file the
+    // per-file needles run against. cli.zig's binding pins the same shadow
+    // trick against verifyGates and `clanker gate`.
+    .{ .file = "src/improve/engine.zig", .needle = "@import(\"../gate/checks.zig\")" },
+    .{ .file = "src/cli.zig", .needle = "@import(\"gate/checks.zig\")" },
     // The one gate that asks whether a change does anything. It is the gate a
     // loop optimising for acceptance has the most to gain from removing, and
     // removing it would look, to every other check, like a clean patch.
@@ -2850,6 +2860,14 @@ fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
         .{ .sig = "fn lintGate(", .required = "hits += 1", .allow = &.{} },
         .{ .sig = "fn toolDescriptorGate(", .required = "if (problems.items.len > 0)", .allow = &.{"FileNotFound"} },
         .{ .sig = "fn gitDenyGuardGate(", .required = "hasGitInExecAllow(", .allow = &.{} },
+        // The one engine-called gate with no needle of its own in
+        // gate_invariants; its only protection used to be its unit tests,
+        // which sit in this same writable file and a patch can delete in the
+        // same pass as the gate. `hits += 1` is the first line after the
+        // detection logic (the catch-block failure return is an allowed
+        // `.{ .ok = false }`), so an early green return is caught the same
+        // way as the zig-spawning gates.
+        .{ .sig = "fn providerKindLeakGate(", .required = "hits += 1", .allow = &.{} },
         .{ .sig = "fn configWeakeningGate(", .required = "weakensImprove(", .allow = &.{} },
         .{ .sig = "fn runZigArgs(", .required = "std.process.run(", .allow = &.{} },
     };
