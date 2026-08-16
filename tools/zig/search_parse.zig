@@ -4,8 +4,9 @@
 //! compilable on the host and its `test` blocks actually run in
 //! `zig build test` — the pure-tool list in build.zig is what registers it.
 //! Everything here slices into the caller's source buffer; only the URL
-//! decoders and the text cleaner write into an explicit output buffer. No
-//! allocator is touched.
+//! decoders and the text cleaner write into an explicit output buffer. The one
+//! exception is `parseGoogleApi`, whose input is JSON rather than a byte
+//! pattern, so it takes an allocator explicitly.
 //!
 //! The two backends are deliberately different shapes:
 //!   - DuckDuckGo Lite returns HTML; a result title is an
@@ -14,6 +15,10 @@
 //!     stable across Lite's layout churn, so that is the semantic anchor.
 //!   - Bing returns an RSS 2.0 document; a result is an `<item>` with
 //!     `<title>`, `<link>` and `<description>` children.
+//!   - Google is reached through the Programmable Search JSON API, not by
+//!     scraping: `www.google.com/search` answers a plain HTTP client with a
+//!     "turn on JavaScript" page and no result links. It is the last backend
+//!     tried and needs a key, so it is normally absent.
 
 const std = @import("std");
 
@@ -139,6 +144,44 @@ pub fn parseDdgLite(html: []const u8, out: []WebResult, max: usize) usize {
         pos = if (indexOfPos(html, tag_end, "</a>")) |te| te + "</a>".len else tag_end + 1;
     }
     return count;
+}
+
+/// Parses a Google Programmable Search JSON response into results.
+///
+/// Not a scraper. `www.google.com/search` answers every plain HTTP client with
+/// a "turn on JavaScript" interstitial — verified against the legacy `gbv=1`
+/// no-JS parameter and a browser user agent alike, all of them 200 OK with no
+/// result links in the body — so there is no HTML here to anchor on. The JSON
+/// API is the only Google surface a server can read, and it returns
+/// `{"items":[{"title","link","snippet"}, ...]}`.
+///
+/// Takes an allocator because the response is JSON rather than a byte pattern;
+/// everything written to `out` slices into that parse, which the caller keeps
+/// alive. Returns the number of results written (capped by `max`).
+pub fn parseGoogleApi(alloc: std.mem.Allocator, document: []const u8, out: []WebResult, max: usize) usize {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, document, .{}) catch return 0;
+    if (parsed != .object) return 0;
+    // An error response ({"error":{...}}) has no items and is not a failure to
+    // report from here: the caller counts zero results and moves on.
+    const items = parsed.object.get("items") orelse return 0;
+    if (items != .array) return 0;
+
+    var count: usize = 0;
+    for (items.array.items) |item| {
+        if (count >= max) break;
+        if (item != .object) continue;
+        const title = strOf(item.object, "title") orelse continue;
+        const link = strOf(item.object, "link") orelse continue;
+        if (title.len == 0 or link.len == 0) continue;
+        out[count] = .{ .title = title, .url = link, .snippet = strOf(item.object, "snippet") orelse "" };
+        count += 1;
+    }
+    return count;
+}
+
+fn strOf(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    const v = obj.get(key) orelse return null;
+    return if (v == .string) v.string else null;
 }
 
 // ------------------------------------------------------------ URL decoding --
@@ -360,6 +403,55 @@ test "uddgValue extracts and percentDecode recovers the real url" {
     var buf: [256]u8 = undefined;
     const decoded = percentDecode(v, &buf);
     try std.testing.expectEqualStrings("https://ziglang.org/news/", decoded);
+}
+
+test "parseGoogleApi reads title, link and snippet from the API response" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const body =
+        \\{"kind":"customsearch#search","items":[
+        \\ {"title":"First result","link":"https://example.com/a","snippet":"what it says"},
+        \\ {"title":"Second result","link":"https://example.org/b","snippet":"and this"}]}
+    ;
+    var out: [4]WebResult = undefined;
+    try std.testing.expectEqual(@as(usize, 2), parseGoogleApi(arena.allocator(), body, &out, 4));
+    try std.testing.expectEqualStrings("First result", out[0].title);
+    // The API returns real URLs, so there is no redirect to unwrap.
+    try std.testing.expectEqualStrings("https://example.com/a", out[0].url);
+    try std.testing.expectEqualStrings("what it says", out[0].snippet);
+    try std.testing.expectEqualStrings("Second result", out[1].title);
+}
+
+test "parseGoogleApi honors max and skips items missing a title or link" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const body =
+        \\{"items":[{"title":"no link"},
+        \\ {"link":"https://a.dev/1"},
+        \\ {"title":"good","link":"https://b.dev/2"},
+        \\ {"title":"also good","link":"https://c.dev/3"}]}
+    ;
+    var out: [4]WebResult = undefined;
+    try std.testing.expectEqual(@as(usize, 2), parseGoogleApi(a, body, &out, 4));
+    try std.testing.expectEqualStrings("good", out[0].title);
+    // A missing snippet is not a reason to drop an otherwise usable result.
+    try std.testing.expectEqualStrings("", out[0].snippet);
+
+    var one: [1]WebResult = undefined;
+    try std.testing.expectEqual(@as(usize, 1), parseGoogleApi(a, body, &one, 1));
+}
+
+test "parseGoogleApi returns nothing for an error, an empty result or junk" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var out: [4]WebResult = undefined;
+    // The shape Google returns for a bad key: an object with no items.
+    try std.testing.expectEqual(@as(usize, 0), parseGoogleApi(a, "{\"error\":{\"code\":400,\"status\":\"INVALID_ARGUMENT\"}}", &out, 4));
+    try std.testing.expectEqual(@as(usize, 0), parseGoogleApi(a, "{\"items\":[]}", &out, 4));
+    try std.testing.expectEqual(@as(usize, 0), parseGoogleApi(a, "not json at all", &out, 4));
+    try std.testing.expectEqual(@as(usize, 0), parseGoogleApi(a, "", &out, 4));
 }
 
 test "isBotChallenge detects the anomaly page" {

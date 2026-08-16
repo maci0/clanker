@@ -223,6 +223,10 @@ const Sweep = struct {
     notes: std.ArrayList([]const u8) = .empty,
     fetches: usize = 0,
     duplicates: usize = 0,
+    /// Whether the "Google fallback is not configured" note has been made. A
+    /// deep sweep runs a dozen queries; without this the same advice lands
+    /// twelve times and buries the notes that are about this search.
+    google_noted: bool = false,
 
     fn budgetLeft(self: *const Sweep) bool {
         return self.fetches < fetch_budget;
@@ -345,7 +349,56 @@ fn sweepWeb(st: *Sweep, queries: []const Query, per_query: usize) !void {
                 if (count > 0) try collectWeb(st, results[0..count], q, "bing");
             }
         }
+
+        // Third and last: Google, only once both others came back empty for
+        // this query. Two independent backends returning nothing is usually a
+        // real gap in coverage, but it is also what a rate limit or a reshaped
+        // result page looks like, and an angle silently contributing no
+        // evidence is the failure this sweep exists to avoid.
+        //
+        // Through the Programmable Search JSON API, never by scraping:
+        // www.google.com/search answers a plain HTTP client with a "turn on
+        // JavaScript" page carrying no result links, whatever user agent it is
+        // asked with and including the legacy gbv=1 no-JS parameter. The API
+        // needs a key and an engine id, so this backend is normally absent;
+        // that is a missing fallback, not an error, and the sweep says so once
+        // rather than per query.
+        if (count == 0 and st.budgetLeft()) {
+            if (googleCredentials()) |cred| {
+                const google = std.fmt.bufPrint(
+                    &url_buf,
+                    "https://customsearch.googleapis.com/customsearch/v1?key={s}&cx={s}&num={d}&q={s}",
+                    .{ cred.key, cred.cx, @min(per_query, 10), enc },
+                ) catch continue;
+                if (fetch(st, google, null)) |body| {
+                    // An error response (bad key, quota exhausted) parses as
+                    // zero items, which lands in the same "nothing found" note
+                    // below as an empty search.
+                    count = parse.parseGoogleApi(lib.alloc, body, &results, per_query);
+                    if (count > 0) try collectWeb(st, results[0..count], q, "google");
+                }
+            } else if (!st.google_noted) {
+                st.google_noted = true;
+                st.note("DuckDuckGo and Bing both came back empty for at least one query, and the Google fallback is not configured: set GOOGLE_SEARCH_KEY and GOOGLE_SEARCH_CX (a Programmable Search engine id) to enable it.");
+            }
+        }
+
+        if (count == 0) {
+            st.note("No web backend returned anything for one query; try shorter wording in the field's own vocabulary.");
+        }
     }
+}
+
+const GoogleCredentials = struct { key: []const u8, cx: []const u8 };
+
+/// The Programmable Search key and engine id, or null when either is unset.
+/// Both are needed: a key without an engine id addresses no index, and the API
+/// rejects the request rather than falling back to anything.
+fn googleCredentials() ?GoogleCredentials {
+    const key = lib.getenv("GOOGLE_SEARCH_KEY") orelse return null;
+    const cx = lib.getenv("GOOGLE_SEARCH_CX") orelse return null;
+    if (key.len == 0 or cx.len == 0) return null;
+    return .{ .key = key, .cx = cx };
 }
 
 /// One counted HTTP GET. A failed fetch is a gap in the evidence, not a failed
@@ -381,7 +434,8 @@ fn collectWeb(st: *Sweep, results: []const parse.WebResult, q: Query, backend: [
     }
 }
 
-/// DuckDuckGo wraps every result in a redirect; Bing links are already real.
+/// DuckDuckGo wraps every result in a redirect. Bing links and Google API
+/// links are already real.
 fn resolveUrl(raw: []const u8, backend: []const u8) ![]const u8 {
     if (std.mem.eql(u8, backend, "duckduckgo")) {
         if (parse.uddgValue(raw)) |enc| {
