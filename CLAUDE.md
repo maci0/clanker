@@ -39,9 +39,9 @@ looks for it.
 | `docs/reports/` | operational bugs and evidence-led investigations | `clanker reports` |
 | `docs/runbooks/` | current recovery procedures for recurring failures | `clanker reports` |
 | `docs/rfcs/` | decisions that are still **open** | `clanker rfc` |
-| `docs/adrs/` | a decision that has been **made** | by hand, after the RFC |
+| `docs/adrs/` | a decision that has been **made** | `clanker adr` |
 | `docs/research/` | the evidence a decision rests on | `clanker research` |
-| `docs/prds/` | what a feature is meant to be | by hand |
+| `docs/prds/` | what a feature is meant to be | `clanker prd` |
 | `docs/ROADMAP.md` | the Done/Planned narrative over those PRDs | by hand, `clanker autolearn` |
 | `docs/digests/` | what we can learn from an external project | by hand |
 | `docs/reviews/` | working review logs | by hand |
@@ -97,7 +97,30 @@ from 0 to 10. `search` covers the RFCs and the ADRs together on purpose.
 `checklist` is what to pin down when a request is too vague to draft from —
 use it with `ask_user` rather than inventing a scope.
 
-All three stores write compare-and-swap: a concurrent edit is refused rather
+### `clanker adr`
+
+`list`, `search`, `open`, `create`, `append`, `update`, `status`. The decision
+once it is made. The title is the **choice**, not the question. `create`
+requires the consequences, and `status ... superseded` requires a note naming
+what replaced it: a reversal links forward instead of editing the history out,
+because that history is the only account of why the original constraint looked
+binding. `search` spans the ADRs, RFCs and PRDs and reports each separately —
+which store a hit lands in is the answer. Passing the RFC a decision came from
+links it and quotes its recommendation under the Decision.
+
+### `clanker prd`
+
+`list`, `search`, `open`, `checklist`, `create`, `append`, `update`, `status`.
+What a feature is meant to be — never a decision (that is an ADR) and never the
+shipped narrative (that is the ROADMAP). `list` groups by status with the
+unfinished work first. `checklist` is the Draft bar: dependencies named,
+blocking questions settled in Design rather than parked under Open questions,
+implementation phases that name files. `status ... shipped` requires a note
+naming the source files that are now the source of truth. Goals and acceptance
+criteria must cover each other, and a bug belongs in Known issues, never in
+Open questions.
+
+All five stores write compare-and-swap: a concurrent edit is refused rather
 than overwritten, so re-open the record and retry against its current text.
 `update` takes an exact old/new pair, and an argument beginning with `-` is
 parsed as a flag, so anchor on text that does not start with a dash.

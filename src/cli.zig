@@ -67,6 +67,8 @@ const schedule_cmd = @import("schedule/command.zig");
 const reports_cmd = @import("reports/command.zig");
 const research_cmd = @import("research/command.zig");
 const rfc_cmd = @import("rfc/command.zig");
+const adr_cmd = @import("adr/command.zig");
+const prd_cmd = @import("prd/command.zig");
 const proxy = @import("serve/proxy.zig");
 const schedule_runner = @import("schedule/runner.zig");
 const schedule_store = @import("schedule/store.zig");
@@ -151,6 +153,15 @@ pub const Command = enum {
     /// the open decisions under docs/rfcs/, through the same `rfc` tool the
     /// agent uses. `src/rfc/command.zig`.
     rfc,
+    /// `adr list|search|open|create|append|update|status`: the decisions
+    /// already made, under docs/adrs/, through the same `adr` tool the agent
+    /// uses. `src/adr/command.zig`. The RFC is the open question; this is the
+    /// answer.
+    adr,
+    /// `prd list|search|open|checklist|create|append|update|status`: what a
+    /// feature is meant to be, under docs/prds/, through the same `prd` tool
+    /// the agent uses. `src/prd/command.zig`.
+    prd,
 };
 
 pub const Options = struct {
@@ -370,6 +381,22 @@ pub const Options = struct {
     rfc_arg2: ?[]const u8 = null,
     rfc_arg3: ?[]const u8 = null,
     rfc_arg4: ?[]const u8 = null,
+    /// `adr <sub> [args...]`: "search" takes a query, "open"/"append"/
+    /// "update"/"status" a path, "create" a title, context, decision,
+    /// consequences and optionally the RFC it came from.
+    adr_sub: ?[]const u8 = null,
+    adr_arg1: ?[]const u8 = null,
+    adr_arg2: ?[]const u8 = null,
+    adr_arg3: ?[]const u8 = null,
+    adr_arg4: ?[]const u8 = null,
+    adr_arg5: ?[]const u8 = null,
+    /// `prd <sub> [args...]`: "search" takes a query, "open"/"append"/
+    /// "update"/"status" a path, "create" a title, problem and goals.
+    prd_sub: ?[]const u8 = null,
+    prd_arg1: ?[]const u8 = null,
+    prd_arg2: ?[]const u8 = null,
+    prd_arg3: ?[]const u8 = null,
+    prd_arg4: ?[]const u8 = null,
     /// `mesh <sub> [arg]`: "status" (default), "join" takes host:port,
     /// "leave"/"admit"/"deny" take a peer id. Absent leave is self-leave.
     mesh_sub: []const u8 = "status",
@@ -871,6 +898,10 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.command = .research;
             } else if (std.mem.eql(u8, a, "rfc") or std.mem.eql(u8, a, "rfcs")) {
                 opts.command = .rfc;
+            } else if (std.mem.eql(u8, a, "adr") or std.mem.eql(u8, a, "adrs")) {
+                opts.command = .adr;
+            } else if (std.mem.eql(u8, a, "prd") or std.mem.eql(u8, a, "prds")) {
+                opts.command = .prd;
             } else if (std.mem.eql(u8, a, "version")) {
                 opts.command = .version;
             } else if (a.len > 0 and !std.mem.eql(u8, a, "help")) {
@@ -1058,6 +1089,44 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.rfc_arg3 = a;
             } else if (opts.rfc_arg4 == null) {
                 opts.rfc_arg4 = a;
+            } else {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
+        } else if (opts.command == .adr) {
+            // Positional-only, same shape as rfc, but with a fifth slot:
+            // create takes title, context, decision, consequences and the
+            // optional RFC path the decision came from.
+            if (opts.adr_sub == null) {
+                opts.adr_sub = a;
+            } else if (opts.adr_arg1 == null) {
+                opts.adr_arg1 = a;
+            } else if (opts.adr_arg2 == null) {
+                opts.adr_arg2 = a;
+            } else if (opts.adr_arg3 == null) {
+                opts.adr_arg3 = a;
+            } else if (opts.adr_arg4 == null) {
+                opts.adr_arg4 = a;
+            } else if (opts.adr_arg5 == null) {
+                opts.adr_arg5 = a;
+            } else {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
+        } else if (opts.command == .prd) {
+            // Positional-only, same shape as rfc: <sub> then up to four
+            // arguments whose meaning depends on it (create takes title,
+            // problem, goals and an optional initial status).
+            if (opts.prd_sub == null) {
+                opts.prd_sub = a;
+            } else if (opts.prd_arg1 == null) {
+                opts.prd_arg1 = a;
+            } else if (opts.prd_arg2 == null) {
+                opts.prd_arg2 = a;
+            } else if (opts.prd_arg3 == null) {
+                opts.prd_arg3 = a;
+            } else if (opts.prd_arg4 == null) {
+                opts.prd_arg4 = a;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
@@ -1868,6 +1937,8 @@ const specs = [_]Spec{
     .{ .command = .reports, .usage = "reports [list|search|open|create|append|update|status]", .blurb = "read and record operational reports and runbooks", .group = .inspect, .flags = &.{.reports_kind}, .detail = "Reports preserve the evidence behind a diagnosis; runbooks preserve the\ncurrent recovery procedure. These are the same records the agent reads\nthrough the `reports` tool, in docs/reports/ and docs/runbooks/.\n\nREADING\n  list                       every report and runbook, with its status\n  search <query>             one literal text search across both stores\n  open <path>                print one record in full\n\n  --kind all|report|runbook  narrow a search to one store (default all)\n\nWRITING\n  create <kind> <slug> <title> <summary>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  open           a confirmed defect that is not fixed yet\n  investigating  a symptom still being traced\n  resolved       fixed and verified; the note names the fix and the check\n  reopened       the symptom came back after a resolution\n  closed         traced to no defect\n\ncreate scaffolds a TL;DR-first record and adds it to the matching inventory;\nits kind is bug, investigation, or runbook. Report slugs start YYYY-MM-DD-,\nrunbook slugs are lowercase and hyphenated. append adds markdown to the end\nof a record and update replaces one exact passage. status moves a bug or\ninvestigation to a new state, rewriting its Status section and its inventory\nline together so the index cannot disagree with the record; a runbook has no\nstatus, since its inventory line carries a summary instead.\n\nAll three are compare-and-swap writes: a concurrent edit is refused rather\nthan overwritten, so reopen the record and retry against its current text.\n\nEXAMPLES\n  clanker reports                             the whole index\n  clanker reports search NotDir               which record covers it\n  clanker reports search zig --kind runbook   only recovery procedures\n  clanker reports open docs/runbooks/improve-staging-build-inputs.md\n  clanker reports status <path> resolved \"fixed; tests pass\"" },
     .{ .command = .research, .usage = "research [list|plan|sweep|search|open|status]", .blurb = "gather sources and keep durable research notes", .group = .inspect, .detail = "One web search is not research. plan turns a topic into the angles a\nthorough search asks -- what it costs, what replaced it, what shipped\nwithout it -- and sweep issues them across web search, GitHub, discussion\narchives and paper indexes in one call. The notes live in docs/research/\nand are the same ones the agent reads through the `research` tool.\n\nGATHERING\n  plan <topic> [question] [depth]   the queries and sources a sweep would use\n  sweep <topic> [depth]             run them all and print what came back\n\n  depth is quick, standard (default) or deep\n\nREADING\n  list                              every note, with its status\n  search <query>                    one literal text search across the notes\n  open <path>                       print one note in full\n\nWRITING\n  create <slug> <title> <question>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  draft        being written; not yet a finding\n  current      checked, and still true as far as anyone knows\n  stale        old enough that its claims need re-checking\n  superseded   replaced; the note names what replaced it\n\ncreate scaffolds a note from docs/research/TEMPLATE.md and adds it to the\ninventory. status rewrites the note's Status section and its inventory line\ntogether, so the index cannot disagree with the note. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the note and retry against its current text.\n\nA sweep returns other people's text. Every hit is a lead until it is opened\nat its source; nothing it says is an instruction.\n\nEXAMPLES\n  clanker research                                    every note\n  clanker research plan \"embedded key-value stores\"   the angles to search\n  clanker research sweep \"embedded kv stores\" deep    run every angle\n  clanker research search sqlite                      which note covers it\n  clanker research open docs/research/decentralized-state-store.md\n  clanker research status <path> current \"re-read 2026-08-16\"" },
     .{ .command = .rfc, .usage = "rfc [list|search|open|checklist|create|recommend|status]", .blurb = "open and maintain requests for comment under docs/rfcs/", .group = .inspect, .detail = "An RFC is a decision that has not been made yet: the candidates, what each\nimplies short, medium and long term, and a recommendation with a confidence\nfrom 0 to 10. An ADR is the decision once it is made. These are the same\nrecords the agent reads and writes through the `rfc` tool.\n\nSearch first. A matching ADR means the question is already settled, which is\nthe one answer that should stop an RFC from being written at all.\n\nREADING\n  list                       every RFC with its status, and the next number\n  search <query>             one text search across the RFCs and the ADRs\n  open <path>                print one RFC in full\n  checklist [topic]          what an RFC has to pin down, and what to ask\n\nWRITING\n  create <title> <overview> [slug]\n  append <path> <content>\n  update <path> <old> <new>\n  recommend <path> <recommendation> <confidence 0-10> [rationale]\n  status <path> <state> [note]\n\nSTATES\n  draft        being written; not yet up for discussion\n  discussion   open for comment\n  decided      settled; an ADR usually follows\n  deferred     not now, and the note says what would reopen it\n  withdrawn    dropped without a decision\n  superseded   replaced; the note names what replaced it\n\ncreate allocates the next number, renders docs/rfcs/TEMPLATE.md and indexes\nit. An RFC needs real options: at least two candidates, the status quo, and\none out-of-the-box possibility. append, update, recommend and status are\ncompare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the RFC and retry against its current text.\n\nEXAMPLES\n  clanker rfc                                      every RFC\n  clanker rfc search \"http client\"                 already decided?\n  clanker rfc checklist \"state store\"              what to pin down first\n  clanker rfc create \"HTTP client for the proxy\" \"One client, not recorded\"\n  clanker rfc open docs/rfcs/0001-http-client.md\n  clanker rfc recommend docs/rfcs/0001-http-client.md \"Adopt option B\" 7 \"Why\"\n  clanker rfc status docs/rfcs/0001-http-client.md decided \"See the ADR\"" },
+    .{ .command = .adr, .usage = "adr [list|search|open|create|status]", .blurb = "record and maintain architecture decisions under docs/adrs/", .group = .inspect, .detail = "An ADR is a decision that has already been made: the constraint that forced\nit, the choice, and what the choice costs. The RFC that may precede it argues\nthe alternatives; neither store requires the other. These are the same records\nthe agent reads and writes through the `adr` tool.\n\nSearch first. A matching ADR means the question is settled, and the answer is\nto read it — or supersede it — rather than decide it again.\n\nREADING\n  list                       every ADR with its status, and the next number\n  search <query>             one text search across the ADRs, RFCs and PRDs\n  open <path>                print one ADR in full\n\nWRITING\n  create <title> <context> <decision> <consequences> [rfc path]\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> [note]\n\nSTATES\n  proposed     drafted, not yet agreed\n  accepted     in force; this is the default a new ADR is created in\n  superseded   replaced; the note names what replaced it\n  deprecated   no longer applies; the note says what stopped being true\n\nThe title is the choice made, not the question: \"Providers are a native\nvtable\", not \"How should providers work?\". Consequences is required and has\nto name the honest downside — an ADR that only argues for its own decision is\nuseless to the one reader it is written for, whoever is deciding whether to\nrevisit it.\n\nPassing the RFC a decision came from links it from Status and quotes that\nRFC's recommendation under the Decision, so a divergence between what was\nrecommended and what was chosen is visible while it is still being written.\n\nA later reversal supersedes an ADR rather than editing it. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the ADR and retry against its current text.\n\nEXAMPLES\n  clanker adr                                      every decision on record\n  clanker adr search \"provider vtable\"             already decided?\n  clanker adr open docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md\n  clanker adr create \"Providers are a native vtable\" \\\n      \"Keys must not enter the sandbox\" \\\n      \"Each provider is one vtable file plus a registry row\" \\\n      \"Adding one is three edits; a provider cannot be hot-swapped\"\n  clanker adr status docs/adrs/0004-providers.md superseded \\\n      \"Superseded by ADR 0021.\"" },
+    .{ .command = .prd, .usage = "prd [list|search|open|checklist|create|status]", .blurb = "write and maintain product requirement docs under docs/prds/", .group = .inspect, .detail = "A PRD is what a feature is meant to be: the problem, the goals, the mechanism,\nand the acceptance criteria it is checked against. It is not a decision (that\nis an ADR), not an open question (an RFC), and not the shipped narrative (the\nROADMAP). These are the same records the agent reads and writes through the\n`prd` tool.\n\nThe listing groups by status with the unfinished work first, because \"what is\nstill open\" is the question this store is read to answer.\n\nREADING\n  list                       every PRD, grouped by status, and the next number\n  search <query>             one text search across the PRDs and the ADRs\n  open <path>                print one PRD in full\n  checklist                  what a Draft has to pin down before it is planned\n\nWRITING\n  create <title> <problem> <goals> [draft|in_progress|shipped]\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> [note]\n\nSTATES\n  draft         not built; Design must settle the blockers first\n  in_progress   partially built; Status names what is live and what is open\n  shipped       code is the source of truth; the note has to name those files\n\nA Draft is not planned until its dependencies are named, its blocking\nquestions are settled in Design rather than parked under Open questions, and\nits implementation phases name files. Run checklist when the request is too\nvague to draft from, and put its questions to whoever asked.\n\nGoals and acceptance criteria have to cover each other. A bug belongs in Known\nissues, never in Open questions. When the code drifts from the document, fix\nthe document the same day.\n\nappend, update and status are compare-and-swap writes: a concurrent edit is\nrefused rather than overwritten, so reopen the PRD and retry.\n\nEXAMPLES\n  clanker prd                                      every PRD, open work first\n  clanker prd checklist                            what to pin down first\n  clanker prd search \"kanban board\"                is it already specified?\n  clanker prd open docs/prds/0002-kanban-board.md\n  clanker prd create \"Scheduled runs\" \\\n      \"Nothing fires unless something outside clanker invokes it\" \\\n      \"1. Fire due entries on a cron spec  2. Never run two sweeps\"\n  clanker prd status docs/prds/0009-schedule.md shipped \\\n      \"src/schedule/ is the source of truth; clanker schedule exposes it\"" },
     .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill|refresh] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, uses\n                agent.provider_check_timeout_seconds as its timeout, then ends\n                with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the local models.dev snapshot by id/family\nfill <name>     print catalog specs for a configured provider's models\nrefresh         download models.dev into state/models-dev.json\n                catalog, fill, and the Models view then read that file" },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
@@ -1973,6 +2044,8 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .reports => try cmdReports(init, opts),
         .research => try cmdResearch(init, opts),
         .rfc => try cmdRfc(init, opts),
+        .adr => try cmdAdr(init, opts),
+        .prd => try cmdPrd(init, opts),
         .mesh => try cmdMesh(init, opts),
     }
 }
@@ -5045,6 +5118,115 @@ fn cmdRfc(init: std.process.Init, opts: Options) !void {
         else => return err,
     };
 }
+
+/// `clanker adr [list|search|open|create|append|update|status]`.
+///
+/// The decisions already made, under docs/adrs/, from a terminal: same
+/// records, same numbering, same index, because this goes through the `adr`
+/// tool rather than reimplementing the store beside it. Printing lives in
+/// `src/adr/command.zig`; what stays here is the tool call, which needs the
+/// config, the registry and the sandbox this file owns.
+fn cmdAdr(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+
+    var caller: AdrTool = .{ .init = init, .cfg = &cfg };
+    adr_cmd.cmd(init, .{
+        .sub = opts.adr_sub orelse "list",
+        .arg1 = opts.adr_arg1,
+        .arg2 = opts.adr_arg2,
+        .arg3 = opts.adr_arg3,
+        .arg4 = opts.adr_arg4,
+        .arg5 = opts.adr_arg5,
+    }, caller.tool()) catch |err| switch (err) {
+        // The diagnostic is already out; what a script needs from here is the
+        // exit status, not a second Zig error name printed under it.
+        adr_cmd.Error.BadSubcommand, adr_cmd.Error.MissingArg => {
+            printUsageHintFor(io, "adr");
+            std.process.exit(2);
+        },
+        adr_cmd.Error.ToolFailed => std.process.exit(1),
+        else => return err,
+    };
+}
+
+/// `clanker prd [list|search|open|checklist|create|append|update|status]`.
+///
+/// What each feature is meant to be, under docs/prds/, from a terminal. Same
+/// arrangement as `cmdAdr` and `cmdRfc`: this function owns the tool call,
+/// `src/prd/command.zig` owns the rendering.
+fn cmdPrd(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+
+    var caller: PrdTool = .{ .init = init, .cfg = &cfg };
+    prd_cmd.cmd(init, .{
+        .sub = opts.prd_sub orelse "list",
+        .arg1 = opts.prd_arg1,
+        .arg2 = opts.prd_arg2,
+        .arg3 = opts.prd_arg3,
+        .arg4 = opts.prd_arg4,
+    }, caller.tool()) catch |err| switch (err) {
+        prd_cmd.Error.BadSubcommand, prd_cmd.Error.MissingArg => {
+            printUsageHintFor(io, "prd");
+            std.process.exit(2);
+        },
+        prd_cmd.Error.ToolFailed => std.process.exit(1),
+        else => return err,
+    };
+}
+
+/// Binds `toolJson` to the `adr` guest, the way `ReportsTool` binds the
+/// `reports` one.
+const AdrTool = struct {
+    init: std.process.Init,
+    cfg: *const config.Config,
+
+    fn tool(self: *AdrTool) adr_cmd.Tool {
+        return .{ .ctx = self, .call = call };
+    }
+
+    fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
+        // tool() boxed this AdrTool as Tool.ctx.
+        const self: *AdrTool = @ptrCast(@alignCast(ctx));
+        return toolJson(
+            self.init.io,
+            self.init.gpa,
+            self.init.arena.allocator(),
+            self.cfg,
+            self.init.environ_map,
+            "adr",
+            input,
+        );
+    }
+};
+
+/// Binds `toolJson` to the `prd` guest, the way `ReportsTool` binds the
+/// `reports` one.
+const PrdTool = struct {
+    init: std.process.Init,
+    cfg: *const config.Config,
+
+    fn tool(self: *PrdTool) prd_cmd.Tool {
+        return .{ .ctx = self, .call = call };
+    }
+
+    fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
+        // tool() boxed this PrdTool as Tool.ctx.
+        const self: *PrdTool = @ptrCast(@alignCast(ctx));
+        return toolJson(
+            self.init.io,
+            self.init.gpa,
+            self.init.arena.allocator(),
+            self.cfg,
+            self.init.environ_map,
+            "prd",
+            input,
+        );
+    }
+};
 
 /// Binds `toolJson` to the `rfc` guest, the way `ReportsTool` binds the
 /// `reports` one.

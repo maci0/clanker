@@ -37,6 +37,26 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker adr` and `clanker prd`, plus the `adr` and `prd` tools behind them:
+  the two record stores that had no verb and were maintained by hand. `adr`
+  covers `list`, `search`, `open`, `create`, `append`, `update` and `status`
+  over `docs/adrs/`; `prd` adds `checklist` over `docs/prds/`. Both allocate
+  the next number, render the store's `TEMPLATE.md` and maintain its index, so
+  the CLI, the web UI and the agent share one implementation. `adr search`
+  spans the ADRs, RFCs and PRDs together and `prd search` the PRDs and ADRs,
+  because which store a hit lands in is the answer: an ADR means the question
+  is settled, an RFC means it is still open, a PRD means a feature already
+  specifies around it.
+  - `adr create` requires consequences, and `adr status ... superseded`
+    requires a note naming the replacement — a decision record that only
+    argues for itself, or that is reversed by editing its history out, is
+    worthless to whoever later asks whether to revisit it.
+  - `prd status ... shipped` requires a note naming the source files that are
+    now the single source of truth, and `prd list` groups by status with the
+    unfinished work first.
+  - New: `docs/adrs/README.md` (the store had no index), inventory markers in
+    `docs/prds/README.md`, and `{{placeholder}}`s in both `TEMPLATE.md` files
+    so the tools can render them.
 - `clanker research`: the `research` tool on the CLI, with `list`, `plan`,
   `sweep`, `search`, `open`, `create`, `append`, `update` and `status`. It
   calls the same sandboxed tool the agent uses, so the notes in

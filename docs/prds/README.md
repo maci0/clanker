@@ -5,6 +5,42 @@ Product requirement docs for clanker. Schema and quality bar:
 [`../ROADMAP.md`](../ROADMAP.md). Architecture decisions that constrain
 PRDs: [`../adrs/`](../adrs/).
 
+## Quick start
+
+See every PRD, with the unfinished work first:
+
+```bash
+clanker prd
+```
+
+Check what a Draft has to pin down before it counts as planned:
+
+```bash
+clanker prd checklist
+```
+
+Find out whether a feature is already specified, and what decision constrains
+it:
+
+```bash
+clanker prd search "kanban board"
+```
+
+Open a numbered scaffold:
+
+```bash
+clanker prd create "Scheduled runs" "Nothing fires unless something outside clanker invokes it" "1. Fire due entries on a cron spec"
+```
+
+Read one in full:
+
+```bash
+clanker prd open docs/prds/0009-schedule.md
+```
+
+The same actions are the `prd` tool's, which is what the CLI calls.
+Everything below is detail.
+
 ## How to read Status
 
 | Status | Meaning |
@@ -21,6 +57,7 @@ and Implementation lists checkable file-level phases.
 
 | PRD | Title | Status | Notes |
 |---|---|---|---|
+<!-- inventory:prd:start -->
 | [0001](0001-chatrooms.md) | Chatrooms & peer messaging | Shipped | Transport may become historical if 0011 ships |
 | [0002](0002-kanban-board.md) | Shared kanban board | Shipped | |
 | [0003](0003-run-todos.md) | Run todo checklists | Shipped | Private vs shared; room todos removed |
@@ -57,6 +94,7 @@ and Implementation lists checkable file-level phases.
 | [0034](0034-session-subprocs.md) | Session subprocess inspector | Draft | Lists/kills 0016 registry rows from doctor + a guest |
 | [0035](0035-goal-lifecycle.md) | Goal lifecycle capabilities | Shipped | Draft, persist, and execute are independent |
 | [0036](0036-sixel-mascot-rendering.md) | SIXEL mascot rendering | In progress | Kitty → SIXEL → Unicode cells implemented; manual terminal matrix open |
+<!-- inventory:prd:end -->
 
 ## Recommended build order (Drafts)
 

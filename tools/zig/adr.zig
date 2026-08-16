@@ -391,13 +391,26 @@ fn search(obj: std.json.Value, out: *lib.Out) !void {
     lib.commit(out, &w);
 }
 
+/// The index lists every record by title, so an unfiltered grep answers one
+/// real hit with an inventory line stapled to it. `isDocPath` drops those and
+/// the template: neither is a record, and neither is what a searcher meant.
 fn grepDir(where: []const u8, query: []const u8) !std.json.Value {
     const raw = lib.fsGrep(where, query) catch |err| switch (err) {
         error.NotFound => return .{ .array = std.json.Array.init(lib.alloc) },
         else => return err,
     };
-    return std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch
-        .{ .array = std.json.Array.init(lib.alloc) };
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch
+        return .{ .array = std.json.Array.init(lib.alloc) };
+    if (parsed != .array) return .{ .array = std.json.Array.init(lib.alloc) };
+
+    var kept = std.json.Array.init(lib.alloc);
+    for (parsed.array.items) |hit| {
+        if (hit != .object) continue;
+        const file = hit.object.get("file") orelse continue;
+        if (file != .string or !doc.isDocPath(file.string)) continue;
+        try kept.append(hit);
+    }
+    return .{ .array = kept };
 }
 
 // ---------------------------------------------------------------- mutations
