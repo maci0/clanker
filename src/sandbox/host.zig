@@ -349,19 +349,37 @@ pub fn sandboxFor(
 }
 
 /// Descriptor `fs_prefixes` plus any extra `agent.tools_dir` entries the
-/// plugins/tools guests need to list. Extra entries stay relative to the
-/// sandbox root: a host-absolute path is refused by `safeJoin` and so is
-/// only useful to `Registry.load` on the host, not to a guest walk.
+/// plugins/tools guests need to list, and `agent.skills_dir` for the skills
+/// guest. Extra entries stay relative to the sandbox root: a host-absolute
+/// path is refused by `safeJoin` and so is only useful to `Registry.load` on
+/// the host, not to a guest walk.
 fn fsPrefixesFor(
     arena: std.mem.Allocator,
     tool: *const registry.Tool,
     cfg: *const config_mod.Config,
 ) ![]const []const u8 {
-    if (!std.mem.eql(u8, tool.name, "plugins") and !std.mem.eql(u8, tool.name, "tools")) {
-        return tool.fs_prefixes;
-    }
+    const wants_extra = std.mem.eql(u8, tool.name, "plugins") or
+        std.mem.eql(u8, tool.name, "tools") or
+        std.mem.eql(u8, tool.name, "skills");
+    if (!wants_extra) return tool.fs_prefixes;
     var out: std.ArrayList([]const u8) = .empty;
     try out.appendSlice(arena, tool.fs_prefixes);
+    if (std.mem.eql(u8, tool.name, "skills")) {
+        // The skills guest scans agent.skills_dir (granted through
+        // ck_harness_config); a non-default directory is refused by the
+        // manifest's static "skills" prefix unless it lands here too.
+        const skills_dir = cfg.agent.skills_dir;
+        if (skills_dir.len > 0) {
+            var seen = false;
+            for (out.items) |have| {
+                if (std.mem.eql(u8, have, skills_dir)) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen) try out.append(arena, skills_dir);
+        }
+    }
     for (cfg.agent.tools_dir) |dir| {
         if (dir.len == 0) continue;
         var seen = false;
@@ -1042,7 +1060,7 @@ pub fn ckHarnessConfig(caller: *zwasm.Caller) u32 {
     return h.writeResult(bytes, json_out);
 }
 
-const HarnessConfigAccess = enum { full, providers, peers, workflows, chains, tools_dir, kernel, debug };
+const HarnessConfigAccess = enum { full, providers, peers, workflows, chains, tools_dir, skills, kernel, debug };
 
 /// ck_harness_config is a privileged structured view, independent of
 /// fs_prefixes. Grant each shipped caller only the section it consumes and
@@ -1062,6 +1080,10 @@ fn harnessConfigAccess(tool_name: []const u8) ?HarnessConfigAccess {
     if (std.mem.eql(u8, tool_name, "workflows")) return .workflows;
     if (std.mem.eql(u8, tool_name, "chain")) return .chains;
     if (std.mem.eql(u8, tool_name, "plugins") or std.mem.eql(u8, tool_name, "tools")) return .tools_dir;
+    // skills reads agent.skills_dir to find where to scan for skill files;
+    // denied, it would silently fall back to the literal "skills" and drift
+    // from a configured directory. `.skills` answers that one question.
+    if (std.mem.eql(u8, tool_name, "skills")) return .skills;
     if (std.mem.eql(u8, tool_name, "kernel")) return .kernel;
     if (std.mem.eql(u8, tool_name, "debug")) return .debug;
     return null;
@@ -1160,7 +1182,7 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
             }
         }
         try s.endObject();
-    } else if (access == .workflows or access == .chains or access == .tools_dir) {
+    } else if (access == .workflows or access == .chains or access == .tools_dir or access == .skills) {
         try s.objectField("agent");
         try s.beginObject();
         if (access == .workflows) {
@@ -1170,6 +1192,10 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
         if (access == .chains) {
             try s.objectField("chains_dir");
             try s.write(cfg.agent.chains_dir);
+        }
+        if (access == .skills) {
+            try s.objectField("skills_dir");
+            try s.write(cfg.agent.skills_dir);
         }
         if (access == .tools_dir) {
             try s.objectField("tools_dir");
@@ -6200,6 +6226,7 @@ test "harness config access is scoped to each tool's consumed fields" {
     try std.testing.expectEqual(HarnessConfigAccess.chains, harnessConfigAccess("chain").?);
     try std.testing.expectEqual(HarnessConfigAccess.tools_dir, harnessConfigAccess("plugins").?);
     try std.testing.expectEqual(HarnessConfigAccess.tools_dir, harnessConfigAccess("tools").?);
+    try std.testing.expectEqual(HarnessConfigAccess.skills, harnessConfigAccess("skills").?);
     try std.testing.expect(harnessConfigAccess("unrelated") == null);
 
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -6243,6 +6270,40 @@ test "harness config access is scoped to each tool's consumed fields" {
     try std.testing.expect(std.mem.find(u8, tools_dir_json, "vendor/overrides") != null);
     try std.testing.expect(std.mem.find(u8, tools_dir_json, "providers") == null);
     try std.testing.expect(std.mem.find(u8, tools_dir_json, "max_iterations") == null);
+
+    // skills resolves agent.skills_dir through the same bridge; denied, the
+    // guest would silently fall back to the literal "skills" directory.
+    cfg.agent.skills_dir = "custom-skills";
+    const skills_json = try harnessConfigJSON(arena, &cfg, .skills);
+    try std.testing.expect(std.mem.find(u8, skills_json, "skills_dir") != null);
+    try std.testing.expect(std.mem.find(u8, skills_json, "custom-skills") != null);
+    try std.testing.expect(std.mem.find(u8, skills_json, "providers") == null);
+    try std.testing.expect(std.mem.find(u8, skills_json, "peers") == null);
+    try std.testing.expect(std.mem.find(u8, skills_json, "workflows_dir") == null);
+
+    // The skills guest's sandbox prefixes must cover the configured directory
+    // it was just told to scan, or the grant above only produces denials.
+    const skills_tool = registry.Tool{
+        .name = "skills",
+        .description = "",
+        .wasm = "zig-out/tools/skills.wasm",
+        .input_schema = .{ .object = .empty },
+        .fs_prefixes = &.{ "skills", "state/skills.json" },
+    };
+    const skills_prefixes = try fsPrefixesFor(arena, &skills_tool, &cfg);
+    try std.testing.expect(std.mem.eql(u8, skills_prefixes[0], "skills"));
+    try std.testing.expect(std.mem.eql(u8, skills_prefixes[1], "state/skills.json"));
+    try std.testing.expect(std.mem.eql(u8, skills_prefixes[2], "custom-skills"));
+    // A tool that does not consume tools_dir/skills_dir keeps its prefixes.
+    const other_tool = registry.Tool{
+        .name = "edit_file",
+        .description = "",
+        .wasm = "zig-out/tools/edit_file.wasm",
+        .input_schema = .{ .object = .empty },
+        .fs_prefixes = &.{"state/runs"},
+    };
+    const other_prefixes = try fsPrefixesFor(arena, &other_tool, &cfg);
+    try std.testing.expectEqual(@as(usize, 1), other_prefixes.len);
 
     const full = try harnessConfigJSON(arena, &cfg, .full);
     try std.testing.expect(std.mem.find(u8, full, "\"modules\"") != null);

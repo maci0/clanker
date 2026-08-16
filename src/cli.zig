@@ -2877,6 +2877,14 @@ fn renderModelSnippet(arena: std.mem.Allocator, provider_name: []const u8, name:
         if (jsonNum(c.object, "input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_input = {d}", .{v}));
         if (jsonNum(c.object, "output")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_output = {d}", .{v}));
     };
+    // The catalog's `id` is the wire SKU; `name` is a display string. A local
+    // alias (table key != SKU) must keep its `id` in the snippet, or a pasted
+    // fill silently sends the alias name on the wire.
+    if (json_util.strFieldOrNull(m.object, "id")) |sku| {
+        if (!std.mem.eql(u8, sku, name)) {
+            try fields.append(arena, try std.fmt.allocPrint(arena, "id = {s}", .{try tomlQuoted(arena, sku)}));
+        }
+    }
     if (json_util.strFieldOrNull(m.object, "name")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "display = {s}", .{try tomlQuoted(arena, disp)}));
     // models.dev's "temperature" is a capability flag, not a recommended
     // value; 0.7 matches sampling_profiles.zig's own chat default so a
@@ -15955,6 +15963,20 @@ test "renderModelSnippet emits a valid, pasteable TOML models table" {
     try std.testing.expectEqualStrings("Kimi K3", entry.get("display").?.string);
     // "reasoning": true on the catalog entry becomes a "thinking" capability.
     try std.testing.expectEqualStrings("thinking", entry.get("capabilities").?.array.items[0].string);
+
+    // A local alias keeps the catalog SKU as `id`, or the pasted snippet
+    // would silently send the alias name on the wire.
+    const alias = try renderModelSnippet(arena, "moonshotai", "kimi-k3-code", model);
+    var alias_parser = toml.Parser(toml.Table).init(arena);
+    defer alias_parser.deinit();
+    var alias_result = try alias_parser.parseString(alias);
+    defer alias_result.deinit();
+    const alias_entry = alias_result.value.get("models").?.table.get("moonshotai/kimi-k3-code").?.table;
+    try std.testing.expectEqualStrings("moonshotai", alias_entry.get("provider").?.string);
+    try std.testing.expectEqualStrings("kimi-k3", alias_entry.get("id").?.string);
+    // A non-alias table key emits no `id` at all (the fixture's id equals the
+    // key), so a fresh fill stays the minimal snippet it always was.
+    try std.testing.expect(entry.get("id") == null);
 }
 
 test "providers refresh is a recognized subcommand" {
