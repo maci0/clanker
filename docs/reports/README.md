@@ -46,7 +46,13 @@ Read one record:
 clanker reports open docs/reports/bugs/2026-08-14-worktree-state-symlink-notdir.md
 ```
 
-`clanker reports --help` covers `create`, `append` and `update`.
+Move a record to a new state, record and inventory together:
+
+```bash
+clanker reports status docs/reports/bugs/2026-08-14-worktree-state-symlink-notdir.md resolved "ensureDir handles the symlink; zig build test passes"
+```
+
+`clanker reports --help` covers `create`, `append`, `update` and `status`.
 
 ## Agent workflow
 
@@ -60,7 +66,11 @@ use its `create` action to make a TL;DR-first investigation while tracing it,
 then a bug report once the defect is confirmed. `create` also adds the record
 to the matching inventory. As the work proceeds, use `append` for new evidence
 and `update` for a precise correction to an existing passage; both reject a
-concurrent change, so reopen the record before retrying. Fill out the scaffold
+concurrent change, so reopen the record before retrying. When the work reaches
+a new state, use `status` rather than editing the Status line: it rewrites the
+record and its inventory entry in one call, and the inventory is what the next
+reader skims. `resolved` requires a note naming the fix and what verified it,
+so write the Resolution and Verification sections first. Fill out the scaffold
 with the evidence, resolution, and verification before calling it complete.
 Project agents receive this workflow through the harness prompt and
 [`AGENTS.md`](../../AGENTS.md).
@@ -70,6 +80,10 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [improve-self worktrees are never reclaimed when a run promotes nothing](bugs/2026-08-16-improve-worktree-merge-bound-to-promotion.md) — Open
+
+- [Every guest read and write under a symlinked state/ was refused](bugs/2026-08-16-guest-writes-refused-under-symlinked-state.md) — Resolved
+
 - [State backups stopped for two days because .agents is a real directory](bugs/2026-08-16-state-backup-aborts-on-checkout-local-agents.md) — Resolved
 
 - [Isolated-run e2e still called the removed `goal` guest](bugs/2026-08-16-worktree-e2e-calls-removed-goal-tool.md) — Resolved
@@ -120,6 +134,11 @@ An investigation may be open, resolved, or closed as not a bug. A bug report
 is open until the fix is verified, then resolved; it may be reopened if the
 symptom returns. Status is a summary for the index, not a replacement for the
 report's evidence and verification sections.
+
+The inventory above carries a second copy of each status. Only the `status`
+action writes both; `create` sets the inventory copy once and never again, so a
+record moved by hand leaves the index behind. A runbook has no status — its
+inventory line carries a summary — and `status` refuses one for that reason.
 
 Reports are historical records. Amend them when new evidence changes the
 conclusion, but do not delete failed hypotheses or the conditions that made a
