@@ -10,7 +10,9 @@ are specified in [0035-goal-lifecycle.md](0035-goal-lifecycle.md).
 A follow-on requirement is specified below but not yet implemented: a draft
 must propose measurable completion criteria when the caller supplied none, and
 must propose a concrete test script for any measurable criterion (Goal 4; the
-matching acceptance box is unchecked).
+matching acceptance box is unchecked). Drafting is otherwise unaffected by the
+goal-is-a-card change in 0035: the draft is still a review artifact, and
+`add_goal` is what turns it into a goal-card.
 
 ## Problem
 
@@ -32,7 +34,9 @@ must supply one when the caller did not.
 
 ## Non-goals
 
-- Persisting a goal. `add_goal` (`tools/zig/add_goal.zig`) owns that explicit operation.
+- Persisting a goal. `add_goal` (`tools/zig/add_goal.zig`) owns that explicit
+  operation — shipped as a `state/goals.json` append, becoming a goal-card
+  create under 0035's Goal 7.
 - Executing a goal. `goal` owns starting a goal loop; `run --goal <id>` starts
   that loop from a selected persisted record.
 - Making drafting mandatory before either operation.
@@ -46,9 +50,9 @@ an execution approach, stop rules, assumptions, and unresolved questions.
 If the caller supplied no measurable criterion, `write_goal` drafts one rather
 than leaving it blank; if the criterion is measurable (time elapsed, a score
 reached, an eval passing, a file present), it proposes a concrete test script
-as the `proof`. It is a review artifact, not a persistence format:
-`state/goals.json` stores the smaller executable record selected by
-`add_goal`.
+as the `proof`. It is a review artifact, not a persistence format: `add_goal`
+creates the durable record (a goal-card, under 0035's Goal 7) from the selected
+fields, and `state/goals.json` is only an index over those cards.
 
 The same tool is exposed on both direct surfaces:
 
@@ -90,4 +94,6 @@ The same tool is exposed on both direct surfaces:
 
 The current persisted goal record deliberately flattens parts of the richer
 draft. If preserving every draft field becomes necessary, design a versioned
-stored record rather than silently widening `add_goal`.
+stored record rather than silently widening `add_goal` — under the
+goal-is-a-card model that versioning question applies to card fields, not a
+separate file.

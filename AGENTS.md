@@ -177,8 +177,11 @@ through a gated loop. Follow these conventions when changing this codebase.
   seconds, so the pulse clock must be too. The page watches `GET /api/events`
   (SSE in `src/serve/live.zig`); membership and pending JOINs publish `t:mesh`
   the same way chat talk does. HTTP `POST /api/*` stays the command path.
-  `chatrooms.fanOut` POSTs each message to every peer's `/api/chat/message`
-  (per-peer backoff on failure). A local append seeks onto the jsonl when
+  `chatrooms.fanOut` delivers each message to every peer's
+  `/api/chat/message` through the sandboxed `peers` tool (`chat_fanout`,
+  `network_from_config` gating); the host keeps the per-peer backoff table
+  and hands the guest the names in backoff as `skip`. A local append seeks
+  onto the jsonl when
   the log is still under `max_history`; only a trim rewrites the file.
   Conversational DMs are `chat_dm` (`ck_chat` send with `to`); `peers`
   `notify` writes `state/notifications.jsonl` via `POST /api/notify` and

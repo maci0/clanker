@@ -7,13 +7,15 @@ prerequisite for `goal_add`; persistence is a separate explicit choice.
 
 Call `goal_write` with the intent (and any workspace facts you already
 inspected). It asks only the material forks via `ask_user`, or records
-assumptions when nobody is reachable. It never writes `state/goals.json`.
+assumptions when nobody is reachable. It never writes `state/goals.json` or
+creates a card.
 
 Present the returned markdown. If the caller explicitly wants it saved, call
-the `goal_add` tool with the selected fields. Map the draft onto the goal_add
-tool's field names (`completion_criterion`, `proof`, `stop_rule`, not the
-`goal_write` record's `completion_criteria` / `verification` / `stop_rules`).
-A well-formed goal carries these five fields
+the `goal_add` tool with the selected fields. `goal_add` creates a goal-card on
+the board; `state/goals.json` is only an index over those cards. Map the draft
+onto the `goal_add` tool's field names (`completion_criterion`, `proof`,
+`stop_rule`, not the `goal_write` record's `completion_criteria` /
+`verification` / `stop_rules`). A well-formed goal-card carries these fields
 (`objective, completion_criterion, proof, boundaries, stop_rule`):
 
 - `objective`: what will be true afterwards, not what you will do. "Runs survive
@@ -38,7 +40,7 @@ measurable one (and a test script when measurable) rather than left blank. A
 goal that stops at objective + criterion is worth keeping when the rest is
 genuinely unknown. Prefer a short honest goal to a padded one.
 
-Read `state/goals.json` first. The `goal_add` tool only appends; it cannot update an
-existing entry. If the intent restates an open goal, do not call `goal_add` and
-create a duplicate. Return that goal's id and explain that it already covers
-the intent.
+Read the board and the goals index first. `goal_add` creates a card; it cannot
+update an existing entry. If the intent restates an open goal, do not create a
+duplicate card. Return that goal's id and explain that it already covers the
+intent.

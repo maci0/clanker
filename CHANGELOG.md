@@ -43,7 +43,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   banner that opens Mesh, and a Manage mesh control. Membership and
   pending JOINs publish `t:mesh` on `GET /api/events`.
 - `zig build e2e` covers two-process loopback join/leave, prompt
-  admit and deny, and the CLI when serve is down or mesh is off.
+  admit and deny, the CLI when serve is down or mesh is off, plus
+  operator journeys `add-goal` (persist without running) and
+  `schedule add` then list.
+- `ck_fs_write_if` creates missing parent directories before the
+  compare-and-swap lock, so `clanker schedule add` works in a fresh
+  checkout that has no `state/` yet.
 - `clanker mesh` talks to local serve over loopback HTTP: `status`,
   `join <host:port>`, `leave [<peer-id>]`, `pending`, `admit <id>`,
   `deny <id>`. `--webui-port` selects which serve when several run on

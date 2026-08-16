@@ -30,6 +30,7 @@ test "operator journey: add-goal persists the objective without starting a run" 
     defer gpa.free(goals);
     try std.testing.expect(std.mem.find(u8, goals, objective) != null);
     try std.testing.expect(std.mem.find(u8, goals, criterion) != null);
+    std.debug.print("pass: operator journey: add-goal persists the objective without starting a run\n", .{});
 }
 
 test "operator journey: schedule add then list shows the task" {
@@ -64,4 +65,5 @@ test "operator journey: schedule add then list shows the task" {
     try std.testing.expect(listed.ok());
     try std.testing.expect(std.mem.find(u8, listed.stdout, task) != null);
     try std.testing.expect(std.mem.find(u8, listed.stdout, spec) != null);
+    std.debug.print("pass: operator journey: schedule add then list shows the task\n", .{});
 }

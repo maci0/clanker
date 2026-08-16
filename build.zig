@@ -497,7 +497,6 @@ pub fn build(b: *std.Build) void {
     const run_e2e = b.addRunArtifact(e2e_tests);
     run_e2e.step.dependOn(b.getInstallStep());
     run_e2e.step.dependOn(tools_step);
-    if (b.args) |args| run_e2e.addArgs(args);
     const e2e_step = b.step("e2e", "Run black-box e2e tests against the built clanker binary + a mock LLM server");
     e2e_step.dependOn(&run_e2e.step);
 }
