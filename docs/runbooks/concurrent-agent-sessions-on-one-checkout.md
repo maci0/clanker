@@ -263,6 +263,48 @@ A branch absent from origin whose commits are all upstream by content is a
 stale pointer, not a risk; pushing it adds a ref and no bytes. Compare by
 patch id or `git rev-list --count origin/main..<branch>`, not by name.
 
+**Check the branch still exists on the remote before analysing it.** A clone
+accumulates remote-tracking refs for branches the remote deleted after merging
+their PRs — this one had 124 tracking refs against 27 real ones. Those refs
+look like unmerged work and are not:
+
+```bash
+git ls-remote --heads origin <name>
+```
+
+They read as unmerged because a **squash merge rewrites the commit**, so its
+patch id no longer matches anything on `main` even though every line landed.
+Confirm by finding the squash commit's subject on `main`, not by patch id.
+This is the same failure as grepping for code across an API rename: a
+mechanical identity check reports **absent** for content that is present in a
+different form, and "absent" is the answer that makes you re-land work that
+already exists. On 2026-08-16 it turned twelve real branches into a
+thirty-one-branch panic.
+
+### Closing out a branch whose content already landed
+
+A branch that is superseded, obsolete, or salvaged still shows as unmerged
+forever, and the next sweep re-investigates it. Close it instead of leaving
+the signal:
+
+```bash
+git merge -s ours -m "merge: close out <branch>" origin/<branch>
+```
+
+`-s ours` records the merge while keeping **the current tree byte for byte** —
+verify with `git rev-parse <merge>^{tree}` against `<merge>^1^{tree}`, which
+must be equal. So it cannot revert anything, and the branch's snapshot stays
+permanently reachable as the merge's second parent (`git show <merge>^2`),
+surviving `gc` and the deletion of the branch ref — which a bare unmerged
+branch does not. Once merged, the remote ref can be deleted without losing
+the content.
+
+Only do this when the content is genuinely accounted for, per-commit and not
+per-branch: a feature landing does not prove every commit riding along was
+part of it. And unique content is necessary but not sufficient — a commit
+whose own message says `wip` or `build error` should not be cherry-picked
+on uniqueness alone.
+
 ## Escalate or follow up
 
 Tell every session when the hold is lifted. A session that is still holding
