@@ -159,7 +159,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   OpenAI/Anthropic compatibility proxy (`clanker serve --proxy`; also
   `src/proxy_main.zig` via `zig build proxy`). The proxy is native because
   it attaches provider credentials. It forwards `/v1/*` 1:1 and must not
-  go through `client.chat` / `buildRequest`. HTTP routes live in `cli.zig`:
+  go through `client.chat` / `chatStream` (the transcode may still call the
+  provider vtable `buildRequest` to reshape the upstream body). HTTP routes
+  live in `cli.zig`:
   `toolRefusalStatus` maps a tool JSON `no such` / `not found` to 404 and
   every other refusal to 400; `requestPath` strips the query before a
   resource id is read off the target. `GET /api/logs` is the `logs` guest
@@ -302,7 +304,8 @@ lines is a failed capability gate, not a pass.
 `src/gate/checks.zig` is writable so the loop can strengthen its own gates.
 A substring needle still matches if the real work is skipped by an early
 `return .{ .ok = true }` left above it as dead code; `checksZigShapeBroken`
-refuses that shape (same idea as `cmdEvalShapeBroken` for `cmdEval`).
+(in `src/improve/engine.zig`) refuses that shape (same idea as
+`cmdEvalShapeBroken` for `cmdEval`).
 
 ## Living document
 
