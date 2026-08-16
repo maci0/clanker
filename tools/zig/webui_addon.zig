@@ -185,6 +185,7 @@ fn actionPut(obj: std.json.Value, out: *lib.Out) !void {
         const m = std.json.parseFromSliceLeaky(Manifest, lib.alloc, content, .{ .ignore_unknown_fields = true }) catch
             return lib.fail(out, "plugin.json is not valid JSON");
         if (logic.capabilitiesRejected(m.capabilities)) |why| return lib.fail(out, why);
+        if (!std.mem.eql(u8, m.name, name)) return lib.fail(out, "plugin.json name must match the addon directory");
         if (m.title.len == 0 or m.title.len > logic.max_title_len) return lib.fail(out, "title must be 1-64 characters");
         if (m.description.len > logic.max_desc_len) return lib.fail(out, "description is too long");
         if (!logic.validGroup(m.group)) return lib.fail(out, "group must be Work, Watch, or Set up");
