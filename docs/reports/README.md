@@ -117,6 +117,10 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [TUI selection copy never reaches the system clipboard in terminals that ignore OSC 52 or intercept Ctrl+Shift+C](investigations/2026-08-16-tui-selection-copy-not-reaching-clipboard.md) — Investigating
+
+- [TUI crashes irrecoverably on terminal resize with mascot enabled](investigations/2026-08-16-tui-resize-crash.md) — Investigating
+
 - [TUI Ctrl+C cannot interrupt a streaming turn while the picker or search modal is open](investigations/2026-08-16-tui-ctrl-c-swallowed-by-picker-and-search.md) — Resolved
 
 - [Improve staging omits node UI-test data roots](investigations/2026-08-15-improve-staging-node-ui-data.md) — Resolved
