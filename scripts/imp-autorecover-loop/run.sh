@@ -15,6 +15,7 @@ CLANKER_DIR="${CLANKER_DIR:-/home/yannick/code/maci0/clanker}"
 MODELS=(
     default
     ollama/qwen3.6-27b-tuned
+    deepseek/deepseek-v4-pro
 )
 
 # Models for the clanker escalation run — the second clanker run, which repairs
@@ -25,6 +26,7 @@ MODELS=(
 ESCALATE_MODELS=(
     default
     ollama/qwen3.6-27b-tuned
+    deepseek/deepseek-v4-pro
 )
 
 # Harnesses that repair a failed clanker escalation run. Repair runs fix
