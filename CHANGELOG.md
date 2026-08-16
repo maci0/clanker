@@ -370,6 +370,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `GET /webui/core/slash.js` no longer serves `app.js`. The slash module
+  was on the asset list but reused `app.js`'s render/gzip slot, so a
+  gzip client executed `app.js` at the slash URL and then requested
+  `/webui/core/core/*.js`. Each first-party module now has its own
+  cache kind; the default slot is only `app.js`.
 - A run can no longer spend itself compacting a history it cannot shrink.
   Compaction preserves the system message and the last six messages, so when
   those alone exceeded `agent.max_history_tokens` it was asked to compact on

@@ -151,8 +151,9 @@ contract holds). `/api/goals` GET reads through `goal_update`'s new
 **Resolved 2026-08-16 (follow-up):** `/api/skills` relays to a new `skills`
 guest (`tools/zig/skills.zig` + `skills_logic.zig`); discovery filters are
 the one helper `system_prompt.zig` also uses. `pluginApi()` now has
-`postJSON`, `onLive`, `confirm`/`prompt`/`toast`, `workspace`, `icon`, and
-namespaced `storage`. `plugin.json` declares `capabilities` against that
+`postJSON`, `del` (DELETE with an optional JSON body), `onLive`,
+`confirm`/`prompt`/`toast`, `workspace`, `icon`, and namespaced `storage`.
+`plugin.json` declares `capabilities` against that
 surface (unknown names refused on write). Office/files/music use the API
 instead of raw `fetch`/`localStorage`/`window.clankerWorkspace`.
 

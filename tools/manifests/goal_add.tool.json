@@ -1,7 +1,7 @@
 {
   "name": "goal_add",
-  "description": "Persist a structured goal to state/goals.json without running it (write). Use this only when a durable objective with a completion criterion is needed for a later `run --goal <id>` or the goal board. Not a kanban card and never an executor.",
-  "llm_description": "Persist a structured goal without running it. Required: \"objective\", \"completion_criterion\". Optional: \"proof\", \"boundaries\", \"stop_rule\", \"max_iterations\" (integer 1..1000), \"worktree\" (branch/path for worktree runs). Returns its id. Link cards via kanban_* goal id. This is not a board card and must not execute the goal.",
+  "description": "Persist a structured goal without running it (write): creates a goal-card on the board plus a state/goals.json index entry for a later `run --goal <id>` or the goal board. Never executes the goal.",
+  "llm_description": "Persist a structured goal without running it. Required: \"objective\". Optional: \"completion_criterion\" (the goal loop drafts one when omitted), \"proof\", \"boundaries\", \"stop_rule\", \"max_iterations\" (integer 1..1000), \"worktree\" (branch/path for worktree runs). Returns its id. A goal is a card (RFC 0001): this tool creates that card plus the goals.json index.",
   "wasm": "zig-out/tools/add_goal.wasm",
   "input_schema": {
     "type": "object",
@@ -31,8 +31,7 @@
       }
     },
     "required": [
-      "objective",
-      "completion_criterion"
+      "objective"
     ]
   },
   "fs_prefixes": [

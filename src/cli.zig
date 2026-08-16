@@ -8674,6 +8674,98 @@ fn webuiAssetCacheControl(untagged: []const u8) []const u8 {
     return untagged;
 }
 
+/// One cache kind per first-party webui file. `.js` is only `/webui/app.js`:
+/// any other path that lands there serves app.js at the wrong URL, and the
+/// browser then requests `/webui/core/core/utils.js` (and the rest of app.js's
+/// relative imports) as 404s. Feature views carry their directory so they
+/// cannot alias `core/goals.js` / `lib/board.js`. `arena3d` is checked before
+/// `arena` so a suffix match cannot steal the shorter name.
+const WebuiAssetKind = enum {
+    css,
+    js,
+    boot,
+    board_view,
+    goals_view,
+    knowledge_view,
+    prompts_view,
+    arena_view,
+    arena3d_view,
+    todos_view,
+    models_view,
+    vendor,
+    chat,
+    labels,
+    goals,
+    stream,
+    theme,
+    slash,
+    overlay,
+    search,
+    composer,
+    ai_disclosure,
+    scroll,
+    run_metrics,
+    markdown,
+    graph,
+    board,
+    fleet,
+    utils,
+    icons,
+    ui,
+    dialog,
+    usage,
+    status,
+    attachments,
+    logs,
+    plugins,
+    palette,
+    modelpicker,
+    tools,
+};
+
+fn webuiAssetKind(target: []const u8) WebuiAssetKind {
+    if (std.mem.endsWith(u8, target, ".css")) return .css;
+    if (std.mem.endsWith(u8, target, "preact-boot.js")) return .boot;
+    if (std.mem.endsWith(u8, target, "features/board.js")) return .board_view;
+    if (std.mem.endsWith(u8, target, "features/goals.js")) return .goals_view;
+    if (std.mem.endsWith(u8, target, "features/knowledge.js")) return .knowledge_view;
+    if (std.mem.endsWith(u8, target, "features/prompts.js")) return .prompts_view;
+    if (std.mem.endsWith(u8, target, "features/arena3d.js")) return .arena3d_view;
+    if (std.mem.endsWith(u8, target, "features/arena.js")) return .arena_view;
+    if (std.mem.endsWith(u8, target, "features/todos.js")) return .todos_view;
+    if (std.mem.endsWith(u8, target, "features/models.js")) return .models_view;
+    if (std.mem.endsWith(u8, target, "vendor.js")) return .vendor;
+    if (std.mem.endsWith(u8, target, "chat.js")) return .chat;
+    if (std.mem.endsWith(u8, target, "labels.js")) return .labels;
+    if (std.mem.endsWith(u8, target, "goals.js")) return .goals;
+    if (std.mem.endsWith(u8, target, "stream.js")) return .stream;
+    if (std.mem.endsWith(u8, target, "theme.js")) return .theme;
+    if (std.mem.endsWith(u8, target, "core/slash.js")) return .slash;
+    if (std.mem.endsWith(u8, target, "overlay.js")) return .overlay;
+    if (std.mem.endsWith(u8, target, "search.js")) return .search;
+    if (std.mem.endsWith(u8, target, "composer.js")) return .composer;
+    if (std.mem.endsWith(u8, target, "ai-disclosure.js")) return .ai_disclosure;
+    if (std.mem.endsWith(u8, target, "scroll.js")) return .scroll;
+    if (std.mem.endsWith(u8, target, "run-metrics.js")) return .run_metrics;
+    if (std.mem.endsWith(u8, target, "markdown.js")) return .markdown;
+    if (std.mem.endsWith(u8, target, "graph.js")) return .graph;
+    if (std.mem.endsWith(u8, target, "board.js")) return .board;
+    if (std.mem.endsWith(u8, target, "fleet.js")) return .fleet;
+    if (std.mem.endsWith(u8, target, "utils.js")) return .utils;
+    if (std.mem.endsWith(u8, target, "icons.js")) return .icons;
+    if (std.mem.endsWith(u8, target, "ui.js")) return .ui;
+    if (std.mem.endsWith(u8, target, "dialog.js")) return .dialog;
+    if (std.mem.endsWith(u8, target, "usage.js")) return .usage;
+    if (std.mem.endsWith(u8, target, "status.js")) return .status;
+    if (std.mem.endsWith(u8, target, "attachments.js")) return .attachments;
+    if (std.mem.endsWith(u8, target, "logs.js")) return .logs;
+    if (std.mem.endsWith(u8, target, "plugins.js")) return .plugins;
+    if (std.mem.endsWith(u8, target, "palette.js")) return .palette;
+    if (std.mem.endsWith(u8, target, "modelpicker.js")) return .modelpicker;
+    if (std.mem.endsWith(u8, target, "tools.js")) return .tools;
+    return .js;
+}
+
 /// The page's stylesheet and script. Same tool, same sandbox, same size guard
 /// as the markup; only the content type and the caching differ.
 fn handleWebuiAsset(
@@ -8690,63 +8782,11 @@ fn handleWebuiAsset(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const is_css = std.mem.endsWith(u8, target, ".css");
-    const is_boot = std.mem.endsWith(u8, target, "preact-boot.js");
-    // The feature views share their file names with core/goals.js and
-    // lib/board.js, so these two carry the directory in the suffix and the
-    // bare-name predicates below exclude them, a bare endsWith("board.js")
-    // for both would alias the two caches and serve one file for the other's
-    // path (the known cache-aliasing bug class; see docs/prds/0006-webui.md).
-    const is_board_view = std.mem.endsWith(u8, target, "features/board.js");
-    const is_goals_view = std.mem.endsWith(u8, target, "features/goals.js");
-    const is_knowledge_view = std.mem.endsWith(u8, target, "features/knowledge.js");
-    const is_prompts_view = std.mem.endsWith(u8, target, "features/prompts.js");
-    // Both carry the directory for the same reason board/goals do: a bare
-    // endsWith is one same-named future module away from the aliasing bug, and
-    // features/arena.js in particular was embedded and routed in webui.zig but
-    // reachable from neither list here, so the Arena view's dynamic import
-    // 404'd until this line existed.
-    const is_arena3d_view = std.mem.endsWith(u8, target, "features/arena3d.js");
-    const is_arena_view = !is_arena3d_view and std.mem.endsWith(u8, target, "features/arena.js");
-    const is_todos_view = std.mem.endsWith(u8, target, "features/todos.js");
-    const is_models_view = std.mem.endsWith(u8, target, "features/models.js");
-    const is_vendor = std.mem.endsWith(u8, target, "vendor.js");
-    const is_chat = std.mem.endsWith(u8, target, "chat.js");
-    const is_labels = std.mem.endsWith(u8, target, "labels.js");
-    const is_goals = !is_goals_view and std.mem.endsWith(u8, target, "goals.js");
-    const is_stream = std.mem.endsWith(u8, target, "stream.js");
-    const is_theme = std.mem.endsWith(u8, target, "theme.js");
-    const is_overlay = std.mem.endsWith(u8, target, "overlay.js");
-    const is_search = std.mem.endsWith(u8, target, "search.js");
-    const is_composer = std.mem.endsWith(u8, target, "composer.js");
-    const is_ai_disclosure = std.mem.endsWith(u8, target, "ai-disclosure.js");
-    const is_scroll = std.mem.endsWith(u8, target, "scroll.js");
-    const is_run_metrics = std.mem.endsWith(u8, target, "run-metrics.js");
-    const is_markdown = std.mem.endsWith(u8, target, "markdown.js");
-    const is_graph = std.mem.endsWith(u8, target, "graph.js");
-    const is_board = !is_board_view and std.mem.endsWith(u8, target, "board.js");
-    const is_fleet = std.mem.endsWith(u8, target, "fleet.js");
-    const is_utils = std.mem.endsWith(u8, target, "utils.js");
-    const is_icons = std.mem.endsWith(u8, target, "icons.js");
-    const is_dialog = std.mem.endsWith(u8, target, "dialog.js");
-    const is_usage = std.mem.endsWith(u8, target, "usage.js");
-    const is_status = std.mem.endsWith(u8, target, "status.js");
-    const is_attachments = std.mem.endsWith(u8, target, "attachments.js");
-    const is_logs_asset = std.mem.endsWith(u8, target, "logs.js");
-    const is_plugins = std.mem.endsWith(u8, target, "plugins.js");
-    const is_palette = std.mem.endsWith(u8, target, "palette.js");
-    const is_modelpicker = std.mem.endsWith(u8, target, "modelpicker.js");
-    const is_tools = std.mem.endsWith(u8, target, "tools.js");
-    const is_ui = std.mem.endsWith(u8, target, "ui.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_arena3d_view) &render_arena3d_view else if (is_todos_view) &render_todos_view else if (is_models_view) &render_models_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_ai_disclosure) &render_ai_disclosure else if (is_scroll) &render_scroll else if (is_run_metrics) &render_run_metrics else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
-    // Must stay in lockstep with `cache` above. A missing gzip slot falls
-    // through to gzip_js (app.js): a gzip client then receives app.js at this
-    // path, and relative imports resolve under the wrong directory
-    // (`core/run-metrics.js` serving app.js became `/core/core/utils.js` 404s
-    // and an empty main column).
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_arena3d_view) &gzip_arena3d_view else if (is_todos_view) &gzip_todos_view else if (is_models_view) &gzip_models_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_ai_disclosure) &gzip_ai_disclosure else if (is_scroll) &gzip_scroll else if (is_run_metrics) &gzip_run_metrics else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
+    const kind = webuiAssetKind(target);
+    const cache = webuiRenderCache(kind);
+    const gz = webuiGzipCache(kind);
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
-    const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
+    const content_type: []const u8 = if (kind == .css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
     // These are compiled into the binary and change with every rebuild, so
     // they cannot carry a far-future cache lifetime, but re-sending the same
@@ -13733,6 +13773,7 @@ var render_palette: RenderCache = .{};
 var render_modelpicker: RenderCache = .{};
 var render_tools: RenderCache = .{};
 var render_ui: RenderCache = .{};
+var render_slash: RenderCache = .{};
 
 var gzip_page: GzipCache = .{};
 var gzip_css: GzipCache = .{};
@@ -13774,6 +13815,7 @@ var gzip_palette: GzipCache = .{};
 var gzip_modelpicker: GzipCache = .{};
 var gzip_tools: GzipCache = .{};
 var gzip_ui: GzipCache = .{};
+var gzip_slash: GzipCache = .{};
 var gzip_preact: GzipCache = .{};
 var gzip_htm: GzipCache = .{};
 var gzip_signals: GzipCache = .{};
@@ -13784,6 +13826,96 @@ var gzip_three: GzipCache = .{};
 var gzip_three_core: GzipCache = .{};
 var gzip_patternfly: GzipCache = .{};
 var gzip_patternfly_addons: GzipCache = .{};
+
+fn webuiRenderCache(kind: WebuiAssetKind) *RenderCache {
+    return switch (kind) {
+        .css => &render_css,
+        .js => &render_js,
+        .boot => &render_preact_boot,
+        .board_view => &render_board_view,
+        .goals_view => &render_goals_view,
+        .knowledge_view => &render_knowledge_view,
+        .prompts_view => &render_prompts_view,
+        .arena_view => &render_arena_view,
+        .arena3d_view => &render_arena3d_view,
+        .todos_view => &render_todos_view,
+        .models_view => &render_models_view,
+        .vendor => &render_vendor,
+        .chat => &render_chat,
+        .labels => &render_labels,
+        .goals => &render_goals,
+        .stream => &render_stream,
+        .theme => &render_theme,
+        .slash => &render_slash,
+        .overlay => &render_overlay,
+        .search => &render_search,
+        .composer => &render_composer,
+        .ai_disclosure => &render_ai_disclosure,
+        .scroll => &render_scroll,
+        .run_metrics => &render_run_metrics,
+        .markdown => &render_markdown,
+        .graph => &render_graph,
+        .board => &render_board,
+        .fleet => &render_fleet,
+        .utils => &render_utils,
+        .icons => &render_icons,
+        .ui => &render_ui,
+        .dialog => &render_dialog,
+        .usage => &render_usage,
+        .status => &render_status,
+        .attachments => &render_attachments,
+        .logs => &render_logs,
+        .plugins => &render_plugins,
+        .palette => &render_palette,
+        .modelpicker => &render_modelpicker,
+        .tools => &render_tools,
+    };
+}
+
+fn webuiGzipCache(kind: WebuiAssetKind) *GzipCache {
+    return switch (kind) {
+        .css => &gzip_css,
+        .js => &gzip_js,
+        .boot => &gzip_preact_boot,
+        .board_view => &gzip_board_view,
+        .goals_view => &gzip_goals_view,
+        .knowledge_view => &gzip_knowledge_view,
+        .prompts_view => &gzip_prompts_view,
+        .arena_view => &gzip_arena_view,
+        .arena3d_view => &gzip_arena3d_view,
+        .todos_view => &gzip_todos_view,
+        .models_view => &gzip_models_view,
+        .vendor => &gzip_vendor,
+        .chat => &gzip_chat,
+        .labels => &gzip_labels,
+        .goals => &gzip_goals,
+        .stream => &gzip_stream,
+        .theme => &gzip_theme,
+        .slash => &gzip_slash,
+        .overlay => &gzip_overlay,
+        .search => &gzip_search,
+        .composer => &gzip_composer,
+        .ai_disclosure => &gzip_ai_disclosure,
+        .scroll => &gzip_scroll,
+        .run_metrics => &gzip_run_metrics,
+        .markdown => &gzip_markdown,
+        .graph => &gzip_graph,
+        .board => &gzip_board,
+        .fleet => &gzip_fleet,
+        .utils => &gzip_utils,
+        .icons => &gzip_icons,
+        .ui => &gzip_ui,
+        .dialog => &gzip_dialog,
+        .usage => &gzip_usage,
+        .status => &gzip_status,
+        .attachments => &gzip_attachments,
+        .logs => &gzip_logs,
+        .plugins => &gzip_plugins,
+        .palette => &gzip_palette,
+        .modelpicker => &gzip_modelpicker,
+        .tools => &gzip_tools,
+    };
+}
 
 /// A JSON body, gzipped when the client takes it and the saving is worth the
 /// work. Uncached on purpose: these bodies are per-request (a session list, a
@@ -16251,6 +16383,33 @@ test "the webui asset route covers every embedded module, arena.js included" {
     for (webui_asset_paths, 0..) |p, i| {
         try std.testing.expect(std.mem.startsWith(u8, p, "/webui/"));
         for (webui_asset_paths[i + 1 ..]) |q| try std.testing.expect(!std.mem.eql(u8, p, q));
+    }
+}
+
+test "every webui asset except app.js has its own cache kind" {
+    // slash.js was on webui_asset_paths but reused app.js's render/gzip
+    // slot: a gzip client got app.js at /webui/core/slash.js and then
+    // requested /webui/core/core/utils.js (and the rest of app.js's
+    // relative imports) as 404s.
+    try std.testing.expectEqual(WebuiAssetKind.slash, webuiAssetKind("/webui/core/slash.js"));
+    try std.testing.expectEqual(WebuiAssetKind.js, webuiAssetKind("/webui/app.js"));
+    try std.testing.expect(webuiRenderCache(.slash) != webuiRenderCache(.js));
+    try std.testing.expect(webuiGzipCache(.slash) != webuiGzipCache(.js));
+
+    var seen = [_]bool{false} ** std.meta.tags(WebuiAssetKind).len;
+    for (webui_asset_paths) |p| {
+        const k = webuiAssetKind(p);
+        if (std.mem.eql(u8, p, "/webui/app.js")) {
+            try std.testing.expectEqual(WebuiAssetKind.js, k);
+            continue;
+        }
+        try std.testing.expect(k != .js);
+        const idx = @intFromEnum(k);
+        if (seen[idx]) {
+            std.debug.print("webui asset {s} shares cache kind {s}\n", .{ p, @tagName(k) });
+            return error.AliasedWebuiCache;
+        }
+        seen[idx] = true;
     }
 }
 
