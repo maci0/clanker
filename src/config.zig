@@ -406,6 +406,11 @@ pub const Agent = struct {
     /// these are the remaining components a guest reaches by prefixing its
     /// relative path with the component name. Empty everywhere else.
     sandbox_roots: []const SandboxRoot = &.{},
+    /// Workspace (project) id the current run belongs to, set at runtime by the
+    /// run entry points (RFC 0001). "" is the default workspace. Used to name
+    /// the project's `#general` board room (`ws:<id>`), so a goal loop's card
+    /// actions land in the project feed rather than the global `board` room.
+    workspace_id: []const u8 = "",
     /// Directory holding reusable prompt templates ("workflows", Cursor-style).
     workflows_dir: []const u8 = "workflows",
     /// Directory for shared chain pipelines (tool-level, not prompt-level).
@@ -5159,7 +5164,7 @@ test "config.toml documents every key the loader accepts" {
     // Fields that are not config keys. `shared_root` is set by `run
     // --worktree` at runtime and deliberately unreadable from a file; the
     // rest are the parsed *results* of keys rather than keys themselves.
-    const not_keys = [_][]const u8{ "shared_root", "sandbox_roots", "name", "models", "context_window_set", "max_tokens_set" };
+    const not_keys = [_][]const u8{ "shared_root", "sandbox_roots", "workspace_id", "name", "models", "context_window_set", "max_tokens_set" };
     inline for (.{ Agent, Improve, Modules, Web, Notify, Chatrooms, Kernel, Debug, Mesh, Ttsr, TtsrRule, Advisor, Instance, Tui, Serve, Model, Provider }) |T| {
         inline for (@typeInfo(T).@"struct".fields) |f| {
             comptime var skip = false;

@@ -25,7 +25,7 @@
       },
       "subtask_id": {
         "type": "string",
-        "description": "Subtask id, for toggle and remove"
+        "description": "Checklist item id. For toggle/remove it names the item. For subtask_add it is an optional stable id (a goal task id, RFC 0001); re-adding the same id folds to one item instead of duplicating."
       },
       "parent_subtask_id": {
         "type": "string",

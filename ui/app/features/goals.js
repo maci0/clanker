@@ -74,6 +74,40 @@ function findGoal(goals, gid) {
   return null;
 }
 
+/* A goal's public tasks: visible_to is absent or empty. Private tasks (a
+   non-empty visible_to list) never project onto the board (RFC 0001). */
+function publicTasksOf(g) {
+  var tasks = g.tasks || [];
+  var out = [];
+  for (var i = 0; i < tasks.length; i++) {
+    var t = tasks[i];
+    if (!t || !t.id || !t.text) continue;
+    if ((t.visible_to || []).length === 0) out.push(t);
+  }
+  return out;
+}
+
+/* Projects a goal's public tasks onto its mirror card's checklist. The card is
+   not the store: goals.json owns the tasks, and this only keeps the visible
+   checklist in step. Stable ids (the goal task id) make the projection
+   idempotent — re-adding the same task folds to one checklist item. */
+function syncGoalPublicTasks(g, card) {
+  var tasks = publicTasksOf(g);
+  var subs = card.subtasks || [];
+  for (var i = 0; i < tasks.length; i++) {
+    var t = tasks[i];
+    var sub = null;
+    for (var j = 0; j < subs.length; j++) {
+      if (subs[j].id === t.id) { sub = subs[j]; break; }
+    }
+    if (!sub) {
+      postBoard({ op: "subtask_add", id: card.id, subtask_id: t.id, text: t.text, goal_sync: false }, null);
+    } else if (!!sub.done !== !!t.done) {
+      postBoard({ op: "subtask_toggle", id: card.id, subtask_id: t.id, done: !!t.done, goal_sync: false }, null);
+    }
+  }
+}
+
 /* Mirrors goals onto the board so live work is visible there. Idempotent by
    construction: a goal whose card exists is only reconciled (link persisted
    if missing, column corrected when the status pins one), and a goal without
@@ -96,6 +130,7 @@ function mirrorGoalsToBoard(goals) {
         if (pinned && card.column !== pinned) {
           postBoard({ op: "move", id: card.id, column: pinned, goal_sync: false }, null);
         }
+        syncGoalPublicTasks(g, card);
         return;
       }
       if (status === "abandoned") return;

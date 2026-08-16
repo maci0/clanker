@@ -40,6 +40,29 @@
         "type": "integer",
         "minimum": 0
       },
+      "task_add": {
+        "type": "object",
+        "description": "Add a first-class task to this goal. text is required; visible_to is an array of instance ids (empty means public).",
+        "properties": {
+          "id": { "type": "string" },
+          "text": { "type": "string" },
+          "visible_to": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["text"]
+      },
+      "task_toggle": {
+        "type": "object",
+        "description": "Mark a task done or not done.",
+        "properties": {
+          "id": { "type": "string" },
+          "done": { "type": "boolean" }
+        },
+        "required": ["id"]
+      },
+      "task_remove": {
+        "type": "string",
+        "description": "Remove a task by id."
+      },
       "remove": {
         "type": "boolean"
       }

@@ -251,6 +251,27 @@ pub const Worktree = struct {
     }
 };
 
+/// Sanitized instance identity for a branch name, so two instances sharing one
+/// checkout with distinct worktrees cannot generate the same branch (RFC 0001
+/// hazard 3). Git branch names forbid spaces and most punctuation; everything
+/// outside `[A-Za-z0-9_-]` folds to `-`. An empty id folds to "self".
+pub fn branchInstanceTag(out: []u8, instance_id: []const u8) []const u8 {
+    const src = if (instance_id.len == 0) "self" else instance_id;
+    const n = @min(src.len, out.len);
+    for (src[0..n], 0..) |c, i| {
+        out[i] = if (std.ascii.isAlphanumeric(c) or c == '-' or c == '_') c else '-';
+    }
+    return out[0..n];
+}
+
+test "branchInstanceTag folds disallowed chars and defaults empty" {
+    var buf: [16]u8 = undefined;
+    try std.testing.expectEqualStrings("self", branchInstanceTag(&buf, ""));
+    try std.testing.expectEqualStrings("clanker-robot", branchInstanceTag(&buf, "clanker-robot"));
+    try std.testing.expectEqualStrings("a-b-c", branchInstanceTag(&buf, "a b:c"));
+    try std.testing.expectEqualStrings("under_score", branchInstanceTag(&buf, "under_score"));
+}
+
 /// Creates a worktree on a fresh branch cut from `base_branch`'s current
 /// tip. Must be called before any chdir into the result: `git worktree add`
 /// targets the repo the caller's cwd is already in.

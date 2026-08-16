@@ -355,11 +355,9 @@ pub fn sandboxFor(
         // An exec-capable tool sees the harness's exec policy in its own
         // `config` so the git.zig / gh.zig guests can mirror the host's deny
         // decision instead of pre-empting it (e.g. a hardcoded in-tool "merge
-        // is denied" would block what git_remote_ops just granted).
-        .config_json = if (tool.exec_allow.len > 0)
-            try execPolicyConfig(arena, tool.config_json, cfg)
-        else
-            tool.config_json,
+        // is denied" would block what git_remote_ops just granted). Board
+        // tools get the project's `#general` room the same way (RFC 0001).
+        .config_json = try toolConfigFor(arena, tool, cfg),
     };
 }
 
@@ -432,6 +430,49 @@ pub fn execPolicyConfig(
     return out.toOwnedSlice();
 }
 
+/// The board tools are one wasm (`board.wasm`) with a `kanban` multiplexed
+/// entry and one op per `kanban_*` tool. The project's `#general` room is
+/// `ws:<id>` (RFC 0001); a non-empty workspace defaults these tools to that
+/// room so card actions land in the project feed instead of the global `board`.
+fn isBoardTool(name: []const u8) bool {
+    return std.mem.eql(u8, name, "kanban") or std.mem.startsWith(u8, name, "kanban_");
+}
+
+/// Adds `"room": "ws:<id>"` to a board tool's descriptor config so board.zig
+/// picks the project's `#general` room when the caller does not name one. The
+/// descriptor's own keys (the pinned `op`) are kept; only `room` is overridden.
+pub fn boardConfig(
+    arena: std.mem.Allocator,
+    tool_config: []const u8,
+    workspace_id: []const u8,
+) ![]const u8 {
+    const room = try std.fmt.allocPrint(arena, "ws:{s}", .{workspace_id});
+    var obj: std.json.ObjectMap = if (std.json.parseFromSliceLeaky(std.json.Value, arena, tool_config, .{})) |v| blk: {
+        if (v == .object) break :blk v.object;
+        break :blk std.json.ObjectMap.empty;
+    } else |_| std.json.ObjectMap.empty;
+    try obj.put(arena, "room", .{ .string = room });
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+    try s.write(std.json.Value{ .object = obj });
+    return out.toOwnedSlice();
+}
+
+/// The effective `config` object a tool sees in `ck_config`: the harness's exec
+/// policy for exec-capable tools, the project board room for the kanban tools,
+/// and the descriptor's own config otherwise. One function so the sequential
+/// sandbox and the parallel worker inject the same thing.
+pub fn toolConfigFor(
+    arena: std.mem.Allocator,
+    tool: *const registry.Tool,
+    cfg: *const config_mod.Config,
+) ![]const u8 {
+    if (tool.exec_allow.len > 0) return execPolicyConfig(arena, tool.config_json, cfg);
+    if (isBoardTool(tool.name) and cfg.agent.workspace_id.len > 0)
+        return boardConfig(arena, tool.config_json, cfg.agent.workspace_id);
+    return tool.config_json;
+}
+
 fn appendNetworkAllow(
     arena: std.mem.Allocator,
     current: []const []const u8,
@@ -453,6 +494,18 @@ fn isResearchTool(name: []const u8) bool {
     return std.mem.eql(u8, name, "web_fetch") or
         std.mem.eql(u8, name, "web_search") or
         std.mem.eql(u8, name, "research");
+}
+
+test "boardConfig injects the project room and keeps the pinned op" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const with_op = try boardConfig(arena, "{\"op\":\"list\"}", "relumea");
+    try std.testing.expectEqualStrings("{\"op\":\"list\",\"room\":\"ws:relumea\"}", with_op);
+
+    const bare = try boardConfig(arena, "{}", "7dtd");
+    try std.testing.expectEqualStrings("{\"room\":\"ws:7dtd\"}", bare);
 }
 
 test "execPolicyConfig injects git_remote_ops and exec_pattern_allow for exec tools" {

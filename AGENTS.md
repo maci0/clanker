@@ -132,8 +132,10 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   lines): a `*` walk used to serialize every path or fail the call with
   `too_large`.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
-  workspace registry (`workspace.zig`: folder + chat-history set; empty id is
-  the serve cwd), execution graphs, sub-agents, autolearn, workflows. The
+  workspace registry (`workspace.zig`: a project id over one or more named
+  roots + the chat-history set; empty id is the serve cwd; ids reject `/`,
+  `\` and `:` so the `ws:<id>:goal:<id>` room namespace stays unambiguous,
+  RFC 0001), execution graphs, sub-agents, autolearn, workflows. The
   auto-thinking classifier's prompt/parse/effort map is
   `tools/zig/thinking_logic.zig` (host-tested); `thinking.zig` keeps
   provider resolution and the fail-open `client.chat` call. The

@@ -3695,7 +3695,8 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
             log.log(.error_, "run --worktree: could not read the current directory: {s}", .{@errorName(err)});
             return err;
         };
-        const wt_id = try std.fmt.allocPrint(gpa, "{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
+        var tag_buf: [48]u8 = undefined;
+        const wt_id = try std.fmt.allocPrint(gpa, "{d}-{s}", .{ std.Io.Timestamp.now(io, .real).nanoseconds, worktree_mod.branchInstanceTag(&tag_buf, selfInstanceId(&cfg)) });
         defer gpa.free(wt_id);
         var created = worktree_mod.createOn(gpa, io, wt_id, "clanker/run-", .run) catch |err| {
             if (!isolation_required) {
@@ -5602,7 +5603,8 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     defer if (original_cwd) |p| gpa.free(p[0 .. p.len + 1]);
     var wt: ?worktree_mod.Worktree = null;
     if (!opts.dry_run and original_cwd != null) {
-        const wt_id = try std.fmt.allocPrint(gpa, "{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
+        var tag_buf: [48]u8 = undefined;
+        const wt_id = try std.fmt.allocPrint(gpa, "{d}-{s}", .{ std.Io.Timestamp.now(io, .real).nanoseconds, worktree_mod.branchInstanceTag(&tag_buf, selfInstanceId(&cfg)) });
         defer gpa.free(wt_id);
         if (worktree_mod.create(gpa, io, wt_id)) |created| {
             wt = created;
@@ -13950,6 +13952,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid workspace\"}");
         return;
     }
+    run_cfg.agent.workspace_id = run_workspace;
     const ws_root = workspaceSandboxPath(io, arena, run_workspace);
     var wt: ?worktree_mod.Worktree = null;
     defer if (wt) |*w| w.deinit(gpa);
@@ -13962,7 +13965,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
-        const wt_id = std.fmt.allocPrint(gpa, "webui-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds}) catch {
+        var tag_buf: [48]u8 = undefined;
+        const wt_id = std.fmt.allocPrint(gpa, "webui-{d}-{s}", .{ std.Io.Timestamp.now(io, .real).nanoseconds, worktree_mod.branchInstanceTag(&tag_buf, selfInstanceId(cfg)) }) catch {
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
