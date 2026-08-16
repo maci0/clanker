@@ -55,3 +55,14 @@ Resolved. No handoff.
 ## References
 
 - Related bug: none yet
+
+## Enhancement 2026-08-16
+
+`failureWindow` now also handles `zig build test` transcripts: a failing test
+prints a `✘`-prefixed line in the middle of a long log (its `error:`-free, since
+passing config tests deliberately load a bad file and log it), so the window
+prefers the first `✘` marker when one exists, otherwise the first real
+diagnostic line. It also decodes the exec-wrapper JSON `stdout` before windowing
+(the wrapper escapes the transcript) and spills the full decoded transcript to
+`zig-out/gate-failure.txt` when a build or test fails, so the complete diagnostic
+survives display truncation. Window capped at 3000 bytes.
