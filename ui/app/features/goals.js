@@ -705,9 +705,9 @@ export function bindGoals(deps) {
   el.goalForm.addEventListener("submit", function (e) {
     e.preventDefault();
     var objective = el.goalObjective.value.trim();
-    var criterion = el.goalCriterion.value.trim();
-    // Criterion is optional: the goal loop's first turn drafts a measurable one
-    // when it is left blank (PRD 0035 Goal 5). Only the objective is required.
+    // The criterion field is gone in the one-input form; it is optional and
+    // drafted by the goal loop's first turn (PRD 0035 Goal 5).
+    var criterion = el.goalCriterion ? el.goalCriterion.value.trim() : "";
     if (!objective) return;
     var budgetRaw = el.goalMaxIterations.value.trim();
     var budget = budgetRaw ? parseInt(budgetRaw, 10) : 0;
@@ -725,7 +725,7 @@ export function bindGoals(deps) {
       // likely to be refused, and retyping the objective to fix it is a tax.
       if (!d) return;
       el.goalObjective.value = "";
-      el.goalCriterion.value = "";
+      if (el.goalCriterion) el.goalCriterion.value = "";
       el.goalMaxIterations.value = "";
       if (el.goalWorktree) el.goalWorktree.checked = !!window.clankerWorktreeDefault;
       el.goalsStatus.textContent = "Goal saved in Backlog. Start it when ready.";

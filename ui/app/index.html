@@ -575,10 +575,8 @@ lamps carry further). The seven named palettes ride the same tokens.
       <details class="board-create-fold" id="board-create-fold">
         <summary>New goal</summary>
       <form id="goal-form" class="goal-form board-goal-form">
-        <label for="goal-objective">Objective</label>
-        <input type="text" id="goal-objective" placeholder="What should clanker achieve?" maxlength="2000" autocomplete="off" required>
-        <label for="goal-criterion">Done when</label>
-        <input type="text" id="goal-criterion" placeholder="The observable completion criterion" maxlength="2000" autocomplete="off" required>
+        <label for="goal-objective">Goal</label>
+        <input type="text" id="goal-objective" placeholder="What should clanker achieve? (completion criterion is optional — it is drafted automatically)" maxlength="2000" autocomplete="off" required>
         <label for="goal-max-iterations">Max steps</label>
         <input type="number" id="goal-max-iterations" placeholder="usually 50" min="1" max="1000" autocomplete="off"
                title="How many tool steps each run of this goal may take. Leave blank to use the configured default (usually 50). The hard ceiling is 1000.">

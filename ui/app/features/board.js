@@ -357,8 +357,7 @@ function boardColumn(col, s) {
     var t = qaTextarea.value.trim(); if (!t) return;
     el.goalObjective.value = t;
     closeQuickAdd();
-    el.goalCriterion.focus();
-    el.boardStatus.textContent = "Add the completion criterion to create this goal card.";
+    el.boardStatus.textContent = "Goal card ready — press Create goal card (the completion criterion is optional).";
   }
   qaSave.addEventListener("click", function(e){ e.stopPropagation(); doCreate(); });
   var colEl = T.section({
