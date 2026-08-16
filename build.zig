@@ -110,6 +110,11 @@ pub fn build(b: *std.Build) void {
                     .target = exe_target,
                     .optimize = optimize,
                 }) },
+                .{ .name = "commit_logic", .module = b.createModule(.{
+                    .root_source_file = b.path("tools/zig/commit_logic.zig"),
+                    .target = exe_target,
+                    .optimize = optimize,
+                }) },
                 .{ .name = "thinking_logic", .module = b.createModule(.{
                     .root_source_file = b.path("tools/zig/thinking_logic.zig"),
                     .target = exe_target,
@@ -202,6 +207,11 @@ pub fn build(b: *std.Build) void {
             }) },
             .{ .name = "schedule_cron", .module = b.createModule(.{
                 .root_source_file = b.path("tools/zig/schedule_cron.zig"),
+                .target = test_target,
+                .optimize = optimize,
+            }) },
+            .{ .name = "commit_logic", .module = b.createModule(.{
+                .root_source_file = b.path("tools/zig/commit_logic.zig"),
                 .target = test_target,
                 .optimize = optimize,
             }) },

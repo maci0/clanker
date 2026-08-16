@@ -6,6 +6,67 @@ pub const types = [_][]const u8{
     "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
 };
 
+/// One proposed commit, in the shape the `smart_commit` guest emits.
+pub const Commit = struct {
+    message: []const u8 = "",
+    files: []const []const u8 = &.{},
+};
+
+/// A whole `smart_commit` answer. `message` is the top-level one `writeEmpty`
+/// uses ("nothing to commit"); the per-commit messages live on `commits`.
+pub const Plan = struct {
+    dry_run: bool = false,
+    /// Why the grouping deviated, when it did (a degenerate dependency cycle
+    /// collapses every group into one commit).
+    note: []const u8 = "",
+    /// Paths the guest refused to stage, lock files above all. A reader who
+    /// does not see them here will assume they were committed.
+    excluded: []const []const u8 = &.{},
+    commits: []const Commit = &.{},
+    message: []const u8 = "",
+};
+
+/// Renders a plan for a terminal.
+///
+/// The guest answers structured JSON and this is the one place that turns it
+/// into prose, so `clanker commit` and any other surface show the same thing.
+/// It lives here rather than in the guest because a rendered `text` field
+/// would force every consumer -- the web UI, the model -- to parse prose back
+/// out of a reply that was already structured.
+///
+/// The dry-run and applied wordings are deliberately different: the defect
+/// this replaces printed a proposal, asked for confirmation, and then reported
+/// success without writing anything.
+pub fn renderPlan(alloc: std.mem.Allocator, plan: Plan) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+
+    if (plan.commits.len == 0) {
+        const why = if (plan.message.len > 0) plan.message else "nothing to commit";
+        try out.print(alloc, "{s}\n", .{why});
+        try appendExcluded(alloc, &out, plan.excluded);
+        return out.toOwnedSlice(alloc);
+    }
+
+    try out.print(alloc, "{s} {d} commit(s):\n\n", .{
+        if (plan.dry_run) "would write" else "committed",
+        plan.commits.len,
+    });
+    for (plan.commits) |c| {
+        try out.print(alloc, "  {s}\n", .{c.message});
+        for (c.files) |f| try out.print(alloc, "      {s}\n", .{f});
+        try out.appendSlice(alloc, "\n");
+    }
+    try appendExcluded(alloc, &out, plan.excluded);
+    if (plan.note.len > 0) try out.print(alloc, "note: {s}\n", .{plan.note});
+    return out.toOwnedSlice(alloc);
+}
+
+fn appendExcluded(alloc: std.mem.Allocator, out: *std.ArrayList(u8), excluded: []const []const u8) !void {
+    if (excluded.len == 0) return;
+    try out.appendSlice(alloc, "excluded:\n");
+    for (excluded) |f| try out.print(alloc, "  {s}\n", .{f});
+}
+
 pub fn isLockFile(path: []const u8) bool {
     if (std.mem.endsWith(u8, path, ".lock")) return true;
     const base = std.fs.path.basename(path);
@@ -170,4 +231,71 @@ test "all-groups cycle is degenerate" {
     var d1 = [_]usize{0};
     const deps = [_][]const usize{ &d0, &d1 };
     try std.testing.expectError(error.DegenerateCycle, topoSort(arena_state.allocator(), 2, &deps));
+}
+
+test "renderPlan lists each proposed commit with its files" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const files_a = [_][]const u8{ "src/cli.zig", "src/main.zig" };
+    const files_b = [_][]const u8{"docs/README.md"};
+    const commits = [_]Commit{
+        .{ .message = "fix(cli): stop double-wrapping structured tool input", .files = &files_a },
+        .{ .message = "docs: record the commit contract", .files = &files_b },
+    };
+    const text = try renderPlan(arena, .{ .dry_run = true, .commits = &commits });
+
+    // A proposal a person is about to approve has to show what it would do:
+    // the message it would write and the files each commit would carry.
+    try std.testing.expect(std.mem.find(u8, text, "fix(cli): stop double-wrapping structured tool input") != null);
+    try std.testing.expect(std.mem.find(u8, text, "src/cli.zig") != null);
+    try std.testing.expect(std.mem.find(u8, text, "docs/README.md") != null);
+    try std.testing.expect(std.mem.endsWith(u8, text, "\n"));
+}
+
+test "renderPlan names the empty case rather than printing nothing" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // writeEmpty in the guest answers {ok, commits:[], message:"nothing to
+    // commit"}: a top-level message, not a per-commit one, so the renderer
+    // has to read both shapes or an empty staging area prints a blank line.
+    const text = try renderPlan(arena, .{ .commits = &.{}, .message = "nothing to commit" });
+    try std.testing.expect(std.mem.find(u8, text, "nothing to commit") != null);
+}
+
+test "renderPlan surfaces excluded files and the note" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const excluded = [_][]const u8{"zig-out/bin/clanker.lock"};
+    const files = [_][]const u8{"src/a.zig"};
+    const commits = [_]Commit{.{ .message = "chore: touch a", .files = &files }};
+    const text = try renderPlan(arena, .{
+        .dry_run = true,
+        .commits = &commits,
+        .excluded = &excluded,
+        .note = "one group fell back to a single commit",
+    });
+    // Excluded paths are the ones a reader would otherwise assume were
+    // committed, so they cannot be silently dropped from the preview.
+    try std.testing.expect(std.mem.find(u8, text, "zig-out/bin/clanker.lock") != null);
+    try std.testing.expect(std.mem.find(u8, text, "one group fell back to a single commit") != null);
+}
+
+test "renderPlan reports what was written once it is not a dry run" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const files = [_][]const u8{"src/a.zig"};
+    const commits = [_]Commit{.{ .message = "chore: touch a", .files = &files }};
+    const text = try renderPlan(arena, .{ .dry_run = false, .commits = &commits });
+    // The applied wording must differ from the proposal wording: the whole
+    // failure this renderer exists to fix was a verb that said it had done
+    // something it had not.
+    try std.testing.expect(std.mem.find(u8, text, "committed") != null);
 }

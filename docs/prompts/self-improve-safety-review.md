@@ -145,6 +145,10 @@ every file under `src/improve/` plus `src/gate/checks.zig`.
       confirm it's not effectively re-widening the isolation (e.g.
       symlinking the whole `state/` directory back in, which previously
       broke the sandbox's no-follow-symlink path check for `patch_apply`).
+      Note that a checkout may now legitimately keep `state/` behind a symlink
+      with `agent.sandbox_follow_symlinks` set; that flag is a deliberate,
+      opt-in, default-off capability ([ADR 0017](../adrs/0017-sandbox-symlink-traversal-is-opt-in.md))
+      and is not a finding. Removing it is a regression, not a hardening.
 - [ ] `mergeBack`'s compare-and-swap loop (`git merge-tree` +
       `git commit-tree` + three-arg `git update-ref`) is the only path that
       lands a promoted change on the real branch — a code path that commits

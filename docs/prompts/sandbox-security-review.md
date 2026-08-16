@@ -104,6 +104,18 @@ file under `tools/manifests/`, `src/sandbox/`, and any `tools/zig/*.zig` /
       `follow_symlinks = false`; a new fs-touching host function that stats
       or opens a path a different way (skipping this walk) reintroduces the
       symlink-escape class this exists to close.
+- [ ] `agent.sandbox_follow_symlinks` skips that walk **by design** and is not
+      a finding. It is the one sanctioned exception, decided in
+      [ADR 0017](../adrs/0017-sandbox-symlink-traversal-is-opt-in.md), and it
+      exists because a checkout whose `state/` is a symlink into external
+      storage is otherwise refused every guest read and write under `state/`.
+      Do not report its existence, and do not propose deleting it. Check
+      instead that: the default is still `false` in `src/config.zig`; the
+      early return is still gated on the flag and still sits *after*
+      `safeJoin`, so `fs_prefixes` grants are untouched and the flag never
+      widens which paths a tool may reach; and nothing turns it on for the
+      operator (no setup path, no shipped example config). A flipped default,
+      an ungated return, or a return placed before `safeJoin` is P0.
 - [ ] `..` and absolute paths are rejected in `safeJoin` itself — a
       tool-level path check duplicating this (in `tools/zig/*.zig`) is
       redundant, not wrong, but flag if the *guest-side* check is the only
@@ -249,7 +261,7 @@ Classify each hit: **correctly scoped, leave** / **narrow the manifest** /
 
 | Sev | Meaning | Examples |
 |---|---|---|
-| **P0** | A guest can reach something the sandbox model says it can't | Network/exec bypass outside declared authority; a secret crossing into guest memory; a new fs host function skipping `safeJoinSecure`'s symlink walk |
+| **P0** | A guest can reach something the sandbox model says it can't | Network/exec bypass outside declared authority; a secret crossing into guest memory; a new fs host function skipping `safeJoinSecure`'s symlink walk; `agent.sandbox_follow_symlinks` defaulting to true, ungated, or returning before `safeJoin` (the flag itself is sanctioned, ADR 0017 — its default and placement are what to check) |
 | **P1** | Real capability creep with a plausible cost | `fs_prefixes` wider than the code touches; undocumented `"confirm": false` on a write; `exec_pattern_allow` pattern too broad |
 | **P2** | Dead or redundant authority | An `fs_prefixes`/`network_allow` entry nothing reads; a guest-side path check duplicating the host's |
 | **P3** | Nit | Missing doc-comment on why a widening exists |

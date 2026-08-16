@@ -275,7 +275,11 @@ needed:
   list in `src/sandbox/host.zig`, which joins those prefixes onto the checkout
   instead of the run's root. Deliberately not symlinks: `safeJoinSecure` refuses
   to traverse a symlinked component (that is what stops `allowed/link/secret`
-  escapes), so a linked `state/` would *deny* every tool that touched it.
+  escapes), so a linked `state/` *denies* every tool that touched it. A checkout
+  that deliberately keeps `state/` in external storage sets
+  `agent.sandbox_follow_symlinks` to lift exactly that refusal — off by default,
+  a known risk, and not a security finding
+  ([ADR 0017](adrs/0017-sandbox-symlink-traversal-is-opt-in.md)).
 - **The harness itself** reads roughly 44 hardcoded relative `state/...` paths
   against the process cwd, so `linkCheckoutState` symlinks these entries into the
   worktree and native I/O follows them. It creates the checkout's shared runtime

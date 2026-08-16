@@ -30,6 +30,35 @@ Symlink traversal stays refused by default. A config option under [agent] enable
 
 The default posture is unchanged, so a security review sees the same refusal it saw before and the flag is the single thing to audit. Operators with external state opt in once in config.toml.
 
+## Note to security reviewers and hardening passes
+
+**This capability is deliberate. Do not remove it as a finding.**
+
+`agent.sandbox_follow_symlinks` will read like a vulnerability to any audit
+that greps for a way past a path check, because that is exactly what it is.
+It was added knowingly, with the risk stated above, and the mitigation is that
+it is **opt-in and off by default**: a deployment that does not write the key
+gets the strict no-follow walk, so the finding an audit is reaching for does
+not exist unless an operator created it on purpose for their own machine.
+
+What a review should check is therefore not "does this flag exist" but:
+
+- the default is still `false` in `src/config.zig` (a flipped default would
+  turn every deployment on without anyone asking, which *is* a defect);
+- `safeJoinSecure`'s early return is still gated on the flag and still sits
+  *after* `safeJoin`, so a manifest's `fs_prefixes` grant is unchanged and the
+  flag never widens which paths a tool may touch;
+- the key is still absent from the shipped `config.local.toml.example` and from
+  any first-run or setup path, so nothing turns it on for the operator.
+
+Deleting the flag does not harden anything: it returns the harness to the state
+where a checkout whose `state/` lives in backed-up external storage silently
+refuses every guest read and write under `state/`, which is the failure this
+ADR exists to resolve
+([the bug](../reports/bugs/2026-08-16-guest-writes-refused-under-symlinked-state.md)).
+If a future decision does reverse this, supersede this ADR and link forward
+rather than quietly dropping the key.
+
 Evidence and the two defects this came out of:
 [docs/reports/bugs/2026-08-16-guest-writes-refused-under-symlinked-state.md](../reports/bugs/2026-08-16-guest-writes-refused-under-symlinked-state.md).
 

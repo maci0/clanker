@@ -35,6 +35,7 @@ const host = @import("sandbox/host.zig");
 const raw_http = @import("util/raw_http.zig");
 const toml_edit = @import("util/toml_edit.zig");
 const json_util = @import("util/json.zig");
+const commit_logic = @import("commit_logic");
 // tui/transcript.zig's MdStream is still used by cmdRun's own run_md; the
 // rest of tui/* (input, region, statusbar, palette, approval, term) was
 // exclusive to the REPL that's now src/tui/repl.zig, and was
@@ -5898,9 +5899,15 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
     const dry = opts.dry_run;
     // The preview is a dry run either way: --dry-run only decides whether we
     // stop after showing it. The real commit below is the one that writes.
-    const preview = try toolText(io, init.gpa, arena, &cfg, init.environ_map, "smart_commit", "{\"dry_run\":true,\"scope\":\"staged\"}");
+    //
+    // Through toolJson, not toolText: toolText wraps whatever it is handed as
+    // {"args": "<string>"}, so passing this tool's own structured body made
+    // the guest see neither `dry_run` nor `scope` and fall back to its
+    // defaults -- dry_run true. The write below was a second dry run
+    // reporting success. toolText also demands a `text` field, which
+    // smart_commit does not emit, so the verb could not succeed at all.
+    const preview = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, true);
     try writeStdOut(io, preview);
-    try writeStdOut(io, "\n");
     if (dry) return;
     if (!opts.apply) {
         try writeStdOut(io, "Proceed? [y/N] ");
@@ -5913,9 +5920,79 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
             return;
         }
     }
-    const done = try toolText(io, init.gpa, arena, &cfg, init.environ_map, "smart_commit", "{\"dry_run\":false,\"scope\":\"staged\"}");
+    const done = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, false);
     try writeStdOut(io, done);
-    try writeStdOut(io, "\n");
+}
+
+/// One `smart_commit` call, rendered for a terminal.
+///
+/// The guest answers structured JSON; `commit_logic.renderPlan` is the single
+/// place that turns it into prose, so the CLI and any other surface show the
+/// same thing and the guest keeps a reply the web UI and the model can read.
+fn smartCommitPlan(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    dry_run: bool,
+) ![]const u8 {
+    const body = if (dry_run)
+        "{\"dry_run\":true,\"scope\":\"staged\"}"
+    else
+        "{\"dry_run\":false,\"scope\":\"staged\"}";
+    const raw = try toolJson(io, gpa, arena, cfg, environ_map, "smart_commit", body);
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch
+        return error.ToolBadOutput;
+    if (parsed != .object) return error.ToolBadOutput;
+    const ok = if (parsed.object.get("ok")) |k| (k == .bool and k.bool) else false;
+    if (!ok) {
+        const detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "refused") else "refused";
+        log.log(.error_, "commit: {s}", .{detail});
+        return error.ToolFailed;
+    }
+
+    var commits: std.ArrayList(commit_logic.Commit) = .empty;
+    if (parsed.object.get("commits")) |c| {
+        if (c == .array) {
+            for (c.array.items) |item| {
+                if (item != .object) continue;
+                var files: std.ArrayList([]const u8) = .empty;
+                if (item.object.get("files")) |f| {
+                    if (f == .array) {
+                        for (f.array.items) |p| {
+                            if (p == .string) try files.append(arena, p.string);
+                        }
+                    }
+                }
+                try commits.append(arena, .{
+                    .message = json_util.strFieldOrEmpty(item.object, "message"),
+                    .files = files.items,
+                });
+            }
+        }
+    }
+
+    var excluded: std.ArrayList([]const u8) = .empty;
+    if (parsed.object.get("excluded")) |e| {
+        if (e == .array) {
+            for (e.array.items) |p| {
+                if (p == .string) try excluded.append(arena, p.string);
+            }
+        }
+    }
+
+    // `dry_run` is echoed by the guest; trusting the reply rather than the
+    // request is what makes "committed" in the output mean a write happened.
+    const echoed = if (parsed.object.get("dry_run")) |d| (d == .bool and d.bool) else dry_run;
+
+    return commit_logic.renderPlan(arena, .{
+        .dry_run = echoed,
+        .note = json_util.strFieldOrEmpty(parsed.object, "note"),
+        .excluded = excluded.items,
+        .commits = commits.items,
+        .message = json_util.strFieldOrEmpty(parsed.object, "message"),
+    });
 }
 
 fn cmdGit(init: std.process.Init, opts: Options) !void {
