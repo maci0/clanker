@@ -416,6 +416,23 @@ do not let `state/claims/*.json` become something a consumer reads directly.
    same claim. Whether that is acceptable depends on what a claim is allowed
    to guard, which is a policy question this RFC should answer before A is
    built, not after.
+7. **Is invisibility the larger problem, and does it belong here at all?**
+   Recorded because it was found while answering this RFC, and because no
+   option above addresses it. On the day this was written the checkout held
+   74 local branches; 11 carried commits that existed on no remote, the
+   oldest five days old, including `fix/option-specific-help`,
+   `fix/worktree-shared-state` and `local/gitignore-local-dir`. Three
+   sessions had each reported their own state as clean, and each was telling
+   the truth: every one had answered "is *my* work pushed" rather than "is
+   this repository work safe". Nothing was contending, so a claim would have
+   caught none of it — a lease arbitrates writers who collide, and unpushed
+   work collides with nobody. Counting is what caught it, and the useful
+   distinction the count produced is **missing ref** versus **lost work**:
+   of 43 branches with no matching ref upstream, 11 held content and the
+   rest were stale pointers at commits already there. If this is worth
+   solving it is a different mechanism — something that answers "what here
+   exists nowhere else", periodically and without being asked. It may
+   deserve its own RFC rather than an option in this one.
 
 ## Next steps / action items
 
