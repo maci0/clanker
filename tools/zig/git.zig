@@ -227,10 +227,15 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (policy.patterns.len > 0) {
         var join_buf: [2048]u8 = undefined;
         var w: std.Io.Writer = .fixed(&join_buf);
-        w.writeAll("git") catch {};
-        for (args.items) |a| {
-            w.writeByte(' ') catch {};
-            w.writeAll(a) catch {};
+        // Fail-closed: never make a pattern-allow decision from argv data that does not fit.
+        var needed: usize = "git".len;
+        for (args.items) |a| needed += 1 + a.len;
+        if (needed <= join_buf.len) {
+            w.writeAll("git") catch {};
+            for (args.items) |a| {
+                w.writeByte(' ') catch {};
+                w.writeAll(a) catch {};
+            }
         }
         const joined = join_buf[0..w.end];
         for (policy.patterns) |pat| {
