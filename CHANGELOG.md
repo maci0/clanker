@@ -37,6 +37,22 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- A browsable run list in the web UI's Runs view. The view had only a
+  `<select>`, which can show one run at a time, so a page of recorded runs
+  could not be read without opening the dropdown and none of it was dated —
+  a listing that had gone stale looked exactly like a current one. Rows now
+  sit under Today / Yesterday / a date, each carrying its relative time, run
+  id, provider, step count, duration and token total. A nested run is
+  indented and names the run it belongs to. Clicking a row selects it through
+  the same `<select>`, so there is still one selection and the graph below is
+  unchanged. The filter box drives the list and the dropdown together.
+- `failed` on each entry of `GET /api/runs`, and `failed` in a recorded
+  graph. A run is failed when a check on it returned a failing verdict — the
+  agent loop records one per tool declared `check: true` — so a run with no
+  check node is unjudged rather than failed. The flag is stamped at write
+  time and stored with the other listing scalars, ahead of `task`, so a
+  picker reading the 4 KiB prefix can see it. Graphs recorded before this
+  read `false`.
 - HTTP endpoints for the five record stores on `clanker serve`:
   `GET|POST /api/reports`, `/api/rfc`, `/api/adr`, `/api/prd` and
   `/api/research`. Each relays the tool of the same name, so the CLI, the
@@ -469,6 +485,22 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker janitor` now sweeps the graphs of nested runs. Its predicate
+  matched only `run-*.json`, while a sub-agent run writes
+  `sub-<unix nanoseconds>.json` to the same directory, so those graphs were
+  outside both the newest-200 retention and the check made before deleting —
+  they accumulated for good and could not be removed even when named. A
+  directory of 208 graphs reported nothing to reclaim because only 187 of
+  them were `run-`; it now reports the 8 beyond the newest 200. The predicate
+  also now requires a parsable timestamp, so a hand-made `run-notes.json` is
+  left alone
+  (docs/reports/bugs/2026-08-17-janitor-never-prunes-sub-run-graphs.md).
+- Typing `failed` in the web UI's Runs filter no longer throws. The filter's
+  failure test read `nodes` as the node array of a whole graph, but the run
+  listing sends `nodes` as a count, so it threw a `TypeError` on the first
+  run with any steps. It could never have matched either, because the listing
+  carried no failure signal at all; it now does (see Added)
+  (docs/reports/bugs/2026-08-17-runs-filter-failed-keyword-throws.md).
 - Shift+Enter in `clanker repl` inserts a line break instead of spraying
   `warning(vaxis_parser): unhandled ss3: 4d` over the screen. Konsole's
   default keytab sends Shift+Return as `ESC O M`, which the vendored vaxis

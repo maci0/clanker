@@ -280,6 +280,8 @@ fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) 
         try s.write(g.duration_ms);
         try s.objectField("nodes");
         try s.write(listingNodeCount(g));
+        try s.objectField("failed");
+        try s.write(g.failed);
         try s.objectField("prompt_tokens");
         try s.write(g.total_prompt_tokens);
         try s.objectField("completion_tokens");
@@ -328,6 +330,9 @@ fn writeGraph(out: *lib.Out, alloc: std.mem.Allocator, value: std.json.Value) !v
 
     var stored = g;
     if (stored.node_count == 0) stored.node_count = std.math.cast(u32, stored.nodes.len) orelse std.math.maxInt(u32);
+    // Stamped now, while the nodes are here: a listing only ever reads the
+    // 4 KiB prefix, so a verdict left inside `nodes` is invisible to a picker.
+    if (!stored.failed) stored.failed = graph_listing.anyNodeFailed(g);
 
     var enc: std.Io.Writer.Allocating = .init(alloc);
     var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };

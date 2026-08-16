@@ -39,6 +39,12 @@ pub const GraphFile = struct {
     /// 4 KiB prefix. Absent on graphs recorded before the field; those fall
     /// back to `nodes.len` when the whole file fit in the prefix.
     node_count: u32 = 0,
+    /// Whether any check on this run returned a failing verdict, stamped at
+    /// write time by `anyNodeFailed`. A listing reads a 4 KiB prefix and never
+    /// sees `nodes`, so a run-level scalar is the only way a picker can tell a
+    /// failed run from a good one; graphs recorded before the field read
+    /// `false`, which is also what a run with no check node means.
+    failed: bool = false,
     /// After the listing scalars: a pasted prompt can be tens of kilobytes
     /// and used to push `node_count` out of the prefix window.
     task: []const u8 = "",
@@ -110,6 +116,60 @@ pub fn lessThanChronological(_: void, a: []const u8, b: []const u8) bool {
     const kb = runOrderKey(b);
     if (ka != kb) return ka < kb;
     return std.mem.lessThan(u8, a, b);
+}
+
+/// Did any check on this run fail? Only `check` nodes carry a verdict — the
+/// agent loop records one per tool declared `check: true` (`src/agent/loop.zig`)
+/// — so a run with no check node is not failed, it is unjudged.
+pub fn anyNodeFailed(g: GraphFile) bool {
+    for (g.nodes) |n| {
+        if (std.mem.eql(u8, n.kind, "check") and !n.ok) return true;
+    }
+    return false;
+}
+
+test anyNodeFailed {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const failed = try std.json.parseFromSliceLeaky(GraphFile, alloc, "{\"run_id\":\"run-1\",\"nodes\":[{\"kind\":\"check\",\"label\":\"gate\",\"ok\":false}]}", .{ .ignore_unknown_fields = true });
+    try std.testing.expect(anyNodeFailed(failed));
+
+    const passed = try std.json.parseFromSliceLeaky(GraphFile, alloc, "{\"run_id\":\"run-1\",\"nodes\":[{\"kind\":\"check\",\"label\":\"gate\",\"ok\":true}]}", .{ .ignore_unknown_fields = true });
+    try std.testing.expect(!anyNodeFailed(passed));
+
+    // A tool node's `ok` defaults true and is not a verdict; a run with no
+    // check node at all is unjudged rather than failed.
+    const unjudged = try std.json.parseFromSliceLeaky(GraphFile, alloc, "{\"run_id\":\"run-1\",\"nodes\":[{\"kind\":\"tool\",\"label\":\"read_file\"}]}", .{ .ignore_unknown_fields = true });
+    try std.testing.expect(!anyNodeFailed(unjudged));
+
+    // The listing scalar survives a prefix read that cut `nodes` away.
+    const scalar_only = try std.json.parseFromSliceLeaky(GraphFile, alloc, "{\"run_id\":\"run-1\",\"node_count\":9,\"failed\":true}", .{ .ignore_unknown_fields = true });
+    try std.testing.expect(scalar_only.failed);
+    try std.testing.expect(!anyNodeFailed(scalar_only));
+}
+
+/// Every graph `state/runs/` holds, both id shapes. `janitor` picks its
+/// retention set with this and re-checks it before deleting, so a shape left
+/// out here is a file that accumulates forever — which is what `sub-` graphs
+/// did while the predicate spelled out only `run-`. Requiring a parsable
+/// timestamp (rather than just the prefix) keeps a hand-made `run-notes.json`
+/// out of the sweep: the retention order could not rank it anyway.
+pub fn isRunGraphName(name: []const u8) bool {
+    if (!std.mem.endsWith(u8, name, ".json")) return false;
+    return runOrderKey(name) != 0;
+}
+
+test isRunGraphName {
+    try std.testing.expect(isRunGraphName("run-1786920177.json"));
+    // The regression: a nested run's graph lives in the same directory and is
+    // just as much a run graph, but only `run-` was ever swept.
+    try std.testing.expect(isRunGraphName("sub-1786563209053324602.json"));
+    try std.testing.expect(!isRunGraphName("run-1786920177"));
+    try std.testing.expect(!isRunGraphName("improve-12.log"));
+    try std.testing.expect(!isRunGraphName("run-notes.json"));
+    try std.testing.expect(!isRunGraphName("goals.json"));
 }
 
 test runOrderKey {

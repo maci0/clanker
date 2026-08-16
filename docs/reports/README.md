@@ -80,6 +80,10 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [Runs filter's 'failed' keyword throws a TypeError and could never match](bugs/2026-08-17-runs-filter-failed-keyword-throws.md) — Resolved
+
+- [clanker janitor never prunes sub-run graphs](bugs/2026-08-17-janitor-never-prunes-sub-run-graphs.md) — Resolved
+
 - [smart_commit's apply path re-adds whole worktree files, widening a hunk-narrowed index](bugs/2026-08-17-smart-commit-readds-worktree-files.md) — Open
 
 - [clanker commit generates a generic 'chore: update working tree' message for a clearly scoped diff](bugs/2026-08-16-smart-commit-generic-message.md) — Resolved

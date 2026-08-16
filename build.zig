@@ -274,6 +274,11 @@ pub fn build(b: *std.Build) void {
     const markdown_js_test = b.addSystemCommand(&.{ "node", "--test" });
     markdown_js_test.addFileArg(b.path("ui/app/lib/markdown.test.mjs"));
     test_step.dependOn(&markdown_js_test.step);
+    // The Runs list derives a date and a state from a summary that carries
+    // neither directly; its clock has to agree with graph_listing.runOrderKey.
+    const runs_list_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    runs_list_js_test.addFileArg(b.path("ui/app/lib/runs-list.test.mjs"));
+    test_step.dependOn(&runs_list_js_test.step);
     const labels_js_test = b.addSystemCommand(&.{ "node", "--test" });
     labels_js_test.addFileArg(b.path("ui/app/core/labels.test.mjs"));
     test_step.dependOn(&labels_js_test.step);

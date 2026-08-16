@@ -336,7 +336,12 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   vendor embeds) so browsers cannot keep a stale module graph across rebuilds.
   Each `webui_asset_paths` entry except `app.js` needs its own RenderCache/GzipCache
   pair (`webuiAssetKind`); a missing slot serves `app.js` at that path and
-  relative imports 404 as `/webui/core/core/`.
+  relative imports 404 as `/webui/core/core/`. A new `ui/app/**` module is
+  three edits in lockstep, none of which the other two imply: `@embedFile` +
+  the comptime size table + an `endsWith` arm in `ui/webui.zig`, the path in
+  `webui_asset_paths`, and a kind with its two caches in `cli.zig`. Only the
+  last has a guard (`every webui asset except app.js has its own cache kind`);
+  a missing `@embedFile` just 404s the import at runtime.
   Feature views stay off the eager `<script>` tag list in `index.html`: each is
   dynamically imported by app.js (`load<View>Module`) on first open, so a visit
   that stays in chat downloads none of them. A new view that needs app.js state

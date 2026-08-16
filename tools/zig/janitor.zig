@@ -34,9 +34,11 @@ fn isImpId(name: []const u8) bool {
     return true;
 }
 
-fn isRunGraph(name: []const u8) bool {
-    return std.mem.startsWith(u8, name, "run-") and std.mem.endsWith(u8, name, ".json");
-}
+/// Both graph shapes: a top-level `run-<unix seconds>.json` and a nested
+/// `sub-<unix nanoseconds>.json`. Spelling out only `run-` here left every
+/// sub-agent graph outside the newest-200 retention *and* outside the
+/// delete-time recheck, so they accumulated in `state/runs/` for good.
+const isRunGraph = graph_listing.isRunGraphName;
 
 fn isImproveLog(name: []const u8) bool {
     return std.mem.startsWith(u8, name, "improve-") and std.mem.endsWith(u8, name, ".log");

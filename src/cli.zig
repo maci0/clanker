@@ -8925,6 +8925,7 @@ const webui_asset_paths = [_][]const u8{
     "/webui/lib/board.js",
     "/webui/lib/graph.js",
     "/webui/lib/markdown.js",
+    "/webui/lib/runs-list.js",
     "/webui/features/arena.js",
     "/webui/features/arena3d.js",
     "/webui/features/board.js",
@@ -9132,6 +9133,7 @@ const WebuiAssetKind = enum {
     markdown,
     graph,
     board,
+    runs_list,
     fleet,
     utils,
     icons,
@@ -9171,6 +9173,7 @@ fn webuiAssetKind(target: []const u8) WebuiAssetKind {
     if (std.mem.endsWith(u8, target, "ai-disclosure.js")) return .ai_disclosure;
     if (std.mem.endsWith(u8, target, "scroll.js")) return .scroll;
     if (std.mem.endsWith(u8, target, "run-metrics.js")) return .run_metrics;
+    if (std.mem.endsWith(u8, target, "lib/runs-list.js")) return .runs_list;
     if (std.mem.endsWith(u8, target, "markdown.js")) return .markdown;
     if (std.mem.endsWith(u8, target, "graph.js")) return .graph;
     if (std.mem.endsWith(u8, target, "board.js")) return .board;
@@ -14593,6 +14596,7 @@ var render_theme: RenderCache = .{};
 var render_markdown: RenderCache = .{};
 var render_graph: RenderCache = .{};
 var render_board: RenderCache = .{};
+var render_runs_list: RenderCache = .{};
 var render_board_view: RenderCache = .{};
 var render_goals_view: RenderCache = .{};
 var render_knowledge_view: RenderCache = .{};
@@ -14635,6 +14639,7 @@ var gzip_theme: GzipCache = .{};
 var gzip_markdown: GzipCache = .{};
 var gzip_graph: GzipCache = .{};
 var gzip_board: GzipCache = .{};
+var gzip_runs_list: GzipCache = .{};
 var gzip_board_view: GzipCache = .{};
 var gzip_goals_view: GzipCache = .{};
 var gzip_knowledge_view: GzipCache = .{};
@@ -14707,6 +14712,7 @@ fn webuiRenderCache(kind: WebuiAssetKind) *RenderCache {
         .markdown => &render_markdown,
         .graph => &render_graph,
         .board => &render_board,
+        .runs_list => &render_runs_list,
         .fleet => &render_fleet,
         .utils => &render_utils,
         .icons => &render_icons,
@@ -14752,6 +14758,7 @@ fn webuiGzipCache(kind: WebuiAssetKind) *GzipCache {
         .markdown => &gzip_markdown,
         .graph => &gzip_graph,
         .board => &gzip_board,
+        .runs_list => &gzip_runs_list,
         .fleet => &gzip_fleet,
         .utils => &gzip_utils,
         .icons => &gzip_icons,

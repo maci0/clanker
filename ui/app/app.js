@@ -10,6 +10,7 @@ import { makeLineSplitter as makeLineSplitterMod, onLive as liveOn, liveOk as li
 import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as mdParagraphInto, tableRow as mdTableRow, renderMarkdown as mdRenderMarkdown, renderMarkdownWithFences as mdRenderMarkdownWithFences, highlightInto as mdHighlightInto, buildCodeBlock as mdBuildCodeBlock, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
 import { metricsFor as graphMetricsFor, buildStages as graphBuildStages, graphSummaryText as graphSummaryTextMod, toDagInput as graphToDagInput, buildIncompleteNode as graphBuildIncompleteNode, buildNodeBox as graphBuildNodeBox, layoutGraph as graphLayoutGraph } from "./lib/graph.js";
 import { boardActionLine as boardActionLineMod } from "./lib/board.js";
+import { runRows as runRowsMod, groupRunsByDay as groupRunsByDayMod, matchesRunQuery, runFailed } from "./lib/runs-list.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
 import { clearMarks as searchClear, markMatches as searchMark, turnForMessage } from "./core/search.js";
 import { loadPrompts as compLoadPrompts, savePrompts as compSavePrompts, promptQuery as compPromptQuery, autoGrow as compAutoGrow, contextLabel as compContextLabel, transcriptMarkdown as compTranscriptMarkdown, downloadText as compDownloadText, forgetPrompt as compForgetPrompt, setActiveItem as compSetActiveItem, loadDrafts as compLoadDrafts, saveDrafts as compSaveDrafts, draftFor as compDraftFor, setDraft as compSetDraft } from "./core/composer.js";
@@ -150,6 +151,8 @@ var el = {
   toolsStatus: document.getElementById("tools-status"),
   toolDetail: document.getElementById("tool-detail"),
   runSelect: document.getElementById("run-select"),
+  runList: document.getElementById("run-list"),
+  runListCount: document.getElementById("run-list-count"),
   runGraph: document.getElementById("run-graph"),
   runDetail: document.getElementById("run-detail"),
   sessionFilter: document.getElementById("session-filter"),
@@ -2522,13 +2525,9 @@ var pendingRunId = null;
    hiding <option>s with CSS isn't reliably respected by every browser's
    native combobox rendering, but replacing the option list outright always
    works. */
-function runFailed(r){ return r && (r.failed === true || r.ok === false || (r.nodes||[]).some(function(n){ return n.ok===false; })); }
 function renderRunOptions(filterText) {
   var q = (filterText || "").trim().toLowerCase();
-  var failedOnly = q === "failed" || q === ":failed" || q === "⚠ failed";
-  var matches;
-  if (failedOnly) matches = allRuns.filter(function(r){ return runFailed(r); });
-  else matches = !q ? allRuns : allRuns.filter(function (r) { return (r.task || "").toLowerCase().indexOf(q) !== -1 || r.run_id.toLowerCase().indexOf(q) !== -1; });
+  var matches = allRuns.filter(function (r) { return matchesRunQuery(r, q); });
   var previous = el.runSelect.value;
   el.runSelect.textContent = "";
   matches.forEach(function (r) {
@@ -2537,6 +2536,7 @@ function renderRunOptions(filterText) {
     opt.textContent = runLabel(r);
     el.runSelect.appendChild(opt);
   });
+  renderRunList(matches);
   if (!matches.length) {
     el.runSelect.disabled = true;
     el.runGraph.textContent = "";
@@ -2580,6 +2580,114 @@ function renderRunOptions(filterText) {
   el.runSelect.value = wanted;
   announceRunMatches(q, matches.length);
   return wanted;
+}
+
+/* The browsable half of the picker. The select can only ever show the one run
+   it has selected, which is why a listing that had gone stale looked exactly
+   like a current one — nothing on screen carried a date. Each row here is
+   dated, grouped under the day it ran, and says what the run did. */
+function renderRunList(matches) {
+  if (!el.runList) return;
+  var rows = runRowsMod(matches, { now: Date.now() });
+  var selected = el.runSelect.value;
+  el.runList.textContent = "";
+  if (el.runListCount) {
+    el.runListCount.textContent = rows.length
+      ? rows.length + (rows.length === 1 ? " run" : " runs")
+      : "";
+  }
+  if (!rows.length) {
+    var empty = document.createElement("p");
+    empty.className = "run-empty";
+    empty.textContent = "No recorded runs to show.";
+    el.runList.appendChild(empty);
+    return;
+  }
+  groupRunsByDayMod(rows, Date.now()).forEach(function (group) {
+    var head = document.createElement("div");
+    head.className = "run-row-day";
+    head.textContent = group.day;
+    el.runList.appendChild(head);
+    group.rows.forEach(function (row) {
+      el.runList.appendChild(buildRunRow(row, row.id === selected));
+    });
+  });
+}
+
+/* One row. `role=option` under the list's `role=listbox`, so the whole thing
+   is one control to a screen reader rather than a pile of buttons. */
+function buildRunRow(row, isSelected) {
+  var item = document.createElement("div");
+  item.className = "run-row" + (isSelected ? " is-selected" : "") + (row.nested ? " is-nested" : "") + (row.failed ? " is-failed" : "");
+  item.setAttribute("role", "option");
+  item.setAttribute("aria-selected", isSelected ? "true" : "false");
+  item.tabIndex = -1;
+  item.dataset.runId = row.id;
+
+  var top = document.createElement("div");
+  top.className = "run-row-top";
+  var task = document.createElement("span");
+  task.className = "run-row-task";
+  task.textContent = row.task;
+  task.title = row.task;
+  top.appendChild(task);
+  var when = document.createElement("span");
+  when.className = "run-row-when";
+  when.textContent = row.when;
+  top.appendChild(when);
+  item.appendChild(top);
+
+  var meta = document.createElement("div");
+  meta.className = "run-row-meta";
+  // The id is what `clanker graph <id>` and every record refers to, so it
+  // stays visible rather than living only in a tooltip.
+  meta.appendChild(runRowChip(row.id, "run-row-id"));
+  if (row.nested) meta.appendChild(runRowChip("sub-agent of " + row.parentId, "run-row-nested"));
+  if (row.provider) meta.appendChild(runRowChip(row.provider, "run-row-provider"));
+  if (row.nodes) meta.appendChild(runRowChip(fmtInt(row.nodes) + (row.nodes === 1 ? " step" : " steps"), ""));
+  if (row.durationMs) meta.appendChild(runRowChip(fmtMs(row.durationMs), ""));
+  if (row.tokens) meta.appendChild(runRowChip(fmtInt(row.tokens) + " tok", ""));
+  if (row.failed) meta.appendChild(runRowChip("⚠ failed check", "run-row-failed"));
+  item.appendChild(meta);
+
+  item.addEventListener("click", function () { selectRunFromList(row.id); });
+  item.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      selectRunFromList(row.id);
+    }
+  });
+  return item;
+}
+
+function runRowChip(text, cls) {
+  var span = document.createElement("span");
+  span.className = "run-row-chip" + (cls ? " " + cls : "");
+  span.textContent = text;
+  return span;
+}
+
+/* Clicking a row is the same act as choosing from the select, so it goes
+   through the select: one selection, one source of truth, and the `change`
+   handler that loads the graph keeps working untouched. */
+function selectRunFromList(id) {
+  if (el.runSelect.value === id) {
+    loadRun(id);
+  } else {
+    el.runSelect.value = id;
+    el.runSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  markSelectedRunRow(id);
+}
+
+function markSelectedRunRow(id) {
+  if (!el.runList) return;
+  var rows = el.runList.querySelectorAll(".run-row");
+  for (var i = 0; i < rows.length; i++) {
+    var on = rows[i].dataset.runId === id;
+    rows[i].classList.toggle("is-selected", on);
+    rows[i].setAttribute("aria-selected", on ? "true" : "false");
+  }
 }
 
 /* The filter's whole result — how many runs matched, which one is now shown —
@@ -2659,6 +2767,9 @@ function loadRun(id) {
   el.runGraph.textContent = "";
   skeletonRows(el.runGraph, 2);
   el.runStatus.textContent = "Loading run " + id + "…";
+  // Every route into a run ends here — the select, a row, the palette, a
+  // #runs/<id> deep link — so the list's highlight is set once, here.
+  markSelectedRunRow(id);
   return fetch("/api/runs/" + encodeURIComponent(id))
     .then(readJson)
     .then(function (g) {

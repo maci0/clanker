@@ -361,6 +361,14 @@ lamps carry further). The seven named palettes ride the same tokens.
                #run-graph, which is a plain group rather than a live region. -->
           <p class="sr-only" id="run-status" role="status" aria-live="polite"></p>
         </div>
+        <!-- The select alone can only show the run it has selected, so a page
+             of recorded runs was unbrowsable and an out-of-date listing looked
+             the same as a current one. The list shows the page, dated. -->
+        <div class="run-list-head">
+          <h3 id="run-list-head">Recorded runs</h3>
+          <span class="meta" id="run-list-count"></span>
+        </div>
+        <div id="run-list" class="run-list" role="listbox" aria-labelledby="run-list-head" tabindex="0"></div>
         <div class="run-compare" id="run-compare" hidden>
           <label for="run-compare-a">Compare</label>
           <select id="run-compare-a"></select>
