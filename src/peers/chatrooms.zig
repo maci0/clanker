@@ -10,8 +10,10 @@
 //!                          run only surfaces messages not seen yet
 //!
 //! Sending fans the message out to every configured peer's
-//! POST /api/chat/message; each peer appends it only when it subscribes to
-//! the room, so every clanker's log is exactly the rooms it belongs to.
+//! POST /api/chat/message via the sandboxed `peers` tool (the host keeps the
+//! per-peer backoff table and hands the guest the names to skip); each peer
+//! appends it only when it subscribes to the room, so every clanker's log is
+//! exactly the rooms it belongs to.
 
 const std = @import("std");
 const config_mod = @import("../config.zig");
@@ -20,7 +22,8 @@ const atomic_write = @import("../util/atomic_write.zig");
 const file_lock = @import("../util/file_lock.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
 const utf8 = @import("../util/utf8.zig");
-const build_options = @import("build_options");
+const registry = @import("../toolhost/registry.zig");
+const runtime = @import("../sandbox/runtime.zig");
 
 /// Guards the read-modify-write in `append`. Separate from the log so that
 /// trimming, which replaces the log, cannot invalidate a held lock.
@@ -679,11 +682,11 @@ pub fn getPins(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir
 
 /// Appends the message locally and fans it out to every configured peer's
 /// POST /api/chat/message. Returns the message (with ts + id filled in).
-pub fn sendMessage(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, room: []const u8, text: []const u8) !Message {
-    return sendMessageOpts(base, io, gpa, arena, state_dir, cfg, room, text, null);
+pub fn sendMessage(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, environ_map: *std.process.Environ.Map, room: []const u8, text: []const u8) !Message {
+    return sendMessageOpts(base, io, gpa, arena, state_dir, cfg, environ_map, room, text, null);
 }
 
-pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, room: []const u8, text: []const u8, thread_ts: ?[]const u8) !Message {
+pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, environ_map: *std.process.Environ.Map, room: []const u8, text: []const u8, thread_ts: ?[]const u8) !Message {
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     const msg = Message{
         .room = room,
@@ -694,7 +697,7 @@ pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, are
         .thread_ts = thread_ts,
     };
     try append(base, io, gpa, arena, state_dir, cfg, msg);
-    fanOut(io, gpa, cfg, msg);
+    fanOut(io, gpa, arena, environ_map, cfg, msg);
     return msg;
 }
 
@@ -787,71 +790,102 @@ fn cooldownWindow(fail_count: u32) i128 {
     return @min(w, cap);
 }
 
-fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg: Message) void {
+/// One peer's outcome from the guest's `chat_fanout` action, so the host can
+/// move each peer into or out of its backoff window.
+const FanOutResult = struct {
+    name: []const u8 = "",
+    ok: bool = false,
+    @"error": ?[]const u8 = null,
+};
+
+const FanOutReply = struct {
+    ok: bool = false,
+    @"error": ?[]const u8 = null,
+    results: []const FanOutResult = &.{},
+};
+
+fn fanOut(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, environ_map: *std.process.Environ.Map, cfg: *const config_mod.Config, msg: Message) void {
     if (!cfg.chatrooms.on) return;
     if (cfg.peers.len == 0) return;
 
-    var http_client: std.http.Client = .{ .allocator = gpa, .io = io };
-    defer http_client.deinit();
-
+    // The HTTP delivery itself runs inside the sandboxed `peers` tool, the
+    // same gate phonebook and notify use: every request is confined to the
+    // configured peer hosts by that tool's `network_from_config` allowlist.
+    // The host keeps the per-peer backoff table and hands over the names it
+    // is already cooling down, so a down peer is not hammered on every
+    // message while its cooldown is still running.
+    var skip: std.ArrayList([]const u8) = .empty;
+    defer skip.deinit(gpa);
     for (cfg.peers) |peer| {
-        // Skip a peer still inside its backoff window: don't hammer it and
-        // don't re-log the same failure on every message.
-        if (inCooldown(io, peer.name)) continue;
+        if (inCooldown(io, peer.name)) skip.append(gpa, peer.name) catch {};
+    }
 
-        const url = std.fmt.allocPrint(gpa, "{s}/api/chat/message", .{std.mem.trimEnd(u8, peer.url, "/")}) catch |err| {
-            log.log(.error_, "chat to '{s}' failed: {s}", .{ peer.name, @errorName(err) });
-            continue;
-        };
-        defer gpa.free(url);
+    var enc: std.Io.Writer.Allocating = .init(arena);
+    defer enc.deinit();
+    var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("action") catch return;
+    s.write("chat_fanout") catch return;
+    s.objectField("room") catch return;
+    s.write(msg.room) catch return;
+    s.objectField("from") catch return;
+    s.write(msg.from) catch return;
+    s.objectField("text") catch return;
+    s.write(msg.text) catch return;
+    s.objectField("ts") catch return;
+    s.print("{d}", .{msg.ts}) catch return;
+    s.objectField("id") catch return;
+    s.write(msg.id) catch return;
+    if (msg.thread_ts) |tts| {
+        s.objectField("thread_ts") catch return;
+        s.write(tts) catch return;
+    }
+    s.objectField("skip") catch return;
+    s.write(skip.items) catch return;
+    s.endObject() catch return;
+    const input = enc.written();
 
-        var body_buf: [64 * 1024]u8 = undefined;
-        var w: std.Io.Writer = .fixed(&body_buf);
-        var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-        s.beginObject() catch continue;
-        s.objectField("room") catch continue;
-        s.write(msg.room) catch continue;
-        s.objectField("from") catch continue;
-        s.write(msg.from) catch continue;
-        s.objectField("text") catch continue;
-        s.write(msg.text) catch continue;
-        s.objectField("ts") catch continue;
-        s.print("{d}", .{msg.ts}) catch continue;
-        s.objectField("id") catch continue;
-        s.write(msg.id) catch continue;
-        if (msg.thread_ts) |tts| {
-            s.objectField("thread_ts") catch continue;
-            s.write(tts) catch continue;
-        }
-        s.endObject() catch continue;
-        const body = body_buf[0..w.end];
+    var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
+        log.log(.error_, "chat fan-out: tool registry load failed: {s}", .{@errorName(err)});
+        return;
+    };
+    const mod = runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, "peers", null) catch |err| {
+        log.log(.error_, "chat fan-out: 'peers' tool load failed: {s}", .{@errorName(err)});
+        return;
+    };
+    defer mod.deinit();
+    const raw = mod.executeTool(input) catch |err| {
+        log.log(.error_, "chat fan-out: 'peers' tool failed: {s}", .{@errorName(err)});
+        return;
+    };
+    defer gpa.free(raw);
 
-        var response_buf: [64 * 1024]u8 = undefined;
-        var rw: std.Io.Writer = .fixed(&response_buf);
-        const result = http_client.fetch(.{
-            .location = .{ .url = url },
-            .method = .POST,
-            .payload = body,
-            .headers = .{ .content_type = .{ .override = "application/json" }, .user_agent = .{ .override = "clanker/" ++ build_options.version } },
-            .response_writer = &rw,
-        }) catch |err| {
-            const window_s = recordFailure(io, gpa, peer.name, std.Io.Timestamp.now(io, .real).nanoseconds);
-            if (window_s > 0) {
-                log.log(.error_, "chat to '{s}' failed: {s}; marking peer down, backing off {d}s", .{ peer.name, @errorName(err), window_s });
+    const reply = std.json.parseFromSliceLeaky(FanOutReply, arena, raw, .{ .ignore_unknown_fields = true }) catch {
+        log.log(.error_, "chat fan-out: the tool answered something that is not JSON", .{});
+        return;
+    };
+    if (!reply.ok) {
+        log.log(.error_, "chat fan-out: {s}", .{reply.@"error" orelse "unknown error"});
+        return;
+    }
+
+    const now = std.Io.Timestamp.now(io, .real).nanoseconds;
+    for (reply.results) |r| {
+        if (r.ok) {
+            // A completed delivery clears any cooldown; a peer that had been
+            // down coming back is worth saying once.
+            if (recordSuccess(io, r.name)) {
+                log.log(.info, "chat {s}: delivered (peer back up)", .{r.name});
             } else {
-                log.log(.error_, "chat to '{s}' failed: {s}", .{ peer.name, @errorName(err) });
+                log.log(.info, "chat {s}: delivered", .{r.name});
             }
-            continue;
-        };
-        const status = result.status;
-        // Body is a peer-controlled response, not delivery confirmation content
-        // worth surfacing at the default log level; a status code is enough to
-        // know the send worked, and skipping the body keeps a peer echoing
-        // message text (or anything else) out of this instance's logs.
-        if (recordSuccess(io, peer.name)) {
-            log.log(.info, "chat {s}: HTTP {d} (peer back up)", .{ peer.name, @intFromEnum(status) });
         } else {
-            log.log(.info, "chat {s}: HTTP {d}", .{ peer.name, @intFromEnum(status) });
+            const window_s = recordFailure(io, gpa, r.name, now);
+            if (window_s > 0) {
+                log.log(.error_, "chat to '{s}' failed: {s}; marking peer down, backing off {d}s", .{ r.name, r.@"error" orelse "unknown error", window_s });
+            } else {
+                log.log(.error_, "chat to '{s}' failed: {s}", .{ r.name, r.@"error" orelse "unknown error" });
+            }
         }
     }
 }

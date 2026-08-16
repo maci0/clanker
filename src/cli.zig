@@ -5554,7 +5554,7 @@ fn cmdChat(init: std.process.Init, opts: Options) !void {
         }
         try out.writeStreamingAll(io, "\n");
     } else if (std.mem.eql(u8, opts.chat_sub, "send")) {
-        const msg = try chatrooms.sendMessage(base, io, gpa, arena, state_dir, &cfg, opts.room.?, opts.message.?);
+        const msg = try chatrooms.sendMessage(base, io, gpa, arena, state_dir, &cfg, init.environ_map, opts.room.?, opts.message.?);
         const line = try std.fmt.allocPrint(arena, "sent to #{s} as {s} (ts {d}, id {s})\n", .{ msg.room, msg.from, msg.ts, msg.id });
         try out.writeStreamingAll(io, line);
     } else if (std.mem.eql(u8, opts.chat_sub, "history")) {
@@ -6345,7 +6345,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_chat_rooms) {
             handleChatRooms(io, gpa, cfg, stream);
         } else if (is_chat_send) {
-            handleChatSend(io, gpa, cfg, body, stream);
+            handleChatSend(io, gpa, cfg, environ_map, body, stream);
         } else if (is_chat_subscribe) {
             handleChatSubscribe(io, gpa, cfg, body, stream);
         } else if (is_chat_react) {
@@ -6794,7 +6794,7 @@ test "a full page of full-length messages serializes whole" {
 /// difference matters: sending appends locally *and* fans the message out to
 /// every configured peer, while the inbound path deliberately refuses rooms
 /// this instance has not joined.
-fn handleChatSend(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+fn handleChatSend(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, body: []const u8, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -6827,7 +6827,7 @@ fn handleChatSend(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
             return;
         };
     }
-    const msg = chatrooms.sendMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, room, text) catch |err| {
+    const msg = chatrooms.sendMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, environ_map, room, text) catch |err| {
         log.log(.error_, "POST /api/chat/send room={s}: {s}", .{ room, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"send failed\"}");
         return;

@@ -1929,7 +1929,7 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             return Err.invalid;
         const text = parsed.text orelse return Err.invalid;
         if (room.len == 0 or text.len == 0 or text.len > chatrooms_mod.max_text_len) return Err.invalid;
-        const msg = chatrooms_mod.sendMessageOpts(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, cfg, room, text, parsed.thread_ts) catch |err| {
+        const msg = chatrooms_mod.sendMessageOpts(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, cfg, h.sandbox.environ_map, room, text, parsed.thread_ts) catch |err| {
             log.log(.warn, "[chat] send failed: {s}", .{@errorName(err)});
             return Err.invalid;
         };

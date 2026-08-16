@@ -3,7 +3,11 @@
 //! Input:  {"action": "phonebook"}                     scan every peer's card
 //!         {"action": "notify", "peer": "<name>", "message": "..."}      one peer
 //!         {"action": "notify", "message": "...", "kind": "...", "topic": "..."}  every peer
+//!         {"action": "chat_fanout", "room": "...", "text": "...", ...}  deliver a chat
+//!                                    message to every peer (the host passes the names
+//!                                    in its per-peer backoff window as "skip")
 //! Output: {"ok": true, "peers": [...]}  |  {"ok": true, "sent": "<name>"|"all"}
+//!         {"ok": true, "results": [{"name","ok"|"error"}]}
 //!
 //! The peer hosts are not in this descriptor: it sets
 //! `"network_from_config": "peers"` and the harness adds whatever is configured
@@ -43,6 +47,15 @@ const Request = struct {
     /// should reuse this value; when omitted the tool creates one once and
     /// uses it for every peer in a broadcast.
     id: []const u8 = "",
+    /// chat_fanout fields. `from`/`ts`/`id` fall back to this instance's
+    /// name, now, and a generated id when the caller leaves them blank.
+    room: []const u8 = "",
+    from: []const u8 = "",
+    text: []const u8 = "",
+    ts: i64 = 0,
+    thread_ts: ?[]const u8 = null,
+    /// Peer names to leave alone (the host's per-peer backoff window).
+    skip: []const []const u8 = &.{},
 };
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -58,7 +71,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     if (std.mem.eql(u8, req.action, "phonebook")) return phonebook(out, alloc, peers);
     if (std.mem.eql(u8, req.action, "notify")) return notify(out, alloc, peers, req);
-    return lib.fail(out, "action must be \"phonebook\" or \"notify\"");
+    if (std.mem.eql(u8, req.action, "chat_fanout")) return chatFanout(out, alloc, peers, req);
+    return lib.fail(out, "action must be \"phonebook\", \"notify\", or \"chat_fanout\"");
 }
 
 /// Phonebook folds a missing peers config to an empty array rather than a
@@ -236,4 +250,91 @@ fn sendNotify(alloc: std.mem.Allocator, peer: Peer, req: Request) !void {
 
     const url = try std.fmt.allocPrint(alloc, "{s}/api/notify", .{std.mem.trimEnd(u8, peer.url, "/")});
     _ = try lib.httpPost(url, body_buf[0..bw.end]);
+}
+
+/// Delivers one chat message to every configured peer's `/api/chat/message`.
+/// The host keeps the per-peer backoff table and passes the names it is
+/// already cooling down as `skip`; this guest only does the gated network
+/// work and reports a per-peer outcome back so the host can move each peer
+/// into or out of backoff. Same traffic class as phonebook/notify: every
+/// request is confined to the configured peer hosts by
+/// `network_from_config`.
+fn chatFanout(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Request) !void {
+    if (req.room.len == 0 or req.text.len == 0) return lib.fail(out, "chat_fanout needs a room and a text");
+
+    const from = if (req.from.len > 0) req.from else instanceName(alloc);
+    const ts = if (req.ts > 0) req.ts else @as(i64, @trunc(lib.nowSeconds()));
+    var generated_id: []const u8 = req.id;
+    if (generated_id.len == 0) {
+        const now_bits: u64 = @bitCast(@as(i64, @trunc(lib.nowSeconds())));
+        var h = std.hash.Wyhash.init(0);
+        h.update(req.room);
+        h.update(req.text);
+        const content_hash = h.final();
+        generated_id = try std.fmt.allocPrint(alloc, "{x}-{x}", .{ now_bits, content_hash });
+    }
+
+    var body_buf: [16 * 1024]u8 = undefined;
+    var bw: std.Io.Writer = .fixed(&body_buf);
+    var bs = std.json.Stringify{ .writer = &bw, .options = .{ .emit_null_optional_fields = false } };
+    try bs.beginObject();
+    try bs.objectField("room");
+    try bs.write(req.room);
+    try bs.objectField("from");
+    try bs.write(from);
+    try bs.objectField("text");
+    try bs.write(req.text);
+    try bs.objectField("ts");
+    try bs.print("{d}", .{ts});
+    try bs.objectField("id");
+    try bs.write(generated_id);
+    if (req.thread_ts) |tts| {
+        try bs.objectField("thread_ts");
+        try bs.write(tts);
+    }
+    try bs.endObject();
+    const body = body_buf[0..bw.end];
+
+    var out_buf: [48 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&out_buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("results");
+    try s.beginArray();
+    for (peers) |p| {
+        var skip_peer = false;
+        for (req.skip) |skipped| {
+            if (std.mem.eql(u8, skipped, p.name)) {
+                skip_peer = true;
+                break;
+            }
+        }
+        if (skip_peer) continue;
+        const url = try std.fmt.allocPrint(alloc, "{s}/api/chat/message", .{std.mem.trimEnd(u8, p.url, "/")});
+        const result = lib.httpPost(url, body);
+        try s.beginObject();
+        try s.objectField("name");
+        try s.write(p.name);
+        if (result) |_| {
+            try s.objectField("ok");
+            try s.write(true);
+        } else |err| {
+            try s.objectField("ok");
+            try s.write(false);
+            try s.objectField("error");
+            try s.write(switch (err) {
+                error.SandboxDenied => "refused by sandbox policy",
+                error.NetworkError => "the request did not complete",
+                error.TooLarge => "too large for one call",
+                error.InvalidArg => "the arguments were rejected",
+                else => "the request could not be completed",
+            });
+        }
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.endObject();
+    try out.writeAll(out_buf[0..w.end]);
 }

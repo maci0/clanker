@@ -1,7 +1,7 @@
 {
   "name": "peers",
-  "description": "Scan other clanker instances, or deliver a machine notification. The action defaults to phonebook, which fetches every configured peer's agent card and reports up/down. {\"action\": \"notify\", \"peer\": \"<name>\", \"message\": \"...\"} writes a notification on that peer (state/notifications.jsonl via POST /api/notify); omit \"peer\" to broadcast. Conversational messages use chat_dm, not notify.",
-  "llm_description": "Scan peers or send a machine notification. action: phonebook (default, agent cards, up/down) | notify{peer?,message} (omit peer to broadcast). notify is not a chat message; use chat_dm to talk to an instance.",
+  "description": "Scan other clanker instances, deliver a machine notification, or fan out a chat message. The action defaults to phonebook, which fetches every configured peer's agent card and reports up/down. {\"action\": \"notify\", \"peer\": \"<name>\", \"message\": \"...\"} writes a notification on that peer (state/notifications.jsonl via POST /api/notify); omit \"peer\" to broadcast. {\"action\": \"chat_fanout\", \"room\": \"...\", \"text\": \"...\"} delivers a chat message to every peer's POST /api/chat/message (\"skip\" lists peer names to leave alone; \"from\"/\"ts\"/\"id\"/\"thread_ts\" optional). Conversational messages use chat_dm, not notify.",
+  "llm_description": "Scan peers, send a machine notification, or broadcast a chat message. action: phonebook (default, agent cards, up/down) | notify{peer?,message} (omit peer to broadcast; not a chat message, use chat_dm to talk to an instance) | chat_fanout{room,text,skip?} (deliver a chat message to every peer).",
   "wasm": "zig-out/tools/peers.wasm",
   "input_schema": {
     "type": "object",
@@ -10,7 +10,8 @@
         "type": "string",
         "enum": [
           "phonebook",
-          "notify"
+          "notify",
+          "chat_fanout"
         ]
       },
       "peer": {
@@ -27,7 +28,30 @@
       },
       "id": {
         "type": "string",
-        "description": "Stable notification delivery ID. Reuse it when retrying the same logical notification. If omitted, the tool generates one and echoes it back in the response (even on failure) for you to reuse on retry."
+        "description": "Stable notification or chat delivery ID. Reuse it when retrying the same logical send. If omitted, the tool generates one and echoes it back in the response (even on failure) for you to reuse on retry."
+      },
+      "room": {
+        "type": "string",
+        "description": "chat_fanout: the room the message goes to."
+      },
+      "text": {
+        "type": "string",
+        "description": "chat_fanout: the message text."
+      },
+      "ts": {
+        "type": "integer",
+        "description": "chat_fanout: message timestamp in unix seconds; omitted means now."
+      },
+      "thread_ts": {
+        "type": "string",
+        "description": "chat_fanout: parent message timestamp when replying in a thread."
+      },
+      "skip": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "chat_fanout: peer names to skip (the host's per-peer backoff window)."
       }
     }
   },

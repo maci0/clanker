@@ -8,4 +8,5 @@ comptime {
     _ = @import("tool_roundtrip_test.zig");
     _ = @import("hooks_test.zig");
     _ = @import("mesh_test.zig");
+    _ = @import("journeys_test.zig");
 }

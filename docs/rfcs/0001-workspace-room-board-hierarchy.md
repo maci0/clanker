@@ -36,7 +36,7 @@ rooms (`#general` feed, per-goal output), goals, membership, and remote clanker
 instances relate?
 
 **Why now.** Three follow-on changes are blocked on the same answer: bind the
-default board to a workspace, put a workspace id on goals, and define
+default board to a workspace, put goals on the board as cards, and define
 share / enter / leave for mesh Phase 3. Doing any of those against today's
 implied model (one global `board` room, a workspace that is a single folder, a
 session tag that is not a path, a local `workspaces.json`) will bake a shape
@@ -44,8 +44,12 @@ that the next change has to migrate.
 
 **Drivers.**
 
-- Do not re-litigate ADR 0001 (the board is a chatroom fold) or ADR 0012
-  (goal draft, persist, and run stay separate).
+- Do not re-litigate ADR 0001 (the board is a chatroom fold). A goal **is a
+  card**, not a separate record: objective, completion criterion, proof, stop
+  rule, and status are card fields, and `state/goals.json` becomes an index over
+  goal-cards rather than a store. ADR 0012's draft / persist / run split is
+  retained; only what "persist" writes changes — create the card, not append
+  `goals.json`.
 - A workspace **is** a project: one stable id over one or more named folders
   (components). The single-folder model fails the suite case by construction.
 - A project owns a small **room namespace**, not one log: a default `#general`
@@ -277,7 +281,7 @@ Four hazards follow, and each is resolved explicitly.
           W --> Roots["roots — named folders: core, web"]
           W --> Gen["ws:relumea · #general<br/>chat + card actions<br/>(board = fold of this room)"]
           W --> GoalRoom["ws:relumea:goal:&lt;id&gt;<br/>per-goal model output<br/>(optional, lossy feed)"]
-          W --> Goals["goals — tagged relumea"]
+          W --> Goals["goals — cards on the board (#general)"]
           W --> Sessions["sessions — tagged relumea"]
           W --> Members["members — main (home), laptop"]
       end
@@ -299,20 +303,20 @@ Four hazards follow, and each is resolved explicitly.
   picks out, operator chat is everything else. A goal may get an optional
   `ws:<id>:goal:<goal-id>` room for its actual model output — turns, decisions,
   diffs — so a long goal loop does not flood the feed. The board stays one fold
-  over `#general`; goal rooms are output feeds, and the goal's card remains on
-  the board (the card already carries the goal id). The empty-id (cwd)
+  over `#general`; goal rooms are output feeds, and a goal **is** a card on the
+  board (objective, criterion, proof, and status are card fields; there is no
+  separate goal record to mirror). The empty-id (cwd)
   workspace keeps today's `board` room as its `#general`, so existing logs do
   not move.
 
   **Two different canonical rules.** The board's room *is* the board's source
-  of truth (ADR 0001: there is no `board.json`). A goal's output is *not*: the
-  session transcript is the durable record (PRD 0011 home writes it), and the
-  goal room is a shared projection/feed of that work, allowed to be lossy
-  summaries. A goal therefore has two records with one owner each — its *status*
-  (column, checklist, assignment) is canonical on the board card in `#general`,
-  its *output* is canonical in the session — and the goal room relays output
-  only. Making the goal room another canonical store would re-create the
-  two-stores-for-one-idea problem ADR 0001 closed.
+  of truth (ADR 0001: there is no `board.json`), and a goal is a card in that
+  room — so the card is the goal's canonical record for objective, criterion,
+  proof, and status. A goal's *output* is not on the card: the session
+  transcript is the durable record (PRD 0011 home writes it), and the goal room
+  is a shared projection/feed of that output, allowed to be lossy summaries.
+  Making the goal room (or `state/goals.json`) another canonical store would
+  re-create the two-stores-for-one-idea problem ADR 0001 closed.
 
   ```mermaid
   sequenceDiagram
@@ -504,7 +508,7 @@ Four hazards follow, and each is resolved explicitly.
 **Recommended option:** Option B, multi-root project workspace: a stable
 workspace id over one or more named roots; a small room namespace — `ws:<id>`
 (`#general`: chat + card actions) and optional `ws:<id>:goal:<id>` rooms for
-model output; goals and sessions tagged to that id; and mesh share / enter /
+model output; goal-cards and sessions tagged to that id; and mesh share / enter /
 leave / bind kept distinct from mesh join / leave.
 
 **Confidence:** 6/10
@@ -535,7 +539,7 @@ logs with a `:` convention (`dm:`) and per-object rooms (`arena-<id>`), so
 sandbox root set — is real and must be spiked first, but it is the cost of the
 requirement, not a reason to pretend the requirement does not exist.
 
-**Reversibility.** Additive fields (goal.workspace, membership roster, goal
+**Reversibility.** Additive fields (goal card fields, membership roster, goal
 rooms, bind records) are easy to ignore. The points of no return are:
 creating `ws:<id>` (`#general`) board rooms and moving cards onto them (the old
 `board` log stays put and keeps serving the empty-id workspace), advertising
@@ -591,6 +595,11 @@ project actually needs its own board; keep `board` as the empty-id workspace's
     happens to non-git roots? Bias: one worktree per git root; non-git roots
     stay shared read-only, and a run that must write a non-git root takes an
     explicit lock.
+13. **Goal fields on the card.** Which goal fields (completion criterion, proof,
+    stop rule, boundaries, max_iterations, worktree) become structured card
+    fields vs. card-body content, and how does the `state/goals.json` index get
+    rebuilt from cards? Bias: criterion, proof, and stop_rule are card fields;
+    the index is rebuilt from cards on startup, no migration.
 
 ## Next steps / action items
 
@@ -654,13 +663,13 @@ a real join record; the rest are foreign keys or derived views.
 | Instance | Room | **N:N** | per-instance subscription (`chatrooms-sub.json`) |
 | Workspace | Root | 1:N | `workspace.roots[]` |
 | Workspace | Room | 1:N | room namespace: `ws:<id>` (#general) and `ws:<id>:goal:<id>` |
-| Workspace | Goal | 1:N | `goal.workspace` |
+| Workspace | Goal (card) | 1:N | a goal is a card in the workspace's `#general` board |
 | Workspace | Session | 1:N | `session.workspace` |
 | Instance (home) | Session | 1:N | home owns the canonical transcript; entered peers hold read-only replicas (PRD 0011) |
 | Room | Board | 1:0..1 | only `#general` folds a board (ADR 0001); goal and fleet rooms do not |
 | Board | Card | 1:N | cards are `@todo` messages in the board's room |
-| Goal | Card | 1:0..1 | `card.goal` links them; the web UI mirrors a goal to one board card |
-| Goal | Room | 1:0..1 | `ws:<id>:goal:<goal-id>`, created on demand, chat/status only |
+| Goal | Card | **1:1 (identity)** | a goal is a card with its goal fields set; `state/goals.json` is an index over those cards, not a store |
+| Goal | Room | 1:0..1 | `ws:<id>:goal:<card-id>`, created on demand, chat/status only |
 
 Fleet rooms (`dm:<a>|<b>`, `ops`) are rooms with no folder, so they map to zero
 workspaces — the 0-side of `Workspace : Room`.
