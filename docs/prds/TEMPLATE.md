@@ -1,6 +1,8 @@
-# PRD — <Name>
+# PRD — {{title}}
 
 ## Status
+
+{{status}}
 
 Shipped / In progress / Draft. Name the source files that are the single
 source of truth, and the surface(s) that expose it (tools, HTTP, CLI, web
@@ -10,12 +12,16 @@ reads Status should not walk away misinformed.
 
 ## Problem
 
+{{problem}}
+
 What breaks or is impossible without this, stated from the situation that
 forced the decision, not from the solution. Include real constraints
 (no server to mediate, must ride an existing transport, sandbox must be
 able to enforce it) that shaped the design, not just the desired outcome.
 
 ## Goals
+
+{{goals}}
 
 Numbered, verifiable. Each goal should be checkable against the Acceptance
 criteria below — if a goal has no matching checkbox, either the goal is

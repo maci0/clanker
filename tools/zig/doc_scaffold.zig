@@ -277,6 +277,40 @@ pub fn statusWord(text: []const u8) []const u8 {
     return line[0..end];
 }
 
+/// The status of a document whose vocabulary is a fixed set of phrases, some
+/// of them more than one word.
+///
+/// `statusWord` cuts at the first space, so it reads "In progress" as "In" and
+/// "**Web UI plugins: Shipped.**" as "**Web". A store with a two-word status
+/// therefore needs its vocabulary passed in: the earliest phrase that occurs
+/// in the Status line wins, which is what makes a sentence naming two statuses
+/// resolve to the one it leads with. An unrecognized wording falls back to
+/// `statusWord` rather than to an empty string — a row with a surprising
+/// status is still worth listing, a row with none looks unreadable.
+pub fn statusFrom(text: []const u8, vocabulary: []const []const u8) []const u8 {
+    const line = firstLineOf(text, "## Status");
+    if (line.len == 0) return "";
+    var best: ?[]const u8 = null;
+    var best_at: usize = std.math.maxInt(usize);
+    for (vocabulary) |phrase| {
+        const at = findIgnoreCase(line, phrase) orelse continue;
+        if (at < best_at) {
+            best_at = at;
+            best = phrase;
+        }
+    }
+    return best orelse statusWord(text);
+}
+
+fn findIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
+    if (needle.len == 0 or needle.len > haystack.len) return null;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[i .. i + needle.len], needle)) return i;
+    }
+    return null;
+}
+
 /// Replaces a section's body wholesale. Returns false when the heading is
 /// absent, so the caller can say which heading it wanted rather than writing
 /// the replacement into the wrong place.
@@ -480,6 +514,108 @@ pub fn setInventoryStatus(
     return false;
 }
 
+// -------------------------------------------------------- table inventory
+
+/// Some indexes are Markdown *tables* rather than lists — a PRD row carries a
+/// Notes column that a `- [Title](link) — Status` line has nowhere to put. The
+/// two functions below are the table equivalents of `insertInventory` and
+/// `setInventoryStatus`, and they are separate rather than generalized because
+/// the cell arithmetic has no counterpart in a list: rewriting a status means
+/// finding the third pipe-delimited cell without touching the fourth.
+///
+/// The row is appended at the *bottom* of the marker block. A numbered store
+/// reads in ascending order, so newest-first — what the RFC list does — would
+/// put 0037 above 0001.
+pub fn insertInventoryRow(
+    w: *std.Io.Writer,
+    index: []const u8,
+    start_marker: []const u8,
+    end_marker: []const u8,
+    row: []const u8,
+) !bool {
+    const start = std.mem.find(u8, index, start_marker) orelse return false;
+    const content_start = start + start_marker.len;
+    const end = std.mem.findPos(u8, index, content_start, end_marker) orelse return false;
+    const previous = std.mem.trim(u8, index[content_start..end], " \t\r\n");
+
+    try w.writeAll(index[0..content_start]);
+    try w.writeAll("\n");
+    if (previous.len > 0) {
+        try w.writeAll(previous);
+        try w.writeAll("\n");
+    }
+    try w.writeAll(row);
+    try w.writeAll("\n");
+    try w.writeAll(index[end..]);
+    return true;
+}
+
+/// The pipe-delimited cells of one table row, without the leading and trailing
+/// empty fields a `| a | b |` row produces. Returned as offsets into `line` so
+/// a rewrite can splice one cell and copy the rest verbatim, notes included.
+pub const RowCell = struct { start: usize, end: usize };
+
+pub fn rowCells(line: []const u8, out: *[8]RowCell) []const RowCell {
+    const trimmed_end = std.mem.trimEnd(u8, line, " \t\r").len;
+    var count: usize = 0;
+    var i: usize = 0;
+    // A well-formed row opens with a pipe; anything else is not a row.
+    while (i < trimmed_end and (line[i] == ' ' or line[i] == '\t')) i += 1;
+    if (i >= trimmed_end or line[i] != '|') return out[0..0];
+    i += 1;
+    while (i <= trimmed_end and count < out.len) {
+        const bar = std.mem.findPos(u8, line[0..trimmed_end], i, "|") orelse break;
+        out[count] = .{ .start = i, .end = bar };
+        count += 1;
+        i = bar + 1;
+    }
+    return out[0..count];
+}
+
+/// Rewrites the status cell of the table row whose first Markdown link points
+/// at `target`. Column 0 is the link, 1 the title, 2 the status; a row with
+/// fewer cells is skipped rather than padded, because widening someone else's
+/// table silently is worse than reporting that the row was not updated.
+pub fn setInventoryRowStatus(
+    w: *std.Io.Writer,
+    index: []const u8,
+    start_marker: []const u8,
+    end_marker: []const u8,
+    target: []const u8,
+    status: []const u8,
+) !bool {
+    const start = std.mem.find(u8, index, start_marker) orelse return false;
+    const content_start = start + start_marker.len;
+    const end = std.mem.findPos(u8, index, content_start, end_marker) orelse return false;
+
+    var scan = content_start;
+    while (scan < end) {
+        const line_end = @min(std.mem.findPos(u8, index, scan, "\n") orelse end, end);
+        const line = index[scan..line_end];
+        var cells_buf: [8]RowCell = undefined;
+        const cells = rowCells(line, &cells_buf);
+        if (cells.len < 3) {
+            scan = line_end + 1;
+            continue;
+        }
+        const entry = inventoryEntry(line[cells[0].start..cells[0].end]) orelse {
+            scan = line_end + 1;
+            continue;
+        };
+        if (!std.mem.eql(u8, entry.target, target)) {
+            scan = line_end + 1;
+            continue;
+        }
+        try w.writeAll(index[0 .. scan + cells[2].start]);
+        try w.writeAll(" ");
+        try w.writeAll(status);
+        try w.writeAll(" ");
+        try w.writeAll(index[scan + cells[2].end ..]);
+        return true;
+    }
+    return false;
+}
+
 // ------------------------------------------------------------------ tests
 
 test "isoDate renders the epoch, a leap day, and a late date" {
@@ -536,6 +672,94 @@ test "isPathIn accepts a direct child and refuses traversal" {
     try std.testing.expect(!isPathIn("docs/rfcs", "docs/research/a.md"));
     try std.testing.expect(!isPathIn("docs/rfcs", "docs/rfcs/a.txt"));
     try std.testing.expect(!isPathIn("docs/rfcs", "docs/rfcs/"));
+}
+
+test "statusFrom reads a two-word status that statusWord would cut at the space" {
+    const vocabulary = [_][]const u8{ "In progress", "Shipped", "Draft" };
+    // The real shapes in docs/prds/: statusWord stops at the first space,
+    // comma, colon or period, so only a one-word status survives it.
+    try std.testing.expectEqualStrings("In progress", statusFrom("## Status\n\nIn progress: the offline path ships.\n", &vocabulary));
+    try std.testing.expectEqualStrings("Shipped", statusFrom("## Status\n\nShipped. Source of truth: `ui/app/*`\n", &vocabulary));
+    try std.testing.expectEqualStrings("Shipped", statusFrom("## Status\n\n**Web UI plugins: Shipped.** TUI is draft.\n", &vocabulary));
+    try std.testing.expectEqualStrings("Draft", statusFrom("## Status\n\nDraft. No source files yet.\n", &vocabulary));
+}
+
+test "statusFrom falls back to the first word when no known status matches" {
+    const vocabulary = [_][]const u8{ "In progress", "Shipped", "Draft" };
+    // Rather than report an empty status and hide the row, an unrecognized
+    // wording degrades to what statusWord can read off it.
+    try std.testing.expectEqualStrings("Implemented", statusFrom("## Status\n\nImplemented, except the manual matrix.\n", &vocabulary));
+    try std.testing.expectEqualStrings("", statusFrom("# No status section\n", &vocabulary));
+}
+
+test "statusFrom prefers the earliest phrase in the line, not the first listed" {
+    const vocabulary = [_][]const u8{ "Shipped", "Draft" };
+    try std.testing.expectEqualStrings("Draft", statusFrom("## Status\n\nDraft; supersedes a Shipped design.\n", &vocabulary));
+}
+
+test "insertInventoryRow appends a table row below the last one" {
+    const index =
+        \\| PRD | Title | Status | Notes |
+        \\|---|---|---|---|
+        \\<!-- inventory:prd:start -->
+        \\| [0001](0001-a.md) | A | Shipped | |
+        \\| [0002](0002-b.md) | B | Draft | |
+        \\<!-- inventory:prd:end -->
+        \\
+    ;
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expect(try insertInventoryRow(
+        &out.writer,
+        index,
+        "<!-- inventory:prd:start -->",
+        "<!-- inventory:prd:end -->",
+        "| [0003](0003-c.md) | C | Draft | |",
+    ));
+    const text = out.written();
+    const b = std.mem.find(u8, text, "0002-b.md").?;
+    const c = std.mem.find(u8, text, "0003-c.md").?;
+    // Numbered documents read in ascending order, so a new row lands at the
+    // bottom — the opposite of the newest-first RFC list.
+    try std.testing.expect(b < c);
+    try std.testing.expect(std.mem.find(u8, text, "| [0001](0001-a.md) | A | Shipped | |") != null);
+}
+
+test "insertInventoryRow refuses an index with no markers" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expect(!try insertInventoryRow(&out.writer, "| a |\n", "<!-- s -->", "<!-- e -->", "| b |"));
+}
+
+test "setInventoryRowStatus rewrites only the status cell of the matching row" {
+    const index =
+        \\<!-- inventory:prd:start -->
+        \\| [0001](0001-a.md) | A | Draft | keeps its note |
+        \\| [0002](0002-b.md) | B | Draft | |
+        \\<!-- inventory:prd:end -->
+        \\
+    ;
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expect(try setInventoryRowStatus(
+        &out.writer,
+        index,
+        "<!-- inventory:prd:start -->",
+        "<!-- inventory:prd:end -->",
+        "0001-a.md",
+        "Shipped",
+    ));
+    const text = out.written();
+    try std.testing.expect(std.mem.find(u8, text, "| [0001](0001-a.md) | A | Shipped | keeps its note |") != null);
+    // The other row is untouched, notes column included.
+    try std.testing.expect(std.mem.find(u8, text, "| [0002](0002-b.md) | B | Draft | |") != null);
+}
+
+test "setInventoryRowStatus reports a row it cannot find rather than guessing" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    const index = "<!-- s -->\n| [0001](0001-a.md) | A | Draft | |\n<!-- e -->\n";
+    try std.testing.expect(!try setInventoryRowStatus(&out.writer, index, "<!-- s -->", "<!-- e -->", "0009-z.md", "Shipped"));
 }
 
 test "fillTemplate substitutes known names and leaves unknown ones visible" {

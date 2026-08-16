@@ -1,0 +1,86 @@
+{
+  "name": "prd",
+  "description": "Write and maintain product requirement docs under docs/prds/: what a feature is meant to be, as opposed to a decision (docs/adrs/), an open question (docs/rfcs/), or the shipped narrative (docs/ROADMAP.md). Actions: list shows every PRD with its real status and the next free number; checklist returns what a Draft has to pin down before it counts as planned — dependencies named, blocking questions settled in Design rather than parked under Open questions, and implementation phases that name files — because the failure mode here is not a missing document but a Draft that reads finished and cannot be started from; use it with ask_user when the request is too vague to draft from. search {query} covers the PRDs and the ADRs together, so a spec that would contradict a recorded decision is caught before it is written. create {title, problem, goals, status?, slug?, notes?} allocates the number, renders docs/prds/TEMPLATE.md and adds the inventory row. open, append, update maintain the body; status {path, status, note?} moves it between draft, in_progress and shipped, and a shipped PRD needs a note naming the source files that are now the single source of truth. Goals and acceptance criteria must cover each other; a bug belongs in Known issues, never in Open questions; and when the code drifts, the PRD is fixed the same day.",
+  "llm_description": "Product requirement docs under docs/prds/ — what a feature is meant to be. {action:\"list\"} shows status and the next number; {action:\"checklist\"} gives the Draft bar (problem from the situation, numbered goals, non-goals, dependencies, file-level implementation phases, failure modes, honest acceptance boxes) with the question to ask the operator for each; {action:\"search\",query} covers PRDs and ADRs (an ADR match constrains this design). {action:\"create\",title,problem,goals,status?,slug?,notes?} numbers, renders and indexes it. Then open/append/update, {action:\"status\",path,status:\"draft\"|\"in_progress\"|\"shipped\",note?} — shipped needs a note naming the source files that are now the source of truth. Settle blocking questions in Design, not Open questions; put bugs in Known issues. Mutations are compare-and-swap — re-open after a conflict.",
+  "wasm": "zig-out/tools/prd.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "list",
+          "checklist",
+          "create",
+          "open",
+          "search",
+          "append",
+          "update",
+          "status"
+        ],
+        "description": "list is the default; checklist before drafting a vague request; create scaffolds a numbered PRD."
+      },
+      "title": {
+        "type": "string",
+        "description": "The feature's name, e.g. 'Scheduled runs'. Required for create."
+      },
+      "problem": {
+        "type": "string",
+        "description": "What breaks or is impossible without this, stated from the situation that forced it rather than from the solution. Include the real constraints that shaped the design. Required for create."
+      },
+      "goals": {
+        "type": "string",
+        "description": "Numbered, verifiable goals, each checkable against an acceptance criterion. Required for create."
+      },
+      "slug": {
+        "type": "string",
+        "description": "Filename stem after the number: lowercase letters, digits and hyphens. Derived from the title when omitted."
+      },
+      "notes": {
+        "type": "string",
+        "description": "Short text for the inventory table's Notes cell, e.g. what is live versus open. Cannot contain '|'."
+      },
+      "path": {
+        "type": "string",
+        "description": "Markdown path directly below docs/prds/. Required for open, append, update and status."
+      },
+      "content": {
+        "type": "string",
+        "description": "Markdown to append to an existing PRD. Required for append."
+      },
+      "old": {
+        "type": "string",
+        "description": "Exact, uniquely occurring current text to replace. Required for update; obtain it with open."
+      },
+      "new": {
+        "type": "string",
+        "description": "Replacement text for update. May be empty to remove old text."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "in_progress",
+          "shipped"
+        ],
+        "description": "New status, and the initial status for create (draft when omitted). Shipped needs a note naming the source files that are now the single source of truth."
+      },
+      "note": {
+        "type": "string",
+        "description": "Sentence appended to the status line: for shipped, the source files and the surfaces that expose them."
+      },
+      "query": {
+        "type": "string",
+        "description": "Text to search for across the PRDs and ADRs. Required for search."
+      }
+    },
+    "required": []
+  },
+  "fs_prefixes": [
+    "docs/prds/",
+    "docs/adrs/"
+  ],
+  "network_allow": [],
+  "category": "knowledge",
+  "confirm": false
+}
