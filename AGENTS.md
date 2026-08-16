@@ -214,6 +214,10 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   through `patches/vaxis-sixel-graphics.patch`, so `sixel_supported` in
   `mascot.zig` compiles the whole path out on an unpatched dependency.
   `turn_stats.writeSession` matches the web `#run-metrics` fields.
+  A keyboard-owning modal in `repl.zig` (picker, search) must route Ctrl+C
+  through `modalCtrlCAction` (the ask modal has its own stop path): a
+  fall-through `consumeAndRedraw` swallows the interrupt and a streaming
+  turn cannot be stopped while the modal is open.
 - `src/mcp/` — MCP server. `src/acp/` — ACP v1 stdio. `src/hooks/` —
   Claude-compatible lifecycle hooks. `src/debug/` — DAP.
 - `src/peers/` — mesh + chatrooms. Fleet's lamp map is `GET /api/mesh/map`
