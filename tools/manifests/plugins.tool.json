@@ -11,9 +11,9 @@
     }
   },
   "fs_prefixes": [
-    ".",
     "state/plugins.json",
-    "state/plugin_config.json"
+    "state/plugin_config.json",
+    "tools/manifests"
   ],
   "internal": true,
   "category": "harness"

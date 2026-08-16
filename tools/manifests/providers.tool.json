@@ -20,6 +20,5 @@
   },
   "fs_prefixes": [],
   "llm": true,
-  "network_from_config": "providers",
   "category": "observability"
 }

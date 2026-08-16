@@ -11,7 +11,7 @@
     }
   },
   "fs_prefixes": [
-    "."
+    "tools/manifests"
   ],
   "internal": true,
   "category": "harness"
