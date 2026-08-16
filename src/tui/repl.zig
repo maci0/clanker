@@ -1389,8 +1389,8 @@ const shell_escape_help =
 
 const keys_help =
     \\Keys:
-    \\  Shift-Enter       insert a line break (shown as ⏎, submitted as a
-    \\                    real newline; keypad Enter does the same)
+    \\  Shift-Enter       insert a line break; the box grows one row per
+    \\                    line (keypad Enter does the same)
     \\  Tab               complete a /command
     \\  Ctrl-P            command palette (matches names and descriptions)
     \\  Ctrl-R            search transcript; Up/Down step through matches
@@ -4077,6 +4077,59 @@ const Model = struct {
         self.text_field.insertSliceAtCursor(shown) catch {};
     }
 
+    /// Draws the composer as one row per ⏎-separated line, replacing the
+    /// single-row `TextField.draw` whenever the buffer holds a line break.
+    /// The marker grapheme is never written to a cell — some terminals
+    /// render U+23CE at a different width than the width table says
+    /// (Konsole draws it wide), and a width disagreement in the input row
+    /// garbles everything after it. The surface carries
+    /// `text_field.widget()` so focus keeps the terminal cursor here.
+    ///
+    /// The cursor's line scrolls horizontally to keep the cursor visible;
+    /// every other line truncates with an ellipsis, like the TextField.
+    /// With more lines than rows the block scrolls to the cursor's line.
+    fn drawComposer(self: *Model, ctx: vxfw.DrawContext, text: []const u8, width: u16, rows: u16) !vxfw.Surface {
+        var surface = try vxfw.Surface.init(ctx.arena, self.text_field.widget(), .{ .width = width, .height = rows });
+        const style = self.text_field.style;
+        @memset(surface.buffer, .{ .style = style });
+        if (width == 0 or rows == 0) return surface;
+        const layout = composerLayout(text, self.text_field.buf.firstHalf().len);
+        var first: u16 = if (layout.line_count > rows) layout.line_count - rows else 0;
+        if (layout.cursor_line < first) first = layout.cursor_line;
+
+        var it = std.mem.splitSequence(u8, text, newline_marker);
+        var idx: u16 = 0;
+        var cursor_screen_col: u16 = 0;
+        while (it.next()) |seg| : (idx += 1) {
+            if (idx < first or idx >= first + rows) continue;
+            const row: u16 = idx - first;
+            const on_cursor_line = idx == layout.cursor_line;
+            const offset_cols: u16 = if (on_cursor_line and layout.cursor_cols >= width)
+                layout.cursor_cols - width + 1
+            else
+                0;
+            var skipped: u16 = 0;
+            var col: u16 = 0;
+            var i: usize = 0;
+            while (nextCell(seg, &i)) |c| {
+                if (skipped < offset_cols) {
+                    skipped += c.width;
+                    continue;
+                }
+                if (col + c.width >= width) {
+                    surface.writeCell(width - 1, row, .{ .char = .{ .grapheme = "…", .width = 1 }, .style = style });
+                    break;
+                }
+                surface.writeCell(col, row, .{ .char = .{ .grapheme = c.bytes, .width = @intCast(c.width) }, .style = style });
+                col += c.width;
+            }
+            if (offset_cols > 0) surface.writeCell(0, row, .{ .char = .{ .grapheme = "…", .width = 1 }, .style = style });
+            if (on_cursor_line) cursor_screen_col = layout.cursor_cols - offset_cols;
+        }
+        surface.cursor = .{ .col = @min(cursor_screen_col, width - 1), .row = layout.cursor_line - first };
+        return surface;
+    }
+
     /// `TextField.toOwnedSlice` plus marker decoding: every path that takes
     /// text out of the composer (task submit, mid-run steering) goes through
     /// here so a drawn ⏎ and a submitted '\n' can never disagree. Returned
@@ -4320,7 +4373,23 @@ const Model = struct {
             max.width >= mascot_v.cols + 4 and
             // The taller box must still leave a transcript worth reading.
             max.height >= mascot.inputBoxHeight(mascot_v) + 5;
-        const box_h: u16 = if (mascot_in_box) mascot.inputBoxHeight(mascot_v) else 3;
+        // One composer row per ⏎-separated line. The marker glyph itself is
+        // never drawn: terminals disagree with the width table about U+23CE
+        // (Konsole renders it wide where the table says one column), and a
+        // width disagreement inside the input row garbles everything after
+        // it. Instead a buffer holding line breaks grows the box upward and
+        // each line gets its own row (`drawComposer`). Growth is capped so
+        // the transcript keeps at least a handful of rows; past the cap the
+        // block scrolls to keep the cursor's line visible.
+        const composer_text = blk: {
+            const fh = self.text_field.buf.firstHalf();
+            const sh = self.text_field.buf.secondHalf();
+            break :blk std.mem.concat(ctx.arena, u8, &.{ fh, sh }) catch fh;
+        };
+        const composer_total = composerLayout(composer_text, self.text_field.buf.firstHalf().len).line_count;
+        const base_box_h: u16 = if (mascot_in_box) mascot.inputBoxHeight(mascot_v) else 3;
+        const composer_extra: u16 = @min(composer_total - 1, @min(5, max.height -| (base_box_h + 5)));
+        const box_h: u16 = base_box_h + composer_extra;
         // Same session strip as the web UI's `#run-metrics`. One row under
         // the composer once a turn has started; skipped when the terminal
         // cannot hold status + box + this line without overlapping.
@@ -4449,12 +4518,18 @@ const Model = struct {
         // underneath the robot, and keeps the caret reachable.
         const input_reserve: u16 = if (mascot_in_box) mascot_v.cols + 1 else 0;
         const input_w = max.width -| 4 -| input_reserve;
-        const input_surf = try self.text_field.draw(ctx.withConstraints(.{}, .{ .width = input_w, .height = 1 }));
+        // A break-free buffer keeps the plain single-row TextField (its own
+        // horizontal scroll state included); one holding ⏎ markers is drawn
+        // by `drawComposer`, one row per line with no marker glyph.
+        const input_surf = if (composer_extra == 0)
+            try self.text_field.draw(ctx.withConstraints(.{}, .{ .width = input_w, .height = 1 }))
+        else
+            try self.drawComposer(ctx, composer_text, input_w, composer_extra + 1);
         var children = try ctx.arena.alloc(vxfw.SubSurface, 1);
-        // The field sits on the box's *last* interior row, so a taller box
+        // The field ends on the box's *last* interior row, so a taller box
         // grows upward around the robot and the prompt stays where the eye
         // expects it rather than floating at the top of a tall frame.
-        const input_row = box_y + box_h -| 2;
+        const input_row = box_y + box_h -| 2 -| composer_extra;
         children[0] = .{ .origin = .{ .row = input_row, .col = 2 }, .surface = input_surf };
 
         // The scrollbar claims the rightmost column whenever the transcript
@@ -6083,6 +6158,59 @@ fn encodeComposerNewlines(alloc: std.mem.Allocator, text: []const u8) []const u8
         }
     }
     return out.toOwnedSlice(alloc) catch text;
+}
+
+/// Where the cursor of a marker-separated composer buffer lands when each
+/// line is drawn on its own row. `cursor_byte` is the TextField gap position;
+/// the gap moves by whole graphemes, so it never splits a marker.
+const ComposerLayout = struct {
+    /// Marker-separated line count, at least 1.
+    line_count: u16,
+    /// Line the cursor sits on, 0-based.
+    cursor_line: u16,
+    /// Display columns from that line's start to the cursor.
+    cursor_cols: u16,
+};
+
+fn composerLayout(text: []const u8, cursor_byte: usize) ComposerLayout {
+    var out: ComposerLayout = .{ .line_count = 1, .cursor_line = 0, .cursor_cols = 0 };
+    var it = std.mem.splitSequence(u8, text, newline_marker);
+    var idx: u16 = 0;
+    var off: usize = 0;
+    var found = false;
+    while (it.next()) |seg| : (idx += 1) {
+        const end = off + seg.len;
+        if (!found and cursor_byte <= end) {
+            found = true;
+            out.cursor_line = idx;
+            const upto = @max(off, @min(cursor_byte, end));
+            out.cursor_cols = @intCast(width_mod.displayWidth(text[off..upto]));
+        }
+        off = end + newline_marker.len;
+        out.line_count = idx + 1;
+    }
+    return out;
+}
+
+test "composerLayout maps the cursor through markers to a line and column" {
+    // Empty buffer: one line, origin.
+    try std.testing.expectEqual(ComposerLayout{ .line_count = 1, .cursor_line = 0, .cursor_cols = 0 }, composerLayout("", 0));
+
+    const text = "ab" ++ newline_marker ++ "cde" ++ newline_marker ++ "f";
+    // Three lines.
+    try std.testing.expectEqual(@as(u16, 3), composerLayout(text, 0).line_count);
+    // End of the first line, just before its marker.
+    try std.testing.expectEqual(ComposerLayout{ .line_count = 3, .cursor_line = 0, .cursor_cols = 2 }, composerLayout(text, 2));
+    // Start of the second line, just after the marker.
+    try std.testing.expectEqual(ComposerLayout{ .line_count = 3, .cursor_line = 1, .cursor_cols = 0 }, composerLayout(text, 2 + newline_marker.len));
+    // Middle of the second line.
+    try std.testing.expectEqual(ComposerLayout{ .line_count = 3, .cursor_line = 1, .cursor_cols = 2 }, composerLayout(text, 4 + newline_marker.len));
+    // End of the buffer.
+    try std.testing.expectEqual(ComposerLayout{ .line_count = 3, .cursor_line = 2, .cursor_cols = 1 }, composerLayout(text, text.len));
+
+    // A trailing marker yields an empty last line the cursor can sit on.
+    const trailing = "x" ++ newline_marker;
+    try std.testing.expectEqual(ComposerLayout{ .line_count = 2, .cursor_line = 1, .cursor_cols = 0 }, composerLayout(trailing, trailing.len));
 }
 
 test "newline markers round-trip: what encode shows, submit's decode returns" {

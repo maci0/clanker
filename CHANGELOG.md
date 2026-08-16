@@ -520,8 +520,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   parser dropped (now mapped to keypad Enter by
   `patches/vaxis-ss3-keypad-enter.patch`); terminals speaking the kitty
   keyboard protocol report the chord as Enter+Shift and land in the same
-  handler. The break is shown as `⏎` in the single-line composer and becomes
-  a real newline in the submitted task. Multi-line pastes (bracketed and
+  handler. The composer grows one row per line and each line renders on its
+  own row, and the submitted task carries real newlines. Multi-line pastes (bracketed and
   Ctrl+Shift+V) now keep their line structure the same way instead of being
   folded to spaces, and Up/Down history recall restores it. Documented in
   the repl keys help
