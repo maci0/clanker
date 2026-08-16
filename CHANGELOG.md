@@ -469,6 +469,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- TUI: Ctrl+C is no longer swallowed while the model/theme picker, command
+  palette (Ctrl+P), or transcript search (Ctrl+R) is open. It now closes the
+  modal like Escape, and with a turn streaming it also interrupts the turn —
+  previously those two modals consumed every unmatched key, so a streaming
+  turn could not be stopped until the modal was dismissed by hand. The ask
+  modal already handled this.
 - `clanker commit` works again. It called the `smart_commit` guest through a
   helper that wraps its argument as `{"args": "<string>"}` and requires a
   `text` field in the reply; the guest emits neither, so the verb always
