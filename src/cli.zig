@@ -6797,6 +6797,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleFiles(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (is_logs) {
             handleLogs(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), stream);
+        } else if (recordStoreForPath(path)) |record_store| {
+            handleRecords(io, gpa, cfg, environ_map, record_store, method, target, body, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, path, "/api/knowledge")) {
             handleKnowledge(io, gpa, cfg, environ_map, method, target, body, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, path, "/api/prompts")) {
@@ -11521,6 +11523,351 @@ test "skills route maps list and toggle onto the guest" {
     try std.testing.expect(std.mem.find(u8, off, "\"action\":\"set_enabled\"") != null);
     try std.testing.expect(std.mem.find(u8, off, "\"name\":\"research\"") != null);
     try std.testing.expect(std.mem.find(u8, off, "\"enabled\":false") != null);
+}
+
+/// The record stores that have an HTTP endpoint (ADR 0019). One per *tool*,
+/// not per store: `reports` covers both `docs/reports/` and `docs/runbooks/`,
+/// so following the tools keeps the endpoints and the guests one-to-one.
+const RecordStore = enum {
+    reports,
+    rfc,
+    adr,
+    prd,
+    research,
+
+    /// The guest is named after the store, which is what keeps this from
+    /// becoming a translation table.
+    fn toolName(self: RecordStore) []const u8 {
+        return @tagName(self);
+    }
+
+    /// Actions a GET may name. Reads only: a GET is what a browser
+    /// prefetches and a crawler follows, so it must not be able to mutate a
+    /// record. `research` `plan` is a read because it is pure — it builds
+    /// search angles from the topic and makes no network call; `sweep` does,
+    /// and is deliberately on neither list (PRD 0038 Non-goals).
+    fn readActions(self: RecordStore) []const []const u8 {
+        return switch (self) {
+            .reports, .adr => &.{ "list", "search", "open" },
+            .rfc, .prd => &.{ "list", "search", "open", "checklist" },
+            .research => &.{ "list", "search", "open", "plan" },
+        };
+    }
+
+    /// Actions a POST may name. All of them are compare-and-swap writes in
+    /// the guest, so a concurrent edit comes back as that guest's refusal.
+    fn writeActions(self: RecordStore) []const []const u8 {
+        return switch (self) {
+            .rfc => &.{ "create", "append", "update", "recommend", "status" },
+            .reports, .adr, .prd, .research => &.{ "create", "append", "update", "status" },
+        };
+    }
+
+    fn actionsFor(self: RecordStore, is_read: bool) []const []const u8 {
+        return if (is_read) self.readActions() else self.writeActions();
+    }
+};
+
+fn recordStoreForPath(path: []const u8) ?RecordStore {
+    inline for (@typeInfo(RecordStore).@"enum".fields) |field| {
+        if (std.mem.eql(u8, path, "/api/" ++ field.name)) return @field(RecordStore, field.name);
+    }
+    return null;
+}
+
+fn recordActionAllowed(store: RecordStore, is_read: bool, action: []const u8) bool {
+    for (store.actionsFor(is_read)) |known| {
+        if (std.mem.eql(u8, known, action)) return true;
+    }
+    return false;
+}
+
+fn joinActions(arena: std.mem.Allocator, actions: []const []const u8) []const u8 {
+    return std.mem.join(arena, ", ", actions) catch "";
+}
+
+/// Refusal naming what this method accepts and which method the caller
+/// probably wanted, so a 400 is actionable without reading the PRD.
+fn recordWrongMethod(
+    arena: std.mem.Allocator,
+    store: RecordStore,
+    is_read: bool,
+    action: []const u8,
+) RecordRoute {
+    const method = if (is_read) "GET" else "POST";
+    const other = if (is_read) "POST" else "GET";
+    const msg = std.fmt.allocPrint(
+        arena,
+        "'{s}' is not available on {s} /api/{s}; {s} accepts {s} — use {s} for {s}",
+        .{
+            action,
+            method,
+            store.toolName(),
+            method,
+            joinActions(arena, store.actionsFor(is_read)),
+            other,
+            joinActions(arena, store.actionsFor(!is_read)),
+        },
+    ) catch "unsupported action";
+    return .{ .bad_request = msg };
+}
+
+const RecordRoute = union(enum) {
+    /// JSON input to hand the guest.
+    input: []const u8,
+    /// Refuse with 400 and this message.
+    bad_request: []const u8,
+    /// Refuse with 405.
+    method_not_allowed,
+};
+
+/// Maps one HTTP request onto the guest's own input object, or onto the
+/// refusal to send instead. Pure, so the method split can be tested without a
+/// server: a GET that names a write action is refused here, before the guest
+/// is ever loaded.
+///
+/// GET carries its fields in the query string under the names the tool's
+/// `input_schema` already uses, and defaults `action` to `list` — the
+/// endpoint always sends an explicit action, so a guest's own default (which
+/// is `plan` for `research`) never applies over HTTP. POST carries the guest's
+/// input object verbatim, so a write sends exactly what the agent would send,
+/// and must name an action rather than fall through to a default that reads.
+fn recordsRouteToToolInput(
+    arena: std.mem.Allocator,
+    store: RecordStore,
+    method: []const u8,
+    target: []const u8,
+    body: []const u8,
+) RecordRoute {
+    if (std.mem.eql(u8, method, "GET")) return recordsGetToToolInput(arena, store, target);
+    if (std.mem.eql(u8, method, "POST")) return recordsPostToToolInput(arena, store, body);
+    return .method_not_allowed;
+}
+
+fn recordsGetToToolInput(arena: std.mem.Allocator, store: RecordStore, target: []const u8) RecordRoute {
+    const query = if (std.mem.findScalar(u8, target, '?')) |i| target[i + 1 ..] else "";
+
+    var action: []const u8 = "list";
+    if (queryParam(arena, target, "action")) |named| {
+        if (named.len > 0) action = named;
+    }
+    if (!recordActionAllowed(store, true, action)) {
+        if (recordActionAllowed(store, false, action)) return recordWrongMethod(arena, store, true, action);
+        return unknownRecordAction(arena, store, true, action);
+    }
+
+    var w: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &w.writer };
+    buildRecordGetInput(&s, arena, action, query) catch return .{
+        .bad_request = "could not build the tool request from the query string",
+    };
+    return .{ .input = w.written() };
+}
+
+fn buildRecordGetInput(
+    s: *std.json.Stringify,
+    arena: std.mem.Allocator,
+    action: []const u8,
+    query: []const u8,
+) !void {
+    try s.beginObject();
+    try s.objectField("action");
+    try s.write(action);
+    var pairs = std.mem.splitScalar(u8, query, '&');
+    while (pairs.next()) |pair| {
+        if (pair.len == 0) continue;
+        const eq = std.mem.findScalar(u8, pair, '=') orelse continue;
+        const raw_key = pair[0..eq];
+        if (raw_key.len == 0) continue;
+        const key = try percentDecode(arena, raw_key);
+        // `action` is written above; anything else is a field the guest's
+        // schema names, passed through under that name.
+        if (std.mem.eql(u8, key, "action")) continue;
+        try s.objectField(key);
+        try s.write(try percentDecode(arena, pair[eq + 1 ..]));
+    }
+    try s.endObject();
+}
+
+fn recordsPostToToolInput(arena: std.mem.Allocator, store: RecordStore, body: []const u8) RecordRoute {
+    const trimmed = std.mem.trim(u8, body, " \t\r\n");
+    if (trimmed.len == 0) return .{
+        .bad_request = "a record write needs the tool's JSON input object as its request body",
+    };
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, trimmed, .{}) catch return .{
+        .bad_request = "request body is not JSON",
+    };
+    const obj = switch (parsed) {
+        .object => |o| o,
+        else => return .{ .bad_request = "request body must be a JSON object" },
+    };
+    const action = switch (obj.get("action") orelse return recordMissingAction(arena, store)) {
+        .string => |v| v,
+        else => return recordMissingAction(arena, store),
+    };
+    if (!recordActionAllowed(store, false, action)) {
+        if (recordActionAllowed(store, true, action)) return recordWrongMethod(arena, store, false, action);
+        return unknownRecordAction(arena, store, false, action);
+    }
+    return .{ .input = trimmed };
+}
+
+fn recordMissingAction(arena: std.mem.Allocator, store: RecordStore) RecordRoute {
+    const msg = std.fmt.allocPrint(
+        arena,
+        "POST /api/{s} needs an action: {s}",
+        .{ store.toolName(), joinActions(arena, store.writeActions()) },
+    ) catch "request body needs an action";
+    return .{ .bad_request = msg };
+}
+
+/// An action neither method has, including `research` `sweep`, which is left
+/// off the HTTP surface on purpose (PRD 0038 Non-goals). The wording avoids
+/// "no such", which `toolRefusalStatus` reads as a missing *resource* (404);
+/// an action the surface does not offer is a client mistake, so it is a 400.
+fn unknownRecordAction(
+    arena: std.mem.Allocator,
+    store: RecordStore,
+    is_read: bool,
+    action: []const u8,
+) RecordRoute {
+    const msg = std.fmt.allocPrint(
+        arena,
+        "'{s}' is not an action {s} /api/{s} offers; it accepts {s}",
+        .{
+            action,
+            if (is_read) "GET" else "POST",
+            store.toolName(),
+            joinActions(arena, store.actionsFor(is_read)),
+        },
+    ) catch "no such action";
+    return .{ .bad_request = msg };
+}
+
+/// `GET|POST /api/{reports,rfc,adr,prd,research}` — the record stores over
+/// HTTP (ADR 0019). Every store's logic stays in its guest: this relays the
+/// request and the guest's answer, including the compare-and-swap refusal a
+/// concurrent edit produces, and never reads or writes `docs/` itself.
+///
+/// Ungated on purpose: `config.Modules` has no documentation-records flag,
+/// and the neighbouring `/api/skills`, `/api/logs`, `/api/knowledge` and
+/// `/api/prompts` are ungated too.
+fn handleRecords(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    store: RecordStore,
+    method: []const u8,
+    target: []const u8,
+    body: []const u8,
+    accepts_gzip: bool,
+    stream: std.Io.net.Stream,
+) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const input = switch (recordsRouteToToolInput(arena, store, method, target, body)) {
+        .method_not_allowed => {
+            respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+            return;
+        },
+        .bad_request => |msg| {
+            respond(stream, 400, "Bad Request", recordErrorBody(arena, msg));
+            return;
+        },
+        .input => |in| in,
+    };
+
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, store.toolName(), input) catch {
+        const msg = std.fmt.allocPrint(
+            arena,
+            "{{\"ok\":false,\"error\":\"{s} tool unavailable\"}}",
+            .{store.toolName()},
+        ) catch "{\"ok\":false,\"error\":\"record tool unavailable\"}";
+        respond(stream, 500, "Internal Server Error", msg);
+        return;
+    };
+    if (toolResultFailed(raw)) {
+        respondTool(stream, raw);
+        return;
+    }
+    respondCompressible(arena, stream, accepts_gzip, raw);
+}
+
+fn recordErrorBody(arena: std.mem.Allocator, msg: []const u8) []const u8 {
+    const fallback = "{\"ok\":false,\"error\":\"bad request\"}";
+    var w: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &w.writer };
+    writeRecordError(&s, msg) catch return fallback;
+    return w.written();
+}
+
+fn writeRecordError(s: *std.json.Stringify, msg: []const u8) !void {
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(false);
+    try s.objectField("error");
+    try s.write(msg);
+    try s.endObject();
+}
+
+test "records route puts reads on GET and writes on POST" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // GET with no query is the listing call: the endpoint always sends an
+    // explicit action, so the guest's own default never applies over HTTP.
+    try std.testing.expectEqualStrings(
+        "{\"action\":\"list\"}",
+        recordsRouteToToolInput(arena, .rfc, "GET", "/api/rfc", "").input,
+    );
+    // Query parameters become the guest's own fields, percent-decoded.
+    try std.testing.expectEqualStrings(
+        "{\"action\":\"search\",\"query\":\"symlinked state\"}",
+        recordsRouteToToolInput(arena, .reports, "GET", "/api/reports?action=search&query=symlinked%20state", "").input,
+    );
+    try std.testing.expectEqualStrings(
+        "{\"action\":\"open\",\"path\":\"docs/adrs/0004-x.md\"}",
+        recordsRouteToToolInput(arena, .adr, "GET", "/api/adr?action=open&path=docs%2Fadrs%2F0004-x.md", "").input,
+    );
+
+    // A write action is refused on GET before the guest runs: a safe method
+    // must not be able to mutate a record.
+    const forged = recordsRouteToToolInput(arena, .prd, "GET", "/api/prd?action=create&title=x", "");
+    try std.testing.expect(std.mem.find(u8, forged.bad_request, "POST") != null);
+
+    // POST relays the guest's input object verbatim.
+    const create = "{\"action\":\"create\",\"title\":\"t\",\"problem\":\"p\",\"goals\":\"g\"}";
+    try std.testing.expectEqualStrings(
+        create,
+        recordsRouteToToolInput(arena, .prd, "POST", "/api/prd", create).input,
+    );
+    // A missing action is refused rather than defaulted, because a guest's
+    // own default action is a read.
+    try std.testing.expect(recordsRouteToToolInput(arena, .prd, "POST", "/api/prd", "{\"title\":\"t\"}") == .bad_request);
+    try std.testing.expect(recordsRouteToToolInput(arena, .prd, "POST", "/api/prd", "") == .bad_request);
+    try std.testing.expect(recordsRouteToToolInput(arena, .prd, "POST", "/api/prd", "not json") == .bad_request);
+    // A read on POST is refused too: the split is both ways.
+    try std.testing.expect(recordsRouteToToolInput(arena, .adr, "POST", "/api/adr", "{\"action\":\"open\",\"path\":\"x\"}") == .bad_request);
+
+    // Per-store action sets. `checklist` exists on rfc and prd only;
+    // `recommend` on rfc only.
+    try std.testing.expect(recordsRouteToToolInput(arena, .rfc, "GET", "/api/rfc?action=checklist", "") == .input);
+    try std.testing.expect(recordsRouteToToolInput(arena, .adr, "GET", "/api/adr?action=checklist", "") == .bad_request);
+    try std.testing.expect(recordsRouteToToolInput(arena, .rfc, "POST", "/api/rfc", "{\"action\":\"recommend\",\"path\":\"p\"}") == .input);
+    try std.testing.expect(recordsRouteToToolInput(arena, .prd, "POST", "/api/prd", "{\"action\":\"recommend\",\"path\":\"p\"}") == .bad_request);
+
+    // `plan` is a read: it builds search angles and makes no network call.
+    // `sweep` does, and is on neither method.
+    try std.testing.expect(recordsRouteToToolInput(arena, .research, "GET", "/api/research?action=plan&topic=wasm", "") == .input);
+    try std.testing.expect(recordsRouteToToolInput(arena, .research, "GET", "/api/research?action=sweep&topic=wasm", "") == .bad_request);
+    try std.testing.expect(recordsRouteToToolInput(arena, .research, "POST", "/api/research", "{\"action\":\"sweep\",\"topic\":\"wasm\"}") == .bad_request);
+
+    try std.testing.expect(recordsRouteToToolInput(arena, .rfc, "PUT", "/api/rfc", "") == .method_not_allowed);
+    try std.testing.expect(recordsRouteToToolInput(arena, .rfc, "DELETE", "/api/rfc", "") == .method_not_allowed);
 }
 
 /// `GET /api/workflows` — the `workflows` guest owns the scan (workflows_dir

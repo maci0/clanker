@@ -497,6 +497,11 @@ pub fn build(b: *std.Build) void {
     // manifests directory absolutely, rather than duplicating either.
     e2e_options.addOption([]const u8, "zig_out_dir", b.pathFromRoot("zig-out"));
     e2e_options.addOption([]const u8, "tools_manifests_dir", b.pathFromRoot("tools/manifests"));
+    // A record store scaffolds new records from its own README.md inventory
+    // and TEMPLATE.md, so an /api/<store> journey needs those files in the
+    // temp cwd. The harness copies them out of the real docs/ tree rather
+    // than hand-rolling a second set that would drift from the guests.
+    e2e_options.addOption([]const u8, "docs_dir", b.pathFromRoot("docs"));
     const raw_http_mod = b.createModule(.{
         .root_source_file = b.path("src/util/raw_http.zig"),
         .target = test_target,

@@ -942,6 +942,68 @@ trust. The `prd` index is a Markdown table with a Notes column rather than a
 list, so a status change rewrites only the status cell and leaves the note
 alone.
 
+### The record stores over HTTP
+
+Every store above is also an endpoint on `clanker serve`, one per tool
+([ADR 0019](adrs/0019-record-stores-are-exposed-over-http-as-one-relay-endpoint.md),
+[PRD 0038](prds/0038-http-endpoints-for-the-record-stores.md)). There are six
+stores but five tools, because `reports` covers both `docs/reports/` and
+`docs/runbooks/`; following the tools keeps the endpoints and the guests
+one-to-one.
+
+| Endpoint | Tool | Store(s) | GET actions | POST actions |
+|---|---|---|---|---|
+| `/api/reports` | `reports` | `docs/reports/`, `docs/runbooks/` | `list`, `search`, `open` | `create`, `append`, `update`, `status` |
+| `/api/rfc` | `rfc` | `docs/rfcs/` | `list`, `search`, `open`, `checklist` | `create`, `append`, `update`, `recommend`, `status` |
+| `/api/adr` | `adr` | `docs/adrs/` | `list`, `search`, `open` | `create`, `append`, `update`, `status` |
+| `/api/prd` | `prd` | `docs/prds/` | `list`, `search`, `open`, `checklist` | `create`, `append`, `update`, `status` |
+| `/api/research` | `research` | `docs/research/` | `list`, `search`, `open`, `plan` | `create`, `append`, `update`, `status` |
+
+Each endpoint relays the guest and nothing else: no record logic is native and
+`src/` never reads or writes `docs/`. The field names are the tool's own, so
+what the agent sends and what a browser sends are the same request.
+
+A bare `GET` lists a store:
+
+```bash
+curl -s http://127.0.0.1:17921/api/rfc
+```
+
+Reads take their fields from the query string, under the schema's names:
+
+```bash
+curl -s 'http://127.0.0.1:17921/api/reports?action=search&query=NotDir'
+curl -s 'http://127.0.0.1:17921/api/adr?action=open&path=docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md'
+```
+
+Writes take the guest's input object as the JSON body:
+
+```bash
+curl -s -X POST http://127.0.0.1:17921/api/prd -H 'content-type: application/json' -d '{"action":"create","title":"Scheduled runs","problem":"Nothing fires on its own","goals":"1. Fire due entries on a cron spec"}'
+```
+
+The endpoint always sends an explicit action, so a guest's own default action
+never applies over HTTP — `GET /api/research` lists rather than planning. A
+write action named on `GET`, a read action named on `POST`, and a `POST` with
+no `action` are all refused with 400 before the guest runs: a GET is what a
+browser prefetches and a crawler follows, so it must not be able to change a
+record. Any other method is 405.
+
+`research sweep` is deliberately on neither method. It performs network egress
+and can run for tens of seconds, which is a different shape from every other
+action here; `clanker research sweep` and the agent still have it.
+
+Compare-and-swap survives the trip unchanged, because nothing native writes:
+an `append`, `update`, `status` or `recommend` against text the record no
+longer has comes back as the guest's own refusal telling the caller to re-open
+and retry, mapped to 400 — never a silent overwrite, and never a 500. A path
+that does not exist is 404.
+
+None of the five is behind a `modules.*` flag, for the same reason
+`/api/skills`, `/api/logs`, `/api/knowledge` and `/api/prompts` are not: there
+is no documentation-records module to gate them with, and they cost nothing
+when idle.
+
 ### Scheduled runs
 
 Recurring agent runs, kept in `state/schedule.json` and recorded in `state/schedule/log.jsonl`. Code: `tools/zig/schedule_cron.zig` (the dialect, host-tested), `src/schedule/` (`store.zig` the two files, `runner.zig` the due/claim/fire logic, `command.zig` the operator surface), and the `schedule` guest (`tools/zig/schedule.zig`) which `/api/schedule` relays to. Full design in [docs/prds/0009-schedule.md](prds/0009-schedule.md).
@@ -1222,6 +1284,11 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/files?path=` | GET | List one directory of the current workspace (JSON), or preview a file. `?workspace=` selects a registered folder. `..` is clamped at that folder; a missing directory is 404 |
 | `/api/knowledge` | GET, POST | Knowledge-graph entries |
 | `/api/prompts` | GET, POST | Stored prompts |
+| `/api/reports` | GET, POST | The `docs/reports/` and `docs/runbooks/` records. Relays the `reports` guest |
+| `/api/rfc` | GET, POST | The `docs/rfcs/` open decisions. Relays the `rfc` guest |
+| `/api/adr` | GET, POST | The `docs/adrs/` decisions already made. Relays the `adr` guest |
+| `/api/prd` | GET, POST | The `docs/prds/` feature specifications. Relays the `prd` guest |
+| `/api/research` | GET, POST | The `docs/research/` notes. Relays the `research` guest; `sweep` is not exposed |
 | `/api/steer` | POST | Send steering text into a run already in flight |
 | `/api/chat/messages?room=..&after=..` | GET | Read a room's message log after a cursor |
 | `/api/chat/rooms` | GET | List subscribed chatrooms |
@@ -1258,7 +1325,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/webui/plugins` | GET, POST | List web UI plugin assets, or toggle one |
 | `/webui/plugins/<name>` | GET | Serve a web UI plugin's static asset |
 
-Error bodies are `{"ok":false,"error":"<message>"}`. Tool-backed routes map a refusal that names a missing resource (`no such …`, `not found`) to 404 and every other refusal to 400. A query string is not part of a resource id: `GET /api/sessions/<id>?t=1` still loads `<id>`. Wrong method on a known resource is 405; a malformed body on an allowed method is 400, not 405. Chat edit/delete/react answer 404 for a missing message and 403 when the caller is not the sender.
+Error bodies are `{"ok":false,"error":"<message>"}`. Tool-backed routes map a refusal that names a missing resource (`no such …`, `not found`) to 404 and every other refusal to 400. A query string is not part of a resource id: `GET /api/sessions/<id>?t=1` still loads `<id>`. Wrong method on a known resource is 405; a malformed body on an allowed method is 400, not 405. On the five record endpoints the action set is split by method, so a write action named on `GET` is 400 before the guest runs rather than 405. Chat edit/delete/react answer 404 for a missing message and 403 when the caller is not the sender.
 
 `GET /` loads the `webui` tool from the registry and renders its output as HTML. It is a real multi-turn chat, not a one-shot form: the page holds a `session` id in `localStorage` and sends it on every `/api/run` call, so replies stay in context (backed by the same `state/sessions/*.json` store as the CLI/REPL `--session`) until "New chat" starts a fresh id.
 
