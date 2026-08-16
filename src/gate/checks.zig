@@ -175,11 +175,22 @@ test "lintGate flags forbidden markers only in changed .zig files" {
 ///
 /// One comparison is legal and is allowed structurally rather than by path:
 /// the proxy's Vertex Gemini model-name sniff, which decides on the *model*
-/// name (`isAnthropicModel`), not the kind. Any other line that compares or
-/// switches on the provider kind (full `provider.kind` or short `p.kind`)
-/// outside `src/llm/providers/` trips the gate. `forKind(...)` lookups and
-/// `@tagName(...)` messages are not kind-switches and pass.
+/// name (`isAnthropicModel`), not the kind. Any other kind reference that
+/// compares (`==`) or sits inside a `switch (` outside `src/llm/providers/`
+/// trips the gate. `forKind(...)` lookups and `@tagName(...)` messages are
+/// not kind-switches and pass.
+///
+/// The scan is conservative about what counts as a kind reference so a
+/// neighbour does not trip it: the name must be a word start (`provider.kind`
+/// or `p.kind`, not a suffix of `exp.kind`), and a comparison must have the
+/// `==` immediately after the `kind` token (a vtable call and an unrelated
+/// `==` on the same line is not a kind-switch).
+fn isIdentChar(c: u8) bool {
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_';
+}
+
 pub fn providerKindLeakGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, files: []const []const u8) !GateResult {
+    const needles = [_][]const u8{ "provider.kind", "p.kind" };
     var hits: usize = 0;
     var hit_buf: [4096]u8 = undefined;
     var hit_w: std.Io.Writer = .fixed(&hit_buf);
@@ -196,17 +207,39 @@ pub fn providerKindLeakGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir,
         var lines = std.mem.splitScalar(u8, content, '\n');
         var line_no: usize = 1;
         while (lines.next()) |line| : (line_no += 1) {
-            const names_kind = std.mem.indexOf(u8, line, "provider.kind") != null or
-                std.mem.indexOf(u8, line, "p.kind") != null;
-            if (!names_kind) continue;
-            const compares = std.mem.indexOf(u8, line, "==") != null;
-            const switches = std.mem.indexOf(u8, line, "switch (") != null;
-            if (!compares and !switches) continue;
-            // The one legal comparison: the Vertex Gemini model-name sniff,
-            // which decides on the model name, not the kind.
-            if (std.mem.indexOf(u8, line, "isAnthropicModel") != null) continue;
-            hit_w.print("{s}:{d}: {s}; ", .{ f, line_no, std.mem.trim(u8, line, " \t") }) catch {};
-            hits += 1;
+            var idx: usize = 0;
+            while (idx < line.len) {
+                var found: ?usize = null;
+                var used: usize = 0;
+                for (needles) |n| {
+                    if (std.mem.indexOfPos(u8, line, idx, n)) |pos| {
+                        if (found == null or pos < found.?) {
+                            found = pos;
+                            used = n.len;
+                        }
+                    }
+                }
+                const pos = found orelse break;
+                // A kind reference must be a word start, not a suffix of
+                // another identifier (exp.kind, myprovider.kind).
+                if (pos > 0 and isIdentChar(line[pos - 1])) {
+                    idx = pos + used;
+                    continue;
+                }
+                const after = std.mem.trimStart(u8, line[pos + used ..], " \t");
+                const compares = std.mem.startsWith(u8, after, "==");
+                const switches = std.mem.indexOf(u8, line[0..pos], "switch (") != null;
+                if (!compares and !switches) {
+                    idx = pos + used;
+                    continue;
+                }
+                // The one legal comparison: the Vertex Gemini model-name
+                // sniff, which decides on the model name, not the kind.
+                if (std.mem.indexOf(u8, line, "isAnthropicModel") != null) break;
+                hit_w.print("{s}:{d}: {s}; ", .{ f, line_no, std.mem.trim(u8, line, " \t") }) catch {};
+                hits += 1;
+                break;
+            }
         }
     }
     if (hits > 0) {
@@ -228,18 +261,20 @@ test "providerKindLeakGate: vtable, forKind and tagName pass; comparisons and sw
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.createDirPath(io, "src/llm/providers");
-    try tmp.dir.createDirPath(io, "src/serve");
+    var providers_dir = try tmp.dir.createDirPathOpen(io, "src/llm/providers", .{});
+    defer providers_dir.close(io);
+    var serve_dir = try tmp.dir.createDirPathOpen(io, "src/serve", .{});
+    defer serve_dir.close(io);
     // A switch on provider.kind inside the vtable dir is exactly where kind
     // logic belongs; it must not trip the gate. The pattern is concatenated
     // so checks.zig's own bytes do not match the gate's needles (the lintGate
     // "TO" ++ "DO" precedent).
-    try tmp.dir.writeFile(io, .{ .sub_path = "src/llm/providers/openai.zig", .data = "switch (provider." ++ "kind) { .openai => 1 }\n" });
+    try providers_dir.writeFile(io, .{ .sub_path = "openai.zig", .data = "switch (provider." ++ "kind) { .openai => 1 }\n" });
     // Vtable lookups and tagName messages are not kind-switches.
     try tmp.dir.writeFile(io, .{ .sub_path = "src/cli.zig", .data = "const impl = providers.forKind(provider.kind);\nlog(@tagName(provider.kind));\n" });
     // The proxy's Vertex Gemini model-name sniff is the one legal comparison:
     // it decides on the model name, not the kind.
-    try tmp.dir.writeFile(io, .{ .sub_path = "src/serve/proxy.zig", .data = "if (resolved.provider." ++ "kind == .vertex and !vertex_ai.isAnthropicModel(resolved.provider.wireModelName())) {}\n" });
+    try serve_dir.writeFile(io, .{ .sub_path = "proxy.zig", .data = "if (resolved.provider." ++ "kind == .vertex and !vertex_ai.isAnthropicModel(resolved.provider.wireModelName())) {}\n" });
 
     const clean = try providerKindLeakGate(gpa, io, tmp.dir, &.{ "src/llm/providers/openai.zig", "src/cli.zig", "src/serve/proxy.zig" });
     try std.testing.expect(clean.ok);

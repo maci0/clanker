@@ -373,6 +373,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Lifecycle hooks that never read stdin (`printf`, `echo`) no longer fail
+  the hook when the child exits before the payload write finishes. The
+  decision on stdout still applies.
 - `GET /api/goals` no longer 500s on a valid store. The list guest wrote
   `"goals"` then the array without a colon (`{"ok":true,"goals"[...]}`),
   so the HTTP handler rejected it as bad JSON.

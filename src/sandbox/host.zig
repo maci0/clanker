@@ -4705,8 +4705,11 @@ pub fn execUnderPolicyInput(
     if (child.stdin) |stdin_file| {
         var buffer: [4096]u8 = undefined;
         var writer = stdin_file.writer(sb.io, &buffer);
-        writer.interface.writeAll(input) catch |err| return .{ .failed = err };
-        writer.interface.flush() catch |err| return .{ .failed = err };
+        // A hook that never reads stdin (printf, echo) can exit before we
+        // finish the write; the pipe then returns WriteFailed. That is not
+        // a failed hook, the child's stdout still carries the decision.
+        writer.interface.writeAll(input) catch {};
+        writer.interface.flush() catch {};
         stdin_file.close(sb.io);
         child.stdin = null;
     }
@@ -5376,6 +5379,44 @@ test "execUnderPolicyInput carries stdin and enforces one wall-clock deadline" {
     switch (timed) {
         .failed => |err| try std.testing.expectEqual(error.Timeout, err),
         else => return error.TestExpectedTimeout,
+    }
+}
+
+test "execUnderPolicyInput treats a child that ignores stdin as ran" {
+    // Hooks often use printf and never read the payload. On a fast runner
+    // the child exits before the stdin write finishes (WriteFailed). That
+    // must not become a failed hook; stdout still has the decision JSON.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("PATH", "/usr/bin:/bin");
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{},
+        .environ_map = &env,
+        .exec_allow = &.{"printf"},
+    };
+    const attempt = execUnderPolicyInput(
+        &sb,
+        &.{ "printf", "%s", "{\"decision\":\"deny\",\"reason\":\"policy\"}" },
+        "{}",
+        1024,
+        1024,
+        1000,
+        ".",
+    );
+    switch (attempt) {
+        .ran => |out| {
+            defer out.deinit(std.testing.allocator);
+            try std.testing.expectEqual(@as(u32, 0), out.code);
+            try std.testing.expect(std.mem.find(u8, out.stdout, "deny") != null);
+        },
+        else => return error.TestExpectedExec,
     }
 }
 
