@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const graph_listing = @import("graph_listing.zig");
 
 const keep_runs: usize = 200;
 const keep_logs: usize = 20;
@@ -57,9 +58,12 @@ fn removable(state_dir: []const u8, path: []const u8) bool {
     return false;
 }
 
-fn lessThanName(_: void, a: []const u8, b: []const u8) bool {
-    return std.mem.lessThan(u8, a, b);
-}
+/// Oldest first: `collectOldest` deletes the front of this order, so a graph
+/// has to rank by the instant it was recorded. Ordering `run-<unix seconds>`
+/// ids by name only agrees with that while every id has the same digit width,
+/// and it disagrees outright once a `sub-<unix nanoseconds>` id is in the set.
+/// Names of neither shape (the improve logs) keep plain name order.
+const lessThanName = graph_listing.lessThanChronological;
 
 fn dirSize(a: std.mem.Allocator, path: []const u8) u64 {
     const raw = lib.fsStat(path) catch return 0;

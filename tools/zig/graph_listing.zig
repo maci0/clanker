@@ -70,6 +70,94 @@ pub fn labelOf(task: []const u8) []const u8 {
 
 const label_max = 200;
 
+/// Graph filenames carry two different clocks: a top-level run is
+/// `run-<unix seconds>` and a nested one `sub-<unix nanoseconds>` (see
+/// `src/agent/subagent.zig`, which needs the finer clock because several
+/// sub-agents can start within one second). Ordering the raw names puts every
+/// `sub-` after every `run-` — `'s' > 'r'` — so the newest page of a listing
+/// was months-old sub-runs and the web UI's run picker opened on one.
+/// Compare on the timestamp instead, normalized to nanoseconds by padding the
+/// digits out to nanosecond width. A name of neither shape scores 0 and keeps
+/// its name order, which is what `janitor` wants for improve logs.
+pub fn runOrderKey(name: []const u8) u64 {
+    const stem = stemOfJson(name);
+    const digits = if (std.mem.startsWith(u8, stem, "run-"))
+        stem["run-".len..]
+    else if (std.mem.startsWith(u8, stem, "sub-"))
+        stem["sub-".len..]
+    else
+        return 0;
+    if (digits.len == 0 or digits.len > ns_digits) return 0;
+    for (digits) |c| {
+        if (!std.ascii.isDigit(c)) return 0;
+    }
+    var key: u64 = std.fmt.parseInt(u64, digits, 10) catch return 0;
+    var scale = digits.len;
+    while (scale < ns_digits) : (scale += 1) {
+        key = std.math.mul(u64, key, 10) catch return std.math.maxInt(u64);
+    }
+    return key;
+}
+
+/// Width of a nanosecond unix timestamp for the era this runs in: 1.7e18 ns is
+/// 19 digits, and a seconds-wide id is the same instant with nine fewer.
+const ns_digits: usize = 19;
+
+/// Oldest first, by the instant the run started rather than by filename.
+/// Equal instants fall back to the name so the order stays total.
+pub fn lessThanChronological(_: void, a: []const u8, b: []const u8) bool {
+    const ka = runOrderKey(a);
+    const kb = runOrderKey(b);
+    if (ka != kb) return ka < kb;
+    return std.mem.lessThan(u8, a, b);
+}
+
+test runOrderKey {
+    // Both id shapes land on the same nanosecond scale, so they interleave.
+    try std.testing.expectEqual(@as(u64, 1786561572_000000000), runOrderKey("run-1786561572.json"));
+    try std.testing.expectEqual(@as(u64, 1786563209053324602), runOrderKey("sub-1786563209053324602.json"));
+    // Anything else sorts by name, not by a number read out of the middle.
+    try std.testing.expectEqual(@as(u64, 0), runOrderKey("improve-12.log"));
+    try std.testing.expectEqual(@as(u64, 0), runOrderKey("run-notanumber.json"));
+    try std.testing.expectEqual(@as(u64, 0), runOrderKey("run-.json"));
+}
+
+test lessThanChronological {
+    const recorded = [_][]const u8{
+        "sub-1786563209053324602.json",
+        "run-1786920177.json",
+        "run-1786561572.json",
+        "sub-1786471458413566380.json",
+    };
+
+    // The regression this replaced: `'s' > 'r'`, so a name sort collects every
+    // `sub-` at the tail no matter when it ran, and the newest page of a
+    // listing was months-old sub-runs.
+    var by_name = recorded;
+    std.mem.sort([]const u8, &by_name, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lt);
+    try std.testing.expectEqualStrings("sub-1786563209053324602.json", by_name[3]);
+    try std.testing.expectEqualStrings("run-1786920177.json", by_name[1]);
+
+    // Chronological order interleaves the two shapes: the sub-run at
+    // 1786471458 really did start before the run at 1786561572.
+    var by_time = recorded;
+    std.mem.sort([]const u8, &by_time, {}, lessThanChronological);
+    try std.testing.expectEqualStrings("sub-1786471458413566380.json", by_time[0]);
+    try std.testing.expectEqualStrings("run-1786561572.json", by_time[1]);
+    try std.testing.expectEqualStrings("sub-1786563209053324602.json", by_time[2]);
+    // Newest last: the tail is the page a listing shows.
+    try std.testing.expectEqualStrings("run-1786920177.json", by_time[3]);
+
+    // Names of an unrecognized shape keep plain name order.
+    var logs = [_][]const u8{ "improve-9.log", "improve-10.log" };
+    std.mem.sort([]const u8, &logs, {}, lessThanChronological);
+    try std.testing.expectEqualStrings("improve-10.log", logs[0]);
+}
+
 test labelOf {
     try std.testing.expectEqualStrings("one", labelOf("one\ntwo"));
     try std.testing.expectEqualStrings("short", labelOf("short"));

@@ -22,6 +22,7 @@ const GraphFile = graph_listing.GraphFile;
 const listingFromName = graph_listing.listingFromName;
 const listingNodeCount = graph_listing.listingNodeCount;
 const labelOf = graph_listing.labelOf;
+const lessThanChronological = graph_listing.lessThanChronological;
 
 /// Graphs collect a bounded preview for every LLM and tool step. A long run
 /// therefore legitimately exceeds the normal 64 KiB tool-request buffer when
@@ -61,8 +62,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return runJson(out, alloc, names, want);
     }
 
-    // No argument renders the most recent run (run-<ts> sorts chronologically);
-    // an argument names the run to render.
+    // No argument renders the most recent run; an argument names the run to
+    // render. "Most recent" is the largest timestamp, not the largest name:
+    // a nested `sub-<ns>` id is lexically greater than every `run-<s>` id.
     var best: ?[]const u8 = null;
     if (names == .array) {
         for (names.array.items) |item| {
@@ -73,7 +75,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 if (std.mem.eql(u8, stem, args)) best = item.string;
                 continue;
             }
-            if (best == null or std.mem.lessThan(u8, best.?, item.string)) best = item.string;
+            if (best == null or lessThanChronological({}, best.?, item.string)) best = item.string;
         }
     }
     const fname = best orelse {
@@ -159,7 +161,7 @@ fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !voi
         if (!std.mem.endsWith(u8, item.string, ".json")) continue;
         try files.append(alloc, item.string);
     }
-    std.mem.sort([]const u8, files.items, {}, lessThanStr);
+    std.mem.sort([]const u8, files.items, {}, lessThanChronological);
 
     // Same 50-run page as `json`: a 48 KiB prefix per file used to exhaust
     // the 1 MiB host arena after ~21 rows and drop the rest.
@@ -236,11 +238,9 @@ fn loadGraphListing(alloc: std.mem.Allocator, path: []const u8, fname: []const u
     return std.json.parseFromSliceLeaky(GraphFile, alloc, src, .{ .ignore_unknown_fields = true }) catch fallback;
 }
 
-fn lessThanStr(_: void, a: []const u8, b: []const u8) bool {
-    return std.mem.lessThan(u8, a, b);
-}
-
 /// `json`: newest-first array of run summaries, for the web UI's run picker.
+/// Newest is by start time, so a `run-<seconds>` and a `sub-<nanoseconds>` id
+/// interleave; see `graph_listing.lessThanChronological`.
 fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !void {
     var files: std.ArrayList([]const u8) = .empty;
     if (names == .array) {
@@ -250,7 +250,7 @@ fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) 
             try files.append(alloc, item.string);
         }
     }
-    std.mem.sort([]const u8, files.items, {}, lessThanStr);
+    std.mem.sort([]const u8, files.items, {}, lessThanChronological);
 
     var enc: std.Io.Writer.Allocating = .init(alloc);
     var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };

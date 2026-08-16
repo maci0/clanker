@@ -158,7 +158,11 @@ test for a pure function and an e2e case for a CLI or HTTP journey.
   scalars (`doc_count`, `bytes`) sit in front of `docs`. Graph listing reads
   a 4 KiB prefix (scalars sit in front of `task`/`nodes`) and caps the picker
   at 50 newest runs; 48 KiB times a few dozen files used to exhaust that
-  arena mid-list.
+  arena mid-list. `state/runs/` mixes two clocks — `run-<unix seconds>` and
+  `sub-<unix nanoseconds>` (`subagent.zig`) — so "newest" is
+  `graph_listing.lessThanChronological`, never a filename sort: every `sub-`
+  is lexically greater than every `run-`, which filled the picker's newest
+  page with the oldest sub-runs.
   `Agent.on_token` has no context argument, so streaming side-state
   (`stream_tally`, the TTSR guard, `run_stream_socket`) is threadlocal; a
   process-static pointer would splice concurrent `/api/run` streams.

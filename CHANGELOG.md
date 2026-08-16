@@ -469,6 +469,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The web UI's run history and `clanker graph` no longer show months-old
+  sub-agent runs as the newest ones. `state/runs/` holds top-level runs as
+  `run-<unix seconds>` and nested ones as `sub-<unix nanoseconds>`, and both
+  listings ordered the raw filenames, where every `sub-` sorts after every
+  `run-`. The newest-50 page was therefore filled with the oldest sub-runs, so
+  the System view's history panel and the Runs picker's default selection both
+  opened on a run from days earlier. Listings now order by the timestamp in the
+  id, so the two id shapes interleave chronologically; `clanker janitor`'s
+  newest-200 retention uses the same order
+  (docs/reports/investigations/2026-08-17-web-ui-run-history-stale.md).
 - `clanker commit` no longer collapses a describable staged diff into one
   generic `chore: update working tree` commit: the `smart_commit` descriptor
   now grants `ck_llm` 4096 completion tokens (the 1024 default truncated the
