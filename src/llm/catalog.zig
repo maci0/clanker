@@ -364,3 +364,59 @@ test "classifyEntry reads npm, api, and the first env var" {
     try std.testing.expectEqualStrings("https://api.moonshot.ai/v1", s.base_url);
     try std.testing.expectEqualStrings("MOONSHOT_API_KEY", s.api_key_env);
 }
+
+const search_sample =
+    \\{
+    \\  "moonshotai": {
+    \\    "npm": "@ai-sdk/openai-compatible",
+    \\    "api": "https://api.moonshot.ai/v1",
+    \\    "env": ["MOONSHOT_API_KEY"],
+    \\    "models": {
+    \\      "kimi-k3": {
+    \\        "name": "Kimi K3",
+    \\        "family": "kimi-k3",
+    \\        "reasoning": true,
+    \\        "tool_call": true,
+    \\        "limit": {"context": 1048576, "output": 131072},
+    \\        "cost": {"input": 3, "output": 15}
+    \\      }
+    \\    }
+    \\  },
+    \\  "unknown-vendor": {
+    \\    "npm": "@ai-sdk/amazon-bedrock",
+    \\    "models": { "secret": { "family": "kimi-k3" } }
+    \\  }
+    \\}
+;
+
+test "queryMatches is case-insensitive on provider, model, and family" {
+    try std.testing.expect(queryMatches("KIMI", "moonshotai", "kimi-k3", "kimi-k3"));
+    try std.testing.expect(queryMatches("moon", "moonshotai", "kimi-k3", ""));
+    try std.testing.expect(queryMatches("k3", "x", "other", "kimi-k3"));
+    try std.testing.expect(!queryMatches("claude", "moonshotai", "kimi-k3", "kimi-k3"));
+    try std.testing.expect(!queryMatches("", "moonshotai", "kimi-k3", "kimi-k3"));
+}
+
+test "collectHits skips unsupported vendors and fills the /api/catalog fields" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, search_sample, .{});
+
+    const found = try collectHits(arena, catalog, "kimi", max_search_hits);
+    try std.testing.expectEqual(@as(usize, 1), found.hits.len);
+    try std.testing.expect(!found.truncated);
+    try std.testing.expectEqualStrings("moonshotai", found.hits[0].provider);
+    try std.testing.expectEqualStrings("kimi-k3", found.hits[0].id);
+    try std.testing.expectEqualStrings("openai_compat", found.hits[0].kind);
+    try std.testing.expectEqualStrings("Kimi K3", found.hits[0].display);
+    try std.testing.expectEqual(@as(i64, 1048576), found.hits[0].context.?);
+    try std.testing.expect(found.hits[0].reasoning);
+    try std.testing.expectEqual(@as(usize, 2), found.hits[0].capabilities.len);
+
+    const none = try collectHits(arena, catalog, "claude", max_search_hits);
+    try std.testing.expectEqual(@as(usize, 0), none.hits.len);
+
+    const capped = try collectHits(arena, catalog, "kimi", 1);
+    try std.testing.expect(capped.truncated);
+}
