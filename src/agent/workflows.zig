@@ -13,37 +13,19 @@
 //! duplicate files: `workflows/*.md` (configurable), `clanker workflow
 //! list|show|run`, REPL `/workflows` + `/workflow`, and a `workflows` WASM
 //! tool all see the same merged set.
+//!
+//! Parsing and argument expansion live in the shared, host-tested
+//! `tools/zig/workflows_logic.zig` (imported by this module and by the
+//! `workflows` WASM tool), so the CLI and the tool cannot drift apart.
 
 const std = @import("std");
+const logic = @import("workflows_logic");
 
-pub const Workflow = struct {
-    /// File stem, or `name:` from frontmatter when present.
-    name: []const u8,
-    /// Human-facing: shown in the webui/CLI, never sent to the model.
-    description: []const u8,
-    /// Model-facing: what actually lands in the system prompt's per-turn
-    /// catalog line (see `catalogText`). Falls back to `description` when a
-    /// workflow's frontmatter has no `llm_description`, so an unmigrated
-    /// workflow still works, just not as cheaply.
-    llm_description: []const u8 = "",
-    /// Free-form facets from frontmatter `tags: a, b, c` (comma-separated;
-    /// the frontmatter parser is a key:value-per-line subset, not real YAML,
-    /// so no bracketed array syntax). For filtering/organization; not sent
-    /// to the model.
-    tags: []const []const u8 = &.{},
-    /// Hint shown in help, e.g. "[feature description]".
-    arg_hint: []const u8,
-    /// Prompt template body (frontmatter stripped, trimmed of leading/trailing blank lines).
-    body: []const u8,
-    /// Relative path under workflows_dir, for diagnostics.
-    rel_path: []const u8,
-    /// Optional chain pipeline embedded in frontmatter: JSON array of steps
-    /// (same schema as `chain` tool's `steps`). Lets a workflow double as a
-    /// prompt AND a tool pipeline, `clanker workflow run plan "..."` expands
-    /// the prompt while `chain: {chain:"plan"}` or inline steps can be invoked
-    /// from the workflow body.
-    chain_json: ?[]const u8 = null,
-};
+/// The workflow record, shared with the `workflows` WASM tool.
+pub const Workflow = logic.Workflow;
+
+/// Argument substitution, shared with the `workflows` WASM tool.
+pub const instantiate = logic.instantiate;
 
 const max_file_bytes: usize = 64 * 1024;
 const max_dir_entries: usize = 512;
@@ -78,7 +60,7 @@ pub fn loadAll(arena: std.mem.Allocator, io: std.Io, workflows_dir: []const u8) 
     for (names.items) |fname| {
         const raw = dir.readFileAlloc(io, fname, arena, .limited(max_file_bytes)) catch continue;
         const stem = fname[0 .. fname.len - 3];
-        const parsed = parseWorkflow(arena, stem, fname, raw) catch continue;
+        const parsed = logic.parseWorkflow(arena, stem, fname, raw) catch continue;
         // Skip files with empty body, they would produce an empty prompt.
         if (std.mem.trim(u8, parsed.body, " \t\r\n").len == 0) continue;
         try out.append(arena, parsed);
@@ -129,39 +111,6 @@ pub fn findByName(workflows: []const Workflow, name: []const u8) ?Workflow {
     return null;
 }
 
-/// Apply argument substitution to a workflow body. Replaces every occurrence of
-/// `{{args}}`, `{{arguments}}`, `{{$args}}`, and `$ARGUMENTS` with `args` (empty → "").
-/// Caller owns the result (arena).
-pub fn instantiate(arena: std.mem.Allocator, body: []const u8, args: []const u8) ![]const u8 {
-    // Fast path: no placeholder present.
-    if (std.mem.find(u8, body, "{{") == null and std.mem.find(u8, body, "$ARGUMENTS") == null) {
-        if (args.len == 0) return body;
-        // No placeholder but args given: append them (Cursor does similarly, extra args become trailing context).
-        return try std.fmt.allocPrint(arena, "{s}\n\n{s}", .{ body, args });
-    }
-    var out: std.ArrayList(u8) = .empty;
-    var i: usize = 0;
-    while (i < body.len) {
-        if (std.mem.startsWith(u8, body[i..], "{{args}}")) {
-            try out.appendSlice(arena, args);
-            i += "{{args}}".len;
-        } else if (std.mem.startsWith(u8, body[i..], "{{arguments}}")) {
-            try out.appendSlice(arena, args);
-            i += "{{arguments}}".len;
-        } else if (std.mem.startsWith(u8, body[i..], "{{$args}}")) {
-            try out.appendSlice(arena, args);
-            i += "{{$args}}".len;
-        } else if (std.mem.startsWith(u8, body[i..], "$ARGUMENTS")) {
-            try out.appendSlice(arena, args);
-            i += "$ARGUMENTS".len;
-        } else {
-            try out.append(arena, body[i]);
-            i += 1;
-        }
-    }
-    return out.toOwnedSlice(arena);
-}
-
 /// Short catalog line for the system prompt / `workflow list` table.
 /// Chains (tool pipelines) are flagged with `[chain]` so the agent can
 /// discover them as executable pipelines without guessing.
@@ -181,185 +130,7 @@ pub fn catalogText(arena: std.mem.Allocator, workflows: []const Workflow) ![]con
     return w.written();
 }
 
-// ----------------------------------------------------------------- parsing ---
-
-fn parseWorkflow(arena: std.mem.Allocator, stem: []const u8, rel_path: []const u8, raw: []const u8) !Workflow {
-    var name = try arena.dupe(u8, stem);
-    var description: []const u8 = "";
-    var llm_description: []const u8 = "";
-    var tags: []const []const u8 = &.{};
-    var arg_hint: []const u8 = "";
-    var chain_json: ?[]const u8 = null;
-    var body: []const u8 = raw;
-
-    // Frontmatter: leading `---\n` ... `\n---\n` (or `\n---` at EOF).
-    if (std.mem.startsWith(u8, raw, "---")) {
-        const first_nl = std.mem.findScalar(u8, raw, '\n') orelse raw.len;
-        // First line must be exactly "---" (allow trailing spaces).
-        const first_line = std.mem.trim(u8, raw[0..first_nl], " \t\r");
-        if (std.mem.eql(u8, first_line, "---")) {
-            if (std.mem.find(u8, raw[first_nl + 1 ..], "\n---")) |rel| {
-                const fm_start = first_nl + 1;
-                const fm_end = fm_start + rel;
-                const fm = raw[fm_start..fm_end];
-                const after = raw[fm_end + "\n---".len ..];
-                // Body starts after the closing fence line (consume one trailing newline if present).
-                body = if (after.len > 0 and after[0] == '\n') after[1..] else if (after.len > 0 and after[0] == '\r' and after.len > 1 and after[1] == '\n') after[2..] else after;
-                // Very small YAML subset: key: value per line.
-                var lines = std.mem.splitScalar(u8, fm, '\n');
-                while (lines.next()) |line| {
-                    const trimmed = std.mem.trim(u8, line, " \t\r");
-                    if (trimmed.len == 0 or trimmed[0] == '#') continue;
-                    const colon = std.mem.findScalar(u8, trimmed, ':') orelse continue;
-                    const key = std.mem.trim(u8, trimmed[0..colon], " \t");
-                    var val = std.mem.trim(u8, trimmed[colon + 1 ..], " \t");
-                    // Strip surrounding quotes.
-                    if (val.len >= 2 and ((val[0] == '"' and val[val.len - 1] == '"') or (val[0] == '\'' and val[val.len - 1] == '\''))) {
-                        val = val[1 .. val.len - 1];
-                    }
-                    if (std.ascii.eqlIgnoreCase(key, "name") and val.len > 0) {
-                        name = try arena.dupe(u8, val);
-                    } else if (std.ascii.eqlIgnoreCase(key, "description") and val.len > 0) {
-                        description = try arena.dupe(u8, val);
-                    } else if ((std.ascii.eqlIgnoreCase(key, "llm-description") or std.ascii.eqlIgnoreCase(key, "llm_description")) and val.len > 0) {
-                        llm_description = try arena.dupe(u8, val);
-                    } else if (std.ascii.eqlIgnoreCase(key, "tags") and val.len > 0) {
-                        var out_tags: std.ArrayList([]const u8) = .empty;
-                        var parts = std.mem.splitScalar(u8, val, ',');
-                        while (parts.next()) |part| {
-                            const t = std.mem.trim(u8, part, " \t");
-                            if (t.len > 0) out_tags.append(arena, try arena.dupe(u8, t)) catch {};
-                        }
-                        tags = out_tags.items;
-                    } else if ((std.ascii.eqlIgnoreCase(key, "argument-hint") or std.ascii.eqlIgnoreCase(key, "arg_hint") or std.ascii.eqlIgnoreCase(key, "args_hint")) and val.len > 0) {
-                        arg_hint = try arena.dupe(u8, val);
-                    } else if (std.ascii.eqlIgnoreCase(key, "chain") and val.len > 0) {
-                        chain_json = try arena.dupe(u8, val);
-                    }
-                }
-            }
-        }
-    }
-
-    // Trim outer blank lines but keep internal formatting.
-    body = std.mem.trim(u8, body, " \r\n");
-    if (description.len == 0) {
-        description = try arena.dupe(u8, inferDescription(body));
-    }
-    if (description.len == 0) description = try arena.dupe(u8, "no description");
-
-    // Validate name: alphanum, dash, underscore.
-    for (name) |c| {
-        if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.')) {
-            return error.InvalidWorkflowName;
-        }
-    }
-    if (name.len == 0 or name.len > 64) return error.InvalidWorkflowName;
-
-    return .{
-        .name = name,
-        .description = description,
-        .llm_description = llm_description,
-        .tags = tags,
-        .arg_hint = arg_hint,
-        .body = try arena.dupe(u8, body),
-        .rel_path = try arena.dupe(u8, rel_path),
-        .chain_json = if (chain_json) |c| try arena.dupe(u8, c) else null,
-    };
-}
-
-fn inferDescription(body: []const u8) []const u8 {
-    var lines = std.mem.splitScalar(u8, body, '\n');
-    while (lines.next()) |line| {
-        var t = std.mem.trim(u8, line, " \t\r");
-        if (t.len == 0) continue;
-        // Strip leading markdown heading markers.
-        while (t.len > 0 and t[0] == '#') t = std.mem.trim(u8, t[1..], " \t");
-        if (t.len == 0) continue;
-        const end = @min(t.len, 120);
-        // Cut at sentence end if within budget.
-        if (std.mem.findScalar(u8, t[0..end], '.')) |dot| {
-            if (dot >= 20) return t[0 .. dot + 1];
-        }
-        return t[0..end];
-    }
-    return "";
-}
-
 // ------------------------------------------------------------------- tests ---
-
-test "parseWorkflow: frontmatter overrides name and description" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const raw =
-        \\---
-        \\name: my-plan
-        \\description: Create a plan for the feature
-        \\argument-hint: "[feature]"
-        \\---
-        \\Create a plan for: {{args}}
-    ;
-    const wf = try parseWorkflow(arena, "unused", "unused.md", raw);
-    try std.testing.expectEqualStrings("my-plan", wf.name);
-    try std.testing.expectEqualStrings("Create a plan for the feature", wf.description);
-    try std.testing.expectEqualStrings("[feature]", wf.arg_hint);
-    try std.testing.expectEqualStrings("Create a plan for: {{args}}", wf.body);
-}
-
-test "parseWorkflow: no frontmatter infers description from body" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const raw = "# Code review\n\nReview this code for bugs.";
-    const wf = try parseWorkflow(arena, "review", "review.md", raw);
-    try std.testing.expectEqualStrings("review", wf.name);
-    try std.testing.expectEqualStrings("Code review", wf.description);
-    try std.testing.expect(std.mem.find(u8, wf.body, "Review this") != null);
-}
-
-test "parseWorkflow: quoted description and arg_hint aliases" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const raw =
-        \\---
-        \\description: "Fix it"
-        \\arg_hint: '<file>'
-        \\---
-        \\Do it: {{args}}
-    ;
-    const wf = try parseWorkflow(arena, "fix", "fix.md", raw);
-    try std.testing.expectEqualStrings("Fix it", wf.description);
-    try std.testing.expectEqualStrings("<file>", wf.arg_hint);
-}
-
-test "instantiate: all placeholder spellings replaced" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const body = "A {{args}} B {{arguments}} C {{$args}} D $ARGUMENTS E";
-    const out = try instantiate(arena, body, "X");
-    try std.testing.expectEqualStrings("A X B X C X D X E", out);
-}
-
-test "instantiate: no placeholder appends args" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const out = try instantiate(arena, "hello", "world");
-    try std.testing.expectEqualStrings("hello\n\nworld", out);
-    const out2 = try instantiate(arena, "hello", "");
-    try std.testing.expectEqualStrings("hello", out2);
-}
-
-test "instantiate: placeholder with empty args yields empty insertion" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const out = try instantiate(arena, "before {{args}} after", "");
-    try std.testing.expectEqualStrings("before  after", out);
-}
 
 test "catalogText formats with and without arg_hint" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);

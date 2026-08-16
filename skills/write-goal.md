@@ -20,8 +20,12 @@ A well-formed goal carries these five fields
   a restart", not "add persistence to runs".
 - `completion_criterion`: a test someone else could apply and reach the same
   verdict. If two readers could disagree about whether it is met, rewrite it.
+  If the caller supplied none, draft a measurable one (time elapsed, a score
+  reached, an eval passing, a file present). If it is measurable, also write a
+  concrete test script as the `proof`.
 - `proof`: the artifact that shows it, named exactly. A command and its expected
-  output, a file that must exist, an eval that must pass.
+  output, a file that must exist, an eval that must pass. For a measurable
+  criterion this is a test script the evaluator can run, not a prose summary.
 - `boundaries`: what stays untouched, plus any assumption made for want of an
   answer. This is what refuses scope creep later.
 - `stop_rule`: when to abandon the attempt rather than keep spending. An
@@ -29,8 +33,10 @@ A well-formed goal carries these five fields
 - `worktree`: when the run lives in its own git worktree, name it (branch/path)
   so the goal is tied to that worktree's context.
 
-Only the first two are required, and a goal that stops there is worth keeping
-when the rest is genuinely unknown. Prefer a short honest goal to a padded one.
+Only `objective` is required; a missing `completion_criterion` is drafted as a
+measurable one (and a test script when measurable) rather than left blank. A
+goal that stops at objective + criterion is worth keeping when the rest is
+genuinely unknown. Prefer a short honest goal to a padded one.
 
 Read `state/goals.json` first. The `goal_add` tool only appends; it cannot update an
 existing entry. If the intent restates an open goal, do not call `goal_add` and

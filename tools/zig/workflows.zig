@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const logic = @import("workflows_logic.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -41,7 +42,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     if (workflows_dir.len == 0) return lib.fail(out, "workflows are disabled (agent.workflows_dir is empty)");
 
-    var catalog: std.ArrayList(FileWorkflow) = .empty;
+    var catalog: std.ArrayList(logic.Workflow) = .empty;
     const fallback_dir = ".cursor/workflows";
     const dirs: [2][]const u8 = .{ workflows_dir, fallback_dir };
     for (dirs, 0..) |dir, idx| {
@@ -56,7 +57,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             const fpath = std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ dir, fname }) catch continue;
             const raw = lib.fsRead(fpath) catch continue;
             const stem = if (fname.len > 3) fname[0 .. fname.len - 3] else continue;
-            const wf = parseWorkflow(lib.alloc, stem, fname, raw) catch continue;
+            const wf = logic.parseWorkflow(lib.alloc, stem, fname, raw) catch continue;
             if (std.mem.trim(u8, wf.body, " \t\r\n").len == 0) continue;
             var is_dup = false;
             for (catalog.items) |existing| if (std.mem.eql(u8, existing.name, wf.name)) {
@@ -67,8 +68,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             catalog.append(lib.alloc, wf) catch continue;
         }
     }
-    std.mem.sort(FileWorkflow, catalog.items, {}, struct {
-        fn lt(_: void, a: FileWorkflow, b: FileWorkflow) bool {
+    std.mem.sort(logic.Workflow, catalog.items, {}, struct {
+        fn lt(_: void, a: logic.Workflow, b: logic.Workflow) bool {
             return std.mem.lessThan(u8, a.name, b.name);
         }
     }.lt);
@@ -79,7 +80,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     const want = name.?;
     if (want.len == 0) return lib.fail(out, "workflow name must not be empty");
-    var found: ?FileWorkflow = null;
+    var found: ?logic.Workflow = null;
     for (catalog.items) |wf| {
         if (std.mem.eql(u8, wf.name, want)) {
             found = wf;
@@ -90,129 +91,21 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // Unified surface: a workflow can also carry a chain pipeline (frontmatter `chain:`).
     // When the caller asks with {"name":"x","chain":""} or simply inspects, surface it.
     if (wants_chain) {
-        const c = extractChainFrontmatter(lib.alloc, wf.body) catch null;
+        const c = logic.extractChainFrontmatter(lib.alloc, wf.body) catch null;
         if (c) |cj| return writeOneWithChain(out, wf, cj);
     }
     if (args.len > 0) {
-        const expanded = instantiate(lib.alloc, wf.body, args) catch return lib.fail(out, "could not expand workflow");
+        const expanded = logic.instantiate(lib.alloc, wf.body, args) catch return lib.fail(out, "could not expand workflow");
         return writePrompt(out, wf.name, expanded);
     }
     return writeOne(out, wf);
 }
 
-const FileWorkflow = struct {
-    name: []const u8,
-    description: []const u8,
-    arg_hint: []const u8,
-    tags: []const []const u8 = &.{},
-    chain: bool = false,
-    body: []const u8,
-    rel_path: []const u8,
-};
-
 fn listMarkdownFiles(dir: []const u8) ![]const u8 {
     return try lib.fsList(dir);
 }
 
-fn parseWorkflow(alloc: std.mem.Allocator, stem: []const u8, rel_path: []const u8, raw: []const u8) !FileWorkflow {
-    var name = try alloc.dupe(u8, stem);
-    var description: []const u8 = "";
-    var arg_hint: []const u8 = "";
-    var tags: []const []const u8 = &.{};
-    var chain_json: ?[]const u8 = null;
-    var body: []const u8 = raw;
-    if (std.mem.startsWith(u8, raw, "---")) {
-        const first_nl = std.mem.findScalar(u8, raw, '\n') orelse raw.len;
-        const first_line = std.mem.trim(u8, raw[0..first_nl], " \t\r");
-        if (std.mem.eql(u8, first_line, "---")) {
-            if (std.mem.find(u8, raw[first_nl + 1 ..], "\n---")) |rel| {
-                const fm_start = first_nl + 1;
-                const fm_end = fm_start + rel;
-                const fm = raw[fm_start..fm_end];
-                const after = raw[fm_end + "\n---".len ..];
-                body = if (after.len > 0 and after[0] == '\n') after[1..] else if (after.len > 0 and after[0] == '\r' and after.len > 1 and after[1] == '\n') after[2..] else after;
-                var lines = std.mem.splitScalar(u8, fm, '\n');
-                while (lines.next()) |line| {
-                    const trimmed = std.mem.trim(u8, line, " \t\r");
-                    if (trimmed.len == 0 or trimmed[0] == '#') continue;
-                    const colon = std.mem.findScalar(u8, trimmed, ':') orelse continue;
-                    const key = std.mem.trim(u8, trimmed[0..colon], " \t");
-                    var val = std.mem.trim(u8, trimmed[colon + 1 ..], " \t");
-                    if (val.len >= 2 and ((val[0] == '"' and val[val.len - 1] == '"') or (val[0] == '\'' and val[val.len - 1] == '\''))) {
-                        val = val[1 .. val.len - 1];
-                    }
-                    if (std.ascii.eqlIgnoreCase(key, "name") and val.len > 0) {
-                        name = try alloc.dupe(u8, val);
-                    } else if (std.ascii.eqlIgnoreCase(key, "description") and val.len > 0) {
-                        description = try alloc.dupe(u8, val);
-                    } else if ((std.ascii.eqlIgnoreCase(key, "argument-hint") or std.ascii.eqlIgnoreCase(key, "arg_hint") or std.ascii.eqlIgnoreCase(key, "args_hint")) and val.len > 0) {
-                        arg_hint = try alloc.dupe(u8, val);
-                    } else if (std.ascii.eqlIgnoreCase(key, "tags") and val.len > 0) {
-                        var out_tags: std.ArrayList([]const u8) = .empty;
-                        var parts = std.mem.splitScalar(u8, val, ',');
-                        while (parts.next()) |part| {
-                            const t = std.mem.trim(u8, part, " \t");
-                            if (t.len > 0) out_tags.append(alloc, try alloc.dupe(u8, t)) catch {};
-                        }
-                        tags = out_tags.items;
-                    } else if (std.ascii.eqlIgnoreCase(key, "chain") and val.len > 0) {
-                        chain_json = try alloc.dupe(u8, val);
-                    }
-                }
-            }
-        }
-    }
-    body = std.mem.trim(u8, body, " \r\n");
-    if (description.len == 0) description = try alloc.dupe(u8, inferDescription(body));
-    if (description.len == 0) description = try alloc.dupe(u8, "no description");
-    return .{ .name = name, .description = description, .arg_hint = arg_hint, .tags = tags, .chain = chain_json != null, .body = try alloc.dupe(u8, body), .rel_path = try alloc.dupe(u8, rel_path) };
-}
-
-fn inferDescription(body: []const u8) []const u8 {
-    var lines = std.mem.splitScalar(u8, body, '\n');
-    while (lines.next()) |line| {
-        var t = std.mem.trim(u8, line, " \t\r");
-        if (t.len == 0) continue;
-        while (t.len > 0 and t[0] == '#') t = std.mem.trim(u8, t[1..], " \t");
-        if (t.len == 0) continue;
-        const end = @min(t.len, 120);
-        if (std.mem.findScalar(u8, t[0..end], '.')) |dot| {
-            if (dot >= 20) return t[0 .. dot + 1];
-        }
-        return t[0..end];
-    }
-    return "";
-}
-
-fn instantiate(alloc: std.mem.Allocator, body: []const u8, args: []const u8) ![]const u8 {
-    if (std.mem.find(u8, body, "{{") == null and std.mem.find(u8, body, "$ARGUMENTS") == null) {
-        if (args.len == 0) return body;
-        return try std.fmt.allocPrint(alloc, "{s}\n\n{s}", .{ body, args });
-    }
-    var out: std.ArrayList(u8) = .empty;
-    var i: usize = 0;
-    while (i < body.len) {
-        if (std.mem.startsWith(u8, body[i..], "{{args}}")) {
-            try out.appendSlice(alloc, args);
-            i += "{{args}}".len;
-        } else if (std.mem.startsWith(u8, body[i..], "{{arguments}}")) {
-            try out.appendSlice(alloc, args);
-            i += "{{arguments}}".len;
-        } else if (std.mem.startsWith(u8, body[i..], "{{$args}}")) {
-            try out.appendSlice(alloc, args);
-            i += "{{$args}}".len;
-        } else if (std.mem.startsWith(u8, body[i..], "$ARGUMENTS")) {
-            try out.appendSlice(alloc, args);
-            i += "$ARGUMENTS".len;
-        } else {
-            try out.append(alloc, body[i]);
-            i += 1;
-        }
-    }
-    return out.toOwnedSlice(alloc);
-}
-
-fn writeList(out: *lib.Out, wfs: []const FileWorkflow) !void {
+fn writeList(out: *lib.Out, wfs: []const logic.Workflow) !void {
     var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();
@@ -233,7 +126,7 @@ fn writeList(out: *lib.Out, wfs: []const FileWorkflow) !void {
         for (wf.tags) |t| try s.write(t);
         try s.endArray();
         try s.objectField("chain");
-        try s.write(wf.chain);
+        try s.write(wf.chain_json != null);
         try s.objectField("rel_path");
         try s.write(wf.rel_path);
         try s.endObject();
@@ -243,7 +136,7 @@ fn writeList(out: *lib.Out, wfs: []const FileWorkflow) !void {
     lib.commit(out, &w);
 }
 
-fn writeOne(out: *lib.Out, wf: FileWorkflow) !void {
+fn writeOne(out: *lib.Out, wf: logic.Workflow) !void {
     var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();
@@ -266,7 +159,7 @@ fn writeOne(out: *lib.Out, wf: FileWorkflow) !void {
     lib.commit(out, &w);
 }
 
-fn writeOneWithChain(out: *lib.Out, wf: FileWorkflow, chain_json: []const u8) !void {
+fn writeOneWithChain(out: *lib.Out, wf: logic.Workflow, chain_json: []const u8) !void {
     var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();
@@ -289,30 +182,6 @@ fn writeOneWithChain(out: *lib.Out, wf: FileWorkflow, chain_json: []const u8) !v
     try s.endObject();
     try s.endObject();
     lib.commit(out, &w);
-}
-
-fn extractChainFrontmatter(alloc: std.mem.Allocator, body: []const u8) !?[]const u8 {
-    // Very small frontmatter chain extraction: look for `chain:` line in leading `---` block.
-    if (!std.mem.startsWith(u8, body, "---")) return null;
-    const first_nl = std.mem.findScalar(u8, body, '\n') orelse return null;
-    const first_line = std.mem.trim(u8, body[0..first_nl], " \t\r");
-    if (!std.mem.eql(u8, first_line, "---")) return null;
-    const rel = std.mem.find(u8, body[first_nl + 1 ..], "\n---") orelse return null;
-    const fm = body[first_nl + 1 .. first_nl + 1 + rel];
-    var lines = std.mem.splitScalar(u8, fm, '\n');
-    while (lines.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (trimmed.len == 0 or trimmed[0] == '#') continue;
-        const colon = std.mem.findScalar(u8, trimmed, ':') orelse continue;
-        const key = std.mem.trim(u8, trimmed[0..colon], " \t");
-        if (!std.ascii.eqlIgnoreCase(key, "chain")) continue;
-        var val = std.mem.trim(u8, trimmed[colon + 1 ..], " \t");
-        if (val.len >= 2 and ((val[0] == '"' and val[val.len - 1] == '"') or (val[0] == '\'' and val[val.len - 1] == '\''))) {
-            val = val[1 .. val.len - 1];
-        }
-        if (val.len > 0) return try alloc.dupe(u8, val);
-    }
-    return null;
 }
 
 fn writePrompt(out: *lib.Out, name: []const u8, prompt: []const u8) !void {
