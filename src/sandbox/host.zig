@@ -3744,6 +3744,7 @@ pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
     // inherits a minimal environment; resolve it explicitly so the std_api
     // tool works in capability evals and sub-agents too. See std_api evaluation.
     const rg = resolveExecPath(h.sandbox.gpa, h.sandbox.io, h.sandbox.environ_map, "rg") orelse return Err.not_found;
+    defer h.sandbox.gpa.free(rg);
     const std_dir = std.fmt.allocPrint(h.sandbox.gpa, "{s}/std", .{zig_lib_dir}) catch return Err.invalid;
     defer h.sandbox.gpa.free(std_dir);
     const argv = [_][]const u8{ rg, "-n", "-F", "--max-count", "40", sym, std_dir };

@@ -51,7 +51,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     else
         &.{ "diff", "--staged" };
     const diff = gitOut(diff_args) catch "";
-    const groups = try groupViaLlm(files.items, diff, max_commits);
+    const plan = try groupViaLlm(files.items, diff, max_commits);
+    const groups = plan.groups;
     for (groups) |g| {
         if (!logic.validMessage(g.message)) {
             return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "invalid conventional commit message: {s}", .{g.message}));
@@ -59,7 +60,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
 
     const order_or = orderGroups(groups);
-    var note: []const u8 = "";
+    var note: []const u8 = plan.note;
     var ordered = groups;
     if (order_or) |ord| {
         var rearranged = try lib.alloc.alloc(logic.Group, groups.len);
@@ -161,7 +162,9 @@ fn prepend(a: []const u8, b: []const u8, rest: []const []const u8) ![]const []co
     return out;
 }
 
-fn groupViaLlm(files: []const []const u8, diff: []const u8, max_commits: usize) ![]logic.Group {
+const GroupPlan = struct { groups: []logic.Group, note: []const u8 };
+
+fn groupViaLlm(files: []const []const u8, diff: []const u8, max_commits: usize) !GroupPlan {
     const prompt = try std.fmt.allocPrint(lib.alloc,
         \\You are grouping a git diff into atomic commits. Group files by logical concern.
         \\Reply with JSON only:
@@ -173,8 +176,15 @@ fn groupViaLlm(files: []const []const u8, diff: []const u8, max_commits: usize) 
         \\Diff:
         \\{s}
     , .{ joinLines(files), utf8.cap(diff, 12000) });
-    const reply = lib.llm(prompt) catch return oneGroup(files, "chore: update working tree");
-    return parseGroups(reply, files, max_commits) catch oneGroup(files, "chore: update working tree");
+    const reply = lib.llm(prompt) catch return .{
+        .groups = try oneGroup(files, "chore: update working tree"),
+        .note = "llm call failed; fell back to one generic commit",
+    };
+    const groups = parseGroups(reply, files, max_commits) catch return .{
+        .groups = try oneGroup(files, "chore: update working tree"),
+        .note = "llm reply held no usable grouping (possibly truncated by the max_tokens grant); fell back to one generic commit",
+    };
+    return .{ .groups = groups, .note = "" };
 }
 
 fn joinLines(files: []const []const u8) []const u8 {

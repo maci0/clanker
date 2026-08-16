@@ -469,6 +469,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker commit` no longer collapses a describable staged diff into one
+  generic `chore: update working tree` commit: the `smart_commit` descriptor
+  now grants `ck_llm` 4096 completion tokens (the 1024 default truncated the
+  grouping reply mid-JSON), and when the guest does fall back it says why in
+  the plan's note instead of failing silently
+  (docs/reports/bugs/2026-08-16-smart-commit-generic-message.md).
+- The `zig_std` tool's host call (`ck_std_api`) no longer leaks the
+  PATH-resolved `rg` path on every symbol lookup; debug builds printed one
+  DebugAllocator leak trace per lookup at shutdown
+  (docs/reports/bugs/2026-08-17-resolveexecpath-candidate-leak.md).
 - `clanker repl` copy (mouse-drag release and Ctrl-Shift-C) now also pipes
   the text into the host clipboard tool (`wl-copy`, `xclip`, `xsel`, or
   `pbcopy`, chosen from the desktop session) as a fallback to OSC 52, so a

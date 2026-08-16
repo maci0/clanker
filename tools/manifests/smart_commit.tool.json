@@ -4,6 +4,9 @@
   "llm_description": "Group staged/unstaged files into conventional commits. {dry_run, scope:'staged'|'all', max_commits}. Lock files excluded. Degenerate import cycles become one commit + note. Prefer dry_run first.",
   "wasm": "zig-out/tools/smart_commit.wasm",
   "llm": true,
+  "config": {
+    "max_tokens": 4096
+  },
   "input_schema": {
     "type": "object",
     "properties": {

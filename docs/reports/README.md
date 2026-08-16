@@ -80,7 +80,11 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
-- [resolveExecPath leaks PATH-candidate allocations through ckStdApi](bugs/2026-08-17-resolveexecpath-candidate-leak.md) — Open
+- [smart_commit's apply path re-adds whole worktree files, widening a hunk-narrowed index](bugs/2026-08-17-smart-commit-readds-worktree-files.md) — Open
+
+- [clanker commit generates a generic 'chore: update working tree' message for a clearly scoped diff](bugs/2026-08-16-smart-commit-generic-message.md) — Resolved
+
+- [resolveExecPath leaks PATH-candidate allocations through ckStdApi](bugs/2026-08-17-resolveexecpath-candidate-leak.md) — Resolved
 
 - [A commit on origin/main did not compile, and the break surfaced in an unrelated session's push](bugs/2026-08-16-pushed-main-did-not-compile.md) — Resolved
 
