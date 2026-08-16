@@ -63,9 +63,10 @@ test "clanker run --worktree: goal and session state stay in the checkout" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const turn0 = try mock_llm.toolCallTurn(gpa, "call_1", "load_tools", "{\"names\":[\"goal\"]}");
+    // `goal_add` is the persist guest. `goal` is the CLI/TUI loop (ADR 0012).
+    const turn0 = try mock_llm.toolCallTurn(gpa, "call_1", "load_tools", "{\"names\":[\"goal_add\"]}");
     defer gpa.free(turn0);
-    const turn1 = try mock_llm.toolCallTurn(gpa, "call_2", "goal", "{\"objective\":\"exercise shared worktree state\",\"completion_criterion\":\"the checkout retains the goal\"}");
+    const turn1 = try mock_llm.toolCallTurn(gpa, "call_2", "goal_add", "{\"objective\":\"exercise shared worktree state\",\"completion_criterion\":\"the checkout retains the goal\"}");
     defer gpa.free(turn1);
     const final_text = "goal saved from the isolated worktree";
     const turn2 = try mock_llm.textTurn(gpa, final_text);
