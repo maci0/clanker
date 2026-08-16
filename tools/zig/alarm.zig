@@ -209,7 +209,7 @@ fn load() !Loaded {
         else => return err,
     };
     result.seen_hash = try lib.hash(raw);
-    const parsed = std.json.parseFromSliceLeaky([]Alarm, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch return result;
+    const parsed = std.json.parseFromSliceLeaky([]Alarm, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch |err| return err;
     for (parsed) |a| try result.alarms.append(lib.alloc, a);
     return result;
 }
