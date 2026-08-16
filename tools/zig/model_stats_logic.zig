@@ -59,10 +59,24 @@ pub const Stats = struct {
 pub fn renderText(alloc: std.mem.Allocator, stats: []const Stat, totals: Stat) ![]const u8 {
     if (stats.len == 0) return "no token usage recorded yet (run an agent task first)\n";
 
+    // The table is read by comparing figures down the numeric columns, so
+    // those columns must line up row to row. A provider or model name longer
+    // than the default column width widens that column for the whole table
+    // instead of shoving one row's numbers out of line with the rest.
+    var provider_w: usize = 15;
+    var model_w: usize = 30;
+    for (stats) |stat| {
+        provider_w = @max(provider_w, stat.provider.len);
+        model_w = @max(model_w, stat.model.len);
+    }
+
     var text: std.ArrayList(u8) = .empty;
-    try text.appendSlice(alloc, "provider        model                          calls  prompt  output   total  cache%  tok/s     cost$  fail\n");
-    for (stats) |stat| try appendRow(alloc, &text, stat.provider, stat.model, stat);
-    try appendRow(alloc, &text, "totals", "", totals);
+    try text.appendSlice(alloc, try padRight(alloc, "provider", provider_w));
+    try text.appendSlice(alloc, " ");
+    try text.appendSlice(alloc, try padRight(alloc, "model", model_w));
+    try text.appendSlice(alloc, "calls  prompt  output   total  cache%  tok/s     cost$  fail\n");
+    for (stats) |stat| try appendRow(alloc, &text, provider_w, model_w, stat.provider, stat.model, stat);
+    try appendRow(alloc, &text, provider_w, model_w, "totals", "", totals);
     if (totals.thinking_distribution.total() > 0) {
         try text.print(alloc, "thinking        low {d}  medium {d}  high {d}  xhigh {d}\n", .{
             totals.thinking_distribution.low,
@@ -74,13 +88,23 @@ pub fn renderText(alloc: std.mem.Allocator, stats: []const Stat, totals: Stat) !
     return text.toOwnedSlice(alloc);
 }
 
-fn appendRow(alloc: std.mem.Allocator, text: *std.ArrayList(u8), provider: []const u8, model: []const u8, stat: Stat) !void {
+fn appendRow(
+    alloc: std.mem.Allocator,
+    text: *std.ArrayList(u8),
+    provider_w: usize,
+    model_w: usize,
+    provider: []const u8,
+    model: []const u8,
+    stat: Stat,
+) !void {
     const prompt = try compactCount(alloc, stat.prompt_tokens);
     const completion = try compactCount(alloc, stat.completion_tokens);
     const total = try compactCount(alloc, stat.total_tokens);
-    const line = try std.fmt.allocPrint(alloc, "{s:<15} {s:<30}{d:>5} {s:>7} {s:>7} {s:>7} {d:>5.1} {d:>7.1} {d:>8.2} {d:>5}\n", .{
-        provider,
-        model,
+    // Cells are pre-padded so the numeric columns stay put no matter how
+    // wide a provider or model name grows the leading columns.
+    const line = try std.fmt.allocPrint(alloc, "{s} {s}{d:>5} {s:>7} {s:>7} {s:>7} {d:>5.1} {d:>7.1} {d:>8.2} {d:>5}\n", .{
+        try padRight(alloc, provider, provider_w),
+        try padRight(alloc, model, model_w),
         stat.calls,
         prompt,
         completion,
@@ -91,6 +115,13 @@ fn appendRow(alloc: std.mem.Allocator, text: *std.ArrayList(u8), provider: []con
         stat.error_calls,
     });
     try text.appendSlice(alloc, line);
+}
+
+/// Right-pad `s` to at least `width` cells. Returns the input slice when it
+/// already fills the column, so no allocation happens in the common case.
+fn padRight(alloc: std.mem.Allocator, s: []const u8, width: usize) ![]const u8 {
+    if (s.len >= width) return s;
+    return std.fmt.allocPrint(alloc, "{s: <[1]}", .{ s, width });
 }
 
 /// Human tables optimize for comparison; the JSON path above preserves exact
@@ -130,13 +161,26 @@ test "columns stay aligned and the thinking breakdown renders from the totals" {
             .cost = 0.02,
             .ok_calls = 2,
         },
+        // A provider name longer than the default column width must widen
+        // the table, not shove this row's figures out of line (the numbers
+        // column is the comparison surface).
+        .{
+            .provider = "google-vertex-anthropic",
+            .model = "claude-opus-5@default",
+            .calls = 29,
+            .prompt_tokens = 0,
+            .completion_tokens = 0,
+            .total_tokens = 0,
+            .error_calls = 29,
+        },
     };
     var totals = Stat{};
-    totals.calls = 2;
+    totals.calls = 31;
     totals.prompt_tokens = 300;
     totals.completion_tokens = 50;
     totals.total_tokens = 350;
     totals.cost = 0.02;
+    totals.error_calls = 29;
     totals.thinking_distribution = .{ .low = 1, .high = 2, .xhigh = 1 };
 
     const text = try renderText(arena, &rows, totals);
@@ -149,6 +193,22 @@ test "columns stay aligned and the thinking breakdown renders from the totals" {
     // The cost column is right-aligned to width 8 with two decimals, so a
     // totals row aligns with a per-provider row.
     try std.testing.expect(std.mem.find(u8, text, "    0.02") != null);
+
+    // Every row's numeric columns start at the same offset, including the
+    // row whose provider name exceeds the default column width.
+    var it = std.mem.splitScalar(u8, text, '\n');
+    var offset: ?usize = null;
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        const calls_at = std.mem.indexOf(u8, line, " 29 ") orelse
+            std.mem.indexOf(u8, line, " 31 ") orelse
+            std.mem.indexOf(u8, line, "    0.02") orelse continue;
+        if (offset) |o| {
+            try std.testing.expectEqual(o, calls_at);
+        } else {
+            offset = calls_at;
+        }
+    }
 }
 
 test "compactCount keeps small numbers exact and shortens the rest" {

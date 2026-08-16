@@ -1406,6 +1406,20 @@ function createTurn(task) {
 function errorRecoveryHint(msg) {
   if (!msg) return "";
   var m = msg.toLowerCase();
+  // The server already appends recovery guidance to /api/run failures
+  // (enrichRunError: "try `clanker providers models`", "run clanker
+  // doctor", "switch model", ...). Re-classifying an enriched message
+  // stacks a second, overlapping hint inside the first — "…request body
+  // is invalid (provider rejected the request; …)" — so defer to the
+  // server when it already named a next action. Raw tool errors (the
+  // other caller) carry none of these phrases, so their hint still fires.
+  var serverGuided = [
+    "providers models", "clanker doctor", "switch model",
+    "slow or unreachable", "base_url", "vision-capable",
+    "is the server still running"
+  ];
+  for (var i = 0; i < serverGuided.length; i++)
+    if (m.indexOf(serverGuided[i]) !== -1) return "";
   if (m.indexOf("401") !== -1 || m.indexOf("unauthorized") !== -1 || m.indexOf("authentication") !== -1)
     return " (check API key; run clanker doctor)";
   if (m.indexOf("429") !== -1 || m.indexOf("rate limit") !== -1 || m.indexOf("rate_limit") !== -1)
