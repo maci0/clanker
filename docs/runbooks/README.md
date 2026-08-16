@@ -51,6 +51,8 @@ both are compare-and-swap writes, so reopen the record after a conflict.
 ## Inventory
 
 <!-- inventory:runbook:start -->
+- [A build failure that is not yours](build-failure-not-yours.md) — Current
+
 - [Several agent sessions share one checkout](concurrent-agent-sessions-on-one-checkout.md) — Current
 
 - [Leftover improve-self worktrees pile up under .clanker-worktrees/](improve-worktree-backlog.md) — Current
