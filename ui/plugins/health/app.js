@@ -30,12 +30,6 @@ clanker.registerView({
   title: "Health",
   group: "Watch",
   mount: function (container, api) {
-    // How often to re-read while the view is on screen. The endpoint is a
-    // bufPrint over a handful of atomics — cheap — but it still costs a
-    // connection on a server that answers one request per connection, so this
-    // is deliberately slower than the arena's 1.1s match poll.
-    var POLL_MS = 2000;
-
     // Fractions of the connection limit at which the wording changes. Named
     // rather than inline so the table below and the tile agree.
     var BUSY_AT = 0.6;
@@ -162,8 +156,8 @@ clanker.registerView({
     container.appendChild(head);
 
     container.appendChild(api.el("p", "meta",
-      "Read from /api/metrics. Rates are measured between the last two samples, " +
-      "so they describe the last couple of seconds rather than the whole run."));
+      "Read from /api/metrics and the live bus. Rates are measured between the last two samples, " +
+      "so they describe recent traffic rather than the whole run."));
 
     var tiles = api.el("div", "health-tiles");
     container.appendChild(tiles);
@@ -339,30 +333,32 @@ clanker.registerView({
       return !!(view && view.hidden);
     }
 
+    function applySample(d) {
+      var http = (d && d.http) || null;
+      if (!http) throw new Error("no http metrics in the response");
+      var llm = (d && d.llm) || {};
+      var tools = (d && d.tools) || {};
+      var schedule = (d && d.schedule) || {};
+      var at = Date.now();
+      drawTiles(http, llm, tools, schedule, at);
+      drawBands(http);
+      prev = { at: at, http: http, llm: llm, tools: tools, schedule: schedule };
+      api.status("Health: " + num(http.requests_total) + " requests served, " +
+        num(http.errors_total) + " errors, " +
+        num(llm.requests_total) + " LLM calls, " +
+        num(llm.errors_total) + " LLM errors, " +
+        num(tools.requests_total) + " tool calls, " +
+        num(schedule.fires_total) + " scheduled runs.");
+      return http;
+    }
+
     var inFlightLoad = false;
     function load() {
       if (inFlightLoad) return Promise.resolve(null);
       inFlightLoad = true;
       refresh.disabled = true;
       return api.getJSON("/api/metrics")
-        .then(function (d) {
-          var http = (d && d.http) || null;
-          if (!http) throw new Error("no http metrics in the response");
-          var llm = (d && d.llm) || {};
-          var tools = (d && d.tools) || {};
-          var schedule = (d && d.schedule) || {};
-          var at = Date.now();
-          drawTiles(http, llm, tools, schedule, at);
-          drawBands(http);
-          prev = { at: at, http: http, llm: llm, tools: tools, schedule: schedule };
-          api.status("Health: " + num(http.requests_total) + " requests served, " +
-            num(http.errors_total) + " errors, " +
-            num(llm.requests_total) + " LLM calls, " +
-            num(llm.errors_total) + " LLM errors, " +
-            num(tools.requests_total) + " tool calls, " +
-            num(schedule.fires_total) + " scheduled runs.");
-          return http;
-        })
+        .then(applySample)
         .catch(function (err) {
           // The previous sample is dropped: differencing across a gap of
           // unknown length would report a rate for a window that never
@@ -381,10 +377,14 @@ clanker.registerView({
 
     refresh.addEventListener("click", function () { load(); });
 
-    window.setInterval(function () {
+    // Metrics ride the live bus (throttled to 1 Hz on the server). No poll:
+    // a timer would spend a connection on a server that answers one request
+    // per connection. Refresh still does a GET for a quiet server.
+    api.onLive(function (ev) {
+      if (!ev || ev.t !== "metrics" || !ev.http) return;
       if (viewHidden()) return;
-      load();
-    }, POLL_MS);
+      try { applySample(ev); } catch (e) {}
+    });
 
     // Coming back to the view: the numbers on screen are as old as the moment
     // it was hidden, so read once immediately rather than waiting out a tick.

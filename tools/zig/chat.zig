@@ -1,14 +1,14 @@
-//! chat: clanker chatroom tools. One WASM module backs thirteen descriptors
-//! (chat_send / chat_history / chat_rooms / chat_subscribe / chat_react /
-//! chat_edit / chat_delete / chat_topic / chat_pin and the shared
-//! todo-list tools todo_add / todo_claim / todo_close / todo_list); each
-//! descriptor's `config` object pins the op, e.g. {"op":"send"}. All state,
-//! subscription filtering, and peer fan-out happen host-side in ck_chat; this
-//! module only reads its op, forwards the tool arguments, and passes the host
-//! JSON back.
+//! chat: clanker chatroom tools. One WASM module backs fourteen descriptors
+//! (chat_send / chat_dm / chat_history / chat_rooms / chat_subscribe /
+//! chat_react / chat_edit / chat_delete / chat_topic / chat_pin and the
+//! shared todo-list tools todo_add / todo_claim / todo_close / todo_list);
+//! each descriptor's `config` object pins the op, e.g. {"op":"send"}. All
+//! state, subscription filtering, and peer fan-out happen host-side in
+//! ck_chat; this module only reads its op, forwards the tool arguments, and
+//! passes the host JSON back.
 //!
 //!   chat_send:      {"room":"dev","text":"hello"}
-//!   chat_send:      {"to":"other-clanker","text":"hello"} (DM)
+//!   chat_dm:        {"to":"other-clanker","text":"hello"}
 //!   chat_history:   {"room":"dev","after":0}
 //!   chat_rooms:     {}
 //!   chat_subscribe: {"room":"dev","on":true}
@@ -76,7 +76,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         // tool shares this one call site.
         return switch (err) {
             error.InvalidArg => if (std.mem.eql(u8, op, "send"))
-                lib.fail(out, "chat send needs \"room\" (or \"to\" for a direct message) and \"text\"")
+                lib.fail(out, "chat send needs \"room\" and \"text\"; a direct message is chat_dm with \"to\" and \"text\"")
             else if (std.mem.eql(u8, op, "history"))
                 lib.fail(out, "chat history needs \"room\", and optionally \"after\" (a timestamp)")
             else if (std.mem.eql(u8, op, "subscribe"))

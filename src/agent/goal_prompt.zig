@@ -1,8 +1,8 @@
 //! goal_prompt: the first-turn prompt for a continuing goal loop.
 //!
 //! The CLI (`clanker goal <intent>`) and the TUI's `/goal` submission both
-//! start a goal loop from the supplied prompt. Drafting (`write_goal`) and
-//! persistence (`add_goal`) are separate, optional capabilities; this prompt
+//! start a goal loop from the supplied prompt. Drafting (`goal_write`) and
+//! persistence (`goal_add`) are separate, optional capabilities; this prompt
 //! makes sure neither entry point turns them into a prerequisite for work.
 //!
 //! Pure — no allocator of its own beyond the caller's arena, no I/O, no std.Io.
@@ -18,8 +18,8 @@ pub const template =
     "\n" ++
     "This is the first turn of a continuing goal loop. Work toward the requested outcome and verify what you can; " ++
     "after this turn an evaluator will decide whether more turns are needed. " ++
-    "Do not stop to require a write_goal draft or an add_goal record: those are optional, separate capabilities. " ++
-    "Use write_goal only when the user asks to draft or refine a structured goal, and use add_goal only when the user asks to persist one without running it.";
+    "Do not stop to require a goal_write draft or a goal_add record: those are optional, separate capabilities. " ++
+    "Use goal_write only when the user asks to draft or refine a structured goal, and use goal_add only when the user asks to persist one without running it.";
 
 /// Render the full task prompt for an intent. `alloc` is the caller's arena.
 pub fn task(alloc: std.mem.Allocator, intent: []const u8) ![]const u8 {
@@ -33,4 +33,6 @@ test "template carries the intent and starts a loop without a draft or record" {
     try std.testing.expect(std.mem.find(u8, out, "continuing goal loop") != null);
     try std.testing.expect(std.mem.find(u8, out, "Do not stop to require") != null);
     try std.testing.expect(std.mem.find(u8, out, "optional, separate capabilities") != null);
+    try std.testing.expect(std.mem.find(u8, out, "goal_write") != null);
+    try std.testing.expect(std.mem.find(u8, out, "goal_add") != null);
 }

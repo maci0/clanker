@@ -1,7 +1,7 @@
 {
   "name": "subagent",
-  "description": "Delegate a self-contained sub-problem to a nested agent with its own context and a short iteration budget; returns its final answer. WHEN TO USE: work that would otherwise fill your own context \u2014 reading a large file to answer one question, checking a claim, drafting one patch \u2014 while you keep the thread of the main task. WHEN NOT TO USE: anything you can finish in a couple of tool calls yourself; delegation costs a whole extra run. The sub-agent starts with an EMPTY transcript: it cannot see what you have read or decided, so brief it. Put the facts it must not re-derive in \"context\" and the paths worth reading in \"files\" (it reads them itself, which costs you nothing). Input: {\"task\": \"...\", \"context\": [\"...\"], \"files\": [\"src/x.zig\"], \"provider\": \"kimi-k3\"}.",
-  "llm_description": "Delegate a self-contained sub-problem to a nested agent (own context, short budget); returns its final answer. Use for work that would fill your own context; skip for anything doable in a couple tool calls. Sub-agent starts with EMPTY transcript \u2014 brief it fully: facts in \"context\", paths to read in \"files\" (it reads them itself). Input: {task, context?, files?, provider?}.",
+  "description": "Delegate a self-contained sub-problem to a nested agent with its own context and a short iteration budget; returns its final answer. WHEN TO USE: work that would otherwise fill your own context \u2014 reading a large file to answer one question, checking a claim, drafting one patch \u2014 while you keep the thread of the main task. WHEN NOT TO USE: anything you can finish in a couple of tool calls yourself; delegation costs a whole extra run. The sub-agent starts with an EMPTY transcript: it cannot see what you have read or decided, so brief it. Put the facts it must not re-derive in \"context\" and the paths worth reading in \"files\" (it reads them itself, which costs you nothing). Input: {\"task\": \"...\", \"context\": [\"...\"], \"files\": [\"src/x.zig\"], \"provider\": \"kimi-k3\", \"background\": false}. background:true returns a job id immediately; wait with the jobs tool. A background child cannot ask_user {parent:true}.",
+  "llm_description": "Delegate a self-contained sub-problem to a nested agent (own context, short budget). Default: join and return its answer. {background:true} returns a job id immediately so this turn can continue; wait/list/kill with the jobs tool. Brief it fully: facts in context, paths in files. Cannot nest parent ask_user when background. Input: {task, context?, files?, provider?, background?}.",
   "wasm": "zig-out/tools/subagent.wasm",
   "input_schema": {
     "type": "object",
@@ -25,6 +25,10 @@
           "type": "string"
         },
         "description": "Paths the sub-agent should read first. Passed by reference; it reads them itself."
+      },
+      "background": {
+        "type": "boolean",
+        "description": "If true, return a job id immediately and keep working; wait with the jobs tool."
       }
     },
     "required": [

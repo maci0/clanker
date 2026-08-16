@@ -49,6 +49,9 @@ pub const Spec = struct {
     /// `api_key_env` configured (Vertex, which can be served by
     /// `service_account_file` or gcloud ADC instead).
     required: bool = false,
+    /// When true, `Credential.quota_project` is `provider.project` (Vertex
+    /// user ADC's `x-goog-user-project`). A Spec field, not a kind switch.
+    quota_from_project: bool = false,
 };
 
 /// A resolved credential, ready to be turned into headers.
@@ -114,7 +117,7 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
             .bearer = try std.fmt.allocPrint(env.gpa, "Bearer {s}", .{tok}),
             .strategy = strategy,
             .owns_value = true,
-            .quota_project = quotaProject(provider),
+            .quota_project = quotaProject(spec, provider),
         };
     }
 
@@ -129,16 +132,13 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
         .value = k,
         .bearer = try std.fmt.allocPrint(env.gpa, "Bearer {s}", .{k}),
         .strategy = strategy,
-        .quota_project = quotaProject(provider),
+        .quota_project = quotaProject(spec, provider),
     };
-    return .{ .strategy = strategy, .quota_project = quotaProject(provider) };
+    return .{ .strategy = strategy, .quota_project = quotaProject(spec, provider) };
 }
 
-fn quotaProject(provider: *const config.Provider) []const u8 {
-    return switch (provider.kind) {
-        .vertex, .vertex_anthropic => provider.project,
-        else => "",
-    };
+fn quotaProject(spec: Spec, provider: *const config.Provider) []const u8 {
+    return if (spec.quota_from_project) provider.project else "";
 }
 
 // ------------------------------------------------------------------- tests --
@@ -224,4 +224,23 @@ test "oauth_refresh on a kind that cannot mint is rejected, not silently downgra
     var p = config.Provider{ .name = "x", .base_url = "https://x", .default_model = "m" };
     p.auth = .oauth_refresh;
     try std.testing.expectError(error.UnsupportedAuthStrategy, resolve(env, .{}, &p));
+}
+
+test "quota_project is a Spec field, not a kind switch" {
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("TEST_KEY", "secret-1");
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const env = Env{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env_map };
+
+    var p = config.Provider{ .name = "v", .base_url = "https://x", .default_model = "m", .project = "my-gcp" };
+    p.api_key_env = "TEST_KEY";
+    const with_quota = try resolve(env, .{ .quota_from_project = true }, &p);
+    defer with_quota.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("my-gcp", with_quota.quota_project);
+
+    const without = try resolve(env, .{}, &p);
+    defer without.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("", without.quota_project);
 }

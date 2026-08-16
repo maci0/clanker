@@ -8,7 +8,7 @@
 //! the run path.
 
 const std = @import("std");
-const cron = @import("cron.zig");
+const cron = @import("schedule_cron");
 const store = @import("store.zig");
 const runner = @import("runner.zig");
 const log = @import("../util/log.zig");

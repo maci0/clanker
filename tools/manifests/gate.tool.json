@@ -24,7 +24,7 @@
     },
     "required": []
   },
-  "category": "verify",
+  "category": "harness",
   "check": true,
   "sequential": true,
   "exec_allow": [

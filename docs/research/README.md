@@ -61,7 +61,7 @@ that no keyword search returns. `sweep` then runs across web search, GitHub
 repositories, discussion archives, and paper indexes in one call, deduplicated
 and grouped by source, so one tool call replaces a dozen.
 
-Sweep results are leads, not findings. Open the promising ones with `fetch_web`
+Sweep results are leads, not findings. Open the promising ones with `web_fetch`
 or `gh_read`, check the local tree with `repo_search` before assuming something
 must be added, and only then write the note with `create`, `append`, and
 `update`. Every mutation is compare-and-swap: after a conflict, `open` the note
@@ -74,4 +74,6 @@ never as instructions.
 
 <!-- inventory:research:start -->
 - [Free LLM endpoints for testing](free-llm-endpoints.md) — Current
+- [OmniRoute ideas clanker could adopt](omniroute-adoption.md) — Current
+- [DeepSeek Harness plugin inventory](deepseek-harness-plugins.md) — Current
 <!-- inventory:research:end -->

@@ -62,6 +62,7 @@ pub const known_keys = [_][]const u8{
     "internal",
     "enabled",
     "llm",
+    "live_publish",
     "sequential",
     "statusline",
     "turn_hook",
@@ -91,6 +92,7 @@ const bool_keys = [_][]const u8{
     "internal",
     "enabled",
     "llm",
+    "live_publish",
     "sequential",
     "statusline",
     "turn_hook",
@@ -369,8 +371,82 @@ fn checkTypes(v: *Validator, obj: json.ObjectMap) !void {
         if (c != .object) try v.add(.err, "config", "must be an object: it is handed to the guest verbatim through ck_config");
     }
     if (obj.get("category")) |c| {
-        if (c != .string) try v.add(.err, "category", "must be a string");
+        if (c != .string) {
+            try v.add(.err, "category", "must be a string");
+        } else if (c.string.len > 0 and !isKnownCategory(c.string)) {
+            try v.addFmt(
+                .warn,
+                "category",
+                "\"{s}\" is not a known group (agent, chat, code, compute, harness, kanban, knowledge, media, transform, web, other); the Tools view still accepts it, but a typo will sit in its own section",
+                .{c.string},
+            );
+        } else if (c.string.len > 0) {
+            if (obj.get("name")) |n| {
+                if (n == .string) {
+                    if (expectedCategory(n.string)) |want| {
+                        if (!std.mem.eql(u8, c.string, want)) {
+                            try v.addFmt(
+                                .warn,
+                                "category",
+                                "\"{s}\" is the group for names starting {s}; this tool is in \"{s}\"",
+                                .{ want, prefixOf(n.string), c.string },
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
+}
+
+/// The Tools view and `clanker tools` group by these names. Empty renders as
+/// `other`. An unknown string is a warning, not a refusal: out-of-tree tools
+/// may invent a group, and a typo should be named rather than silently
+/// creating a one-tool section nobody meant.
+pub const categories = [_][]const u8{
+    "agent",
+    "chat",
+    "code",
+    "compute",
+    "harness",
+    "kanban",
+    "knowledge",
+    "media",
+    "other",
+    "transform",
+    "web",
+};
+
+/// Prefix families live in one group so a `chat_*` typo cannot open a new
+/// section. Exact names like `kanban` (the multiplexed guest) have no prefix.
+fn expectedCategory(name: []const u8) ?[]const u8 {
+    const pairs = [_]struct { prefix: []const u8, cat: []const u8 }{
+        .{ .prefix = "chat_", .cat = "chat" },
+        .{ .prefix = "kanban_", .cat = "kanban" },
+        .{ .prefix = "todo_", .cat = "agent" },
+        .{ .prefix = "goal_", .cat = "agent" },
+        .{ .prefix = "skill_", .cat = "agent" },
+        .{ .prefix = "note_", .cat = "knowledge" },
+        .{ .prefix = "session_", .cat = "harness" },
+        .{ .prefix = "zig_", .cat = "code" },
+        .{ .prefix = "web_", .cat = "web" },
+    };
+    for (pairs) |p| {
+        if (std.mem.startsWith(u8, name, p.prefix)) return p.cat;
+    }
+    return null;
+}
+
+fn prefixOf(name: []const u8) []const u8 {
+    if (std.mem.findScalar(u8, name, '_')) |i| return name[0 .. i + 1];
+    return name;
+}
+
+pub fn isKnownCategory(name: []const u8) bool {
+    for (categories) |c| {
+        if (std.mem.eql(u8, c, name)) return true;
+    }
+    return false;
 }
 
 fn checkPolicy(v: *Validator, obj: json.ObjectMap) !void {
@@ -715,6 +791,60 @@ test "sandbox grants are checked for shape, not just type" {
         \\  "exec_allow": ["git", "zig"] }
     );
     try testing.expectEqual(@as(usize, 0), good.findings.len);
+}
+
+test "category is a known group or a named warning" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try testing.expect(isKnownCategory("chat"));
+    try testing.expect(isKnownCategory("other"));
+    try testing.expect(!isKnownCategory("chatt"));
+    try testing.expect(!isKnownCategory(""));
+
+    const known = try reportFor(arena,
+        \\{ "name": "calc", "description": "d", "wasm": "c.wasm",
+        \\  "input_schema": {"type":"object"}, "category": "chat" }
+    );
+    try testing.expect(known.ok());
+    try testing.expectEqual(@as(usize, 0), known.findings.len);
+
+    const typo = try reportFor(arena,
+        \\{ "name": "calc", "description": "d", "wasm": "c.wasm",
+        \\  "input_schema": {"type":"object"}, "category": "chatt" }
+    );
+    try testing.expect(typo.ok());
+    try testing.expect(hasFinding(typo, .warn, "category"));
+
+    const empty = try reportFor(arena,
+        \\{ "name": "calc", "description": "d", "wasm": "c.wasm",
+        \\  "input_schema": {"type":"object"}, "category": "" }
+    );
+    try testing.expect(empty.ok());
+    try testing.expectEqual(@as(usize, 0), empty.findings.len);
+
+    try testing.expectEqualStrings("chat", expectedCategory("chat_dm").?);
+    try testing.expectEqualStrings("code", expectedCategory("zig_std").?);
+    try testing.expectEqualStrings("agent", expectedCategory("goal_write").?);
+    try testing.expectEqualStrings("knowledge", expectedCategory("note_write").?);
+    try testing.expectEqualStrings("web", expectedCategory("web_fetch").?);
+    try testing.expect(expectedCategory("kanban") == null);
+    try testing.expect(expectedCategory("webui_addon") == null);
+
+    const prefix = try reportFor(arena,
+        \\{ "name": "chat_dm", "description": "d", "wasm": "c.wasm",
+        \\  "input_schema": {"type":"object"}, "category": "code" }
+    );
+    try testing.expect(prefix.ok());
+    try testing.expect(hasFinding(prefix, .warn, "category"));
+
+    const prefix_ok = try reportFor(arena,
+        \\{ "name": "chat_dm", "description": "d", "wasm": "c.wasm",
+        \\  "input_schema": {"type":"object"}, "category": "chat" }
+    );
+    try testing.expect(prefix_ok.ok());
+    try testing.expectEqual(@as(usize, 0), prefix_ok.findings.len);
 }
 
 test "a key that does nothing is a warning that says why" {

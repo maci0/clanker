@@ -1,5 +1,5 @@
 // Board view — ES module, no bundler.
-// Owns #view-board: columns and cards, the card detail modal, filters, and
+// Owns #view-kanban: columns and cards, the card detail modal, filters, and
 // the list view. The pure column/card helpers stay in ../lib/board.js; the
 // goal side of the card<->goal mirroring lives in ./goals.js. bindBoard()
 // wires the DOM and the app-level callbacks (tab counts, run opening, the
@@ -2000,7 +2000,7 @@ export function bindBoard(deps) {
     s.cards.forEach(function (c) {
       if (c.column !== "done" && c.column !== "archive" && (!s.mine || c.assignee === s.me)) open += 1;
     });
-    _setTabCount("board", open);
+    _setTabCount("kanban", open);
     el.boardEmpty.hidden = !boardLoaded || s.cards.length > 0;
     var filterEmpty = document.getElementById("board-filter-empty");
     if (filterEmpty) {
@@ -2118,11 +2118,11 @@ export function bindBoard(deps) {
     // This used to read el.board, which is #board-grid — the columns, which
     // nothing ever hid. The test was therefore always false and these
     // shortcuts were live on every view, so `/` on the Runs view jumped focus
-    // into the board's filter. #view-board is the panel showView() toggles,
+    // into the board's filter. #view-kanban is the panel showView() toggles,
     // which is the thing "the board view is visible" actually means, and it
     // keeps the shortcuts working in list mode, where the grid is hidden but
     // the view is not.
-    var panel = document.getElementById("view-board");
+    var panel = document.getElementById("view-kanban");
     if (!panel || panel.hidden) return;
     var tag = (document.activeElement || {}).tagName || "";
     var isInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";

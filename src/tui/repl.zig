@@ -910,7 +910,7 @@ const CommandAction = union(enum) {
     workflow,
     /// Starts a continuing goal loop (see `runGoalTask`).
     goal,
-    /// Invokes the draft-only write_goal tool directly (see `runWriteGoal`).
+    /// Invokes the draft-only goal_write tool directly (see `runWriteGoal`).
     write_goal,
     /// Persists a structured goal without starting a run (see `runAddGoal`).
     add_goal,
@@ -961,6 +961,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/workflows", .help = "list reusable prompt workflows", .action = .workflows },
     .{ .name = "/workflow", .takes_args = true, .arg_hint = "<name> [args]", .help = "run a workflow (expands {{args}} then runs as a task)", .action = .workflow },
     .{ .name = "/sessions", .aliases = &.{"/history"}, .help = "list saved conversations", .action = .{ .tool = .{ .name = "sessions", .args = "" } } },
+    .{ .name = "/search", .takes_args = true, .arg_hint = "<query>", .help = "search saved conversations (resume with --session)", .action = .{ .tool = .{ .name = "session_search", .args = "", .forward_args = true } } },
     .{ .name = "/graph", .takes_args = true, .arg_hint = "[run-id]", .help = "list runs or draw one as a timeline (same as clanker graph)", .action = .{ .tool = .{ .name = "graph", .args = "list", .forward_args = true } } },
     .{ .name = "/status", .help = "show instance identity and configured peers", .action = .{ .tool = .{ .name = "status", .args = "" } } },
     .{ .name = "/tools", .help = "list registered tools (same as clanker tools)", .action = .{ .tool = .{ .name = "tools", .args = "" } } },
@@ -973,7 +974,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/compare", .takes_args = true, .arg_hint = "...", .help = "one prompt to several models at once, answers unlabeled (see /compare --help)", .action = .compare },
     .{ .name = "/theme", .takes_args = true, .arg_hint = "[name]", .help = "list or switch color theme (mocha, latte, tokyonight, ...)", .action = .theme },
     .{ .name = "/plan", .takes_args = true, .arg_hint = "[on|off]", .help = "toggle plan mode (proposal only; write tools refused)", .action = .plan },
-    .{ .name = "/research", .takes_args = true, .arg_hint = "[on|off]", .help = "toggle research mode (prefer web_search/fetch_web for current facts)", .action = .research },
+    .{ .name = "/research", .takes_args = true, .arg_hint = "[on|off]", .help = "toggle research mode (prefer web_search/web_fetch for current facts)", .action = .research },
     .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
 };
 
@@ -1890,11 +1891,12 @@ test "matchingSpellings finds a unique prefix and every ambiguous one" {
     try std.testing.expectEqual(@as(usize, 1), unique.len);
     try std.testing.expectEqualStrings("/help", unique[0].spelling);
 
-    // "/s" hits /sessions and /status; "?" alone lands on /help's alias.
+    // "/s" hits /sessions, /search, and /status.
     const ambiguous = matchingSpellings("/s", &buf);
-    try std.testing.expectEqual(@as(usize, 2), ambiguous.len);
+    try std.testing.expectEqual(@as(usize, 3), ambiguous.len);
     try std.testing.expectEqualStrings("/sessions", ambiguous[0].spelling);
-    try std.testing.expectEqualStrings("/status", ambiguous[1].spelling);
+    try std.testing.expectEqualStrings("/search", ambiguous[1].spelling);
+    try std.testing.expectEqualStrings("/status", ambiguous[2].spelling);
 
     try std.testing.expectEqual(@as(usize, 0), matchingSpellings("/nope", &buf).len);
 }
@@ -2596,7 +2598,7 @@ const Model = struct {
                     pc.args,
                     &self.research_mode,
                     "usage: /research [on|off] (bare /research toggles)",
-                    "notice: research mode {s} (web_search/fetch_web preferred for current facts)",
+                    "notice: research mode {s} (web_search/web_fetch preferred for current facts)",
                 ) == .bad_usage) return;
             },
             .workflows => {
@@ -2999,7 +3001,7 @@ const Model = struct {
             self.lines.append(self.arena, .{ .text = "error: could not prepare write-goal draft", .dim = true }) catch {};
             return true;
         };
-        return self.runToolJson("write_goal", input, false);
+        return self.runToolJson("goal_write", input, false);
     }
 
     /// `/add-goal` persists an explicitly structured goal and deliberately
@@ -3018,7 +3020,7 @@ const Model = struct {
             self.lines.append(self.arena, .{ .text = "error: could not prepare add-goal input", .dim = true }) catch {};
             return true;
         };
-        return self.runToolJson("add_goal", input, false);
+        return self.runToolJson("goal_add", input, false);
     }
 
     /// The tail of `submit` that runs a task: echoes it, records it in

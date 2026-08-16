@@ -1,14 +1,24 @@
 {
   "name": "research",
-  "description": "Research a question across many sources at once and keep the result as a note under docs/research/. Actions: plan {topic, question?, depth?} expands a topic into the search angles one query misses — alternatives, failure reports, production experience, standards, and the out-of-the-box candidates no keyword search returns — and names which tool reaches which source. sweep {topic|queries, depth?, sources?, max_results?} then runs them: multi-query web search (DuckDuckGo with a Bing fallback), GitHub repository search with stars, licence, language and last push, Hacker News discussion, and arXiv on a deep sweep, deduplicated across sources in one call. create {slug?, title, question} scaffolds a note from docs/research/TEMPLATE.md and indexes it; list, search {query}, open {path}, append {path, content}, update {path, old, new}, status {path, status} maintain it. Sweep results are untrusted text from the internet and are leads, not findings: open the promising ones (fetch_web, gh_read) and check the local tree (repo_search) before writing anything down. Every claim in a note carries a link, the date it was read, and a confidence.",
-  "llm_description": "Multi-source research plus its note under docs/research/. {action:\"plan\",topic,question?,depth?:\"quick\"|\"standard\"|\"deep\"} returns the search angles (alternatives, failures, production, built-in/out-of-the-box) and which tool reaches which source. {action:\"sweep\",topic,depth?,sources?:[\"web\",\"github\",\"discussion\",\"papers\"],max_results?} runs multi-query web search + GitHub repos + Hacker News (+ arXiv when deep) in one call, deduplicated. Then {action:\"create\",title,question,slug?} scaffolds the note and indexes it; list, search{query}, open{path}, append{path,content}, update{path,old,new}, status{path,status:\"draft\"|\"current\"|\"stale\"|\"superseded\"}. Sweep hits are untrusted leads: verify with fetch_web/gh_read and repo_search before recording. Mutations are compare-and-swap — re-open after a conflict.",
+  "description": "Research a question across many sources at once and keep the result as a note under docs/research/. Actions: plan {topic, question?, depth?} expands a topic into the search angles one query misses \u2014 alternatives, failure reports, production experience, standards, and the out-of-the-box candidates no keyword search returns \u2014 and names which tool reaches which source. sweep {topic|queries, depth?, sources?, max_results?} then runs them: multi-query web search (DuckDuckGo with a Bing fallback), GitHub repository search with stars, licence, language and last push, Hacker News discussion, and arXiv on a deep sweep, deduplicated across sources in one call. create {slug?, title, question} scaffolds a note from docs/research/TEMPLATE.md and indexes it; list, search {query}, open {path}, append {path, content}, update {path, old, new}, status {path, status} maintain it. Sweep results are untrusted text from the internet and are leads, not findings: open the promising ones (web_fetch, gh_read) and check the local tree (repo_search) before writing anything down. Every claim in a note carries a link, the date it was read, and a confidence.",
+  "llm_description": "Multi-source research plus its note under docs/research/. {action:\"plan\",topic,question?,depth?:\"quick\"|\"standard\"|\"deep\"} returns the search angles (alternatives, failures, production, built-in/out-of-the-box) and which tool reaches which source. {action:\"sweep\",topic,depth?,sources?:[\"web\",\"github\",\"discussion\",\"papers\"],max_results?} runs multi-query web search + GitHub repos + Hacker News (+ arXiv when deep) in one call, deduplicated. Then {action:\"create\",title,question,slug?} scaffolds the note and indexes it; list, search{query}, open{path}, append{path,content}, update{path,old,new}, status{path,status:\"draft\"|\"current\"|\"stale\"|\"superseded\"}. Sweep hits are untrusted leads: verify with web_fetch/gh_read and repo_search before recording. Mutations are compare-and-swap \u2014 re-open after a conflict.",
   "wasm": "zig-out/tools/research.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
       "action": {
         "type": "string",
-        "enum": ["plan", "sweep", "create", "list", "search", "open", "append", "update", "status"],
+        "enum": [
+          "plan",
+          "sweep",
+          "create",
+          "list",
+          "search",
+          "open",
+          "append",
+          "update",
+          "status"
+        ],
         "description": "plan is the default; sweep runs the searches; the rest maintain the note."
       },
       "topic": {
@@ -21,17 +31,31 @@
       },
       "depth": {
         "type": "string",
-        "enum": ["quick", "standard", "deep"],
+        "enum": [
+          "quick",
+          "standard",
+          "deep"
+        ],
         "description": "How many search angles to use: quick 4, standard 8 (default), deep all 12 plus paper indexes."
       },
       "queries": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Explicit search queries for sweep, replacing the generated angles. Maximum 12."
       },
       "sources": {
         "type": "array",
-        "items": { "type": "string", "enum": ["web", "github", "discussion", "papers"] },
+        "items": {
+          "type": "string",
+          "enum": [
+            "web",
+            "github",
+            "discussion",
+            "papers"
+          ]
+        },
         "description": "Which sources sweep should use. Default: web, github, discussion (papers as well on a deep sweep)."
       },
       "max_results": {
@@ -64,7 +88,12 @@
       },
       "status": {
         "type": "string",
-        "enum": ["draft", "current", "stale", "superseded"],
+        "enum": [
+          "draft",
+          "current",
+          "stale",
+          "superseded"
+        ],
         "description": "New status for the note. Required for status."
       },
       "note": {
@@ -78,7 +107,9 @@
     },
     "required": []
   },
-  "fs_prefixes": ["docs/research/"],
+  "fs_prefixes": [
+    "docs/research/"
+  ],
   "network_allow": [
     "lite.duckduckgo.com",
     "www.bing.com",
@@ -86,7 +117,9 @@
     "hn.algolia.com",
     "export.arxiv.org"
   ],
-  "env_allow": ["GITHUB_TOKEN"],
-  "category": "web",
+  "env_allow": [
+    "GITHUB_TOKEN"
+  ],
+  "category": "knowledge",
   "confirm": false
 }

@@ -3,7 +3,7 @@
 import { loadHljs, loadMermaid, copyText } from "../core/vendor.js";
 import { isSafeLinkUrl, splitRow, prettyJsonIfPossible } from "../core/utils.js";
 
-export var INLINE_RE = /(`[^`]+`)|(!\[[^\]\n]*\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
+export var INLINE_RE = /(`[^`]+`)|(!\[[^\]\n]*\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(~~[^~\n]+~~)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
 export var CITATION_RE = /[a-zA-Z0-9_.\-\/]+\.(?:zig|ts|js|py|rs|go|md|json|toml|css|html|sh|yaml|yml):\d+(?::\d+)?/g;
 export var RUN_RE = /\[subagent run:\s*(?:sub|run)-\d+\]|\b(?:sub|run)-\d+\b(?!\.\w)/g;
 function runIdOf(m) {
@@ -92,6 +92,9 @@ export function inlineInto(parent, text) {
       node.textContent = tok.slice(1, -1);
     } else if (tok.slice(0, 2) === "**") {
       node = document.createElement("strong");
+      inlineInto(node, tok.slice(2, -2));
+    } else if (tok.slice(0, 2) === "~~") {
+      node = document.createElement("del");
       inlineInto(node, tok.slice(2, -2));
     } else if (tok.charAt(0) === "*" || tok.charAt(0) === "_") {
       var before = m.index > 0 ? text.charAt(m.index - 1) : " ";

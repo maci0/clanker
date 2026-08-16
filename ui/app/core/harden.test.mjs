@@ -112,10 +112,9 @@ test("phone composer suggestions and attachment remove are 44px", function () {
 });
 
 test("Search sits in Work, not the folded Set up group", function () {
-  const work = html.slice(html.indexOf('id="rail-section-work"'), html.indexOf('id="rail-section-watch"'));
-  const setup = html.slice(html.indexOf('id="rail-section-setup"'));
-  assert.match(work, /id="tab-search"/);
-  assert.doesNotMatch(setup, /id="tab-search"/);
+  const spec = readFileSync(join(here, "../../plugins/search/plugin.json"), "utf8");
+  assert.match(spec, /"group": "Work"/);
+  assert.doesNotMatch(html, /id="tab-search"/);
 });
 
 test("empty transcript names the new conversation, not Idle", function () {
@@ -217,7 +216,7 @@ test("knowledge search empty offers to clear the query", function () {
 });
 
 test("compare and arena empty lists sit in the picker, not only the status line", function () {
-  const compare = readFileSync(join(here, "../features/compare.js"), "utf8");
+  const compare = readFileSync(join(here, "../../plugins/compare/app.js"), "utf8");
   const arena = readFileSync(join(here, "../features/arena.js"), "utf8");
   assert.match(compare, /No comparisons yet\. Run one with /);
   assert.match(arena, /No matches yet\. Run one with /);
@@ -267,7 +266,9 @@ test("required marker covers a required input nested in its label", function () 
 });
 
 test("Search field names conversations, not Find", function () {
-  assert.match(html, /<label for="search-q">Search conversations<\/label>/);
+  const src = readFileSync(join(here, "../../plugins/search/app.js"), "utf8");
+  assert.match(src, /Search conversations/);
+  assert.match(src, /setAttribute\("for", "search-q"\)/);
 });
 
 test("Board create goal is the primary action", function () {
@@ -338,7 +339,7 @@ test("session Delete explains it is permanent", function () {
 });
 
 test("Search stays disabled until the query is long enough", function () {
-  const src = readFileSync(join(here, "../features/search.js"), "utf8");
+  const src = readFileSync(join(here, "../../plugins/search/app.js"), "utf8");
   assert.match(src, /btn\.disabled = on \|\| tooShort/);
   assert.match(src, /Type at least /);
 });
@@ -370,8 +371,8 @@ test("Prompts Use confirms before replacing an unsent task", function () {
 });
 
 test("Compare pick asks before recording an irreversible choice", function () {
-  const src = readFileSync(join(here, "../features/compare.js"), "utf8");
-  assert.match(src, /uiConfirm\("Pick answer " \+ a\.label \+ "\? You cannot change this later\."/);
+  const src = readFileSync(join(here, "../../plugins/compare/app.js"), "utf8");
+  assert.match(src, /api\.confirm\("Pick answer " \+ a\.label \+ "\? You cannot change this later\."/);
   assert.match(src, /if \(yes\) recordPick\(doc\.id, a\.label\)/);
 });
 
@@ -385,6 +386,31 @@ test("disabling a web UI plugin offers a reload control", function () {
   const src = readFileSync(join(here, "plugins.js"), "utf8");
   assert.match(src, /Reload page/);
   assert.match(src, /window\.location\.reload\(\)/);
+});
+
+test("showView waits for plugins before treating an unknown view as Chat", function () {
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  assert.match(app, /var pluginsReady = false/);
+  assert.match(app, /pendingPluginView/);
+  assert.match(app, /function markPluginsReady/);
+  assert.match(app, /function viewBase/);
+});
+
+test("pluginApi offers POST, live bus, dialogs, workspace, icons, storage, session", function () {
+  const src = readFileSync(join(here, "plugins.js"), "utf8");
+  assert.match(src, /openSession:\s*function/);
+  assert.match(src, /foldFind:\s*searchFoldFind/);
+  assert.match(src, /postJSON:\s*function/);
+  assert.match(src, /onLive:\s*onLive/);
+  assert.match(src, /emit:\s*function/);
+  assert.match(src, /\/api\/live/);
+  assert.match(src, /confirm:\s*uiConfirm/);
+  assert.match(src, /prompt:\s*uiPrompt/);
+  assert.match(src, /toast:\s*toast/);
+  assert.match(src, /workspace:\s*function/);
+  assert.match(src, /icon:\s*icon/);
+  assert.match(src, /storage:\s*pluginStorage/);
+  assert.match(src, /clanker\.plugin\./);
 });
 
 test("Board new-goal form sits behind a disclosure", function () {
@@ -402,18 +428,19 @@ test("rooms copy uses the shared copy feedback helper", function () {
 test("failed list loads keep a visible retry in the panel", function () {
   assert.match(uiSrc, /export function showLoadError/);
   assert.match(uiSrc, /btn\.textContent = "Try again"/);
-  const schedule = readFileSync(join(here, "../features/schedule.js"), "utf8");
+  const schedule = readFileSync(join(here, "../../plugins/schedule/app.js"), "utf8");
   const prompts = readFileSync(join(here, "../features/prompts.js"), "utf8");
   const knowledge = readFileSync(join(here, "../features/knowledge.js"), "utf8");
   const plugins = readFileSync(join(here, "plugins.js"), "utf8");
   const tools = readFileSync(join(here, "tools.js"), "utf8");
   const board = readFileSync(join(here, "../features/board.js"), "utf8");
-  const search = readFileSync(join(here, "../features/search.js"), "utf8");
-  const compare = readFileSync(join(here, "../features/compare.js"), "utf8");
+  const search = readFileSync(join(here, "../../plugins/search/app.js"), "utf8");
+  const compare = readFileSync(join(here, "../../plugins/compare/app.js"), "utf8");
   const arena = readFileSync(join(here, "../features/arena.js"), "utf8");
   const app = readFileSync(join(here, "../app.js"), "utf8");
   const logs = readFileSync(join(here, "logs.js"), "utf8");
-  assert.match(schedule, /showLoadError\(byId\("schedule-list"\)/);
+  assert.match(schedule, /Try again/);
+  assert.match(schedule, /clanker\.registerView/);
   assert.match(prompts, /showLoadError\(document\.getElementById\("prompts-list"\)/);
   assert.match(knowledge, /showLoadError\(document\.getElementById\("knowledge-list"\)/);
   assert.match(plugins, /showLoadError\(_el\.webuiPlugins/);
@@ -423,7 +450,7 @@ test("failed list loads keep a visible retry in the panel", function () {
   assert.match(board, /showLoadError\(el\.board/);
   assert.match(board, /el\.boardEmpty\.hidden = !boardLoaded \|\| s\.cards\.length > 0/);
   assert.match(search, /Try again/);
-  assert.match(compare, /showLoadError\(byId\("compare-list"\)/);
+  assert.match(compare, /showError\(list, msg, load\)/);
   assert.match(arena, /showLoadError\(byId\("arena-list"\)/);
   assert.match(app, /showLoadError\(el\.usage/);
   assert.match(app, /showLoadError\(list, msg, load\)/);
@@ -485,8 +512,8 @@ test("accent pill is primary/#submit only, not every unmarked button", function 
 });
 
 test("Search and Create channel use a primary CTA", function () {
-  assert.match(html, /id="search-go"[^>]*class="primary"|class="primary"[^>]*id="search-go"/);
-  assert.match(html, /id="search-go"[^>]*>Search conversations</);
+  const search = readFileSync(join(here, "../../plugins/search/app.js"), "utf8");
+  assert.match(search, /api\.el\("button", "primary", "Search conversations"\)/);
   assert.match(html, /id="chat-create-confirm"[^>]*class="primary"|class="primary"[^>]*id="chat-create-confirm"/);
   assert.match(html, /id="chat-create-confirm"[^>]*>Create channel</);
   assert.match(html, /id="config-editor-save"[^>]*class="primary"|class="primary"[^>]*id="config-editor-save"/);
@@ -511,9 +538,9 @@ test("Fleet empty roster points at System Config instead of the phonebook", func
 test("Activity empty state offers to open the board", function () {
   const src = readFileSync(join(here, "../../plugins/activity/app.js"), "utf8");
   assert.match(src, /Nothing recorded yet/);
-  assert.match(src, /Open board/);
-  assert.match(src, /"primary", "Open board"/);
-  assert.match(src, /api\.showView\("board"\)/);
+  assert.match(src, /Open kanban/);
+  assert.match(src, /"primary", "Open kanban"/);
+  assert.match(src, /api\.showView\("kanban"\)/);
   const css = readFileSync(join(here, "../../plugins/activity/app.css"), "utf8");
   assert.match(css, /@media \(max-width: 40rem\) \{\s*\.activity-card \{ min-height: 44px; \}/);
 });

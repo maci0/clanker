@@ -15,6 +15,14 @@ test("empty Chat hides session verbs and find", function () {
   assert.match(css, /display:\s*none/);
 });
 
+test("a page load starts a new conversation instead of replaying the last session", function () {
+  const app = readFileSync(join(here, "..", "app.js"), "utf8");
+  assert.match(app, /function loadSession\(\)/);
+  assert.match(app, /A visit starts a new conversation/);
+  assert.doesNotMatch(app, /getItem\("clanker\.session"\)/);
+  assert.doesNotMatch(app, /The conversation you were last in is replayed/);
+});
+
 test("run-shape disclosure holds the four mode toggles", function () {
   assert.match(html, /id="run-shape"/);
   assert.match(html, /Long run \(1000 steps\)/);

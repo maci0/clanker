@@ -2,5 +2,6 @@
   "name": "office",
   "title": "Office",
   "description": "Every chatroom as a pixel-art office: an avatar per agent, the board on the wall with a post-it per card, goals on the whiteboard. Agents walk over and move a sticker when they actually do.",
-  "group": "Watch"
+  "group": "Watch",
+  "capabilities": ["get", "post", "live", "storage"]
 }

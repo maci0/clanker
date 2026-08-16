@@ -1,0 +1,37 @@
+{
+  "name": "jobs",
+  "description": "Background jobs: start a long command without parking the turn, then list/wait/kill. Input: {\"op\":\"start\",\"argv\":[\"zig\",\"build\"]} | {\"op\":\"list\"} | {\"op\":\"wait\",\"id\":\"job-...\"} | {\"op\":\"kill\",\"id\":\"...\"}. wait blocks until the process exits and returns {exit}. Subagent jobs from subagent {\"background\":true} use wait/list too.",
+  "llm_description": "Start, list, wait, or kill a background job. {op:start, argv:[cmd,...]} returns an id. {op:list} shows exec and background-subagent jobs (done flag). {op:wait,id} blocks until that job exits and returns {exit}. {op:kill,id}. Use this for long builds instead of blocking exec.",
+  "wasm": "zig-out/tools/jobs.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "op": {
+        "type": "string",
+        "description": "start, list, wait, or kill"
+      },
+      "argv": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "op"
+    ]
+  },
+  "exec_allow": [
+    "git",
+    "zig",
+    "rg",
+    "ast-grep",
+    "semcode",
+    "uv"
+  ],
+  "confirm": true,
+  "category": "agent"
+}

@@ -1,0 +1,26 @@
+{
+  "name": "advisor",
+  "description": "Fail-open post-turn critique. One prompt, one parsed note ({severity, text}). Internal: the agent loop injects the note; this guest is the completion + dialect so a CLI or hook runs the same review. Input: {\"summary\":\"...\",\"provider\":\"optional\"}.",
+  "llm_description": "Review a turn summary and return {severity: note|concern|blocker, text}. Internal; not for the model catalog.",
+  "wasm": "zig-out/tools/advisor.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "string",
+        "description": "Redacted turn window to review."
+      },
+      "provider": {
+        "type": "string",
+        "description": "Optional provider name. Empty uses the harness default."
+      }
+    },
+    "required": ["summary"]
+  },
+  "internal": true,
+  "llm": true,
+  "config": {
+    "max_tokens": 256
+  },
+  "category": "harness"
+}

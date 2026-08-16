@@ -28,18 +28,13 @@ clanker.registerView({
       return entry.id ? "card " + entry.id : "an untitled card";
     }
 
-    /// Open the card this entry belongs to. The board's own deep link is
-    /// `#board/<id>`, which app.js's hash router resolves by waiting for the
-    /// board to load and then opening that card — so this navigates rather
-    /// than reimplementing any of it. Previously this called showView("board")
-    /// and dropped the id, which switched views and left you to find the card
-    /// yourself, under a button whose title promised to open it.
+    /// Open the card this entry belongs to. The kanban deep link is
+    /// `#kanban/<id>` (`#board/<id>` still works). app.js waits for the
+    /// view to load and opens that card.
     function openCard(entry) {
-      if (!entry.id) { api.showView("board"); return; }
-      var want = "#board/" + encodeURIComponent(entry.id);
-      // Assigning an unchanged hash fires no hashchange, so nothing would
-      // happen; ask the host directly in that case.
-      if (window.location.hash === want) { api.showView("board"); return; }
+      if (!entry.id) { api.showView("kanban"); return; }
+      var want = "#kanban/" + encodeURIComponent(entry.id);
+      if (window.location.hash === want) { api.showView("kanban"); return; }
       window.location.hash = want;
     }
 
@@ -47,9 +42,9 @@ clanker.registerView({
       list.textContent = "";
       if (!entries.length) {
         var empty = api.el("p", "run-empty", "Nothing recorded yet. Move a card, or write a line in a card's activity box. ");
-        var go = api.el("button", "primary", "Open board");
+        var go = api.el("button", "primary", "Open kanban");
         go.type = "button";
-        go.addEventListener("click", function () { api.showView("board"); });
+        go.addEventListener("click", function () { api.showView("kanban"); });
         empty.appendChild(go);
         list.appendChild(empty);
         return;

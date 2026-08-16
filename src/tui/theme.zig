@@ -527,8 +527,8 @@ pub fn select(name: ?[]const u8, environ_map: *const std.process.Environ.Map) Th
     return Theme.default;
 }
 
-/// Canonical theme names for `/theme` and completion, aligned with the web
-/// UI's palette set (core/theme.js). `select` also accepts the aliases
+/// Canonical theme names for `/theme` and completion. Shared named
+/// palettes also live as web tokens in `themes/*.json`. `select` also accepts the aliases
 /// (`catppuccin`, `tokyo-night`, `storm`, `day`, ...); these are the names to
 /// show and cycle through.
 pub const names = [_][]const u8{

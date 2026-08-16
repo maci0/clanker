@@ -1,0 +1,50 @@
+{
+  "name": "goal_update",
+  "description": "change or remove one persisted goal in state/goals.json, or list the whole store with action=list",
+  "wasm": "zig-out/tools/update_goal.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "list"
+        ]
+      },
+      "id": {
+        "type": "string"
+      },
+      "from": {
+        "type": "string",
+        "description": "Only write when the goal currently holds this status."
+      },
+      "status": {
+        "type": "string"
+      },
+      "max_iterations": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1000
+      },
+      "worktree": {
+        "description": "Boolean flag from the web UI, or the worktree branch a run was assigned."
+      },
+      "goal_loop_reason": {
+        "type": "string"
+      },
+      "goal_loop_turns": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "remove": {
+        "type": "boolean"
+      }
+    }
+  },
+  "fs_prefixes": [
+    "state/goals.json"
+  ],
+  "internal": true,
+  "confirm": false,
+  "category": "agent"
+}

@@ -4,7 +4,7 @@ const build_zon = @import("build.zig.zon");
 // Pure-logic modules under tools/zig/ that don't export the tool ABI (run/scratch/host_arena).
 // They are imported by other tools, not standalone guests, so the wasm build skips them
 // and `zig build test` runs their tests on the host target instead.
-const host_tested_helpers = [_][]const u8{ "alphaxiv_client", "arena_match", "cards", "commit_logic", "compare_logic", "doc_scaffold", "flat_json", "gh_url", "goal_store", "graph_listing", "hashline", "kernel_magic", "log_view", "manifest_scan", "memory_embed", "patch_logic", "research_queries", "search_parse", "session_export_logic", "strip_xml", "webui_addon_logic" };
+const host_tested_helpers = [_][]const u8{ "advisor_logic", "alphaxiv_client", "arena_match", "autolearn_logic", "cards", "commit_logic", "compare_logic", "doc_scaffold", "feedback_logic", "flat_json", "gh_url", "goal_store", "graph_listing", "hashline", "kernel_magic", "log_view", "manifest_scan", "memory_embed", "patch_logic", "providers_logic", "research_queries", "run_plan_logic", "schedule_cron", "schedule_logic", "search_parse", "session_export_logic", "sessions_logic", "skills_logic", "spill_logic", "strip_xml", "thinking_logic", "webui_addon_logic" };
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
@@ -100,6 +100,31 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "vaxis", .module = vaxis_mod },
                 .{ .name = "toml", .module = toml_mod },
                 .{ .name = "vendor", .module = ui_vendor_mod },
+                .{ .name = "skills_logic", .module = b.createModule(.{
+                    .root_source_file = b.path("tools/zig/skills_logic.zig"),
+                    .target = exe_target,
+                    .optimize = optimize,
+                }) },
+                .{ .name = "schedule_cron", .module = b.createModule(.{
+                    .root_source_file = b.path("tools/zig/schedule_cron.zig"),
+                    .target = exe_target,
+                    .optimize = optimize,
+                }) },
+                .{ .name = "thinking_logic", .module = b.createModule(.{
+                    .root_source_file = b.path("tools/zig/thinking_logic.zig"),
+                    .target = exe_target,
+                    .optimize = optimize,
+                }) },
+                .{ .name = "advisor_logic", .module = b.createModule(.{
+                    .root_source_file = b.path("tools/zig/advisor_logic.zig"),
+                    .target = exe_target,
+                    .optimize = optimize,
+                }) },
+                .{ .name = "providers_logic", .module = b.createModule(.{
+                    .root_source_file = b.path("tools/zig/providers_logic.zig"),
+                    .target = exe_target,
+                    .optimize = optimize,
+                }) },
             },
         }),
     });
@@ -160,6 +185,31 @@ pub fn build(b: *std.Build) void {
             .{ .name = "vaxis", .module = vaxis_test_dep.module("vaxis") },
             .{ .name = "toml", .module = toml_test_mod },
             .{ .name = "vendor", .module = ui_vendor_test_mod },
+            .{ .name = "skills_logic", .module = b.createModule(.{
+                .root_source_file = b.path("tools/zig/skills_logic.zig"),
+                .target = test_target,
+                .optimize = optimize,
+            }) },
+            .{ .name = "schedule_cron", .module = b.createModule(.{
+                .root_source_file = b.path("tools/zig/schedule_cron.zig"),
+                .target = test_target,
+                .optimize = optimize,
+            }) },
+            .{ .name = "thinking_logic", .module = b.createModule(.{
+                .root_source_file = b.path("tools/zig/thinking_logic.zig"),
+                .target = test_target,
+                .optimize = optimize,
+            }) },
+            .{ .name = "advisor_logic", .module = b.createModule(.{
+                .root_source_file = b.path("tools/zig/advisor_logic.zig"),
+                .target = test_target,
+                .optimize = optimize,
+            }) },
+            .{ .name = "providers_logic", .module = b.createModule(.{
+                .root_source_file = b.path("tools/zig/providers_logic.zig"),
+                .target = test_target,
+                .optimize = optimize,
+            }) },
         },
     });
     // The committed config.toml, for the config.zig test that checks it still
@@ -181,6 +231,12 @@ pub fn build(b: *std.Build) void {
     const layout_js_test = b.addSystemCommand(&.{ "node", "--test" });
     layout_js_test.addFileArg(b.path("ui/app/core/layout.test.mjs"));
     test_step.dependOn(&layout_js_test.step);
+    const markdown_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    markdown_js_test.addFileArg(b.path("ui/app/lib/markdown.test.mjs"));
+    test_step.dependOn(&markdown_js_test.step);
+    const labels_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    labels_js_test.addFileArg(b.path("ui/app/core/labels.test.mjs"));
+    test_step.dependOn(&labels_js_test.step);
     const files_js_test = b.addSystemCommand(&.{ "node", "--test" });
     files_js_test.addFileArg(b.path("ui/plugins/files/files.test.mjs"));
     test_step.dependOn(&files_js_test.step);
@@ -190,6 +246,12 @@ pub fn build(b: *std.Build) void {
     const harden_js_test = b.addSystemCommand(&.{ "node", "--test" });
     harden_js_test.addFileArg(b.path("ui/app/core/harden.test.mjs"));
     test_step.dependOn(&harden_js_test.step);
+    const theme_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    theme_js_test.addFileArg(b.path("ui/app/core/theme.test.mjs"));
+    test_step.dependOn(&theme_js_test.step);
+    const slash_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    slash_js_test.addFileArg(b.path("ui/app/core/slash.test.mjs"));
+    test_step.dependOn(&slash_js_test.step);
     const distill_js_test = b.addSystemCommand(&.{ "node", "--test" });
     distill_js_test.addFileArg(b.path("ui/app/core/distill.test.mjs"));
     test_step.dependOn(&distill_js_test.step);
@@ -200,8 +262,11 @@ pub fn build(b: *std.Build) void {
     models_js_test.addFileArg(b.path("ui/app/features/models.test.mjs"));
     test_step.dependOn(&models_js_test.step);
     const compare_js_test = b.addSystemCommand(&.{ "node", "--test" });
-    compare_js_test.addFileArg(b.path("ui/app/features/compare.test.mjs"));
+    compare_js_test.addFileArg(b.path("ui/plugins/compare/compare.test.mjs"));
     test_step.dependOn(&compare_js_test.step);
+    const search_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    search_js_test.addFileArg(b.path("ui/plugins/search/search.test.mjs"));
+    test_step.dependOn(&search_js_test.step);
     const arena_js_test = b.addSystemCommand(&.{ "node", "--test" });
     arena_js_test.addFileArg(b.path("ui/app/features/arena.test.mjs"));
     test_step.dependOn(&arena_js_test.step);

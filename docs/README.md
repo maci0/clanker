@@ -167,6 +167,7 @@ rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
 | `ck_ask` | Put a multiple-choice question to the human, when one is attached |
 | `ck_chat` | Send to or read a chatroom |
 | `ck_stats` | Token usage recorded so far |
+| `ck_publish` | Post a JSON value onto the serve live bus as a plugin event. Denied unless the descriptor sets `"live_publish": true`. The host stamps `t:"plugin"` and `from` as the tool name; a guest cannot pick chat/run/metrics |
 | `ck_std_api` | Look up a symbol in the Zig standard library source |
 | `ck_config` | Return this tool's `config` object from its descriptor |
 | `ck_harness_config` | Return the calling tool's allowlisted slice of clanker's effective config as JSON. Unknown tools are denied; shipped callers receive only providers, peers, or their configured workflow/chain directory as needed |
@@ -406,10 +407,10 @@ peer keeps the message only when it subscribes to that room.
   module flag `modules.chatrooms`.
 - CLI: `clanker chat send <room> "<text>"`, `clanker chat history <room> [after]`,
   `clanker chat rooms`, `clanker chat subscribe <room> [on]`.
-- WASM tools: `chat_send`, `chat_history`, `chat_rooms`, `chat_subscribe`,
-  `chat_react`, `chat_edit`, `chat_delete`, `chat_pin`, `chat_topic`
-  (nine descriptors over one `chat.wasm` module; the descriptor `config` pins
-  the op). They are
+- WASM tools: `chat_send`, `chat_dm`, `chat_history`, `chat_rooms`,
+  `chat_subscribe`, `chat_react`, `chat_edit`, `chat_delete`, `chat_pin`,
+  `chat_topic` (ten descriptors over one `chat.wasm` module; the descriptor
+  `config` pins the op). They are
   marked `sequential` so concurrent tool calls never race on the log file.
 - Shared board: room-scoped `todo_*` (a `room` param on the shared list) was
   removed once the board covered the same need (see
@@ -532,28 +533,31 @@ changes as tools are added.
 | `lsp` | `.` | Resolve a Zig symbol through zls: where it is defined, or everywhere it is referenced |
 | `image` | `.` | Read an image file and return it as a multimodal part, so the model can see it |
 | `ask_user` | none | Put a multiple-choice question to the human, to another clanker instance, or (in a sub-agent run) to the parent agent via `{"parent": true}` |
-| `forget_note` | `state` | Remove learnings matching a substring, with `dry_run` to see what would go |
+| `note_forget` | `state` | Remove learnings matching a substring, with `dry_run` to see what would go |
 | `repo_search` | none | Search this project via `{"engine": "rg" \| "ast-grep" \| "semcode", "query", "path"}` |
 | `symbols` | none | Find the Zig declaration site of a fn, const, struct, enum, or union |
-| `std_api` | none | Look up a Zig 0.16 std signature and docs before writing code against it |
+| `zig_std` | none | Look up a Zig 0.16 std signature and docs before writing code against it |
 | `sourcegraph_search` | none | Search open-source code through Sourcegraph |
 | `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
-| `fetch_web` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
+| `web_fetch` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
 | `web_search` | none | No-key web search: tries DuckDuckGo Lite first, transparently falls back to Bing Search RSS when DDG is unreachable, bot-challenged, or empty. Input: `{"query", "max_results" (1-20, default 8), "region"}`; returns `{ok, backend, query, count, results:[{title,url,snippet}]}` |
 | `git <args...>` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Runs at the run's root, the directory the file tools resolve against, so plain `add`/`commit` stage what the agent edited. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored only for paths inside the run's own tree — an argument naming `.clanker-worktrees`, or stepping above the root with `..`, is refused as another run's worktree — and they do not relocate the agent's work: see [Isolating a run](#isolating-a-run) |
 | `docker` | none | Query the local Docker daemon over its Unix socket |
-| `peers` | none — reads clanker's own config through the host (ck_harness_config) | Scan peer agent cards (up/down) or post a message to one peer |
+| `peers` | none — reads clanker's own config through the host (ck_harness_config) | Scan peer agent cards (up/down) or deliver a machine notification (`notify`). Conversational DMs are `chat_dm` |
+| `chat_dm` | none | Direct message another instance (`to` + `text`); same send path as `chat_send`, canonical dm room |
 | `opencv` | none | Image analysis: size/brightness/sharpness, Canny edges, contours, faces, grayscale, resize |
 | `zig_check` | none | Fast per-file `zig ast-check` and format check, without the full gate |
-| `test_file` | none | Run one Zig test file, optionally with `--test-filter` |
-| `config_view` | `config.toml` via direct file read for the whole-dump path; structured fields via ck_harness_config | Dump the effective config: providers, models, modules, budgets |
+| `zig_test` | none | Run one Zig test file, optionally with `--test-filter` |
+| `config` | `config.toml` via direct file read for the whole-dump path; structured fields via ck_harness_config | Dump the effective config: providers, models, modules, budgets |
 | `roadmap` | `docs/` | Read the roadmap and list the planned (unchecked) items |
-| `history` | `state/` | Review the improve history: successes, failures, summaries |
+| `improve_history` | `state/` | Review the self-improve history: successes, failures, summaries. Conversation search is `session_search` |
 | `learnings` | `state/learnings.md` | Read the persisted learnings |
-| `write_note` | `state/` | Append a learning to `state/learnings.md`, included in later system prompts |
-| `edit_skill` | `skills/` | Write or replace a markdown skill file, changing the agent's own instructions |
-| `write_goal` | `state/` | Draft a structured goal without writing or running it |
-| `add_goal` | `state/` | Save a structured goal without running it |
+| `note_write` | `state/` | Append a learning to `state/learnings.md`, included in later system prompts |
+| `skills` | `skills/`, `state/skills.json` | List, show, search, or enable/disable markdown skills. Same discovery the system prompt uses. `GET /api/skills` and `POST /api/skills` relay. Prompt inlines title+description |
+| `skill_edit` | `skills/` | Write or replace a markdown skill file, changing the agent's own instructions |
+| `goal_write` | `state/` | Draft a structured goal without writing or running it |
+| `goal_add` | `state/` | Save a structured goal without running it |
+| `schedule` | `state/schedule.json`, `state/schedule/` | List and edit recurring agent runs. `GET /api/schedule` and `POST /api/schedule/<id>` relay to it. Firing stays `clanker schedule run-due` |
 | `subagent` | none | Delegate a task to a nested sub-agent run (own context, bounded iterations, dedicated thread) |
 | `rlm` | none | Recursive Language Model: recursively call a sub-LM over input chunks with bounded depth |
 | `arena` | `state/arena/` | Run a bounded, judged debate between two positions, or a 3-8 way Battle Royale, and return a verdict traceable to the move transcript. Rules live in `tools/zig/arena_match.zig` (host-tested); turns go through `ck_llm`, one bounded completion per move |
@@ -571,7 +575,7 @@ Internal tools, never offered to the model:
 | `status` | none — reads clanker's own config through the host (ck_harness_config) | Show this instance and its peers |
 | `plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
 | `webui_addon` | `ui/plugins/`, `state/webui_plugins.json` | Create, update, list, and toggle ad-hoc web UI views from chat |
-| `autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`) |
+| `autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`); `--model` is the same guest via `ck_llm` |
 | `webui` | none | Serve the web UI at `GET /`. Same-origin only: every script, style and font comes from this server's own `/webui/*` routes, with no CDN and no third-party origin (`script-src 'self'`). Not a single file — the page is many small ES modules, each served on its own route |
 | `translate` | none | Transform plugin, off by default: translates tool results through `ck_llm` |
 | `board` | none | The whole board operation surface behind one entry point, used by `/api/board`; agents use the `kanban_*` tools instead (same wasm, one op each) |
@@ -583,6 +587,7 @@ Internal tools, never offered to the model:
 | `mutate` | none | Generic mutator transform, off by default: rewrites tool results via an LLM instruction (translate, summarize, extract, redact) |
 | `statusline_clock` | none | Demo statusline plugin: current UTC time as a status-bar segment |
 | `turn_hook_echo` | none | Demo turn-hook plugin: prints a line into the transcript after every turn |
+| `advisor` | none (`llm:true`) | Fail-open post-turn critique via `ck_llm`. Internal; parse/summarize/inject live in `advisor_logic.zig` |
 
 `tools/examples/manifests/` holds descriptors that are not loaded, such as `calc_ts.tool.json` (the AssemblyScript build of the calculator).
 
@@ -636,7 +641,7 @@ The panel reads `GET /api/runs` and `GET /api/runs/<run-id>`, both answered by t
 A transform plugin wraps other tools instead of being called by the model. `before` transforms rewrite the arguments going into a tool; `after` transforms rewrite the result coming out, in ascending `order`, before it reaches the agent. Each transform receives:
 
 ```json
-{ "tool": "fetch_web", "phase": "after", "payload": "<the tool's JSON>", "prior": ["redact"] }
+{ "tool": "web_fetch", "phase": "after", "payload": "<the tool's JSON>", "prior": ["redact"] }
 ```
 
 so a chained plugin knows which tool it is wrapping and which transforms already ran. It answers `{"ok": true, "payload": "<rewritten>"}`, or anything else to decline. A transform that errors, denies, or returns no payload is skipped with a warning and the original payload continues down the chain: a broken filter never takes the tool with it.
@@ -736,7 +741,7 @@ iter 2
 | `autolearn` | Aggregate usage from `state/autolearn.jsonl` + `state/runs/` and update the ROADMAP's Autolearn section |
 | `git` | Git passthrough (everything after `git` is passed through) |
 | `mcp` | Serve tools over MCP (stdio) |
-| `add_goal` | Save a structured goal without running it |
+| `add-goal` | Save a structured goal without running it |
 | `arena "<question>" --for X --against Y` | Run a judged debate between two positions; repeated `--position` (3-8) runs a Battle Royale instead. `--judge third` pays a provider that is not fighting to score every move; `--defend <text|file> --alternative <text|file>` runs a design review instead, seeding both sides with a real artifact and returning a review finding; `--match <id>` prints a stored match |
 | `compare "<prompt>" --with a --with b@model` | Ask 2-8 models the same prompt concurrently and show the answers unlabeled. Repeated `--with <provider>` or `--with <provider@model>`, or none at all to use every configured provider. `--judge <provider>` names the scorer (default: the configured default provider, with a caveat on the verdict when it is itself an entrant), `--judge none` leaves the pick to you; `--synthesize` merges the answers, `--reveal` prints the label-to-model key with no verdict, `--show <id>` prints a stored comparison and `--show <id> --pick <letter>` records your pick. The web UI's Compare tab is the same thing in a browser: the answers side by side and a pick button per column, reading blind and recording through the same tool op |
 | `autoresearch [--target F] [--harness C]` | Measurement-driven research loop: the agent edits targets, the harness scores, the best result wins. `--metric`, `--direction min\|max`, `--pattern`, `--budget`, `--iters`, `--dry-run` |
@@ -791,7 +796,7 @@ clanker reports update docs/reports/investigations/2026-08-16-run-livelock.md "I
 
 ### Scheduled runs
 
-Recurring agent runs, kept in `state/schedule.json` and recorded in `state/schedule/log.jsonl`. Code: `src/schedule/` (`cron.zig` the dialect, `store.zig` the two files, `runner.zig` the due/claim/fire logic, `command.zig` the operator surface). Full design in [docs/prds/0009-schedule.md](prds/0009-schedule.md).
+Recurring agent runs, kept in `state/schedule.json` and recorded in `state/schedule/log.jsonl`. Code: `tools/zig/schedule_cron.zig` (the dialect, host-tested), `src/schedule/` (`store.zig` the two files, `runner.zig` the due/claim/fire logic, `command.zig` the operator surface), and the `schedule` guest (`tools/zig/schedule.zig`) which `/api/schedule` relays to. Full design in [docs/prds/0009-schedule.md](prds/0009-schedule.md).
 
 | Subcommand | What it does |
 |---|---|
@@ -815,7 +820,7 @@ Flags: `--provider <p>` / `--model <m>` are recorded on the entry by `add`, so a
 
 **Cron dialect.** Five fields — `minute hour day-of-month month day-of-week` — each `*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those. Sunday is `0` or `7`. Deliberately not accepted, because guessing at a dialect is worse than an error at the point the mistake was made: names (`MON`, `JAN`), `@nicknames` (`@daily`), a seconds field, `L`/`W`/`#`, wrapping ranges (`55-5`), and a step on a bare number (`5/10` — write `5-59/10` or `*/10`). When *both* day fields are restricted the entry fires when **either** matches, as in Vixie cron: `0 0 13 * 5` is "the 13th, and every Friday", not "Friday the 13th". A field counts as unrestricted when it is written `*` or `*/n`; `*/2,15` is a set the writer chose and is treated as one. A spec that parses but can never come around (`0 0 30 2 *`) is refused by `add`.
 
-**Time zones.** Fields are read in UTC, shifted by the entry's own fixed `--tz-offset`. There is no time zone database in the binary and therefore no DST handling: an entry at `+01:00` stays at `+01:00` all year, so a wall-clock-sensitive job needs its offset edited twice a year. The reasoning is in [ADR 0009](adrs/0009-schedule-fires-on-fixed-utc-offsets.md); the payoff is that `src/schedule/cron.zig` is pure and every awkward case (leap years, month lengths, an offset crossing a UTC date boundary) is a host unit test.
+**Time zones.** Fields are read in UTC, shifted by the entry's own fixed `--tz-offset`. There is no time zone database in the binary and therefore no DST handling: an entry at `+01:00` stays at `+01:00` all year, so a wall-clock-sensitive job needs its offset edited twice a year. The reasoning is in [ADR 0009](adrs/0009-schedule-fires-on-fixed-utc-offsets.md); the payoff is that `tools/zig/schedule_cron.zig` is pure and every awkward case (leap years, month lengths, an offset crossing a UTC date boundary) is a host unit test.
 
 **Missed runs fire once and are never backfilled.** An entry's `last_run` records the moment it *ran*, not the slot it ran *for*, so the next window is computed from wake time. A machine that slept through a day of a `*/5` entry fires it exactly once on waking, counts the 286 windows in between into the ledger's `skipped`, and resumes on the normal grid. Backfilling would mean 288 agent runs and a real bill for answers that stopped being interesting hours ago.
 
@@ -879,7 +884,7 @@ Each names the provider (or model key) and the fix. All fail at startup rather t
 
 A key that doesn't belong in its section (a typo like `mx_iterations`) doesn't fail the load — it logs `unknown key '<name>' in <section> (ignored — check spelling)` and falls back to that field's default, so a misspelling is visible in the startup log instead of silently taking effect as "unset."
 
-Internally, `Config.load` distributes the top-level `models` table into each `Provider`'s own `models` map at load time (`distributeModels` in `src/config.zig`), so everything downstream — `Provider.activeModel()`, `resolveProvider`, the LLM client, the agent loop's context budgeting — still sees the same per-provider model map it always has. The table-key name is the local alias (`--model xai/grok4.6-coding`); optional `id` is the SKU sent on the wire, so two names can share one SKU with different sampling. Omitted context/max-output/cost/display/capabilities are filled from the models.dev snapshot when that file exists; a written value wins. `rpm` on a provider or model is a self-imposed requests-per-minute cap enforced in `src/llm/rate_limit.zig` before each send. Only the on-disk shape changed; wasm guest tools that need structured config fields (`peers`, `providers`, `status`, `ask_user`) go through a `ck_harness_config` host function rather than reading `config.toml` themselves, since a `wasm32-freestanding` guest carries no TOML parser. `config_view` is the exception for its whole-file dump (raw bytes). Its `{"section":...}` filter reads the same host JSON, which includes every non-secret top-level section of the merged config (`agent` budgets, `modules`, `models` as the reconstructed flat table, `chatrooms`, `tui`, `improve`, `web`, `serve`, `memory`, `notify`, `mesh`, `ttsr`, `advisor`, `hooks`, `mcp_servers`) and still omits `api_key_env` and `service_account_file`.
+Internally, `Config.load` distributes the top-level `models` table into each `Provider`'s own `models` map at load time (`distributeModels` in `src/config.zig`), so everything downstream — `Provider.activeModel()`, `resolveProvider`, the LLM client, the agent loop's context budgeting — still sees the same per-provider model map it always has. The table-key name is the local alias (`--model xai/grok4.6-coding`); optional `id` is the SKU sent on the wire, so two names can share one SKU with different sampling. Omitted context/max-output/cost/display/capabilities are filled from the models.dev snapshot when that file exists; a written value wins. `rpm` on a provider or model is a self-imposed requests-per-minute cap enforced in `src/llm/rate_limit.zig` before each send. Only the on-disk shape changed; wasm guest tools that need structured config fields (`peers`, `providers`, `status`, `ask_user`) go through a `ck_harness_config` host function rather than reading `config.toml` themselves, since a `wasm32-freestanding` guest carries no TOML parser. `config` is the exception for its whole-file dump (raw bytes). Its `{"section":...}` filter reads the same host JSON, which includes every non-secret top-level section of the merged config (`agent` budgets, `modules`, `models` as the reconstructed flat table, `chatrooms`, `tui`, `improve`, `web`, `serve`, `memory`, `notify`, `mesh`, `ttsr`, `advisor`, `hooks`, `mcp_servers`) and still omits `api_key_env` and `service_account_file`.
 
 Full example:
 
@@ -967,7 +972,7 @@ Fields:
   - `tool_catalog`: when true (default), send full schemas only for hot tools and let the model ask for the rest by name.
   - `hot_tools`: how many of the most-used tools keep their schemas loaded without being asked for (default 10).
 - `peers`: list of peer agents with `name` and `url`.
-- `web`: research-host allowlist for `fetch_web` and `web_search` only.
+- `web`: research-host allowlist for `web_fetch` and `web_search` only.
   - `allow`: hostnames or glob patterns — no scheme, path, or port. Each entry matches the exact hostname or a `*`/`?` glob (e.g. `"*.github.com"` matches any subdomain, and a bare `"*"` allows every host). These are appended to each tool's descriptor `network_allow`, so the static hosts remain available. Put machine-specific grants in `config.local.toml`.
 - `instance`: identity of this agent.
 - `notify`: `on` / `topic` for peer notifications.
@@ -1055,7 +1060,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/sessions/<id>/fork` | POST | Copy a conversation to a new id |
 | `/api/sessions/<id>/branch/<n>` | POST | Fork from message `n`, dropping everything after it |
 | `/api/sessions/<id>/compact` | POST | Compact one conversation in place |
-| `/api/skills` | GET | Skills discovered under `agent.skills_dir` (JSON) |
+| `/api/skills` | GET, POST | Skills discovered under `agent.skills_dir` (JSON). Relays the `skills` guest. POST `{name,enabled}` toggles one |
 | `/api/workflows` | GET | Reusable prompt workflows (JSON) |
 | `/api/catalog` | GET | Local models.dev snapshot search (JSON). Only providers whose API+auth clanker implements. Downloads the snapshot only if `state/models-dev.json` is missing |
 | `/api/catalog/refresh` | POST | Replace `state/models-dev.json` from models.dev |
@@ -1082,8 +1087,8 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/run` | POST | Run an agent task and return the response |
 | `/api/ask` | POST | Answer an `ask` or `confirm` event a streaming run raised |
 | `/api/stats` | GET | Aggregated token usage per provider/model, including `ok_calls`/`error_calls`/`error_rate` (JSON) |
-| `/api/providers` | GET | Configured providers and models (JSON) |
-| `/api/goals` | GET, POST | Read saved goals; create through `add_goal`, or update an existing goal's status/settings |
+| `/api/providers` | GET | Configured providers and models (JSON); relays the `providers` guest list. Live `/models` fill for an empty map stays native |
+| `/api/goals` | GET, POST | Read saved goals; create through `goal_add`, or update an existing goal's status/settings |
 | `/api/plugins` | GET, POST | List plugins, or toggle one on/off |
 | `/api/plugins/config` | POST | Update a plugin's `config` object |
 | `/api/board` | GET, POST | Read or mutate the shared Kanban board |
@@ -1092,8 +1097,8 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/compare` | GET | List past blind comparisons. Read blind: each row says whether a judge reached a verdict, never whose, since a winning provider name beside a verdict letter is the key to a two-way comparison |
 | `/api/compare/<id>` | GET, POST | GET reads one comparison blind — the answers in their stored order under `A`/`B`/`C`, with no provider or model anywhere in the reply. POST `{"pick":"<letter>"}` records the human's pick through the same tool op `clanker compare --show <id> --pick <letter>` uses, and the reply is revealed |
 | `/api/sessions/search?q=` | GET | Every saved conversation with a message containing `q`, newest first, one row each: the first match in context plus a count of the others in that conversation. Case-insensitive substring, not the fuzzy match the sidebar filter uses on titles, because fuzzy over whole transcripts matches nearly everything. Queries under 3 characters return an empty result rather than an error, and the list is capped at 50 with `truncated` set |
-| `/api/schedule` | GET | Every scheduled entry with its next fire time, plus the last 20 ledger records. The next-fire reading is the one `clanker schedule list` prints, and it is omitted rather than zeroed when an entry can never fire (disabled, or a spec that parses to nothing) |
-| `/api/schedule/<id>` | POST | `{"enabled":true\|false}` pauses or resumes one entry, writing the same `state/schedule.json` `clanker schedule enable\|disable` writes. Resuming re-dates the window from now, so an entry parked for a month does not come back owing a run. Firing is deliberately not here: that is `run`/`run-due`, from cron or a terminal |
+| `/api/schedule` | GET | Every scheduled entry with its next fire time, plus the last 20 ledger records. Relays the `schedule` guest. The next-fire reading is the one `clanker schedule list` prints, and it is omitted rather than zeroed when an entry can never fire (disabled, or a spec that parses to nothing) |
+| `/api/schedule/<id>` | POST | `{"enabled":true\|false}` pauses or resumes one entry via the `schedule` guest (same `state/schedule.json` `clanker schedule enable\|disable` writes). Resuming re-dates the window from now, so an entry parked for a month does not come back owing a run. Firing is deliberately not here: that is `run`/`run-due`, from cron or a terminal |
 | `/api/janitor` | GET | How much litter (staging copies, run graphs, improve logs) is reclaimable; read-only, never deletes |
 | `/api/logs` | GET | Tail the instance's log output |
 | `/api/webui/plugins` | GET, POST | List web UI plugin assets, or toggle one |

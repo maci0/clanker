@@ -1,23 +1,84 @@
-// Vanilla, no bundler. Theme list + apply + a picker (not an 11-click cycle).
+// Vanilla, no bundler. Theme list comes from themes/*.json (served at
+// /webui/themes/); apply writes those tokens onto :root. "system" is not a
+// file: it clears the inline tokens so :root + the prefers-color-scheme
+// block in app.css paint.
 
-export var THEMES = ["system", "light", "dark", "mocha", "latte", "frappe", "macchiato", "tokyonight", "tokyonight-storm", "tokyonight-day", "hackerman"];
+export var THEMES = ["system"];
 
+var CATALOG = {};
+var _appliedKeys = [];
+var _current = "system";
+var _catalogPromise = null;
 var _picker = null;
 var _list = null;
 var _anchor = null;
 var _open = false;
 var _listeners = [];
 
+function themeAsset(file) {
+  return "/webui/themes/" + file;
+}
+
+function loadCatalog() {
+  return fetch(themeAsset("catalog.json")).then(function (r) {
+    if (!r.ok) throw new Error("themes catalog");
+    return r.json();
+  }).then(function (data) {
+    var names = ["system"];
+    var next = {};
+    (data.themes || []).forEach(function (t) {
+      if (!t || !t.id) return;
+      next[t.id] = t;
+      names.push(t.id);
+    });
+    CATALOG = next;
+    THEMES = names;
+    applyTheme(_current);
+  }).catch(function () {
+    // Serve path missing (tests, a host without themes/): picker keeps
+    // "system" and any stored named theme waits until a later load.
+  });
+}
+
+export function themesReady() {
+  if (!_catalogPromise) _catalogPromise = loadCatalog();
+  return _catalogPromise;
+}
+
+themesReady();
+
 export function loadTheme() {
   var t = null;
   try { t = window.localStorage.getItem("clanker.theme"); } catch (e) {}
+  if (!t || t === "system") return "system";
+  // Catalog not in yet: keep the stored name so the fetch can apply it.
+  if (THEMES.length === 1) return t;
   return THEMES.indexOf(t) === -1 ? "system" : t;
+}
+
+function applyTokens(tokens) {
+  var root = document.documentElement;
+  var i;
+  for (i = 0; i < _appliedKeys.length; i++) root.style.removeProperty(_appliedKeys[i]);
+  _appliedKeys = [];
+  if (!tokens) return;
+  Object.keys(tokens).forEach(function (key) {
+    root.style.setProperty(key, tokens[key]);
+    _appliedKeys.push(key);
+  });
 }
 
 export function applyTheme(theme, opts) {
   var id = (opts && opts.toggleId) || "theme-toggle";
-  if (theme === "system") document.documentElement.removeAttribute("data-theme");
-  else document.documentElement.setAttribute("data-theme", theme);
+  _current = theme;
+  if (theme === "system") {
+    document.documentElement.removeAttribute("data-theme");
+    applyTokens(null);
+  } else {
+    document.documentElement.setAttribute("data-theme", theme);
+    var rec = CATALOG[theme];
+    applyTokens(rec && rec.tokens ? rec.tokens : null);
+  }
   var btn = document.getElementById(id);
   if (btn) {
     btn.textContent = "theme: " + theme;
@@ -123,7 +184,7 @@ function closePicker() {
 }
 
 function choose(name) {
-  if (THEMES.indexOf(name) === -1) return;
+  if (name !== "system" && THEMES.indexOf(name) === -1) return;
   try { window.localStorage.setItem("clanker.theme", name); } catch (e) {}
   applyTheme(name);
   for (var i = 0; i < _listeners.length; i++) _listeners[i](name);

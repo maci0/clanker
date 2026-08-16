@@ -71,6 +71,9 @@ comptime {
     _ = @import("agent/session.zig");
     _ = @import("agent/workspace.zig");
     _ = @import("agent/prune.zig");
+    _ = @import("agent/spill.zig");
+    _ = @import("agent/rewind.zig");
+    _ = @import("agent/jobs.zig");
     _ = @import("agent/graph.zig");
     _ = @import("agent/subagent.zig");
     _ = @import("util/dotenv.zig");
@@ -118,14 +121,12 @@ comptime {
     _ = @import("serve/proxy_transcode.zig");
     _ = @import("cli.zig");
     _ = @import("doctor.zig");
-    _ = @import("research/engine.zig");
     _ = @import("research/ledger.zig");
     _ = @import("research/harness.zig");
     _ = @import("research/auto_research.zig");
     _ = @import("agent/workflows.zig");
     _ = @import("agent/goal_prompt.zig");
     _ = @import("agent/goal_loop.zig");
-    _ = @import("schedule/cron.zig");
     _ = @import("schedule/store.zig");
     _ = @import("schedule/runner.zig");
     _ = @import("schedule/command.zig");
@@ -133,7 +134,7 @@ comptime {
 }
 
 /// Resolves the Zig standard library directory at startup (via `zig env`),
-/// used by the std_api tool to look up symbol signatures.
+/// used by the zig_std tool to look up symbol signatures.
 fn resolveZigLibDir(io: std.Io, gpa: std.mem.Allocator) void {
     const argv = [_][]const u8{ "zig", "env" };
     const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return;

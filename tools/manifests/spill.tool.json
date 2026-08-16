@@ -1,0 +1,18 @@
+{
+  "name": "spill",
+  "description": "Read back a tool result whose middle was omitted from the model request. After a prune marker, call {\"id\":\"<8hex>\"} (or pass the whole locator line as \"text\"). {\"list\":true} lists spill directories.",
+  "llm_description": "Read a spilled tool result the request pruner omitted. Input: {id} (8 hex from the [spill id=........] line) or {text} containing that locator. Optional {session}. {list:true} lists spill dirs. The saved transcript is unchanged.",
+  "wasm": "zig-out/tools/spill.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "id": { "type": "string", "description": "8 lowercase hex spill id" },
+      "text": { "type": "string", "description": "Text containing [spill id=........]" },
+      "session": { "type": "string" },
+      "list": { "type": "boolean" }
+    }
+  },
+  "fs_prefixes": ["state/spills/"],
+  "confirm": false,
+  "category": "agent"
+}

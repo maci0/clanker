@@ -16,6 +16,7 @@ pub const default_api_version = "2024-10-21";
 pub const provider: api.Provider = .{
     .kind = .azure_openai,
     .auth = .{ .default = .api_key, .required = true },
+    .proxy = .{ .family = .openai, .vtable_chat = true },
     .buildRequest = openai.provider.buildRequest,
     .parseResponse = openai.provider.parseResponse,
     .parseErrorDetail = openai.provider.parseErrorDetail,

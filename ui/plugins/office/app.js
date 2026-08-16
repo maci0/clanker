@@ -39,7 +39,8 @@ clanker.registerView({
        against, which is exactly how his bubble became permanent. */
     var QUIP_MS = 4500;
     var QUIP_GAP_MS = 9000;
-    var alarmOn = van.state(localStorage.getItem("clanker-office-alarm") === "on");
+    var alarmOn = van.state(api.storage.get("alarm") === "on" ||
+      (api.storage.get("alarm") == null && localStorage.getItem("clanker-office-alarm") === "on"));
 
     function nowSec() { return Math.floor(Date.now() / 1000); }
     function asleep(a) { return !a.walk && nowSec() - (a.lastSeen || 0) > SLEEP_AFTER; }
@@ -61,7 +62,7 @@ clanker.registerView({
           checked: alarmOn.val ? "" : null,
           onchange: function (e) {
             alarmOn.val = !!e.target.checked;
-            localStorage.setItem("clanker-office-alarm", alarmOn.val ? "on" : "off");
+            api.storage.set("alarm", alarmOn.val ? "on" : "off");
             dirty = true;
           },
         }),
@@ -1527,10 +1528,9 @@ clanker.registerView({
         o.ringAt = now;
         o.ringUntil = performance.now() + RING_MS;
         say(o.room + ": alarm clock rings for " + sleepers.join(", "));
-        fetch("/api/chat/send", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ room: o.room, text: "⏰ wake up, " + sleepers.join(", ") + "!" }),
+        api.postJSON("/api/chat/send", {
+          room: o.room,
+          text: "⏰ wake up, " + sleepers.join(", ") + "!"
         }).catch(function () {});
         dirty = true;
       });
@@ -1545,6 +1545,10 @@ clanker.registerView({
       raf = window.requestAnimationFrame(frame);
     }
     var raf = window.requestAnimationFrame(frame);
+    api.onLive(function (ev) {
+      if (!ev || ev.t !== "chat") return;
+      poll().then(function () { dirty = true; });
+    });
     window.setInterval(function () { poll().then(function () { dirty = true; }); }, 3000);
     window.setInterval(checkAlarm, 5000);
     window.setInterval(function () {

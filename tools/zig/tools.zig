@@ -69,24 +69,47 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     return lib.okText(out, buf.items);
 }
 
-/// Writes entries grouped under their category heading, categories in first-
-/// seen order so related tools read together instead of scattered by name.
+/// Work-first, then instance-ops. Same sequence as the web Tools view
+/// (`ui/app/core/labels.js` `toolCategoryOrder`) and the validator set in
+/// `src/toolhost/manifest.zig` `categories`.
+const category_order = [_][]const u8{ "code", "chat", "kanban", "agent", "knowledge", "web", "media", "compute", "transform", "harness" };
+
+fn categoryRank(name: []const u8) usize {
+    if (name.len == 0 or std.mem.eql(u8, name, "other")) return category_order.len + 1;
+    for (category_order, 0..) |c, i| {
+        if (std.mem.eql(u8, c, name)) return i;
+    }
+    return category_order.len;
+}
+
+fn lessCategory(_: void, a: []const u8, b: []const u8) bool {
+    const ra = categoryRank(a);
+    const rb = categoryRank(b);
+    if (ra != rb) return ra < rb;
+    return std.mem.lessThan(u8, a, b);
+}
+
+/// Writes entries grouped under their category heading, categories in the
+/// shared work-first order so the CLI listing matches the Tools view.
 fn writeGrouped(alloc: std.mem.Allocator, buf: *std.ArrayList(u8), entries: anytype) !void {
-    var done: std.ArrayList([]const u8) = .empty;
-    defer done.deinit(alloc);
+    var cats: std.ArrayList([]const u8) = .empty;
+    defer cats.deinit(alloc);
     for (entries) |seed| {
         var seen = false;
-        for (done.items) |d| {
+        for (cats.items) |d| {
             if (std.mem.eql(u8, d, seed.meta.category)) seen = true;
         }
         if (seen) continue;
-        try done.append(alloc, seed.meta.category);
+        try cats.append(alloc, seed.meta.category);
+    }
+    std.mem.sort([]const u8, cats.items, {}, lessCategory);
 
+    for (cats.items) |cat| {
         try buf.appendSlice(alloc, "  ");
-        try buf.appendSlice(alloc, seed.meta.category);
+        try buf.appendSlice(alloc, cat);
         try buf.appendSlice(alloc, "\n");
         for (entries) |e| {
-            if (!std.mem.eql(u8, e.meta.category, seed.meta.category)) continue;
+            if (!std.mem.eql(u8, e.meta.category, cat)) continue;
             try buf.appendSlice(alloc, "    ");
             try buf.appendSlice(alloc, e.name);
             const desc = e.meta.description;

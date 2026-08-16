@@ -75,7 +75,8 @@ its arguments.
 | `env_allow` | string[] | `[]` | Environment variables this tool may read. Empty means the safe defaults in `host.zig`, never the whole process environment: that is where the API keys are |
 | `fuel` | integer | sandbox default | Instruction budget for one call. See below |
 | `llm` | bool | `false` | May call the model through `ck_llm` / `ck_llm_many`. Costs tokens, so it is opt-in, and it forces the tool onto the sequential execution path |
-| `tool_call` | bool | `false` | May call other tools through `ck_tool`. Only tools that call others need it — as shipped, `chain` (the tools it wraps), `bugreport` (`kanban_add`), and `write_goal` (`ask_user`) |
+| `live_publish` | bool | `false` | May emit onto the serve live bus through `ck_publish`. The import existing is not a grant. Events land on `Topic.plugin` only; the host stamps `t` and `from`. Forces the sequential path: the bus is host-shared state |
+| `tool_call` | bool | `false` | May call other tools through `ck_tool`. Only tools that call others need it — as shipped, `chain` (the tools it wraps), `run_plan` (a bounded step list), `bugreport` (`kanban_add`), and `goal_write` (`ask_user`) |
 | `tool_allow` | string[] | all | With `tool_call`, which tool names it may invoke. Absent or empty means every enabled non-internal tool. Ignored entirely without `tool_call` |
 | `confirm` | bool | derived | Ask the human before running, when a confirm channel is installed (`agent.confirm_writes`). Unset, it is derived from the grants: any tool with `exec_allow` or `fs_prefixes` is a write in a viewer's eyes. A read-only tool opts out with `false`; a tool whose risk its grants understate opts in with `true` |
 
@@ -101,7 +102,7 @@ itself is.
 | `check` | bool | `false` | This tool answers pass/fail about something (a gate, an eval, a lint). Its verdict is recorded in the run graph as a check |
 | `statusline` | bool | `false` | Contributes a segment to the REPL status line, invoked with empty input after each turn. Pair with `"internal": true` |
 | `turn_hook` | bool | `false` | Runs once after each REPL turn and may print a line into the transcript. Pair with `"internal": true` |
-| `category` | string | `""` | Grouping label for `clanker tools list` and the web UI's tool panel. Read by the `tools` and `plugins` guests, not by the registry. Empty is rendered as `other` |
+| `category` | string | `""` | Grouping key for `clanker tools list` and the web UI's Tools panel. Read by the `tools` and `plugins` guests, not by the registry. Empty is rendered as `other`. Known groups: `agent`, `chat`, `code`, `compute`, `harness`, `kanban`, `knowledge`, `media`, `transform`, `web`, `other`. A name prefix matches its group (`chat_*` in `chat`, `kanban_*` in `kanban`, `todo_*`/`goal_*`/`skill_*` in `agent`, `note_*` in `knowledge`, `session_*` in `harness`, `zig_*` in `code`, `web_*` in `web`; `webui*` is harness and is not `web_*`). Multi-op families use `noun_verb` (`kanban_add`, `goal_write`, `note_write`, `web_fetch`). Standalone file verbs stay `verb_noun` (`read_file`, `edit_file`). Inspectors are a bare noun (`sessions`, `config`, `providers`, `learnings`). `knowledge` is notes, memory, research, rfc, reports, roadmap. `clanker plugins validate` warns on an unknown string or a prefix in the wrong group so a typo does not silently invent a one-tool section |
 
 ## Settings
 

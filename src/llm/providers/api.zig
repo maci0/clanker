@@ -101,6 +101,35 @@ pub const StreamEvent = struct {
 
 pub const StreamParseError = error{OutOfMemory};
 
+/// Wire protocol the OpenAI/Anthropic compatibility proxy uses for this
+/// provider. Kept here so `src/serve/proxy.zig` never switches on
+/// `provider.kind`.
+pub const ProxyFamily = enum { openai, anthropic };
+
+/// Proxy policy for one kind. Defaults are OpenAI-compat: advertised on
+/// `/v1/models`, available on the proxy, path-join for non-chat routes.
+pub const Proxy = struct {
+    family: ProxyFamily = .openai,
+    /// Listed on `/v1/models` for `family` and selected by family-filtered lookup.
+    speaks: bool = true,
+    /// False for kinds the OpenAI/Anthropic proxy refuses outright (gemini).
+    enabled: bool = true,
+    /// Non-chat routes are refused (Vertex only serves chat / messages).
+    chat_only: bool = false,
+    /// Use this vtable's `endpointUrl` for `/v1/chat/completions`.
+    vtable_chat: bool = false,
+    /// Use this vtable's `endpointUrl` for `/v1/messages`.
+    vtable_messages: bool = false,
+    /// Always use `endpointUrl`, even when the inbound path is not chat/messages.
+    always_vtable_url: bool = false,
+    /// Rewrite an Anthropic messages body for Vertex's publisher path.
+    rewrite_vertex_body: bool = false,
+    /// `openaiToAnthropic` pins `anthropic_version` in the body (Vertex Anthropic).
+    vertex_body: bool = false,
+    /// Overlay client `anthropic-version` / `anthropic-beta` headers.
+    overlay_anthropic: bool = false,
+};
+
 /// One provider. Registered in `../registry.zig`; adding a provider is this
 /// struct filled in by one new file plus one row in that table.
 pub const Provider = struct {
@@ -111,6 +140,10 @@ pub const Provider = struct {
     /// and the auth strategy are separate axes: a provider offering both an
     /// API key and OAuth carries the second here, not as a second kind.
     auth: auth.Spec = .{},
+
+    /// OpenAI/Anthropic proxy behaviour for this kind. A new provider fills
+    /// this in rather than adding a `switch (provider.kind)` in the proxy.
+    proxy: Proxy = .{},
 
     // -- wire codec: pure, no I/O, no credentials ---------------------------
 

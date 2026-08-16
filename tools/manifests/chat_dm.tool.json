@@ -1,0 +1,27 @@
+{
+  "name": "chat_dm",
+  "description": "Send a direct message to another clanker instance. Uses the canonical room dm:<you>|<to> automatically, so neither side constructs or orders it. The message is logged locally and delivered to every peer subscribed to that room (POST /api/chat/message). Returns the message ts and id. Machine notifications (improve promotions, /api/notify) stay on the peers tool's notify action.",
+  "llm_description": "DM another clanker. Input: {to, text (max 4096 chars)}. Uses canonical room dm:<you>|<to>. Returns ts and id. Not peers notify (that is a machine notification, not a conversation).",
+  "wasm": "zig-out/tools/chat.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "to": {
+        "type": "string",
+        "description": "Recipient instance name (a configured peer)."
+      },
+      "text": {
+        "type": "string",
+        "description": "Message text (max 4096 chars)"
+      }
+    },
+    "required": ["to", "text"]
+  },
+  "fs_prefixes": [],
+  "network_allow": [],
+  "sequential": true,
+  "config": {
+    "op": "send"
+  },
+  "category": "chat"
+}

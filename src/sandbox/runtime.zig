@@ -71,6 +71,7 @@ fn linkHostFns(lk: *zwasm.Linker, h: *host.Host) !void {
     try lk.defineFuncCtx("env", "ck_std_api", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckStdApi);
     try lk.defineFuncCtx("env", "ck_tool", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckTool);
     try lk.defineFuncCtx("env", "ck_subagent", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckSubagent);
+    try lk.defineFuncCtx("env", "ck_job", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckJob);
     try lk.defineFuncCtx("env", "ck_swarm", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckSwarm);
     try lk.defineFuncCtx("env", "ck_ask", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckAsk);
     try lk.defineFuncCtx("env", "ck_docker", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckDocker);
@@ -79,6 +80,7 @@ fn linkHostFns(lk: *zwasm.Linker, h: *host.Host) !void {
     try lk.defineFuncCtx("env", "ck_llm", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckLlm);
     try lk.defineFuncCtx("env", "ck_llm_many", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckLlmMany);
     try lk.defineFuncCtx("env", "ck_chat", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckChat);
+    try lk.defineFuncCtx("env", "ck_publish", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckPublish);
     try lk.defineFuncCtx("env", "ck_stats", h, fn (*zwasm.Caller) u32, &host.ckStats);
     try lk.defineFuncCtx("env", "ck_config", h, fn (*zwasm.Caller) u32, &host.ckConfig);
     try lk.defineFuncCtx("env", "ck_harness_config", h, fn (*zwasm.Caller) u32, &host.ckHarnessConfig);
@@ -508,7 +510,7 @@ test "board wasm tool folds a room log longer than one history page completely" 
                 .state_dir = "",
                 .state_base_dir = dir,
                 .config_json = config_json,
-                .tool_self_name = "board",
+                .tool_self_name = "kanban",
             };
             const mod = try ToolModule.load(std.testing.allocator, io_, &sb, wasm_);
             defer mod.deinit();
@@ -575,7 +577,7 @@ test "board wasm tool assigns at creation, and update's assignee reassigns" {
                 .state_dir = "",
                 .state_base_dir = dir,
                 .config_json = config_json,
-                .tool_self_name = "board",
+                .tool_self_name = "kanban",
             };
             const mod = try ToolModule.load(std.testing.allocator, io_, &sb, wasm_);
             defer mod.deinit();
@@ -775,7 +777,7 @@ test "webui wasm tool serves every module the asset route names" {
         .{ .path = "/webui/features/todos.js", .marker = "renderTurnTodos" },
         .{ .path = "/webui/features/arena.js", .marker = "export" },
         .{ .path = "/webui/features/prompts.js", .marker = "export" },
-        .{ .path = "/webui/features/compare.js", .marker = "loadCompareView" },
+        .{ .path = "/webui/features/models.js", .marker = "export" },
     }) |case| {
         const args = try std.fmt.allocPrint(std.testing.allocator, "{{\"path\":\"{s}\"}}", .{case.path});
         defer std.testing.allocator.free(args);

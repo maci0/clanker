@@ -85,5 +85,5 @@ projects, and the strongest case against the recommendation.
 ## Inventory
 
 <!-- inventory:rfc:start -->
-No RFCs yet.
+- [RFC 0001 — Workspace, room, board, and folder hierarchy](0001-workspace-room-board-hierarchy.md) — Discussion
 <!-- inventory:rfc:end -->

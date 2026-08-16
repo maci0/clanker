@@ -27,6 +27,11 @@ const NpmRow = struct {
     kind: config.ProviderKind,
     auth: config.AuthStrategy,
     default_base: []const u8 = "",
+    /// False when the URL is built from project/resource, not catalog `api`.
+    needs_base: bool = true,
+    /// When catalog `api` already ends in `/v1`, use this instead of the kind
+    /// default (`/v1/messages` would double the prefix).
+    path_if_api_ends_v1: ?[]const u8 = null,
 };
 
 /// Closed table: npm package → wire kind + default auth + implied host.
@@ -42,11 +47,11 @@ const npm_rows = std.StaticStringMap(NpmRow).initComptime(.{
     .{ "@ai-sdk/deepinfra", NpmRow{ .kind = .openai_compat, .auth = .api_key, .default_base = "https://api.deepinfra.com/v1/openai" } },
     .{ "@ai-sdk/mistral", NpmRow{ .kind = .openai_compat, .auth = .api_key, .default_base = "https://api.mistral.ai/v1" } },
     .{ "@openrouter/ai-sdk-provider", NpmRow{ .kind = .openai_compat, .auth = .api_key, .default_base = "https://openrouter.ai/api/v1" } },
-    .{ "@ai-sdk/anthropic", NpmRow{ .kind = .anthropic, .auth = .api_key, .default_base = "https://api.anthropic.com" } },
-    .{ "@ai-sdk/google-vertex/anthropic", NpmRow{ .kind = .vertex_anthropic, .auth = .oauth_refresh } },
-    .{ "@ai-sdk/google-vertex", NpmRow{ .kind = .vertex, .auth = .oauth_refresh } },
+    .{ "@ai-sdk/anthropic", NpmRow{ .kind = .anthropic, .auth = .api_key, .default_base = "https://api.anthropic.com", .path_if_api_ends_v1 = "/messages" } },
+    .{ "@ai-sdk/google-vertex/anthropic", NpmRow{ .kind = .vertex_anthropic, .auth = .oauth_refresh, .needs_base = false } },
+    .{ "@ai-sdk/google-vertex", NpmRow{ .kind = .vertex, .auth = .oauth_refresh, .needs_base = false } },
     .{ "@ai-sdk/google", NpmRow{ .kind = .gemini, .auth = .api_key, .default_base = "https://generativelanguage.googleapis.com/v1beta" } },
-    .{ "@ai-sdk/azure", NpmRow{ .kind = .azure_openai, .auth = .api_key } },
+    .{ "@ai-sdk/azure", NpmRow{ .kind = .azure_openai, .auth = .api_key, .needs_base = false } },
 });
 
 /// Classify a models.dev provider from its npm package, catalog `api` URL,
@@ -56,14 +61,14 @@ pub fn classify(npm: []const u8, api: []const u8, env0: []const u8) ?Support {
     const base = if (api.len > 0) api else row.default_base;
     // Vertex builds the URL from project/location. Azure needs the
     // resource host from the operator (`https://<name>.openai.azure.com`).
-    if (base.len == 0 and row.kind != .vertex_anthropic and row.kind != .vertex and row.kind != .azure_openai) return null;
+    if (base.len == 0 and row.needs_base) return null;
 
     var path: ?[]const u8 = null;
-    if (row.kind == .anthropic and api.len > 0) {
-        // Those entries already end in /v1. The anthropic kind default is
-        // /v1/messages, which would double the prefix.
-        const trimmed = std.mem.trimEnd(u8, api, "/");
-        if (std.mem.endsWith(u8, trimmed, "/v1")) path = "/messages";
+    if (row.path_if_api_ends_v1) |override| {
+        if (api.len > 0) {
+            const trimmed = std.mem.trimEnd(u8, api, "/");
+            if (std.mem.endsWith(u8, trimmed, "/v1")) path = override;
+        }
     }
 
     return .{

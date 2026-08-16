@@ -1,7 +1,7 @@
 {
   "name": "peers",
-  "description": "Talk to other clanker instances. The action defaults to phonebook, which scans every configured peer's agent card and reports up/down; {\"action\": \"notify\", \"peer\": \"<name>\", \"message\": \"...\"} posts a message to one peer, or omit \"peer\" to broadcast to every configured peer.",
-  "llm_description": "Talk to other clanker instances. action: phonebook (default, scans peers, reports up/down) | notify{peer?,message} (omit peer to broadcast to all).",
+  "description": "Scan other clanker instances, or deliver a machine notification. The action defaults to phonebook, which fetches every configured peer's agent card and reports up/down. {\"action\": \"notify\", \"peer\": \"<name>\", \"message\": \"...\"} writes a notification on that peer (state/notifications.jsonl via POST /api/notify); omit \"peer\" to broadcast. Conversational messages use chat_dm, not notify.",
+  "llm_description": "Scan peers or send a machine notification. action: phonebook (default, agent cards, up/down) | notify{peer?,message} (omit peer to broadcast). notify is not a chat message; use chat_dm to talk to an instance.",
   "wasm": "zig-out/tools/peers.wasm",
   "input_schema": {
     "type": "object",
@@ -33,5 +33,5 @@
   },
   "fs_prefixes": [],
   "network_from_config": "peers",
-  "category": "chat"
+  "category": "harness"
 }

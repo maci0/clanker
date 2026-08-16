@@ -478,6 +478,14 @@ two-process case once Phase 1 lands; it is not a Phase 1 blocker.
     contributes the card-as-label (and, later, an optional relayed
     `message/send`). ACP is the editor surface and does not touch
     this port.
+15. Same-host multi-process is the same mesh. Two `clanker serve`
+    processes on one box use the same JOIN / LEAVE / CHAT /
+    WORKSPACE_* / FILE_* frames as two machines. Loopback is an
+    address, not a mode. Each process needs its own `instance.id`,
+    mesh `listen_port`, web UI port, and `agent.state_dir`. Sharing a
+    `state/` directory is one instance, not a cluster. Same-host is
+    not a grant to skip `workspace_share` or to open the other
+    process's folder without an explicit bind.
 
 **Dependencies.**
 

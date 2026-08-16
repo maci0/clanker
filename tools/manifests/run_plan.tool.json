@@ -1,0 +1,28 @@
+{
+  "name": "run_plan",
+  "description": "Code Mode v1: run a bounded list of existing tools in one call. Input: {\"steps\":[{\"tool\":\"read_file\",\"args\":{...}}, ...]}. Max 12 steps (16 ceiling). Cannot call run_plan or chain.",
+  "llm_description": "Run several catalog tools in one turn. Input: {steps:[{tool, args}]}. Max 12 steps. Use this instead of many round trips when the sequence is already known. Do not nest run_plan or chain.",
+  "wasm": "zig-out/tools/run_plan.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "steps": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "tool": { "type": "string" },
+            "args": { "type": "object" }
+          },
+          "required": ["tool"]
+        }
+      },
+      "max_steps": { "type": "number" }
+    },
+    "required": ["steps"]
+  },
+  "tool_call": true,
+  "sequential": true,
+  "confirm": true,
+  "category": "agent"
+}

@@ -1,0 +1,20 @@
+{
+  "name": "feedback",
+  "description": "Record a human thumbs-up or thumbs-down on a turn. This never enters the model prompt. Input: {\"rating\":\"up\"|\"down\",\"session\":\"...\",\"turn\":N,\"note\":\"...\"} or {\"list\":true}.",
+  "llm_description": "Record operator feedback (up/down) on a turn. Never injected into the model. Input: {rating, session?, turn?, note?} or {list:true}.",
+  "wasm": "zig-out/tools/feedback.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "rating": { "type": "string", "description": "up or down" },
+      "session": { "type": "string" },
+      "turn": { "type": "number" },
+      "note": { "type": "string" },
+      "list": { "type": "boolean" }
+    }
+  },
+  "fs_prefixes": ["state/feedback.jsonl"],
+  "confirm": false,
+  "internal": true,
+  "category": "harness"
+}

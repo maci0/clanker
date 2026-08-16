@@ -1,4 +1,4 @@
-//! edit_skill: write or replace a skill file inside skills/ (sandbox fs
+//! skill_edit: write or replace a skill file inside skills/ (sandbox fs
 //! prefix "skills/", root = project root).
 //! Input:  {"path": "skills/<name>.md", "content": "..."}
 //! Output: {"ok": true, "path": "..."}

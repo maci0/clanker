@@ -25,9 +25,11 @@ const build_options = @import("build_options");
 const zwasm = @import("zwasm");
 const python_wasi = @import("python_wasi.zig");
 const subprocess = @import("../agent/subprocess.zig");
+const jobs_mod = @import("../agent/jobs.zig");
 const kernel_mod = @import("../agent/kernel.zig");
 const dap = @import("../debug/dap.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
+const live_mod = @import("../serve/live.zig");
 
 /// Model access for tools whose descriptor sets `"llm": true` (a translate or
 /// summarize transform needs one). The harness hands over the same provider
@@ -48,7 +50,7 @@ pub const scratch_cap = 64 * 1024;
 
 /// Error codes returned by ck_* host functions.
 /// Zig standard library directory (set at startup from build_options).
-/// Used by the std_api tool to look up symbol signatures.
+/// Used by the zig_std tool to look up symbol signatures.
 pub var zig_lib_dir: []const u8 = "";
 
 pub const Err = struct {
@@ -234,6 +236,9 @@ pub const Sandbox = struct {
     exec_pattern_allow: []const []const u8 = &.{},
     /// Environment variables a guest may read, from the tool's manifest.
     env_allow: []const []const u8 = &.{},
+    /// May emit onto the live bus via `ck_publish`. Default false; the
+    /// import existing is not a grant. Events land on `Topic.plugin` only.
+    live_publish: bool = false,
     /// May call another tool via `ck_tool`. Default false, only the chain
     /// tool sets this.
     tool_call: bool = false,
@@ -321,6 +326,7 @@ pub fn sandboxFor(
         .git_remote_ops = cfg.agent.git_remote_ops,
         .exec_pattern_allow = cfg.agent.exec_pattern_allow,
         .env_allow = tool.env_allow,
+        .live_publish = tool.live_publish,
         .tool_call = tool.tool_call,
         .tool_allow = tool.tool_allow,
         .tool_self_name = tool.name,
@@ -411,7 +417,7 @@ fn appendNetworkAllow(
 /// calls itself, and a site the operator wants it to reach should be a config
 /// edit rather than a manifest edit.
 fn isResearchTool(name: []const u8) bool {
-    return std.mem.eql(u8, name, "fetch_web") or
+    return std.mem.eql(u8, name, "web_fetch") or
         std.mem.eql(u8, name, "web_search") or
         std.mem.eql(u8, name, "research");
 }
@@ -462,7 +468,7 @@ test "sandboxFor adds web.allow only to research tools and keeps static hosts" {
 
     const cfg = config_mod.Config{ .web = .{ .allow = &.{ "github.com", "raw.githubusercontent.com" } } };
     const fetch = registry.Tool{
-        .name = "fetch_web",
+        .name = "web_fetch",
         .description = "test",
         .wasm = "test.wasm",
         .input_schema = .{ .object = .empty },
@@ -1017,7 +1023,7 @@ pub fn ckConfig(caller: *zwasm.Caller) u32 {
 /// parsed it, regardless of whether the checkout uses TOML or (legacy)
 /// JSON. Guests need this because a wasm32-freestanding module carries no
 /// TOML parser: reading config.toml's raw bytes directly only works for
-/// tools that just display the file (config_view's whole-dump path); a tool
+/// tools that just display the file (config's whole-dump path); a tool
 /// that needs structured fields (peers, providers, status, ask_user)
 /// goes through the host, which already parsed it once at startup.
 pub fn ckHarnessConfig(caller: *zwasm.Caller) u32 {
@@ -1042,7 +1048,7 @@ const HarnessConfigAccess = enum { full, providers, peers, workflows, chains, to
 /// fs_prefixes. Grant each shipped caller only the section it consumes and
 /// fail closed for any other guest, including newly added tools.
 fn harnessConfigAccess(tool_name: []const u8) ?HarnessConfigAccess {
-    if (std.mem.eql(u8, tool_name, "config_view")) return .full;
+    if (std.mem.eql(u8, tool_name, "config")) return .full;
     // arena needs the provider list for one question only: which configured
     // provider is free to judge a match, i.e. is not already fighting it.
     // `.providers` answers that without handing it the api_key_env names
@@ -1091,6 +1097,10 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
             // guest memory. The host resolves them in src/llm/auth.zig.
             try s.objectField("default_model");
             try s.write(p.default_model);
+            if (p.rpm) |r| {
+                try s.objectField("rpm");
+                try s.write(r);
+            }
             try s.objectField("models");
             try s.beginObject();
             var mit = p.models.iterator();
@@ -1127,7 +1137,7 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
     }
 
     // Narrow views only get the one directory they read. The full view is
-    // config_view's section mode, which looks up any top-level key of the
+    // config's section mode, which looks up any top-level key of the
     // merged config, so a truncated `agent` (just the two dirs) would report
     // max_iterations and the other budgets as unset.
     if (access == .full) {
@@ -1135,7 +1145,7 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
         try s.write(cfg.agent);
         // On disk, models are a top-level `[models."provider/name"]` table.
         // In memory they live under each provider. Reconstruct the flat
-        // table so `config_view {"section":"models"}` is not reported as
+        // table so `config {"section":"models"}` is not reported as
         // missing after a successful load.
         try s.objectField("models");
         try s.beginObject();
@@ -1172,7 +1182,7 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
         try s.endObject();
     }
 
-    // config_view's section mode looks up one top-level key of this object.
+    // config's section mode looks up one top-level key of this object.
     // Emit every non-secret section so `{"section":"chatrooms"}` (or tui,
     // improve, web, ...) is not reported as missing when the file has it.
     // api_key_env / service_account_file stay off every access level.
@@ -2200,13 +2210,13 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
 }
 
 fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
-    // The board is one guest (board.wasm) behind eleven manifest names, and it
-    // needs two ops rather than one: it replicates each card into its room with
-    // "send" and folds that room's log back with "history" on every read.
-    // Matched on the "board" name (the internal multiplexed entry) and the
-    // "kanban_" prefix the public tools use (commit 4fadb86 renamed the tools
-    // from board_* to kanban_*).
-    if (std.mem.eql(u8, tool_name, "board") or
+    // The board is one guest (board.wasm) behind the multiplexed `kanban`
+    // entry plus the public `kanban_*` names, and it needs two ops rather
+    // than one: it replicates each card into its room with "send" and folds
+    // that room's log back with "history" on every read. "board" remains
+    // as an alias so an older tool_self_name still reaches the room.
+    if (std.mem.eql(u8, tool_name, "kanban") or
+        std.mem.eql(u8, tool_name, "board") or
         std.mem.startsWith(u8, tool_name, "kanban_"))
         return std.mem.eql(u8, op, "send") or std.mem.eql(u8, op, "history");
     // The janitor announces what it pruned into the room. Like the board it
@@ -2214,7 +2224,8 @@ fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
     // announcements silently rather than failing the prune.
     if (std.mem.eql(u8, tool_name, "janitor")) return std.mem.eql(u8, op, "send");
 
-    const allowed_ops: ?[]const []const u8 = if (std.mem.eql(u8, tool_name, "chat_send"))
+    const allowed_ops: ?[]const []const u8 = if (std.mem.eql(u8, tool_name, "chat_send") or
+        std.mem.eql(u8, tool_name, "chat_dm"))
         &.{"send"}
     else if (std.mem.eql(u8, tool_name, "chat_history"))
         &.{"history"}
@@ -2248,6 +2259,29 @@ fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
         }
     }
     return false;
+}
+
+/// ck_publish(json) posts one event onto the serve live bus. The payload is
+/// the `data` value; the host stamps `t:"plugin"` and `from` as the calling
+/// tool's name so a guest cannot spoof chat/run/metrics or another tool.
+/// Denied unless the descriptor sets `"live_publish": true`.
+pub fn ckPublish(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
+    const h = getHost(caller);
+    if (!h.sandbox.live_publish or h.sandbox.tool_self_name.len == 0) {
+        log.log(.warn, "[sandbox] ck_publish denied for tool '{s}'", .{h.sandbox.tool_self_name});
+        return Err.denied;
+    }
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const raw = sliceOf(bytes, ptr, len) orelse return Err.invalid;
+    if (raw.len == 0 or raw.len > live_mod.event_cap / 2) return Err.too_large;
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // Refuse non-JSON so a subscriber never sees a broken `data` splice.
+    _ = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return Err.invalid;
+    live_mod.notePlugin(h.sandbox.tool_self_name, raw);
+    return Err.ok;
 }
 
 /// ck_stats() returns the host-side aggregate of token_stats.jsonl to the
@@ -3272,6 +3306,17 @@ fn gitVerbAllowed(argv: []const []const u8, remote_ops: bool) bool {
     return remote_ops and (std.mem.eql(u8, v, "push") or std.mem.eql(u8, v, "merge") or std.mem.eql(u8, v, "checkout"));
 }
 
+/// The rewind guest may `git stash apply <hash>` (and `stash create` is
+/// taken by the host). Other git verbs stay on the normal allowlist.
+fn rewindGitAllowed(tool_name: []const u8, argv: []const []const u8) bool {
+    if (!std.mem.eql(u8, tool_name, "rewind")) return false;
+    if (argv.len < 3) return false;
+    if (!std.mem.eql(u8, argv[0], "git") and !std.mem.endsWith(u8, argv[0], "/git")) return false;
+    if (!std.mem.eql(u8, argv[1], "stash")) return false;
+    if (!std.mem.eql(u8, argv[2], "apply") and !std.mem.eql(u8, argv[2], "show")) return false;
+    return true;
+}
+
 /// First non-flag argument after argv[0], skipping empty tokens. Used by the
 /// zig/uv verb allowlists the same way gitVerbAllowed finds the subcommand.
 fn firstNonFlag(argv: []const []const u8) ?[]const u8 {
@@ -3284,7 +3329,7 @@ fn firstNonFlag(argv: []const []const u8) ?[]const u8 {
     return null;
 }
 
-/// zig_check, test_file, and gate may run `zig`, but the host must not let a
+/// zig_check, zig_test, and gate may run `zig`, but the host must not let a
 /// replaced guest turn that into `zig fetch` (network) or `zig run` (arbitrary
 /// code). `fmt` is allowed only with `--check` so it cannot rewrite the tree.
 fn zigVerbAllowed(argv: []const []const u8) bool {
@@ -3457,7 +3502,7 @@ const shell_op_deny_tokens = [_][]const u8{ "&&", "||", ";", ">", "<", "`" };
 /// from "the parent environment", but that resolution did not find `zig` (on
 /// PATH, confirmed executable) when called from this sandboxed exec path,
 /// while the identical bare-name call from the non-sandboxed gate checks
-/// succeeded, every capability eval that shells out (zig_check, test_file)
+/// succeeded, every capability eval that shells out (zig_check, zig_test)
 /// failed on a plain FileNotFound before ever reaching the tool's own logic.
 /// Resolving here removes the dependency on that implicit lookup entirely.
 /// Returns null (falls back to the bare name) if `cmd` already looks like a
@@ -3540,6 +3585,7 @@ pub fn execDenial(sb: *const Sandbox, cmd: []const u8, argv: []const []const u8)
     const policy = execPolicyFor(sb, argv, &join_buf);
     if (std.mem.eql(u8, cmd, "git")) {
         if (gitExecPathArg(argv)) |arg| return .{ .host_path = arg };
+        if (rewindGitAllowed(sb.tool_self_name, argv)) return null;
         if (!gitVerbAllowed(argv, sb.git_remote_ops)) return .git_verb;
     }
     if (std.mem.eql(u8, cmd, "zig") and !zigVerbAllowed(argv)) return .zig_verb;
@@ -3585,7 +3631,7 @@ fn runsAShell(cmd: []const u8) bool {
 /// symbols or project-internal code; use repo_search / read_file instead.
 pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
     const h = getHost(caller);
-    if (!std.mem.eql(u8, h.sandbox.tool_self_name, "std_api")) return Err.denied;
+    if (!std.mem.eql(u8, h.sandbox.tool_self_name, "zig_std")) return Err.denied;
     const bytes = memBytes(caller) orelse return Err.invalid;
     const sym = sliceOf(bytes, sym_ptr, sym_len) orelse return Err.invalid;
     if (sym.len == 0 or zig_lib_dir.len == 0) return Err.not_found;
@@ -3683,6 +3729,7 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     child_sb.tool_registry = null;
     child_sb.tool_call_depth = 0;
     child_sb.tool_self_name = target.name;
+    child_sb.live_publish = target.live_publish;
     // A child tool must not inherit the parent's ability to spawn agents
     // or to answer on its behalf: those are wired by the agent loop for
     // the tools that declared the capability, not inherited via chain.
@@ -3752,6 +3799,7 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     linker.defineFuncCtx("env", "ck_llm", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckLlm) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_llm_many", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckLlmMany) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_chat", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckChat) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_publish", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckPublish) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_stats", child_host, fn (*zwasm_mod.Caller) u32, &ckStats) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_config", child_host, fn (*zwasm_mod.Caller) u32, &ckConfig) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_harness_config", child_host, fn (*zwasm_mod.Caller) u32, &ckHarnessConfig) catch return Err.invalid;
@@ -3929,6 +3977,37 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
         .parent_run_id = h.sandbox.parent_run_id,
         .runner = runner,
     };
+    const background = switch (obj.get("background") orelse .null) {
+        .bool => |b| b,
+        else => false,
+    };
+    if (background) {
+        const heap = h.sandbox.gpa.create(SubagentCall) catch return Err.invalid;
+        heap.* = call;
+        // ParentAsk is a re-entrant completion on a parked parent. A
+        // background child does not park the parent, so that channel would
+        // deadlock. The child must not call ask_user {parent:true}.
+        heap.parent_ask = null;
+        heap.task = h.sandbox.gpa.dupe(u8, task) catch return Err.invalid;
+        if (provider_name) |p| heap.provider_name = h.sandbox.gpa.dupe(u8, p) catch return Err.invalid;
+        heap.parent_run_id = h.sandbox.gpa.dupe(u8, h.sandbox.parent_run_id) catch return Err.invalid;
+        var id_buf: [16]u8 = undefined;
+        const now_ns: u64 = @intCast(@max(std.Io.Timestamp.now(h.sandbox.io, .awake).nanoseconds, 0));
+        const id = jobs_mod.makeId(now_ns, &id_buf);
+        const id_owned = h.sandbox.gpa.dupe(u8, id) catch return Err.invalid;
+        const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, struct {
+            fn run(c: *SubagentCall, job_id: []const u8) void {
+                c.run();
+                const err_name: ?[]const u8 = if (c.err) |e| @errorName(e) else null;
+                jobs_mod.finishSub(job_id, c.result, err_name);
+            }
+        }.run, .{ heap, id_owned }) catch return Err.invalid;
+        const sid = if (h.sandbox.session_id.len > 0) h.sandbox.session_id else "default";
+        jobs_mod.registerSub(h.sandbox.gpa, id_owned, sid, heap.task, th) catch return Err.invalid;
+        var out_buf: [128]u8 = undefined;
+        const out = std.fmt.bufPrint(&out_buf, "{{\"ok\":true,\"job\":{f},\"status\":\"running\"}}", .{std.json.fmt(id_owned, .{})}) catch return Err.invalid;
+        return h.writeResult(bytes, out);
+    }
     const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SubagentCall.run, .{&call}) catch return Err.invalid;
     th.join();
     if (call.err) |e| {
@@ -3939,6 +4018,77 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const rc = h.writeResult(bytes, result);
     if (result.len > 0) h.sandbox.gpa.free(@constCast(result));
     return rc;
+}
+
+fn jobAccessAllowed(name: []const u8) bool {
+    return std.mem.eql(u8, name, "jobs") or std.mem.eql(u8, name, "subagent");
+}
+
+/// ck_job: start / list / wait / kill background work. Privileged: only the
+/// jobs and subagent guests. Exec start reuses the caller's exec_allow.
+pub fn ckJob(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
+    const h = getHost(caller);
+    if (!jobAccessAllowed(h.sandbox.tool_self_name)) {
+        log.log(.warn, "[sandbox] ck_job denied for tool '{s}'", .{h.sandbox.tool_self_name});
+        return Err.denied;
+    }
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const raw = sliceOf(bytes, ptr, len) orelse return Err.invalid;
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return Err.invalid;
+    const obj = switch (parsed) {
+        .object => |o| o,
+        else => return Err.invalid,
+    };
+    const op = switch (obj.get("op") orelse return Err.invalid) {
+        .string => |s| s,
+        else => return Err.invalid,
+    };
+    const sid = if (h.sandbox.session_id.len > 0) h.sandbox.session_id else "default";
+    const reg = h.sandbox.subprocs orelse (subprocess.processRegistry(h.sandbox.gpa, h.sandbox.io) catch return Err.invalid);
+
+    if (std.mem.eql(u8, op, "list")) {
+        const json_out = jobs_mod.listJson(arena, reg, sid) catch return Err.invalid;
+        return h.writeResult(bytes, json_out);
+    }
+    if (std.mem.eql(u8, op, "start")) {
+        const argv_v = obj.get("argv") orelse return Err.invalid;
+        if (argv_v != .array or argv_v.array.items.len == 0) return Err.invalid;
+        var argv: std.ArrayList([]const u8) = .empty;
+        for (argv_v.array.items) |item| {
+            if (item != .string) return Err.invalid;
+            argv.append(arena, item.string) catch return Err.invalid;
+        }
+        if (execDenial(h.sandbox, argv.items[0], argv.items) != null) return Err.denied;
+        const kind = jobs_mod.startExec(h.sandbox.io, h.sandbox.gpa, reg, sid, h.sandbox.root_dir, argv.items) catch return Err.invalid;
+        defer h.sandbox.gpa.free(kind);
+        var out_buf: [160]u8 = undefined;
+        const out = std.fmt.bufPrint(&out_buf, "{{\"ok\":true,\"id\":{f}}}", .{std.json.fmt(kind, .{})}) catch return Err.invalid;
+        return h.writeResult(bytes, out);
+    }
+    if (std.mem.eql(u8, op, "kill")) {
+        const id = switch (obj.get("id") orelse return Err.invalid) {
+            .string => |s| s,
+            else => return Err.invalid,
+        };
+        _ = jobs_mod.kill(reg, sid, id);
+        return h.writeResult(bytes, "{\"ok\":true}");
+    }
+    if (std.mem.eql(u8, op, "wait")) {
+        const id = switch (obj.get("id") orelse return Err.invalid) {
+            .string => |s| s,
+            else => return Err.invalid,
+        };
+        if (std.mem.startsWith(u8, id, "job-")) {
+            const json_out = jobs_mod.waitExec(arena, id) catch return Err.not_found;
+            return h.writeResult(bytes, json_out);
+        }
+        const json_out = jobs_mod.waitSub(arena, id) catch return Err.not_found;
+        return h.writeResult(bytes, json_out);
+    }
+    return Err.invalid;
 }
 
 /// Bound on tasks per ck_swarm call: each spawns its own 128 MiB-stack
@@ -5969,6 +6119,12 @@ test "subagent and swarm host channels are scoped to the tools that spawn them" 
     try std.testing.expect(!subagentAccessAllowed("subagent-helper"));
     try std.testing.expect(!subagentAccessAllowed("swarm"));
     try std.testing.expect(!subagentAccessAllowed("read_file"));
+    try std.testing.expect(jobAccessAllowed("jobs"));
+    try std.testing.expect(jobAccessAllowed("subagent"));
+    try std.testing.expect(!jobAccessAllowed("read_file"));
+    try std.testing.expect(rewindGitAllowed("rewind", &.{ "git", "stash", "apply", "0123456789abcdef0123456789abcdef01234567" }));
+    try std.testing.expect(!rewindGitAllowed("git", &.{ "git", "stash", "apply", "x" }));
+    try std.testing.expect(!rewindGitAllowed("rewind", &.{ "git", "stash", "drop" }));
     try std.testing.expect(swarmAccessAllowed("swarm"));
     try std.testing.expect(!swarmAccessAllowed("swarm-helper"));
     try std.testing.expect(!swarmAccessAllowed("subagent"));
@@ -5977,9 +6133,12 @@ test "subagent and swarm host channels are scoped to the tools that spawn them" 
 
 test "chat host channel pins each descriptor to its operation" {
     try std.testing.expect(chatAccessAllowed("chat_send", "send"));
+    try std.testing.expect(chatAccessAllowed("chat_dm", "send"));
     try std.testing.expect(chatAccessAllowed("todo_close", "todo_close"));
     try std.testing.expect(!chatAccessAllowed("chat_send", "history"));
+    try std.testing.expect(!chatAccessAllowed("chat_dm", "history"));
     try std.testing.expect(!chatAccessAllowed("chat_send-helper", "send"));
+    try std.testing.expect(!chatAccessAllowed("chat_dm-helper", "send"));
     try std.testing.expect(!chatAccessAllowed("unrelated", "send"));
 }
 
@@ -6056,6 +6215,7 @@ test "ck_chat access covers every shipped caller, one op at a time" {
     // nothing else.
     const single = [_]struct { tool: []const u8, op: []const u8 }{
         .{ .tool = "chat_send", .op = "send" },
+        .{ .tool = "chat_dm", .op = "send" },
         .{ .tool = "chat_history", .op = "history" },
         .{ .tool = "chat_rooms", .op = "rooms" },
         .{ .tool = "chat_subscribe", .op = "subscribe" },
@@ -6070,11 +6230,11 @@ test "ck_chat access covers every shipped caller, one op at a time" {
         try std.testing.expect(!chatAccessAllowed(c.tool, "rooms") or std.mem.eql(u8, c.op, "rooms"));
     }
 
-    // board.wasm is registered under eleven manifest names and needs two ops:
-    // "send" replicates a card into the room, "history" folds that log back on
-    // read. Granting one op per tool broke replication silently, because the
-    // board ignores a failed chat call, so this is pinned per name, not just
-    // for the bare "board".
+    // board.wasm is registered under the multiplexed `kanban` name plus the
+    // public `kanban_*` tools and needs two ops: "send" replicates a card
+    // into the room, "history" folds that log back on read. Granting one op
+    // per tool broke replication silently, because the board ignores a
+    // failed chat call, so this is pinned per name, not just for `kanban`.
     //
     // The names are read off the shipped manifests rather than written out
     // here, because a hard-coded copy is what let this break in the first

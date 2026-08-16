@@ -30,6 +30,15 @@ pub const provider: api.Provider = .{
         .default = .api_key,
         .mint = mint,
         .required = true,
+        .quota_from_project = true,
+    },
+    .proxy = .{
+        .family = .anthropic,
+        .chat_only = true,
+        .vtable_messages = true,
+        .always_vtable_url = true,
+        .rewrite_vertex_body = true,
+        .vertex_body = true,
     },
     .buildRequest = buildRequest,
     // The codec is Anthropic's, unchanged.

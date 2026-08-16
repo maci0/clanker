@@ -1780,7 +1780,7 @@ pub const Engine = struct {
     /// different Zig version. Handing it only "expected enum, found
     /// comptime_int" leaves it guessing again, which is how one lock patch
     /// failed four attempts running on std.posix.SEEK. This is the same lookup
-    /// the std_api tool does, attached to the failure that needs it.
+    /// the zig_std tool does, attached to the failure that needs it.
     fn stdSymbolHelp(self: *Engine, err_text: []const u8) []const u8 {
         if (sandbox_host.zig_lib_dir.len == 0) return "";
         var out: std.ArrayList(u8) = .empty;

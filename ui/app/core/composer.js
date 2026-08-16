@@ -127,9 +127,12 @@ export function transcriptMarkdown(transcriptEl, currentSessionMeta, sessionId) 
     var task = turn.querySelector(".turn-you");
     var answer = turn.querySelector(".turn-answer");
     if (task) {
-      var author = task.querySelector(".turn-author");
-      var said = author ? task.textContent.slice(author.textContent.length) : task.textContent;
-      lines.push("## " + said.trim(), "");
+      var said = task._taskSource;
+      if (said == null) {
+        var author = task.querySelector(".turn-author");
+        said = author ? task.textContent.slice(author.textContent.length) : task.textContent;
+      }
+      lines.push("## " + String(said || "").trim(), "");
     }
     var body = turn.markdownSource || (answer ? answer.textContent : "");
     if (body) lines.push("### Response", "", body.replace(/\s+$/, ""), "");

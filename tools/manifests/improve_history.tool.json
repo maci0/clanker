@@ -1,0 +1,21 @@
+{
+  "name": "improve_history",
+  "description": "Review the self-improve history (successes, failures, summaries). Not conversation history: that is session_search / sessions.",
+  "llm_description": "Review self-improve history (successes/failures/summaries), not conversation history (use session_search). {\"last\":N} limits to the N most recent entries.",
+  "wasm": "zig-out/tools/history.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "last": {
+        "type": "integer"
+      }
+    },
+    "required": []
+  },
+  "fs_prefixes": [
+    "state/improvements.jsonl"
+  ],
+  "network_allow": [],
+  "category": "harness",
+  "confirm": false
+}

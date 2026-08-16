@@ -1,12 +1,20 @@
 {
   "name": "sessions",
-  "description": "list saved conversations",
+  "description": "list saved conversations, or search them. {\"format\":\"json\"} lists; {\"q\":\"text\"} (min 3 chars) searches transcripts.",
   "wasm": "zig-out/tools/sessions.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
       "args": {
         "type": "string"
+      },
+      "format": {
+        "type": "string",
+        "description": "\"json\" for the picker shape; omit for the catalog text listing"
+      },
+      "q": {
+        "type": "string",
+        "description": "search transcripts (min 3 characters)"
       }
     }
   },

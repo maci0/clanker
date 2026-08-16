@@ -3,10 +3,11 @@ import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkelet
 import { icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { loadTheme as loadThemeMod, applyTheme as applyThemeMod, bindThemeToggle as bindThemeToggleMod } from "./core/theme.js";
+import { SLASH_CMDS, slashReady, runSlashEntry } from "./core/slash.js";
 import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod, messageKey as chatMessageKey, hasServerId as chatHasServerId } from "./core/chat.js";
 import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
 import { makeLineSplitter as makeLineSplitterMod, onLive as liveOn, liveOk as liveIsUp } from "./core/stream.js";
-import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as mdParagraphInto, tableRow as mdTableRow, renderMarkdown as mdRenderMarkdown, highlightInto as mdHighlightInto, buildCodeBlock as mdBuildCodeBlock, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
+import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as mdParagraphInto, tableRow as mdTableRow, renderMarkdown as mdRenderMarkdown, renderMarkdownWithFences as mdRenderMarkdownWithFences, highlightInto as mdHighlightInto, buildCodeBlock as mdBuildCodeBlock, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
 import { metricsFor as graphMetricsFor, buildStages as graphBuildStages, graphSummaryText as graphSummaryTextMod, toDagInput as graphToDagInput, buildIncompleteNode as graphBuildIncompleteNode, buildNodeBox as graphBuildNodeBox, layoutGraph as graphLayoutGraph } from "./lib/graph.js";
 import { boardActionLine as boardActionLineMod } from "./lib/board.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
@@ -258,9 +259,11 @@ window.clankerWorkspace = currentWorkspace;
 var knownWorkspaces = [];
 
 function loadSession() {
-  var id = null;
-  try { id = window.localStorage.getItem("clanker.session"); } catch (e) {}
-  if (!id) id = newSessionId();
+  // A visit starts a new conversation. The last session stays in the
+  // sidebar; opening it is a click. `#chat?session=` is the explicit
+  // resume path. localStorage is still written so the first turn and
+  // later switches have a stable id.
+  var id = newSessionId();
   try { window.localStorage.setItem("clanker.session", id); } catch (e) {}
   return id;
 }
@@ -551,12 +554,8 @@ bind(el.railList, railState, function (s) {
         class: "rail-empty-action",
         onclick: function () {
           var q = s.filter;
-          var input = document.getElementById("search-q");
-          if (input) input.value = q;
+          window._pendingSearchQuery = q;
           showView("search", true);
-          // The search view module is loaded on first open; run the query
-          // once it has arrived rather than referencing it eagerly.
-          loadSearchModule().then(function (m) { m.runSearch(q); }).catch(function () {});
         }
       }, "Search messages"),
       " or ",
@@ -1332,6 +1331,14 @@ el.steerInput.addEventListener("keydown", function (e) {
 /* Each submitted task gets its own turn card, appended below the last —
    a real conversation history instead of one box that forgets the past
    answer as soon as you ask another question. */
+function turnPromptSource(turnRoot) {
+  var you = turnRoot && turnRoot.querySelector ? turnRoot.querySelector(".turn-you") : null;
+  if (!you) return "";
+  if (you._taskSource != null) return you._taskSource;
+  var author = you.querySelector(".turn-author");
+  return author ? you.textContent.slice(author.textContent.length) : (you.textContent || "");
+}
+
 function createTurn(task) {
   if (el.transcriptEmpty) el.transcriptEmpty.hidden = true;
   document.getElementById("view-chat").classList.remove("chat-empty");
@@ -1346,14 +1353,24 @@ function createTurn(task) {
   turn.appendChild(depth);
 
   var you = document.createElement("div");
-  you.className = "turn-you";
+  you.className = "turn-you md";
+  // Kept on the node so Edit / Copy / export still see the source after
+  // the bubble is rendered as markdown (textContent would drop the marks).
+  you._taskSource = task;
   // Real text, not generated content: a name in ::before is not announced,
   // not selected, not copied and not exported.
+  var youHead = document.createElement("div");
+  youHead.className = "turn-you-head";
   var author = document.createElement("span");
   author.className = "turn-author";
-  author.textContent = "you  ·  ";
-  you.appendChild(author);
-  you.appendChild(document.createTextNode(task));
+  author.textContent = "you";
+  youHead.appendChild(author);
+  you.appendChild(youHead);
+  var youBody = document.createElement("div");
+  youBody.className = "turn-you-body";
+  try { youBody.appendChild(renderMarkdownWithFences(task)); }
+  catch (_e) { youBody.textContent = task; }
+  you.appendChild(youBody);
 
   var body = document.createElement("div");
   body.className = "turn-body";
@@ -1467,6 +1484,7 @@ var inlineInto = mdInlineInto;
 var paragraphInto = mdParagraphInto;
 var tableRow = mdTableRow;
 var renderMarkdown = mdRenderMarkdown;
+var renderMarkdownWithFences = mdRenderMarkdownWithFences;
 var highlightInto = mdHighlightInto;
 var buildCodeBlock = mdBuildCodeBlock;
 var finalizeAnswer = mdFinalizeAnswer;
@@ -1590,6 +1608,21 @@ function addAskOptionsGroup(turn, row, evt, ariaLabel) {
   }catch(_){}
   var first = group.querySelector("button");
   if (first) first.focus();
+}
+
+function notifyTurnDone(task) {
+  try {
+    if (!document.hidden || !("Notification" in window)) return;
+    if (Notification.permission === "granted") {
+      var n = new Notification("clanker finished", {
+        body: String(task || "").slice(0, 120),
+        tag: "clanker-turn-" + sessionId,
+      });
+      n.onclick = function () { try { window.focus(); } catch (_) {} n.close(); };
+    } else if (Notification.permission !== "denied") {
+      Notification.requestPermission().catch(function () {});
+    }
+  } catch (_) {}
 }
 
 /* A streaming run called ask_user: the server sent an `ask` control event
@@ -1730,6 +1763,32 @@ function renderStats(turn, stats, task) {
     copyText(turn.root.markdownSource || turn.answer.textContent, copyBtn, "Copy answer", turn.answer);
   });
   actions.appendChild(copyBtn);
+  var upBtn = document.createElement("button");
+  upBtn.type = "button";
+  upBtn.className = "secondary";
+  upBtn.textContent = "Up";
+  upBtn.title = "Record a thumbs-up. Never sent to the model.";
+  upgradePfButton(upBtn);
+  var downBtn = document.createElement("button");
+  downBtn.type = "button";
+  downBtn.className = "secondary";
+  downBtn.textContent = "Down";
+  downBtn.title = "Record a thumbs-down. Never sent to the model.";
+  upgradePfButton(downBtn);
+  function sendFeedback(rating, btn) {
+    var n = parseInt((turn.root.querySelector(".turn-depth") || {}).textContent, 10) || 0;
+    fetch("/api/feedback", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rating: rating, session: sessionId, turn: n }),
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      btn.textContent = data && data.ok ? "Saved" : "Failed";
+    }).catch(function () { btn.textContent = "Failed"; });
+  }
+  upBtn.addEventListener("click", function () { sendFeedback("up", upBtn); });
+  downBtn.addEventListener("click", function () { sendFeedback("down", downBtn); });
+  actions.appendChild(upBtn);
+  actions.appendChild(downBtn);
 
   /* A plan turn that held is a proposal awaiting a verdict: Apply runs it
      for real, in the same conversation so the plan is in context, with plan
@@ -1803,7 +1862,7 @@ function renderStats(turn, stats, task) {
     // Branch timeline: which forks came from here
     (function(){
       if (!knownSessions || !knownSessions.length) return;
-      var title = ((turn.root.querySelector(".turn-you") || {}).textContent || "").trim();
+      var title = (turnPromptSource(turn.root) || "").trim();
       var forks = knownSessions.filter(function(s){
         return s.title && (s.title.indexOf("fork of") !== -1 || s.title.indexOf("branch of") !== -1) && s.id !== sessionId;
       });
@@ -1853,8 +1912,7 @@ function renderStats(turn, stats, task) {
     upgradePfButton(copyTurnBtn);
     copyTurnBtn.title = "Copy this turn as markdown";
     copyTurnBtn.addEventListener("click", function(){
-      var you = turn.root.querySelector(".turn-you");
-      var promptText = you ? you.textContent : task || "";
+      var promptText = turnPromptSource(turn.root) || task || "";
       var answerText = turn.root.markdownSource || (turn.answer ? turn.answer.textContent : "");
       var md = (promptText ? ("## " + String(promptText).trim() + "\n\n") : "") +
         "### " + ANSWER_LABEL + "\n\n" +
@@ -2015,6 +2073,87 @@ function handleSlashDocFile(task){
   return "[File: " + path + "]\n\n" + task;
 }
 
+var pendingFiles = [];
+function renderFileChips() {
+  var hostEl = document.getElementById("file-chips") || el.attachments;
+  if (!hostEl) return;
+  if (!pendingFiles.length && hostEl.id === "file-chips") { hostEl.hidden = true; hostEl.textContent = ""; return; }
+  if (hostEl.id === "file-chips") {
+    hostEl.hidden = pendingFiles.length === 0;
+    hostEl.textContent = "";
+    pendingFiles.forEach(function (path, i) {
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip";
+      chip.textContent = "@" + path + " ×";
+      chip.title = "Remove " + path;
+      chip.addEventListener("click", function () {
+        pendingFiles.splice(i, 1);
+        renderFileChips();
+      });
+      hostEl.appendChild(chip);
+    });
+  }
+}
+function prependPendingFiles(task) {
+  if (!pendingFiles.length) return task;
+  var prefix = pendingFiles.map(function (p) { return "[File: " + p + "]"; }).join("\n");
+  pendingFiles = [];
+  renderFileChips();
+  return prefix + "\n\n" + task;
+}
+function fileMentionQuery() {
+  var v = el.task.value;
+  var at = v.lastIndexOf("@");
+  if (at === -1) return null;
+  if (at > 0 && v.charAt(at - 1) !== " " && v.charAt(at - 1) !== "\n") return null;
+  var q = v.slice(at + 1);
+  if (q.indexOf(" ") !== -1 || q.indexOf("\n") !== -1) return null;
+  return { at: at, q: q };
+}
+function renderFileMentionList() {
+  var mq = fileMentionQuery();
+  if (!mq) return false;
+  var dir = "";
+  var slash = mq.q.lastIndexOf("/");
+  if (slash !== -1) dir = mq.q.slice(0, slash);
+  var needle = (slash === -1 ? mq.q : mq.q.slice(slash + 1)).toLowerCase();
+  fetch("/api/files?path=" + encodeURIComponent(dir || ".")).then(function (r) { return r.json(); }).then(function (data) {
+    var names = (data && (data.entries || data.files || data.names)) || [];
+    var matches = [];
+    names.forEach(function (n) {
+      var name = typeof n === "string" ? n : (n.name || n.path || "");
+      if (!name) return;
+      if (needle && name.toLowerCase().indexOf(needle) === -1) return;
+      var full = dir ? (dir + "/" + name.replace(/\/$/, "")) : name.replace(/\/$/, "");
+      matches.push(full);
+    });
+    matches = matches.slice(0, 8);
+    if (!matches.length) { el.promptList.hidden = true; return; }
+    el.promptList.textContent = "";
+    matches.forEach(function (path, i) {
+      var li = document.createElement("li");
+      li.className = "palette-item";
+      li.setAttribute("role", "option");
+      li.textContent = path;
+      li.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        if (pendingFiles.indexOf(path) === -1) pendingFiles.push(path);
+        var before = el.task.value.slice(0, mq.at);
+        var after = el.task.value.slice(mq.at + 1 + mq.q.length);
+        el.task.value = before + after;
+        renderFileChips();
+        el.promptList.hidden = true;
+        el.task.focus();
+      });
+      el.promptList.appendChild(li);
+      if (i === 0) li.setAttribute("aria-selected", "true");
+    });
+    el.promptList.hidden = false;
+  }).catch(function () {});
+  return true;
+}
+
 // ---- session status bar: goal / tool-call / sub-agent / todos receipt ----
 // Reflects the turn currently streaming, or the last one that did, not the
 // whole session's history. Resets on every new submit; nothing here is
@@ -2115,6 +2254,7 @@ el.form.addEventListener("submit", function (e) {
   if (busy || task === "") return;
   var promoted = handleSlashDocFile(task);
   if (promoted) task = promoted;
+  task = prependPendingFiles(task);
 
   var isPlan = el.planMode && el.planMode.checked;
   var isResearch = el.researchMode && el.researchMode.checked;
@@ -2132,7 +2272,8 @@ el.form.addEventListener("submit", function (e) {
     var planBadge = document.createElement("span");
     planBadge.className = "plan-badge";
     planBadge.textContent = "plan";
-    turn.root.querySelector(".turn-you").appendChild(planBadge);
+    var youHead = turn.root.querySelector(".turn-you-head");
+    (youHead || turn.root.querySelector(".turn-you")).appendChild(planBadge);
   }
   scrollTo(turn.root, "start");
   setTurnPhase(turn, "llm");
@@ -2209,6 +2350,7 @@ el.form.addEventListener("submit", function (e) {
         statsRendered = true;
         setTurnPhase(turn, "");
         pushLiveNode("final", "done", "done", evt.ms||0);
+        notifyTurnDone(task);
       } else if (evt.type === "llm_start" || evt.type === "llm") { pushLiveNode("llm", evt.model||"llm", evt.model||"llm", 0); }
       return;
     }
@@ -2229,7 +2371,7 @@ el.form.addEventListener("submit", function (e) {
         turn._lastMD = pend;
         var hadCaret2 = !!turn.answer.querySelector(".caret");
         try {
-          var fragMd2 = renderMarkdown(pend);
+          var fragMd2 = renderMarkdownWithFences(pend);
           turn.answer.textContent = "";
           turn.answer.className = "turn-answer md";
           turn.answer.appendChild(fragMd2);
@@ -3894,11 +4036,9 @@ function rememberChatId(id) {
 
 
 
-/* ── Slack-style message formatting ──────────────────────────────────
-   Converts Slack-style markup to DOM nodes:
-   ```code blocks```, `inline code`, *bold*, _italic_, ~strike~,
-   > blockquotes, :emoji_shortcodes:, and auto-links.
-   All output is XSS-safe (no innerHTML, only textContent + classList). */
+/* Room messages use the same markdown renderer as the agent transcript
+   (`renderMarkdownWithFences`). Shortcodes expand first so :rocket: is
+   text the renderer does not have to know about. */
 var _emojiShortcodes = {
   ":thumbsup:":"👍",":thumbsdown:":"👎",":heart:":"❤️",":fire:":"🔥",
   ":eyes:":"👀",":rocket:":"🚀",":check:":"✅",":white_check_mark:":"✅",
@@ -3924,108 +4064,15 @@ var _emojiShortcodes = {
   ":skull:":"💀",":poop:":"💩",":cat:":"🐱",":dog:":"🐶",
   "+1":"👍","-1":"👎",":ship:":"🚢",":airplane:":"✈️",":car:":"🚗"
 };
+function expandEmojiShortcodes(text) {
+  return String(text || "").replace(/:[a-z0-9_+-]+:/g, function (m) {
+    return _emojiShortcodes[m] || m;
+  });
+}
 function formatChatText(raw) {
   var frag = document.createDocumentFragment();
   if (!raw) return frag;
-
-  /* --- Code blocks: ```...``` (must come first, greedy) --- */
-  var codeBlockRe = /```([\s\S]*?)```/g;
-  var parts = [];
-  var lastIdx = 0;
-  var cbMatch;
-  while ((cbMatch = codeBlockRe.exec(raw)) !== null) {
-    if (cbMatch.index > lastIdx) parts.push({ type: "text", val: raw.slice(lastIdx, cbMatch.index) });
-    parts.push({ type: "codeblock", val: cbMatch[1] });
-    lastIdx = codeBlockRe.lastIndex;
-  }
-  if (lastIdx < raw.length) parts.push({ type: "text", val: raw.slice(lastIdx) });
-
-  parts.forEach(function(part) {
-    if (part.type === "codeblock") {
-      var pre = document.createElement("span");
-      pre.className = "fmt-codeblock";
-      pre.textContent = part.val;
-      frag.appendChild(pre);
-      return;
-    }
-    /* --- Blockquotes: lines starting with > --- */
-    var lines = part.val.split("\n");
-    var i = 0;
-    while (i < lines.length) {
-      if (/^>\s?/.test(lines[i])) {
-        var bq = document.createElement("span");
-        bq.className = "fmt-blockquote";
-        var bqLines = [];
-        while (i < lines.length && /^>\s?/.test(lines[i])) {
-          bqLines.push(lines[i].replace(/^>\s?/, ""));
-          i++;
-        }
-        bq.appendChild(_formatInline(bqLines.join("\n")));
-        frag.appendChild(bq);
-      } else {
-        if (i > 0) frag.appendChild(document.createTextNode("\n"));
-        frag.appendChild(_formatInline(lines[i]));
-        i++;
-      }
-    }
-  });
-  return frag;
-}
-function _formatInline(line) {
-  var frag = document.createDocumentFragment();
-  /* Inline formatting: `code`, *bold*, _italic_, ~strike~, :emoji:, URLs */
-  var re = /(`[^`]+`)|(\*[^\s*][^*]*[^\s*]\*|\*[^\s*]\*)|(_[^\s_][^_]*[^\s_]_|_[^\s_]_)|(~[^\s~][^~]*[^\s~]~|~[^\s~]~)|(:[a-z0-9_+-]+:)|(https?:\/\/[^\s<]+)/g;
-  var last = 0;
-  var match;
-  while ((match = re.exec(line)) !== null) {
-    if (match.index > last) {
-      frag.appendChild(document.createTextNode(line.slice(last, match.index)));
-    }
-    if (match[1]) {
-      /* inline code */
-      var code = document.createElement("span");
-      code.className = "fmt-code";
-      code.textContent = match[1].slice(1, -1);
-      frag.appendChild(code);
-    } else if (match[2]) {
-      /* bold */
-      var b = document.createElement("span");
-      b.className = "fmt-bold";
-      b.textContent = match[2].slice(1, -1);
-      frag.appendChild(b);
-    } else if (match[3]) {
-      /* italic */
-      var em = document.createElement("span");
-      em.className = "fmt-italic";
-      em.textContent = match[3].slice(1, -1);
-      frag.appendChild(em);
-    } else if (match[4]) {
-      /* strikethrough */
-      var s = document.createElement("span");
-      s.className = "fmt-strike";
-      s.textContent = match[4].slice(1, -1);
-      frag.appendChild(s);
-    } else if (match[5]) {
-      /* emoji shortcode */
-      var emoji = _emojiShortcodes[match[5]];
-      if (emoji) {
-        frag.appendChild(document.createTextNode(emoji));
-      } else {
-        frag.appendChild(document.createTextNode(match[5]));
-      }
-    } else if (match[6]) {
-      /* URL auto-link */
-      var a = document.createElement("a");
-      a.href = match[6]; a.target = "_blank"; a.rel = "noopener noreferrer";
-      a.textContent = match[6];
-      a.style.color = "var(--accent)";
-      frag.appendChild(a);
-    }
-    last = re.lastIndex;
-  }
-  if (last < line.length) {
-    frag.appendChild(document.createTextNode(line.slice(last)));
-  }
+  frag.appendChild(renderMarkdownWithFences(expandEmojiShortcodes(raw)));
   return frag;
 }
 
@@ -4091,7 +4138,7 @@ function buildChatMessage(m) {
   }
 
   var text = document.createElement("div");
-  text.className = "chat-text";
+  text.className = "chat-text md";
   // Deleted messages
   if (m.deleted) {
     text.classList.add("chat-deleted");
@@ -4787,16 +4834,11 @@ toolsBind({
 
 // ---- views: one section visible at a time -----------------------------
 
-var VIEWS = ["chat", "board", "runs", "fleet", "arena", "compare", "rooms", "models", "search", "schedule", "knowledge", "prompts", "tools", "system"];
+var VIEWS = ["chat", "kanban", "runs", "fleet", "arena", "rooms", "models", "knowledge", "prompts", "tools", "system"];
 var arenaModulePromise = null;
 function loadArenaModule() {
   if (!arenaModulePromise) arenaModulePromise = import("./features/arena.js");
   return arenaModulePromise;
-}
-var compareModulePromise = null;
-function loadCompareModule() {
-  if (!compareModulePromise) compareModulePromise = import("./features/compare.js");
-  return compareModulePromise;
 }
 var fleetModulePromise = null;
 function loadFleetModule() {
@@ -4814,13 +4856,14 @@ function loadTodosModule() {
   if (!todosModulePromise) todosModulePromise = import("./features/todos.js");
   return todosModulePromise;
 }
-/* The view modules below (board, goals, prompts, models, schedule, search)
+/* The view modules below (board, goals, prompts, models)
    are loaded on first open, not at page load: together they are ~190 KB that
    a status-check-and-leave visit never executes. The promise is cached, so a
    second open of the same view does not re-fetch. Module state these views
    share with app.js (the board card list, the goal list, the card modal key
    handler) is exposed through the module-scope vars here, which stay unset
-   until the module has loaded; call sites that can run before then guard. */
+   until the module has loaded; call sites that can run before then guard.
+   Search and Compare are disk plugins under ui/plugins/. */
 var boardModule = null;
 var cardModalKeyHandler = null;
 var boardModulePromise = null;
@@ -4852,16 +4895,6 @@ var modelsModulePromise = null;
 function loadModelsModule() {
   if (!modelsModulePromise) modelsModulePromise = import("./features/models.js");
   return modelsModulePromise;
-}
-var scheduleModulePromise = null;
-function loadScheduleModule() {
-  if (!scheduleModulePromise) scheduleModulePromise = import("./features/schedule.js");
-  return scheduleModulePromise;
-}
-var searchModulePromise = null;
-function loadSearchModule() {
-  if (!searchModulePromise) searchModulePromise = import("./features/search.js");
-  return searchModulePromise;
 }
 /* The command palette indexes board cards and goals, both of which live in
    lazy modules. The refs start as empty stand-ins and are swapped for the
@@ -4909,17 +4942,14 @@ var viewLoaders = {
   arena: function () {
     return loadArenaModule().then(function (arena) { bindOnce("arena", arena.bindArena); return arena.loadArenaView(); });
   },
-  compare: function () {
-    return loadCompareModule().then(function (compare) { bindOnce("compare", compare.bindCompare); return compare.loadCompareView(); });
-  },
   rooms: function () { return loadStatus().then(loadChatRooms); },
   // Goals ride along with the board: the board->goal sync (moving a card
   // marks its goal) needs the goal list, and the goal->board mirror needs to
   // run even when the Goals view was never opened. Both modules load here on
   // the board's first open; the wiring binds once for the life of the page.
-  board: function () {
+  kanban: function () {
     return loadBoardModule().then(function (m) {
-      bindOnce("board", function () {
+      bindOnce("kanban", function () {
         m.bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: function () { return knownPeers; } });
       });
       return m.loadBoardRooms().then(function () {
@@ -4935,22 +4965,6 @@ var viewLoaders = {
   models: function () {
     bindOnce("models", function () { loadModelsModule().then(function (m) { m.bindModels(); }); });
     return loadModelsModule().then(function (m) { return m.loadModelsView(); });
-  },
-  schedule: function () {
-    bindOnce("schedule", function () { loadScheduleModule().then(function (m) { m.bindSchedule(); }); });
-    return loadScheduleModule().then(function (m) { return m.loadScheduleView(); });
-  },
-  search: function () {
-    bindOnce("search", function () {
-      loadSearchModule().then(function (m) {
-        // Opening a hit is a conversation switch, which app.js owns: switchSession
-        // refuses mid-run and puts the rail back, and the search view has no
-        // business reimplementing that.
-        m.bindSearchDeps({ openSession: function (id, jump) { switchSession(id, jump); showView("chat", true); } });
-        m.bindSearch();
-      });
-    });
-    return loadSearchModule().then(function (m) { return m.loadSearchView(); });
   },
   knowledge: function(){ return kbLoad(); },
   prompts: function () {
@@ -4969,9 +4983,8 @@ var VIEW_CONTAINERS = {
   runs: "run-graph",
   fleet: "fleet-runs",
   arena: "arena-list",
-  compare: "compare-list",
   rooms: "chat-log",
-  board: "board",
+  kanban: "board-grid",
   tools: "tools",
   system: "usage"
 };
@@ -5042,10 +5055,30 @@ document.querySelectorAll("details.rail-fold[id]").forEach(function (d) {
   d.addEventListener("toggle", persistRailFolds);
 });
 
+var pluginsReady = false;
+var pendingPluginView = null;
+
+function viewBase(name) {
+  var n = name || "";
+  var slash = n.indexOf("/");
+  var q = n.indexOf("?");
+  var cut = n.length;
+  if (slash !== -1) cut = slash;
+  if (q !== -1 && q < cut) cut = q;
+  return n.slice(0, cut);
+}
+
 function showView(name, focusPanel) {
-  // Goals and board are one workflow now. Keep old bookmarks working while
-  // making Board the only visible navigation destination.
-  if (name === "goals") name = "board";
+  // A plugin view (schedule, search, compare, …) is not in VIEWS until its
+  // script has registered. Falling through to Chat here used to overwrite
+  // clanker.view and drop a refresh that was sitting on #schedule.
+  if (VIEWS.indexOf(viewBase(name === "goals" || name === "board" ? "kanban" : name)) === -1 && !pluginsReady) {
+    pendingPluginView = { name: name, focusPanel: focusPanel };
+    return;
+  }
+  // Goals and kanban are one workflow. Old #board / #goals bookmarks
+  // still land here.
+  if (name === "goals" || name === "board") name = "kanban";
   var parsed = parseRunsHash("#" + name);
   var deepRun = null, deepNode = null, deepSearch=null, deepKind=null;
   if (parsed) { deepRun = parsed.id; deepNode = parsed.node || null; deepSearch = parsed.search; deepKind = parsed.kind; name = "runs"; }
@@ -5062,7 +5095,8 @@ function showView(name, focusPanel) {
   if (name.indexOf("chat?session=") === 0) { try { pendingSessionId = decodeURIComponent(name.slice(13)); } catch (e) {} name = "chat"; }
   if (name.indexOf("arena/") === 0) { window._pendingArenaId = decodeURIComponent(name.slice(6)); name = "arena"; }
   if (name.indexOf("compare/") === 0) { window._pendingCompareId = decodeURIComponent(name.slice(8)); name = "compare"; }
-  if (name.indexOf("board/") === 0) { pendingBoardCard = decodeURIComponent(name.slice(6)); name = "board"; }
+  if (name.indexOf("kanban/") === 0) { pendingBoardCard = decodeURIComponent(name.slice(7)); name = "kanban"; }
+  if (name.indexOf("board/") === 0) { pendingBoardCard = decodeURIComponent(name.slice(6)); name = "kanban"; }
   if (name.indexOf("knowledge/") === 0) { pendingKnowledgeId = decodeURIComponent(name.slice(10)); name = "knowledge"; }
   if (pendingBoardCard) window._pendingBoardCard = pendingBoardCard;
   if (pendingKnowledgeId) window._pendingKnowledgeId = pendingKnowledgeId;
@@ -5345,7 +5379,7 @@ if (window.MutationObserver) {
     });
   });
   ["session-status", "run-status", "chat-status", "board-status", "webui-plugins-status", "tools-status", "logs-status", "goals-status",
-   "search-status", "schedule-status", "knowledge-status", "prompts-status", "models-status", "fleet-status",
+   "knowledge-status", "prompts-status", "models-status", "fleet-status",
    "progress-status", "settings-status", "skills-status", "workflows-status"].forEach(function (id) {
     var node = document.getElementById(id);
     if (node) statusObserver.observe(node, { childList: true, characterData: true, subtree: true });
@@ -5456,32 +5490,23 @@ function hidePromptList() {
   kbMentionIndex = 0;
 }
 
-var SLASH_CMDS = [
-  { cmd: "/compact", desc: "Drop oldest exchanges to fit context", run: function(){ document.getElementById("session-compact").click(); } },
-  { cmd: "/fork", desc: "Fork this conversation", run: function(){ document.getElementById("session-fork").click(); } },
-  { cmd: "/branch", desc: "Branch from last turn", run: function(){ var b=document.querySelector(".turn:last-child .turn-foot-actions button"); if(b) b.click(); } },
-  { cmd: "/clear", desc: "Start a new conversation", run: function(){ document.getElementById("new-chat").click(); } },
-  { cmd: "/model", desc: "Switch model — e.g. /model gpt-4o", run: function(arg){
-    var s = document.getElementById("model-select");
-    if (!s) return;
-    if (arg) {
-      var matched = false;
-      for (var i = 0; i < s.options.length; i++) {
-        if (s.options[i].value === arg || s.options[i].textContent.indexOf(arg) >= 0) {
-          s.value = s.options[i].value; matched = true; break;
-        }
+function runSlashModel(arg) {
+  var s = document.getElementById("model-select");
+  if (!s) return;
+  if (arg) {
+    var matched = false;
+    for (var i = 0; i < s.options.length; i++) {
+      if (s.options[i].value === arg || s.options[i].textContent.indexOf(arg) >= 0) {
+        s.value = s.options[i].value; matched = true; break;
       }
-      if (matched) s.dispatchEvent(new Event("change", { bubbles: true }));
-      return;
     }
-    mpOpen(document.getElementById("composer-model") || document.getElementById("header-model"));
-  } },
-  { cmd: "/knowledge", desc: "Open Knowledge collections", run: function(){ showView("knowledge", true); } },
-  { cmd: "/prompts", desc: "Open Prompts library", run: function(){ showView("prompts", true); } },
-  { cmd: "/compare", desc: "Open blind model comparisons", run: function(){ showView("compare", true); } },
-  { cmd: "/new", desc: "New chat (alias for /clear)", run: function(){ document.getElementById("new-chat").click(); } },
-  { cmd: "/help", desc: "Show keyboard shortcuts", run: function(){ document.getElementById("help-open").click(); } },
-];
+    if (matched) s.dispatchEvent(new Event("change", { bubbles: true }));
+    return;
+  }
+  mpOpen(document.getElementById("composer-model") || document.getElementById("header-model"));
+}
+var slashCtx = { showView: showView, runModel: runSlashModel };
+slashReady();
 function slashQuery(){
   var v = el.task.value;
   if (v.charAt(0) !== "/") return null;
@@ -5515,9 +5540,8 @@ function hideSlashList(){ hidePromptList(); }
 function useSlash(entry, arg){
   hideSlashList();
   // keep the slash text out of the composer for pure-command entries
-  if (entry.cmd === "/model" && arg) { entry.run(arg); el.task.value=""; }
-  else if (entry.cmd === "/model") { el.task.value=""; entry.run(""); }
-  else { el.task.value=""; entry.run(arg); }
+  el.task.value = "";
+  runSlashEntry(entry, arg, slashCtx);
   syncControls();
   el.task.focus();
 }
@@ -5784,7 +5808,7 @@ var pluginViews = pluginsViews;
 var loadPluginAssets = pluginsLoadPluginAssets;
 var loadWebuiPlugins = pluginsLoadWebuiPlugins;
 var renderWebuiPlugins = pluginsRenderWebuiPlugins;
-pluginsBind({ VIEWS: VIEWS, viewLoaders: viewLoaders, wireTab: wireTab, showView: showView, el: el, readJson: readJson, fmtBytes: fmtBytes, fmtInt: fmtInt, fmtCost: fmtCost, formatChatTime: formatChatTime });
+pluginsBind({ VIEWS: VIEWS, viewLoaders: viewLoaders, wireTab: wireTab, showView: showView, el: el, readJson: readJson, fmtBytes: fmtBytes, fmtInt: fmtInt, fmtCost: fmtCost, formatChatTime: formatChatTime, openSession: function (id, jump) { switchSession(id, jump); showView("chat", true); } });
 
 function loadLogList() { return logsLoadLogList(el, readJson, fmtBytes); }
 function loadLog(name) { return logsLoadLog(name, el, readJson, fmtBytes); }
@@ -6065,6 +6089,7 @@ function renderKbMentionList() {
 }
 // Integrated input handler so #knowledge and / prompts + Delete share one promptList cleanly
 function integratedTaskInputHandler(){
+  if (renderFileMentionList()) return;
   var mq = kbMentionQuery();
   if (mq && mq.q.length >= 0) {
     // Only trigger knowledge suggest when the # is the trailing token and not mid-slash
@@ -6100,67 +6125,63 @@ restoreDraft();
    on screen needs until the composer is used.
 
    Plugins are the exception, and only sometimes: a plugin registers a view, so
-   a deep link to one cannot resolve until they have loaded. When the hash names
-   a view that already exists, plugins wait with everything else. */
+   a deep link or a remembered last view cannot resolve until they have loaded.
+   When the hash names a built-in view, plugins wait with everything else. */
 var openingHash = window.location.hash.replace("#", "");
-var needsPluginsNow = !!openingHash && VIEWS.indexOf(openingHash) === -1;
 
 /* The view to open on load: a URL fragment naming a real view wins; otherwise
    the last view this browser was on (persisted by showView) is reopened so a
-   hard refresh keeps you on the same page instead of dropping to chat. */
+   hard refresh keeps you on the same page instead of dropping to chat.
+   Plugin view names are returned even before they have registered. */
 function lastView() {
   try {
     var v = window.localStorage.getItem("clanker.view");
-    if (v && VIEWS.indexOf(v) !== -1) return v;
+    if (v === "board" || v === "goals") v = "kanban";
+    return v || "";
   } catch (e) {}
   return "";
 }
 /* The full hash is handed to showView, whose prefix parsing resolves deep
-   links (#runs/<id>, #board/<id>, #arena/<id>, #knowledge/<id>,
-   #chat?session=<id>) that a bare view-name check used to drop on load. */
+   links (#runs/<id>, #kanban/<id>, #arena/<id>, #knowledge/<id>,
+   #chat?session=<id>, #compare/<id>) that a bare view-name check used to drop on load. */
 var openingView = openingHash || lastView() || "chat";
+var needsPluginsNow = VIEWS.indexOf(viewBase(openingView === "goals" || openingView === "board" ? "kanban" : openingView)) === -1;
 
 function afterFirstDraw(work) {
   if (window.requestIdleCallback) window.requestIdleCallback(work, { timeout: 2000 });
   else window.setTimeout(work, 0);
 }
 
+function markPluginsReady() {
+  pluginsReady = true;
+  if (!pendingPluginView) return;
+  var p = pendingPluginView;
+  pendingPluginView = null;
+  if (VIEWS.indexOf(viewBase(p.name === "goals" || p.name === "board" ? "kanban" : p.name)) !== -1) {
+    showView(p.name, p.focusPanel);
+  } else {
+    showView("chat", false);
+  }
+}
+
 if (needsPluginsNow) {
-  loadWebuiPlugins().then(function () {
-    if (VIEWS.indexOf(openingHash) !== -1) showView(openingHash, false);
-  });
+  loadWebuiPlugins().then(markPluginsReady, markPluginsReady);
 }
 
 afterFirstDraw(function () {
   loadStatus();
   loadProviders();
-  if (!needsPluginsNow) loadWebuiPlugins();
+  if (!needsPluginsNow) loadWebuiPlugins().then(markPluginsReady, markPluginsReady);
 });
 syncSubmitLabel();
 updateComposerModeHint();
 restoreRailFolds();
 // Only the opening view's data is fetched now; the rest load when opened.
 showView(openingView, false);
-/* Reopening the page used to show an empty transcript even when the picker
-   said the conversation had nine messages: nothing ever fetched them. The
-   conversation you were last in is replayed, so a reload resumes rather
-   than restarts. */
+/* Session list for the sidebar only. Do not replay the last conversation:
+   a load is a new chat. `#chat?session=` still opens a named one. */
 Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
-  var meta = currentSessionMeta();
-  if (meta) setCurrentWorkspace(meta.workspace || "", { silent: true });
-  if (!currentSessionMeta()) {
-    syncTranscriptEmpty();
-    return;
-  }
-  return fetch("/api/sessions/" + encodeURIComponent(sessionId))
-    .then(readJson)
-    .then(function (data) {
-      renderSessionHistory(data.messages || []);
-      syncTranscriptEmpty();
-      applyTurnFilter();
-      syncScrollButton();
-    })
-    .catch(function () { syncTranscriptEmpty(); });
+  syncTranscriptEmpty();
 });
 });
 

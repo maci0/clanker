@@ -15,5 +15,5 @@
   "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
-  "category": "observability"
+  "category": "harness"
 }

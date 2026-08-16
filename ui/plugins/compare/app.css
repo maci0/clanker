@@ -1,0 +1,3 @@
+/* Compare view — was a built-in; lives here so it is not part of app.wasm.
+   Shared row family (.compare-list / .compare-row) still lives in app.css
+   next to the Arena pickers they pair with. */

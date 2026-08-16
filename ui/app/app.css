@@ -40,8 +40,11 @@
   --scrim: rgba(27, 28, 24, 0.32);
   --warn: #b45309;
   --warn-text: #92400e;
-  --code-bg: #0d1117;
-  --code-fg: #e6edf3;
+  /* Code wells stay in the page's luminance family so hljs tokens
+     (--fg / --ok / --accent-text / --warn-text) keep contrast. A
+     GitHub-dark well on a light page made every token unreadable. */
+  --code-bg: #d4d0c6;
+  --code-fg: #1b1c18;
 
   /* Per-sender chat hues: one stable color per clanker name so different
      senders read as different people at a glance. Light-tuned here; the
@@ -135,9 +138,8 @@
 
 /* Night-shift cabinet: anthracite backplane, green-grey panel faces.
    Slightly lifted from true black so chat bubbles have room to breathe.
-   Only when theme is system (no data-theme): a :not(light/latte/...)
-   list is more specific than :root[data-theme="mocha"] and was painting
-   named dark themes with the default dark ramp. */
+   Only when theme is system (no data-theme): named palettes set the
+   attribute and write their tokens inline from themes/*.json. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     color-scheme: dark;
@@ -172,358 +174,16 @@
     --chat-hue-5: #22d3ee;
     --chat-hue-6: #c084fc;
     --chat-hue-7: #a3e635;
+    --code-bg: #121411;
+    --code-fg: #e8eae5;
     --lift: 0 1px 2px rgba(0, 0, 0, 0.45), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
     --lift-high: 0 2px 6px rgba(0, 0, 0, 0.5), 0 20px 44px -16px rgba(0, 0, 0, 0.7);
   }
 }
-:root[data-theme="light"] {
-  color-scheme: light;
-  --paper: #eeebe4;
-  --bg: #dcd9d1;
-  --surface: #eeebe4;
-  --surface-2: #e2dfd6;
-  --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
-  --surface-raised: var(--surface-2);
-  --border: #b9b5aa;
-  --rule: #cdc9bf;
-  --fg: #1b1c18;
-  --fg-muted: #4f534b;
-  --accent: #0b57d0;
-  --accent-dim: #0b57d014;
-  --accent-text: #0b57d0;
-  --on-accent: #ffffff;
-  --ok: #117a3a;
-  --ok-fill: #16a34a;
-  --violet: var(--accent);
-  --violet-text: var(--accent-text);
-  --danger: #b91c1c;
-  --on-danger: #ffffff;
-  --scrim: rgba(27, 28, 24, 0.32);
-  --warn: #b45309;
-  --warn-text: #92400e;
-  --code-bg: #0d1117;
-  --code-fg: #e6edf3;
-  --lift: 0 1px 2px rgba(24, 29, 26, 0.12), 0 6px 18px -8px rgba(24, 29, 26, 0.35);
-  --lift-high: 0 2px 4px rgba(24, 29, 26, 0.15), 0 20px 44px -16px rgba(24, 29, 26, 0.45);
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --paper: #232622;
-  --bg: #171916;
-  --surface: #232622;
-  --surface-2: #2e322d;
-  --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
-  --surface-raised: var(--surface-2);
-  --border: #454a44;
-  --rule: #353934;
-  --fg: #e8eae5;
-  --fg-muted: #a3aaa1;
-  --accent: #7aa7ff;
-  --accent-dim: #7aa7ff1f;
-  --accent-text: #8fb5ff;
-  --on-accent: #171916;
-  --ok: #4ade80;
-  --ok-fill: #22c55e;
-  --violet: var(--accent);
-  --violet-text: var(--accent-text);
-  --danger: #f87171;
-  --on-danger: #171916;
-  --scrim: rgba(0, 0, 0, 0.56);
-  --warn: #fbbf24;
-  --warn-text: #fcd34d;
-  --code-bg: #1a1e24;
-  --code-fg: #e6edf3;
-  --chat-hue-0: #82aaff;
-  --chat-hue-1: #b799ff;
-  --chat-hue-2: #4ade80;
-  --chat-hue-3: #fbbf24;
-  --chat-hue-4: #f87171;
-  --chat-hue-5: #22d3ee;
-  --chat-hue-6: #c084fc;
-  --chat-hue-7: #a3e635;
-  --lift: 0 1px 2px rgba(0, 0, 0, 0.45), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
-  --lift-high: 0 2px 6px rgba(0, 0, 0, 0.5), 0 20px 44px -16px rgba(0, 0, 0, 0.7);
-}
+/* Named palettes (light, dark, mocha, ...) live in themes/*.json and are
+   applied as inline tokens by core/theme.js. :root and the system dark
+   block above stay here so "system" has paint before any fetch. */
 
-/* Catppuccin Mocha (https://github.com/catppuccin/catppuccin), mapped onto
-   this page's own token names rather than renaming everything after the
-   palette. Values are from catppuccin/palette's palette.json; the roles come
-   from its style guide: base for the main surface, mantle behind it, surface0
-   for raised panels, overlay0 for borders, text and subtext0 for prose, mauve
-   as the accent, green/yellow/red for held/limit/failed. */
-:root[data-theme="mocha"] {
-  color-scheme: dark;
-  --paper: #1e1e2e;
-  --bg: #181825;
-  --surface: var(--paper);
-  --surface-2: #313244;
-  --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
-  --surface-raised: var(--surface-2);
-  --border: #6c7086;
-  --rule: #45475a;
-  --fg: #cdd6f4;
-  --fg-muted: #a6adc8;
-  --accent: #cba6f7;
-  --accent-dim: #cba6f726;
-  --accent-text: #cba6f7;
-  --on-accent: #1e1e2e;
-  --ok: #a6e3a1;
-  --ok-fill: #a6e3a1;
-  --violet: #f5c2e7;
-  --violet-text: #f5c2e7;
-  --danger: #f38ba8;
-  --on-danger: #1e1e2e;
-  --scrim: rgba(17, 17, 27, 0.72);
-  --warn: #f9e2af;
-  --warn-text: #f9e2af;
-  --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
-  --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
-}
-
-/* Catppuccin Latte, the family's light member: same roles as Mocha above
-   (mauve accent, green/yellow/red for held/limit/failed) over the light
-   base/mantle/surface0 ramp instead of the dark one. */
-:root[data-theme="latte"] {
-  color-scheme: light;
-  --paper: #eff1f5;
-  --bg: #e6e9ef;
-  --surface: var(--paper);
-  --surface-2: #ccd0da;
-  --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
-  --surface-raised: var(--surface-2);
-  --border: #9ca0b0;
-  --rule: #bcc0cc;
-  --fg: #4c4f69;
-  /* One step darker than Latte's subtext row: #63667a read 3.66:1 on the
-     #ccd0da surface-2; this holds 4.64:1 there and 6.3:1 on paper. */
-  --fg-muted: #535670;
-  --accent: #8839ef;
-  --accent-dim: #8839ef1f;
-  --accent-text: #8534ef;
-  --on-accent: #eff1f5;
-  /* Upstream green/pink/yellow read at 2.3-3.0:1 on this base, below the
-     4.5:1 every other theme's text clears; darkened here, same hue. */
-  --ok: #327c21;
-  --ok-fill: #327c21;
-  --violet: #c71f9a;
-  --violet-text: #c71f9a;
-  --danger: #d20f39;
-  --on-danger: #eff1f5;
-  --scrim: rgba(76, 79, 105, 0.45);
-  --warn: #996114;
-  --warn-text: #996114;
-  --lift: 0 1px 2px rgba(76, 79, 105, 0.10), 0 6px 18px -8px rgba(76, 79, 105, 0.30);
-  --lift-high: 0 2px 4px rgba(76, 79, 105, 0.12), 0 20px 44px -16px rgba(76, 79, 105, 0.40);
-}
-
-/* Catppuccin Frappé, the softer-contrast dark member. */
-:root[data-theme="frappe"] {
-  color-scheme: dark;
-  --paper: #303446;
-  --bg: #292c3c;
-  --surface: var(--paper);
-  --surface-2: #414559;
-  --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
-  --surface-raised: var(--surface-2);
-  --border: #737994;
-  --rule: #51576d;
-  --fg: #c6d0f5;
-  /* Frappé subtext1: subtext0 (#a5adce) read 4.26:1 on the #414559
-     surface-2; subtext1 holds 5.19:1 there. */
-  --fg-muted: #b5bfe2;
-  --accent: #ca9ee6;
-  --accent-dim: #ca9ee626;
-  --accent-text: #ca9ee6;
-  --on-accent: #303446;
-  --ok: #a6d189;
-  --ok-fill: #a6d189;
-  --violet: #f4b8e4;
-  --violet-text: #f4b8e4;
-  --danger: #e78284;
-  --on-danger: #303446;
-  --scrim: rgba(35, 38, 52, 0.72);
-  --warn: #e5c890;
-  --warn-text: #e5c890;
-  --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
-  --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
-}
-
-/* Catppuccin Macchiato, between Frappé and Mocha in contrast. */
-:root[data-theme="macchiato"] {
-  color-scheme: dark;
-  --paper: #24273a;
-  --bg: #1e2030;
-  --surface: var(--paper);
-  --surface-2: #363a4f;
-  --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
-  --surface-raised: var(--surface-2);
-  --border: #6e738d;
-  --rule: #494d64;
-  --fg: #cad3f5;
-  --fg-muted: #a5adcb;
-  --accent: #c6a0f6;
-  --accent-dim: #c6a0f626;
-  --accent-text: #c6a0f6;
-  --on-accent: #24273a;
-  --ok: #a6da95;
-  --ok-fill: #a6da95;
-  --violet: #f5bde6;
-  --violet-text: #f5bde6;
-  --danger: #ed8796;
-  --on-danger: #24273a;
-  --scrim: rgba(24, 25, 38, 0.72);
-  --warn: #eed49f;
-  --warn-text: #eed49f;
-  --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
-  --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
-}
-
-/* Tokyo Night (folke/tokyonight.nvim), roles from its own bg/bg_highlight/
-   fg/fg_dark/comment/purple/green/magenta/red/yellow. */
-:root[data-theme="tokyonight"] {
-  color-scheme: dark;
-  --paper: #1a1b26;
-  --bg: #16161e;
-  --surface: var(--paper);
-  --surface-2: #292e42;
-  --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
-  --surface-raised: var(--surface-2);
-  --border: #545c7e;
-  --rule: #3b4261;
-  --fg: #c0caf5;
-  --fg-muted: #a9b1d6;
-  --accent: #9d7cd8;
-  --accent-dim: #9d7cd826;
-  --accent-text: #9d7cd8;
-  --on-accent: #1a1b26;
-  --ok: #9ece6a;
-  --ok-fill: #9ece6a;
-  --violet: #bb9af7;
-  --violet-text: #bb9af7;
-  --danger: #f7768e;
-  --on-danger: #1a1b26;
-  --scrim: rgba(22, 22, 30, 0.72);
-  --warn: #e0af68;
-  --warn-text: #e0af68;
-  --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
-  --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
-}
-
-/* Tokyo Night Storm: same accents as Night, lighter background — the two
-   only diverge on --paper/--bg, matching tokyonight.nvim upstream where
-   Storm and Night share every foreground colour. */
-:root[data-theme="tokyonight-storm"] {
-  color-scheme: dark;
-  --paper: #24283b;
-  --bg: #1f2335;
-  --surface: var(--paper);
-  --surface-2: #292e42;
-  --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
-  --surface-raised: var(--surface-2);
-  --border: #545c7e;
-  --rule: #3b4261;
-  --fg: #c0caf5;
-  --fg-muted: #a9b1d6;
-  --accent: #9d7cd8;
-  --accent-dim: #9d7cd826;
-  --accent-text: #a080d9;
-  --on-accent: #1a1b26;
-  --ok: #9ece6a;
-  --ok-fill: #9ece6a;
-  --violet: #bb9af7;
-  --violet-text: #bb9af7;
-  --danger: #f7768e;
-  --on-danger: #1a1b26;
-  --scrim: rgba(31, 35, 53, 0.72);
-  --warn: #e0af68;
-  --warn-text: #e0af68;
-  --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
-  --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
-}
-
-/* Tokyo Night Day, the light variant. Every hue is inverted relative to
-   Night upstream, not just lightened, so this does not just reuse Night's
-   values with a swapped background. */
-:root[data-theme="tokyonight-day"] {
-  color-scheme: light;
-  --paper: #e1e2e7;
-  --bg: #d0d5e3;
-  --surface: var(--paper);
-  --surface-2: #c4c8da;
-  --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
-  --surface-raised: var(--surface-2);
-  --border: #8990b3;
-  --rule: #a8aecb;
-  --fg: #3760bf;
-  /* Darkened from #47568d, which read 4.23:1 on the #c4c8da surface-2;
-     this holds 5.02:1 there. */
-  --fg-muted: #3d4c7a;
-  --accent: #7847bd;
-  --accent-dim: #7847bd1f;
-  --accent-text: #6e3fb0;
-  --on-accent: #e1e2e7;
-  /* Night's raw violet/red/yellow read at 3.0-3.8:1 on this lighter base,
-     below the 4.5:1 every other theme's text clears; darkened, same hue. */
-  --ok: #526c35;
-  --ok-fill: #526c35;
-  --violet: #812eee;
-  --violet-text: #812eee;
-  --danger: #c90941;
-  --on-danger: #e1e2e7;
-  --scrim: rgba(55, 96, 191, 0.35);
-  --warn: #7c6037;
-  --warn-text: #7c6037;
-  --lift: 0 1px 2px rgba(55, 96, 191, 0.10), 0 6px 18px -8px rgba(55, 96, 191, 0.30);
-  --lift-high: 0 2px 4px rgba(55, 96, 191, 0.12), 0 20px 44px -16px rgba(55, 96, 191, 0.40);
-}
-
-/* Hackerman: green-phosphor terminal. Bright green on near-black, amber for
-   warnings and a legible red for danger so a failure still reads through the
-   monochrome-green aesthetic. Matches the TUI theme.zig `hackerman`. */
-:root[data-theme="hackerman"] {
-  color-scheme: dark;
-  --paper: #020a02;
-  --bg: #000000;
-  --surface: var(--paper);
-  --surface-2: #0a160a;
-  --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
-  --surface-raised: var(--surface-2);
-  --border: #0a5a0a;
-  --rule: #0a3a0a;
-  --fg: #33ff66;
-  --fg-muted: #00aa55;
-  --accent: #50ff50;
-  --accent-dim: #50ff5020;
-  --accent-text: #7cff7c;
-  --on-accent: #001100;
-  --ok: #00ffaa;
-  --ok-fill: #00cc88;
-  --violet: #b4ff50;
-  --violet-text: #b4ff50;
-  --danger: #ff3c3c;
-  --on-danger: #001100;
-  --scrim: rgba(0, 20, 0, 0.78);
-  --warn: #b4ff50;
-  --warn-text: #b4ff50;
-  --lift: 0 1px 2px rgba(0, 255, 0, 0.10), 0 6px 18px -8px rgba(0, 255, 0, 0.35);
-  --lift-high: 0 2px 4px rgba(0, 255, 0, 0.14), 0 20px 44px -16px rgba(0, 255, 0, 0.45);
-}
-
-/* The named dark themes share one bright chat-hue set: :root's light-tuned
-   hues drop below readable contrast on their dark surfaces, and each palette
-   inventing eight of its own would splinter what the hue means (the same
-   sender should keep roughly the same color across themes). */
-:root[data-theme="mocha"], :root[data-theme="frappe"], :root[data-theme="macchiato"],
-:root[data-theme="tokyonight"], :root[data-theme="tokyonight-storm"], :root[data-theme="hackerman"] {
-  --chat-hue-0: #82aaff;
-  --chat-hue-1: #b799ff;
-  --chat-hue-2: #4ade80;
-  --chat-hue-3: #fbbf24;
-  --chat-hue-4: #f87171;
-  --chat-hue-5: #22d3ee;
-  --chat-hue-6: #c084fc;
-  --chat-hue-7: #a3e635;
-}
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -743,19 +403,18 @@ main.pf-v6-c-page__main {
   display: flex; flex-direction: column;
   overflow: hidden;
 }
-/* Operator pages fill the main column. Chat's 46rem / ~70ch measure lives
-   only on #view-chat header / transcript / composer, not on every section. */
+/* Operator pages and Chat fill the main column. A leftover 46rem cap on
+   Chat left a stripe of text in a wide window. */
 .view > section { max-width: none; width: 100%; }
 
-/* Conversation column: header / scrollport / docked composer. The 46rem
-   reading measure is Chat-only; operator views fill the main column. */
+/* Conversation column: header / scrollport / docked composer, full width. */
 #view-chat {
   display: flex; flex-direction: column;
   flex: 1 1 auto; min-height: 0; width: 100%;
 }
 #view-chat[hidden] { display: none; }
 #view-chat .conversation-header {
-  flex: none; width: 100%; max-width: 46rem; margin-inline: auto;
+  flex: none; width: 100%; max-width: none; margin-inline: 0;
 }
 #view-chat .conversation-header .section-head {
   margin-bottom: var(--space-2);
@@ -772,14 +431,14 @@ main.pf-v6-c-page__main {
 }
 #view-chat .conversation-scroll .transcript,
 #view-chat .conversation-scroll .run-empty {
-  max-width: 46rem; margin-inline: auto;
+  max-width: none; width: 100%; margin-inline: 0;
 }
 #view-chat .composer {
   flex: none; position: relative; z-index: 3;
-  width: 100%; max-width: 46rem; margin: var(--space-2) auto 0;
+  width: 100%; max-width: none; margin: var(--space-2) 0 0;
 }
 #view-chat .suggestions {
-  flex: none; width: 100%; max-width: 46rem; margin-inline: auto;
+  flex: none; width: 100%; max-width: none; margin-inline: 0;
 }
 /* Suggestions belong to the empty state only; once a turn exists the column
    is transcript over docked composer with nothing beneath it. */
@@ -1013,15 +672,23 @@ form[hidden] { display: none; }
 /* What was asked, set as the entry's heading: the text face, not mono,
    because it is prose and not a measurement. */
 .turn-you {
+  display: flex; flex-direction: column; align-items: stretch; gap: 0.25rem;
   font-family: var(--sans); font-size: 14px; color: var(--fg);
   padding: 0.6rem 0.85rem;
   border: 1px solid var(--rule); border-radius: 18px;
   background: var(--surface);
   margin: 0 0 var(--space-3);
   margin-left: auto;
-  white-space: pre-wrap; overflow-wrap: anywhere;
-  max-width: min(30rem, 68%);
+  white-space: normal; overflow-wrap: anywhere;
+  max-width: min(42rem, 86%);
 }
+.turn-you-head { display: flex; align-items: center; gap: 0.4rem; }
+.turn-you-body { min-width: 0; }
+.turn-you.md .md-p { margin: 0 0 0.35em; font-size: inherit; line-height: 1.5; }
+.turn-you.md .md-p:last-child { margin-bottom: 0; }
+.turn-you.md .md-h { margin: 0.4em 0 0.25em; font-size: 1em; }
+.turn-you.md ul, .turn-you.md ol { margin: 0.3em 0; }
+.turn-you.md .code-block { margin: 0.4em 0; }
 .turn-author { color: var(--fg); font-weight: 700; letter-spacing: -0.015em; }
 /* A restored answer whose question is no longer in the transcript is not
    yours: attributing it to "you" said the wrong thing about who wrote it. */
@@ -1190,7 +857,7 @@ form[hidden] { display: none; }
 .turn-answer {
   font-family: var(--sans); font-size: 15px; line-height: 1.65;
   white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;
-  max-width: var(--measure);
+  max-width: none;
 }
 .turn-answer:empty::before {
   content: "…"; color: var(--fg-muted); display: inline-block;
@@ -1293,9 +960,8 @@ form[hidden] { display: none; }
    than floating over the code: as overlays they covered the first line and
    inherited the 44px control height onto a block that can be shorter. */
 .code-block {
-  margin: 0.75rem 0; border: 0;
+  margin: 0.75rem 0; border: 1px solid var(--rule);
   border-radius: var(--radius-lg); overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
 }
 .code-head {
   display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
@@ -1304,7 +970,7 @@ form[hidden] { display: none; }
   border-bottom: 0;
 }
 .code-block pre {
-  margin: 0; padding: 0.75rem 0.9rem; background: var(--code-bg, #0d1117); color: var(--code-fg, #e6edf3);
+  margin: 0; padding: 0.75rem 0.9rem; background: var(--code-bg); color: var(--code-fg);
   border: 0; border-radius: 0; overflow-x: auto;
   white-space: pre; font-family: var(--mono); font-size: var(--step-0); line-height: 1.6;
   tab-size: 2;
@@ -1325,15 +991,17 @@ form[hidden] { display: none; }
 .copy-code-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* highlight.js token colors, mapped to clanker's own theme tokens instead
-   of an imported hljs theme file — stays in sync with the light/dark and
-   manual theme overrides above instead of fighting them. Signal roles:
+   of an imported hljs theme file. The well (--code-bg) is set per theme
+   in the same luminance family as these tokens, so light themes stay
+   dark-on-light and dark themes stay light-on-dark. Signal roles:
    action blue for keywords, held green for strings, amber for numbers. */
+.hljs { background: transparent; color: inherit; }
 .hljs-comment, .hljs-quote { color: var(--fg-muted); font-style: italic; }
 .hljs-keyword, .hljs-selector-tag, .hljs-tag, .hljs-built_in, .hljs-type { color: var(--accent-text); }
 .hljs-string, .hljs-addition, .hljs-symbol, .hljs-regexp { color: var(--ok); }
 .hljs-deletion { color: var(--danger); }
-.hljs-title, .hljs-name, .hljs-attr, .hljs-attribute, .hljs-variable { color: var(--fg); }
-.hljs-title.function_, .hljs-title.class_, .hljs-section { color: var(--fg); font-weight: 700; }
+.hljs-title, .hljs-name, .hljs-attr, .hljs-attribute, .hljs-variable { color: var(--code-fg); }
+.hljs-title.function_, .hljs-title.class_, .hljs-section { color: var(--code-fg); font-weight: 700; }
 .hljs-number, .hljs-literal, .hljs-meta { color: var(--warn-text); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
@@ -1984,11 +1652,13 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
    the room list gets native keyboard and mobile behavior for free. */
 
 /* ── Slack-style layout ─────────────────────────────────────────────── */
+#view-rooms.view:not([hidden]) {
+  display: flex; flex-direction: column; overflow: hidden;
+}
 .slack-layout {
-  display: flex; height: calc(100vh - 56px); overflow: hidden;
-  /* dvh tracks mobile browsers' collapsing URL bar; vh above is the fallback. */
-  height: calc(100dvh - 56px);
-  width: 100%; min-width: 0;
+  display: flex; flex: 1 1 auto; min-height: 0; height: auto;
+  overflow: hidden;
+  width: 100%;
   border: 1px solid var(--rule); border-radius: var(--radius);
   background: var(--surface);
 }
@@ -2307,33 +1977,11 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   content: ""; flex: 1; height: 1px; background: var(--danger);
 }
 
-/* ── Message formatting ── */
-.chat-msg .fmt-bold { font-weight: 700; }
-.chat-msg .fmt-italic { font-style: italic; }
-.chat-msg .fmt-strike { text-decoration: line-through; color: var(--fg-muted); }
-.chat-msg .fmt-code {
-  font-family: var(--mono); font-size: 12px;
-  background: var(--surface-2, var(--surface-hover));
-  padding: 0.1rem 0.3rem; border-radius: 3px;
-  border: 1px solid var(--rule);
-}
-.chat-msg .fmt-codeblock {
-  display: block; font-family: var(--mono); font-size: 12px;
-  background: var(--surface-2, var(--surface-hover));
-  padding: 0.5rem 0.75rem; border-radius: var(--radius);
-  border: 1px solid var(--rule); margin: 0.35rem 0;
-  white-space: pre-wrap; overflow-x: auto;
-}
-.chat-msg .fmt-blockquote {
-  border-left: 3px solid var(--accent); padding-left: 0.75rem;
-  margin: 0.25rem 0; color: var(--fg-muted);
-}
-
 /* ── Mobile responsive ── */
 /* 48rem, not 768px: every other breakpoint here is rem so zoomed-text users
    get consistent trigger points. */
 @media (max-width: 48rem) {
-  .slack-layout { height: calc(100vh - 48px); height: calc(100dvh - 48px); position: relative; }
+  .slack-layout { position: relative; height: auto; }
   .slack-sidebar {
     position: absolute; z-index: 30; height: 100%; left: 0; top: 0;
     width: 260px; min-width: 260px; max-width: 260px; flex: none;
@@ -2358,9 +2006,10 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   .slack-sidebar-scrim { display: none; }
 }
 .chat-log {
-  margin-top: 1rem; border: 1px solid var(--rule); border-radius: var(--radius-lg);
-  background: var(--surface); padding: 0.75rem;
-  max-height: 24rem; overflow-y: auto;
+  flex: 1 1 auto; min-height: 0;
+  margin: 0; border: 0; border-radius: 0;
+  background: var(--surface); padding: 0.75rem 1rem;
+  overflow-y: auto; overflow-x: hidden;
   display: flex; flex-direction: column; gap: 0.5rem;
 }
 .chat-log:empty::before {
@@ -2382,7 +2031,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   color: var(--danger); text-transform: uppercase; letter-spacing: 0.03em;
   white-space: nowrap;
 }
-.chat-msg { position: relative; font-family: var(--sans); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.35rem 0.5rem; border-radius: var(--radius); border-left: 2px solid transparent; }
+.chat-msg { position: relative; font-family: var(--sans); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 0.15rem; align-items: stretch; padding: 0.35rem 0.5rem; border-radius: var(--radius); border-left: 2px solid transparent; }
 .chat-msg[data-grouped="true"] { padding-top: 0.2rem; padding-bottom: 0.2rem; }
 .chat-msg[data-grouped="true"] .chat-meta { display: none; }
 .chat-gutter-time { font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; opacity: 0; margin-left: auto; white-space: nowrap; align-self: center; }
@@ -2437,7 +2086,13 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
 .chat-from[data-color="7"] { color: var(--chat-hue-7); border-bottom: 2px solid var(--chat-hue-7); }
 .chat-time[data-seen="true"]::after { content: " ✓✓"; color: var(--ok); font-size: 11px; }
 .chat-time { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
-.chat-text { white-space: pre-wrap; color: var(--fg); max-width: var(--measure); }
+.chat-text { white-space: pre-wrap; color: var(--fg); max-width: none; min-width: 0; width: 100%; }
+.chat-text.md { white-space: normal; }
+.chat-text.md .md-p { margin: 0 0 0.35em; font-size: inherit; line-height: 1.5; }
+.chat-text.md .md-p:last-child { margin-bottom: 0; }
+.chat-text.md .md-h { margin: 0.4em 0 0.25em; font-size: 1em; }
+.chat-text.md ul, .chat-text.md ol { margin: 0.3em 0; }
+.chat-text.md .code-block { margin: 0.4em 0; }
 /* What a card action reads as: a report of something that happened, not
    something anyone typed. */
 .chat-text.chat-action { color: var(--fg-muted); font-style: italic; }
@@ -2551,6 +2206,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
 .skill-card {
   padding: 0.6rem 0.1rem; border-bottom: 1px solid var(--rule);
 }
+.skill-card input[type="checkbox"] { vertical-align: middle; margin: 0 0.4rem 0 0; }
 .skill-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); margin-right: var(--space-3); }
 .skill-meta { font-family: var(--mono); font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .skill-desc { margin: 0.2rem 0 0; font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted); overflow-wrap: anywhere; }
@@ -3537,9 +3193,10 @@ h2#session-title {
 @media (prefers-reduced-motion: reduce) { .rail { transition: none; } }
 
 /* Rendered markdown. Sized against the text face it sits in: headings step
-   up rather than shout, and every block keeps the reading measure. */
+   up rather than shout. Blocks fill the Chat column so tables and code
+   are not re-capped inside it. */
 .turn-answer.md { white-space: normal; }
-.md .md-p { margin: 0 0 var(--space-4); max-width: var(--measure); line-height: 1.7; font-size: 15px; }
+.md .md-p { margin: 0 0 var(--space-4); max-width: none; line-height: 1.7; font-size: 15px; }
 .md .md-p:last-child { margin-bottom: 0; }
 .md .md-h {
   font-family: var(--sans); font-size: var(--step-1); font-weight: 700;
@@ -3557,20 +3214,32 @@ h2#session-title {
   text-transform: uppercase; color: var(--fg-muted);
 }
 .md .md-h:first-child { margin-top: 0; }
-.md ul, .md ol { margin: 0 0 var(--space-4); padding-left: 1.4em; max-width: var(--measure); }
-.md li { margin: var(--space-2) 0; line-height: 1.55; }
+.md ul, .md ol {
+  margin: 0 0 var(--space-4); padding-left: 1.4em; max-width: none;
+  list-style-position: outside;
+}
+.md ul { list-style-type: disc; }
+.md ol { list-style-type: decimal; }
+.md li { margin: var(--space-2) 0; line-height: 1.55; display: list-item; }
 .md li::marker { color: var(--fg-muted); }
 .md blockquote {
   margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-4);
-  border-left: 2px solid var(--accent); color: var(--fg-muted); max-width: var(--measure);
+  border-left: 2px solid var(--accent); color: var(--fg-muted); max-width: none;
 }
 .md hr { border: 0; border-top: 1px solid color-mix(in srgb, var(--rule) 70%, transparent); margin: var(--space-6) 0; }
-.md code {
+.md :not(pre) > code {
   font-family: var(--mono); font-size: 0.88em;
   padding: 0.15em 0.4em; border-radius: 6px;
   background: color-mix(in srgb, var(--surface-2) 92%, transparent);
   border: 1px solid color-mix(in srgb, var(--rule) 55%, transparent);
   color: var(--fg);
+}
+/* Fenced blocks already paint the well on `pre`. The inline-code pill
+   (padding, border, surface-2 wash) on the inner `code` fought --code-bg
+   and left a dark gutter around light tokens, or the reverse. */
+.md pre code, .code-block pre code {
+  background: none; border: 0; padding: 0; border-radius: 0;
+  color: inherit; font-size: inherit;
 }
 .md a { color: var(--accent-text); }
 .md a:hover { text-decoration: underline; }
@@ -4507,8 +4176,8 @@ h2#session-title {
   .fleet-card { flex-direction: column; align-items: flex-start; }
   .fleet-card .fleet-actions, .fleet-card .toolbar-actions { width: 100%; justify-content: flex-end; }
   .fleet-child-group, .fleet-children { gap: var(--space-1); }
-  #view-board .board { gap: var(--space-3); }
-  #view-board .board-col { min-width: 10rem; }
+  #view-kanban .board { gap: var(--space-3); }
+  #view-kanban .board-col { min-width: 10rem; }
   .board-goal-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .board-goal-form label, .board-goal-form input, .board-goal-form button { grid-row: auto; }
   .board-goal-form label { margin-top: var(--space-2); }
@@ -4516,11 +4185,11 @@ h2#session-title {
 }
 @media (max-width: 40rem) {
   .fleet-children, .fleet-child-group, .fleet-note, .fleet-extra-row { margin-left: var(--space-3); }
-  #view-board .section-head { align-items: flex-start; margin-bottom: var(--space-4); }
-  #view-board .section-head .toolbar-actions { gap: var(--space-2); }
-  #view-board .section-head button { min-height: 44px; }
-  #view-board .board { flex-direction: column; }
-  #view-board .board-col:not([data-collapsed="true"]) { min-width: 0; max-width: none; width: 100%; max-height: none; }
+  #view-kanban .section-head { align-items: flex-start; margin-bottom: var(--space-4); }
+  #view-kanban .section-head .toolbar-actions { gap: var(--space-2); }
+  #view-kanban .section-head button { min-height: 44px; }
+  #view-kanban .board { flex-direction: column; }
+  #view-kanban .board-col:not([data-collapsed="true"]) { min-width: 0; max-width: none; width: 100%; max-height: none; }
   .board-goal-form { display: flex; padding: var(--space-3); }
   .board-goal-form input, .board-goal-form button { width: 100%; min-height: 44px; }
   /* Exempt from the full-width rule above: a checkbox has nothing to fill. */
@@ -4566,7 +4235,7 @@ h2#session-title {
    other — equal width, one shared surface, no ordering cue beyond the letter —
    because any per-column decoration is a place a reader could learn something
    about who wrote which answer before they have picked. Palette variables only,
-   so every data-theme block gets it. */
+   so every palette's tokens get it. */
 .compare-list { display: flex; flex-direction: column; gap: 4px; }
 .compare-row { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; }
 .compare-row[aria-pressed="true"] { border-color: var(--accent, var(--ok)); }
@@ -4586,33 +4255,13 @@ h2#session-title {
 .compare-key-list dt { font-weight: 600; }
 .compare-key-list dd { margin: 0; color: var(--fg-muted); }
 
-/* ---- Schedule view ---- */
-.schedule-entry { display: flex; flex-direction: column; gap: 6px; background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 12px; margin-bottom: var(--space-3); }
-/* A paused entry stays legible rather than greyed to the edge of readable:
-   it is still the thing you came to read, it just is not going to fire. */
-.schedule-entry[data-paused="true"] { border-style: dashed; }
-.schedule-entry[data-paused="true"] .schedule-cron { text-decoration: line-through; }
-.schedule-entry-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.schedule-entry-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.schedule-id { font-size: 12px; color: var(--fg-muted); }
-.schedule-cron { font-size: 12px; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 1px 6px; }
-.schedule-task { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
-.schedule-status[data-state="ok"] { color: var(--ok, #2fae4d); }
-.schedule-status[data-state="error"] { color: var(--danger, #d33); }
-.schedule-next { margin-right: auto; }
-.schedule-toggle { align-self: flex-start; }
-.schedule-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
-.schedule-log-row { display: grid; grid-template-columns: 6rem 6rem 1fr; gap: 10px; align-items: baseline; }
-.schedule-log-row[data-state="error"] { color: var(--danger, #d33); }
-
 /* Record lists are one control family. Arena, Compare, and Search all open a
    saved record, so they use the panel's compact rectangular rows rather than
-   inheriting the pill silhouette reserved for short actions. Schedule entries
-   are the read-only member of the same family. */
+   inheriting the pill silhouette reserved for short actions. */
 .arena-list, .compare-list {
   gap: var(--space-2);
 }
-.arena-pick, .compare-row, .search-hit, .schedule-entry {
+.arena-pick, .compare-row, .search-hit {
   border-radius: var(--radius);
   border: 1px solid var(--rule);
   background: var(--surface);
@@ -4630,11 +4279,6 @@ h2#session-title {
   border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
   background: var(--accent-dim);
 }
-.schedule-entry {
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  margin-bottom: var(--space-2);
-}
 .arena-pick-q, .compare-row-q, .search-hit-title {
   color: var(--fg);
   font-weight: 600;
@@ -4648,7 +4292,7 @@ h2#session-title {
   font-weight: 400;
   line-height: 1.55;
 }
-.schedule-entry-head, .schedule-entry-foot, .search-hit-head {
+.search-hit-head {
   gap: var(--space-2) var(--space-3);
 }
 
@@ -4660,12 +4304,6 @@ h2#session-title {
   .arena-pick-outcome, .compare-row-outcome {
     flex-basis: 100%;
     padding-left: calc(8px + 10px);
-  }
-  .schedule-log-row {
-    grid-template-columns: minmax(5rem, auto) 1fr;
-  }
-  .schedule-log-row > :last-child {
-    grid-column: 1 / -1;
   }
 }
 
@@ -4722,7 +4360,7 @@ h2#session-title {
   border: 1px solid var(--border); border-radius: var(--radius);
 }
 .config-editor .config-editor-highlight {
-  background: var(--code-bg); color: var(--fg);
+  background: var(--code-bg); color: var(--code-fg);
   pointer-events: none; z-index: 0;
 }
 .config-editor textarea {

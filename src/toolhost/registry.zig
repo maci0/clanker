@@ -53,6 +53,10 @@ pub const Tool = struct {
     /// May call the model through `ck_llm`. Costs tokens, so it is opt-in per
     /// descriptor and forces the tool onto the sequential execution path.
     llm: bool = false,
+    /// May emit onto the serve live bus through `ck_publish`. The import
+    /// existing is not a grant. Forces the sequential path: the bus is
+    /// host-shared state, same reason `sequential` exists for the chat log.
+    live_publish: bool = false,
     /// Never runs on the parallel worker pool (host-shared state, e.g. the
     /// chatroom log): each tool call waits its turn on the main thread.
     sequential: bool = false,
@@ -601,6 +605,12 @@ pub const Registry = struct {
         if (obj.get("llm")) |lv| {
             switch (lv) {
                 .bool => |b| t.llm = b,
+                else => {},
+            }
+        }
+        if (obj.get("live_publish")) |lv| {
+            switch (lv) {
+                .bool => |b| t.live_publish = b,
                 else => {},
             }
         }
@@ -1182,6 +1192,24 @@ test "descriptor statusline flag parses and defaults off" {
     const b = try Registry.parseDescriptor(arena, bare);
     try std.testing.expect(!b.statusline);
     try std.testing.expect(!b.internal);
+}
+
+test "descriptor live_publish flag parses and defaults off" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const raw =
+        \\{ "name": "pub", "description": "d", "wasm": "p.wasm", "input_schema": {}, "live_publish": true, "internal": true }
+    ;
+    const t = try Registry.parseDescriptor(arena, raw);
+    try std.testing.expect(t.live_publish);
+
+    const bare =
+        \\{ "name": "plain3", "description": "d", "wasm": "p.wasm" }
+    ;
+    const b = try Registry.parseDescriptor(arena, bare);
+    try std.testing.expect(!b.live_publish);
 }
 
 test "descriptor turn_hook flag parses and defaults off" {

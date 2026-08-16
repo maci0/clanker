@@ -396,7 +396,7 @@ clanker.registerView({
     function openFile(path, name) {
       var mine = ++generation;
       api.status("Loading "+name+"…");
-      return api.getJSON("/api/files?path="+encodeURIComponent(path)+(window.clankerWorkspace ? "&workspace="+encodeURIComponent(window.clankerWorkspace) : ""))
+      return api.getJSON("/api/files?path="+encodeURIComponent(path)+(api.workspace() ? "&workspace="+encodeURIComponent(api.workspace()) : ""))
         .then(function(d) {
           if (mine !== generation) return;
           openPath = path;
@@ -487,7 +487,7 @@ clanker.registerView({
       refreshBtn.disabled = true;
       filterInput.value = "";
       filterText = "";
-      return api.getJSON("/api/files?path="+encodeURIComponent(want)+(window.clankerWorkspace ? "&workspace="+encodeURIComponent(window.clankerWorkspace) : ""))
+      return api.getJSON("/api/files?path="+encodeURIComponent(want)+(api.workspace() ? "&workspace="+encodeURIComponent(api.workspace()) : ""))
         .then(function(d) {
           if (mine !== generation) return;
           cur.path = d.path || "";

@@ -47,7 +47,7 @@ there is no time zone — only an offset.
 
 ## Consequences
 
-Makes easy: `src/schedule/cron.zig` stays pure. No allocator, no clock, no
+Makes easy: `tools/zig/schedule_cron.zig` stays pure. No allocator, no clock, no
 `std.Io`, no data files, and the awkward parts — leap years, month lengths, the
 day-of-month/day-of-week rule, an offset that pushes a fire across a UTC date
 boundary — are all functions of their arguments and all covered by tests that

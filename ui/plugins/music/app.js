@@ -33,16 +33,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
   var viewRoot = null;
   var dock = null;
   var collapsed = false;
-
-  try {
-    collapsed = window.localStorage.getItem("clanker.music.dock") === "hide";
-    var saved = JSON.parse(window.localStorage.getItem("clanker.music.urls") || "[]");
-    if (Array.isArray(saved)) {
-      saved.forEach(function (u) {
-        if (typeof u === "string" && u) tracks.push({ title: titleFromUrl(u), src: u, kind: "url" });
-      });
-    }
-  } catch (e) {}
+  var savedLoaded = false;
 
   function titleFromUrl(u) {
     try {
@@ -64,7 +55,25 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
   function persistUrls() {
     var urls = [];
     tracks.forEach(function (t) { if (t.kind === "url") urls.push(t.src); });
-    try { window.localStorage.setItem("clanker.music.urls", JSON.stringify(urls)); } catch (e) {}
+    if (api && api.storage) api.storage.set("urls", JSON.stringify(urls));
+  }
+
+  function loadSaved() {
+    if (savedLoaded || !api || !api.storage) return;
+    savedLoaded = true;
+    try {
+      var dockVal = api.storage.get("dock");
+      if (dockVal == null) dockVal = window.localStorage.getItem("clanker.music.dock");
+      collapsed = dockVal === "hide";
+      var raw = api.storage.get("urls");
+      if (raw == null) raw = window.localStorage.getItem("clanker.music.urls");
+      var saved = JSON.parse(raw || "[]");
+      if (Array.isArray(saved)) {
+        saved.forEach(function (u) {
+          if (typeof u === "string" && u) tracks.push({ title: titleFromUrl(u), src: u, kind: "url" });
+        });
+      }
+    } catch (e) {}
   }
 
   function current() { return index >= 0 ? tracks[index] : null; }
@@ -217,7 +226,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
 
   function setCollapsed(on) {
     collapsed = !!on;
-    try { window.localStorage.setItem("clanker.music.dock", collapsed ? "hide" : "show"); } catch (e) {}
+    if (api && api.storage) api.storage.set("dock", collapsed ? "hide" : "show");
     draw();
   }
 
@@ -458,6 +467,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
   return {
     ensure: function (nextApi) {
       if (nextApi) api = nextApi;
+      loadSaved();
       ensureDock();
       drawDock();
     },

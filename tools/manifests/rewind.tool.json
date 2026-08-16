@@ -1,0 +1,18 @@
+{
+  "name": "rewind",
+  "description": "List or restore git checkpoints taken before mutating tools. {\"list\":true,\"session\":\"...\"} or {\"restore\":\"<hash>\",\"session\":\"...\"}. Restore runs git stash apply on the dangling snapshot (working tree changes). Pair with session branch to rewind the transcript.",
+  "llm_description": "List or restore a git checkpoint. {list:true, session?} lists state/rewinds. {restore:<hash>, session?} applies that snapshot to the working tree. Does not rewrite the conversation; fork/branch the session separately if you need the old transcript.",
+  "wasm": "zig-out/tools/rewind.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "list": { "type": "boolean" },
+      "restore": { "type": "string", "description": "git stash create hash" },
+      "session": { "type": "string" }
+    }
+  },
+  "fs_prefixes": ["state/rewinds/"],
+  "exec_allow": ["git"],
+  "confirm": true,
+  "category": "code"
+}

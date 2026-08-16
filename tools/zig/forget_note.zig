@@ -1,6 +1,6 @@
-//! forget_note: remove a learning from persistent memory.
+//! note_forget: remove a learning from persistent memory.
 //!
-//! write_note only appends, so memory could only ever grow. Notes that were
+//! note_write only appends, so memory could only ever grow. Notes that were
 //! true once and are not any more do not sit quietly: they are in the system
 //! prompt of every run, and the agent acts on them — proposing fixes for bugs
 //! that are already fixed, re-reading files it was told are broken.
@@ -37,7 +37,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (d == .bool) dry_run = d.bool;
     }
 
-    // A note appended by a concurrent write_note between our read and our
+    // A note appended by a concurrent note_write between our read and our
     // write-back used to be erased without trace. Hash exactly the bytes we
     // filtered and write compare-and-swap; on a mismatch, redo the whole
     // read-filter-write against the new contents, up to three attempts.

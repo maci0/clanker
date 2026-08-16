@@ -10,17 +10,31 @@
         "items": {
           "type": "object",
           "properties": {
-            "file": { "type": "string" },
-            "old": { "type": "string" },
-            "new": { "type": "string" }
+            "file": {
+              "type": "string"
+            },
+            "old": {
+              "type": "string"
+            },
+            "new": {
+              "type": "string"
+            }
           },
-          "required": ["file", "new"]
+          "required": [
+            "file",
+            "new"
+          ]
         }
       }
     },
-    "required": ["changes"]
+    "required": [
+      "changes"
+    ]
   },
-  "fs_prefixes": ["state/staging", "state/autoresearch"],
+  "fs_prefixes": [
+    "state/staging",
+    "state/autoresearch"
+  ],
   "internal": true,
-  "category": "harness"
+  "category": "code"
 }

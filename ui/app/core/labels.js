@@ -31,4 +31,43 @@ export function chatRoomLabel(room, isDmFn, dmPartnerFn, clankerMarkFn) {
   return "# " + r.room;
 }
 
+// Manifest `category` keys, work-first then instance-ops. Keep in step with
+// `src/toolhost/manifest.zig` `categories` and `tools/zig/tools.zig`.
+export var toolCategoryOrder = ["code", "chat", "kanban", "agent", "knowledge", "web", "media", "compute", "transform", "harness"];
+
+var toolCategoryLabels = {
+  agent: "Agent",
+  chat: "Chat",
+  code: "Code",
+  compute: "Compute",
+  harness: "Harness",
+  kanban: "Kanban",
+  knowledge: "Knowledge",
+  media: "Media",
+  other: "Other",
+  transform: "Transform",
+  web: "Web"
+};
+
+export function toolCategoryLabel(cat) {
+  var key = cat || "other";
+  if (toolCategoryLabels[key]) return toolCategoryLabels[key];
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}
+
+export function compareToolCategories(a, b) {
+  if (a === b) return 0;
+  var ia = toolCategoryRank(a);
+  var ib = toolCategoryRank(b);
+  if (ia !== ib) return ia - ib;
+  return a < b ? -1 : 1;
+}
+
+function toolCategoryRank(cat) {
+  var key = cat || "other";
+  if (key === "other") return toolCategoryOrder.length + 1;
+  var i = toolCategoryOrder.indexOf(key);
+  return i < 0 ? toolCategoryOrder.length : i;
+}
+
 

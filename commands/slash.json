@@ -1,0 +1,12 @@
+[
+  { "cmd": "/compact", "desc": "Drop oldest exchanges to fit context", "click": "session-compact", "palette": "Compact this conversation" },
+  { "cmd": "/fork", "desc": "Fork this conversation", "click": "session-fork", "palette": "Fork this conversation" },
+  { "cmd": "/branch", "desc": "Branch from last turn", "selector": ".turn:last-child .turn-foot-actions button" },
+  { "cmd": "/clear", "desc": "Start a new conversation", "click": "new-chat", "palette": "New chat" },
+  { "cmd": "/model", "desc": "Switch model — e.g. /model gpt-4o", "action": "model" },
+  { "cmd": "/knowledge", "desc": "Open Knowledge collections", "view": "knowledge" },
+  { "cmd": "/prompts", "desc": "Open Prompts library", "view": "prompts" },
+  { "cmd": "/compare", "desc": "Open blind model comparisons", "view": "compare" },
+  { "cmd": "/new", "desc": "New chat (alias for /clear)", "click": "new-chat" },
+  { "cmd": "/help", "desc": "Show keyboard shortcuts", "click": "help-open", "palette": "Keyboard shortcuts" }
+]

@@ -7,7 +7,7 @@
 
 const std = @import("std");
 
-pub const Topic = enum { chat, mesh, arena, run };
+pub const Topic = enum { chat, mesh, arena, run, metrics, plugin };
 
 pub const max_subs = 32;
 pub const queue_cap = 64;
@@ -48,7 +48,7 @@ pub fn topicBit(t: Topic) u8 {
 }
 
 pub fn allTopics() u8 {
-    return topicBit(.chat) | topicBit(.mesh) | topicBit(.arena) | topicBit(.run);
+    return topicBit(.chat) | topicBit(.mesh) | topicBit(.arena) | topicBit(.run) | topicBit(.metrics) | topicBit(.plugin);
 }
 
 pub fn topicsFromTarget(target: []const u8) []const u8 {
@@ -70,6 +70,8 @@ pub fn parseTopics(s: []const u8) u8 {
         if (std.mem.eql(u8, p, "mesh")) mask |= topicBit(.mesh);
         if (std.mem.eql(u8, p, "arena")) mask |= topicBit(.arena);
         if (std.mem.eql(u8, p, "run")) mask |= topicBit(.run);
+        if (std.mem.eql(u8, p, "metrics")) mask |= topicBit(.metrics);
+        if (std.mem.eql(u8, p, "plugin")) mask |= topicBit(.plugin);
     }
     return if (mask == 0) allTopics() else mask;
 }
@@ -165,6 +167,35 @@ pub fn noteRun(working: bool) void {
     publish(.run, json);
 }
 
+/// Snapshot already includes `"t":"metrics"`. Throttle lives at the caller
+/// so a page load of static assets does not fill the bus.
+pub fn noteMetrics(json: []const u8) void {
+    publish(.metrics, json);
+}
+
+/// Wrap a guest or UI-plugin payload as `{"t":"plugin","from":...,"data":...}`.
+/// `from` is JSON-stringified (so a quote in a tool name cannot break the
+/// frame); `data_json` is already a JSON value and is spliced in raw.
+pub fn pluginEvent(buf: []u8, from: []const u8, data_json: []const u8) ?[]const u8 {
+    if (from.len == 0 or data_json.len == 0) return null;
+    var w: std.Io.Writer = .fixed(buf);
+    w.writeAll("{\"t\":\"plugin\",\"from\":") catch return null;
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.write(from) catch return null;
+    w.writeAll(",\"data\":") catch return null;
+    w.writeAll(data_json) catch return null;
+    w.writeByte('}') catch return null;
+    return buf[0..w.end];
+}
+
+/// Guests (`ck_publish`) and UI plugins (`POST /api/live`) land here. They
+/// cannot pick `chat`/`run`/`metrics`: the host stamps `t` and `from`.
+pub fn notePlugin(from: []const u8, data_json: []const u8) void {
+    var buf: [event_cap]u8 = undefined;
+    const json = pluginEvent(&buf, from, data_json) orelse return;
+    publish(.plugin, json);
+}
+
 /// Long-lived SSE write loop. Caller must have already decided this
 /// connection is not keep-alive. Residual posix: raw-fd SSE push bus, same
 /// hand-rolled HTTP family as cli.zig's server.
@@ -227,13 +258,45 @@ test "subscribe publish take, overflow drops oldest" {
 test "parseTopics empty is all, unknown names ignored" {
     try std.testing.expectEqual(allTopics(), parseTopics(""));
     try std.testing.expectEqual(topicBit(.chat) | topicBit(.mesh), parseTopics("chat,mesh"));
+    try std.testing.expectEqual(topicBit(.metrics), parseTopics("metrics"));
+    try std.testing.expectEqual(topicBit(.plugin), parseTopics("plugin"));
     try std.testing.expectEqual(allTopics(), parseTopics("nope"));
+}
+
+test "pluginEvent wraps data and escapes from" {
+    var buf: [event_cap]u8 = undefined;
+    const got = pluginEvent(&buf, "music", "{\"n\":1}") orelse return error.Short;
+    try std.testing.expectEqualStrings("{\"t\":\"plugin\",\"from\":\"music\",\"data\":{\"n\":1}}", got);
+    const quoted = pluginEvent(&buf, "a\"b", "true") orelse return error.Short;
+    try std.testing.expectEqualStrings("{\"t\":\"plugin\",\"from\":\"a\\\"b\",\"data\":true}", quoted);
+    try std.testing.expect(pluginEvent(&buf, "", "{}") == null);
+}
+
+test "notePlugin publishes on the plugin topic" {
+    const a = subscribe(topicBit(.plugin)) orelse return error.NoSlot;
+    defer unsubscribe(a);
+    notePlugin("health", "{\"ok\":true}");
+    var buf: [event_cap]u8 = undefined;
+    const ev = take(a, &buf) orelse return error.Missing;
+    try std.testing.expectEqual(Topic.plugin, ev.topic);
+    try std.testing.expect(std.mem.find(u8, ev.json, "\"t\":\"plugin\"") != null);
+    try std.testing.expect(std.mem.find(u8, ev.json, "\"from\":\"health\"") != null);
 }
 
 test "writeSse frames one event" {
     var buf: [64]u8 = undefined;
     const got = writeSse(&buf, "{\"t\":\"ping\"}") orelse return error.Short;
     try std.testing.expectEqualStrings("event: live\ndata: {\"t\":\"ping\"}\n\n", got);
+}
+
+test "noteMetrics publishes on the metrics topic" {
+    const a = subscribe(topicBit(.metrics)) orelse return error.NoSlot;
+    defer unsubscribe(a);
+    noteMetrics("{\"t\":\"metrics\",\"http\":{}}");
+    var buf: [event_cap]u8 = undefined;
+    const ev = take(a, &buf) orelse return error.Missing;
+    try std.testing.expectEqual(Topic.metrics, ev.topic);
+    try std.testing.expect(std.mem.find(u8, ev.json, "\"t\":\"metrics\"") != null);
 }
 
 test "noteChat publishes both a chat and a mesh event without reusing a completed Stringify" {

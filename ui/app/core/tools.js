@@ -4,6 +4,7 @@
 import { scrollTo as vendorScrollTo } from "./vendor.js";
 import { fmtBytes as utilFmtBytes } from "./utils.js";
 import { showLoadError } from "./ui.js";
+import { toolCategoryLabel, compareToolCategories } from "./labels.js";
 
 var _el = null;
 var _allToolsHolder = null;
@@ -13,10 +14,11 @@ var _readJson = null;
 var _scrollTo = vendorScrollTo;
 
 /* The list groups by each tool's manifest `category` (already sent by
-   /api/plugins, already shown as a detail-view tag) so the surface reads as
-   a handful of sections instead of a wall of a hundred rows. Which sections
-   you have folded away is a property of how you are browsing right now, not
-   of the tools, so it lives in this browser like the rail's day-groups do. */
+   /api/plugins) so the surface reads as a handful of sections instead of
+   a wall of a hundred rows. Headings come from toolCategoryLabel; order
+   from compareToolCategories. Which sections you have folded away is a
+   property of how you are browsing right now, not of the tools, so it
+   lives in this browser like the rail's day-groups do. */
 function loadCollapsedToolGroups() {
   try { return JSON.parse(window.localStorage.getItem("clanker.toolGroupsCollapsed") || "[]"); } catch (e) { return []; }
 }
@@ -29,7 +31,7 @@ function toggleToolGroupCollapsed(g) {
   renderTools(null);
 }
 
-function groupLabel(cat) { return cat.charAt(0).toUpperCase() + cat.slice(1); }
+function groupLabel(cat) { return toolCategoryLabel(cat); }
 
 export function renderTools(filterText) {
   _toolState.val = {
@@ -183,7 +185,6 @@ export function showToolDetail(t) {
   meta.className = "run-detail-meta";
   var tags = [];
   if (t.core) tags.push("core");
-  if (t.category) tags.push(t.category);
   if (t.llm) tags.push("calls the model");
   if (t.sequential) tags.push("sequential");
   if (t.check) tags.push("check");
@@ -372,10 +373,10 @@ function loadWorkflows() {
     });
 }
 
-/* The Skills list under the tool rows: GET /api/skills mirrors the system
-   prompt's discovery (same dir, same filters, same sort), so this can never
-   disagree with what the agent actually has in context. Best-effort — a
-   skills failure must not take the tools list down with it. */
+/* The Skills list under the tool rows: GET /api/skills relays the skills
+   guest (same discovery as the system prompt). Disabled skills stay in the
+   list so they can be turned back on. Best-effort: a skills failure must
+   not take the tools list down with it. */
 function loadSkills() {
   var box = document.getElementById("skills");
   var status = document.getElementById("skills-status");
@@ -397,6 +398,26 @@ function loadSkills() {
       list.forEach(function (sk) {
         var card = document.createElement("div");
         card.className = "skill-card";
+        var box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = sk.enabled !== false;
+        box.title = box.checked ? "Included in the system prompt" : "Off: not sent to the model";
+        box.addEventListener("change", function () {
+          box.disabled = true;
+          fetch("/api/skills", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: sk.name, enabled: box.checked })
+          })
+            .then(_readJson)
+            .then(function () { return loadSkills(); })
+            .catch(function (err) {
+              box.checked = !box.checked;
+              if (status) status.textContent = "Skill: " + err.message;
+            })
+            .then(function () { box.disabled = false; });
+        });
+        card.appendChild(box);
         var name = document.createElement("span");
         name.className = "skill-name";
         name.textContent = sk.title || sk.name.replace(/\.md$/, "");
@@ -435,6 +456,8 @@ export function bindTools(ctx) {
       var shown = !s.filter ? s.tools : s.tools.filter(function (t) {
         return t.name.toLowerCase().indexOf(s.filter) !== -1 ||
           (t.description || "").toLowerCase().indexOf(s.filter) !== -1 ||
+          (t.category || "").toLowerCase().indexOf(s.filter) !== -1 ||
+          toolCategoryLabel(t.category).toLowerCase().indexOf(s.filter) !== -1 ||
           (t.tags || []).some(function (tagName) { return tagName.toLowerCase().indexOf(s.filter) !== -1; });
       });
       _el.toolsStatus.textContent = s.filter
@@ -468,12 +491,7 @@ export function bindTools(ctx) {
         if (!groups[cat]) { groups[cat] = []; order.push(cat); }
         groups[cat].push(t);
       });
-      order.sort(function (a, b) {
-        if (a === b) return 0;
-        if (a === "other") return 1;
-        if (b === "other") return -1;
-        return a < b ? -1 : 1;
-      });
+      order.sort(compareToolCategories);
 
       var out = [];
       order.forEach(function (cat) {

@@ -1,4 +1,4 @@
-//! add_goal: persist a structured goal to state/goals.json without running it.
+//! goal_add: persist a structured goal to state/goals.json without running it.
 //! Input:  {"objective":"...","completion_criterion":"...","proof":"...","boundaries":"...","stop_rule":"...","max_iterations":1..1000,"worktree":"..."}
 //! Output: {"ok":true,"goal":{...}}
 

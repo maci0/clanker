@@ -1,0 +1,22 @@
+{
+  "name": "config",
+  "description": "dump the effective config (providers/models/modules/budgets)",
+  "llm_description": "Dump effective config (providers/models/modules/budgets). {section?}.",
+  "wasm": "zig-out/tools/config_view.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "section": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "fs_prefixes": [
+    "config.toml",
+    "config.local.toml"
+  ],
+  "network_allow": [],
+  "confirm": false,
+  "category": "harness"
+}

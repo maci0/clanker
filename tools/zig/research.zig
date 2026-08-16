@@ -87,8 +87,8 @@ const sources = [_]Source{
     .{ .name = "code", .covers = "How an API is really called in the wild, across public repositories", .how = "sourcegraph_search" },
     .{ .name = "issues", .covers = "Whether the project answers bug reports, and what its users hit", .how = "gh_read on an issue or pull request URL" },
     .{ .name = "library docs", .covers = "Current API surface for a named library, rather than a stale blog post", .how = "context7" },
-    .{ .name = "pages", .covers = "The full text behind a promising result, instead of its snippet", .how = "fetch_web" },
-    .{ .name = "local tree", .covers = "What this repository already has, which is the cheapest option and the easiest to miss", .how = "repo_search, list_files, std_api" },
+    .{ .name = "pages", .covers = "The full text behind a promising result, instead of its snippet", .how = "web_fetch" },
+    .{ .name = "local tree", .covers = "What this repository already has, which is the cheapest option and the easiest to miss", .how = "repo_search, list_files, zig_std" },
 };
 
 /// The candidates a keyword search never returns, because nobody writes a page
@@ -164,8 +164,8 @@ fn plan(obj: std.json.Value, out: *lib.Out) !void {
     try s.objectField("next");
     try s.beginArray();
     try s.write("Run {\"action\":\"sweep\"} with this topic and depth; it issues these queries across web, GitHub, and discussion archives in one call.");
-    try s.write("Check the local tree before adding anything: repo_search for the capability, std_api for a standard-library primitive.");
-    try s.write("Open the promising hits with fetch_web or gh_read. A snippet is a lead, not evidence.");
+    try s.write("Check the local tree before adding anything: repo_search for the capability, zig_std for a standard-library primitive.");
+    try s.write("Open the promising hits with web_fetch or gh_read. A snippet is a lead, not evidence.");
     try s.write("Record what survives with {\"action\":\"create\"}, then append findings as they are verified.");
     try s.endArray();
     try s.endObject();
@@ -681,7 +681,7 @@ fn emitSweep(out: *lib.Out, topic: []const u8, depth: rq.Depth, queries: []const
 
     try s.objectField("next");
     try s.beginArray();
-    try s.write("Open the strongest hits (fetch_web, gh_read) before believing a snippet; a title is not a finding.");
+    try s.write("Open the strongest hits (web_fetch, gh_read) before believing a snippet; a title is not a finding.");
     try s.write("Answer the out-of-the-box prompts from {\"action\":\"plan\"} explicitly, including 'do nothing' — sweep results cannot contain them.");
     try s.write("Record verified findings with {\"action\":\"create\"} or {\"action\":\"append\"}, each with its link and a confidence.");
     try s.endArray();

@@ -189,9 +189,10 @@ fn recordRunTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
 // Aggregating state/autolearn.jsonl into roadmap items and upserting
 // docs/ROADMAP.md is a fs-scoped read/aggregate/write, once per `clanker
 // autolearn` invocation: that shape lives in the autolearn WASM tool
-// (tools/zig/autolearn.zig), not here. record()/recordRun() stay native
-// because they run inside the agent loop's hot path (every tool call / every
-// run), where a WASM dispatch per call would add real overhead.
+// (tools/zig/autolearn.zig), not here, including the optional `--model`
+// rewrite via ck_llm. record()/recordRun() stay native because they run
+// inside the agent loop's hot path (every tool call / every run), where a
+// WASM dispatch per call would add real overhead.
 
 // ------------------------------------------------------------------- tests --
 

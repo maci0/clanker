@@ -15,10 +15,10 @@ silently substitute for another.
 
 ## Decision
 
-Keep `write_goal`, `add_goal`, and `goal` separate. `write_goal` drafts only;
-`add_goal` persists only; `goal` starts a goal loop only. Each has a direct CLI
-and TUI entry point. `run --goal <id>` starts that loop from an existing record,
-and the web board creates through `add_goal`.
+Keep `goal_write`, `goal_add`, and `goal` separate. `goal_write` drafts only;
+`goal_add` persists only; `goal` starts a goal loop only. Each has a direct CLI
+(`write-goal`, `add-goal`, `goal`) and TUI entry point. `run --goal <id>` starts
+that loop from an existing record, and the web board creates through `goal_add`.
 
 ## Consequences
 

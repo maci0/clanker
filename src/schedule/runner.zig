@@ -20,7 +20,7 @@
 //! other choice is a crash loop that bills per iteration.
 
 const std = @import("std");
-const cron = @import("cron.zig");
+const cron = @import("schedule_cron");
 const store = @import("store.zig");
 const file_lock = @import("../util/file_lock.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");

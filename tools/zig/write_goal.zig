@@ -1,4 +1,4 @@
-//! write_goal: turn a rough natural-language intent into a structured goal
+//! goal_write: turn a rough natural-language intent into a structured goal
 //! draft without consulting a model. Draft-only:
 //!
 //!   * inspects the workspace first (reads state/goals.json for an already-open

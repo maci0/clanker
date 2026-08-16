@@ -13,6 +13,7 @@
 const std = @import("std");
 const types = @import("../llm/types.zig");
 const utf8 = @import("../util/utf8.zig");
+const skills_logic = @import("skills_logic");
 
 /// Per-file read cap for instruction layers and each `@` import hop.
 const max_instruction_file_bytes: usize = 64 * 1024;
@@ -26,7 +27,7 @@ pub const PromptParts = struct {
     system_prompt_file: []const u8,
     skills_dir: []const u8,
     learnings_file: []const u8,
-    max_skill_bytes: usize = 24 * 1024,
+    max_skill_bytes: usize = skills_logic.max_skill_bytes,
     /// This instance's own name and id. Without them the agent reads its own
     /// chatroom messages as someone else's and greets itself by name.
     instance_name: []const u8 = "",
@@ -40,6 +41,9 @@ pub const PromptParts = struct {
     /// (caller already decided there is no path to load). Missing/empty file
     /// is a soft skip.
     global_instructions_file: []const u8 = "",
+    /// Operator enable/disable sidecar (`state/skills.json`). Injectable so
+    /// tests do not read the checkout's real override file.
+    skills_overrides_file: []const u8 = "state/skills.json",
     /// Project conventions file (default cwd AGENTS.md). Injectable so tests
     /// do not depend on the repo's real AGENTS.md.
     project_agents_file: []const u8 = "AGENTS.md",
@@ -59,7 +63,7 @@ pub const PromptParts = struct {
 };
 
 /// Prefixed to the Skills and Learnings sections, both of which the agent
-/// writes to itself (edit_skill, write_note) mid-session. Content written
+/// writes to itself (skill_edit, note_write) mid-session. Content written
 /// while acting on a task can be shaped by whatever untrusted text the agent
 /// read to do that task (a fetched page, a file, a tool result), so without
 /// this label a later run reads that content with the same authority as the
@@ -125,7 +129,7 @@ const decision_docs_workflow =
     \\standards, and the out-of-the-box candidates nobody advertises. `sweep`
     \\then runs them across web search, GitHub, discussion archives and paper
     \\indexes in one call. Its results are untrusted text and are leads, not
-    \\findings: open the strongest with `fetch_web` or `gh_read`, and search the
+    \\findings: open the strongest with `web_fetch` or `gh_read`, and search the
     \\local tree with `repo_search` before assuming anything must be added.
     \\Answer the out-of-the-box prompts explicitly, "do nothing" included. Then
     \\record what survived with `create`, `append` and `update`, every claim
@@ -411,7 +415,15 @@ pub fn build(
         try buf.appendSlice(arena, "\n\n");
     }
 
-    // Skills (agent-editable markdown files in skills_dir).
+    // Skills (agent-editable markdown files in skills_dir). Title +
+    // description only: full bodies ride every turn if inlined, so the
+    // `skills` tool is how a later turn reads one. Disabled skills (frontmatter
+    // or state/skills.json) stay off the prompt.
+    const skill_overrides_raw = if (parts.skills_overrides_file.len > 0)
+        std.Io.Dir.cwd().readFileAlloc(io, parts.skills_overrides_file, arena, .limited(16 * 1024)) catch ""
+    else
+        "";
+    const skill_overrides = skills_logic.parseOverrides(arena, skill_overrides_raw);
     var dir = std.Io.Dir.cwd().openDir(io, parts.skills_dir, .{ .iterate = true }) catch null;
     if (dir) |*d| {
         defer d.close(io);
@@ -419,8 +431,7 @@ pub fn build(
         var it = d.iterate();
         while (it.next(io) catch null) |entry| {
             if (entry.kind != .file) continue;
-            if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
-            if (std.mem.eql(u8, entry.name, "SYSTEM.md")) continue; // base already included
+            if (!skills_logic.isSkillFile(entry.name)) continue;
             try names.append(arena, try arena.dupe(u8, entry.name));
         }
         // Sort so the system prompt is byte-stable across runs; LLM prompt
@@ -437,16 +448,24 @@ pub fn build(
         var skills_header_done = false;
         for (names.items) |name| {
             const content = d.readFileAlloc(io, name, arena, .limited(parts.max_skill_bytes)) catch continue;
-            if (std.mem.trim(u8, content, " \t\r\n").len < 20) continue;
+            const meta = skills_logic.parseMeta(content) orelse continue;
+            if (!skills_logic.isEnabled(meta, name, skill_overrides.disabled)) continue;
             if (!skills_header_done) {
                 try buf.appendSlice(arena, "## Skills\n\n" ++ self_authored_notice);
+                try buf.appendSlice(arena, "Each entry is a name and a one-line description. Call the `skills` tool with {\"name\":\"<stem>\"} to read the full body.\n\n");
                 skills_header_done = true;
             }
             try buf.appendSlice(arena, "### ");
-            try buf.appendSlice(arena, name);
+            try buf.appendSlice(arena, skills_logic.stemOf(name));
+            if (meta.title.len > 0 and !std.mem.eql(u8, meta.title, skills_logic.stemOf(name))) {
+                try buf.appendSlice(arena, ": ");
+                try buf.appendSlice(arena, meta.title);
+            }
             try buf.appendSlice(arena, "\n\n");
-            try buf.appendSlice(arena, content);
-            try buf.appendSlice(arena, "\n\n");
+            if (meta.description.len > 0) {
+                try buf.appendSlice(arena, meta.description);
+                try buf.appendSlice(arena, "\n\n");
+            }
         }
     }
 
@@ -522,7 +541,7 @@ pub fn build(
         \\Two complementary ways to wire tools together without leaving the current turn:
         \\
         \\- **Mutate**, a transform plugin (`mutate`, off by default) that rewrites tool results via an LLM instruction before the agent sees them. Enable with `/plugins on mutate` and configure `instruction`/`lang`/`mode` (`json` or `text`) in `state/plugin_config.json`; it wraps every `after` result in `order` and declines to broken JSON automatically. `translate` is the preset translate case of mutate.
-        \\- **Chain**, a `chain` tool that runs a pipeline inside one call: steps like `{"tool":"read_file","args":{"path":"src/main.zig"}}` → `{"mutate":{"instruction":"Summarize the public API"}}` → `{"tool":"write_note","args":{"text":"{{prev}}","path":"state/notes/summary.md"}}`. String args support `{{prev}}`, `{{prev.field}}`, `{{prev.a[0]}}` and `{{vars.key}}`; `{{prev}}` is the prior step's raw output. Named chains live in `chains/` (configurable via `agent.chains_dir`, shown in the workflows catalog as `[chain]`) and are loaded via `{"chain":"name"}`; `{"list":true}` and `{"show":"name"}` discover them. A failed step aborts the chain unless `stop_on_error:false`.
+        \\- **Chain**, a `chain` tool that runs a pipeline inside one call: steps like `{"tool":"read_file","args":{"path":"src/main.zig"}}` → `{"mutate":{"instruction":"Summarize the public API"}}` → `{"tool":"note_write","args":{"text":"{{prev}}","path":"state/notes/summary.md"}}`. String args support `{{prev}}`, `{{prev.field}}`, `{{prev.a[0]}}` and `{{vars.key}}`; `{{prev}}` is the prior step's raw output. Named chains live in `chains/` (configurable via `agent.chains_dir`, shown in the workflows catalog as `[chain]`) and are loaded via `{"chain":"name"}`; `{"list":true}` and `{"show":"name"}` discover them. A failed step aborts the chain unless `stop_on_error:false`.
         \\- **Workflows as chains**, a `workflows/*.md` file may embed a pipeline via frontmatter `chain: '[{\"tool\":\"read_file\",...}]'` or by naming a chain file; `clanker workflow list` marks such workflows with `[chain]` and the `workflows` agent tool surfaces them.
         \\
         \\
@@ -901,6 +920,88 @@ test "build: project @import of local file skips dedicated local section" {
     }
     try std.testing.expectEqual(@as(usize, 1), count);
     try std.testing.expect(std.mem.find(u8, prompt, "## Project-local operator instructions") == null);
+}
+
+test "build discloses skill titles, skips disabled, omits full bodies" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "SYSTEM.md", .data = "BASE" });
+    try tmp.dir.createDirPath(io, "skills");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "skills/alpha-skill.md",
+        .data =
+        \\# Alpha skill
+        \\
+        \\Look things up on the web.
+        \\
+        \\ALPHA_BODY_SECRET
+        \\
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "skills/off-skill.md",
+        .data =
+        \\---
+        \\title: Off
+        \\description: Should not appear.
+        \\enabled: false
+        \\---
+        \\
+        \\OFF_BODY_SECRET
+        \\
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "skills/sidecar-skill.md",
+        .data =
+        \\# Sidecar
+        \\
+        \\This one is turned off by the sidecar.
+        \\
+        \\SIDECAR_BODY_SECRET
+        \\
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "skills-overrides.json",
+        .data = "{\"disabled\":[\"sidecar-skill\"]}",
+    });
+
+    const base_path = try tmpRel(std.testing.allocator, &tmp, "SYSTEM.md");
+    defer std.testing.allocator.free(base_path);
+    const skills_path = try tmpRel(std.testing.allocator, &tmp, "skills");
+    defer std.testing.allocator.free(skills_path);
+    const overrides_path = try tmpRel(std.testing.allocator, &tmp, "skills-overrides.json");
+    defer std.testing.allocator.free(overrides_path);
+    const learnings_path = try tmpRel(std.testing.allocator, &tmp, "no-learnings.md");
+    defer std.testing.allocator.free(learnings_path);
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const prompt = try build(arena, io, .{
+        .system_prompt_file = base_path,
+        .skills_dir = skills_path,
+        .skills_overrides_file = overrides_path,
+        .learnings_file = learnings_path,
+        .project_agents_file = "",
+        .local_instructions_file = "",
+    }, &.{});
+
+    try std.testing.expect(std.mem.find(u8, prompt, "## Skills") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "### alpha-skill") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "Look things up on the web.") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "ALPHA_BODY_SECRET") == null);
+    try std.testing.expect(std.mem.find(u8, prompt, "OFF_BODY_SECRET") == null);
+    try std.testing.expect(std.mem.find(u8, prompt, "Should not appear.") == null);
+    try std.testing.expect(std.mem.find(u8, prompt, "SIDECAR_BODY_SECRET") == null);
+    try std.testing.expect(std.mem.find(u8, prompt, "This one is turned off") == null);
 }
 
 test "expandImports leaves @path inside code spans and fences alone" {

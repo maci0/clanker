@@ -15,5 +15,5 @@
     "state/reasoning.jsonl"
   ],
   "network_allow": [],
-  "category": "agent"
+  "category": "harness"
 }

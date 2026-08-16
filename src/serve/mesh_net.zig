@@ -36,6 +36,8 @@ const Runtime = struct {
     admission: mesh.Admission,
     seeds: []const mesh.PeerSeed,
     max_frame: u32,
+    max_pending: u16,
+    prompt_timeout_ns: i64,
     on_chat: ?OnChat,
     mu: struct {
         raw: std.atomic.Mutex = .unlocked,
@@ -49,8 +51,21 @@ const Runtime = struct {
         }
     } = .{},
     members: [mesh.max_members]Member = @splat(.{}),
+    pending: [8]Pending = @splat(.{}),
     stop: std.atomic.Value(bool) = .init(false),
     server: ?std.Io.net.Server = null,
+};
+
+const Pending = struct {
+    used: bool = false,
+    id: [64]u8 = undefined,
+    id_len: u8 = 0,
+    name: [64]u8 = undefined,
+    name_len: u8 = 0,
+    ack_id: [64]u8 = undefined,
+    ack_id_len: u8 = 0,
+    arrived_ns: i64 = 0,
+    stream: ?std.Io.net.Stream = null,
 };
 
 var runtime: ?*Runtime = null;
@@ -83,6 +98,122 @@ fn findMember(rt: *Runtime, key: []const u8) ?*Member {
         if (std.mem.eql(u8, mid(m), key) or std.mem.eql(u8, mname(m), key)) return m;
     }
     return null;
+}
+
+fn nowNs(rt: *Runtime) i64 {
+    return std.Io.Timestamp.now(rt.io, .real).nanoseconds;
+}
+
+pub fn pendingTimedOut(arrived_ns: i64, now_ns: i64, timeout_ns: i64) bool {
+    return now_ns - arrived_ns >= timeout_ns;
+}
+
+fn pid(p: *const Pending) []const u8 {
+    return p.id[0..p.id_len];
+}
+fn pname(p: *const Pending) []const u8 {
+    return p.name[0..p.name_len];
+}
+
+fn expirePendingLocked(rt: *Runtime, now_ns: i64) void {
+    for (&rt.pending) |*p| {
+        if (!p.used) continue;
+        if (!pendingTimedOut(p.arrived_ns, now_ns, rt.prompt_timeout_ns)) continue;
+        if (p.stream) |st| {
+            _ = writeJoinAck(rt, st.socket.handle, p.ack_id[0..p.ack_id_len], false);
+            st.close(rt.io);
+        }
+        p.* = .{};
+    }
+}
+
+fn findPendingLocked(rt: *Runtime, key: []const u8) ?*Pending {
+    if (key.len == 0) return null;
+    for (&rt.pending) |*p| {
+        if (!p.used) continue;
+        if (std.mem.eql(u8, pid(p), key) or std.mem.eql(u8, pname(p), key)) return p;
+    }
+    return null;
+}
+
+fn enqueuePending(rt: *Runtime, id: []const u8, name: []const u8, ack_id: []const u8, stream: std.Io.net.Stream) bool {
+    rt.mu.lock();
+    defer rt.mu.unlock();
+    expirePendingLocked(rt, nowNs(rt));
+    if (findPendingLocked(rt, id)) |old| {
+        if (old.stream) |st| {
+            _ = writeJoinAck(rt, st.socket.handle, old.ack_id[0..old.ack_id_len], false);
+            st.close(rt.io);
+        }
+        old.* = .{};
+    }
+    var used: u16 = 0;
+    var slot: ?*Pending = null;
+    for (&rt.pending) |*p| {
+        if (p.used) {
+            used += 1;
+        } else if (slot == null) {
+            slot = p;
+        }
+    }
+    if (used >= rt.max_pending) return false;
+    const p = slot orelse return false;
+    p.* = .{ .used = true, .arrived_ns = nowNs(rt), .stream = stream };
+    p.id_len = copyField(&p.id, id);
+    p.name_len = copyField(&p.name, name);
+    p.ack_id_len = copyField(&p.ack_id, ack_id);
+    return true;
+}
+
+fn writeJoinAck(rt: *Runtime, fd: std.posix.fd_t, ack_id: []const u8, accepted: bool) bool {
+    var arena_state = std.heap.ArenaAllocator.init(rt.gpa);
+    defer arena_state.deinit();
+    var out: std.Io.Writer.Allocating = .init(arena_state.allocator());
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return false;
+    s.objectField("version") catch return false;
+    s.write(mesh.protocol_version) catch return false;
+    s.objectField("kind") catch return false;
+    s.write("JOIN_ACK") catch return false;
+    s.objectField("id") catch return false;
+    s.write(ack_id) catch return false;
+    s.objectField("from") catch return false;
+    s.write(rt.our_id) catch return false;
+    s.objectField("payload") catch return false;
+    s.write(.{ .accepted = accepted }) catch return false;
+    s.endObject() catch return false;
+    return writeFrame(fd, rt.gpa, out.written());
+}
+
+fn writeLeave(rt: *Runtime, fd: std.posix.fd_t) void {
+    if (fd < 0) return;
+    var arena_state = std.heap.ArenaAllocator.init(rt.gpa);
+    defer arena_state.deinit();
+    var out: std.Io.Writer.Allocating = .init(arena_state.allocator());
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("version") catch return;
+    s.write(mesh.protocol_version) catch return;
+    s.objectField("kind") catch return;
+    s.write("LEAVE") catch return;
+    s.objectField("id") catch return;
+    s.write("leave") catch return;
+    s.objectField("from") catch return;
+    s.write(rt.our_id) catch return;
+    s.objectField("payload") catch return;
+    s.write(.{ .reason = "operator" }) catch return;
+    s.endObject() catch return;
+    _ = writeFrame(fd, rt.gpa, out.written());
+}
+
+fn forgetMemberLocked(rt: *Runtime, key: []const u8) bool {
+    const m = findMember(rt, key) orelse return false;
+    if (m.fd >= 0) {
+        writeLeave(rt, m.fd);
+        _ = std.c.close(m.fd);
+    }
+    m.* = .{};
+    return true;
 }
 
 fn remember(rt: *Runtime, id: []const u8, name: []const u8, fd: std.posix.fd_t) void {
@@ -262,22 +393,14 @@ fn acceptOne(arg: *Conn) void {
             break :blk if (id.len > 0) id else header.from;
         };
         const join_name = json_util.strFieldOrEmpty(p, "name");
-        const ok = mesh.admit(rt.admission, rt.our_id, join_id, join_name, rt.seeds) == .accept;
-        var ack_out: std.Io.Writer.Allocating = .init(arena);
-        var ack_s = std.json.Stringify{ .writer = &ack_out.writer, .options = .{ .emit_null_optional_fields = false } };
-        ack_s.beginObject() catch break;
-        ack_s.objectField("version") catch break;
-        ack_s.write(mesh.protocol_version) catch break;
-        ack_s.objectField("kind") catch break;
-        ack_s.write("JOIN_ACK") catch break;
-        ack_s.objectField("id") catch break;
-        ack_s.write(header.id) catch break;
-        ack_s.objectField("from") catch break;
-        ack_s.write(rt.our_id) catch break;
-        ack_s.objectField("payload") catch break;
-        ack_s.write(.{ .accepted = ok }) catch break;
-        ack_s.endObject() catch break;
-        _ = writeFrame(fd, rt.gpa, ack_out.written());
+        const decision = mesh.admit(rt.admission, rt.our_id, join_id, join_name, rt.seeds);
+        if (decision == .pending) {
+            if (enqueuePending(rt, join_id, join_name, header.id, stream)) return;
+            _ = writeJoinAck(rt, fd, header.id, false);
+            break;
+        }
+        const ok = decision == .accept;
+        _ = writeJoinAck(rt, fd, header.id, ok);
         if (!ok) break;
         rt.mu.lock();
         remember(rt, join_id, join_name, fd);
@@ -335,6 +458,8 @@ pub fn start(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, on_c
         .admission = std.meta.stringToEnum(mesh.Admission, cfg.mesh.admission) orelse .allowlist,
         .seeds = seeds,
         .max_frame = cfg.mesh.max_frame_bytes,
+        .max_pending = @min(cfg.mesh.max_pending_joins, 8),
+        .prompt_timeout_ns = @as(i64, cfg.mesh.prompt_timeout_seconds) * std.time.ns_per_s,
         .on_chat = on_chat,
         .server = server,
     };
@@ -411,7 +536,11 @@ pub fn join(gpa: std.mem.Allocator, address: []const u8) !void {
     rt.mu.lock();
     remember(rt, peer_from, peer_from, stream.socket.handle);
     rt.mu.unlock();
-    const arg = try gpa.create(Conn);
+    try spawnRead(rt, stream);
+}
+
+fn spawnRead(rt: *Runtime, stream: std.Io.net.Stream) !void {
+    const arg = try rt.gpa.create(Conn);
     arg.* = .{ .rt = rt, .stream = stream };
     const th = try std.Thread.spawn(.{}, struct {
         fn run(a: *Conn) void {
@@ -422,6 +551,101 @@ pub fn join(gpa: std.mem.Allocator, address: []const u8) !void {
         }
     }.run, .{arg});
     th.detach();
+}
+
+pub fn listenAddr() []const u8 {
+    const rt = runtime orelse return "";
+    return rt.listen;
+}
+
+pub fn admissionMode() []const u8 {
+    const rt = runtime orelse return "";
+    return switch (rt.admission) {
+        .allowlist => "allowlist",
+        .prompt => "prompt",
+        .open => "open",
+    };
+}
+
+pub fn ourId() []const u8 {
+    const rt = runtime orelse return "";
+    return rt.our_id;
+}
+
+pub fn leave(peer_id: []const u8) !void {
+    const rt = runtime orelse return error.MeshOff;
+    rt.mu.lock();
+    defer rt.mu.unlock();
+    if (peer_id.len == 0) {
+        for (&rt.members) |*m| {
+            if (!m.used) continue;
+            if (m.fd >= 0) {
+                writeLeave(rt, m.fd);
+                _ = std.c.close(m.fd);
+            }
+            m.* = .{};
+        }
+        return;
+    }
+    if (!forgetMemberLocked(rt, peer_id)) return error.NoSuchPeer;
+}
+
+pub const PendingRow = struct { id: []const u8, name: []const u8, age_s: i64 };
+
+pub fn pendingSnapshot(alloc: std.mem.Allocator) ![]const PendingRow {
+    const rt = runtime orelse return &.{};
+    rt.mu.lock();
+    defer rt.mu.unlock();
+    const now = nowNs(rt);
+    expirePendingLocked(rt, now);
+    var list: std.ArrayList(PendingRow) = .empty;
+    for (&rt.pending) |*p| {
+        if (!p.used) continue;
+        const age = @divTrunc(now - p.arrived_ns, std.time.ns_per_s);
+        try list.append(alloc, .{
+            .id = try alloc.dupe(u8, pid(p)),
+            .name = try alloc.dupe(u8, pname(p)),
+            .age_s = age,
+        });
+    }
+    return list.items;
+}
+
+pub fn resolvePending(id: []const u8, allow: bool) !void {
+    const rt = runtime orelse return error.MeshOff;
+    rt.mu.lock();
+    expirePendingLocked(rt, nowNs(rt));
+    const p = findPendingLocked(rt, id) orelse {
+        rt.mu.unlock();
+        return error.NoSuchPeer;
+    };
+    const stream = p.stream;
+    var id_buf: [64]u8 = undefined;
+    var name_buf: [64]u8 = undefined;
+    var ack_buf: [64]u8 = undefined;
+    const id_len = p.id_len;
+    const name_len = p.name_len;
+    const ack_len = p.ack_id_len;
+    @memcpy(id_buf[0..id_len], p.id[0..id_len]);
+    @memcpy(name_buf[0..name_len], p.name[0..name_len]);
+    @memcpy(ack_buf[0..ack_len], p.ack_id[0..ack_len]);
+    p.* = .{};
+    rt.mu.unlock();
+
+    const st = stream orelse return error.NoSuchPeer;
+    if (!allow) {
+        _ = writeJoinAck(rt, st.socket.handle, ack_buf[0..ack_len], false);
+        st.close(rt.io);
+        return;
+    }
+    _ = writeJoinAck(rt, st.socket.handle, ack_buf[0..ack_len], true);
+    rt.mu.lock();
+    remember(rt, id_buf[0..id_len], name_buf[0..name_len], st.socket.handle);
+    rt.mu.unlock();
+    spawnRead(rt, st) catch {
+        st.close(rt.io);
+        return error.JoinWrite;
+    };
 }
 
 pub const Row = struct { id: []const u8, name: []const u8, up: bool };
@@ -450,4 +674,11 @@ test "parseHostPort v4 and bracketed v6" {
     try std.testing.expectEqualStrings("::1", b.host);
     try std.testing.expectEqual(@as(u16, 9), b.port);
     try std.testing.expectError(error.BadAddress, parseHostPort("no-port"));
+}
+
+test "pendingTimedOut honors the prompt window" {
+    const timeout = 120 * std.time.ns_per_s;
+    try std.testing.expect(!pendingTimedOut(0, timeout - 1, timeout));
+    try std.testing.expect(pendingTimedOut(0, timeout, timeout));
+    try std.testing.expect(pendingTimedOut(1_000, 1_000 + timeout + 1, timeout));
 }

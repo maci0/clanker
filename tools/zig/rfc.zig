@@ -140,7 +140,7 @@ fn checklist(obj: std.json.Value, out: *lib.Out) !void {
     try s.objectField("next");
     try s.beginArray();
     try s.write("Answer each requirement from the request itself where you can; put the rest to the operator with ask_user rather than assuming.");
-    try s.write("A technical choice needs evidence first: research sweep, then fetch_web on what looks promising. A direction question needs alternative perspectives and the strongest case against your own recommendation instead.");
+    try s.write("A technical choice needs evidence first: research sweep, then web_fetch on what looks promising. A direction question needs alternative perspectives and the strongest case against your own recommendation instead.");
     try s.write("Then {\"action\":\"create\"} with a title and an overview; pass research when a note exists.");
     try s.endArray();
     try s.endObject();

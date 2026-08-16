@@ -1,4 +1,4 @@
-//! write_note: append a line to the persistent learnings file
+//! note_write: append a line to the persistent learnings file
 //! (state/learnings.md via sandbox fs prefix "state/").
 //! Input:  {"note": "..."}
 //! Output: {"ok": true}

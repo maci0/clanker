@@ -845,14 +845,14 @@ pub const ModulesFields = struct {
 /// default: a tool reaches a host only when its descriptor names it
 /// (`network_allow`) or the harness adds it from config (`network_from_config`).
 /// This section is the config side of that second channel for the web/research
-/// tools: every host listed here is added to `fetch_web` and `web_search`'s
+/// tools: every host listed here is added to `web_fetch` and `web_search`'s
 /// allowlists at load, so granting a research site is a config edit, not a
 /// manifest edit.
 pub const Web = struct {
     /// Hostnames (no scheme, no path, matched against the URL's host) the
     /// research tools may reach. Default empty: out of the box the sandbox
     /// still lets a tool reach only its own `network_allow` hosts, which for
-    /// `fetch_web` is a small static set. Adding a host here widens research
+    /// `web_fetch` is a small static set. Adding a host here widens research
     /// without touching any manifest.
     allow: []const []const u8 = &.{},
 };

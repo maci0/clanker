@@ -1,0 +1,7 @@
+{
+  "name": "compare",
+  "title": "Compare",
+  "description": "Past blind model comparisons, opened one at a time. Starting a comparison stays on the terminal.",
+  "group": "Watch",
+  "capabilities": ["get", "post", "confirm"]
+}

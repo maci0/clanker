@@ -1,0 +1,39 @@
+{
+  "name": "goal_write",
+  "description": "Turn a rough natural-language intent into a structured goal draft without consulting a model. Inspects state/goals.json for an already-open goal first, asks up to 4 material questions (via ask_user, or records assumptions when headless), and returns BOTH a machine-readable record and a readable markdown rendering. Draft-only: never persists, never starts a run, never calls goal.",
+  "llm_description": "Draft a goal from a rough intent: {intent:'...', max_questions?:1..4, parent?:bool}. Checks state/goals.json for an existing open goal covering the intent and reports it instead of duplicating; otherwise asks only the material (open) forks and returns {ok, duplicate, existing_goal_id, record:{objective,completion_criteria,verification,boundaries,execution_loop,stop_rules,assumptions,unresolved_questions}, markdown}. It neither persists the goal nor starts a run \u2014 persist an explicitly chosen structured goal with goal_add as a separate step.",
+  "wasm": "zig-out/tools/write_goal.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "intent": {
+        "type": "string",
+        "description": "The rough natural-language goal intent. Required."
+      },
+      "max_questions": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 4,
+        "default": 4,
+        "description": "Interview budget: how many material questions to ask (1-4)."
+      },
+      "parent": {
+        "type": "boolean",
+        "default": false,
+        "description": "Route questions to the parent agent (sub-agent runs) instead of the human."
+      }
+    },
+    "required": [
+      "intent"
+    ]
+  },
+  "sequential": true,
+  "tool_call": true,
+  "tool_allow": [
+    "ask_user"
+  ],
+  "fs_prefixes": [
+    "state/goals.json"
+  ],
+  "category": "agent"
+}

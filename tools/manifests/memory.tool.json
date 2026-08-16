@@ -72,5 +72,5 @@
     "state/knowledge"
   ],
   "wasm": "zig-out/tools/memory.wasm",
-  "category": "agent"
+  "category": "knowledge"
 }

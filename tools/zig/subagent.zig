@@ -1,7 +1,7 @@
 //! subagent: delegate a task to a nested sub-agent run (separate context,
 //! bounded iterations). Returns the sub-agent's final answer.
-//! Input:  {"task": "...", "context": ["..."], "files": ["src/x.zig"], "provider": "kimi-k3"}
-//! Output: {"ok": true, "text": "<sub-agent answer>"}
+//! Input:  {"task": "...", "context": ["..."], "files": ["src/x.zig"], "provider": "kimi-k3", "background": false}
+//! Output: {"ok": true, "text": "<sub-agent answer>"} or {"ok":true,"job":"...","status":"running"}
 
 const std = @import("std");
 const lib = @import("lib.zig");

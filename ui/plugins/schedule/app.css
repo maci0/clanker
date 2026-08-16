@@ -1,0 +1,60 @@
+/* Schedule view — was a built-in; lives here so it is not part of app.wasm. */
+
+.schedule-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-2);
+  box-shadow: none;
+}
+.schedule-entry[data-paused="true"] { border-style: dashed; }
+.schedule-entry[data-paused="true"] .schedule-cron { text-decoration: line-through; }
+.schedule-entry-head,
+.schedule-entry-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  flex-wrap: wrap;
+}
+.schedule-id { font-size: 12px; color: var(--fg-muted); }
+.schedule-cron {
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+.schedule-task { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.schedule-status[data-state="ok"] { color: var(--ok, #2fae4d); }
+.schedule-status[data-state="error"] { color: var(--danger, #d33); }
+.schedule-next { margin-right: auto; }
+.schedule-toggle { align-self: flex-start; }
+.schedule-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.schedule-log-row {
+  display: grid;
+  grid-template-columns: 6rem 6rem 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+.schedule-log-row[data-state="error"] { color: var(--danger, #d33); }
+
+@media (max-width: 40rem) {
+  .schedule-log-row {
+    grid-template-columns: minmax(5rem, auto) 1fr;
+  }
+  .schedule-log-row > :last-child {
+    grid-column: 1 / -1;
+  }
+}

@@ -36,6 +36,7 @@ extern fn ck_debug(req_ptr: u32, req_len: u32) u32;
 extern fn ck_llm(prompt_ptr: u32, prompt_len: u32) u32;
 extern fn ck_llm_many(req_ptr: u32, req_len: u32) u32;
 extern fn ck_chat(op_ptr: u32, op_len: u32) u32;
+extern fn ck_publish(ptr: u32, len: u32) u32;
 extern fn ck_stats() u32;
 extern fn ck_config() u32;
 extern fn ck_harness_config() u32;
@@ -43,6 +44,7 @@ extern fn ck_result() u64;
 extern fn ck_std_api(sym_ptr: u32, sym_len: u32) u32;
 extern fn ck_tool(ptr: u32, len: u32) u32;
 extern fn ck_subagent(json_ptr: u32, json_len: u32) u32;
+extern fn ck_job(json_ptr: u32, json_len: u32) u32;
 extern fn ck_swarm(json_ptr: u32, json_len: u32) u32;
 extern fn ck_ask(json_ptr: u32, json_len: u32) u32;
 extern fn ck_random() u64;
@@ -347,6 +349,18 @@ pub fn subagentBriefed(input: []const u8, task: []const u8, provider: ?[]const u
     };
 }
 
+/// Background job control (ck_job). Privileged: the jobs and subagent guests.
+pub fn job(req: []const u8) FsError![]const u8 {
+    const p = sliceToMem(req);
+    const rc = ck_job(p.ptr, p.len);
+    return switch (rc) {
+        0 => readResult() orelse error.IoError,
+        1 => error.SandboxDenied,
+        2 => error.NotFound,
+        else => error.IoError,
+    };
+}
+
 /// Fans a batch of tasks out to concurrent sub-agents, forwarding the
 /// caller's whole input object ("tasks", "provider") untouched — the host
 /// parses it directly, so re-encoding here would only be a chance to drop a
@@ -475,6 +489,20 @@ pub fn chat(req: []const u8) HostError![]const u8 {
     return hostResult(rc);
 }
 
+/// Post `payload` (a JSON value) onto the serve live bus as a plugin event.
+/// Requires `"live_publish": true` in this tool's descriptor; denied otherwise.
+/// The host stamps `t` and `from`; the guest cannot pick chat/run/metrics.
+pub fn publish(payload: []const u8) HostError!void {
+    const p = sliceToMem(payload);
+    const rc = ck_publish(p.ptr, p.len);
+    switch (rc) {
+        0 => {},
+        1 => return error.SandboxDenied,
+        3 => return error.TooLarge,
+        else => return error.InvalidArg,
+    }
+}
+
 /// Aggregated global token usage per provider/model (host-side aggregation
 /// over state/token_stats.jsonl). Requires the token_stats module.
 pub fn stats() HostError![]const u8 {
@@ -513,6 +541,16 @@ pub fn llmWith(prompt: []const u8, provider: ?[]const u8, max_tokens: u32) HostE
     return hostResult(rc);
 }
 
+/// Optional fields for `llmCall`. A null provider/model keeps the
+/// descriptor's defaults; 0 max_tokens does the same.
+pub const LlmCall = struct {
+    system: ?[]const u8 = null,
+    prompt: []const u8,
+    provider: ?[]const u8 = null,
+    model: ?[]const u8 = null,
+    max_tokens: u32 = 0,
+};
+
 /// Like `llmWith`, plus a system message prepended to the call — the shape a
 /// role-played call needs (`arena`'s combatants layer a persona there, not into
 /// the user turn, so the position under debate stays the only thing in it).
@@ -522,23 +560,33 @@ pub fn llmWith(prompt: []const u8, provider: ?[]const u8, max_tokens: u32) HostE
 /// `error.TooLarge` on a prompt the provider would have accepted is the kind of
 /// failure that reads as a provider problem.
 pub fn llmSystem(system: ?[]const u8, prompt: []const u8, provider: ?[]const u8, max_tokens: u32) HostError![]const u8 {
+    return llmCall(.{ .system = system, .prompt = prompt, .provider = provider, .max_tokens = max_tokens });
+}
+
+/// Same request as `llmSystem`, plus an optional model override. `ck_llm`
+/// already accepts `"model"`; this is the guest helper that sends it.
+pub fn llmCall(opts: LlmCall) HostError![]const u8 {
     var w: std.Io.Writer.Allocating = .init(alloc);
     defer w.deinit();
     var s = std.json.Stringify{ .writer = &w.writer, .options = .{ .emit_null_optional_fields = false } };
     s.beginObject() catch return error.TooLarge;
     s.objectField("prompt") catch return error.TooLarge;
-    s.write(prompt) catch return error.TooLarge;
-    if (system) |sys| if (sys.len > 0) {
+    s.write(opts.prompt) catch return error.TooLarge;
+    if (opts.system) |sys| if (sys.len > 0) {
         s.objectField("system") catch return error.TooLarge;
         s.write(sys) catch return error.TooLarge;
     };
-    if (provider) |p| if (p.len > 0) {
+    if (opts.provider) |p| if (p.len > 0) {
         s.objectField("provider") catch return error.TooLarge;
         s.write(p) catch return error.TooLarge;
     };
-    if (max_tokens > 0) {
+    if (opts.model) |m| if (m.len > 0) {
+        s.objectField("model") catch return error.TooLarge;
+        s.write(m) catch return error.TooLarge;
+    };
+    if (opts.max_tokens > 0) {
         s.objectField("max_tokens") catch return error.TooLarge;
-        s.write(max_tokens) catch return error.TooLarge;
+        s.write(opts.max_tokens) catch return error.TooLarge;
     }
     s.endObject() catch return error.TooLarge;
 
@@ -598,7 +646,7 @@ pub const ConfigSource = struct { name: []const u8, text: []const u8 };
 /// matching src/config.zig. Returns null when the file doesn't exist, so a
 /// config layer that simply isn't there (e.g. no local override) is a normal
 /// skip, not an error. For structured fields prefer `harnessConfig()`; this
-/// is for tools that need the raw file bytes (config_view's dump).
+/// is for tools that need the raw file bytes (config's dump).
 pub fn readConfigFile(comptime stem: []const u8) ?ConfigSource {
     if (fsRead(stem ++ ".toml") catch null) |t| return .{ .name = stem ++ ".toml", .text = t };
     return null;

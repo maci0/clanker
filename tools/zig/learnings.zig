@@ -1,5 +1,5 @@
 //! learnings: read the persisted learnings file (state/learnings.md) so the
-//! agent can recall what it already learned (write_note is write-only today).
+//! agent can recall what it already learned (note_write is write-only today).
 //! Input:  {}
 //! Output: {"ok": true, "text": "<learnings>"}
 

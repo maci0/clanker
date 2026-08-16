@@ -50,6 +50,8 @@ const phonebook = @import("peers/phonebook.zig");
 const mesh = @import("peers/mesh.zig");
 const mesh_net = @import("serve/mesh_net.zig");
 const live = @import("serve/live.zig");
+const skills_logic = @import("skills_logic");
+const providers_logic = @import("providers_logic");
 const doctor_mod = @import("doctor.zig");
 const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
@@ -66,7 +68,6 @@ const reports_cmd = @import("reports/command.zig");
 const proxy = @import("serve/proxy.zig");
 const schedule_runner = @import("schedule/runner.zig");
 const schedule_store = @import("schedule/store.zig");
-const schedule_cron = @import("schedule/cron.zig");
 
 // Web UI vendor assets: served as plain static files (not routed through the
 // WASM "webui" tool, its shared output buffer, lib.zig's out_cap, is 64 KiB,
@@ -98,6 +99,8 @@ pub const Command = enum {
     sessions,
     /// `session export <id>`: one conversation as a self-contained HTML file.
     session_export,
+    /// `session search <query>`: linear scan of saved transcripts.
+    session_search,
     tools_list,
     eval,
     improve_self,
@@ -322,7 +325,7 @@ pub const Options = struct {
     schedule_arg2: ?[]const u8 = null,
     /// `schedule add --tz-offset`: minutes east of UTC the cron fields are
     /// read at, written `+02:00`, `-05:00`, `UTC` or a plain minute count.
-    /// Fixed, never a DST-aware zone, see src/schedule/cron.zig.
+    /// Fixed, never a DST-aware zone, see tools/zig/schedule_cron.zig.
     schedule_tz: ?[]const u8 = null,
     /// `reports <sub> [args...]`: "search" takes a query, "open" a path,
     /// "create" a kind, slug, title and summary, "append" a path and markdown,
@@ -856,6 +859,9 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             } else if (opts.command == .chat and sub.len == 0 and (std.mem.eql(u8, a, "send") or std.mem.eql(u8, a, "history") or std.mem.eql(u8, a, "rooms") or std.mem.eql(u8, a, "subscribe"))) {
                 opts.chat_sub = a;
                 pending_sub = null; // sub consumed; next tokens are room etc.
+            } else if (opts.command == .session_export and std.mem.eql(u8, a, "search")) {
+                opts.command = .session_search;
+                pending_sub = null;
             } else {
                 setDiag(diag, a);
                 if (cmd_out) |c| c.* = opts.command;
@@ -881,6 +887,8 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             opts.session = a;
         } else if (opts.command == .session_export and opts.session_out == null) {
             opts.session_out = a;
+        } else if (opts.command == .session_search and opts.task == null) {
+            opts.task = a;
         } else if (opts.command == .run and opts.task == null) {
             opts.task = a;
         } else if (opts.command == .graph and opts.task == null) {
@@ -1043,6 +1051,10 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
     }
     if (opts.command == .session_export and opts.session == null) {
         setDiag(diag, "conversation id");
+        return error.MissingArg;
+    }
+    if (opts.command == .session_search and opts.task == null) {
+        setDiag(diag, "query");
         return error.MissingArg;
     }
     if (opts.session) |sid| {
@@ -1719,8 +1731,8 @@ const specs = [_]Spec{
     .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal, .worktree }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
     .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
     .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model }, .detail = "Starts work immediately, then evaluates every completed agent turn\nagainst the supplied condition and continues until achieved, blocked,\nor the goal-turn budget ends. It does not require a write-goal draft\nor an added goal. Use `add-goal` when you want to persist a goal for a\nlater `run --goal <id>`, and `write-goal` when you only want a\nstructured draft." },
-    .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the write_goal tool directly and prints a reviewable draft. It\nnever writes state/goals.json or starts an agent run." },
-    .{ .command = .add_goal, .usage = "add-goal \"<objective>\" \"<completion criterion>\"", .blurb = "persist a goal without running it", .group = .work, .detail = "Calls the add_goal tool directly. It writes the supplied structured goal\nto state/goals.json and prints its id, but never starts work. Run it\nlater with `clanker run --goal <id>` or from the goal board. Use\n`write-goal` first if you need help drafting the two fields." },
+    .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the goal_write tool directly and prints a reviewable draft. It\nnever writes state/goals.json or starts an agent run." },
+    .{ .command = .add_goal, .usage = "add-goal \"<objective>\" \"<completion criterion>\"", .blurb = "persist a goal without running it", .group = .work, .detail = "Calls the goal_add tool directly. It writes the supplied structured goal\nto state/goals.json and prints its id, but never starts work. Run it\nlater with `clanker run --goal <id>` or from the goal board. Use\n`write-goal` first if you need help drafting the two fields." },
     .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--iters <n>        cap the number of attempts (default 3)\n--dry-run          propose changes without applying them" },
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
@@ -1731,6 +1743,7 @@ const specs = [_]Spec{
 
     .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect, .detail = "Also reachable as `clanker history`.\n\nLists every conversation in state/sessions, newest last. To resume one:\n  clanker run --session <id> \"continue where we left off\"\n  clanker repl --session <id>\nTo export one as a standalone HTML file:\n  clanker session export <id>" },
     .{ .command = .session_export, .usage = "session export <id> [path]", .blurb = "write one conversation as a self-contained HTML file", .group = .inspect, .detail = "Writes state/exports/<id>.html unless a path is given. One file, no scripts and\nno external stylesheet, font or image, so it opens straight from file:// with no\nnetwork. Session text is model and tool output, so every field is HTML-escaped\non the way in; markup in a transcript renders as the characters that were typed.\n\nThere is deliberately no upload and no public URL. Sharing is copying the file." },
+    .{ .command = .session_search, .usage = "session search <query>", .blurb = "find saved conversations containing a substring", .group = .inspect, .detail = "Linear scan of state/sessions, newest first. Min 3 characters.\nResume a hit: clanker repl --session <id>" },
     .{ .command = .graph, .usage = "graph [run-id]", .blurb = "list runs, or draw one as a timeline", .group = .inspect, .detail = "With no argument, lists recorded runs (newest last). With a run id, renders\nthe execution graph as an ASCII timeline of LLM calls and tool invocations.\nThe web UI (clanker serve) shows the same graph interactively." },
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
     .{ .command = .tools_list, .usage = "tools [list]", .blurb = "list the registered WASM tools", .group = .inspect },
@@ -1800,6 +1813,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .run => try cmdRun(init, opts),
         .sessions => try cmdSessions(init),
         .session_export => try cmdSessionExport(init, opts),
+        .session_search => try cmdSessionSearch(init, opts),
         .tools_list => try cmdToolsList(init, opts),
         .eval => try cmdEval(init, opts),
         .improve_self => try cmdImproveSelf(init, opts),
@@ -2889,7 +2903,8 @@ fn httpGetTask(
 /// `clanker autolearn`, review usage observations, refresh the roadmap
 /// Autolearn section, and print the generated items. The aggregate-and-write
 /// logic lives in the autolearn tool (fs-scoped archive/read/aggregate/write,
-/// same shape as roadmap/history/learnings); this just runs it and reports.
+/// same shape as roadmap/history/learnings); `--model` is the same guest
+/// via `ck_llm`. This just builds the request and reports.
 fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
@@ -2901,131 +2916,50 @@ fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
         return error.ModuleDisabled;
     }
     const out = std.Io.File.stdout();
-    const input = if (opts.autolearn_reset) "{\"reset\":true}" else "{}";
-    const raw = try toolJson(io, gpa, arena, &cfg, init.environ_map, "autolearn", input);
+    var input_buf: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &input_buf.writer, .options = .{} };
+    try s.beginObject();
+    if (opts.autolearn_reset) {
+        try s.objectField("reset");
+        try s.write(true);
+    }
+    if (opts.model != null or opts.provider != null) {
+        const p = try resolveProvider(&cfg, opts);
+        try s.objectField("provider");
+        try s.write(p.name);
+        if (p.default_model.len > 0) {
+            try s.objectField("model");
+            try s.write(p.default_model);
+        }
+    }
+    try s.endObject();
+    const raw = try toolJson(io, gpa, arena, &cfg, init.environ_map, "autolearn", input_buf.written());
     const result = try std.json.parseFromSliceLeaky(struct {
         ok: bool = false,
         text: []const u8 = "",
+        synthesized: []const u8 = "",
         notice: []const u8 = "",
+        @"error": []const u8 = "",
     }, arena, raw, .{ .ignore_unknown_fields = true });
-    if (!result.ok) return error.ToolFailed;
+    if (!result.ok) {
+        if (result.@"error".len > 0) {
+            var stderr_buf: [512]u8 = undefined;
+            var stderr = std.Io.File.stderr().writer(io, &stderr_buf);
+            try stderr.interface.print("autolearn: {s}\n", .{result.@"error"});
+            try stderr.interface.flush();
+        }
+        return error.ToolFailed;
+    }
     if (result.notice.len > 0) {
         try out.writeStreamingAll(io, result.notice);
         try out.writeStreamingAll(io, "\n");
     }
     try out.writeStreamingAll(io, "Autolearn section updated in docs/ROADMAP.md\n\n");
     try out.writeStreamingAll(io, result.text);
-    if (opts.model != null or opts.provider != null) {
-        const synthesized = try autolearnSynthesize(init, opts, &cfg, arena, result.text);
-        try upsertRoadmapSection(io, arena, synthesized);
+    if (result.synthesized.len > 0) {
         try out.writeStreamingAll(io, "\n\nAutolearn section rewritten by the model.\n\n");
-        try out.writeStreamingAll(io, synthesized);
+        try out.writeStreamingAll(io, result.synthesized);
     }
-}
-
-/// `clanker autolearn --model <m>` — the deterministic aggregation above is
-/// re-synthesized by the chosen model: it reviews the raw observations and the
-/// mechanical draft, and returns a refined "## Autolearn" section. A WASM guest
-/// cannot call the LLM, so this pass is native; it does not touch the tool's
-/// deterministic aggregation, only overlays the model's write.
-fn autolearnSynthesize(
-    init: std.process.Init,
-    opts: Options,
-    cfg: *const config.Config,
-    arena: std.mem.Allocator,
-    mechanical: []const u8,
-) ![]const u8 {
-    const io = init.io;
-    const gpa = init.gpa;
-
-    // Feed a bounded tail of the raw observation log so a long history does
-    // not blow the prompt; only whole lines, so JSON fragments are never cut.
-    const raw = std.Io.Dir.cwd().readFileAlloc(io, "state/autolearn.jsonl", arena, .limited(1 << 20)) catch "";
-    const observations = lastLines(raw, 64 * 1024);
-    if (observations.len == 0) return error.NoObservations;
-
-    var ctx = client.Ctx{
-        .io = io,
-        .gpa = gpa,
-        .environ_map = init.environ_map,
-        .cfg = cfg,
-    };
-    const provider = try arena.create(config.Provider);
-    provider.* = try resolveProvider(cfg, opts);
-
-    const sys =
-        \\You are the autolearn synthesizer for the clanker agent harness. You
-        \\review raw usage observations from past runs and write an actionable
-        \\"## Autolearn" section for docs/ROADMAP.md: a short intro sentence
-        \\followed by a bullet list of concrete improvement items, each a
-        \\`- [ ]` checkbox whose title captures the change and whose one-line
-        \\body explains the observed reason. Ground every item in the
-        \\observations; do not invent work. Return ONLY the markdown section,
-        \\beginning with the "## Autolearn" heading.
-    ;
-    const user = std.fmt.allocPrint(arena,
-        \\Raw observations (state/autolearn.jsonl, tail):
-        \\```text
-        \\{s}
-        \\```
-        \\
-        \\Current deterministic aggregation:
-        \\```markdown
-        \\{s}
-        \\```
-        \\
-        \\Rewrite and refine the "## Autolearn" section. Keep what the
-        \\deterministic pass got right, fold in anything it missed, and return
-        \\the finished markdown section only, starting with the "## Autolearn"
-        \\heading.
-    , .{ observations, mechanical }) catch return error.OutOfMemory;
-    const messages = [_]types.Message{
-        .{ .role = .system, .content = sys },
-        .{ .role = .user, .content = user },
-    };
-
-    var err_detail: ?[]const u8 = null;
-    const resp = client.chat(&ctx, arena, .{
-        .provider = provider,
-        .messages = &messages,
-        .max_tokens = 2500,
-    }, &err_detail) catch |err| {
-        var stderr_buf: [512]u8 = undefined;
-        var stderr = std.Io.File.stderr().writer(io, &stderr_buf);
-        try stderr.interface.print(
-            "autolearn: model synthesis failed ({s})\n",
-            .{err_detail orelse @errorName(err)},
-        );
-        try stderr.interface.flush();
-        return error.ModelSynthesisFailed;
-    };
-    return resp.message.content orelse return error.EmptySynthesis;
-}
-
-/// The tail of `s` bounded to at most `max_bytes`, aligned to a line boundary
-/// (a leading partial line is dropped so only whole lines are fed).
-fn lastLines(s: []const u8, max_bytes: usize) []const u8 {
-    if (s.len <= max_bytes) return s;
-    const start = s.len - max_bytes;
-    const first_nl = std.mem.find(u8, s[start..], "\n") orelse return s[start..];
-    return s[start + first_nl + 1 ..];
-}
-
-/// Replaces any existing "## Autolearn" section in docs/ROADMAP.md (from the
-/// marker to EOF, since it is always the last section) with `section`, or
-/// appends it. Mirrors the autolearn tool's upsert so the model's write lands
-/// in the same place.
-fn upsertRoadmapSection(io: std.Io, arena: std.mem.Allocator, section: []const u8) !void {
-    const cwd = std.Io.Dir.cwd();
-    const existing = cwd.readFileAlloc(io, "docs/ROADMAP.md", arena, .limited(1 << 22)) catch "";
-    const marker = "## Autolearn";
-    var out: []const u8 = undefined;
-    if (std.mem.find(u8, existing, marker)) |idx| {
-        out = try std.mem.concat(arena, u8, &.{ existing[0..idx], section });
-    } else {
-        out = try std.mem.concat(arena, u8, &.{ existing, "\n\n", section });
-    }
-    try atomic_write.writeFile(io, cwd, "docs/ROADMAP.md", out);
 }
 
 // ---------------------------------------------------------------------- run --
@@ -3719,7 +3653,7 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
         };
         log.log(.info, "goal loop {s} after {d} turn(s): {s}", .{ @tagName(outcome.verdict), outcome.turns, outcome.reason });
         if (resolved_task.goal_id) |gid| {
-            recordGoalLoopOutcome(io, init.gpa, std.Io.Dir.cwd(), gid, outcome);
+            recordGoalLoopOutcome(io, init.gpa, arena, &cfg, init.environ_map, gid, outcome);
         }
     } else {
         const turn_start = std.Io.Timestamp.now(io, .awake);
@@ -3761,7 +3695,7 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
         // An ordinary goal-steered run is a one-turn review candidate. A
         // real explicit `--goal` loop is handled above and distinguishes
         // achieved from blocked instead of unconditionally parking here.
-        if (resolved_task.goal_id) |gid| setGoalStatusIf(io, init.gpa, std.Io.Dir.cwd(), gid, "active", "review");
+        if (resolved_task.goal_id) |gid| setGoalStatusIf(io, init.gpa, arena, &cfg, init.environ_map, gid, "active", "review");
     }
 
     if (opts.session) |sid| {
@@ -4421,6 +4355,32 @@ fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
     }
     const line = try std.fmt.allocPrint(arena, "wrote {s} ({d} messages, {d} bytes)\n", .{ path, result.messages, result.bytes });
     try writeStdOut(io, line);
+}
+
+fn cmdSessionSearch(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    if (!cfg.modules.sessions) return error.ModuleDisabled;
+    const q = std.mem.trim(u8, opts.task orelse return error.MissingArg, " \t\r\n");
+    if (q.len < session_search_min_len) {
+        const msg = try std.fmt.allocPrint(arena, "query must be at least {d} characters\n", .{session_search_min_len});
+        try writeStdOut(io, msg);
+        return;
+    }
+    const hits = session.searchSessions(io, arena, std.Io.Dir.cwd(), q, session_search_limit) catch {
+        return error.ToolFailed;
+    };
+    if (hits.len == 0) {
+        try writeStdOut(io, "no conversations matched\n");
+        return;
+    }
+    var buf: std.Io.Writer.Allocating = .init(arena);
+    for (hits) |h| {
+        try buf.writer.print("{s}\t{s}\tturn {d}\t{s}\n", .{ h.id, h.title, h.turn, h.snippet });
+    }
+    try buf.writer.print("resume: clanker repl --session <id>\n", .{});
+    try writeStdOut(io, buf.written());
 }
 
 /// `clanker graph [run-id]`, list persisted execution graphs, or render one
@@ -5264,7 +5224,7 @@ fn cmdWriteGoal(init: std.process.Init, opts: Options) !void {
     if (!cfg.modules.goal) return error.ModuleDisabled;
     const intent = opts.task orelse return error.MissingTask;
     const input = try std.fmt.allocPrint(arena, "{{\"intent\":{f}}}", .{std.json.fmt(intent, .{})});
-    const raw = try toolJson(io, init.gpa, arena, &cfg, init.environ_map, "write_goal", input);
+    const raw = try toolJson(io, init.gpa, arena, &cfg, init.environ_map, "goal_write", input);
     const result = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return error.ToolFailed;
     if (result != .object) return error.ToolFailed;
     const ok = result.object.get("ok") orelse return error.ToolFailed;
@@ -5280,7 +5240,7 @@ fn cmdWriteGoal(init: std.process.Init, opts: Options) !void {
 }
 
 /// `clanker add-goal <objective> <completion criterion>` persists a goal
-/// through the sandboxed add_goal tool and stops there. Execution is a
+/// through the sandboxed goal_add tool and stops there. Execution is a
 /// separate explicit choice: `clanker run --goal <id>` or the goal board.
 fn cmdAddGoal(init: std.process.Init, opts: Options) !void {
     const io = init.io;
@@ -5299,7 +5259,7 @@ fn cmdAddGoal(init: std.process.Init, opts: Options) !void {
     try s.write(completion);
     try s.endObject();
 
-    const raw = try toolJson(io, init.gpa, arena, &cfg, init.environ_map, "add_goal", input.written());
+    const raw = try toolJson(io, init.gpa, arena, &cfg, init.environ_map, "goal_add", input.written());
     const result = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return error.ToolFailed;
     if (result != .object) return error.ToolFailed;
     const ok = result.object.get("ok") orelse return error.ToolFailed;
@@ -6046,6 +6006,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             std.mem.eql(u8, path, "/webui/import-map.json") or
             std.mem.eql(u8, path, "/webui/vendor/preact.module.js") or std.mem.eql(u8, path, "/webui/vendor/htm.module.js") or std.mem.eql(u8, path, "/webui/vendor/signals-core.module.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
+            std.mem.startsWith(u8, path, "/webui/themes/") or
+            std.mem.startsWith(u8, path, "/webui/commands/") or
             std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js") or
             std.mem.eql(u8, path, "/webui/vendor/mermaid.min.js") or
             std.mem.eql(u8, path, "/webui/vendor/three.module.min.js") or
@@ -6057,6 +6019,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_peers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/peers");
         const is_mesh_map = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/mesh/map");
         const is_events = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/events");
+        const is_live_publish = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/live");
         const is_mesh_join = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/mesh/join");
         const is_mesh_status = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/mesh/status");
         const is_chat_message = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/message");
@@ -6073,7 +6036,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/stats");
         const is_metrics = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/metrics");
         const is_plugins = std.mem.eql(u8, path, "/api/plugins") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
-        const is_skills = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/skills");
+        const is_skills = std.mem.eql(u8, path, "/api/skills") and
+            (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_workflows = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/workflows");
         const is_goals = std.mem.eql(u8, path, "/api/goals") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
@@ -6088,6 +6052,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_webui_plugin_asset = std.mem.eql(u8, method, "GET") and
             std.mem.startsWith(u8, path, "/webui/plugins/");
+        const is_webui_theme_asset = std.mem.eql(u8, method, "GET") and
+            std.mem.startsWith(u8, path, "/webui/themes/");
+        const is_webui_command_asset = std.mem.eql(u8, method, "GET") and
+            std.mem.startsWith(u8, path, "/webui/commands/");
         const is_files = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/files");
         const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/logs");
         const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/plugins/config");
@@ -6163,6 +6131,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             }
             request_keep_alive = false;
             live.serveSse(stream.socket.handle, live.topicsFromTarget(target));
+        } else if (is_live_publish) {
+            handleLivePublish(gpa, body, stream);
         } else if (is_mesh_map) {
             handleMeshMap(io, gpa, cfg, stream);
         } else if (is_mesh_status) {
@@ -6178,7 +6148,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (std.mem.startsWith(u8, path, "/api/sessions") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "DELETE")))
         {
-            handleSessions(io, gpa, cfg, method, target, body, acceptsGzip(headers_raw), stream);
+            handleSessions(io, gpa, cfg, environ_map, method, target, body, acceptsGzip(headers_raw), stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify")) {
             handleNotify(io, gpa, body, stream);
         } else if (is_chat_message) {
@@ -6230,7 +6200,9 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_plugins) {
             handlePlugins(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_skills) {
-            handleSkills(io, gpa, cfg, acceptsGzip(headers_raw), stream);
+            handleSkills(io, gpa, cfg, environ_map, method, body, stream);
+        } else if (std.mem.eql(u8, path, "/api/feedback")) {
+            handleFeedback(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_workflows) {
             handleWorkflows(io, gpa, cfg, environ_map, stream);
         } else if (is_goals) {
@@ -6251,6 +6223,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleWebuiPlugins(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_webui_plugin_asset) {
             handleWebuiPluginAsset(io, gpa, cfg, environ_map, path, acceptsGzip(headers_raw), stream);
+        } else if (is_webui_theme_asset) {
+            handleWebuiThemeAsset(io, gpa, path, acceptsGzip(headers_raw), stream);
+        } else if (is_webui_command_asset) {
+            handleWebuiCommandAsset(io, gpa, path, acceptsGzip(headers_raw), stream);
         } else if (is_files) {
             handleFiles(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (is_logs) {
@@ -6262,7 +6238,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (std.mem.startsWith(u8, path, "/api/arena")) {
             handleArena(io, gpa, cfg, environ_map, method, path, stream);
         } else if (std.mem.startsWith(u8, path, "/api/schedule")) {
-            handleSchedule(io, gpa, method, path, body, stream);
+            handleSchedule(io, gpa, cfg, environ_map, method, path, body, stream);
         } else if (std.mem.startsWith(u8, path, "/api/compare")) {
             handleCompare(io, gpa, cfg, environ_map, method, path, body, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message")) {
@@ -7139,17 +7115,18 @@ fn recordHttpRequest(status: u16, duration_ms: u64) void {
     if (duration_ms <= 100) _ = http_latency_le_100ms.fetchAdd(1, .monotonic);
     if (duration_ms <= 1000) _ = http_latency_le_1s.fetchAdd(1, .monotonic);
     if (duration_ms <= 10_000) _ = http_latency_le_10s.fetchAdd(1, .monotonic);
+    publishMetricsSnapshot();
 }
 
-/// Process-local RED and saturation signals. Counters intentionally have no
-/// path, request-id, provider, or model labels, keeping cardinality and storage
-/// bounded; detailed diagnosis remains in the correlated completion logs.
-fn handleHttpMetrics(stream: std.Io.net.Stream) void {
+var last_metrics_pub_ms = std.atomic.Value(i64).init(0);
+
+/// Same JSON as `GET /api/metrics`, plus `"t":"metrics"` so a live-bus
+/// subscriber can tell the snapshot from chat/run events.
+fn metricsSnapshot(buf: []u8) ?[]const u8 {
     const llm = client.snapshotMetrics();
     const tools = agent.snapshotToolMetrics();
     const schedule = schedule_runner.snapshotScheduleMetrics();
-    var buf: [2048]u8 = undefined;
-    const body = std.fmt.bufPrint(&buf, "{{\"ok\":true,\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}}}}", .{
+    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}}}}", .{
         http_requests_total.load(.monotonic),
         http_errors_total.load(.monotonic),
         http_client_errors_total.load(.monotonic),
@@ -7167,7 +7144,67 @@ fn handleHttpMetrics(stream: std.Io.net.Stream) void {
         tools.errors_total,
         schedule.fires_total,
         schedule.errors_total,
-    }) catch {
+    }) catch null;
+}
+
+fn publishMetricsSnapshot() void {
+    var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
+    _ = std.c.clock_gettime(.REALTIME, &ts);
+    const now: i64 = @intCast(@as(i128, ts.sec) * 1000 + @divTrunc(@as(i128, ts.nsec), 1_000_000));
+    const prev = last_metrics_pub_ms.load(.monotonic);
+    if (now - prev < 1000) return;
+    if (last_metrics_pub_ms.cmpxchgStrong(prev, now, .monotonic, .monotonic) != null) return;
+    var buf: [2048]u8 = undefined;
+    const body = metricsSnapshot(&buf) orelse return;
+    live.noteMetrics(body);
+}
+
+/// Process-local RED and saturation signals. Counters intentionally have no
+/// path, request-id, provider, or model labels, keeping cardinality and storage
+/// bounded; detailed diagnosis remains in the correlated completion logs.
+/// `{from, data}` for `POST /api/live`. `from` is a plugin/tool slug;
+/// `data` is any JSON value. Null means the body is not that shape.
+fn livePublishFromBody(arena: std.mem.Allocator, body: []const u8) ?struct { from: []const u8, data: []const u8 } {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return null;
+    if (parsed != .object) return null;
+    const from = json_util.strFieldOrNull(parsed.object, "from") orelse return null;
+    if (!validPluginName(from)) return null;
+    const data_v = parsed.object.get("data") orelse return null;
+    var w: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &w.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.write(data_v) catch return null;
+    const data = w.written();
+    if (data.len == 0 or data.len > live.event_cap / 2) return null;
+    return .{ .from = from, .data = data };
+}
+
+fn handleLivePublish(gpa: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const parsed = livePublishFromBody(arena_state.allocator(), body) orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"expected {from, data}\"}");
+        return;
+    };
+    live.notePlugin(parsed.from, parsed.data);
+    respond(stream, 200, "OK", "{\"ok\":true}");
+}
+
+test "livePublishFromBody requires a slug from and JSON data" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const ok = livePublishFromBody(arena, "{\"from\":\"music\",\"data\":{\"n\":1}}") orelse return error.Rejected;
+    try std.testing.expectEqualStrings("music", ok.from);
+    try std.testing.expectEqualStrings("{\"n\":1}", ok.data);
+    try std.testing.expect(livePublishFromBody(arena, "{\"from\":\"../x\",\"data\":{}}") == null);
+    try std.testing.expect(livePublishFromBody(arena, "{\"from\":\"music\"}") == null);
+    try std.testing.expect(livePublishFromBody(arena, "{}") == null);
+}
+
+fn handleHttpMetrics(stream: std.Io.net.Stream) void {
+    var buf: [2048]u8 = undefined;
+    const body = metricsSnapshot(&buf) orelse {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"metrics unavailable\"}");
         return;
     };
@@ -7387,7 +7424,7 @@ const RunRequestBody = struct {
     /// user applies the plan as a follow-up run.
     plan: bool = false,
     /// Research mode (the composer's Research toggle): the run is directed
-    /// to consult web_search/fetch_web for current, sourced information.
+    /// to consult web_search/web_fetch for current, sourced information.
     research: bool = false,
     /// Optional per-run max agent-loop iteration budget. When set it wins over
     /// everything else; when null and a goal steers this run, that goal's
@@ -7914,197 +7951,113 @@ fn handleSteer(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io
     }
 }
 
-/// Flips a goal's status in state/goals.json, but only when it currently
-/// holds `from`. Used when a run carrying a goal completes: the goal moves
-/// active -> review on the server, so a closed tab or a crashed browser
-/// cannot leave finished work marked active. Best-effort, a goal already
-/// moved by hand (or deleted) is left alone, and failures only log.
-fn setGoalStatusIf(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, goal_id: []const u8, from: []const u8, to: []const u8) void {
-    var guard = file_lock.acquire(io, dir, "state", "goals", gpa);
+/// Best-effort write through the `goal_update` guest. The lock matches
+/// handleGoalWrite so a run finishing while the board is patched cannot
+/// drop either write; the guest also retries a mismatched hash.
+fn callGoalUpdate(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    input: []const u8,
+    what: []const u8,
+) void {
+    var guard = file_lock.acquire(io, std.Io.Dir.cwd(), "state", "goals", gpa);
     defer guard.release();
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const raw = dir.readFileAlloc(io, goals_path, arena, .limited(1 << 20)) catch return;
-    const list = std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true }) catch return;
-    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    var hit = false;
-    for (list) |*g| {
-        if (!std.mem.eql(u8, g.id, goal_id)) continue;
-        if (!std.mem.eql(u8, g.status, from)) return;
-        g.status = to;
-        g.updated = now;
-        hit = true;
-    }
-    if (!hit) return;
-    var enc: std.Io.Writer.Allocating = .init(arena);
-    std.json.Stringify.value(list, .{ .emit_null_optional_fields = false }, &enc.writer) catch return;
-    atomic_write.writeFile(io, dir, goals_path, enc.written()) catch |err| {
-        log.log(.warn, "goal '{s}' finished its run but could not be moved to {s}: {s}", .{ goal_id, to, @errorName(err) });
+    const out = toolJson(io, gpa, arena, cfg, environ_map, "goal_update", input) catch |err| {
+        log.log(.warn, "{s}: goal_update unavailable: {s}", .{ what, @errorName(err) });
         return;
     };
-    log.log(.info, "goal '{s}' moved {s} -> {s} (run completed)", .{ goal_id, from, to });
+    if (toolResultFailed(out)) {
+        log.log(.warn, "{s}: {s}", .{ what, out });
+    }
 }
 
-/// Persist the terminal result of a continuing goal loop. Review means the
-/// evaluator found the condition achieved and the operator can make the final
-/// workflow decision; blocked carries the reason that prevented another turn.
-fn recordGoalLoopOutcome(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, goal_id: []const u8, outcome: goal_loop.Outcome) void {
-    var guard = file_lock.acquire(io, dir, "state", "goals", gpa);
-    defer guard.release();
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const raw = dir.readFileAlloc(io, goals_path, arena, .limited(1 << 20)) catch return;
-    const list = std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true }) catch return;
-    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    var hit = false;
-    for (list) |*g| {
-        if (!std.mem.eql(u8, g.id, goal_id)) continue;
-        if (!std.mem.eql(u8, g.status, "active")) return;
-        g.status = if (outcome.verdict == .achieved) "review" else "blocked";
-        g.goal_loop_reason = outcome.reason;
-        g.goal_loop_turns = outcome.turns;
-        g.updated = now;
-        hit = true;
-        break;
-    }
-    if (!hit) return;
-    var enc: std.Io.Writer.Allocating = .init(arena);
-    std.json.Stringify.value(list, .{ .emit_null_optional_fields = false }, &enc.writer) catch return;
-    atomic_write.writeFile(io, dir, goals_path, enc.written()) catch |err| {
-        log.log(.warn, "goal '{s}' loop outcome could not be recorded: {s}", .{ goal_id, @errorName(err) });
-        return;
-    };
+/// Flips a goal's status through `goal_update`, but only when it currently
+/// holds `from`. A finished run moves active -> review so a closed tab
+/// cannot leave finished work marked active. Best-effort: a goal already
+/// moved by hand (or deleted) is left alone.
+fn setGoalStatusIf(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    goal_id: []const u8,
+    from: []const u8,
+    to: []const u8,
+) void {
+    var input: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
+    s.beginObject() catch return;
+    s.objectField("id") catch return;
+    s.write(goal_id) catch return;
+    s.objectField("from") catch return;
+    s.write(from) catch return;
+    s.objectField("status") catch return;
+    s.write(to) catch return;
+    s.endObject() catch return;
+    var what_buf: [160]u8 = undefined;
+    const what = std.fmt.bufPrint(&what_buf, "goal '{s}' {s} -> {s}", .{ goal_id, from, to }) catch "goal status";
+    callGoalUpdate(io, gpa, arena, cfg, environ_map, input.written(), what);
+}
+
+/// Persist the terminal result of a continuing goal loop through `goal_update`.
+/// Review means the evaluator found the condition achieved; blocked carries
+/// the reason that prevented another turn.
+fn recordGoalLoopOutcome(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    goal_id: []const u8,
+    outcome: goal_loop.Outcome,
+) void {
+    const status: []const u8 = if (outcome.verdict == .achieved) "review" else "blocked";
+    var input: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
+    s.beginObject() catch return;
+    s.objectField("id") catch return;
+    s.write(goal_id) catch return;
+    s.objectField("from") catch return;
+    s.write("active") catch return;
+    s.objectField("status") catch return;
+    s.write(status) catch return;
+    s.objectField("goal_loop_reason") catch return;
+    s.write(outcome.reason) catch return;
+    s.objectField("goal_loop_turns") catch return;
+    s.print("{d}", .{outcome.turns}) catch return;
+    s.endObject() catch return;
+    var what_buf: [96]u8 = undefined;
+    const what = std.fmt.bufPrint(&what_buf, "goal '{s}' loop outcome", .{goal_id}) catch "goal loop outcome";
+    callGoalUpdate(io, gpa, arena, cfg, environ_map, input.written(), what);
 }
 
 /// Persist the concrete worktree branch on the goal as soon as a run is
-/// assigned one. This is deliberately server-side: a config-defaulted goal
-/// run has no checkbox write from the browser, but its card must still say
-/// where the work lives after a refresh or a later visit.
-fn markGoalWorktree(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, goal_id: []const u8, branch: []const u8) void {
-    var guard = file_lock.acquire(io, dir, "state", "goals", gpa);
-    defer guard.release();
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const raw = dir.readFileAlloc(io, goals_path, arena, .limited(1 << 20)) catch return;
-    const list = std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true }) catch return;
-    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    var hit = false;
-    for (list) |*g| {
-        if (!std.mem.eql(u8, g.id, goal_id)) continue;
-        g.worktree = branch;
-        g.updated = now;
-        hit = true;
-        break;
-    }
-    if (!hit) return;
-    var enc: std.Io.Writer.Allocating = .init(arena);
-    std.json.Stringify.value(list, .{ .emit_null_optional_fields = false }, &enc.writer) catch return;
-    atomic_write.writeFile(io, dir, goals_path, enc.written()) catch |err|
-        log.log(.warn, "goal '{s}' could not record worktree {s}: {s}", .{ goal_id, branch, @errorName(err) });
-}
-
-test "a finished run moves its goal to review, and only from active" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io, "state");
-    try tmp.dir.writeFile(io, .{ .sub_path = goals_path, .data =
-        \\[{"id":"g1","objective":"a","completion_criterion":"b","status":"active","created":1,"updated":1},
-        \\ {"id":"g2","objective":"c","completion_criterion":"d","status":"done","created":1,"updated":1}]
-    });
-
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    // Active flips to review; the done goal is left exactly as it was, and a
-    // goal nobody has ever heard of writes nothing.
-    setGoalStatusIf(io, std.testing.allocator, tmp.dir, "g1", "active", "review");
-    setGoalStatusIf(io, std.testing.allocator, tmp.dir, "g2", "active", "review");
-    setGoalStatusIf(io, std.testing.allocator, tmp.dir, "missing", "active", "review");
-
-    const raw = try tmp.dir.readFileAlloc(io, goals_path, arena, .limited(1 << 20));
-    const goals = try std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true });
-    try std.testing.expectEqual(@as(usize, 2), goals.len);
-    try std.testing.expectEqualStrings("review", goals[0].status);
-    try std.testing.expect(goals[0].updated > 1);
-    try std.testing.expectEqualStrings("done", goals[1].status);
-}
-
-test "goal loop outcome records terminal status, reason, and turns" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "state");
-    try tmp.dir.writeFile(io, .{ .sub_path = goals_path, .data =
-        \\[{"id":"g1","objective":"a","completion_criterion":"b","status":"active","created":1,"updated":1}]
-    });
-
-    recordGoalLoopOutcome(io, std.testing.allocator, tmp.dir, "g1", .{
-        .verdict = .blocked,
-        .turns = 3,
-        .reason = "waiting on credentials",
-    });
-
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const raw = try tmp.dir.readFileAlloc(io, goals_path, arena_state.allocator(), .limited(1 << 20));
-    const goals = try std.json.parseFromSliceLeaky([]StoredGoal, arena_state.allocator(), raw, .{ .ignore_unknown_fields = true });
-    try std.testing.expectEqualStrings("blocked", goals[0].status);
-    try std.testing.expectEqualStrings("waiting on credentials", goals[0].goal_loop_reason);
-    try std.testing.expectEqual(@as(u32, 3), goals[0].goal_loop_turns);
-}
-
-test "concurrent goal status updates do not lose each other" {
-    // serve runs one thread per connection; two runs finishing at once both
-    // call setGoalStatusIf. Without the goals lock they read the same file,
-    // each flip one goal, and the second write drops the first.
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io, "state");
-    try tmp.dir.writeFile(io, .{ .sub_path = goals_path, .data =
-        \\[{"id":"g1","objective":"a","completion_criterion":"b","status":"active","created":1,"updated":1},
-        \\ {"id":"g2","objective":"c","completion_criterion":"d","status":"active","created":1,"updated":1}]
-    });
-
-    const Worker = struct {
-        dir: std.Io.Dir,
-        io: std.Io,
-        id: []const u8,
-        fn go(self: *@This()) void {
-            setGoalStatusIf(self.io, std.testing.allocator, self.dir, self.id, "active", "review");
-        }
-    };
-
-    var workers: [2]Worker = .{
-        .{ .dir = tmp.dir, .io = io, .id = "g1" },
-        .{ .dir = tmp.dir, .io = io, .id = "g2" },
-    };
-    var threads: [2]std.Thread = undefined;
-    for (&workers, 0..) |*w, i| {
-        threads[i] = try std.Thread.spawn(.{}, Worker.go, .{w});
-    }
-    for (&threads) |*t| t.join();
-
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const raw = try tmp.dir.readFileAlloc(io, goals_path, arena, .limited(1 << 20));
-    const goals = try std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true });
-    try std.testing.expectEqualStrings("review", goals[0].status);
-    try std.testing.expectEqualStrings("review", goals[1].status);
+/// assigned one. Server-side: a config-defaulted goal run has no checkbox
+/// write from the browser, but its card must still say where the work lives.
+fn markGoalWorktree(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    goal_id: []const u8,
+    branch: []const u8,
+) void {
+    var input: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
+    s.beginObject() catch return;
+    s.objectField("id") catch return;
+    s.write(goal_id) catch return;
+    s.objectField("worktree") catch return;
+    s.write(branch) catch return;
+    s.endObject() catch return;
+    var what_buf: [96]u8 = undefined;
+    const what = std.fmt.bufPrint(&what_buf, "goal '{s}' worktree {s}", .{ goal_id, branch }) catch "goal worktree";
+    callGoalUpdate(io, gpa, arena, cfg, environ_map, input.written(), what);
 }
 
 test "steer registry: register by goal or session, steer, poll, release" {
@@ -8312,8 +8265,10 @@ fn isWebuiRead(method: []const u8) bool {
 }
 
 /// Every asset of the comptime-embedded page bundle, by request path. Vendored
-/// files (`/webui/vendor/*`) and plugin assets (`/webui/plugins/*`) are served
-/// by their own routes and are deliberately not here.
+/// files (`/webui/vendor/*`), plugin assets (`/webui/plugins/*`), and
+/// theme JSON (`/webui/themes/*`), and command catalogs
+/// (`/webui/commands/*`) are served by their own routes and are
+/// deliberately not here.
 ///
 /// One list, because there used to be two: the module gate (`is_webui`, which
 /// decides whether a disabled `modules.webui` should 404) and the asset route
@@ -8347,6 +8302,7 @@ const webui_asset_paths = [_][]const u8{
     "/webui/core/status.js",
     "/webui/core/stream.js",
     "/webui/core/theme.js",
+    "/webui/core/slash.js",
     "/webui/core/tools.js",
     "/webui/core/ui.js",
     "/webui/core/usage.js",
@@ -8358,15 +8314,12 @@ const webui_asset_paths = [_][]const u8{
     "/webui/features/arena.js",
     "/webui/features/arena3d.js",
     "/webui/features/board.js",
-    "/webui/features/compare.js",
     "/webui/features/fleet.js",
     "/webui/features/goals.js",
     "/webui/features/knowledge.js",
     "/webui/features/prompts.js",
     "/webui/features/todos.js",
     "/webui/features/models.js",
-    "/webui/features/schedule.js",
-    "/webui/features/search.js",
 };
 
 /// Vendored third-party JS under `ui/vendor/`, embedded in `ui/vendor.zig` and
@@ -8555,11 +8508,6 @@ fn handleWebuiAsset(
     // for both would alias the two caches and serve one file for the other's
     // path (the known cache-aliasing bug class; see docs/prds/0006-webui.md).
     const is_board_view = std.mem.endsWith(u8, target, "features/board.js");
-    // Carries its directory for the same reason, and for one more: the
-    // Compare view is the blind side-by-side, so serving another module's
-    // bytes for its path is not only a wrong asset, it is the view that
-    // withholds the key failing to load at all.
-    const is_compare_view = std.mem.endsWith(u8, target, "features/compare.js");
     const is_goals_view = std.mem.endsWith(u8, target, "features/goals.js");
     const is_knowledge_view = std.mem.endsWith(u8, target, "features/knowledge.js");
     const is_prompts_view = std.mem.endsWith(u8, target, "features/prompts.js");
@@ -8572,11 +8520,6 @@ fn handleWebuiAsset(
     const is_arena_view = !is_arena3d_view and std.mem.endsWith(u8, target, "features/arena.js");
     const is_todos_view = std.mem.endsWith(u8, target, "features/todos.js");
     const is_models_view = std.mem.endsWith(u8, target, "features/models.js");
-    const is_schedule_view = std.mem.endsWith(u8, target, "features/schedule.js");
-    // Carries its directory, and the bare `is_search` below now excludes it:
-    // core/search.js already owns that file name, and a bare endsWith would
-    // alias the two caches and serve one file for the other's path.
-    const is_search_view = std.mem.endsWith(u8, target, "features/search.js");
     const is_vendor = std.mem.endsWith(u8, target, "vendor.js");
     const is_chat = std.mem.endsWith(u8, target, "chat.js");
     const is_labels = std.mem.endsWith(u8, target, "labels.js");
@@ -8584,7 +8527,7 @@ fn handleWebuiAsset(
     const is_stream = std.mem.endsWith(u8, target, "stream.js");
     const is_theme = std.mem.endsWith(u8, target, "theme.js");
     const is_overlay = std.mem.endsWith(u8, target, "overlay.js");
-    const is_search = !is_search_view and std.mem.endsWith(u8, target, "search.js");
+    const is_search = std.mem.endsWith(u8, target, "search.js");
     const is_composer = std.mem.endsWith(u8, target, "composer.js");
     const is_ai_disclosure = std.mem.endsWith(u8, target, "ai-disclosure.js");
     const is_scroll = std.mem.endsWith(u8, target, "scroll.js");
@@ -8605,13 +8548,13 @@ fn handleWebuiAsset(
     const is_modelpicker = std.mem.endsWith(u8, target, "modelpicker.js");
     const is_tools = std.mem.endsWith(u8, target, "tools.js");
     const is_ui = std.mem.endsWith(u8, target, "ui.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_compare_view) &render_compare_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_arena3d_view) &render_arena3d_view else if (is_todos_view) &render_todos_view else if (is_models_view) &render_models_view else if (is_schedule_view) &render_schedule_view else if (is_search_view) &render_search_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_ai_disclosure) &render_ai_disclosure else if (is_scroll) &render_scroll else if (is_run_metrics) &render_run_metrics else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_arena3d_view) &render_arena3d_view else if (is_todos_view) &render_todos_view else if (is_models_view) &render_models_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_ai_disclosure) &render_ai_disclosure else if (is_scroll) &render_scroll else if (is_run_metrics) &render_run_metrics else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
     // Must stay in lockstep with `cache` above. A missing gzip slot falls
     // through to gzip_js (app.js): a gzip client then receives app.js at this
     // path, and relative imports resolve under the wrong directory
     // (`core/run-metrics.js` serving app.js became `/core/core/utils.js` 404s
     // and an empty main column).
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_compare_view) &gzip_compare_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_arena3d_view) &gzip_arena3d_view else if (is_todos_view) &gzip_todos_view else if (is_models_view) &gzip_models_view else if (is_schedule_view) &gzip_schedule_view else if (is_search_view) &gzip_search_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_ai_disclosure) &gzip_ai_disclosure else if (is_scroll) &gzip_scroll else if (is_run_metrics) &gzip_run_metrics else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_arena3d_view) &gzip_arena3d_view else if (is_todos_view) &gzip_todos_view else if (is_models_view) &gzip_models_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_ai_disclosure) &gzip_ai_disclosure else if (is_scroll) &gzip_scroll else if (is_run_metrics) &gzip_run_metrics else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -8815,11 +8758,11 @@ fn handleSessionSearch(io: std.Io, arena: std.mem.Allocator, target: []const u8,
     respond(stream, 200, "OK", out.written());
 }
 
-/// `GET /api/sessions` lists saved conversations; `GET /api/sessions/<id>`
-/// returns one whole transcript. Answered natively rather than through a
-/// plugin (the way `/api/runs` reaches graph) because session.zig already
-/// owns this store on the native side, and a long transcript exceeds the
-/// 64 KiB host arena a WASM tool reads through.
+/// `GET /api/sessions` lists saved conversations through the `sessions`
+/// guest; `GET /api/sessions/<id>` still returns one whole transcript
+/// natively, because a long conversation exceeds the 1 MiB host arena a
+/// WASM tool reads through. Mutations (fork/branch/rename/delete) stay
+/// native: they write the session store.
 /// Byte weight of a transcript.
 ///
 /// Must match what `session.listSessions` reports, because that is the number
@@ -9734,101 +9677,74 @@ fn handleProviderModels(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.C
 
 /// Every configured provider and its models, so the composer can offer the
 /// same choice `--provider` does instead of always running the default.
-fn handleProviders(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *const std.process.Environ.Map, stream: std.Io.net.Stream) void {
+/// The `providers` guest owns the static list; a live `/models` fill for an
+/// empty map stays here because it attaches provider credentials.
+fn handleProviders(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    // Allocating rather than a fixed 64 KiB buffer: the live listing below is
-    // remote data of no bounded size, and overflowing a fixed writer bails out
-    // before `respond`, so one provider with a long catalog would answer the
-    // picker with no HTTP response at all instead of with a shorter list.
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "providers", "{\"action\":\"list\"}") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"providers tool unavailable\"}");
+        return;
+    };
+    const body = overlayLiveProviderModels(io, gpa, arena, cfg, environ_map, raw) orelse raw;
+    respondTool(stream, body);
+}
+
+/// When the guest list has a provider with no static models, ask that
+/// provider's `/models` and splice the names into the still-open array.
+/// A fully-static list is returned unchanged.
+fn overlayLiveProviderModels(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    raw: []const u8,
+) ?[]const u8 {
+    if (!providers_logic.listNeedsLiveModelsAlloc(arena, raw)) return null;
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return null;
+    if (parsed != .object) return null;
+    const rows = parsed.object.get("providers") orelse return null;
+    if (rows != .array) return null;
+
     var out: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-    s.beginObject() catch return;
-    s.objectField("ok") catch return;
-    s.write(true) catch return;
-    s.objectField("default") catch return;
-    s.write(cfg.default_provider) catch return;
-    s.objectField("providers") catch return;
-    s.beginArray() catch return;
-    var it = cfg.providers.iterator();
-    while (it.next()) |entry| {
-        const prov = entry.value_ptr;
-        s.beginObject() catch return;
-        s.objectField("name") catch return;
-        s.write(entry.key_ptr.*) catch return;
-        s.objectField("default_model") catch return;
-        s.write(prov.default_model) catch return;
-        if (prov.rpm) |r| {
-            s.objectField("rpm") catch return;
-            s.write(r) catch return;
+    s.beginObject() catch return null;
+    s.objectField("ok") catch return null;
+    s.write(true) catch return null;
+    s.objectField("default") catch return null;
+    s.write(cfg.default_provider) catch return null;
+    s.objectField("providers") catch return null;
+    s.beginArray() catch return null;
+    for (rows.array.items) |item| {
+        if (item != .object) continue;
+        const name = json_util.strFieldOrNull(item.object, "name") orelse continue;
+        s.beginObject() catch return null;
+        var kit = item.object.iterator();
+        while (kit.next()) |kv| {
+            if (std.mem.eql(u8, kv.key_ptr.*, "models")) continue;
+            s.objectField(kv.key_ptr.*) catch return null;
+            s.write(kv.value_ptr.*) catch return null;
         }
-        s.objectField("models") catch return;
-        s.beginArray() catch return;
-        var mit = prov.models.iterator();
-        while (mit.next()) |m| {
-            s.beginObject() catch return;
-            s.objectField("name") catch return;
-            s.write(m.key_ptr.*) catch return;
-            if (m.value_ptr.id.len > 0) {
-                s.objectField("id") catch return;
-                s.write(m.value_ptr.id) catch return;
+        s.objectField("models") catch return null;
+        s.beginArray() catch return null;
+        const models = item.object.get("models");
+        const empty = models == null or models.? != .array or models.?.array.items.len == 0;
+        if (!empty) {
+            for (models.?.array.items) |m| {
+                s.write(m) catch return null;
             }
-            if (m.value_ptr.display) |disp| {
-                s.objectField("display") catch return;
-                s.write(disp) catch return;
-            }
-            s.objectField("context_window") catch return;
-            s.write(m.value_ptr.context_window) catch return;
-            s.objectField("max_tokens") catch return;
-            s.write(m.value_ptr.max_tokens) catch return;
-            if (m.value_ptr.temperature) |t| {
-                s.objectField("temperature") catch return;
-                s.write(t) catch return;
-            }
-            if (m.value_ptr.top_p) |t| {
-                s.objectField("top_p") catch return;
-                s.write(t) catch return;
-            }
-            if (m.value_ptr.cost_per_1m_input) |c| {
-                s.objectField("cost_per_1m_input") catch return;
-                s.write(c) catch return;
-            }
-            if (m.value_ptr.cost_per_1m_output) |c| {
-                s.objectField("cost_per_1m_output") catch return;
-                s.write(c) catch return;
-            }
-            if (m.value_ptr.reasoning_effort) |re| {
-                s.objectField("reasoning_effort") catch return;
-                s.write(@tagName(re)) catch return;
-            }
-            if (m.value_ptr.capabilities.len > 0) {
-                s.objectField("capabilities") catch return;
-                s.write(m.value_ptr.capabilities) catch return;
-            }
-            if (m.value_ptr.category.len > 0) {
-                s.objectField("category") catch return;
-                s.write(m.value_ptr.category) catch return;
-            }
-            if (m.value_ptr.rpm) |r| {
-                s.objectField("rpm") catch return;
-                s.write(r) catch return;
-            }
-            s.endObject() catch return;
-        }
-        if (prov.models.count() == 0) {
-            // The same ceiling `providers check` puts on this provider: the
-            // picker asks the same endpoint from a page load, where a stalled
-            // request is more expensive, not less.
+        } else if (cfg.providers.getPtr(name)) |prov| {
             const budget_s = prov.check_timeout_seconds orelse cfg.agent.provider_check_timeout_seconds;
             writeLiveModels(io, gpa, arena, prov, environ_map, @as(i64, budget_s) * std.time.ms_per_s, &s);
         }
-        s.endArray() catch return;
-        s.endObject() catch return;
+        s.endArray() catch return null;
+        s.endObject() catch return null;
     }
-    s.endArray() catch return;
-    s.endObject() catch return;
-    respond(stream, 200, "OK", out.written());
+    s.endArray() catch return null;
+    s.endObject() catch return null;
+    return out.written();
 }
 
 /// A configured provider with an empty static `models` map (a locally-run
@@ -10086,6 +10002,203 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, cfg: *const config
     raw_http.writeAllFd(stream.socket.handle, out);
 }
 
+const webui_themes_dir = "themes";
+
+fn validThemeName(name: []const u8) bool {
+    return session.validSessionId(name) and !std.mem.eql(u8, name, "catalog");
+}
+
+test validThemeName {
+    try std.testing.expect(validThemeName("mocha"));
+    try std.testing.expect(validThemeName("tokyonight-storm"));
+    try std.testing.expect(!validThemeName("catalog"));
+    try std.testing.expect(!validThemeName("../../etc/passwd"));
+    try std.testing.expect(!validThemeName("a/b"));
+    try std.testing.expect(!validThemeName("a.b"));
+    try std.testing.expect(!validThemeName(""));
+}
+
+/// `/webui/themes/catalog.json` is generated; `/webui/themes/<name>.json` is
+/// a file under `themes/`. `catalog` is reserved so a drop-in cannot shadow
+/// the listing.
+fn themeRestName(rest: []const u8) ?[]const u8 {
+    if (rest.len == 0 or std.mem.eql(u8, rest, "catalog.json")) return null;
+    if (!std.mem.endsWith(u8, rest, ".json")) return null;
+    const name = rest[0 .. rest.len - ".json".len];
+    return if (validThemeName(name)) name else null;
+}
+
+test themeRestName {
+    try std.testing.expect(themeRestName("catalog.json") == null);
+    try std.testing.expect(themeRestName("") == null);
+    try std.testing.expect(themeRestName("mocha.css") == null);
+    try std.testing.expectEqualStrings("mocha", themeRestName("mocha.json").?);
+    try std.testing.expectEqualStrings("tokyonight-storm", themeRestName("tokyonight-storm.json").?);
+    try std.testing.expect(themeRestName("../x.json") == null);
+}
+
+const ThemeEntry = struct {
+    id: []const u8,
+    scheme: []const u8,
+    order: i64,
+    tokens: std.json.Value,
+};
+
+fn themeEntryLessThan(_: void, a: ThemeEntry, b: ThemeEntry) bool {
+    if (a.order != b.order) return a.order < b.order;
+    return std.mem.lessThan(u8, a.id, b.id);
+}
+
+fn jsonOrder(obj: std.json.ObjectMap) i64 {
+    const v = obj.get("order") orelse return 1000;
+    return switch (v) {
+        .integer => |n| n,
+        else => 1000,
+    };
+}
+
+fn collectThemeEntries(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator) ![]ThemeEntry {
+    var opened = dir.openDir(io, webui_themes_dir, .{ .iterate = true }) catch
+        return try arena.alloc(ThemeEntry, 0);
+    defer opened.close(io);
+
+    var list: std.ArrayList(ThemeEntry) = .empty;
+    var it = opened.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        const stem = themeRestName(entry.name) orelse continue;
+        const raw = opened.readFileAlloc(io, entry.name, arena, .limited(64 * 1024)) catch continue;
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch continue;
+        if (parsed != .object) continue;
+        const tokens = parsed.object.get("tokens") orelse continue;
+        if (tokens != .object) continue;
+        const scheme = if (parsed.object.get("scheme")) |s| (if (s == .string) s.string else "dark") else "dark";
+        try list.append(arena, .{
+            .id = try arena.dupe(u8, stem),
+            .scheme = scheme,
+            .order = jsonOrder(parsed.object),
+            .tokens = tokens,
+        });
+    }
+    std.mem.sort(ThemeEntry, list.items, {}, themeEntryLessThan);
+    return try list.toOwnedSlice(arena);
+}
+
+test "collectThemeEntries orders by order then name and skips junk" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try tmp.dir.createDirPath(io, "themes");
+    try tmp.dir.writeFile(io, .{ .sub_path = "themes/zeta.json", .data = "{\"scheme\":\"dark\",\"order\":2,\"tokens\":{\"--bg\":\"#111\"}}" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "themes/alpha.json", .data = "{\"scheme\":\"light\",\"order\":2,\"tokens\":{\"--bg\":\"#eee\"}}" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "themes/first.json", .data = "{\"scheme\":\"dark\",\"order\":1,\"tokens\":{\"--bg\":\"#000\"}}" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "themes/notes.md", .data = "nope" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "themes/catalog.json", .data = "{\"tokens\":{}}" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "themes/bad.json", .data = "not json" });
+
+    const entries = try collectThemeEntries(io, tmp.dir, arena);
+    try std.testing.expectEqual(@as(usize, 3), entries.len);
+    try std.testing.expectEqualStrings("first", entries[0].id);
+    try std.testing.expectEqualStrings("alpha", entries[1].id);
+    try std.testing.expectEqualStrings("zeta", entries[2].id);
+    try std.testing.expectEqualStrings("light", entries[1].scheme);
+}
+
+fn writeThemeCatalog(arena: std.mem.Allocator, entries: []const ThemeEntry) ![]const u8 {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("themes");
+    try s.beginArray();
+    for (entries) |e| {
+        try s.beginObject();
+        try s.objectField("id");
+        try s.write(e.id);
+        try s.objectField("scheme");
+        try s.write(e.scheme);
+        try s.objectField("order");
+        try s.write(e.order);
+        try s.objectField("tokens");
+        try s.write(e.tokens);
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.endObject();
+    return out.written();
+}
+
+/// `GET /webui/themes/catalog.json` and `GET /webui/themes/<name>.json`.
+/// Served from disk like plugins: drop a file in `themes/` and the picker
+/// sees it, no host rebuild. `catalog.json` is assembled from the directory
+/// so a drop-in cannot shadow the listing.
+fn handleWebuiThemeAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rest = target["/webui/themes/".len..];
+    if (themeRestName(rest)) |name| {
+        const path = std.fmt.allocPrint(arena, "{s}/{s}.json", .{ webui_themes_dir, name }) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+            return;
+        };
+        const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(64 * 1024)) catch {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such theme\"}");
+            return;
+        };
+        respondCompressible(arena, stream, accepts_gzip, bytes);
+        return;
+    }
+    if (rest.len != 0 and !std.mem.eql(u8, rest, "catalog.json")) {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such theme\"}");
+        return;
+    }
+    const entries = collectThemeEntries(io, std.Io.Dir.cwd(), arena) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"themes unreadable\"}");
+        return;
+    };
+    const body = writeThemeCatalog(arena, entries) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"themes unreadable\"}");
+        return;
+    };
+    respondCompressible(arena, stream, accepts_gzip, body);
+}
+
+const webui_commands_dir = "commands";
+
+/// `GET /webui/commands/<name>.json`. Same name alphabet as themes; a
+/// drop-in JSON file under `commands/` is the catalog (slash commands today).
+fn handleWebuiCommandAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rest = target["/webui/commands/".len..];
+    const name = themeRestName(rest) orelse {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such command catalog\"}");
+        return;
+    };
+    const path = std.fmt.allocPrint(arena, "{s}/{s}.json", .{ webui_commands_dir, name }) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+        return;
+    };
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(64 * 1024)) catch {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such command catalog\"}");
+        return;
+    };
+    respondCompressible(arena, stream, accepts_gzip, bytes);
+}
+
 /// `GET /api/janitor`, how much litter is lying around, so the office view can
 /// show the janitor working when there is work and sitting down when there is
 /// not. Read-only: it never deletes. `clanker janitor --yes` is the only thing
@@ -10160,7 +10273,7 @@ fn handleBoard(
         break :blk w.written();
     };
     const args = if (std.mem.eql(u8, method, "POST")) body else list_args;
-    const out = toolJson(io, gpa, arena, cfg, environ_map, "board", args) catch {
+    const out = toolJson(io, gpa, arena, cfg, environ_map, "kanban", args) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"board tool unavailable\"}");
         return;
     };
@@ -10169,13 +10282,11 @@ fn handleBoard(
     respondTool(stream, out);
 }
 
-const goals_path = "state/goals.json";
-
-/// Creating a goal goes through the sandboxed `add_goal` tool; status,
-/// budget, worktree-flag, and delete go through `update_goal`. The outer
-/// lock keeps a guest append and a simultaneous web status update from
-/// overwriting each other. Worktree retirement stays native: the sandbox
-/// refuses `git worktree remove` against `.clanker-worktrees/`.
+/// Creating a goal goes through the sandboxed `goal_add` tool; status,
+/// budget, worktree, loop outcome, and delete go through `goal_update`.
+/// The outer lock keeps a guest append and a simultaneous web status
+/// update from overwriting each other. Worktree retirement stays native:
+/// the sandbox refuses `git worktree remove` against `.clanker-worktrees/`.
 fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, body: []const u8, stream: std.Io.net.Stream) void {
     var guard = file_lock.acquire(io, std.Io.Dir.cwd(), "state", "goals", gpa);
     defer guard.release();
@@ -10200,15 +10311,15 @@ fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
             s.write("true") catch return;
         }
         s.endObject() catch return;
-        const out = toolJson(io, gpa, arena, cfg, environ_map, "add_goal", input.written()) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"add_goal tool unavailable\"}");
+        const out = toolJson(io, gpa, arena, cfg, environ_map, "goal_add", input.written()) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"goal_add tool unavailable\"}");
             return;
         };
         if (toolResultFailed(out)) {
             respond(stream, 400, "Bad Request", out);
             return;
         }
-        respondStoredGoals(io, arena, stream);
+        respondStoredGoals(io, gpa, arena, cfg, environ_map, stream);
         return;
     }
     if (req.id == null) {
@@ -10239,8 +10350,8 @@ fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     }
     s.endObject() catch return;
 
-    const out = toolJson(io, gpa, arena, cfg, environ_map, "update_goal", input.written()) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"update_goal tool unavailable\"}");
+    const out = toolJson(io, gpa, arena, cfg, environ_map, "goal_update", input.written()) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"goal_update tool unavailable\"}");
         return;
     };
     if (toolResultFailed(out)) {
@@ -10259,13 +10370,23 @@ fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     respond(stream, 200, "OK", out);
 }
 
-fn respondStoredGoals(io: std.Io, arena: std.mem.Allocator, stream: std.Io.net.Stream) void {
-    const raw = std.Io.Dir.cwd().readFileAlloc(io, goals_path, arena, .limited(1 << 20)) catch "[]";
-    var out: std.Io.Writer.Allocating = .init(arena);
-    out.writer.writeAll("{\"ok\":true,\"goals\":") catch return;
-    out.writer.writeAll(std.mem.trim(u8, raw, " \t\r\n")) catch return;
-    out.writer.writeAll("}") catch return;
-    respond(stream, 200, "OK", out.written());
+fn respondStoredGoals(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    stream: std.Io.net.Stream,
+) void {
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "goal_update", "{\"action\":\"list\"}") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"goal store unavailable\"}");
+        return;
+    };
+    if (toolResultFailed(raw)) {
+        respondTool(stream, raw);
+        return;
+    }
+    respond(stream, 200, "OK", raw);
 }
 
 /// `GET /api/logs` lists the log files; `GET /api/logs/<name>` returns the tail
@@ -10319,6 +10440,7 @@ fn handleSessions(
     io: std.Io,
     gpa: std.mem.Allocator,
     cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
     method: []const u8,
     target: []const u8,
     body: []const u8,
@@ -10513,17 +10635,17 @@ fn handleSessions(
         return;
     }
 
-    const list = session.listSessions(io, arena, std.Io.Dir.cwd()) catch |err| {
-        log.log(.error_, "GET /api/sessions: list failed: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"session list failed\"}");
+    // The sessions guest owns the picker listing (same 4 KiB header walk,
+    // same JSON the page already consumes). Mutations stay native below.
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "sessions", "{\"format\":\"json\"}") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"sessions tool unavailable\"}");
         return;
     };
-    const listing = sessionListJSON(arena, list) catch |err| {
-        log.log(.error_, "GET /api/sessions: encode failed: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"session encode failed\"}");
+    if (toolResultFailed(raw)) {
+        respondTool(stream, raw);
         return;
-    };
-    respondCompressible(arena, stream, accepts_gzip, listing);
+    }
+    respondCompressible(arena, stream, accepts_gzip, raw);
 }
 
 const BranchRef = struct { src: []const u8, turn: usize };
@@ -10566,72 +10688,6 @@ test "branch route suffix parsing yields a valid source id and refuses traversal
     try std.testing.expect(branchSuffix("sess-abc/branch/x") == null);
     try std.testing.expect(branchSuffix("sess-abc/branch/3/4") == null);
 }
-
-const SkillMeta = struct {
-    name: []const u8,
-    title: []const u8 = "",
-    description: []const u8 = "",
-    bytes: usize = 0,
-};
-
-/// Skills are markdown files in `skills_dir` the system prompt embeds
-/// wholesale (system_prompt.zig reads every *.md except SYSTEM.md with
-/// >= 20 bytes of content, sorted for prompt-cache stability). This mirrors
-/// that discovery exactly, same dir, same filters, same sort, so the web
-/// UI's Skills list can never drift from what the agent actually sees. Only
-/// the first `# ` heading and the first prose paragraph after it are sent,
-/// clipped; the page gets a catalogue, not the bodies.
-fn scanSkills(arena: std.mem.Allocator, io: std.Io, base: std.Io.Dir, dir: []const u8) ![]SkillMeta {
-    var out: std.ArrayList(SkillMeta) = .empty;
-    var d = base.openDir(io, dir, .{ .iterate = true }) catch return out.toOwnedSlice(arena);
-    defer d.close(io);
-
-    var names: std.ArrayList([]const u8) = .empty;
-    var it = d.iterate();
-    while (it.next(io) catch null) |entry| {
-        if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
-        if (std.mem.eql(u8, entry.name, "SYSTEM.md")) continue;
-        try names.append(arena, try arena.dupe(u8, entry.name));
-    }
-    std.mem.sort([]const u8, names.items, {}, struct {
-        fn lt(_: void, a: []const u8, b: []const u8) bool {
-            return std.mem.lessThan(u8, a, b);
-        }
-    }.lt);
-
-    for (names.items) |name| {
-        const content = d.readFileAlloc(io, name, arena, .limited(max_skill_bytes)) catch continue;
-        if (std.mem.trim(u8, content, " \t\r\n").len < 20) continue;
-        var title: []const u8 = "";
-        var description: []const u8 = "";
-        var lines = std.mem.splitScalar(u8, content, '\n');
-        while (lines.next()) |line| {
-            const t = std.mem.trim(u8, line, " \t\r");
-            if (t.len == 0) continue;
-            if (std.mem.startsWith(u8, t, "# ")) {
-                if (title.len == 0) title = t[2..];
-                continue;
-            }
-            if (std.mem.startsWith(u8, t, "#")) continue;
-            description = clipTo(arena, t, 220);
-            break;
-        }
-        try out.append(arena, .{ .name = name, .title = title, .description = description, .bytes = content.len });
-    }
-    return out.toOwnedSlice(arena);
-}
-
-/// Clips a line to `max` bytes without splitting a UTF-8 codepoint.
-fn clipTo(arena: std.mem.Allocator, s: []const u8, max: usize) []const u8 {
-    const clipped = utf8.cap(s, max);
-    if (clipped.len == s.len) return s;
-    return arena.dupe(u8, clipped) catch clipped;
-}
-
-/// Skills the prompt embeds also get capped at the same bound (PromptParts
-/// default in system_prompt.zig); the list scans must agree with the read.
-const max_skill_bytes = 24 * 1024;
 
 /// A single entry in the folder browser. Paths travel relative to the process
 /// working directory so nothing needs the server's absolute location.
@@ -10852,37 +10908,95 @@ fn workspaceName(io: std.Io, arena: std.mem.Allocator) []const u8 {
     return trimmed;
 }
 
-fn handleSkills(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+/// `GET /api/skills` lists; `POST /api/skills` with `{name,enabled}` toggles.
+/// The `skills` guest owns the scan and the sidecar; this handler only maps
+/// the route onto a tool call.
+fn handleSkills(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    method: []const u8,
+    body: []const u8,
+    stream: std.Io.net.Stream,
+) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-
-    const skills = scanSkills(arena, io, std.Io.Dir.cwd(), cfg.agent.skills_dir) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"skills scan failed\"}");
+    const tool_input = skillsRouteToToolInput(arena, method, body) orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
     };
-    var out: std.Io.Writer.Allocating = .init(arena);
-    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-    s.beginObject() catch return;
-    s.objectField("ok") catch return;
-    s.write(true) catch return;
-    s.objectField("skills") catch return;
-    s.beginArray() catch return;
-    for (skills) |sk| {
-        s.beginObject() catch return;
-        s.objectField("name") catch return;
-        s.write(sk.name) catch return;
-        s.objectField("title") catch return;
-        s.write(sk.title) catch return;
-        s.objectField("description") catch return;
-        s.write(sk.description) catch return;
-        s.objectField("bytes") catch return;
-        s.print("{d}", .{sk.bytes}) catch return;
-        s.endObject() catch return;
-    }
-    s.endArray() catch return;
-    s.endObject() catch return;
-    respondCompressible(arena, stream, accepts_gzip, out.written());
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "skills", tool_input) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"skills tool unavailable\"}");
+        return;
+    };
+    respondTool(stream, raw);
+}
+
+fn handleFeedback(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    method: []const u8,
+    body: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const tool_input: []const u8 = if (std.mem.eql(u8, method, "GET"))
+        "{\"list\":true}"
+    else if (std.mem.eql(u8, method, "POST"))
+        if (body.len > 0) body else "{}"
+    else {
+        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        return;
+    };
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "feedback", tool_input) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"feedback tool unavailable\"}");
+        return;
+    };
+    respondTool(stream, raw);
+}
+
+fn skillsRouteToToolInput(arena: std.mem.Allocator, method: []const u8, body: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, method, "GET")) return "{}";
+    if (!std.mem.eql(u8, method, "POST")) return null;
+    const req = std.json.parseFromSliceLeaky(struct {
+        name: []const u8 = "",
+        enabled: ?bool = null,
+    }, arena, body, .{ .ignore_unknown_fields = true }) catch return null;
+    if (!skills_logic.validSkillName(req.name) or req.enabled == null) return null;
+    var w: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+    s.beginObject() catch return null;
+    s.objectField("action") catch return null;
+    s.write("set_enabled") catch return null;
+    s.objectField("name") catch return null;
+    s.write(req.name) catch return null;
+    s.objectField("enabled") catch return null;
+    s.write(req.enabled.?) catch return null;
+    s.endObject() catch return null;
+    return w.written();
+}
+
+test "skills route maps list and toggle onto the guest" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try std.testing.expectEqualStrings("{}", skillsRouteToToolInput(arena, "GET", "").?);
+    try std.testing.expect(skillsRouteToToolInput(arena, "PUT", "{\"name\":\"research\",\"enabled\":true}") == null);
+    try std.testing.expect(skillsRouteToToolInput(arena, "POST", "{\"name\":\"../x\",\"enabled\":true}") == null);
+    try std.testing.expect(skillsRouteToToolInput(arena, "POST", "{\"name\":\"research.md\",\"enabled\":true}") != null);
+    try std.testing.expect(skillsRouteToToolInput(arena, "POST", "{\"name\":\"research\"}") == null);
+
+    const off = skillsRouteToToolInput(arena, "POST", "{\"name\":\"research\",\"enabled\":false}").?;
+    try std.testing.expect(std.mem.indexOf(u8, off, "\"action\":\"set_enabled\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, off, "\"name\":\"research\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, off, "\"enabled\":false") != null);
 }
 
 /// `GET /api/workflows` — the `workflows` guest owns the scan (workflows_dir
@@ -10897,40 +11011,6 @@ fn handleWorkflows(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         return;
     };
     respondTool(stream, raw);
-}
-
-test "scanSkills mirrors the system prompt's discovery" {
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "skills");
-    try tmp.dir.writeFile(io, .{ .sub_path = "skills/research.md", .data = "# Web research\n\nFind current facts first, then answer.\n" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "skills/autoresearch.md", .data = "# Autoresearch\n\nRun a command-to-scalar harness loop.\n" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "skills/SYSTEM.md", .data = "# Base\n\nNever included here.\n" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "skills/tiny.md", .data = "too short" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "skills/notes.txt", .data = "# Not markdown\n" });
-
-    const skills = try scanSkills(arena, io, tmp.dir, "skills");
-    // Sorted, SYSTEM.md excluded, <20 bytes skipped, non-.md skipped.
-    try std.testing.expectEqual(@as(usize, 2), skills.len);
-    try std.testing.expectEqualStrings("autoresearch.md", skills[0].name);
-    try std.testing.expectEqualStrings("research.md", skills[1].name);
-    try std.testing.expectEqualStrings("Autoresearch", skills[0].title);
-    try std.testing.expectEqualStrings("Run a command-to-scalar harness loop.", skills[0].description);
-    try std.testing.expect(skills[0].bytes > 20);
-    // Missing dir yields an empty list, not an error.
-    const none = try scanSkills(arena, io, tmp.dir, "no-such-skills");
-    try std.testing.expectEqual(@as(usize, 0), none.len);
 }
 
 test "fork route suffix parsing yields a valid source id and refuses traversal" {
@@ -11514,9 +11594,8 @@ fn handlePluginConfig(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
     respond(stream, 200, "OK", "{\"ok\":true}");
 }
 
-/// `GET /api/goals`, the structured goals that steer runs, straight from
-/// `state/goals.json`. Read natively rather than through the goal tool, which
-/// only writes: it appends a new goal and has no read mode.
+/// `GET /api/goals` lists through the `goal_update` guest (`action:list`).
+/// The transient `running` overlay is composed here from steer slots.
 const GoalPost = struct {
     objective: ?[]const u8 = null,
     completion_criterion: ?[]const u8 = null,
@@ -12037,38 +12116,14 @@ test "arena route maps a bare path to a listing and a suffix to one match" {
     );
 }
 
-/// The next time an entry fires, as a wall-clock second, or null when it never
-/// will: disabled, an unparseable spec, or a spec with no future match.
-///
-/// Same reading `clanker schedule list` prints, and deliberately the same
-/// three-line derivation rather than a shared helper hoisted into the store:
-/// `nextText` renders a string for a terminal column and this needs a number
-/// for JSON, so factoring them together would mean one of the two callers
-/// parsing the other's output.
-fn scheduleNextRun(e: schedule_store.Entry) ?i64 {
-    if (!e.enabled) return null;
-    const spec = schedule_cron.parse(e.cron) catch return null;
-    const from = if (e.last_run > 0) e.last_run else e.created;
-    return spec.nextAfter(from, e.tz_offset_minutes);
-}
-
-/// `GET /api/schedule` — every entry with its next fire time, plus the tail of
-/// the ledger. `POST /api/schedule/<id>` with `{"enabled":bool}` switches one
-/// on or off.
-///
-/// Read-and-toggle only, which is the whole surface on purpose. Firing an
-/// entry is an agent run, and this server answers one request per connection,
-/// so `run` and `run-due` stay where they already work: the system's own cron,
-/// or a terminal. The same line the Arena and Compare views draw. Adding and
-/// removing entries stays on the CLI too, because `add` has to validate a cron
-/// spec and a task and report *which* of them was wrong, and a browser form
-/// that silently accepted a spec that never fires would be worse than no form.
-///
-/// Enabling re-dates `last_run` to now, exactly as `schedule enable` does: an
-/// entry parked for a month must not come back owing a run.
+/// `GET /api/schedule` — the `schedule` guest owns the store (list + toggle);
+/// this handler only maps the route onto a tool call. Firing stays native
+/// (`clanker schedule run` / `run-due`).
 fn handleSchedule(
     io: std.Io,
     gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
     method: []const u8,
     path: []const u8,
     body: []const u8,
@@ -12077,167 +12132,68 @@ fn handleSchedule(
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const cwd = std.Io.Dir.cwd();
 
-    const rest = path["/api/schedule".len..];
-    if (std.mem.eql(u8, method, "POST")) {
-        const id = if (rest.len > 1 and rest[0] == '/') rest[1..] else "";
-        if (!session.validSessionId(id)) {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad entry id\"}");
-            return;
-        }
-        const req = std.json.parseFromSliceLeaky(struct { enabled: bool }, arena, body, .{ .ignore_unknown_fields = true }) catch {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"expected {\\\"enabled\\\": true|false}\"}");
-            return;
-        };
-        var s = schedule_store.open(io, gpa, arena, cwd) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"schedule is locked or unreadable\"}");
-            return;
-        };
-        defer s.close();
-        const e = s.find(id) orelse {
-            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such entry\"}");
-            return;
-        };
-        if (req.enabled and !e.enabled) {
-            e.last_run = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
-        }
-        e.enabled = req.enabled;
-        s.save() catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not write the schedule\"}");
-            return;
-        };
-        var out: std.Io.Writer.Allocating = .init(arena);
-        var js = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-        js.beginObject() catch return;
-        js.objectField("ok") catch return;
-        js.write(true) catch return;
-        js.objectField("entry") catch return;
-        writeScheduleEntry(&js, e.*) catch return;
-        js.endObject() catch return;
-        respond(stream, 200, "OK", out.written());
-        return;
-    }
-
-    if (!std.mem.eql(u8, method, "GET")) {
+    if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "POST")) {
         respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
         return;
     }
-
-    const entries = schedule_store.read(io, arena, cwd) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not read the schedule\"}");
+    const tool_input = scheduleRouteToToolInput(arena, method, path, body) orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
     };
-    // The same 20 `schedule log` shows. A ledger read that fails is an empty
-    // ledger rather than a failed page: the entries are the point, and a
-    // missing log.jsonl is what a schedule that has never fired looks like.
-    const records = schedule_store.readRecords(io, arena, cwd, 20) catch &[_]schedule_store.Record{};
-
-    var out: std.Io.Writer.Allocating = .init(arena);
-    var js = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-    js.beginObject() catch return;
-    js.objectField("ok") catch return;
-    js.write(true) catch return;
-    js.objectField("entries") catch return;
-    js.beginArray() catch return;
-    for (entries) |e| writeScheduleEntry(&js, e) catch return;
-    js.endArray() catch return;
-    js.objectField("log") catch return;
-    js.beginArray() catch return;
-    for (records) |r| {
-        js.beginObject() catch return;
-        js.objectField("ts") catch return;
-        js.write(r.ts) catch return;
-        js.objectField("id") catch return;
-        js.write(r.id) catch return;
-        js.objectField("trigger") catch return;
-        js.write(r.trigger) catch return;
-        js.objectField("ok") catch return;
-        js.write(r.ok) catch return;
-        js.objectField("duration_ms") catch return;
-        js.write(r.duration_ms) catch return;
-        if (r.skipped > 0) {
-            js.objectField("skipped") catch return;
-            js.write(r.skipped) catch return;
-        }
-        if (r.err.len > 0) {
-            js.objectField("err") catch return;
-            js.write(r.err) catch return;
-        }
-        js.endObject() catch return;
-    }
-    js.endArray() catch return;
-    js.endObject() catch return;
-    respond(stream, 200, "OK", out.written());
+    const result = toolJson(io, gpa, arena, cfg, environ_map, "schedule", tool_input) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"schedule tool unavailable\"}");
+        return;
+    };
+    respondTool(stream, result);
 }
 
-fn writeScheduleEntry(js: *std.json.Stringify, e: schedule_store.Entry) !void {
-    try js.beginObject();
-    try js.objectField("id");
-    try js.write(e.id);
-    try js.objectField("cron");
-    try js.write(e.cron);
-    try js.objectField("task");
-    try js.write(e.task);
-    if (e.provider) |p| {
-        try js.objectField("provider");
-        try js.write(p);
+/// `/api/schedule` -> list, `POST /api/schedule/<id>` -> set_enabled.
+fn scheduleRouteToToolInput(arena: std.mem.Allocator, method: []const u8, path: []const u8, body: []const u8) ?[]const u8 {
+    const prefix = "/api/schedule";
+    if (!std.mem.startsWith(u8, path, prefix)) return null;
+    const rest = path[prefix.len..];
+
+    if (std.mem.eql(u8, method, "GET")) {
+        if (rest.len != 0) return null;
+        return "{\"action\":\"list\"}";
     }
-    if (e.model) |m| {
-        try js.objectField("model");
-        try js.write(m);
+    if (std.mem.eql(u8, method, "POST")) {
+        const id = if (rest.len > 1 and rest[0] == '/') rest[1..] else "";
+        if (!session.validSessionId(id)) return null;
+        const req = std.json.parseFromSliceLeaky(struct { enabled: bool }, arena, body, .{ .ignore_unknown_fields = true }) catch return null;
+        var w: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+        s.beginObject() catch return null;
+        s.objectField("action") catch return null;
+        s.write("set_enabled") catch return null;
+        s.objectField("id") catch return null;
+        s.write(id) catch return null;
+        s.objectField("enabled") catch return null;
+        s.write(req.enabled) catch return null;
+        s.endObject() catch return null;
+        return w.written();
     }
-    try js.objectField("tz_offset_minutes");
-    try js.write(e.tz_offset_minutes);
-    try js.objectField("enabled");
-    try js.write(e.enabled);
-    try js.objectField("last_run");
-    try js.write(e.last_run);
-    try js.objectField("last_status");
-    try js.write(e.last_status);
-    try js.objectField("runs");
-    try js.write(e.runs);
-    try js.objectField("failures");
-    try js.write(e.failures);
-    // Absent rather than 0 when it never fires again, so the page can tell
-    // "disabled or broken spec" from "due at the epoch".
-    if (scheduleNextRun(e)) |next| {
-        try js.objectField("next_run");
-        try js.write(next);
-    }
-    try js.endObject();
+    return null;
 }
 
-test "the schedule payload carries the next fire time, and omits it when there is none" {
+test "schedule route maps list and toggle onto the guest" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const created = schedule_cron.epochFromCivil(2026, 8, 13, 12, 0, 0);
-    const every_minute = schedule_store.Entry{ .id = "sch-1", .cron = "* * * * *", .task = "t", .created = created };
-    try std.testing.expectEqual(@as(?i64, created + 60), scheduleNextRun(every_minute));
+    try std.testing.expectEqualStrings("{\"action\":\"list\"}", scheduleRouteToToolInput(arena, "GET", "/api/schedule", "").?);
+    try std.testing.expect(scheduleRouteToToolInput(arena, "GET", "/api/schedule/sch-1", "") == null);
+    try std.testing.expect(scheduleRouteToToolInput(arena, "POST", "/api/schedule", "{\"enabled\":true}") == null);
+    try std.testing.expect(scheduleRouteToToolInput(arena, "POST", "/api/schedule/../etc", "{\"enabled\":true}") == null);
 
-    // A disabled entry has no next fire, and neither does a spec that cannot
-    // be parsed: both are "never", and the field is left out for both.
-    var off = every_minute;
-    off.enabled = false;
-    try std.testing.expectEqual(@as(?i64, null), scheduleNextRun(off));
-    var junk = every_minute;
-    junk.cron = "not a cron spec";
-    try std.testing.expectEqual(@as(?i64, null), scheduleNextRun(junk));
+    const on = scheduleRouteToToolInput(arena, "POST", "/api/schedule/sch-1", "{\"enabled\":true}").?;
+    try std.testing.expect(std.mem.indexOf(u8, on, "\"action\":\"set_enabled\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, on, "\"id\":\"sch-1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, on, "\"enabled\":true") != null);
 
-    var out: std.Io.Writer.Allocating = .init(arena);
-    var js = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-    try writeScheduleEntry(&js, every_minute);
-    const on = try std.json.parseFromSliceLeaky(std.json.Value, arena, out.written(), .{});
-    try std.testing.expectEqual(created + 60, on.object.get("next_run").?.integer);
-    try std.testing.expect(on.object.get("enabled").?.bool);
-
-    var out2: std.Io.Writer.Allocating = .init(arena);
-    var js2 = std.json.Stringify{ .writer = &out2.writer, .options = .{ .emit_null_optional_fields = false } };
-    try writeScheduleEntry(&js2, off);
-    const disabled = try std.json.parseFromSliceLeaky(std.json.Value, arena, out2.written(), .{});
-    try std.testing.expect(disabled.object.get("next_run") == null);
+    const off = scheduleRouteToToolInput(arena, "POST", "/api/schedule/sch-2", "{\"enabled\":false}").?;
+    try std.testing.expect(std.mem.indexOf(u8, off, "\"enabled\":false") != null);
 }
 
 /// `GET /api/compare` lists past comparisons; `GET /api/compare/<id>` returns
@@ -12437,11 +12393,11 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
         return;
     }
 
-    // The goals store is guest-owned (add_goal/update_goal write it), so the
-    // read goes through the update_goal guest's list action too rather than a
+    // The goals store is guest-owned (goal_add/goal_update write it), so the
+    // read goes through the goal_update guest's list action too rather than a
     // native copy of the file. Only the `running` overlay is composed here: it
     // is transient host state (the steer slots) no guest can see.
-    const raw = toolJson(io, gpa, arena, cfg, environ_map, "update_goal", "{\"action\":\"list\"}") catch {
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "goal_update", "{\"action\":\"list\"}") catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"goal store unavailable\"}");
         return;
     };
@@ -12975,7 +12931,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         run_cfg.agent.shared_root = root;
         wt = created;
         if (resolved.goal_id) |gid| {
-            markGoalWorktree(io, gpa, std.Io.Dir.cwd(), gid, created.branch);
+            markGoalWorktree(io, gpa, arena, cfg, environ_map, gid, created.branch);
             retire.register(gpa, io, std.Io.Dir.cwd(), .{
                 .path = created.path,
                 .branch = created.branch,
@@ -13261,9 +13217,9 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         }
         if (resolved.goal_id) |gid| {
             if (loop_outcome) |outcome|
-                recordGoalLoopOutcome(io, gpa, std.Io.Dir.cwd(), gid, outcome)
+                recordGoalLoopOutcome(io, gpa, arena, cfg, environ_map, gid, outcome)
             else
-                setGoalStatusIf(io, gpa, std.Io.Dir.cwd(), gid, "active", "review");
+                setGoalStatusIf(io, gpa, arena, cfg, environ_map, gid, "active", "review");
         }
         if (has_session) {
             var title_buf: [session.title_max]u8 = undefined;
@@ -13359,9 +13315,9 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
 
     if (resolved.goal_id) |gid| {
         if (loop_outcome) |outcome|
-            recordGoalLoopOutcome(io, gpa, std.Io.Dir.cwd(), gid, outcome)
+            recordGoalLoopOutcome(io, gpa, arena, cfg, environ_map, gid, outcome)
         else
-            setGoalStatusIf(io, gpa, std.Io.Dir.cwd(), gid, "active", "review");
+            setGoalStatusIf(io, gpa, arena, cfg, environ_map, gid, "active", "review");
     }
 
     if (has_session) {
@@ -13551,7 +13507,6 @@ var render_markdown: RenderCache = .{};
 var render_graph: RenderCache = .{};
 var render_board: RenderCache = .{};
 var render_board_view: RenderCache = .{};
-var render_compare_view: RenderCache = .{};
 var render_goals_view: RenderCache = .{};
 var render_knowledge_view: RenderCache = .{};
 var render_prompts_view: RenderCache = .{};
@@ -13559,8 +13514,6 @@ var render_arena_view: RenderCache = .{};
 var render_arena3d_view: RenderCache = .{};
 var render_todos_view: RenderCache = .{};
 var render_models_view: RenderCache = .{};
-var render_schedule_view: RenderCache = .{};
-var render_search_view: RenderCache = .{};
 var render_fleet: RenderCache = .{};
 var render_chat: RenderCache = .{};
 var render_labels: RenderCache = .{};
@@ -13595,7 +13548,6 @@ var gzip_markdown: GzipCache = .{};
 var gzip_graph: GzipCache = .{};
 var gzip_board: GzipCache = .{};
 var gzip_board_view: GzipCache = .{};
-var gzip_compare_view: GzipCache = .{};
 var gzip_goals_view: GzipCache = .{};
 var gzip_knowledge_view: GzipCache = .{};
 var gzip_prompts_view: GzipCache = .{};
@@ -13603,8 +13555,6 @@ var gzip_arena_view: GzipCache = .{};
 var gzip_arena3d_view: GzipCache = .{};
 var gzip_todos_view: GzipCache = .{};
 var gzip_models_view: GzipCache = .{};
-var gzip_schedule_view: GzipCache = .{};
-var gzip_search_view: GzipCache = .{};
 var gzip_fleet: GzipCache = .{};
 var gzip_chat: GzipCache = .{};
 var gzip_labels: GzipCache = .{};
@@ -14711,6 +14661,15 @@ test "history is the sessions alias people type first" {
     try std.testing.expectEqual(Command.sessions, commandForHelp("history").?);
 }
 
+test "session search is a sibling of session export" {
+    var diag: []const u8 = "";
+    var cmd: Command = .help;
+    const opts = try parseWithCommand(&.{ "clanker", "session", "search", "cron" }, &diag, &cmd);
+    try std.testing.expectEqual(Command.session_search, opts.command);
+    try std.testing.expectEqualStrings("cron", opts.task.?);
+    try std.testing.expectError(error.MissingArg, parseWithCommand(&.{ "clanker", "session", "search" }, &diag, &cmd));
+}
+
 test "write-goal accepts one intent and is listed as a command" {
     const opts = try parse(&.{ "clanker", "write-goal", "draft the release checklist" }, null);
     try std.testing.expectEqual(Command.write_goal, opts.command);
@@ -15381,6 +15340,19 @@ test "providers models can render configured models without an HTTP endpoint" {
     try provider.models.put(arena, "alpha", .{ .context_window = 128_000 });
     const rendered = try renderConfiguredProviderModels(arena, &provider);
     try std.testing.expectEqualStrings("id\tctx\nalpha\t128000\nzeta\t200000\n", rendered);
+}
+
+test "providers list overlay only fires when a models array is empty" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try std.testing.expect(!providers_logic.listNeedsLiveModelsAlloc(arena,
+        \\{"ok":true,"default":"zai","providers":[{"name":"zai","models":[{"name":"glm-5"}]}]}
+    ));
+    try std.testing.expect(providers_logic.listNeedsLiveModelsAlloc(arena,
+        \\{"ok":true,"default":"ollama","providers":[{"name":"ollama","models":[]}]}
+    ));
+    try std.testing.expect(!providers_logic.listNeedsLiveModelsAlloc(arena, "{\"providers\":[]}"));
 }
 
 test "a live /models listing fills the picker, skipping entries it cannot name" {
@@ -16065,7 +16037,6 @@ test "the webui asset route covers every embedded module, arena.js included" {
     // in ui/webui.zig but named in neither list here, so the Arena
     // view's dynamic import() 404'd against a server that had the bytes.
     try std.testing.expect(isWebuiAssetPath("/webui/features/arena.js"));
-    try std.testing.expect(isWebuiAssetPath("/webui/features/compare.js"));
     try std.testing.expect(isWebuiAssetPath("/webui/features/todos.js"));
     try std.testing.expect(isWebuiAssetPath("/webui/app.js"));
     try std.testing.expect(isWebuiAssetPath("/webui/core/ui.js"));

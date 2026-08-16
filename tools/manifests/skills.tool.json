@@ -1,0 +1,21 @@
+{
+  "name": "skills",
+  "description": "List, show, search, or enable/disable markdown skills in skills/ (agent.skills_dir). Same discovery the system prompt uses: *.md, no SYSTEM.md, at least 20 bytes, sorted, frontmatter plus state/skills.json enable. Input: {} lists name/title/description/bytes/enabled; {\"name\":\"research\"} shows one body; {\"query\":\"facts\"} lists matching skills; {\"action\":\"set_enabled\",\"name\":\"research\",\"enabled\":false} turns one off without rewriting the file.",
+  "llm_description": "List/show/search/toggle skill markdown files (skills/). {} lists; {name} shows one; {query} searches; action set_enabled{name,enabled} writes state/skills.json. Prompt inlines title+description only.",
+  "wasm": "zig-out/tools/skills.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["list", "show", "search", "set_enabled"]
+      },
+      "name": { "type": "string", "description": "Skill basename or stem (research or research.md). Omit to list." },
+      "query": { "type": "string", "description": "Case-insensitive search across name, title, description, and body." },
+      "enabled": { "type": "boolean", "description": "With action set_enabled, whether the skill rides the next prompt." }
+    }
+  },
+  "fs_prefixes": ["skills", "state/skills.json"],
+  "confirm": false,
+  "category": "agent"
+}

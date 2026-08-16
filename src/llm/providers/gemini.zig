@@ -20,6 +20,7 @@ pub const default_base = "https://generativelanguage.googleapis.com/v1beta";
 pub const provider: api.Provider = .{
     .kind = .gemini,
     .auth = .{ .default = .api_key, .required = true },
+    .proxy = .{ .family = .openai, .speaks = false, .enabled = false },
     .buildRequest = buildRequest,
     .parseResponse = parseResponse,
     .parseErrorDetail = parseErrorDetail,

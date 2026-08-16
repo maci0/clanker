@@ -1,0 +1,26 @@
+{
+  "name": "zig_test",
+  "description": "Run one Zig test file, optionally --test-filter. Same zig family as zig_check.",
+  "llm_description": "Run one Zig test file. Params: file (required), filter (optional, passed as --test-filter).",
+  "wasm": "zig-out/tools/test_file.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "file": {
+        "type": "string"
+      },
+      "filter": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "file"
+    ]
+  },
+  "fs_prefixes": [],
+  "network_allow": [],
+  "exec_allow": [
+    "zig"
+  ],
+  "category": "code"
+}

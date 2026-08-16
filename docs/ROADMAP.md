@@ -4,7 +4,7 @@
 
 - **Plugin manifest SDK** — full PRD: [docs/prds/0010-plugin-manifest-sdk.md](prds/0010-plugin-manifest-sdk.md), scope decision on distribution: [docs/adrs/0007-plugin-manifests-are-declarative-and-unsigned.md](adrs/0007-plugin-manifests-are-declarative-and-unsigned.md), field reference: [docs/manifest.md](manifest.md). The `*.tool.json` format already existed and was already enforced; what it lacked was a spec, a version, and any way to check a file against it. Landed: **`manifest_version`**, where absence means 1 (so every shipped manifest loads byte-for-byte unchanged) and a version this build does not know is *refused* rather than read under v1 rules, because registering a tool whose sandbox policy is not the one its author wrote is the failure a version key exists to prevent. **A pure validator** (`src/toolhost/manifest.zig`, no I/O, 11 unit tests) that reports the file and the offending key and separates errors (the loader refuses it, or accepts it and does something else) from warnings (it loads and does nothing) — the second class is the point, since the loader ignores unknown keys, so `"fs_prefix"` for `"fs_prefixes"`, a `fuel` above the 10B ceiling, or a `tool_allow` with no `tool_call` all load clean and quietly grant nothing. **`clanker plugins list|validate|new`**, fitted onto the noun `/plugins` and `/api/plugins` already use (`list` delegates to the same `plugins` guest rather than becoming a second listing); `validate` takes a file or a directory and exits non-zero on errors only, so it can guard a script; `new <name>` writes a manifest and a Zig guest that build and validate as they stand. **One packaging affordance**: a `wasm` value with no path separator now resolves beside its own manifest, so `{name.tool.json, name.wasm}` in one directory is a plugin that works wherever it was unpacked — every shipped manifest names a path with a separator, so this is a no-op for all of them. Every manifest in `tools/manifests` validates with zero errors *and* zero warnings, pinned by a test that walks the directory. Live-verified end to end: a scaffolded tool was built, found through the lazy catalog (94 tools, the model spent one `load_tools` call on it) and called correctly on a real DeepSeek run. Fixed along the way, all found by writing the reference against the code: `exec_allow` empty was described as "the harness default set (`git`, `rg`, `ast-grep`, `semcode`, `zig`)" in three places when `host.execAllowed` grants *nothing* to a tool that names nothing — three docs crediting every tool with exec authority it has never had; `wasm` was documented as "relative to the tools directory" when it has always been read relative to the process's cwd; and `category`, in most manifests and read by the `tools`/`plugins` guests, was undocumented everywhere. **`agent.tools_dir` is now a list** ([PRD 0022](prds/0022-out-of-tree-tools.md)): a string still parses as one entry, an array loads every directory, later-listed wins on a name collision. **Deliberately out of scope, in writing**: fetching, installing, signing, publisher identity and a registry index — the manifest is already the security boundary and already enforced, so signing answers a question the sandbox does not ask, while an install path without signing would make running someone else's code one command easier without making it any safer (ADR 0007).
 
-- **Scheduled runs (`clanker schedule`)** — `clanker schedule add|list|remove|enable|disable|run|run-due|log` over `state/schedule.json`, with every fire recorded in `state/schedule/log.jsonl`. Five-field cron subset (`*`, numbers, lists, `a-b`, `*/n`, `a-b/n`; Sunday is 0 or 7; Vixie's dom-or-dow rule), parsed and evaluated by pure, I/O-free code in `src/schedule/cron.zig` and checked against a brute-force minute scan. Fields are read at a fixed per-entry UTC offset (`--tz-offset`), never a DST-aware zone. A missed window fires **once** and is not backfilled: a machine that slept through a day of a `*/5` entry runs it once on wake, counts the rest into the ledger's `skipped`, and resumes on the normal grid. `run-due` claims a window before it calls the model (so a killed run is at-most-once, not a crash loop) and holds a non-blocking flock for its whole sweep, so a per-minute cron cannot stack sweeps. Nothing fires on its own — the system's own cron calls `run-due`; there is no `serve` loop. See [PRD 0009](prds/0009-schedule.md), [ADR 0009](adrs/0009-schedule-fires-on-fixed-utc-offsets.md) and [ADR 0008](adrs/0008-the-scheduler-is-cron-driven-not-a-daemon.md). **The web UI view shipped** (2026-08-13): a Schedule tab over `GET /api/schedule` (every entry with its next fire time, plus the last 20 ledger records) and `POST /api/schedule/<id>` `{"enabled":bool}`. Read-and-toggle on purpose, the same line the Arena and Compare views draw: firing an entry is an agent run and `serve` answers one request per connection, so `run` and `run-due` stay with cron and the terminal. Adding stays there too, because `add` has to refuse a spec that never fires and say which of the spec and the task was wrong, and a browser form that quietly accepted one would be worse than no form. Two details the view had to get right rather than inherit: times render at each entry's own fixed UTC offset (rendering them in the browser's locale would make a row that says 09:00 mean something other than the 09:00 the cron field names), and `next_run` is *absent* rather than zero when an entry can never fire, so the page can separate "paused", which someone chose, from a spec that parses to nothing, which nobody did. The empty ledger names the reason it is nearly always empty: nothing is calling `run-due`. Still not built: a WASM tool over the schedule, so an agent still cannot read or change its own timetable.
+- **Scheduled runs (`clanker schedule`)** — `clanker schedule add|list|remove|enable|disable|run|run-due|log` over `state/schedule.json`, with every fire recorded in `state/schedule/log.jsonl`. Five-field cron subset (`*`, numbers, lists, `a-b`, `*/n`, `a-b/n`; Sunday is 0 or 7; Vixie's dom-or-dow rule), parsed and evaluated by pure, I/O-free code in `tools/zig/schedule_cron.zig` and checked against a brute-force minute scan. Fields are read at a fixed per-entry UTC offset (`--tz-offset`), never a DST-aware zone. A missed window fires **once** and is not backfilled: a machine that slept through a day of a `*/5` entry runs it once on wake, counts the rest into the ledger's `skipped`, and resumes on the normal grid. `run-due` claims a window before it calls the model (so a killed run is at-most-once, not a crash loop) and holds a non-blocking flock for its whole sweep, so a per-minute cron cannot stack sweeps. Nothing fires on its own — the system's own cron calls `run-due`; there is no `serve` loop. See [PRD 0009](prds/0009-schedule.md), [ADR 0009](adrs/0009-schedule-fires-on-fixed-utc-offsets.md) and [ADR 0008](adrs/0008-the-scheduler-is-cron-driven-not-a-daemon.md). **The web UI view shipped** (2026-08-13): a Schedule tab over `GET /api/schedule` (every entry with its next fire time, plus the last 20 ledger records) and `POST /api/schedule/<id>` `{"enabled":bool}`. Read-and-toggle on purpose, the same line the Arena and Compare views draw: firing an entry is an agent run and `serve` answers one request per connection, so `run` and `run-due` stay with cron and the terminal. Adding stays there too, because `add` has to refuse a spec that never fires and say which of the spec and the task was wrong, and a browser form that quietly accepted one would be worse than no form. Two details the view had to get right rather than inherit: times render at each entry's own fixed UTC offset (rendering them in the browser's locale would make a row that says 09:00 mean something other than the 09:00 the cron field names), and `next_run` is *absent* rather than zero when an entry can never fire, so the page can separate "paused", which someone chose, from a spec that parses to nothing, which nobody did. The empty ledger names the reason it is nearly always empty: nothing is calling `run-due`. The `schedule` guest now owns list/toggle/add/remove over the same files; `/api/schedule` relays to it. Firing (`run`/`run-due`) stays native.
 - **REPL/TUI migrated to libvaxis** — `clanker repl` is now `src/tui/repl.zig`, built on `github.com/rockorager/libvaxis`'s `vxfw` app framework (user's explicit call, after the agave precedent below was raised and weighed — full replacement, not additive). Working end-to-end and live-verified: real `Agent.run` on a background thread (LLM calls block that thread, not the UI), streamed tokens shown live via a 33ms tick that only runs while a turn is in flight (idle, the app is purely event-driven — no busy loop), tool-call/result lines, a status bar with an animated spinner, `Ctrl-C` (idle quits, mid-stream sets the same `stop_flag` `client.chatStream` already checks), `/quit`, `/exit`, `/q`, `exit`, `quit`, and SIGWINCH handled for free by `vxfw.App` (the hand-rolled self-pipe fix in the old `term.zig` has no equivalent here — not needed). Untrusted text (LLM output, tool results) is control-stripped before rendering, mirroring the CWE-150 fix already in the old `transcript.zig`. Known gaps at the time have mostly closed since: the slash-command registry, manual scrollback, session persistence/resume, left-bar tool-call cards, and (2026-08-13) the inline `ask_user`/confirm-before-write bridge have all shipped (see the entries below and Planned for what remains). The hand-rolled REPL it replaced (`src/tui/*`, `cmdRepl`, the pty `tui-test` suite, `util/lineedit.zig`) has since been deleted: about 1,100 lines of `cli.zig` and eight files, on the user's call. `tui/transcript.zig`, `theme.zig`, `syntax.zig` and `width.zig` survive (joined since by `sanitize.zig` and `stats.zig`) because `clanker run` and the vaxis REPL still render through them. The gaps below are now gaps with no fallback, which is the trade that was accepted.
 - **Live status UX** — animated spinner + `⚙ tool` / `↳ ms` status lines cover the gap while the LLM or a tool is running, in both `clanker repl` and `clanker run` (`Agent.on_tool_call` / `on_tool_result` hooks); `clanker run` keeps stdout pipe-clean and puts status on stderr.
 - **Streaming** — SSE client with tool-call accumulation and `Agent.on_token` hook; the REPL streams tokens live.
@@ -21,7 +21,7 @@
 - **Autoresearch** — generic `command → scalar` loop (`clanker autoresearch` / `/autoresearch`, ledger under `state/autoresearch/`, WASM list/tail tool, skill + evals). `--budget` is logged advisory only in v1. PRD: [docs/prds/0004-autoresearch.md](prds/0004-autoresearch.md), ADR: [docs/adrs/0003-autoresearch-is-a-generic-harness-loop.md](adrs/0003-autoresearch-is-a-generic-harness-loop.md).
 - **Subagents** — `subagent` WASM tool: nested agent runs on a dedicated thread with bounded iterations (`ck_subagent` host fn), gated by `modules.subagents`.
 - **RLM / reasoning** — `rlm` WASM tool (recursive sub-LM over input chunks, bounded depth) and the `reasoning` tool; traces persisted to `state/reasoning.jsonl`.
-- **Self-review tools** — `std_api` (Zig 0.16 std signature lookup via `ck_std_api`), `symbols` (declaration-site extraction), `zig_check` (per-file `ast-check`/`fmt`), `test_file` (`zig test <file>`), `history` (improve-history review), `roadmap` (planned-items reader), `learnings` (read `state/learnings.md`).
+- **Self-review tools** — `zig_std` (Zig 0.16 std signature lookup via `ck_std_api`), `symbols` (declaration-site extraction), `zig_check` (per-file `ast-check`/`fmt`), `zig_test` (`zig test <file>`), `improve_history` (self-improve history review), `roadmap` (planned-items reader), `learnings` (read `state/learnings.md`).
 - **Docs** — this roadmap, `README.md`, and `docs/README.md` (reference) maintained in-repo.
 - **Chatrooms** — clankers subscribe to named rooms and talk to each other: `chat_*` WASM tools, `clanker chat` CLI, `/api/chat/*` HTTP endpoints, subscription overrides, and per-run inbox injection (`modules.chatrooms`).
 - **Token usage stats** — every completion recorded to `state/token_stats.jsonl` at the client choke point; `model_stats` WASM tool, `clanker stats` table, and `GET /api/stats` aggregate per provider/model (calls, tokens, cache hit rate, tok/s, cost).
@@ -103,7 +103,7 @@
   - **Not adopting, and why:** Odysseus's 2FA/multi-user auth doesn't apply to `clanker serve`'s *default* trust model — it binds `127.0.0.1` unless `[serve].host`, `CLANKER_HOST` or `--host` says otherwise (config < env < flag), and `unexpectedHost` in `src/cli.zig` refuses any `Host`/`:authority` that is not an IP literal at this port, `localhost`, or a name passed to `--serve-as`. So out of the box there is no network-facing surface to authenticate against. That is a default, not a guarantee: `serve --host 0.0.0.0` is unauthenticated too, and anyone who can reach the port gets full agent and tool access, so the access control there is a firewall or a trusted network, not clanker. Real multi-user exposure would need auth first, and remains a non-goal until it becomes an explicit one. Pi's own docs note it has *no* built-in permission system and runs with the user's full process permissions — the opposite direction from clanker's `ck_*`/descriptor sandbox, so this is a validation of the existing design, not a gap to close.
 - **Feature audit vs. Feynman (2026-08-13)** — compared clanker against [companion-inc/feynman](https://github.com/companion-inc/feynman), Companion's open-source terminal research agent (TypeScript, built on Pi's agent runtime: the same Pi audited on 2026-08-12, so the harness layer is already covered; what is new here is the skill layer on top). Most of feynman's surface is domain research machinery out of scope for a coding/ops harness — PaperRank, alphaXiv paper Q&A, the bio-database tools (OpenAlex, PubMed, ChEMBL, UniProt, ...), literature reviews, replication planning — not adopting any of it. Four ideas are worth adapting:
   - **`/watch` — baseline plus scheduled follow-up.** Feynman's watch skill runs a baseline survey into `outputs/`, then registers recurring follow-up checks *if* a scheduler is reachable, and explicitly reports the capability as unavailable when it is not, rather than pretending monitoring exists. Clanker has the scheduler (`clanker schedule`) but an agent cannot reach it: the schedule entry under Done already names the missing WASM tool over `state/schedule.json` as its one open item. Watch is the feature that makes that tool worth building — a skill that runs the baseline (research_mode), saves it, and adds its own follow-up entry. Adopt in that order: schedule WASM tool first, watch skill second.
-  - **Cross-session search.** Feynman's session-search skill: sessions are JSONL under `~/.feynman/sessions/`, `/search <query>` opens an interactive picker whose hits can be resumed, and the documented fallback is plain grep over the directory. Clanker's Ctrl-R searches the current transcript only; `state/sessions/` has no search at all. Adopt as `clanker session search <query>` (linear scan over the session store, print id + matching line, no index — the store is small), then a REPL entry that can resume a hit.
+  - **Cross-session search.** Feynman's session-search skill: sessions are JSONL under `~/.feynman/sessions/`, `/search <query>` opens an interactive picker whose hits can be resumed, and the documented fallback is plain grep over the directory. Clanker's Ctrl-R still searches the current transcript only. The human HTTP half shipped (`session.searchSessions`, `GET /api/sessions/search?q=`, min 3 chars, cap 50). Still open: `clanker session search`, a REPL resume-from-hit, and a model-facing guest (see the 2026-08-16 DSH plugin inventory below). No SQLite index until the linear scan is measured slow.
   - **Verifier pass with a provenance sidecar.** Feynman's outputs are source-grounded (claims carry direct URLs), deepresearch writes a `.provenance.md` sidecar beside the brief, and a dedicated Verifier agent checks citations and prunes dead links. Clanker's research_mode injects a search/fetch directive but nothing ever checks the citations in the answer. Adaptable as an opt-in post-run verify step: a subagent that fetches each cited URL via the existing `fetch_web` and flags dead or unsupporting ones. No new machinery — subagent + fetch_web compose it.
   - **Named agent role presets.** Feynman bundles four roles (Researcher, Reviewer, Writer, Verifier) as plain markdown prompts in `prompts/`, referenced by name from skills. Clanker's `subagent` tool takes only a free-text task; every skill that wants a reviewer-shaped subagent re-describes one. Cheap adoption: role prompt files under `docs/prompts/` that skills and the subagent tool reference by name.
   - **Not adopting, and why:** skills-only installers into other harnesses (feynman can install just its skills into Claude/Codex/OpenCode trees; clanker's skills name clanker's own tool vocabulary, so exporting them exports calls nothing else can make); the standalone bundle with pinned Node.js and SHA-256 release verification (clanker is one static Zig binary — no runtime to pin); local-model `/v1` endpoints (already have, multi-provider client); feynman's own autoresearch skill (same hypothesis→measure→retain shape as clanker's shipped generic loop; the only takeable detail is its narrative `autoresearch.md` sidecar beside the structured ledger, noted here, not planned); `/jobs` visibility (mostly covered by `clanker schedule list|log` + `clanker graph`; a unified "what is running or scheduled" view can wait until something is actually confusing).
@@ -114,7 +114,18 @@
   - **Deterministic tool-result pruning.** DSH's `compaction-tool-result-pruner` rewrites one oversized tool result to a bounded head/marker/tail with no LLM call, cheaper than clanker's existing LLM-summarization compaction path for the common case of one bulky result dominating the budget. PRD: [docs/prds/0031-tool-result-pruning.md](prds/0031-tool-result-pruning.md).
   - **MCP client bridge.** Clanker only serves MCP today; DSH's `mcp-client` package shows the wire contract for consuming external MCP servers (server-qualified tool naming, reconnect/backoff). The named trade-off: an MCP server sits outside clanker's WASM sandbox entirely, the same trust level Claude Code's and Codex's own MCP client config already asks users to accept. PRD: [docs/prds/0032-mcp-client-bridge.md](prds/0032-mcp-client-bridge.md).
   - **Agent presets.** DSH's `agent-presets`/`persona` packages compose a named tool allowlist plus persona text per session. Supersedes the cheaper "role prompt files" note from the 2026-08-13 Feynman audit above, which only ever changed what the model was *told*, never what it could *call*. PRD: [docs/prds/0033-agent-presets.md](prds/0033-agent-presets.md).
-  - **Not adopting, and why:** an E2B remote-sandbox execution world (`packages/e2b/`) — a paid third-party cloud dependency, the opposite direction from clanker's local-first, self-hosted WASM sandbox; runtime self-modification (`packages/self-modification/`, the agent mounting new plugins into its own live process) — clanker's tools are AOT-compiled WASM behind a `zig build tools` step, not dynamically loadable scripts, so there is no live tree to mount into; the fixed "Ralph" fresh-agent workflow tool (`packages/workflow/tool-ralph/`) — the fresh-context-per-iteration technique it names is real, but it overlaps enough with clanker's existing generic `autoresearch` loop (0004) and blocking `subagent` tool that a dedicated PRD would mostly restate them under a different name; out-of-process subagent providers that shell out to a different agent CLI entirely (`subagent-claude-code`, `subagent-codex`) — a second-opinion-from-a-different-architecture feature `compare`/`arena` already cover from the model-comparison angle, and adding a raw exec path to another agent binary's own file/network access is a materially bigger trust question than anything else in this audit; continuable/background subagents (start one, keep working, poll later) — a real, separably-buildable idea noticed in `packages/subagent/`'s "continuable background subagents" note, but set aside for now rather than forced into a sixth-plus PRD without a concrete user need driving it yet.
+  - **Not adopting, and why:** an E2B remote-sandbox execution world (`packages/e2b/`) — a paid third-party cloud dependency, the opposite direction from clanker's local-first, self-hosted WASM sandbox; runtime self-modification (`packages/self-modification/` / `packages/extensions/`, the agent mounting new plugins into its own live process) — clanker's tools are AOT-compiled WASM behind a `zig build tools` step, not dynamically loadable scripts, so there is no live tree to mount into; the fixed "Ralph" fresh-agent workflow tool (`packages/workflow/tool-ralph/`) — the fresh-context-per-iteration technique it names is real, but it overlaps enough with clanker's existing generic `autoresearch` loop (0004) and blocking `subagent` tool that a dedicated PRD would mostly restate them under a different name; out-of-process subagent providers that shell out to a different agent CLI entirely (`subagent-claude-code`, `subagent-codex`) — a second-opinion-from-a-different-architecture feature `compare`/`arena` already cover from the model-comparison angle, and adding a raw exec path to another agent binary's own file/network access is a materially bigger trust question than anything else in this audit. Continuable/background subagents were set aside here; the 2026-08-16 full plugin inventory below promotes them (they share a registry with jobs).
+- **Plugin inventory vs. DeepSeek Harness (2026-08-16)** — follow-up to the 2026-08-14 audit above. Evidence: [docs/research/deepseek-harness-plugins.md](research/deepseek-harness-plugins.md). **Shipped the same day:** tool-result spill, model-facing session search (`session_search` / `clanker session search` / `/search`), background `jobs` + `subagent {background:true}`, `run_plan` (Code Mode v1), feedback sidecar, composer `@file` mentions, turn-complete OS notifications, git-first checkpoint rewind. PTY (interactive stdin) is still open; jobs cover the non-interactive case. High-value *ideas* as originally listed:
+  - **Tool-result spill.** 0031 already rewrites an oversized result to head/marker/tail and drops the middle. DSH `packages/spill/` (and community `dsh-funnel`) persist the full text under a session-scoped locator the model can read back, so a later turn does not re-run `exec` or `read_file`. Guest over `state/spills/<session>/` plus a hook next to `src/agent/prune.zig`. Complements 0031; does not replace it.
+  - **Model-facing session query.** Human HTTP search shipped (`GET /api/sessions/search`). Still missing `clanker session search`, a REPL resume-from-hit, and a guest the model can call (extend `sessions`, linear scan first). DSH `session-query` also has SQLite FTS and fork lineage; lineage is cheap once `parent_session` is on the listing header, FTS waits on a measured need.
+  - **Background jobs, then PTY.** DSH `jobs/` + `terminal/`: start / poll / cancel / completion-notice for long tools, plus owner-scoped persistent PTYs. Clanker tools are request/response; a long `zig build` either blocks the turn or vanishes. Reuse the 0016 subprocess registry (new `kind`s) so 0034 lists them. Model-facing `job_*` first. A real PTY needs interactive stdin, which `ck_exec` does not have; only build it if jobs are not enough.
+  - **Continuable background subagents.** Promoted from the 2026-08-14 deferral. `ck_subagent` joins the nested thread, so the parent is parked for the whole child. A long review or research child should be a job `kind` the parent can poll. Host-side, not a guest.
+  - **Code Mode v1.** Official Code mode lets the model write one TypeScript program that calls many tools. DSH runs it in a worker thread they document as *not* a security boundary. Adopt the orchestration idea only: a bounded `run_plan` guest that executes `[{tool, args}, ...]` against the existing catalog and returns a bound log. No Node worker, no host APIs from the script.
+  - **Human feedback sidecar.** DSH `feedback/`: thumbs / remarks that are *never* injected into the next prompt. `state/feedback.jsonl` plus a web control and a guest autolearn / compare can read. Distinct from advisor (0015, model-written) and from autolearn (usage-derived).
+  - **Composer `@file` mentions.** Community `dsh-at-file`: type `@path` in the web composer, attach those file contents as chips. Images/video already attach; workspace text files do not. Web UI only; the run payload already accepts extra context.
+  - **Turn-complete OS notifications.** Community `dsh-notification`: notify-send / equivalent when a turn finishes and the tab is in the background. Fail-open if the platform has no notifier.
+  - **Checkpoint rewind.** Community `dsh-checkpoint-rewind` / `dsh-turn-rewind`: git-first snapshot before a mutating tool, then rewind *files* and fork the session. `session.branchSession` already forks transcript text. Prefer `git stash` / a worktree over a new snapshot format.
+  - **Not adopting (same as 2026-08-14, confirmed against the full group list):** E2B; Creator-mode live plugin mount (`packages/extensions/`); Ralph as a named tool; out-of-process Claude Code / Codex children; computer-use / ADB / email / calendar / stocks (Odysseus-shaped workspace apps); a Cordis plugin marketplace (ADR 0007). Vision sidecars are low value here because `image_in` already reaches the model. Memory plugins duplicate 0007. Circuit-breaker routing belongs with the OmniRoute note, not a DSH clone.
 - **TTSR (time-traveling stream rules)** — regex match on the LLM's streaming output aborts the stream mid-token, injects a rule as a system message, and retries from the same point. Zero tokens spent on the rule until a match fires; injections survive compaction. Lives in `src/agent/loop.zig` + a new stream-interception layer. PRD: [docs/prds/0013-ttsr.md](prds/0013-ttsr.md).
 - **Hashline edit format** — hash-anchored line edits: `read_file` annotates lines with 4-hex xxHash32 digests; `edit_file` anchors by hash rather than exact text; the host rejects stale patches before writing. omp benchmarks: -61% output tokens on Grok 4 Fast, pass@1 from 6.7% to 68.3% on Grok Code Fast. PRD: [docs/prds/0014-hashline.md](prds/0014-hashline.md).
 - **Advisor** — a second model reads every completed turn and injects a severity-tagged note (`note`/`concern`/`blocker`) at the top of the next turn. Blockers pause the loop for human confirmation. Configured via `[advisor]` in `config.toml`; disabled by default. PRD: [docs/prds/0015-advisor.md](prds/0015-advisor.md).
@@ -133,8 +144,56 @@
 `/webui/plugins/<name>/app.*` relay to the guest (`src/cli.zig` scan/toggle/seed
 copies deleted; UI reads the guest's `addons` answer). `/api/workflows` now
 bridges to the `workflows` guest (guest list emits `tags`/`chain` so the UI
-contract holds). `/api/goals` GET reads through `update_goal`'s new
+contract holds). `/api/goals` GET reads through `goal_update`'s new
 `action:list`; only the transient `running` overlay stays native.
+
+**Resolved 2026-08-16 (follow-up):** `/api/skills` relays to a new `skills`
+guest (`tools/zig/skills.zig` + `skills_logic.zig`); discovery filters are
+the one helper `system_prompt.zig` also uses. `pluginApi()` now has
+`postJSON`, `onLive`, `confirm`/`prompt`/`toast`, `workspace`, `icon`, and
+namespaced `storage`. `plugin.json` declares `capabilities` against that
+surface (unknown names refused on write). Office/files/music use the API
+instead of raw `fetch`/`localStorage`/`window.clankerWorkspace`.
+
+**Resolved 2026-08-16 (schedule guest):** `/api/schedule` relays to a new
+`schedule` guest (`tools/zig/schedule.zig` + `schedule_logic.zig`). Cron
+arithmetic moved to `tools/zig/schedule_cron.zig` (host-tested helper) so
+the guest and `run-due` share one dialect. The guest owns list, toggle,
+add, and remove over `state/schedule.json`; `runner.zig`'s Fire callback
+stays native.
+
+**Resolved 2026-08-16 (sessions listing):** `GET /api/sessions` relays to
+the `sessions` guest (`format=json`). Header parse and picker JSON live
+in `sessions_logic.zig` (host-tested). Mutations and a full transcript
+stay native.
+
+**Resolved 2026-08-16 (proxy vtable):** `src/serve/proxy.zig` reads
+`Provider.proxy` instead of switching on `provider.kind`. Vertex quota
+project is `auth.Spec.quota_from_project`. The Vertex Gemini model-name
+sniff stays (the model, not the kind).
+
+**Resolved 2026-08-16 (providers list + advisor guest):**
+`GET /api/providers` relays the `providers` guest (`action:list`); the
+guest emits the picker contract (`default`, `default_model`, `models[]`)
+from harness config (host-tested in `providers_logic.zig`). A live
+`/models` fill for an empty map stays native (credentials). Advisor
+parse/summarize/inject moved to `tools/zig/advisor_logic.zig`; the
+`advisor` guest owns the same review via `ck_llm`. Native `review()`
+keeps the timeout + credential `client.chat` call.
+
+**Resolved 2026-08-16 (skills + metrics + catalog + dead engine):**
+Skills have frontmatter (`title`/`description`/`enabled`), a
+`state/skills.json` sidecar, progressive disclosure in the system prompt,
+and `POST /api/skills` to toggle. Health dropped its metrics poll for
+`Topic.metrics` on the live bus. `catalog.classify` is table data
+(`needs_base`, `path_if_api_ends_v1`). Deleted the unused
+`src/research/engine.zig` placeholder.
+
+**Resolved 2026-08-16 (thinking guest + schedule view):**
+The `thinking` guest owns the classifier via `ck_llm` (same
+`thinking_logic` helper). The Schedule web view is
+`ui/plugins/schedule/` and stays on after a pre-migration
+`state/webui_plugins.json` via `inherit_on`.
 
 The whole tree reviewed against the philosophy README/AGENTS.md now state.
 Reference pattern for migrations: `tools/zig/logs.zig` (native handler
@@ -157,21 +216,12 @@ recorder splits (native writer at the choke point, guest reader:
 
 - `/api/workflows` reimplements what the `workflows` guest lists; one
   `toolJson` call replaces it.
-- `/api/skills` + `scanSkills` mirror `system_prompt.zig`'s own skills
-  scan (its docstring admits it), with `max_skill_bytes` duplicated as a
-  constant in each. A `skills` guest (list/show/search, `workflows`-shaped)
-  collapses both and gives skills the descriptor they lack.
-- `/api/sessions` listing overlaps the `sessions` guest; mutations
-  (fork/branch/rename/delete) stay native or grow guest ops.
-- `/api/providers` listing overlaps the `providers` guest's
-  `action:"list"`.
+- `/api/sessions` listing — done (guest `format=json`; mutations stay native).
+- `/api/providers` listing — done (guest `action:list` emits the picker
+  contract; live `/models` fill for an empty map stays native).
 - `/api/goals` GET is a raw `state/goals.json` read while the writes
-  already bridge to `add_goal`/`update_goal`.
-- `/api/schedule` has no guest at all — the one surface with no plugin
-  shape even attempted. The `alarm` guest (whole store owned in-guest,
-  file locking) is the template; `cron.zig` is already pure and belongs
-  in `host_tested_helpers`; only `runner.zig`'s `Fire` callback stays
-  native. This also unblocks the `/watch` skill noted above.
+  already bridge to `goal_add`/`goal_update`.
+- `/api/schedule` — done (guest owns list/toggle/add/remove; Fire stays native).
 - `/api/files` (~200 native lines, hand-rolled `..` clamp instead of the
   sandbox's `safeJoin`) duplicates `list_files`/`read_file`/`find_files`.
   Real pin: workspace roots can sit outside the sandbox root, and the
@@ -179,11 +229,15 @@ recorder splits (native writer at the choke point, guest reader:
 
 **Core code with a natural guest shape**
 
-- `src/agent/advisor.zig` — one prompt, one `ck_llm`-shaped call, one
-  parsed note; the arena/compare guests already prove the shape. Becomes
-  a `turn_hook` + `llm:true` guest.
-- `src/agent/thinking.zig` — the auto-thinking classifier is the purest
-  candidate in the tree: one call in, one word out.
+- `src/agent/advisor.zig` — parse/summarize/inject now live in
+  `tools/zig/advisor_logic.zig` (host-tested). The `advisor` guest is
+  the same review via `ck_llm`. Provider resolution and the fail-open
+  `client.chat` call stay native (timeout + credentials), matching
+  thinking. Injection and the blocker ask stay on the session write path.
+- `src/agent/thinking.zig` — prompt, parse, and effort map now live in
+  `tools/zig/thinking_logic.zig` (host-tested). The `thinking` guest is
+  the same classify via `ck_llm`. Provider resolution and the fail-open
+  `client.chat` call stay native (timeout + credentials).
 - models.dev catalog fetch/search (`loadModelsDev`, `handleCatalog*`) —
   guest with `network_allow:["models.dev"]` +
   `fs_prefixes:["state/models-dev.json"]`; config-load's snapshot read
@@ -194,54 +248,53 @@ recorder splits (native writer at the choke point, guest reader:
   `phonebook.zig` documents routing the same traffic class through the
   `peers` guest precisely so the tool's `network_from_config` allowlist
   gates it. Route fan-out the same way.
-- `src/research/engine.zig` is dead (only the comptime test block
-  references it): delete, or make it the `autoresearch` planner.
+- `src/research/engine.zig` — deleted (placeholder only referenced from
+  the comptime test block; autoresearch never imported it).
 
 **Web UI plugin surface: grow the API, then migrate views**
 
-- `pluginApi()` (`ui/app/core/plugins.js`) lacks five of the six things
-  every built-in feature view uses: POST/mutations, the live bus
-  (`onLive`), `uiConfirm`/`uiPrompt`/`toast`, workspace context, `icon()`,
-  namespaced storage. Existing plugins already work around it (office
-  raw-fetches `/api/chat/send`; health and office poll on `setInterval`
-  beside a live SSE bus they cannot reach).
-- `plugin.json` declares nothing (four string fields) while every WASM
-  tool declares `fs_prefixes`/`network_allow`/`env_allow` — the one
-  plugin surface without a declared surface. Add a capability field.
-- `src/serve/live.zig`'s `Topic` is a closed enum and no `ck_publish`
-  exists, so neither a guest nor a UI plugin can ever emit an event;
-  every publisher must be native. An open (string-topic or registered)
-  publish path is what makes the two items above complete.
+- Health used to poll `/api/metrics` on `setInterval`. Done: `Topic.metrics`
+  plus a 1 Hz snapshot on the live bus; Health uses `onLive`.
+- `plugin.json` now declares `capabilities` against `pluginApi()`. The
+  field is a declaration, not a sandbox grant.
+- Live-bus emit — done: `Topic.plugin`, `ck_publish` (`live_publish` on
+  the descriptor), and `POST /api/live` / `pluginApi.emit`. Guests and
+  UI plugins cannot pick chat/run/metrics; the host stamps `t` and `from`.
 - Then migrate built-in views out of `app.wasm`: `schedule`, `search`,
-  `compare` need only `getJSON` and are ready today; `arena3d` (20K of
-  3D toy) is the cheapest weight loss; `board`/`goals` stay built-in
-  (the goal/board reconciliation is declared core).
+  and `compare` are now disk plugins (on by default; `inherit_on` keeps
+  them after an older `state/webui_plugins.json` that only listed
+  files+music). `pluginApi()` gained `openSession` and `foldFind` so
+  Search can open a hit without importing app.js. `arena3d` (20K of 3D
+  toy) is the cheapest remaining weight loss; `board`/`goals` stay
+  built-in (the goal/board reconciliation is declared core).
 
 **Provider vtable leaks (the registry abolished kind-switches; these
 crept back outside `providers/`)**
 
-- `src/serve/proxy.zig` holds eleven `provider.kind ==` sites (route
-  refusals, body rewrite, `use_vtable` disjunction, `speaks()`), plus a
-  model-name sniff to pick a protocol. Fold into vtable fields
-  (`proxyFamily`, `servesRoute`, `needsBodyRewrite`, `overlayHeaders`).
-- `auth.zig`'s `quotaProject` switch → a `Spec` field like the rest of
-  the strategy axis; `proxy_transcode.zig`'s `upstreamFamily` and
-  `catalog.zig`'s anthropic `/v1` fixup → vtable/table data.
+- `src/serve/proxy.zig` kind-switches — done (`Provider.proxy` on the
+  vtable: family, speaks, enabled, chat_only, vtable_chat/messages,
+  always_vtable_url, rewrite_vertex_body, vertex_body, overlay_anthropic).
+  The Vertex Gemini model-name sniff stays: that is the model, not the kind.
+- `auth.zig`'s `quotaProject` switch — done (`Spec.quota_from_project`).
+  `catalog.zig`'s anthropic `/v1` fixup — done (`NpmRow.path_if_api_ends_v1`
+  and `needs_base`; `classify` has no `row.kind ==`).
 
 **Data that is still code**
 
-- Themes: three hand-kept lists (`src/tui/theme.zig` structs + enum +
-  map, `ui/app/core/theme.js` THEMES array, one `:root[data-theme]`
-  block each in `app.css`). A theme is a name and a color table — the
-  textbook data plugin, currently requiring three edits in two languages
-  and two rebuilds.
-- Slash commands: three separate hardcoded tables (REPL registry,
-  `SLASH_CMDS` in app.js, palette entries) while `/workflow <name>` is
-  already data-driven — the generic shape exists and serves one consumer.
-- Skills have no frontmatter, no enable/disable (tools and UI plugins
-  both have one), and no progressive disclosure: every body rides every
-  prompt unconditionally, so the surface taxes each request linearly as
-  it grows.
+- Themes (web): done. Named palettes live in `themes/*.json` (drop-in;
+  `GET /webui/themes/catalog.json` lists them). `core/theme.js` applies
+  the tokens; `app.css` keeps only `:root` and the system dark media
+  query. TUI ANSI/RGB tables in `src/tui/theme.zig` stay native (different
+  roles: SGR + syntax, not CSS variables).
+- Slash commands (web composer): done. The catalog is
+  `commands/slash.json` (`GET /webui/commands/slash.json`); `core/slash.js`
+  binds click/view/action. REPL `command_registry` stays native (typed
+  actions, a different command set). Palette still builds its own live
+  list (sessions, runs, cards) and a few static actions.
+- Skills frontmatter, enable/disable, and progressive disclosure — done.
+  `skills_logic` parses `title`/`description`/`enabled`; `state/skills.json`
+  is the operator sidecar; the prompt inlines name+description and the
+  `skills` tool reads a body. The Tools view checkbox POSTs to `/api/skills`.
 - `system_prompt.build` concatenates ~10 independent context sections
   with no provider surface; pin: byte-stable ordering for prompt-cache
   hits must stay host-controlled.

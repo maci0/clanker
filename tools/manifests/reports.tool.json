@@ -8,7 +8,14 @@
     "properties": {
       "action": {
         "type": "string",
-        "enum": ["search", "list", "open", "create", "append", "update"],
+        "enum": [
+          "search",
+          "list",
+          "open",
+          "create",
+          "append",
+          "update"
+        ],
         "description": "search is the default; list returns both indexes; open reads one record; create scaffolds and indexes a new record; append adds evidence to a record; update replaces one exact passage."
       },
       "query": {
@@ -17,7 +24,13 @@
       },
       "kind": {
         "type": "string",
-        "enum": ["all", "report", "runbook", "bug", "investigation"],
+        "enum": [
+          "all",
+          "report",
+          "runbook",
+          "bug",
+          "investigation"
+        ],
         "description": "For search: all, report, or runbook (default all). For create: bug, investigation, or runbook."
       },
       "path": {
@@ -51,8 +64,11 @@
     },
     "required": []
   },
-  "fs_prefixes": ["docs/reports/", "docs/runbooks/"],
+  "fs_prefixes": [
+    "docs/reports/",
+    "docs/runbooks/"
+  ],
   "network_allow": [],
-  "category": "agent",
+  "category": "knowledge",
   "confirm": false
 }

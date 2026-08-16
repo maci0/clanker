@@ -1,0 +1,5 @@
+/* Search conversations — migrated built-in. Phone fields stay 16px so iOS
+   Safari does not zoom a focused input. */
+@media (max-width: 40rem) {
+  #view-search input[type="search"] { font-size: 16px; }
+}

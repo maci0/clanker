@@ -23,6 +23,7 @@ pub const provider: api.Provider = .{
     // vendors this kind serves, so there is no `detect`: selecting OAuth means
     // saying so with `auth = "oauth_static"`.
     .auth = .{ .default = .api_key },
+    .proxy = .{ .family = .openai, .vtable_chat = true },
     .buildRequest = buildRequest,
     .parseResponse = parseResponse,
     .parseErrorDetail = parseErrorDetail,

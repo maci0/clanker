@@ -1,4 +1,4 @@
-//! fetch_web: HTTP GET a URL (host must be in the tool's network allowlist).
+//! web_fetch: HTTP GET a URL (host must be in the tool's network allowlist).
 //! Input:  {"url": "https://..."}
 //! Output: {"ok": true, "bytes": <num>, "body": "<up to N chars>"} or error.
 

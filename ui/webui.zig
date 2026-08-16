@@ -25,14 +25,11 @@ const fleet = @embedFile("app/features/fleet.js");
 const arena_view = @embedFile("app/features/arena.js");
 const arena3d_view = @embedFile("app/features/arena3d.js");
 const board_view = @embedFile("app/features/board.js");
-const compare_view = @embedFile("app/features/compare.js");
 const goals_view = @embedFile("app/features/goals.js");
 const knowledge_view = @embedFile("app/features/knowledge.js");
 const prompts_view = @embedFile("app/features/prompts.js");
 const todos_view = @embedFile("app/features/todos.js");
 const models_view = @embedFile("app/features/models.js");
-const schedule_view = @embedFile("app/features/schedule.js");
-const search_view = @embedFile("app/features/search.js");
 const icons = @embedFile("app/core/icons.js");
 const ui = @embedFile("app/core/ui.js");
 const utils = @embedFile("app/core/utils.js");
@@ -42,6 +39,7 @@ const labels = @embedFile("app/core/labels.js");
 const goals = @embedFile("app/core/goals.js");
 const stream = @embedFile("app/core/stream.js");
 const theme = @embedFile("app/core/theme.js");
+const slash = @embedFile("app/core/slash.js");
 const overlay = @embedFile("app/core/overlay.js");
 const search = @embedFile("app/core/search.js");
 const composer = @embedFile("app/core/composer.js");
@@ -83,7 +81,7 @@ fn encodedLen(comptime asset: []const u8) usize {
 // checked on its own, because each is sent in its own response.
 comptime {
     const overhead = "{\"ok\":true,\"content_type\":\"text/javascript; charset=utf-8\",\"body\":}".len;
-    for ([_][]const u8{ page, styles, script, preact_boot, fleet, arena_view, arena3d_view, board_view, compare_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, schedule_view, search_view, icons, ui, utils, vendor, chat, labels, goals, stream, theme, overlay, search, composer, ai_disclosure, scroll, run_metrics, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board }, [_][]const u8{ "index.html", "app.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/arena3d.js", "features/board.js", "features/compare.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/schedule.js", "features/search.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/ai-disclosure.js", "core/scroll.js", "core/run-metrics.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js" }) |asset, name| {
+    for ([_][]const u8{ page, styles, script, preact_boot, fleet, arena_view, arena3d_view, board_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, icons, ui, utils, vendor, chat, labels, goals, stream, theme, slash, overlay, search, composer, ai_disclosure, scroll, run_metrics, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board }, [_][]const u8{ "index.html", "app.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/arena3d.js", "features/board.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/slash.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/ai-disclosure.js", "core/scroll.js", "core/run-metrics.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js" }) |asset, name| {
         const envelope = overhead + encodedLen(asset);
         if (envelope > lib.out_cap) @compileError(std.fmt.comptimePrint(
             "webui/{s} JSON-encodes to {d} bytes, over lib.zig's out_cap of {d}. Shrink it or raise out_cap.",
@@ -113,6 +111,7 @@ fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/core/goals.js")) return .{ .body = goals, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/stream.js")) return .{ .body = stream, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/theme.js")) return .{ .body = theme, .content_type = "text/javascript; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/core/slash.js")) return .{ .body = slash, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/overlay.js")) return .{ .body = overlay, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/search.js")) return .{ .body = search, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/composer.js")) return .{ .body = composer, .content_type = "text/javascript; charset=utf-8" };
@@ -135,14 +134,11 @@ fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/features/arena.js")) return .{ .body = arena_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/arena3d.js")) return .{ .body = arena3d_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/board.js")) return .{ .body = board_view, .content_type = "text/javascript; charset=utf-8" };
-    if (std.mem.endsWith(u8, path, "/features/compare.js")) return .{ .body = compare_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/goals.js")) return .{ .body = goals_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/knowledge.js")) return .{ .body = knowledge_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/prompts.js")) return .{ .body = prompts_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/todos.js")) return .{ .body = todos_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/models.js")) return .{ .body = models_view, .content_type = "text/javascript; charset=utf-8" };
-    if (std.mem.endsWith(u8, path, "/features/schedule.js")) return .{ .body = schedule_view, .content_type = "text/javascript; charset=utf-8" };
-    if (std.mem.endsWith(u8, path, "/features/search.js")) return .{ .body = search_view, .content_type = "text/javascript; charset=utf-8" };
     return .{ .body = page, .content_type = "text/html; charset=utf-8" };
 }
 

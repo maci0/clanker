@@ -1,6 +1,9 @@
 // Vanilla, no bundler. Web UI plugin host — view registration + asset loading.
-import { T, state, add, effect, showLoadError, upgradePfButton } from "./ui.js";
+import { T, state, add, effect, showLoadError, upgradePfButton, uiConfirm, uiPrompt, toast } from "./ui.js";
 import { renderMarkdownWithFences, buildCodeBlock, renderMermaidBlocks } from "../lib/markdown.js";
+import { onLive } from "./stream.js";
+import { icon } from "./icons.js";
+import { searchFoldFind } from "./utils.js";
 
 export var pluginViews = {};
 
@@ -14,19 +17,62 @@ var _fmtBytes = null;
 var _fmtInt = null;
 var _fmtCost = null;
 var _formatChatTime = null;
+var _openSession = null;
 
 function fmt() { return { bytes: _fmtBytes, int: _fmtInt, cost: _fmtCost, time: _formatChatTime }; }
 
-export function pluginApi() {
+function readJsonResponse(r) {
+  return r.json().then(function (d) {
+    if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
+    return d;
+  });
+}
+
+function pluginStorage(spec) {
+  var prefix = "clanker.plugin." + ((spec && spec.id) ? spec.id : "unknown") + ".";
+  return {
+    get: function (key) {
+      try { return window.localStorage.getItem(prefix + key); } catch (e) { return null; }
+    },
+    set: function (key, value) {
+      try { window.localStorage.setItem(prefix + key, value); } catch (e) {}
+    },
+    remove: function (key) {
+      try { window.localStorage.removeItem(prefix + key); } catch (e) {}
+    }
+  };
+}
+
+export function pluginApi(spec) {
   return {
     getJSON: function (path) {
-      return fetch(path).then(function (r) {
-        return r.json().then(function (d) {
-          if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
-          return d;
-        });
-      });
+      return fetch(path).then(readJsonResponse);
     },
+    postJSON: function (path, body) {
+      return fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body == null ? {} : body)
+      }).then(readJsonResponse);
+    },
+    onLive: onLive,
+    emit: function (data) {
+      return fetch("/api/live", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from: (spec && spec.id) ? spec.id : "unknown", data: data == null ? {} : data })
+      }).then(readJsonResponse);
+    },
+    confirm: uiConfirm,
+    prompt: uiPrompt,
+    toast: toast,
+    workspace: function () { return window.clankerWorkspace || ""; },
+    icon: icon,
+    storage: pluginStorage(spec),
+    openSession: function (id, jump) {
+      if (_openSession) _openSession(id, jump);
+    },
+    foldFind: searchFoldFind,
     el: function (tag, className, text) {
       var node = document.createElement(tag);
       if (className) node.className = className;
@@ -184,6 +230,7 @@ export function bindPlugins(ctx) {
   _fmtInt = ctx.fmtInt;
   _fmtCost = ctx.fmtCost;
   _formatChatTime = ctx.formatChatTime;
+  _openSession = ctx.openSession;
   window.clanker = {
     registerView: function (spec) {
       if (!spec || !spec.id || typeof spec.mount !== "function") return;
@@ -245,14 +292,14 @@ export function bindPlugins(ctx) {
       _viewLoaders[spec.id] = function () {
         if (!mounted) {
           mounted = true;
-          return spec.mount.call(spec, section, pluginApi());
+          return spec.mount.call(spec, section, pluginApi(spec));
         }
-        if (typeof spec.refresh === "function") return spec.refresh.call(spec, section, pluginApi());
+        if (typeof spec.refresh === "function") return spec.refresh.call(spec, section, pluginApi(spec));
         return null;
       };
       _wireTab(tab, _VIEWS.length - 1);
       if (typeof spec.boot === "function") {
-        try { spec.boot(pluginApi()); } catch (e) {}
+        try { spec.boot(pluginApi(spec)); } catch (e) {}
       }
     }
   };

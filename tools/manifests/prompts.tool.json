@@ -29,5 +29,5 @@
   ],
   "wasm": "zig-out/tools/prompts.wasm",
   "internal": true,
-  "category": "agent"
+  "category": "harness"
 }

@@ -2,5 +2,6 @@
   "name": "files",
   "title": "Files",
   "description": "Workspace file browser: two-pane split (directory listing + file preview). Filter and sort entries, toggle hidden files, navigate with arrow keys. Markdown renders with mermaid; source files get syntax highlighting; copy the path of any open file.",
-  "group": "Work"
+  "group": "Work",
+  "capabilities": ["get", "workspace", "render"]
 }

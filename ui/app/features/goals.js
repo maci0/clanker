@@ -389,7 +389,7 @@ function runGoal(g, opts) {
     (g.objective || "") + "\nDone when: " + (g.completion_criterion || ""));
   var controller = new AbortController();
   goalRuns[g.id] = { controller: controller, status: "running", text: "" };
-  _showView("board", true);
+  _showView("kanban", true);
   renderGoals(goalState.val);
   el.goalsStatus.textContent = opts.task ? "Re-evaluating goal…" : "Starting work on goal…";
   moveGoalCard(g, "doing");

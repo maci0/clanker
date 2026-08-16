@@ -505,7 +505,7 @@ chatrooms = false
   top_k = 5
   threshold = 0.35
   ```
-- **`[web]`** — `allow`: hostnames the research tools (`fetch_web`,
+- **`[web]`** — `allow`: hostnames the research tools (`web_fetch`,
   `web_search`) may reach, added to their sandbox `network_allow` at load. A
   research site is a config edit, not a manifest edit. Entries may use `*` and
   `?` globs, and a bare `"*"` allows any host.

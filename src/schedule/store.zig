@@ -55,7 +55,7 @@ pub const Entry = struct {
     /// fire time" rather than a snapshot of what it said at add time.
     provider: ?[]const u8 = null,
     model: ?[]const u8 = null,
-    /// Minutes east of UTC that the cron fields are read at. See cron.zig:
+    /// Minutes east of UTC that the cron fields are read at. See schedule_cron.zig:
     /// fixed, never a DST-aware zone.
     tz_offset_minutes: i32 = 0,
     enabled: bool = true,

@@ -7,6 +7,14 @@
     "properties": {
       "reset": {
         "type": "boolean"
+      },
+      "provider": {
+        "type": "string",
+        "description": "Optional provider name. With model, rewrites the Autolearn section via ck_llm."
+      },
+      "model": {
+        "type": "string",
+        "description": "Optional model override for the synthesis pass."
       }
     }
   },
@@ -16,5 +24,9 @@
     "docs/ROADMAP.md"
   ],
   "internal": true,
+  "llm": true,
+  "config": {
+    "max_tokens": 2500
+  },
   "category": "harness"
 }

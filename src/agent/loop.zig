@@ -24,6 +24,8 @@ const utf8 = @import("../util/utf8.zig");
 const mock_server = @import("../llm/mock_server.zig");
 const advisor = @import("advisor.zig");
 const prune = @import("prune.zig");
+const spill_mod = @import("spill.zig");
+const rewind_mod = @import("rewind.zig");
 const loop_guard = @import("loop_guard.zig");
 const hooks_config = @import("../hooks/config.zig");
 const hooks_runner = @import("../hooks/runner.zig");
@@ -132,10 +134,10 @@ const plan_mode_suffix = "\n\nPLAN MODE: This run is a proposal, not an executio
 
 /// Appended to the system prompt when [[Agent.research_mode]] is set, the
 /// composer's Research toggle, the web-search parity control. A directive,
-/// not a gate: web_search/fetch_web are ordinary enabled tools the model
+/// not a gate: web_search/web_fetch are ordinary enabled tools the model
 /// could already call; this tells it the operator wants web-backed answers
 /// and when to reach for them.
-const research_mode_suffix = "\n\nRESEARCH MODE: The operator turned on web research for this run. Prefer current, sourced information over stale knowledge: consult web_search (or fetch_web for a specific page) when the answer depends on facts that change (versions, prices, events, APIs, today's news) and cite what you found. Do not fetch for the sake of fetching; a question answerable from context needs no network call.";
+const research_mode_suffix = "\n\nRESEARCH MODE: The operator turned on web research for this run. Prefer current, sourced information over stale knowledge: consult web_search (or web_fetch for a specific page) when the answer depends on facts that change (versions, prices, events, APIs, today's news) and cite what you found. Do not fetch for the sake of fetching; a question answerable from context needs no network call.";
 
 /// A fork resolved by the human: what was asked, and what they chose.
 pub const Decision = struct {
@@ -253,7 +255,7 @@ pub const Agent = struct {
     plan_mode: bool = false,
     /// Research mode (the composer's Research toggle): [[research_mode_suffix]]
     /// is threaded into the system prompt, directing the run to consult
-    /// web_search/fetch_web for current, sourced facts. A directive, not a
+    /// web_search/web_fetch for current, sourced facts. A directive, not a
     /// gate, the tools stay ordinary and the model stays free.
     research_mode: bool = false,
     /// Images a caller (the /api/run composer) wants attached to the next
@@ -1463,7 +1465,17 @@ pub const Agent = struct {
     fn requestMessages(self: *Agent, messages: []const types.Message) ![]types.Message {
         const copy = try self.arena.dupe(types.Message, messages);
         const reclaimed = try prune.pruneToolResults(copy, self.arena, self.cfg.agent.tool_result_prune_bytes, self.cfg.agent.tool_result_prune_head_bytes, self.cfg.agent.tool_result_prune_tail_bytes);
-        if (reclaimed > 0) log.log(.info, "tool-result pruning reclaimed {d} bytes from the next request", .{reclaimed});
+        if (reclaimed > 0) {
+            const spilled = spill_mod.annotate(
+                self.ctx.io,
+                self.arena,
+                std.Io.Dir.cwd(),
+                if (self.session_id.len > 0) self.session_id else "default",
+                copy,
+                messages,
+            ) catch 0;
+            log.log(.info, "tool-result pruning reclaimed {d} bytes from the next request ({d} spilled)", .{ reclaimed, spilled });
+        }
         return copy;
     }
 
@@ -2664,6 +2676,29 @@ pub const Agent = struct {
             }
         }
 
+        var snapped = false;
+        for (calls, 0..) |tc, i| {
+            if (snapped) break;
+            if (results[i] != null) continue;
+            if (self.reg.get(tc.name)) |t| {
+                if (t.enabled and t.needsConfirm()) {
+                    if (rewind_mod.createSnapshot(self.ctx.io, self.ctx.gpa, self.arena)) |hash_opt| {
+                        if (hash_opt) |hash| {
+                            rewind_mod.appendRecord(
+                                self.ctx.io,
+                                self.ctx.gpa,
+                                std.Io.Dir.cwd(),
+                                if (self.session_id.len > 0) self.session_id else "default",
+                                hash,
+                                tc.name,
+                            ) catch {};
+                            snapped = true;
+                        }
+                    } else |_| {}
+                }
+            }
+        }
+
         // Warm the shared caches on the main thread before any worker
         // spawns: every tool's wasm bytes and every registered transform
         // module land in wasm_cache / the "transform:<name>" module cache
@@ -2717,7 +2752,7 @@ pub const Agent = struct {
             // their before-transforms run on the main thread just below (the
             // shared transform module cache is not thread-safe) and their
             // after-transforms run on the main thread after the join.
-            if (tool.llm or tool.sequential or !tool.enabled) continue;
+            if (tool.llm or tool.sequential or tool.live_publish or !tool.enabled) continue;
             if (self.no_parallel_tools) continue;
             const wasm_bytes = self.wasmBytes(tool) catch |err| {
                 log.log(.error_, "tool '{s}': cannot load {s}: {s}", .{ tc.name, tool.wasm, @errorName(err) });
@@ -2831,7 +2866,7 @@ pub const Agent = struct {
         // Tools that call the model, and disabled ones, keep the original
         // in-thread path: they do not run wasm deeply and the LLM client is
         // not shared with worker threads.
-        if (tool.llm or tool.sequential or !tool.enabled) return self.executeTool(tc);
+        if (tool.llm or tool.sequential or tool.live_publish or !tool.enabled) return self.executeTool(tc);
 
         const wasm_bytes = self.wasmBytes(tool) catch |err| {
             log.log(.error_, "tool '{s}': cannot load {s}: {s}", .{ tc.name, tool.wasm, @errorName(err) });

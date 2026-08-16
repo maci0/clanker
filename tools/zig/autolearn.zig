@@ -1,11 +1,16 @@
 //! autolearn: read state/autolearn.jsonl, aggregate usage observations
 //! into actionable roadmap items, and upsert an "## Autolearn" section into
 //! docs/ROADMAP.md.
-//! Input:  {"reset": bool}
-//! Output: {"ok": true, "text": "<the generated section>", "notice": "..."}
+//! Input:  {"reset": bool, "provider": "", "model": ""}
+//! Output: {"ok": true, "text": "<mechanical section>", "synthesized": "...", "notice": "..."}
+//!
+//! `provider` / `model` run the same rewrite `clanker autolearn --model`
+//! used to do natively, via `ck_llm`. The deterministic aggregation still
+//! runs first and stays on disk if the model call fails.
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const logic = @import("autolearn_logic.zig");
 
 const event_path = "state/autolearn.jsonl";
 const archive_path = "state/autolearn.old.jsonl";
@@ -13,6 +18,8 @@ const roadmap_path = "docs/ROADMAP.md";
 
 const Request = struct {
     reset: bool = false,
+    provider: []const u8 = "",
+    model: []const u8 = "",
 };
 
 /// Only events this recent count toward roadmap items. The log keeps full
@@ -54,6 +61,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const alloc = lib.alloc;
     const req = try std.json.parseFromSliceLeaky(Request, alloc, input, .{ .ignore_unknown_fields = true });
     var notice: []const u8 = "";
+    const synthesizing = req.provider.len > 0 or req.model.len > 0;
+    // Read before reset so `--model` can still see the observations being
+    // archived. A reset without synthesis stays empty on purpose.
+    const prior = lib.fsRead(event_path) catch null;
     if (req.reset) {
         lib.fsRename(event_path, archive_path) catch |err| switch (err) {
             error.NotFound => notice = "No event log to reset (state/autolearn.jsonl not found)",
@@ -61,6 +72,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         };
         if (notice.len == 0) notice = "Event log archived to state/autolearn.old.jsonl";
     }
+    const data: ?[]const u8 = if (req.reset and !synthesizing) null else prior;
 
     var unknown: std.StringArrayHashMapUnmanaged(Count) = .empty;
     var errors: std.StringArrayHashMapUnmanaged(Count) = .empty;
@@ -75,7 +87,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const now_s: i64 = @intCast(@divTrunc(lib.nowNanos(), std.time.ns_per_s));
     const cutoff: i64 = if (now_s > window_seconds) now_s - window_seconds else 0;
 
-    const data = lib.fsRead(event_path) catch null;
     if (data) |d| {
         var it = std.mem.splitScalar(u8, d, '\n');
         while (it.next()) |line| {
@@ -188,6 +199,33 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     try upsertRoadmap(alloc, section.items);
 
+    var synthesized: []const u8 = "";
+    if (synthesizing) {
+        const observations = logic.lastLines(data orelse "", logic.max_observation_bytes);
+        if (observations.len == 0) return lib.fail(out, "no observations to synthesize");
+        const prompt = logic.userPrompt(alloc, observations, section.items) catch
+            return lib.fail(out, "could not build synthesis prompt");
+        const provider: ?[]const u8 = if (req.provider.len > 0) req.provider else null;
+        const model: ?[]const u8 = if (req.model.len > 0) req.model else null;
+        synthesized = lib.llmCall(.{
+            .system = logic.system_prompt,
+            .prompt = prompt,
+            .provider = provider,
+            .model = model,
+            .max_tokens = 2500,
+        }) catch |err| {
+            return lib.fail(out, switch (err) {
+                error.SandboxDenied => "refused by sandbox policy",
+                error.NetworkError => "synthesis request did not complete",
+                error.InvalidArg => "arguments rejected",
+                else => "synthesizer did not respond",
+            });
+        };
+        if (std.mem.trim(u8, synthesized, " \t\r\n").len == 0)
+            return lib.fail(out, "synthesizer returned an empty section");
+        try upsertRoadmap(alloc, synthesized);
+    }
+
     var result: std.Io.Writer.Allocating = .init(alloc);
     var s = std.json.Stringify{ .writer = &result.writer, .options = .{} };
     try s.beginObject();
@@ -195,6 +233,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.write(true);
     try s.objectField("text");
     try s.write(section.items);
+    if (synthesized.len > 0) {
+        try s.objectField("synthesized");
+        try s.write(synthesized);
+    }
     if (notice.len > 0) {
         try s.objectField("notice");
         try s.write(notice);
@@ -207,15 +249,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 /// marker to EOF, since it is always the last section) with the new one.
 fn upsertRoadmap(alloc: std.mem.Allocator, section: []const u8) !void {
     const existing = lib.fsRead(roadmap_path) catch "";
-    const marker = "## Autolearn";
-    var out: std.ArrayList(u8) = .empty;
-    if (std.mem.find(u8, existing, marker)) |idx| {
-        try out.appendSlice(alloc, existing[0..idx]);
-    } else {
-        try out.appendSlice(alloc, existing);
-        if (existing.len > 0 and existing[existing.len - 1] != '\n') try out.append(alloc, '\n');
-        try out.appendSlice(alloc, "\n");
-    }
-    try out.appendSlice(alloc, section);
-    try lib.fsWrite(roadmap_path, out.items);
+    const merged = try logic.mergeRoadmap(alloc, existing, section);
+    try lib.fsWrite(roadmap_path, merged);
 }

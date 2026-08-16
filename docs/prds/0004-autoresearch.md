@@ -11,10 +11,8 @@ line as an agent chat message, see Design), WASM tool `autoresearch`
 `evals/autoresearch_*.task.json`. Inspired by
 [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
 
-`src/research/engine.zig` is an unrelated placeholder for the self-improve
-loop's future research capabilities (pulled in only by a test-only import in
-`main.zig`); the autoresearch loop never imports it and it is not part of
-this surface, despite the similar name.
+The old `src/research/engine.zig` placeholder was deleted: the
+autoresearch loop never imported it.
 
 `--budget` is accepted and logged as an advisory pacing hint only in v1;
 the harness owns its own timeout. See Design and Known issues.

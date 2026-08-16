@@ -1,0 +1,26 @@
+{
+  "name": "schedule",
+  "description": "List and edit recurring agent runs in state/schedule.json. {\"action\":\"list\"} returns every entry with its next fire time plus the last 20 ledger records. {\"action\":\"set_enabled\",\"id\":\"sch-1\",\"enabled\":false} pauses one (re-enabling re-dates the window from now). {\"action\":\"add\",\"cron\":\"0 9 * * 1-5\",\"task\":\"...\"} schedules a task; optional provider, model, tz_offset_minutes. {\"action\":\"remove\",\"id\":\"sch-1\"} drops an entry (its ledger history stays). Nothing fires from this tool: the system's cron calls `clanker schedule run-due`.",
+  "llm_description": "List/edit the cron schedule (state/schedule.json). actions: list, set_enabled{id,enabled}, add{cron,task,provider?,model?,tz_offset_minutes?}, remove{id}. Firing is `clanker schedule run-due`, not this tool.",
+  "wasm": "zig-out/tools/schedule.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["list", "set_enabled", "add", "remove"]
+      },
+      "id": { "type": "string" },
+      "enabled": { "type": "boolean" },
+      "cron": { "type": "string" },
+      "task": { "type": "string" },
+      "provider": { "type": "string" },
+      "model": { "type": "string" },
+      "tz_offset_minutes": { "type": "integer" }
+    }
+  },
+  "fs_prefixes": ["state/schedule.json", "state/schedule/"],
+  "network_allow": [],
+  "category": "agent",
+  "confirm": false
+}

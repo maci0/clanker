@@ -16,6 +16,7 @@ const state_path = "state/webui_plugins.json";
 
 const State = struct {
     enabled: []const []const u8 = &.{},
+    disabled: []const []const u8 = &.{},
 };
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -52,13 +53,15 @@ fn actionList(out: *lib.Out) !void {
             const manifest_path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}/plugin.json", .{ plugins_dir, name });
             const raw_m = lib.fsRead(manifest_path) catch continue;
             const m = std.json.parseFromSliceLeaky(Manifest, lib.alloc, raw_m, .{ .ignore_unknown_fields = true }) catch continue;
+            if (logic.capabilitiesRejected(m.capabilities)) |_| continue;
             try addons.append(lib.alloc, .{
                 .name = name,
                 .title = if (m.title.len > 0) m.title else name,
                 .description = m.description,
                 .group = if (m.group.len > 0) m.group else "Watch",
-                .enabled = isEnabled(state, name),
+                .enabled = logic.addonEnabled(state.enabled, state.disabled, name),
                 .has_css = hasCss(name),
+                .capabilities = m.capabilities,
             });
         }
     }
@@ -72,6 +75,7 @@ const Listed = struct {
     group: []const u8,
     enabled: bool,
     has_css: bool,
+    capabilities: []const []const u8 = &.{},
 };
 
 fn hasCss(name: []const u8) bool {
@@ -103,6 +107,10 @@ fn writeList(out: *lib.Out, addons: []const Listed, state: State) !void {
         try s.write(a.enabled);
         try s.objectField("has_css");
         try s.write(a.has_css);
+        try s.objectField("capabilities");
+        try s.beginArray();
+        for (a.capabilities) |c| try s.write(c);
+        try s.endArray();
         try s.endObject();
     }
     try s.endArray();
@@ -119,6 +127,7 @@ const Manifest = struct {
     title: []const u8 = "",
     description: []const u8 = "",
     group: []const u8 = "Watch",
+    capabilities: []const []const u8 = &.{},
 };
 
 fn actionCreate(obj: std.json.Value, out: *lib.Out) !void {
@@ -173,14 +182,16 @@ fn actionPut(obj: std.json.Value, out: *lib.Out) !void {
     } else if (std.mem.eql(u8, file, "app.css")) {
         if (logic.cssRejected(content)) |why| return lib.fail(out, why);
     } else {
-        _ = std.json.parseFromSliceLeaky(Manifest, lib.alloc, content, .{ .ignore_unknown_fields = true }) catch
+        const m = std.json.parseFromSliceLeaky(Manifest, lib.alloc, content, .{ .ignore_unknown_fields = true }) catch
             return lib.fail(out, "plugin.json is not valid JSON");
+        if (logic.capabilitiesRejected(m.capabilities)) |why| return lib.fail(out, why);
     }
     const dir = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ plugins_dir, name });
     if (lib.fsStat(dir)) |_| {} else |_| return lib.fail(out, "no such addon (create it first)");
     const path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ dir, file });
     lib.fsWrite(path, content) catch |err| return lib.failErr(out, err, "writing the file");
-    return writeOk(out, name, isEnabled(loadState(), name));
+    const st = loadState();
+    return writeOk(out, name, logic.addonEnabled(st.enabled, st.disabled, name));
 }
 
 fn actionShow(obj: std.json.Value, out: *lib.Out) !void {
@@ -201,7 +212,8 @@ fn actionShow(obj: std.json.Value, out: *lib.Out) !void {
     try s.objectField("name");
     try s.write(name);
     try s.objectField("enabled");
-    try s.write(isEnabled(loadState(), name));
+    const st = loadState();
+    try s.write(logic.addonEnabled(st.enabled, st.disabled, name));
     try s.objectField("plugin_json");
     try s.write(manifest);
     try s.objectField("js");
@@ -269,22 +281,20 @@ fn loadState() State {
     return std.json.parseFromSliceLeaky(State, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch .{};
 }
 
-fn isEnabled(state: State, name: []const u8) bool {
-    for (state.enabled) |e| {
-        if (std.mem.eql(u8, e, name)) return true;
-    }
-    return false;
-}
-
 fn setEnabled(name: []const u8, on: bool) !void {
     const state = loadState();
-    const next = try logic.mergeEnabled(lib.alloc, state.enabled, name, on);
+    const next_on = try logic.mergeEnabled(lib.alloc, state.enabled, name, on);
+    const next_off = try logic.mergeEnabled(lib.alloc, state.disabled, name, !on);
     var buf: std.Io.Writer.Allocating = .init(lib.alloc);
     var s = std.json.Stringify{ .writer = &buf.writer, .options = .{} };
     try s.beginObject();
     try s.objectField("enabled");
     try s.beginArray();
-    for (next) |e| try s.write(e);
+    for (next_on) |e| try s.write(e);
+    try s.endArray();
+    try s.objectField("disabled");
+    try s.beginArray();
+    for (next_off) |e| try s.write(e);
     try s.endArray();
     try s.endObject();
     try lib.fsWrite(state_path, buf.written());

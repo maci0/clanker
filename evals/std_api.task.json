@@ -2,8 +2,8 @@
   "name": "std_api",
   "kind": "task",
   "description": "std_api must resolve a Zig 0.16 std symbol through the installed std source (host-side ck_std_api). The assertion is the shape of the answer — the lookup of a symbol that exists reported ok — not any particular signature text, which changes with the toolchain. readSliceShort is the example the tool's own manifest gives and the reader API this codebase calls at its streaming choke points; if it ever leaves std, the manifest is stale too and this eval failing is the reminder.",
-  "prompt": "Use the std_api tool with symbol \"readSliceShort\". Look at the tool's JSON result and reply with only the value of its \"ok\" field: true or false.",
-  "requires_tool": "std_api",
+  "prompt": "Use the zig_std tool with symbol \"readSliceShort\". Look at the tool's JSON result and reply with only the value of its \"ok\" field: true or false.",
+  "requires_tool": "zig_std",
   "criteria": [
     {
       "includes": [

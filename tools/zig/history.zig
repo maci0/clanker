@@ -1,4 +1,4 @@
-//! history: review the improve history (state/history/improvements.jsonl —
+//! improve_history: review the self-improve history (state/improvements.jsonl —
 //! successes, failures, summaries) so clanker can learn from past attempts.
 //! Input:  {"last": 10}
 //! Output: {"ok": true, "text": "<recent improvement records>"}

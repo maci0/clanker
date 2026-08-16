@@ -177,6 +177,27 @@ pub const Registry = struct {
         try h.leftover.appendSlice(self.gpa, bytes);
     }
 
+    /// Drops a pid-only row without signalling. Used after a waiter has
+    /// already reaped the child, so a later session cleanup cannot SIGTERM
+    /// a recycled pid. Missing keys are a no-op. Must not be used on an
+    /// adopted Child (that would leak the pipes); jobs register pids only.
+    pub fn forget(self: *Registry, session_id: []const u8, kind: []const u8) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        var i: usize = 0;
+        while (i < self.items.items.len) {
+            const h = self.items.items[i];
+            if (std.mem.eql(u8, h.session_id, session_id) and std.mem.eql(u8, h.kind, kind)) {
+                var removed = self.items.orderedRemove(i);
+                removed.leftover.deinit(self.gpa);
+                self.gpa.free(removed.session_id);
+                self.gpa.free(removed.kind);
+                return;
+            }
+            i += 1;
+        }
+    }
+
     /// SIGTERM + wait one process. Missing keys are a no-op.
     pub fn terminate(self: *Registry, session_id: []const u8, kind: []const u8) void {
         self.mutex.lockUncancelable(self.io);
@@ -211,6 +232,27 @@ pub const Registry = struct {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         return self.items.items.len;
+    }
+
+    pub const Row = struct {
+        session_id: []const u8,
+        kind: []const u8,
+        pid: std.posix.pid_t,
+    };
+
+    /// Copies identity rows under the lock. Caller owns the strings.
+    pub fn snapshot(self: *Registry, arena: std.mem.Allocator) ![]Row {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        var out: std.ArrayList(Row) = .empty;
+        for (self.items.items) |h| {
+            try out.append(arena, .{
+                .session_id = try arena.dupe(u8, h.session_id),
+                .kind = try arena.dupe(u8, h.kind),
+                .pid = h.pid,
+            });
+        }
+        return out.toOwnedSlice(arena);
     }
 
     fn findLocked(self: *Registry, session_id: []const u8, kind: []const u8) ?*Handle {
@@ -291,6 +333,12 @@ test "register and get by session+kind" {
     try std.testing.expectEqual(@as(std.posix.pid_t, 42), reg.get("sess-1", "python").?);
     try std.testing.expect(reg.get("sess-1", "js") == null);
     try std.testing.expectEqual(@as(usize, 1), reg.count());
+    var snap_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer snap_arena.deinit();
+    const rows = try reg.snapshot(snap_arena.allocator());
+    try std.testing.expectEqual(@as(usize, 1), rows.len);
+    try std.testing.expectEqualStrings("sess-1", rows[0].session_id);
+    try std.testing.expectEqualStrings("python", rows[0].kind);
 }
 
 test "register replaces the previous pid for the same key" {
@@ -315,6 +363,18 @@ test "terminateSession drops every kind for that session" {
     reg.terminateSession("a");
     try std.testing.expect(reg.get("a", "python") == null);
     try std.testing.expectEqual(@as(std.posix.pid_t, 3), reg.get("b", "python").?);
+}
+
+test "forget removes a pid-only row without requiring the process" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    var reg = Registry.init(std.testing.allocator, threaded.io());
+    defer reg.deinit();
+    try reg.register("sess-1", "job-abc", 1);
+    try std.testing.expectEqual(@as(usize, 1), reg.count());
+    reg.forget("sess-1", "job-abc");
+    try std.testing.expectEqual(@as(usize, 0), reg.count());
+    reg.forget("sess-1", "job-abc");
 }
 
 test "invalid session id is refused" {

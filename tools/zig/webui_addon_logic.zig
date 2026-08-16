@@ -10,11 +10,40 @@ pub const max_desc_len: usize = 240;
 
 pub const groups = [_][]const u8{ "Work", "Watch", "Set up" };
 
+/// Surfaces a plugin.json may declare. Matches `pluginApi()` in
+/// `ui/app/core/plugins.js`. An unknown name is a typo, not a grant.
+pub const capabilities = [_][]const u8{
+    "get",   "post",      "live", "emit",    "confirm", "prompt",
+    "toast", "workspace", "icon", "storage", "render",  "session",
+};
+
 /// Fresh `state/webui_plugins.json` is missing: Files is the Work surface
-/// (workspace browser) and ships on, and Music is the demo addon. A written
-/// file — including an empty enabled list after the operator turned them all
-/// off — is respected; only a missing file seeds.
-pub const default_enabled = [_][]const u8{ "files", "music" };
+/// (workspace browser) and ships on, Music is the demo addon, and Schedule,
+/// Search, and Compare are the migrated built-in views. A written file —
+/// including an empty enabled list after the operator turned them all off —
+/// is respected; only a missing file seeds. `inherit_on` covers names that
+/// used to be built-in and must stay on after an older file that only
+/// listed files+music.
+pub const default_enabled = [_][]const u8{ "files", "music", "schedule", "search", "compare" };
+
+/// Shipped-as-core views that stay on after a pre-migration
+/// `state/webui_plugins.json` listed only files+music. An operator who
+/// turns one off is recorded in `disabled`.
+pub const inherit_on = [_][]const u8{ "schedule", "search", "compare" };
+
+pub fn isListed(names: []const []const u8, name: []const u8) bool {
+    for (names) |n| {
+        if (std.mem.eql(u8, n, name)) return true;
+    }
+    return false;
+}
+
+/// `disabled` wins, then `enabled`, then `inherit_on`.
+pub fn addonEnabled(enabled: []const []const u8, disabled: []const []const u8, name: []const u8) bool {
+    if (isListed(disabled, name)) return false;
+    if (isListed(enabled, name)) return true;
+    return isListed(&inherit_on, name);
+}
 
 pub fn validName(name: []const u8) bool {
     if (name.len == 0 or name.len > max_name_len) return false;
@@ -29,6 +58,21 @@ pub fn validGroup(group: []const u8) bool {
         if (std.mem.eql(u8, g, group)) return true;
     }
     return false;
+}
+
+pub fn validCapability(cap: []const u8) bool {
+    for (capabilities) |c| {
+        if (std.mem.eql(u8, c, cap)) return true;
+    }
+    return false;
+}
+
+/// Why this capabilities list must not ship. Null means every name is known.
+pub fn capabilitiesRejected(caps: []const []const u8) ?[]const u8 {
+    for (caps) |c| {
+        if (!validCapability(c)) return "unknown capability (get, post, live, emit, confirm, prompt, toast, workspace, icon, storage, render, session)";
+    }
+    return null;
 }
 
 pub fn validFile(file: []const u8) bool {
@@ -92,6 +136,16 @@ test "validGroup is one of the three rail sections" {
     try std.testing.expect(!validGroup("work"));
 }
 
+test "capabilitiesRejected names the pluginApi surface" {
+    try std.testing.expect(capabilitiesRejected(&.{ "get", "post", "live", "emit" }) == null);
+    try std.testing.expect(validCapability("emit"));
+    try std.testing.expect(capabilitiesRejected(&.{}) == null);
+    try std.testing.expect(capabilitiesRejected(&.{"network"}) != null);
+    try std.testing.expect(!validCapability("eval"));
+    try std.testing.expect(validCapability("workspace"));
+    try std.testing.expect(validCapability("session"));
+}
+
 test "jsRejected requires registerView and refuses CSP-breaking APIs" {
     try std.testing.expectEqualStrings("app.js is empty", jsRejected("").?);
     try std.testing.expectEqualStrings(
@@ -126,12 +180,28 @@ test "mergeEnabled toggles a name without duplicating it" {
 
 test "first toggle on the fresh-checkout seed keeps the default addons on" {
     // The registry lives in one place (the webui_addon guest). A fresh
-    // checkout seeds files+music; enabling a brand-new addon must not drop
-    // them, or the page would silently turn Files off on first use.
+    // checkout seeds files+music+schedule+search+compare; enabling a brand-new addon must
+    // not drop them, or the page would silently turn Files off on first use.
     const a = try mergeEnabled(std.testing.allocator, &default_enabled, "office", true);
     defer std.testing.allocator.free(a);
-    try std.testing.expectEqual(@as(usize, 3), a.len);
+    try std.testing.expectEqual(@as(usize, 6), a.len);
     try std.testing.expectEqualStrings("files", a[0]);
     try std.testing.expectEqualStrings("music", a[1]);
-    try std.testing.expectEqualStrings("office", a[2]);
+    try std.testing.expectEqualStrings("schedule", a[2]);
+    try std.testing.expectEqualStrings("search", a[3]);
+    try std.testing.expectEqualStrings("compare", a[4]);
+    try std.testing.expectEqualStrings("office", a[5]);
+}
+
+test "inherit_on keeps schedule after a pre-migration enabled list" {
+    const old = [_][]const u8{ "files", "music" };
+    try std.testing.expect(addonEnabled(&old, &.{}, "schedule"));
+    try std.testing.expect(addonEnabled(&old, &.{}, "search"));
+    try std.testing.expect(addonEnabled(&old, &.{}, "compare"));
+    try std.testing.expect(addonEnabled(&old, &.{}, "files"));
+    try std.testing.expect(!addonEnabled(&old, &.{}, "office"));
+    const off = [_][]const u8{"schedule"};
+    try std.testing.expect(!addonEnabled(&old, &off, "schedule"));
+    try std.testing.expect(addonEnabled(&old, &off, "files"));
+    try std.testing.expect(addonEnabled(&old, &off, "search"));
 }

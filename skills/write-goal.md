@@ -3,16 +3,16 @@
 Use this skill only when the caller asks to draft, define, or refine a
 structured goal. Do not intercept `clanker goal "<intent>"` or `/goal
 <intent>`: those start the supplied goal loop. Do not make a draft a
-prerequisite for `add_goal`; persistence is a separate explicit choice.
+prerequisite for `goal_add`; persistence is a separate explicit choice.
 
-Call `write_goal` with the intent (and any workspace facts you already
+Call `goal_write` with the intent (and any workspace facts you already
 inspected). It asks only the material forks via `ask_user`, or records
 assumptions when nobody is reachable. It never writes `state/goals.json`.
 
 Present the returned markdown. If the caller explicitly wants it saved, call
-the `add_goal` tool with the selected fields. Map the draft onto the add-goal
+the `goal_add` tool with the selected fields. Map the draft onto the goal_add
 tool's field names (`completion_criterion`, `proof`, `stop_rule`, not the
-`write_goal` record's `completion_criteria` / `verification` / `stop_rules`).
+`goal_write` record's `completion_criteria` / `verification` / `stop_rules`).
 A well-formed goal carries these five fields
 (`objective, completion_criterion, proof, boundaries, stop_rule`):
 
@@ -32,7 +32,7 @@ A well-formed goal carries these five fields
 Only the first two are required, and a goal that stops there is worth keeping
 when the rest is genuinely unknown. Prefer a short honest goal to a padded one.
 
-Read `state/goals.json` first. The `add_goal` tool only appends; it cannot update an
-existing entry. If the intent restates an open goal, do not call `add_goal` and
+Read `state/goals.json` first. The `goal_add` tool only appends; it cannot update an
+existing entry. If the intent restates an open goal, do not call `goal_add` and
 create a duplicate. Return that goal's id and explain that it already covers
 the intent.

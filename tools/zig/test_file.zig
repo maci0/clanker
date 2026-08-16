@@ -1,4 +1,4 @@
-//! test_file: run one Zig test file (optionally filtered), skipping the full gate.
+//! zig_test: run one Zig test file (optionally filtered), skipping the full gate.
 //! Input:  {"file": "src/foo.zig", "filter": "test name"}
 //! Output: {"ok": true, "code": 0, "stdout": "...", "stderr": "..."}
 

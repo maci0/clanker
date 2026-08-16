@@ -2,17 +2,18 @@
 
 ## Status
 
-Shipped. Sources of truth: `src/schedule/cron.zig` (the dialect and the
-next-fire arithmetic, pure), `src/schedule/store.zig`
+Shipped. Sources of truth: `tools/zig/schedule_cron.zig` (the dialect and the
+next-fire arithmetic, pure, host-tested), `src/schedule/store.zig`
 (`state/schedule.json` + `state/schedule/log.jsonl`),
-`src/schedule/runner.zig` (due selection, claiming, firing, the ledger) and
-`src/schedule/command.zig` (the operator surface). Surface: CLI
+`src/schedule/runner.zig` (due selection, claiming, firing, the ledger),
+`src/schedule/command.zig` (the operator surface), and the `schedule` guest
+(`tools/zig/schedule.zig`) which owns list/toggle/add/remove. Surface: CLI
 `clanker schedule [list|add|remove|enable|disable|run|run-due|log]`
 (`Command.schedule` in `src/cli.zig`, which contributes the flag table, one
 dispatch arm, and the callback that turns an entry into a `cmdRun`), plus a
-web UI Schedule view (`ui/app/features/schedule.js`) over
+web UI Schedule view (`ui/plugins/schedule/`) over
 `GET /api/schedule` (entries with next-fire times and a ledger tail) and
-`POST /api/schedule/<id>` `{"enabled": bool}`, both routed in `src/cli.zig`.
+`POST /api/schedule/<id>` `{"enabled": bool}`, both relayed to the guest.
 The browser reads the schedule and can enable/disable an entry; nothing in
 the browser fires one.
 

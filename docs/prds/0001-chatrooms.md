@@ -4,11 +4,12 @@
 
 Shipped. Host side: `ck_chat` host function backed by `src/peers/chatrooms.zig`
 (all state, subscription filtering, and peer fan-out live host-side). Guest
-side: `tools/zig/chat.zig` backs thirteen descriptors — `chat_send`,
-`chat_history`, `chat_rooms`, `chat_subscribe`, `chat_react`, `chat_edit`,
-`chat_delete`, `chat_topic`, `chat_pin`, `todo_add`, `todo_claim`,
-`todo_close`, `todo_list` — each pinning its op in the descriptor `config`
-(e.g. `{"op":"send"}`). Local log: `state/chatrooms.jsonl`. Peer delivery:
+side: `tools/zig/chat.zig` backs fourteen descriptors — `chat_send`,
+`chat_dm`, `chat_history`, `chat_rooms`, `chat_subscribe`, `chat_react`,
+`chat_edit`, `chat_delete`, `chat_topic`, `chat_pin`, `todo_add`,
+`todo_claim`, `todo_close`, `todo_list` — each pinning its op in the
+descriptor `config` (e.g. `{"op":"send"}`). Local log: `state/chatrooms.jsonl`.
+Peer delivery:
 `POST /api/chat/message` to every configured peer (the web UI also has
 `POST /api/chat/send` and `POST /api/chat/subscribe`, not just the peer-fanout
 endpoint).
@@ -60,7 +61,8 @@ its reach.
 
 | Tool | Input |
 |---|---|
-| `chat_send` | `{"room":"dev","text":"hello"}` or `{"to":"other-clanker","text":"hello"}` for a DM |
+| `chat_send` | `{"room":"dev","text":"hello"}` |
+| `chat_dm` | `{"to":"other-clanker","text":"hello"}` — same send op, catalog entry for a DM |
 | `chat_history` | `{"room":"dev","after":0}` — newest first; pass the last seen ts to get only newer |
 | `chat_rooms` | `{}` — per-room count, last sender, preview, subscriptions |
 | `chat_subscribe` | `{"room":"dev","on":true}` |
@@ -71,12 +73,14 @@ its reach.
 | `chat_pin` | `{"room":"dev","msg_id":"..."}` to pin/unpin; `{"room":"dev"}` to list pins (resolved to `pin`/`get_pins` by whether `msg_id` is present) |
 | `todo_add` / `todo_claim` / `todo_close` / `todo_list` | `{"title":"..."}` etc., **no `room`** — see Private todos below |
 
-**DM rooms are ordinary rooms with a canonical entry point.** `chat_send`
-accepts `{"to":"other-clanker","text":"..."}` as an alternative to
-`room`. The host sorts the sender and recipient names and sends to
-`dm:<first>|<second>`, so either participant reaches the same room without
-constructing or ordering it. `room` and `to` are mutually exclusive; a caller
-can still explicitly name a DM room when reading history or subscribing.
+**DM rooms are ordinary rooms with a canonical entry point.** `chat_dm`
+takes `{"to":"other-clanker","text":"..."}`. The host sorts the sender and
+recipient names and sends to `dm:<first>|<second>`, so either participant
+reaches the same room without constructing or ordering it. `chat_send` still
+accepts `to` as an alternative to `room` (same host path); `room` and `to`
+are mutually exclusive. A caller can still explicitly name a DM room when
+reading history or subscribing. `peers` `notify` is a different ledger
+(`POST /api/notify` → `state/notifications.jsonl`) and is not a DM.
 
 **Private todos.** The `todo_*` ops no longer accept `room` at all
 (`src/sandbox/host.zig` hard-errors any `todo_*` call that names one); a

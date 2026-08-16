@@ -37,6 +37,143 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- Tool-result spill: when the request pruner omits a tool middle, the
+  original is stored under `state/spills/<session>/` and the request
+  carries `[spill id=........]`. The `spill` guest reads it back. The
+  saved transcript is unchanged.
+- `session_search` guest, `clanker session search <query>`, and REPL
+  `/search`. Linear scan of saved conversations (min 3 characters).
+- Background `jobs` guest (`start`/`list`/`wait`/`kill`) plus
+  `subagent {"background":true}` so a long child does not park the
+  parent turn.
+- `run_plan`: Code Mode v1, a bounded list of existing tool calls in
+  one turn (max 12, cannot nest run_plan/chain).
+- Human feedback sidecar (`state/feedback.jsonl`, `POST /api/feedback`,
+  Up/Down on a turn). Never injected into the model.
+- Composer `@file` mentions attach workspace paths as chips
+  (`[File: path]` on submit).
+- Desktop notification when a turn finishes and the tab is hidden.
+- Checkpoint rewind: a `git stash create` snapshot before a mutating
+  tool, listed/restored by the `rewind` guest.
+
+### Changed
+
+- `GET /api/providers` relays the `providers` guest list. A live
+  `/models` fill for a provider with no static models stays native.
+- Advisor parse/summarize/inject is a host-tested helper
+  (`advisor_logic`); the `advisor` guest runs the same review via
+  `ck_llm`. The auto-thinking classifier has the same split:
+  `thinking_logic` plus a `thinking` guest via `ck_llm`.
+- The Schedule, Search, and Compare web views are disk plugins
+  (`ui/plugins/schedule/`, `ui/plugins/search/`, `ui/plugins/compare/`),
+  not part of `app.wasm`. They stay on after a pre-migration
+  `state/webui_plugins.json` that only listed files+music.
+- Web UI themes are data files under `themes/*.json`. Drop one in and
+  `GET /webui/themes/catalog.json` lists it; the page applies the tokens
+  instead of shipping a `:root[data-theme]` block per palette.
+- Composer slash commands are `commands/slash.json`. Adding one is a
+  data edit; the page loads `/webui/commands/slash.json`.
+
+- Guests and web UI plugins can emit onto the serve live bus. A descriptor
+  with `"live_publish": true` may call `ck_publish`; a view may call
+  `api.emit(data)` (`POST /api/live`). Both land on the `plugin` topic
+  as `{"t":"plugin","from":...,"data":...}` and cannot pick chat, run,
+  or metrics.
+
+- Fenced code in chat bubbles follows the active theme. The well used
+  to stay GitHub-dark (`#0d1117`) while highlight tokens used the page
+  palette, so light / Latte / Tokyo Night Day painted dark-on-dark.
+  Each theme now sets `--code-bg` / `--code-fg`, and the inline-code
+  pill no longer paints over a fenced `pre`.
+- The web UI view formerly labelled Board is Kanban: rail tab, page
+  heading, Tools category, and `#kanban` / `#kanban/<card>`. `#board`
+  and `#goals` still open it.
+
+- Opening the web UI starts a new conversation instead of replaying the
+  last session. The old chats stay in the sidebar. A `#chat?session=`
+  link still opens that conversation.
+
+- User chat bubbles render the prompt as markdown (lists, bold, fences)
+  instead of dumping the raw marks as a single pre-wrap text node. The
+  source stays on the bubble so Edit, Copy and export are unchanged.
+  Rooms messages sit under the name row, not beside it, so a heading or
+  list is not crushed into the leftover width.
+
+- Chat fills the main column instead of a 46rem stripe: header,
+  transcript and composer share that width, and rendered markdown
+  (lists, tables, code) is no longer re-capped at 70ch. Rooms uses the
+  same markdown renderer as the agent transcript (`**bold**`, fences,
+  lists) and the message log fills the pane instead of a leftover 24rem
+  box.
+
+- Tool categories are a closed vocabulary (`agent`, `chat`, `code`,
+  `compute`, `harness`, `kanban`, `knowledge`, `media`, `transform`,
+  `web`, `other`). The Tools view groups in that work-first order
+  (Kanban for `kanban`) and no longer repeats the group name in the
+  detail header. `knowledge` holds notes, memory, research, rfc,
+  reports, and roadmap. `peers` sits with the harness (phonebook and
+  machine notifications, not chat), `todo_*` with the agent (private
+  run lists, not the board), `jobs` with the agent, `patch_apply` with
+  code. `clanker plugins validate` warns on an unknown category and on
+  a prefix in the wrong group (`chat_*` must be `chat`).
+- Tool names: the multiplexed Kanban guest is `kanban` (was `board`);
+  JSON pretty/validate is `json` (was `json_tool`); self-improve
+  history is `improve_history` (was `history`, which collided with
+  `clanker history` / `/history` for conversations). `/api/board`
+  still calls the multiplexed guest. Zig helpers are one family:
+  `zig_check`, `zig_std` (was `std_api`), `zig_test` (was `test_file`).
+  Identifier generation is `ids` (was `id_gen`). Multi-op families are
+  `noun_verb`: `web_fetch` (was `fetch_web`, pair with `web_search`),
+  `goal_write` / `goal_add` / `goal_update` (were `write_goal` /
+  `add_goal` / `update_goal`; CLI stays `write-goal` / `add-goal`),
+  `skill_edit` (was `edit_skill`), `config` (was `config_view`).
+  `note_write` / `note_forget` (were `write_note` / `forget_note`).
+  `clanker plugins validate` also expects `goal_*`/`skill_*` in agent,
+  `note_*` in knowledge, and `web_*` in web (`webui*` is harness).
+
+### Added
+
+- `GET /api/sessions` relays to the `sessions` guest (`format=json`).
+  The picker and the agent catalog share one 4 KiB header walk
+  (`sessions_logic.zig`). Mutations and a full transcript stay native.
+
+- The OpenAI/Anthropic proxy reads route/protocol policy from each
+  provider's vtable (`Provider.proxy`) instead of switching on
+  `provider.kind`. Vertex quota project is `auth.Spec.quota_from_project`.
+
+- A `schedule` guest lists and edits recurring agent runs
+  (`state/schedule.json`). `GET /api/schedule` and
+  `POST /api/schedule/<id>` relay to it, so the Schedule view and the
+  agent catalog share one store. Cron arithmetic lives in
+  `schedule_cron.zig` (host-tested) and is the same dialect
+  `clanker schedule run-due` uses. Firing stays native.
+
+- A `skills` guest lists, shows, searches, and enables/disables the
+  markdown files under `agent.skills_dir`. `GET /api/skills` and
+  `POST /api/skills` relay to it. Optional YAML frontmatter
+  (`title`, `description`, `enabled`) plus `state/skills.json` is the
+  enable/disable store. The system prompt inlines title and description
+  only; the `skills` tool reads a full body. Discovery filters live in
+  `skills_logic.zig`.
+
+- The Health view subscribes to a `metrics` live-bus topic instead of
+  polling `GET /api/metrics` on a timer. The endpoint still answers a
+  snapshot (and Refresh still uses it). Snapshots are published at most
+  once per second.
+
+- Web UI plugins can POST, subscribe to the live bus, open the page's
+  dialogs, read the current workspace, use the page icons, and store
+  namespaced `localStorage` through `pluginApi()`. `plugin.json` now
+  declares a `capabilities` list against that surface.
+
+- `chat_dm` is the catalog tool for talking to another clanker instance
+  (`{"to":"<name>","text":"..."}`). It is another descriptor over
+  `chat.wasm` (same `ck_chat` send as `chat_send` with `to`), so the
+  message lands in the canonical `dm:<you>|<to>` room and fans out like
+  any other chat. The `peers` tool's `notify` action stays the machine
+  notification ledger (`POST /api/notify` → `state/notifications.jsonl`);
+  its description no longer teaches that path as "post a message".
+
 - `clanker reports` puts the operational reports and runbooks on the CLI:
   `list` (the default) prints the whole index with each record's status and
   path, `search <query>` runs one literal search across `docs/reports/` and

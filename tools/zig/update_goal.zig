@@ -1,11 +1,14 @@
-//! update_goal: change or remove one record in state/goals.json.
-//! Input:  {"id":"...","status":"...","max_iterations":1..1000,"worktree":bool,"remove":bool}
+//! goal_update: change or remove one record in state/goals.json.
+//! Input:  {"id":"...","status":"...","from":"active","max_iterations":1..1000,
+//!          "worktree":true|false|"branch","goal_loop_reason":"...","goal_loop_turns":N,
+//!          "remove":bool} | {"action":"list"}
 //! Output: {"ok":true,"goals":[...]}
 //!
-//! Create stays on `add_goal`. This is the update half the HTTP board used
-//! to do natively: one writer for status, budget, the worktree flag, and
-//! delete. `internal` so the model keeps using the board tools for lane
-//! moves; the harness (and the page through `/api/goals`) is the caller.
+//! Create stays on `goal_add`. This is the only writer for status, budget,
+//! worktree, loop outcome, and delete: HTTP, `clanker run`, and the web
+//! run-completion hook all come through here. `from` is a compare-and-swap
+//! on the current status so a finished run cannot overwrite a hand move.
+//! `internal` so the model keeps using the board tools for lane moves.
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -21,10 +24,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const req = lib.object(input) catch return lib.fail(out, "input must be a JSON object");
     const action = lib.optStr(req, "action");
     if (action != null and std.mem.eql(u8, action.?, "list")) return actionList(out);
-    const id = lib.optStr(req, "id") orelse return lib.fail(out, "update_goal needs an id (get it from add_goal or the board)");
-    if (id.len == 0) return lib.fail(out, "update_goal needs an id (get it from add_goal or the board)");
+    const id = lib.optStr(req, "id") orelse return lib.fail(out, "goal_update needs an id (get it from goal_add or the kanban)");
+    if (id.len == 0) return lib.fail(out, "goal_update needs an id (get it from goal_add or the kanban)");
 
     var patch = store.Patch{ .id = id };
+    if (lib.optStr(req, "from")) |from| patch.from_status = from;
     if (lib.optStr(req, "status")) |s| patch.status = s;
     if (lib.optNum(req, "max_iterations")) |n| {
         if (n < 0 or @floor(n) != n)
@@ -32,31 +36,55 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         patch.max_iterations = store.clampBudget(@as(u32, @trunc(n)));
     }
     if (req.object.get("worktree")) |w| {
-        if (w != .bool) return lib.fail(out, "worktree must be a boolean");
-        patch.worktree = if (w.bool) .set_true else .clear;
+        patch.worktree = switch (w) {
+            .bool => |b| if (b) .set_true else .clear,
+            .string => |s| .{ .value = s },
+            else => return lib.fail(out, "worktree must be a boolean or a string"),
+        };
+    }
+    if (lib.optStr(req, "goal_loop_reason")) |r| patch.goal_loop_reason = r;
+    if (lib.optNum(req, "goal_loop_turns")) |n| {
+        if (n < 0 or @floor(n) != n)
+            return lib.fail(out, "goal_loop_turns must be a non-negative integer");
+        patch.goal_loop_turns = @as(u32, @trunc(n));
     }
     patch.remove = lib.optBool(req, "remove", false);
 
-    const raw = lib.fsRead(goals_path) catch |err| switch (err) {
-        error.NotFound => return lib.fail(out, "no such goal"),
-        else => return lib.failErr(out, err, "reading state/goals.json"),
-    };
-    const existing = std.json.parseFromSliceLeaky([]store.Goal, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch
-        return lib.fail(out, "state/goals.json is not a JSON array");
-
     const now: i64 = @intCast(@divTrunc(lib.nowNanos(), std.time.ns_per_s));
-    const updated = store.apply(lib.alloc, existing, patch, now) catch |err| switch (err) {
-        error.NoSuchGoal => return lib.fail(out, "no such goal"),
-        error.BadStatus => return lib.fail(out, "status must be active, review, done, archived or abandoned"),
-        error.BadBudget => return lib.fail(out, "max_iterations must be an integer from 1 to 1000"),
-        else => return lib.failErr(out, err, "updating the goal"),
-    };
+    var attempt: u32 = 0;
+    while (attempt < 3) : (attempt += 1) {
+        const raw = lib.fsRead(goals_path) catch |err| switch (err) {
+            error.NotFound => return lib.fail(out, "no such goal"),
+            else => return lib.failErr(out, err, "reading state/goals.json"),
+        };
+        const seen = try lib.hash(raw);
+        const existing = std.json.parseFromSliceLeaky([]store.Goal, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch
+            return lib.fail(out, "state/goals.json is not a JSON array");
 
-    var enc: std.Io.Writer.Allocating = .init(lib.alloc);
-    var es = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };
-    try es.write(updated);
-    lib.fsWrite(goals_path, enc.written()) catch |err| return lib.failErr(out, err, "saving the goal");
+        const updated = store.apply(lib.alloc, existing, patch, now) catch |err| switch (err) {
+            error.NoSuchGoal => return lib.fail(out, "no such goal"),
+            error.BadStatus => return lib.fail(out, "status must be active, review, done, archived, abandoned or blocked"),
+            error.BadBudget => return lib.fail(out, "max_iterations must be an integer from 1 to 1000"),
+            // A finished run must not overwrite a hand move. Same body as a
+            // successful write so the caller does not treat "already moved"
+            // as a failure.
+            error.StatusMismatch => return writeGoals(out, raw),
+            else => return lib.failErr(out, err, "updating the goal"),
+        };
 
+        var enc: std.Io.Writer.Allocating = .init(lib.alloc);
+        var es = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };
+        try es.write(updated);
+        lib.fsWriteIf(goals_path, seen, enc.written()) catch |err| switch (err) {
+            error.Mismatch => continue,
+            else => return lib.failErr(out, err, "saving the goal"),
+        };
+        return writeUpdated(out, updated);
+    }
+    return lib.fail(out, "goals file kept changing underneath; try again");
+}
+
+fn writeUpdated(out: *lib.Out, updated: []store.Goal) !void {
     var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();

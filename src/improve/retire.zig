@@ -19,11 +19,11 @@
 //! working tree, never of history.
 //!
 //! Reconciliation rather than a hook on the status write, because
-//! `state/goals.json` has more than one writer: the web UI's PATCH, the `goal`
-//! wasm tool, and `setGoalStatusIf` when a run completes. A wasm tool cannot
-//! run `git worktree remove` at all. Reading the current state and acting on
-//! the difference works for every writer, including a status changed by hand in
-//! an editor, and is safe to run twice.
+//! `state/goals.json` has more than one writer: the web UI's PATCH and the
+//! `goal_update` guest (board, run-completion, loop outcome). A wasm tool
+//! cannot run `git worktree remove` at all. Reading the current state and
+//! acting on the difference works for every writer, including a status
+//! changed by hand in an editor, and is safe to run twice.
 
 const std = @import("std");
 const log = @import("../util/log.zig");

@@ -1,4 +1,4 @@
-//! std_api: look up a Zig 0.16 std symbol's signature + doc by grepping the
+//! zig_std: look up a Zig 0.16 std symbol's signature + doc by grepping the
 //! installed std source (host-side ck_std_api). Kills wrong-API proposals.
 //! Input:  {"symbol": "readSliceShort"}
 //! Output: {"ok": true, "text": "<up to 40 matching lines>"}

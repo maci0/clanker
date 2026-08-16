@@ -119,13 +119,16 @@ pub fn familyOf(v1_path: []const u8, headers_raw: []const u8) Family {
     return .openai;
 }
 
-/// Protocol a provider kind speaks upstream: `.openai` for openai-compatible
-/// (incl. azure and gemini), `.anthropic` for anthropic and vertex anthropic.
+/// Protocol a provider kind speaks upstream. Read off the vtable so a new
+/// kind does not need a row here.
 pub fn upstreamFamily(kind: config.ProviderKind) Family {
-    return switch (kind) {
-        .openai_compat, .azure_openai => .openai,
-        .anthropic, .vertex_anthropic, .vertex => .anthropic,
-        .gemini => .openai,
+    return familyOfProxy(providers.forKind(kind).proxy.family);
+}
+
+fn familyOfProxy(f: providers.api.ProxyFamily) Family {
+    return switch (f) {
+        .openai => .openai,
+        .anthropic => .anthropic,
     };
 }
 
@@ -198,13 +201,14 @@ fn forward(ctx: Ctx, family: Family) u16 {
         error.AmbiguousProvider => return writeEnvelope(ctx, 400, "missing_required_parameter", "Send a model or configure a single provider for this protocol"),
     };
 
-    const up_family = upstreamFamily(resolved.provider.kind);
+    const impl = providers.forKind(resolved.provider.kind);
+    const up_family = familyOfProxy(impl.proxy.family);
     const need_xcode = chat_route and up_family != family;
-    if (!chat_route and (resolved.provider.kind == .vertex_anthropic or resolved.provider.kind == .vertex)) {
+    if (!chat_route and impl.proxy.chat_only) {
         return writeEnvelope(ctx, 400, "unknown_endpoint", "Vertex only serves chat / messages");
     }
-    if (resolved.provider.kind == .gemini) {
-        return writeEnvelope(ctx, 400, "protocol_mismatch", "gemini is not available on the OpenAI/Anthropic proxy");
+    if (!impl.proxy.enabled) {
+        return writeEnvelope(ctx, 400, "protocol_mismatch", "this provider is not available on the OpenAI/Anthropic proxy");
     }
     if (resolved.provider.kind == .vertex and !vertex_ai.isAnthropicModel(resolved.provider.wireModelName())) {
         return writeEnvelope(ctx, 400, "protocol_mismatch", "Vertex Gemini is not available on the OpenAI/Anthropic proxy");
@@ -212,10 +216,10 @@ fn forward(ctx: Ctx, family: Family) u16 {
 
     var upstream_body = ctx.body;
     if (need_xcode) {
-        upstream_body = transcodeRequest(arena, family, &resolved.provider, ctx.body) catch {
+        upstream_body = transcodeRequest(arena, family, &resolved.provider, impl, ctx.body) catch {
             return writeEnvelope(ctx, 400, "malformed_request", "Could not transcode request for this backend");
         };
-    } else if ((resolved.provider.kind == .vertex_anthropic or resolved.provider.kind == .vertex) and isMessagesCreate(ctx.path)) {
+    } else if (impl.proxy.rewrite_vertex_body and isMessagesCreate(ctx.path)) {
         upstream_body = xcode.rewriteVertexBody(arena, if (resolved.splice)
             (spliceModel(arena, ctx.body, resolved.wire_id) catch {
                 return writeEnvelope(ctx, 400, "missing_required_parameter", "model must be a JSON string");
@@ -231,8 +235,7 @@ fn forward(ctx: Ctx, family: Family) u16 {
     }
 
     const streaming = peek.stream == .yes or wantsEventStream(ctx.headers_raw, ctx.path);
-    const impl = providers.forKind(resolved.provider.kind);
-    const url = upstreamUrl(ctx.gpa, &resolved.provider, impl, ctx.path, ctx.query, streaming, need_xcode or resolved.provider.kind == .vertex_anthropic or resolved.provider.kind == .vertex) catch {
+    const url = upstreamUrl(ctx.gpa, &resolved.provider, impl, ctx.path, ctx.query, streaming, need_xcode or impl.proxy.always_vtable_url) catch {
         return writeEnvelope(ctx, 502, null, "Failed to build upstream URL");
     };
     defer ctx.gpa.free(url);
@@ -268,9 +271,15 @@ fn forward(ctx: Ctx, family: Family) u16 {
     return status;
 }
 
-fn transcodeRequest(arena: std.mem.Allocator, client_family: Family, provider: *const config.Provider, body: []const u8) ![]u8 {
+fn transcodeRequest(
+    arena: std.mem.Allocator,
+    client_family: Family,
+    provider: *const config.Provider,
+    impl: *const providers.Provider,
+    body: []const u8,
+) ![]u8 {
     return switch (client_family) {
-        .openai => xcode.openaiToAnthropic(arena, provider, body, provider.kind == .vertex_anthropic),
+        .openai => xcode.openaiToAnthropic(arena, provider, body, impl.proxy.vertex_body),
         .anthropic => xcode.anthropicToOpenai(arena, provider, body),
     };
 }
@@ -310,7 +319,7 @@ fn pipe(
         extra[extra_len] = h;
         extra_len += 1;
     }
-    extra_len = overlayAnthropic(ctx, provider, cred, &extra, extra_len);
+    extra_len = overlayAnthropic(ctx, impl, cred, &extra, extra_len);
     // Accept rides extra_headers: std.http 0.16's Request.Headers has no
     // `accept` field (it was removed with the auto-Accept default).
     extra_len = copyIfPresent(ctx.headers_raw, "accept", &extra, extra_len);
@@ -524,11 +533,8 @@ fn upstreamUrl(
     force_vtable: bool,
 ) ![]u8 {
     const use_vtable = force_vtable or
-        (provider.kind == .vertex_anthropic and isMessagesCreate(path)) or
-        (provider.kind == .vertex and (isMessagesCreate(path) or isChatCompletions(path))) or
-        (provider.kind == .openai_compat and isChatCompletions(path)) or
-        (provider.kind == .azure_openai and isChatCompletions(path)) or
-        (provider.kind == .anthropic and isMessagesCreate(path));
+        (impl.proxy.vtable_messages and isMessagesCreate(path)) or
+        (impl.proxy.vtable_chat and isChatCompletions(path));
     if (use_vtable) {
         const base = try impl.endpointUrl(gpa, provider, streaming);
         if (query.len == 0) return base;
@@ -540,12 +546,12 @@ fn upstreamUrl(
 
 fn overlayAnthropic(
     ctx: Ctx,
-    provider: *const config.Provider,
+    impl: *const providers.Provider,
     cred: auth.Credential,
     extra: *[extra_slots]std.http.Header,
     extra_len: usize,
 ) usize {
-    if (provider.kind != .anthropic) return extra_len;
+    if (!impl.proxy.overlay_anthropic) return extra_len;
     var len = extra_len;
     const client_ver = headerValue(ctx.headers_raw, "anthropic-version");
     if (client_ver) |v| {
@@ -910,10 +916,9 @@ fn uniqueProvider(cfg: *const config.Config, family: ?Family) LookupError!Resolv
 }
 
 fn speaks(kind: config.ProviderKind, family: Family) bool {
-    return switch (family) {
-        .openai => kind == .openai_compat or kind == .azure_openai,
-        .anthropic => kind == .anthropic or kind == .vertex_anthropic,
-    };
+    const impl = providers.forKind(kind);
+    if (!impl.proxy.speaks) return false;
+    return familyOfProxy(impl.proxy.family) == family;
 }
 
 fn writeModelsList(ctx: Ctx, family: Family) u16 {
@@ -1320,6 +1325,21 @@ test "spliceModel rewrites only the top-level model string" {
     const same = try spliceModel(gpa, "{\"model\":\"kimi-k3\"}", "kimi-k3");
     defer gpa.free(same);
     try std.testing.expectEqualStrings("{\"model\":\"kimi-k3\"}", same);
+}
+
+test "proxy policy is on the vtable, not a kind switch" {
+    try std.testing.expect(providers.forKind(.openai_compat).proxy.vtable_chat);
+    try std.testing.expect(providers.forKind(.azure_openai).proxy.vtable_chat);
+    try std.testing.expect(providers.forKind(.anthropic).proxy.overlay_anthropic);
+    try std.testing.expect(providers.forKind(.vertex_anthropic).proxy.vertex_body);
+    try std.testing.expect(providers.forKind(.vertex).proxy.rewrite_vertex_body);
+    try std.testing.expect(!providers.forKind(.gemini).proxy.enabled);
+    try std.testing.expect(!speaks(.gemini, .openai));
+    try std.testing.expect(!speaks(.vertex, .anthropic));
+    try std.testing.expect(speaks(.openai_compat, .openai));
+    try std.testing.expect(speaks(.vertex_anthropic, .anthropic));
+    try std.testing.expectEqual(Family.anthropic, upstreamFamily(.vertex));
+    try std.testing.expectEqual(Family.openai, upstreamFamily(.gemini));
 }
 
 test "authorize accepts Bearer and x-api-key" {

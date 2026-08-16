@@ -51,7 +51,7 @@ export function paletteEntries() {
   _refs.board.cards.forEach(function (c) {
     out.push({ kind: "card", label: c.title + "  ·  " + c.column, run: function () {
       if (_setOpenCardId) _setOpenCardId(c.id);
-      _showView("board", true);
+      _showView("kanban", true);
       _renderBoard(_refs.board);
     } });
   });

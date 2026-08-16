@@ -53,5 +53,5 @@
   ],
   "wasm": "zig-out/tools/knowledge.wasm",
   "internal": true,
-  "category": "agent"
+  "category": "knowledge"
 }

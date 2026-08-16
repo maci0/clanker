@@ -1,4 +1,4 @@
-//! config_view: dump the effective config so the agent knows its own settings
+//! config: dump the effective config so the agent knows its own settings
 //! (providers, models, modules, budgets). The full dump shows config.toml +
 //! config.local.toml raw (local last, matching src/config.zig's load order).
 //! Optional {"section": "<key>"} filters to one top-level key of the

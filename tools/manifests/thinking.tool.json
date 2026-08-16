@@ -1,0 +1,26 @@
+{
+  "name": "thinking",
+  "description": "Fail-open effort classifier. One prompt, one of four words (low/medium/high/xhigh). Internal: the agent loop still owns the timeout + credential call; this guest is the same classify via ck_llm so a CLI or hook runs the same fence. Input: {\"text\":\"...\",\"provider\":\"optional\"}.",
+  "llm_description": "Classify a user message as low, medium, high, or xhigh reasoning effort. Internal; not for the model catalog.",
+  "wasm": "zig-out/tools/thinking.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "User message to classify. Capped and fenced as data."
+      },
+      "provider": {
+        "type": "string",
+        "description": "Optional provider name. Empty uses the harness default."
+      }
+    },
+    "required": ["text"]
+  },
+  "internal": true,
+  "llm": true,
+  "config": {
+    "max_tokens": 5
+  },
+  "category": "harness"
+}

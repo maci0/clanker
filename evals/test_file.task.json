@@ -2,8 +2,8 @@
   "name": "test_file",
   "kind": "task",
   "description": "test_file must run one Zig test file and report the verdict. The file asserted is tools/zig/cards.zig, which build.zig lists as host-testable — `zig build test` compiles and runs its test blocks on every gate, so it is kept permanently green by construction and the expectation is content-independent: a known-good test file must come back ok regardless of what its tests cover that week. Exercises the exec_allow path (zig) plus argv assembly (the `test` subcommand before the file).",
-  "prompt": "Use the test_file tool with file \"tools/zig/cards.zig\" and no filter. Look at the tool's JSON result and reply with only the value of its \"ok\" field: true or false.",
-  "requires_tool": "test_file",
+  "prompt": "Use the zig_test tool with file \"tools/zig/cards.zig\" and no filter. Look at the tool's JSON result and reply with only the value of its \"ok\" field: true or false.",
+  "requires_tool": "zig_test",
   "criteria": [
     {
       "includes": [

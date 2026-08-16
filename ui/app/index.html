@@ -106,7 +106,7 @@ lamps carry further). The seven named palettes ride the same tokens.
        Work destinations stay visible, conversations fill the column,
        Watch and Set up fold so they do not eat the list. -->
   <nav class="pf-v6-c-nav rail-nav rail-places" role="tablist" aria-orientation="vertical" aria-label="Sections"
-       aria-owns="tab-chat tab-board tab-search tab-runs tab-fleet tab-arena tab-compare tab-rooms tab-models tab-schedule tab-knowledge tab-prompts tab-tools tab-system">
+       aria-owns="tab-chat tab-kanban tab-runs tab-fleet tab-arena tab-rooms tab-models tab-knowledge tab-prompts tab-tools tab-system">
     <section class="pf-v6-c-nav__section" aria-labelledby="rail-section-work">
       <h2 class="pf-v6-c-nav__section-title rail-group" id="rail-section-work">Work</h2>
       <ul class="pf-v6-c-nav__list" role="presentation">
@@ -114,10 +114,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <button type="button" class="rail-tab" role="tab" id="tab-chat" aria-controls="view-chat" aria-selected="false" tabindex="-1" data-view="chat">Chat</button>
         </li>
         <li class="pf-v6-c-nav__item">
-          <button type="button" class="rail-tab" role="tab" id="tab-board" aria-controls="view-board" aria-selected="false" tabindex="-1" data-view="board">Board</button>
-        </li>
-        <li class="pf-v6-c-nav__item">
-          <button type="button" class="rail-tab" role="tab" id="tab-search" aria-controls="view-search" aria-selected="false" tabindex="-1" data-view="search">Search</button>
+          <button type="button" class="rail-tab" role="tab" id="tab-kanban" aria-controls="view-kanban" aria-selected="false" tabindex="-1" data-view="kanban">Kanban</button>
         </li>
       </ul>
     </section>
@@ -133,9 +130,6 @@ lamps carry further). The seven named palettes ride the same tokens.
           </li>
           <li class="pf-v6-c-nav__item">
             <button type="button" class="rail-tab" role="tab" id="tab-arena" aria-controls="view-arena" aria-selected="false" tabindex="-1" data-view="arena">Arena</button>
-          </li>
-          <li class="pf-v6-c-nav__item">
-            <button type="button" class="rail-tab" role="tab" id="tab-compare" aria-controls="view-compare" aria-selected="false" tabindex="-1" data-view="compare">Compare</button>
           </li>
           <li class="pf-v6-c-nav__item">
             <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
@@ -172,9 +166,6 @@ lamps carry further). The seven named palettes ride the same tokens.
         <ul class="pf-v6-c-nav__list" role="presentation">
           <li class="pf-v6-c-nav__item">
             <button type="button" class="rail-tab" role="tab" id="tab-models" aria-controls="view-models" aria-selected="false" tabindex="-1" data-view="models">Models</button>
-          </li>
-          <li class="pf-v6-c-nav__item">
-            <button type="button" class="rail-tab" role="tab" id="tab-schedule" aria-controls="view-schedule" aria-selected="false" tabindex="-1" data-view="schedule">Schedule</button>
           </li>
           <li class="pf-v6-c-nav__item">
             <button type="button" class="rail-tab" role="tab" id="tab-knowledge" aria-controls="view-knowledge" aria-selected="false" tabindex="-1" data-view="knowledge">Knowledge</button>
@@ -267,7 +258,8 @@ lamps carry further). The seven named palettes ride the same tokens.
     <form id="task-form" class="composer">
       <label for="task">Task</label>
       <div class="attachments" id="attachments" hidden></div>
-      <textarea id="task" name="task" placeholder="Describe the task, / for prompts" required rows="3"
+      <div class="attachments" id="file-chips" hidden></div>
+      <textarea id="task" name="task" placeholder="Describe the task, / for prompts, @ for files" required rows="3"
                 role="combobox" aria-controls="prompt-list" aria-autocomplete="list" aria-expanded="false"></textarea>
       <ul class="palette-list prompt-list" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
       <div class="run-options">
@@ -307,7 +299,7 @@ lamps carry further). The seven named palettes ride the same tokens.
             <input type="checkbox" id="plan-mode">
             <span>Plan</span>
           </label>
-          <label for="research-mode" class="checkbox-row plan-toggle" title="The run consults the web (web_search/fetch_web) for current, sourced information">
+          <label for="research-mode" class="checkbox-row plan-toggle" title="The run consults the web (web_search/web_fetch) for current, sourced information">
             <input type="checkbox" id="research-mode">
             <span>Research</span>
           </label>
@@ -464,35 +456,6 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
     </section>
   </div>
-  <!-- Compare: the blind side-by-side. Everything in this panel is filled from
-       an un-revealed read of the comparison (`/api/compare` asks the tool for
-       one), so there is no markup here holding a provider name that CSS or a
-       tooltip could surface early. The key section stays empty until a pick is
-       recorded and the tool reveals. -->
-  <div class="view" id="view-compare" role="tabpanel" aria-labelledby="tab-compare" tabindex="-1" hidden>
-    <section>
-      <div class="section-head">
-        <h2>Compare</h2>
-        <div class="toolbar-actions">
-          <button type="button" class="secondary" id="compare-refresh">Refresh</button>
-        </div>
-      </div>
-      <div class="runs">
-        <section aria-labelledby="compare-list-head">
-          <h3 id="compare-list-head" class="sr-only">Comparisons</h3>
-          <div id="compare-list" class="compare-list"></div>
-        </section>
-        <p class="compare-prompt" id="compare-prompt"></p>
-        <p class="meta" id="compare-status" role="status" aria-live="polite"></p>
-        <section aria-labelledby="compare-answers-head">
-          <h3 id="compare-answers-head" class="sr-only">Answers, side by side</h3>
-          <div id="compare-answers" class="compare-answers"></div>
-        </section>
-        <div id="compare-verdict"></div>
-        <section id="compare-key" class="compare-key" hidden></section>
-      </div>
-    </section>
-  </div>
   <div class="view" id="view-rooms" role="tabpanel" aria-labelledby="tab-rooms" tabindex="-1" hidden>
     <div class="slack-layout">
       <!-- Sidebar: channel list -->
@@ -568,7 +531,7 @@ lamps carry further). The seven named palettes ride the same tokens.
                     title="Write a message first" aria-label="Write a message first">Send</button>
           </div>
           <div class="slack-formatting-hint">
-            <span><b>*bold*</b> <i>_italic_</i> <code>`code`</code> ~strike~ &gt;quote</span>
+            <span><b>**bold**</b> <i>*italic*</i> <code>`code`</code> ~~strike~~ &gt;quote</span>
           </div>
         </form>
         <!-- Emoji picker popup -->
@@ -590,10 +553,10 @@ lamps carry further). The seven named palettes ride the same tokens.
       </form>
     </dialog>
   </div>
-  <div class="view" id="view-board" role="tabpanel" aria-labelledby="tab-board" tabindex="-1" hidden>
+  <div class="view" id="view-kanban" role="tabpanel" aria-labelledby="tab-kanban" tabindex="-1" hidden>
     <section>
       <div class="section-head">
-        <h2>Goals board</h2>
+        <h2>Kanban</h2>
         <div class="toolbar-actions">
           <label class="checkbox-row" for="board-room">
             <span>Room</span>
@@ -631,7 +594,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       </form>
       <div class="board-header" id="board-header">
         <span class="board-header-icon" id="board-header-icon"></span>
-        <h2 class="board-header-title" id="board-title">Board</h2>
+        <h2 class="board-header-title" id="board-title">Kanban</h2>
         <span class="board-header-sep"></span>
         <button type="button" class="board-header-btn" id="board-toggle-list" title="Toggle list view" aria-label="Switch to list view"></button>
       </div>
@@ -650,8 +613,8 @@ lamps carry further). The seven named palettes ride the same tokens.
         <select id="board-filter-label"><option value="">All</option><option value="green">Green</option><option value="yellow">Yellow</option><option value="orange">Orange</option><option value="red">Red</option><option value="purple">Purple</option><option value="blue">Blue</option><option value="sky">Sky</option><option value="pink">Pink</option><option value="lime">Lime</option><option value="black">Black</option></select>
       </div>
       </details>
-      <!-- Keep the DOM id distinct from the #board route. If both are
-           "board", native fragment scrolling opens this view halfway down. -->
+      <!-- Keep the DOM id distinct from the #kanban route. If both are
+           "kanban", native fragment scrolling opens this view halfway down. -->
       <div class="board" id="board-grid"></div>
       <div class="toolbar-actions board-list-controls" id="board-list-controls">
         <label for="board-sort" class="checkbox-row"><span>Sort</span> <select id="board-sort"><option value="updated">Updated</option><option value="priority">Priority</option><option value="due">Due date</option><option value="cost">Cost</option></select></label>
@@ -680,36 +643,6 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
 
   </div>
-  <div class="view" id="view-search" role="tabpanel" aria-labelledby="tab-search" tabindex="-1" hidden>
-    <section>
-      <div class="section-head">
-        <h2>Search</h2>
-      </div>
-      <p class="meta">Find a saved conversation by what was said in it. The conversation list in the sidebar filters on titles; this reads the messages.</p>
-      <div class="transcript-tools">
-        <label for="search-q">Search conversations</label>
-        <input type="search" id="search-q" placeholder="e.g. cron spec, provider refused, safeJoin…" autocomplete="off" spellcheck="false">
-        <button type="button" class="primary" id="search-go">Search conversations</button>
-      </div>
-      <p class="sr-only" id="search-status" role="status" aria-live="polite"></p>
-      <div id="search-results"></div>
-    </section>
-  </div>
-
-  <div class="view" id="view-schedule" role="tabpanel" aria-labelledby="tab-schedule" tabindex="-1" hidden>
-    <section>
-      <div class="section-head">
-        <h2>Schedule</h2>
-        <button type="button" class="secondary" id="schedule-refresh">Refresh</button>
-      </div>
-      <p class="meta">What <code>clanker schedule</code> has been asked to run, and when each entry fires next. Times are each entry's own fixed UTC offset, never a DST-aware zone. Nothing fires from this page: entries run when the system's own cron calls <code>clanker schedule run-due</code>.</p>
-      <p class="sr-only" id="schedule-status" role="status" aria-live="polite"></p>
-      <div id="schedule-list"></div>
-      <h3 class="detail-head subsection-head">Recent fires</h3>
-      <ul class="schedule-log" id="schedule-log"></ul>
-    </section>
-  </div>
-
   <div class="view" id="view-models" role="tabpanel" aria-labelledby="tab-models" tabindex="-1" hidden>
     <section>
       <div class="section-head">
@@ -877,7 +810,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <div class="section-head">
         <h2>Skills</h2>
       </div>
-      <p class="meta">Persistent agent instructions from <code>skills/</code>, embedded in the system prompt on every run. Define what the agent knows how to do. Authored via <code>edit_skill</code>.</p>
+      <p class="meta">Persistent agent instructions from <code>skills/</code>, embedded in the system prompt on every run. Define what the agent knows how to do. Authored via <code>skill_edit</code>.</p>
       <div id="skills" class="skills"></div>
       <p class="sr-only" id="skills-status" role="status" aria-live="polite"></p>
     </section>
@@ -1165,10 +1098,11 @@ lamps carry further). The seven named palettes ride the same tokens.
 <!-- Order matters and is guaranteed: module scripts execute in document order
      once parsing is done. preact-boot puts Preact/htm/signals on window for
      the plugin API; first-party modules import core/ui.js directly.
-     The feature views (features/board.js, goals, prompts, todos, models,
-     schedule, search) are deliberately NOT <script> tags here: each is
+     The feature views (features/board.js, goals, prompts, todos, models)
+     are deliberately NOT <script> tags here: each is
      dynamically imported by app.js the first time its view is opened, so a
-     visit that never leaves chat downloads none of them. -->
+     visit that never leaves chat downloads none of them. Schedule, Search,
+     and Compare are disk plugins under ui/plugins/. -->
 <script type="module" src="/webui/preact-boot.js"></script>
 <script type="module" src="/webui/core/utils.js"></script>
 <script type="module" src="/webui/core/icons.js"></script>

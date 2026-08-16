@@ -28,6 +28,11 @@ pub const provider: api.Provider = .{
     // API key. That is `oauth_static` in ADR 0005's terms, and keeping the
     // detection is what makes it zero-config.
     .auth = .{ .default = .api_key, .detect = detectStrategy },
+    .proxy = .{
+        .family = .anthropic,
+        .vtable_messages = true,
+        .overlay_anthropic = true,
+    },
     .buildRequest = buildRequest,
     .parseResponse = parseResponse,
     .parseErrorDetail = parseErrorDetail,

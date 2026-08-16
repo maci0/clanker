@@ -1,0 +1,7 @@
+{
+  "name": "search",
+  "title": "Search",
+  "description": "Find a saved conversation by what was said in it. The sidebar filters titles; this reads the messages.",
+  "group": "Work",
+  "capabilities": ["get", "session"]
+}

@@ -19,13 +19,19 @@ pub const Goal = struct {
     updated: i64 = 0,
 };
 
-pub const Worktree = enum { leave, set_true, clear };
+pub const Worktree = union(enum) { leave, set_true, clear, value: []const u8 };
 
 pub const Patch = struct {
     id: []const u8,
+    /// When set, the write is a no-op unless the goal currently holds this
+    /// status. Run-completion uses `from = "active"` so a hand move or a
+    /// deleted goal is left alone.
+    from_status: ?[]const u8 = null,
     status: ?[]const u8 = null,
     max_iterations: ?u32 = null,
     worktree: Worktree = .leave,
+    goal_loop_reason: ?[]const u8 = null,
+    goal_loop_turns: ?u32 = null,
     remove: bool = false,
 };
 
@@ -61,6 +67,9 @@ pub fn apply(alloc: std.mem.Allocator, goals: []const Goal, patch: Patch, now: i
             continue;
         }
         hit = true;
+        if (patch.from_status) |from| {
+            if (!std.mem.eql(u8, g.status, from)) return error.StatusMismatch;
+        }
         if (patch.remove) continue;
         var updated = g;
         if (patch.status) |s| updated.status = s;
@@ -69,7 +78,10 @@ pub fn apply(alloc: std.mem.Allocator, goals: []const Goal, patch: Patch, now: i
             .leave => {},
             .set_true => updated.worktree = "true",
             .clear => updated.worktree = null,
+            .value => |v| updated.worktree = v,
         }
+        if (patch.goal_loop_reason) |r| updated.goal_loop_reason = r;
+        if (patch.goal_loop_turns) |n| updated.goal_loop_turns = n;
         updated.updated = now;
         try out.append(alloc, updated);
     }
@@ -106,6 +118,70 @@ test "apply updates only the named fields and refuses a missing id" {
 
     try std.testing.expectError(error.NoSuchGoal, apply(gpa, &goals, .{ .id = "missing", .status = "review" }, 9));
     try std.testing.expectError(error.BadStatus, apply(gpa, &goals, .{ .id = "g1", .status = "nope" }, 9));
+}
+
+test "apply from_status is a compare-and-swap, and a loop outcome records reason and turns" {
+    const gpa = std.testing.allocator;
+    const goals = [_]Goal{
+        .{ .id = "g1", .objective = "a", .status = "active", .created = 1, .updated = 1 },
+        .{ .id = "g2", .objective = "c", .status = "done", .created = 1, .updated = 1 },
+    };
+
+    // A finished run only moves active -> review. A goal already done, or an
+    // id nobody has heard of, is left exactly as it was.
+    const moved = try apply(gpa, &goals, .{ .id = "g1", .from_status = "active", .status = "review" }, 9);
+    defer gpa.free(moved);
+    try std.testing.expectEqualStrings("review", moved[0].status);
+    try std.testing.expectEqual(@as(i64, 9), moved[0].updated);
+    try std.testing.expectEqualStrings("done", moved[1].status);
+
+    try std.testing.expectError(error.StatusMismatch, apply(gpa, &goals, .{ .id = "g2", .from_status = "active", .status = "review" }, 9));
+    try std.testing.expectError(error.NoSuchGoal, apply(gpa, &goals, .{ .id = "missing", .from_status = "active", .status = "review" }, 9));
+
+    const blocked = try apply(gpa, &goals, .{
+        .id = "g1",
+        .from_status = "active",
+        .status = "blocked",
+        .goal_loop_reason = "waiting on credentials",
+        .goal_loop_turns = 3,
+    }, 4);
+    defer gpa.free(blocked);
+    try std.testing.expectEqualStrings("blocked", blocked[0].status);
+    try std.testing.expectEqualStrings("waiting on credentials", blocked[0].goal_loop_reason);
+    try std.testing.expectEqual(@as(u32, 3), blocked[0].goal_loop_turns);
+    try std.testing.expectEqual(@as(i64, 4), blocked[0].updated);
+}
+
+test "apply of two different ids composes so neither write is dropped" {
+    const gpa = std.testing.allocator;
+    const goals = [_]Goal{
+        .{ .id = "g1", .objective = "a", .status = "active", .created = 1, .updated = 1 },
+        .{ .id = "g2", .objective = "c", .status = "active", .created = 1, .updated = 1 },
+    };
+
+    // Two run-completion writes finishing at once used to each read the same
+    // file, flip one goal, and let the second write drop the first. The
+    // guest retries a mismatched hash; this pins that two applies in
+    // sequence keep both flips.
+    const after_g1 = try apply(gpa, &goals, .{ .id = "g1", .from_status = "active", .status = "review" }, 2);
+    defer gpa.free(after_g1);
+    const after_both = try apply(gpa, after_g1, .{ .id = "g2", .from_status = "active", .status = "review" }, 3);
+    defer gpa.free(after_both);
+    try std.testing.expectEqualStrings("review", after_both[0].status);
+    try std.testing.expectEqualStrings("review", after_both[1].status);
+    try std.testing.expectEqual(@as(i64, 2), after_both[0].updated);
+    try std.testing.expectEqual(@as(i64, 3), after_both[1].updated);
+}
+
+test "apply sets a worktree branch string" {
+    const gpa = std.testing.allocator;
+    const goals = [_]Goal{
+        .{ .id = "g1", .objective = "a", .created = 1, .updated = 1 },
+    };
+    const patched = try apply(gpa, &goals, .{ .id = "g1", .worktree = .{ .value = "clanker/webui-1" } }, 5);
+    defer gpa.free(patched);
+    try std.testing.expectEqualStrings("clanker/webui-1", patched[0].worktree.?);
+    try std.testing.expectEqual(@as(i64, 5), patched[0].updated);
 }
 
 test "apply removes a goal and clears a worktree flag" {
