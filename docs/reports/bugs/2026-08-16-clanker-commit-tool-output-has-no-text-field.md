@@ -8,7 +8,7 @@
 
 ## Status
 
-Open.
+Resolved on 2026-08-16. cmdCommit now calls toolJson with a structured body and renders via the pure commit_logic.renderPlan (4 new host tests). Verified: clanker commit --dry-run prints a proposal instead of erroring; answering y at the prompt moved HEAD 0e216cd5 -> 612d8079 with the expected single commit, so defect 2 (the post-confirmation dry run) is gone; the applied wording reads 'committed' where the proposal reads 'would write'.
 
 ## Symptom and impact
 

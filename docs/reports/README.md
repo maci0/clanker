@@ -82,7 +82,7 @@ Project agents receive this workflow through the harness prompt and
 <!-- inventory:bug:start -->
 - [Five agent sessions on one checkout committed and stashed each other's work](bugs/2026-08-16-concurrent-sessions-commit-each-others-work.md) — Open
 
-- [clanker commit always fails: smart_commit returns no text field](bugs/2026-08-16-clanker-commit-tool-output-has-no-text-field.md) — Open
+- [clanker commit always fails: smart_commit returns no text field](bugs/2026-08-16-clanker-commit-tool-output-has-no-text-field.md) — Resolved
 
 - [improve-self worktrees are never reclaimed when a run promotes nothing](bugs/2026-08-16-improve-worktree-merge-bound-to-promotion.md) — Resolved
 
