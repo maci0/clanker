@@ -247,8 +247,21 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
 /// Replaces any existing "## Autolearn" section in docs/ROADMAP.md (from the
 /// marker to EOF, since it is always the last section) with the new one.
+/// Compare-and-swap against the digest of what was just read: two runs
+/// finishing near each other both merge and write, and a plain write would
+/// let the second silently clobber the first's section. Retry once on a
+/// mismatch (someone else merged between our read and write), then surface
+/// the conflict to the caller.
 fn upsertRoadmap(alloc: std.mem.Allocator, section: []const u8) !void {
     const existing = lib.fsRead(roadmap_path) catch "";
     const merged = try logic.mergeRoadmap(alloc, existing, section);
-    try lib.fsWrite(roadmap_path, merged);
+    const expected = try lib.hash(existing);
+    lib.fsWriteIf(roadmap_path, expected, merged) catch |err| switch (err) {
+        error.Mismatch => {
+            const fresh = lib.fsRead(roadmap_path) catch return err;
+            const remerged = try logic.mergeRoadmap(alloc, fresh, section);
+            try lib.fsWriteIf(roadmap_path, try lib.hash(fresh), remerged);
+        },
+        else => return err,
+    };
 }

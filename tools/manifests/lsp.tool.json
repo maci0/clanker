@@ -16,7 +16,6 @@
   "category": "code",
   "sequential": true,
   "exec_allow": ["zls"],
-  "env_allow": ["PWD"],
   "fs_prefixes": ["."],
   "network_allow": [],
   "confirm": false
