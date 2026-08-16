@@ -270,7 +270,7 @@ opens a mesh socket itself. A notification is not a chat message.
 
 ## Catalog tools with no top-level verb
 
-`clanker tools list` ends with a count — 94 tools and 22 plugins as of
+`clanker tools list` ends with a count — 96 tools and 22 plugins as of
 2026-08-16 — and only some of them have their own command. The rest are
 reached through the agent:
 
