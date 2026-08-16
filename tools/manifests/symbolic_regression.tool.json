@@ -1,7 +1,7 @@
 {
   "name": "symbolic_regression",
   "description": "Search for a closed-form expression that fits numeric data (symbolic regression). Use this when the operator wants a formula, a law, or an equation that explains a table of numbers — not to evaluate a known expression (that is calculator) and not for a statistical summary (mean, r). Pass the points in JSON. Returns a Pareto front of {expr, complexity, mse}: simpler expressions first. Caps: 200 rows, 6 input columns. Default operators + - * / neg sin cos.",
-  "llm_description": "Discover a formula that fits numbers. {x,y} or {rows} (last col is y) or {csv}. Returns Pareto {expr,complexity,mse}. Use to find a law; calculator evaluates a known expr.",
+  "llm_description": "Discover a formula that fits numbers. {x,y} or {rows} (last col y) or {csv}. Returns Pareto {expr,complexity,mse}. Not calculator (eval a known expr).",
   "wasm": "zig-out/tools/symbolic_regression.wasm",
   "input_schema": {
     "type": "object",

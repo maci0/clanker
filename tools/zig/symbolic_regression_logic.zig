@@ -43,12 +43,6 @@ pub const Tree = struct {
     len: u8 = 0,
 };
 
-pub const Equation = struct {
-    expr: []const u8,
-    complexity: u16,
-    mse: f64,
-};
-
 pub const Dataset = struct {
     x: []const f64,
     y: []const f64,

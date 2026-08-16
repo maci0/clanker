@@ -1668,6 +1668,35 @@ test "recent_commits wasm tool summarizes git history in one call (ck_exec)" {
     try std.testing.expect(std.mem.find(u8, out, "(") != null);
 }
 
+test "symbolic_regression wasm fits y=2x+1" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    const wasm = std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/symbolic_regression.wasm", std.testing.allocator, .limited(1 << 20)) catch
+        return error.SkipZigTest;
+    defer std.testing.allocator.free(wasm);
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+    };
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+
+    const out = try mod.executeTool("{\"x\":[0,1,2,3],\"y\":[1,3,5,7],\"iterations\":4}");
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.startsWith(u8, out, "{\"ok\":true"));
+    try std.testing.expect(std.mem.find(u8, out, "\"equations\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"mse\":0") != null or std.mem.find(u8, out, "e-") != null);
+}
+
 test "assemblyscript calc_ts tool executes" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
