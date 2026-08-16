@@ -51,6 +51,8 @@ both are compare-and-swap writes, so reopen the record after a conflict.
 ## Inventory
 
 <!-- inventory:runbook:start -->
+- [Several agent sessions share one checkout](concurrent-agent-sessions-on-one-checkout.md) — Current
+
 - [Leftover improve-self worktrees pile up under .clanker-worktrees/](improve-worktree-backlog.md) — Current
 
 - [State backups are not running](state-backups-not-running.md) — Current
