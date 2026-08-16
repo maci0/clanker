@@ -130,7 +130,7 @@ only under Open questions:
 - [x] `prd status ... shipped` refuses without a note naming the source files (Goal 4).
 - [x] Listing reads each status from the document, and a status change writes the index too (Goal 5).
 - [x] A failed index write is reported rather than silently dropped (Goal 5).
-- [ ] No HTTP surface exists for either store; `GET /api/adr` and `GET /api/prd` are unwritten. Deliberate — see Non-goals — but it is not true that every surface shares the implementation until one exists to share it.
+- [x] Every surface that exists for a record store is served by the guest (Goal 2). No record store has an HTTP surface — there is no `/api/reports`, `/api/rfc`, `/api/research`, `/api/adr` or `/api/prd` — so this is parity with the five stores around it, not a gap in this one.
 
 ## Open questions / future work
 

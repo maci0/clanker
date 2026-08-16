@@ -32,6 +32,17 @@ through a gated loop. Follow these conventions when changing this codebase.
   moving under the build (another session editing, or a second test binary
   competing for the machine), not a defect: re-run it, or run the compiled
   binary in `.zig-cache/o/<hash>/test` directly, before hunting for a cause.
+- Read zig's own exit code, and never through a pipe. The improve/gate tests
+  run a nested build in a staging copy, so a passing run still ends with
+  `failed command: ./.zig-cache/o/<hash>/test --listen=-` and
+  `capability gate failed: no staged binary` — those lines are the assertion
+  succeeding, not the suite failing. `zig build test 2>&1 | tail` then reports
+  `tail`'s status, which is always 0. Two sessions called the same green run
+  red on the same day this way.
+  Read zig's own exit code, and never through a pipe — `zig build test | tail`
+  reports tail's status. A trailing `failed command: .zig-cache/o/<hash>/test`
+  is not the suite failing: the improve/gate staging tests run a nested build
+  and print that line while asserting the gate reports a failure.
 
 Write the failing test first. Put it next to the shipped function (`test`
 blocks in `src/`, `host_tested_helpers` for pure `tools/zig/` logic, or

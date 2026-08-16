@@ -39,24 +39,68 @@ below is detail.
 
 ## Web backends
 
-A sweep tries DuckDuckGo Lite first, Bing next when it comes back empty, and
-Google last.
+A sweep tries five backends in order, moving to the next only when the one
+before it returned nothing for that query:
 
-Google is reached through the [Programmable Search JSON
-API](https://developers.google.com/custom-search/v1/overview), never by
-scraping: `www.google.com/search` answers a plain HTTP client with a "turn on
-JavaScript" page carrying no result links, whatever user agent it is asked
-with, and including the legacy `gbv=1` no-JavaScript parameter. Set both of
-these to enable it, in `.env` or the environment:
+| Order | Backend | Needs | Index |
+|---|---|---|---|
+| 1 | DuckDuckGo Lite | — | Bing-derived |
+| 2 | Bing RSS | — | Bing |
+| 3 | Google Programmable Search | key + engine id | Google |
+| 4 | Brave Search API | key | Brave's own crawl |
+| 5 | Marginalia public API | — | independent, small-web biased |
+
+Only 1, 2 and 5 work out of the box. 3 and 4 are skipped when their
+environment variables are unset, and the sweep says so once rather than per
+query.
+
+### Why the big engines need keys
+
+They cannot be scraped from a server at all. Each of these answers a plain
+HTTP client with a consent wall, a captcha, or a JavaScript challenge — all of
+them HTTP 200, so an unchecked parser reads them as "no results" rather than
+"we were turned away":
+
+- **Google** — a "turn on JavaScript" interstitial, with no result links in
+  the body. Confirmed against a browser user agent and against the legacy
+  `gbv=1` no-JavaScript parameter.
+- **Baidu** — 百度安全验证, its security-verification page. Confirmed against a
+  browser user agent and Chinese `Accept-Language`. Baidu publishes no web
+  search API either, so there is no way to reach it from a guest.
+- **Ecosia** ("Ecosia Firewall"), **Startpage** (an Anubis proof-of-work
+  challenge), **Mojeek** (a captcha), and the public **searx** instances
+  ("Verifying your browser") all do the same.
+
+So the mainstream indexes are reachable only through a paid or keyed API,
+which is what backends 3 and 4 are.
+
+### Enabling the keyed backends
+
+Google Programmable Search, in `.env` or the environment:
 
 ```bash
 export GOOGLE_SEARCH_KEY=<api key>
 export GOOGLE_SEARCH_CX=<programmable search engine id>
 ```
 
-With either unset the backend is skipped and the sweep says so once. The free
-tier is 100 queries a day, and a sweep only reaches Google for a query the
-other two answered with nothing, so it is rarely spent.
+Brave Search API — the key travels in a header rather than the query string,
+so it stays out of any log that records the URL:
+
+```bash
+export BRAVE_SEARCH_KEY=<api key>
+```
+
+Both have free tiers (Google 100 queries a day, Brave 2000 a month), and a
+sweep only reaches them for a query the free backends answered with nothing,
+so they are rarely spent.
+
+### Marginalia
+
+Last in the chain and the only backend needing no key, so a sweep always has
+one more thing to try however little is configured. Its index is independent
+and deliberately biased towards small, non-commercial pages, which makes it
+worth reaching even when the others worked: it surfaces what the mainstream
+engines rank away rather than returning their first page again.
 
 ## What belongs here
 

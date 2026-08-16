@@ -114,6 +114,8 @@
     "lite.duckduckgo.com",
     "www.bing.com",
     "customsearch.googleapis.com",
+    "api.search.brave.com",
+    "api.marginalia.nu",
     "api.github.com",
     "hn.algolia.com",
     "export.arxiv.org"
@@ -121,7 +123,8 @@
   "env_allow": [
     "GITHUB_TOKEN",
     "GOOGLE_SEARCH_KEY",
-    "GOOGLE_SEARCH_CX"
+    "GOOGLE_SEARCH_CX",
+    "BRAVE_SEARCH_KEY"
   ],
   "category": "knowledge",
   "confirm": false

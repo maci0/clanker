@@ -383,6 +383,52 @@ fn sweepWeb(st: *Sweep, queries: []const Query, per_query: usize) !void {
             }
         }
 
+        // Fourth: Brave, also an API and also keyed. It is the only mainstream
+        // index left that a sandboxed guest can reach at all — Baidu, Ecosia,
+        // Startpage, Mojeek and the public searx instances each answer a plain
+        // HTTP client with a captcha or a JavaScript challenge, the same way
+        // Google does. Brave runs its own crawl rather than reselling someone
+        // else's, so it is a genuinely different set of results from Bing.
+        if (count == 0 and st.budgetLeft()) {
+            if (lib.getenv("BRAVE_SEARCH_KEY")) |key| {
+                if (key.len > 0) {
+                    const brave = std.fmt.bufPrint(
+                        &url_buf,
+                        "https://api.search.brave.com/res/v1/web/search?q={s}&count={d}",
+                        .{ enc, @min(per_query, 20) },
+                    ) catch continue;
+                    // The key travels in a header, not the query string, so it
+                    // stays out of any log that records the URL.
+                    const headers = std.fmt.allocPrint(
+                        lib.alloc,
+                        "{{\"Accept\":\"application/json\",\"X-Subscription-Token\":\"{s}\"}}",
+                        .{key},
+                    ) catch continue;
+                    if (fetch(st, brave, headers)) |body| {
+                        count = parse.parseBraveApi(lib.alloc, body, &results, per_query);
+                        if (count > 0) try collectWeb(st, results[0..count], q, "brave");
+                    }
+                }
+            }
+        }
+
+        // Last: Marginalia, the only backend that needs no key at all, so a
+        // sweep always has one more thing to try however little is configured.
+        // Its index is independent and deliberately biased towards small,
+        // non-commercial pages: it surfaces what the mainstream engines rank
+        // away rather than returning their first page again.
+        if (count == 0 and st.budgetLeft()) {
+            const marginalia = std.fmt.bufPrint(
+                &url_buf,
+                "https://api.marginalia.nu/public/search/{s}",
+                .{enc},
+            ) catch continue;
+            if (fetch(st, marginalia, null)) |body| {
+                count = parse.parseMarginalia(lib.alloc, body, &results, per_query);
+                if (count > 0) try collectWeb(st, results[0..count], q, "marginalia");
+            }
+        }
+
         if (count == 0) {
             st.note("No web backend returned anything for one query; try shorter wording in the field's own vocabulary.");
         }
@@ -453,7 +499,12 @@ fn cleanCopy(raw: []const u8, max: usize) ![]const u8 {
     const capped = utf8.cap(raw, max);
     if (capped.len == 0) return "";
     const buf = try lib.alloc.alloc(u8, capped.len);
-    return parse.cleanInto(capped, buf);
+    const cleaned = parse.cleanInto(capped, buf);
+    // Collapse after stripping markup, not before: removing a `<br>` leaves the
+    // newline that surrounded it, and a title carrying newlines prints as
+    // several ragged lines wherever the sweep is rendered. Safe in place —
+    // collapsing only ever shortens.
+    return parse.collapseSpace(cleaned, buf);
 }
 
 fn sweepGithub(st: *Sweep, subject: []const u8, per_query: usize) !void {
