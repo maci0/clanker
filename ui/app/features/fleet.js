@@ -619,19 +619,45 @@ function meshTopoKey(data) {
   return themeToken("--accent") + "#" + themeToken("--bg") + "#" + nodes + "#" + links + "#" + pulses;
 }
 
-function meshStatusText(data) {
+function meshStatusText(data, live) {
   var nodes = data.nodes || [];
   var links = data.links || [];
   var pulses = data.pulses || [];
   var working = nodes.filter(function (n) { return n.working; }).length;
+  var bits = [];
+  if (live && live.listen) bits.push(live.listen);
+  if (live && live.admission) bits.push("admission=" + live.admission);
   if (nodes.length <= 1 && !links.length) {
-    return "This clanker only. Add a peer in System → Config to see others on the map.";
+    var only = "This clanker only. Join another instance from Mesh, or add a peer in System → Config.";
+    return bits.length ? bits.join(" · ") + " · " + only : only;
   }
-  return nodes.length + " node" + (nodes.length === 1 ? "" : "s") +
-    (links.length ? ", " + links.length + " link" + (links.length === 1 ? "" : "s") : "") +
-    (working ? ", " + working + " working" : "") +
-    (pulses.length ? ", " + pulses.length + " talking" : "") +
-    (data.mesh ? "" : ". Mesh module off; showing configured peers.");
+  bits.push(nodes.length + " node" + (nodes.length === 1 ? "" : "s"));
+  if (links.length) bits.push(links.length + " link" + (links.length === 1 ? "" : "s"));
+  if (working) bits.push(working + " working");
+  if (pulses.length) bits.push(pulses.length + " talking");
+  if (data.mesh === false) bits.push("module off; showing configured peers");
+  return bits.join(" · ");
+}
+
+function navToMesh() {
+  try {
+    if (_navShowView) _navShowView("mesh");
+    else if (typeof window.showView === "function") window.showView("mesh");
+    else if (window.clankerApp && typeof window.clankerApp.showView === "function") window.clankerApp.showView("mesh");
+    else window.location.hash = "#mesh";
+  } catch (_) { window.location.hash = "#mesh"; }
+}
+
+function renderPendingBanner(el, pending) {
+  if (!el) return;
+  var rows = (pending && pending.pending) || [];
+  if (!rows.length) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  el.hidden = false;
+  el.textContent = rows.length + " pending join" + (rows.length === 1 ? "" : "s") + ". Open Mesh to admit or deny.";
 }
 
 function patchMeshWorking(el, data, statusEl) {
@@ -648,7 +674,7 @@ function patchMeshWorking(el, data, statusEl) {
       meta.textContent = working ? "working" : (n.state === "self" ? "home" : (n.path || n.state));
     }
   }
-  if (statusEl) statusEl.textContent = meshStatusText(data);
+  if (statusEl) statusEl.textContent = meshStatusText(data, el && el._meshLive);
 }
 
 function renderMeshMap(el, data, statusEl) {
@@ -715,7 +741,7 @@ function renderMeshMap(el, data, statusEl) {
   });
   parts.push("</svg>");
   el.innerHTML = parts.join("");
-  if (statusEl) statusEl.textContent = meshStatusText(data);
+  if (statusEl) statusEl.textContent = meshStatusText(data, el._meshLive);
 }
 
 function observeFloorTheme() {
@@ -748,8 +774,17 @@ export function initFleet() {
     if (!mapEl) return Promise.resolve();
     var view = byId("view-fleet");
     if (view && view.hidden) return Promise.resolve();
-    return fetch("/api/mesh/map").then(readJson).then(function (d) {
-      renderMeshMap(mapEl, d, mapStatus);
+    var banner = byId("mesh-pending-banner");
+    var liveP = fetch("/api/mesh/status").then(readJson).catch(function () { return null; });
+    var pendP = fetch("/api/mesh/pending").then(readJson).catch(function () { return null; });
+    return Promise.all([
+      fetch("/api/mesh/map").then(readJson),
+      liveP,
+      pendP
+    ]).then(function (pair) {
+      mapEl._meshLive = pair[1];
+      renderMeshMap(mapEl, pair[0], mapStatus);
+      renderPendingBanner(banner, pair[2]);
     }).catch(function (e) {
       renderMeshMap(mapEl, { ok: false, error: e.message || "map failed" }, mapStatus);
     });
@@ -802,6 +837,11 @@ export function initFleet() {
   if (refresh && !refresh._fleetBound) {
     refresh._fleetBound = true;
     refresh.addEventListener("click", doRefresh);
+  }
+  var openMesh = byId("fleet-open-mesh");
+  if (openMesh && !openMesh._fleetBound) {
+    openMesh._fleetBound = true;
+    openMesh.addEventListener("click", navToMesh);
   }
   doRefresh();
   if (_meshTimer) clearInterval(_meshTimer);

@@ -4023,6 +4023,21 @@ h2#session-title {
 /* Mesh map: each clanker is a cabinet lamp. Wires are traces; a live
    talk sends a bead from the speaker toward the listener. */
 .mesh-map-section { min-width: 0; }
+.mesh-map-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.mesh-map-head h3 { margin: 0; }
+.mesh-pending-banner {
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--accent, var(--rule));
+  border-radius: var(--radius);
+  background: var(--surface);
+}
 .mesh-map-section h3 {
   font-family: var(--sans);
   font-size: 11px;

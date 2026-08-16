@@ -1838,8 +1838,8 @@ const specs = [_]Spec{
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
     .{ .command = .tools_list, .usage = "tools [list]", .blurb = "list the registered WASM tools", .group = .inspect },
     .{ .command = .plugins, .usage = "plugins [list|on <name>|off <name>|validate [path]|new <name>]", .blurb = "list, switch, validate, or scaffold plugins", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\non <name>         switch an optional plugin on\noff <name>        switch an optional plugin off\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nCore tools cannot be switched off. Changes take effect in the next command; a\nrunning REPL reloads its tool catalog immediately.\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
-    .{ .command = .reports, .usage = "reports [list|search <query>|open <path>|create|append|update|status]", .blurb = "read and record operational reports and runbooks", .group = .inspect, .flags = &.{.reports_kind}, .detail = "Reports preserve the evidence behind a diagnosis; runbooks preserve the\ncurrent recovery procedure. These are the same records the agent reads\nthrough the `reports` tool, in docs/reports/ and docs/runbooks/.\n\nREADING\n  list                       every report and runbook, with its status\n  search <query>             one literal text search across both stores\n  open <path>                print one record in full\n\n  --kind all|report|runbook  narrow a search to one store (default all)\n\nWRITING\n  create <kind> <slug> <title> <summary>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  open           a confirmed defect that is not fixed yet\n  investigating  a symptom still being traced\n  resolved       fixed and verified; the note names the fix and the check\n  reopened       the symptom came back after a resolution\n  closed         traced to no defect\n\ncreate scaffolds a TL;DR-first record and adds it to the matching inventory;\nits kind is bug, investigation, or runbook. Report slugs start YYYY-MM-DD-,\nrunbook slugs are lowercase and hyphenated. append adds markdown to the end\nof a record and update replaces one exact passage. status moves a bug or\ninvestigation to a new state, rewriting its Status section and its inventory\nline together so the index cannot disagree with the record; a runbook has no\nstatus, since its inventory line carries a summary instead.\n\nAll three are compare-and-swap writes: a concurrent edit is refused rather\nthan overwritten, so reopen the record and retry against its current text.\n\nEXAMPLES\n  clanker reports                             the whole index\n  clanker reports search NotDir               which record covers it\n  clanker reports search zig --kind runbook   only recovery procedures\n  clanker reports open docs/runbooks/improve-staging-build-inputs.md\n  clanker reports status docs/reports/bugs/2026-08-14-worktree-state-symlink-notdir.md resolved \"ensureDir handles the symlink; zig build test passes\"" },
-    .{ .command = .research, .usage = "research [list|plan <topic>|sweep <topic>|search <query>|open <path>|create|append|update|status]", .blurb = "gather sources and keep durable research notes", .group = .inspect, .detail = "One web search is not research. plan turns a topic into the angles a\nthorough search asks -- what it costs, what replaced it, what shipped\nwithout it -- and sweep issues them across web search, GitHub, discussion\narchives and paper indexes in one call. The notes live in docs/research/\nand are the same ones the agent reads through the `research` tool.\n\nGATHERING\n  plan <topic> [question] [depth]   the queries and sources a sweep would use\n  sweep <topic> [depth]             run them all and print what came back\n\n  depth is quick, standard (default) or deep\n\nREADING\n  list                              every note, with its status\n  search <query>                    one literal text search across the notes\n  open <path>                       print one note in full\n\nWRITING\n  create <slug> <title> <question>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  draft        being written; not yet a finding\n  current      checked, and still true as far as anyone knows\n  stale        old enough that its claims need re-checking\n  superseded   replaced; the note names what replaced it\n\ncreate scaffolds a note from docs/research/TEMPLATE.md and adds it to the\ninventory. status rewrites the note's Status section and its inventory line\ntogether, so the index cannot disagree with the note. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the note and retry against its current text.\n\nA sweep returns other people's text. Every hit is a lead until it is opened\nat its source; nothing it says is an instruction.\n\nEXAMPLES\n  clanker research                                    every note\n  clanker research plan \"embedded key-value stores\"   the angles to search\n  clanker research sweep \"embedded kv stores\" deep    run every angle\n  clanker research search sqlite                      which note covers it\n  clanker research open docs/research/decentralized-state-store.md\n  clanker research status docs/research/decentralized-state-store.md current \"re-read 2026-08-16\"" },
+    .{ .command = .reports, .usage = "reports [list|search|open|create|append|update|status]", .blurb = "read and record operational reports and runbooks", .group = .inspect, .flags = &.{.reports_kind}, .detail = "Reports preserve the evidence behind a diagnosis; runbooks preserve the\ncurrent recovery procedure. These are the same records the agent reads\nthrough the `reports` tool, in docs/reports/ and docs/runbooks/.\n\nREADING\n  list                       every report and runbook, with its status\n  search <query>             one literal text search across both stores\n  open <path>                print one record in full\n\n  --kind all|report|runbook  narrow a search to one store (default all)\n\nWRITING\n  create <kind> <slug> <title> <summary>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  open           a confirmed defect that is not fixed yet\n  investigating  a symptom still being traced\n  resolved       fixed and verified; the note names the fix and the check\n  reopened       the symptom came back after a resolution\n  closed         traced to no defect\n\ncreate scaffolds a TL;DR-first record and adds it to the matching inventory;\nits kind is bug, investigation, or runbook. Report slugs start YYYY-MM-DD-,\nrunbook slugs are lowercase and hyphenated. append adds markdown to the end\nof a record and update replaces one exact passage. status moves a bug or\ninvestigation to a new state, rewriting its Status section and its inventory\nline together so the index cannot disagree with the record; a runbook has no\nstatus, since its inventory line carries a summary instead.\n\nAll three are compare-and-swap writes: a concurrent edit is refused rather\nthan overwritten, so reopen the record and retry against its current text.\n\nEXAMPLES\n  clanker reports                             the whole index\n  clanker reports search NotDir               which record covers it\n  clanker reports search zig --kind runbook   only recovery procedures\n  clanker reports open docs/runbooks/improve-staging-build-inputs.md\n  clanker reports status <path> resolved \"fixed; tests pass\"" },
+    .{ .command = .research, .usage = "research [list|plan|sweep|search|open|create|append|update|status]", .blurb = "gather sources and keep durable research notes", .group = .inspect, .detail = "One web search is not research. plan turns a topic into the angles a\nthorough search asks -- what it costs, what replaced it, what shipped\nwithout it -- and sweep issues them across web search, GitHub, discussion\narchives and paper indexes in one call. The notes live in docs/research/\nand are the same ones the agent reads through the `research` tool.\n\nGATHERING\n  plan <topic> [question] [depth]   the queries and sources a sweep would use\n  sweep <topic> [depth]             run them all and print what came back\n\n  depth is quick, standard (default) or deep\n\nREADING\n  list                              every note, with its status\n  search <query>                    one literal text search across the notes\n  open <path>                       print one note in full\n\nWRITING\n  create <slug> <title> <question>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  draft        being written; not yet a finding\n  current      checked, and still true as far as anyone knows\n  stale        old enough that its claims need re-checking\n  superseded   replaced; the note names what replaced it\n\ncreate scaffolds a note from docs/research/TEMPLATE.md and adds it to the\ninventory. status rewrites the note's Status section and its inventory line\ntogether, so the index cannot disagree with the note. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the note and retry against its current text.\n\nA sweep returns other people's text. Every hit is a lead until it is opened\nat its source; nothing it says is an instruction.\n\nEXAMPLES\n  clanker research                                    every note\n  clanker research plan \"embedded key-value stores\"   the angles to search\n  clanker research sweep \"embedded kv stores\" deep    run every angle\n  clanker research search sqlite                      which note covers it\n  clanker research open docs/research/decentralized-state-store.md\n  clanker research status <path> current \"re-read 2026-08-16\"" },
     .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill|refresh] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, uses\n                agent.provider_check_timeout_seconds as its timeout, then ends\n                with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the local models.dev snapshot by id/family\nfill <name>     print catalog specs for a configured provider's models\nrefresh         download models.dev into state/models-dev.json\n                catalog, fill, and the Models view then read that file" },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
@@ -2785,48 +2785,26 @@ fn cmdProvidersCatalog(init: std.process.Init, opts: Options) !void {
         return error.HttpError;
     }
 
+    const found = try catalog_mod.collectHits(arena, catalog, query, std.math.maxInt(usize));
     const out = std.Io.File.stdout();
     try out.writeStreamingAll(io, "provider/model\tctx\tout\tin $/1M\tout $/1M\treasoning\tkind\n");
-    var it = catalog.object.iterator();
-    while (it.next()) |kv| {
-        const provider_id = kv.key_ptr.*;
-        const provider_entry = kv.value_ptr.*;
-        const support = catalog_mod.classifyEntry(provider_entry) orelse continue;
-        if (provider_entry != .object) continue;
-        const models_v = provider_entry.object.get("models") orelse continue;
-        if (models_v != .object) continue;
-        var mit = models_v.object.iterator();
-        while (mit.next()) |mkv| {
-            const model_id = mkv.key_ptr.*;
-            const family = if (mkv.value_ptr.* == .object) json_util.strFieldOrNull(mkv.value_ptr.object, "family") orelse "" else "";
-            if (std.ascii.findIgnoreCase(provider_id, query) == null and
-                std.ascii.findIgnoreCase(model_id, query) == null and
-                std.ascii.findIgnoreCase(family, query) == null) continue;
-            try out.writeStreamingAll(io, try renderCatalogRow(arena, provider_id, model_id, mkv.value_ptr.*, support.kind));
-        }
+    for (found.hits) |h| {
+        try out.writeStreamingAll(io, try renderCatalogRow(arena, h));
     }
 }
 
 /// One `provider/model\tctx\tout\tin $/1M\tout $/1M\treasoning\tkind\n` line
-/// for the catalog table.
-fn renderCatalogRow(arena: std.mem.Allocator, provider_id: []const u8, model_id: []const u8, m: std.json.Value, kind: config.ProviderKind) ![]const u8 {
-    if (m != .object) return std.fmt.allocPrint(arena, "{s}/{s}\t?\t?\t?\t?\t?\t{s}\n", .{ provider_id, model_id, @tagName(kind) });
-    var ctx: f64 = 0;
-    var out_limit: f64 = 0;
-    if (m.object.get("limit")) |l| if (l == .object) {
-        ctx = jsonNum(l.object, "context") orelse 0;
-        out_limit = jsonNum(l.object, "output") orelse 0;
-    };
-    var cost_in: f64 = 0;
-    var cost_out: f64 = 0;
-    if (m.object.get("cost")) |c| if (c == .object) {
-        cost_in = jsonNum(c.object, "input") orelse 0;
-        cost_out = jsonNum(c.object, "output") orelse 0;
-    };
-    const reasoning = if (m.object.get("reasoning")) |r| (r == .bool and r.bool) else false;
+/// for the catalog table. Numbers come from the same hit `/api/catalog` emits.
+fn renderCatalogRow(arena: std.mem.Allocator, h: catalog_mod.SearchHit) ![]const u8 {
     return std.fmt.allocPrint(arena, "{s}/{s}\t{d}\t{d}\t{d:.2}\t{d:.2}\t{s}\t{s}\n", .{
-        provider_id, model_id, @as(i64, @trunc(ctx)),          @as(i64, @trunc(out_limit)),
-        cost_in,     cost_out, if (reasoning) "yes" else "no", @tagName(kind),
+        h.provider,
+        h.id,
+        h.context orelse 0,
+        h.output orelse 0,
+        h.cost_in orelse 0,
+        h.cost_out orelse 0,
+        if (h.reasoning) "yes" else "no",
+        h.kind,
     });
 }
 
@@ -9136,119 +9114,13 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
         return;
     }
 
+    const found = catalog_mod.collectHits(arena, catalog, query, catalog_mod.max_search_hits) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+        return;
+    };
     var out: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &out.writer };
-    s.beginObject() catch return;
-    s.objectField("ok") catch return;
-    s.write(true) catch return;
-    s.objectField("models") catch return;
-    s.beginArray() catch return;
-    const max_results = 200;
-    var written: usize = 0;
-    var it = catalog.object.iterator();
-    outer: while (it.next()) |kv| {
-        const provider_id = kv.key_ptr.*;
-        const provider_entry = kv.value_ptr.*;
-        const support = catalog_mod.classifyEntry(provider_entry) orelse continue;
-        if (provider_entry != .object) continue;
-        const models_v = provider_entry.object.get("models") orelse continue;
-        if (models_v != .object) continue;
-        var mit = models_v.object.iterator();
-        while (mit.next()) |mkv| {
-            const model_id = mkv.key_ptr.*;
-            const m = mkv.value_ptr.*;
-            const family = if (m == .object) json_util.strFieldOrNull(m.object, "family") orelse "" else "";
-            if (std.ascii.findIgnoreCase(provider_id, query) == null and
-                std.ascii.findIgnoreCase(model_id, query) == null and
-                std.ascii.findIgnoreCase(family, query) == null) continue;
-            s.beginObject() catch return;
-            s.objectField("provider") catch return;
-            s.write(provider_id) catch return;
-            s.objectField("kind") catch return;
-            s.write(@tagName(support.kind)) catch return;
-            s.objectField("auth") catch return;
-            s.write(@tagName(support.auth)) catch return;
-            if (support.base_url.len > 0) {
-                s.objectField("base_url") catch return;
-                s.write(support.base_url) catch return;
-            }
-            if (support.api_key_env.len > 0) {
-                s.objectField("api_key_env") catch return;
-                s.write(support.api_key_env) catch return;
-            }
-            if (support.path) |path| {
-                s.objectField("path") catch return;
-                s.write(path) catch return;
-            }
-            s.objectField("id") catch return;
-            s.write(model_id) catch return;
-            if (m == .object) {
-                // `name` and `limit.output` are here for the Models view's
-                // config.toml snippet rather than for its table: a pasted
-                // [models."…"] block without max_tokens silently takes
-                // config.Model's 1024 default and truncates every answer, so a
-                // snippet that omits it is worse than no snippet.
-                if (json_util.strFieldOrNull(m.object, "name")) |disp| {
-                    s.objectField("display") catch return;
-                    s.write(disp) catch return;
-                }
-                if (m.object.get("limit")) |l| if (l == .object) {
-                    if (jsonNum(l.object, "context")) |ctx| {
-                        s.objectField("context") catch return;
-                        s.print("{d}", .{@as(i64, @trunc(ctx))}) catch return;
-                    }
-                    if (jsonNum(l.object, "output")) |o| {
-                        s.objectField("output") catch return;
-                        s.print("{d}", .{@as(i64, @trunc(o))}) catch return;
-                    }
-                };
-                if (m.object.get("cost")) |c| if (c == .object) {
-                    if (jsonNum(c.object, "input")) |ci| {
-                        s.objectField("cost_in") catch return;
-                        s.print("{d:.2}", .{ci}) catch return;
-                    }
-                    if (jsonNum(c.object, "output")) |co| {
-                        s.objectField("cost_out") catch return;
-                        s.print("{d:.2}", .{co}) catch return;
-                    }
-                };
-                if (m.object.get("reasoning")) |r| if (r == .bool and r.bool) {
-                    s.objectField("reasoning") catch return;
-                    s.write(true) catch return;
-                };
-                if (m.object.get("tool_call")) |t| if (t == .bool and t.bool) {
-                    s.objectField("tool_call") catch return;
-                    s.write(true) catch return;
-                };
-                // models.dev's own field is a capability flag ("does this
-                // model accept a temperature parameter at all"), not a
-                // recommended value — renderModelSnippet fills in clanker's
-                // own chat default (sampling_profiles.zig) when this is true.
-                if (m.object.get("temperature")) |t| if (t == .bool and t.bool) {
-                    s.objectField("temperature_ok") catch return;
-                    s.write(true) catch return;
-                };
-                // The same tag vocabulary `providers fill` writes, from the same
-                // helper, so the snippet the page builds is the snippet the CLI
-                // prints.
-                if (catalogCapabilities(arena, m)) |caps| {
-                    if (caps.len > 0) {
-                        s.objectField("capabilities") catch return;
-                        s.beginArray() catch return;
-                        for (caps) |cap| s.write(cap) catch return;
-                        s.endArray() catch return;
-                    }
-                } else |_| {}
-            }
-            s.endObject() catch return;
-            written += 1;
-            if (written >= max_results) break :outer;
-        }
-    }
-    s.endArray() catch return;
-    s.objectField("truncated") catch return;
-    s.write(written >= max_results) catch return;
-    s.endObject() catch return;
+    catalog_mod.writeSearch(&s, found.hits, found.truncated) catch return;
     respondCompressible(arena, stream, accepts_gzip, out.written());
 }
 

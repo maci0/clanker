@@ -1,12 +1,4 @@
-# PRD: LLM compatibility proxy on serve
-
-| Field | Value |
-|---|---|
-| Number | 0026 |
-| Title | LLM compatibility proxy on serve |
-| Author | |
-| Date | 2026-08-14 |
-| Status | In progress |
+# PRD — LLM compatibility proxy on serve
 
 ## Status
 

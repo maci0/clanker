@@ -386,7 +386,11 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <div class="runs">
         <section class="mesh-map-section" aria-labelledby="mesh-map-head">
-          <h3 id="mesh-map-head">Mesh</h3>
+          <div class="section-head mesh-map-head">
+            <h3 id="mesh-map-head">Mesh</h3>
+            <button type="button" class="secondary" id="fleet-open-mesh">Manage mesh</button>
+          </div>
+          <p class="mesh-pending-banner" id="mesh-pending-banner" hidden></p>
           <div id="mesh-map" class="mesh-map" role="img" aria-label="Clanker mesh map"></div>
           <p class="meta" id="mesh-map-status" aria-live="polite"></p>
         </section>

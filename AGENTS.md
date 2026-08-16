@@ -216,7 +216,10 @@ through a gated loop. Follow these conventions when changing this codebase.
   (`state/logs/` only); `GET /api/sessions` is the `sessions` guest
   (`format=json`; helper in `sessions_logic.zig`); `GET /api/providers`
   is the `providers` guest (`action:list`; helper in `providers_logic.zig`;
-  live `/models` fill stays native); `GET /api/skills` and
+  live `/models` fill stays native); `GET /api/stats` is the `model_stats`
+  guest (`ck_stats` already aggregates); `GET /api/catalog` search is
+  `catalog.collectHits` (same hits as `providers catalog`; the snapshot
+  file stays native, it is several MiB); `GET /api/skills` and
   `POST /api/skills` relay to the `skills` guest (same filters as the
   system prompt, helper in `skills_logic.zig`; the prompt inlines
   title+description only); goal status writes go through `goal_update`,
@@ -242,6 +245,8 @@ through a gated loop. Follow these conventions when changing this codebase.
   serve restart; rebuilding the host binary does not pick it up. A chat that
   should add a view uses the `webui_addon` tool (`ui/plugins/<name>/`), not
   edits to `ui/app/`. Plugin `app.js`/`app.css` changes are served from disk.
+  Only an enabled plugin's files are served; that flag is each addon's
+  computed `enabled` (including `inherit_on`), not the raw store list.
   Served HTML rewrites assets to `/webui/~<8hex>/...` (content tag from the wasm +
   vendor embeds) so browsers cannot keep a stale module graph across rebuilds.
   Feature views stay off the eager `<script>` tag list in `index.html`: each is

@@ -53,7 +53,7 @@ clanker.registerView({
 From chat, the `webui_addon` tool writes these files and can enable the
 addon. Ask for a view ("build me a music player") and it should call that
 tool rather than edit `ui/app/`. `music` is the shipped demo; `schedule`,
-`search`, and `compare` are migrated built-ins (on by default).
+`search`, `compare`, and `mesh` are on by default.
 
 `api` is the small surface the page offers plugins:
 
@@ -93,7 +93,7 @@ van.derive(function () {
 ```
 
 Plugins are off until turned on in System → Web UI plugins, except Files
-(the Work rail's workspace browser), Music, Schedule, Search, and Compare,
+(the Work rail's workspace browser), Music, Schedule, Search, Compare, and Mesh,
 which are on when `state/webui_plugins.json` has never been written. Enabled ones are recorded
 in `state/webui_plugins.json`. The registry — scan, seed, and toggle — lives
 in the `webui_addon` tool; the `/api/webui/plugins` route relays to it, so

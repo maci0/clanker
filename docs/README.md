@@ -480,8 +480,9 @@ module is off so Fleet can still draw HTTP peers. Join/leave/pending 404
 naming `modules.mesh` when it is off.
 
 `admission` is `allowlist` (default), `prompt` (queue for `admit`/`deny`,
-timeout = refuse), or `open`. Workspace share / enter / bind is Phase 3
-and is not these verbs.
+timeout = refuse), or `open`. The Mesh plugin (`ui/plugins/mesh/`) is the
+same control plane in the browser; Fleet keeps the lamp map and links into
+it. Workspace share / enter / bind is Phase 3 and is not these verbs.
 
 ### Patch application (`tools/zig/patch_apply.zig`)
 

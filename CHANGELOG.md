@@ -37,6 +37,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- Mesh web UI plugin (`ui/plugins/mesh/`): join, leave, members, and
+  pending admit/deny. On by default. Fleet's map shows listen/admission,
+  a pending-join banner, and a Manage mesh control.
+- `zig build e2e` covers two-process loopback join/leave, prompt
+  admission, and the CLI when serve is down or mesh is off.
 - `clanker mesh` talks to local serve over loopback HTTP: `status`,
   `join <host:port>`, `leave [<peer-id>]`, `pending`, `admit <id>`,
   `deny <id>`. `--webui-port` selects which serve when several run on
@@ -66,6 +71,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `GET /api/stats` relays the `model_stats` guest. The CLI table stays
+  native (`src/stats` cannot be imported from WASM).
+- `GET /api/catalog` and `clanker providers catalog` share one search
+  (`catalog.collectHits`).
+- Web UI plugin assets honor `inherit_on`: an older
+  `state/webui_plugins.json` that only listed files+music no longer
+  404s Schedule, Search, or Compare.
 - `GET /api/providers` relays the `providers` guest list. A live
   `/models` fill for a provider with no static models stays native.
 - Advisor parse/summarize/inject is a host-tested helper

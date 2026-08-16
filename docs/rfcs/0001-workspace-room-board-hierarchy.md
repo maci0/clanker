@@ -16,12 +16,12 @@ reversal supersedes that ADR; this file keeps the reasoning that produced it.
 ## Overview
 
 An operator wants to treat "the project" as one thing with several parts:
-a board, a `#general` feed, and a set of folders that live in different
-directories. The `#general` room is the project's activity feed — operator
-chat plus board updates — and the board is its fold. Heavy agent work — a
-goal's model output — goes to its own room rather than flooding the feed.
-Today those parts sit next to each other without a declared relationship, so
-the next implementation will invent a hierarchy whether we write it down or not.
+a set of folders that live in different directories, and a `#general` room that
+is the project's activity feed — operator chat plus card actions, with the
+board as its fold. Heavy agent work — a goal's model output — goes to its own
+room rather than flooding the feed. Today those parts sit next to each other
+without a declared relationship, so the next implementation will invent a
+hierarchy whether we write it down or not.
 
 The forcing examples are suites, not leaves: `relumea` is one product whose
 repos are `relumea-core` and `relumea-web` in different directories, and
@@ -49,7 +49,7 @@ that the next change has to migrate.
 - A workspace **is** a project: one stable id over one or more named folders
   (components). The single-folder model fails the suite case by construction.
 - A project owns a small **room namespace**, not one log: a default `#general`
-  room that carries operator chat and board updates (the board is its fold,
+  room that carries operator chat and card actions (the board is its fold,
   ADR 0001), and optional focused rooms — one per goal — for the goal's model
   output. The feed stays readable; heavy agent work goes to its own room.
   Per-object rooms are already the pattern (`arena-<id>`).
@@ -89,8 +89,9 @@ non-goal). Per-session exclude from a share (PRD 0011 open question).
 
 ## Current state
 
-These pieces already exist, and already disagree about ownership. Two are
-missing entirely.
+These pieces already exist, and already disagree about ownership. Component /
+root, goal room, and bind record are missing entirely; membership has no
+per-project roster yet.
 
 | Thing | Where it lives | What it is bound to today |
 |---|---|---|
@@ -151,6 +152,12 @@ keeps the workspace model from inventing a distributed-write mechanism.
   because an isolated run cannot see uncommitted work (`src/cli.zig`
   `isolateByDefault`).
 
+Multi-root applies this per root: each root is its own git repository (or a
+non-git tree with no branch), so an isolated run over N roots needs one
+worktree per git root and a coordinated merge-back. Non-git roots have no
+branch to isolate onto and stay shared read-only unless given their own lock
+(see question 12).
+
 Four hazards follow, and each is resolved explicitly.
 
 1. **Same-host peers must not both edit one working tree.** Loopback is an
@@ -189,20 +196,33 @@ Four hazards follow, and each is resolved explicitly.
   (a `#general` feed plus per-goal rooms) applies to A too; A just keeps one
   root.
 
-  ```
-  instance (instance.id)
-    workspace (stable id, local path on home only)
-      folder          exactly one
-      sessions        tagged with that id
-      extra attaches  other workspace ids on the same session
-      board room      `board` on the default workspace, `board:<id>` otherwise
-      goals           tagged with that id
-    rooms             fleet-scoped logs (lounge, ops, dm:…). Not workspaces.
-  mesh
-    join / leave      instance membership
-    share / unshare   home offers one workspace id
-    enter / leave     a member subscribes to that offer
-    bind              optional local checkout mapped to the same id
+  ```mermaid
+  flowchart TD
+      Inst["instance (instance.id)"]
+      WS["workspace — one folder (stable id)"]
+      Folder["folder — exactly one"]
+      Sessions["sessions — tagged with that id"]
+      Extra["extra attaches — other workspace ids (cross-tree)"]
+      BoardRoom["board room — board (default) / board:&lt;id&gt;"]
+      Goals["goals — tagged with that id"]
+      Rooms["fleet rooms (lounge, ops, dm:…) — not workspaces"]
+
+      Inst --> WS
+      Inst --> Rooms
+      WS --> Folder
+      WS --> Sessions
+      WS --> Extra
+      WS --> BoardRoom
+      WS --> Goals
+
+      subgraph Mesh["mesh verbs"]
+          J["join / leave — instance membership"]
+          S["share / unshare — home offers one workspace id"]
+          E["enter / leave — a member subscribes to the offer"]
+          B["bind — local checkout mapped to the same id"]
+      end
+
+      Inst --- Mesh
   ```
 
   Remote sharing is the PRD 0011 home rule plus three operator verbs:
@@ -255,7 +275,7 @@ Four hazards follow, and each is resolved explicitly.
       subgraph WS["workspace relumea — one project"]
           W["workspace id<br/>(stable, never a path)"]
           W --> Roots["roots — named folders: core, web"]
-          W --> Gen["ws:relumea · #general<br/>chat + board updates<br/>(board = fold of this room)"]
+          W --> Gen["ws:relumea · #general<br/>chat + card actions<br/>(board = fold of this room)"]
           W --> GoalRoom["ws:relumea:goal:&lt;id&gt;<br/>per-goal model output<br/>(optional, lossy feed)"]
           W --> Goals["goals — tagged relumea"]
           W --> Sessions["sessions — tagged relumea"]
@@ -288,7 +308,10 @@ Four hazards follow, and each is resolved explicitly.
   of truth (ADR 0001: there is no `board.json`). A goal's output is *not*: the
   session transcript is the durable record (PRD 0011 home writes it), and the
   goal room is a shared projection/feed of that work, allowed to be lossy
-  summaries. Making the goal room another canonical store would re-create the
+  summaries. A goal therefore has two records with one owner each — its *status*
+  (column, checklist, assignment) is canonical on the board card in `#general`,
+  its *output* is canonical in the session — and the goal room relays output
+  only. Making the goal room another canonical store would re-create the
   two-stores-for-one-idea problem ADR 0001 closed.
 
   ```mermaid
@@ -349,7 +372,7 @@ Four hazards follow, and each is resolved explicitly.
     two roots, one board, one `#general` feed — which is what "the relumea
     board" means.
   - The feed stays readable: a goal's model output lives in its own room, while
-    board updates and operator chat stay in `#general`. The board remains one
+    card actions and operator chat stay in `#general`. The board remains one
     consistent fold.
   - Membership is one set of verbs for local, loopback, and networked clankers;
     only the address differs.
@@ -480,7 +503,7 @@ Four hazards follow, and each is resolved explicitly.
 
 **Recommended option:** Option B, multi-root project workspace: a stable
 workspace id over one or more named roots; a small room namespace — `ws:<id>`
-(`#general`: chat + board updates) and optional `ws:<id>:goal:<id>` rooms for
+(`#general`: chat + card actions) and optional `ws:<id>:goal:<id>` rooms for
 model output; goals and sessions tagged to that id; and mesh share / enter /
 leave / bind kept distinct from mesh join / leave.
 
@@ -514,8 +537,9 @@ requirement, not a reason to pretend the requirement does not exist.
 
 **Reversibility.** Additive fields (goal.workspace, membership roster, goal
 rooms, bind records) are easy to ignore. The points of no return are:
-promoting the single `board` room to per-project `ws:<id>` (`#general`) rooms,
-advertising multi-root workspace ids over the mesh as if stable, and the
+creating `ws:<id>` (`#general`) board rooms and moving cards onto them (the old
+`board` log stays put and keeps serving the empty-id workspace), advertising
+multi-root workspace ids over the mesh as if stable, and the
 `roots` list itself (splitting a multi-root id back into single-root workspaces
 is a data migration). Do not migrate the existing `board` log until a second
 project actually needs its own board; keep `board` as the empty-id workspace's
@@ -562,6 +586,11 @@ project actually needs its own board; keep `board` as the empty-id workspace's
     by more than one instance at once, should isolation become the default (or a
     per-workspace setting)? Bias: a per-workspace `concurrent` flag, off by
     default, on for meshed / shared projects.
+12. **Multi-root × worktree isolation.** An isolated run over N roots: one
+    worktree per git root, or does isolation apply to only one root? What
+    happens to non-git roots? Bias: one worktree per git root; non-git roots
+    stay shared read-only, and a run that must write a non-git root takes an
+    explicit lock.
 
 ## Next steps / action items
 
@@ -627,16 +656,57 @@ a real join record; the rest are foreign keys or derived views.
 | Workspace | Room | 1:N | room namespace: `ws:<id>` (#general) and `ws:<id>:goal:<id>` |
 | Workspace | Goal | 1:N | `goal.workspace` |
 | Workspace | Session | 1:N | `session.workspace` |
+| Instance (home) | Session | 1:N | home owns the canonical transcript; entered peers hold read-only replicas (PRD 0011) |
 | Room | Board | 1:0..1 | only `#general` folds a board (ADR 0001); goal and fleet rooms do not |
 | Board | Card | 1:N | cards are `@todo` messages in the board's room |
 | Goal | Card | 1:0..1 | `card.goal` links them; the web UI mirrors a goal to one board card |
 | Goal | Room | 1:0..1 | `ws:<id>:goal:<goal-id>`, created on demand, chat/status only |
 
 Fleet rooms (`dm:<a>|<b>`, `ops`) are rooms with no folder, so they map to zero
-workspaces — the 0-side of `Workspace : Room`. Session replication is the same
-1:N from the home instance to its sessions, with read-only replicas on entered
-peers under `state/mesh/<home-id>/sessions/` (PRD 0011), not a second
-relationship type.
+workspaces — the 0-side of `Workspace : Room`.
+
+### Flows and decision flows
+
+**Message routing — which room does a message go to?**
+
+```mermaid
+flowchart TD
+    M["message arrives in the project"] --> Q{"what kind?"}
+    Q -->|"card action (@todo)"| Gen["ws:relumea (#general)"]
+    Q -->|"operator chat"| Gen
+    Q -->|"goal model output"| GR["ws:relumea:goal:&lt;id&gt;"]
+    Q -->|"DM / fleet"| Fleet["dm:&lt;a&gt;|&lt;b&gt; / ops"]
+    Gen --> Board["board = fold of #general (ADR 0001)"]
+    Gen --> Peers["fan-out to entered members"]
+    GR --> Peers
+    Fleet --> Subs["fan-out to subscribers"]
+```
+
+**Run isolation — worktree or shared checkout?**
+
+```mermaid
+flowchart TD
+    Run["a run starts"] --> Q1{"goal or scheduled?"}
+    Q1 -->|yes| Iso["private worktree + branch"]
+    Q1 -->|"no (typed)"| Q2{"concurrent project, --worktree, or isolated_cli?"}
+    Q2 -->|yes| Iso
+    Q2 -->|no| Shared["shared checkout"]
+    Iso --> Merge["merge-back: git update-ref (CAS, retries)"]
+    Shared --> Direct["edits land in the shared working tree"]
+```
+
+**Bind a path — refuse, read-only, or bind?**
+
+```mermaid
+flowchart TD
+    B["peer wants to bind a root"] --> Q1{"path already another live editor's root on this host?"}
+    Q1 -->|yes| Q2{"read-only acceptable?"}
+    Q2 -->|no| Refuse["refuse the bind"]
+    Q2 -->|yes| RO["bind read-only"]
+    Q1 -->|no| Q3{"same repo already bound?"}
+    Q3 -->|yes| WT["bind as a distinct worktree"]
+    Q3 -->|no| Clone["bind a distinct checkout"]
+```
 
 ### User journey — two instances enter and leave a project
 
@@ -675,6 +745,25 @@ sequenceDiagram
         Goal->>Gen: update board card
     end
     Goal->>Gen: card moved to Done
+```
+
+### User journey — meshed peer binds and merges
+
+```mermaid
+sequenceDiagram
+    participant Peer as laptop (peer)
+    participant Home as main (home)
+    participant Repo as git remote (authoritative)
+
+    Peer->>Home: enter relumea — subscribe rooms + replica sessions
+    Peer->>Peer: bind core, web to local clones
+    loop work on a goal
+        Peer->>Peer: edit in a private worktree (branch)
+        Peer->>Repo: commit + push (git_remote_ops)
+        Peer->>Home: card action → ws:relumea (#general)
+    end
+    Note over Peer,Repo: file content merges by git; board and session state merge by home
+    Peer->>Home: leave relumea
 ```
 
 Same picture, two processes on one host. Loopback is the address; membership is

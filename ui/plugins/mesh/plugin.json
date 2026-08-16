@@ -1,0 +1,7 @@
+{
+  "name": "mesh",
+  "title": "Mesh",
+  "description": "Join, leave, and inspect the clanker mesh. Pending JOINs wait here for admit or deny.",
+  "group": "Watch",
+  "capabilities": ["get", "post", "live", "confirm"]
+}

@@ -111,3 +111,149 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, cwd: std.Io.Dir, args: []const []
     });
     return .{ .term = result.term, .stdout = result.stdout, .stderr = result.stderr };
 }
+
+/// A live `clanker serve` the test started. `stop` kills it.
+pub const Serve = struct {
+    child: std.process.Child,
+    webui_port: u16,
+    mesh_port: u16,
+
+    pub fn stop(self: *Serve, io: std.Io) void {
+        if (self.child.id == null) return;
+        self.child.kill(io);
+        if (self.child.id == null) return;
+        _ = self.child.wait(io) catch {};
+    }
+};
+
+pub const MeshOpts = struct {
+    id: []const u8,
+    name: []const u8 = "",
+    webui_port: u16,
+    mesh_port: u16,
+    admission: []const u8 = "open",
+    mesh: bool = true,
+};
+
+/// Writes a serve-ready config: mesh on, hot reload off, no LLM needed.
+pub fn writeMeshConfig(io: std.Io, dir: std.Io.Dir, gpa: std.mem.Allocator, opts: MeshOpts) !void {
+    const name = if (opts.name.len > 0) opts.name else opts.id;
+    const toml = try std.fmt.allocPrint(gpa,
+        \\default_provider = "e2e-mock"
+        \\
+        \\[providers.e2e-mock]
+        \\kind = "openai_compat"
+        \\base_url = "http://127.0.0.1:9"
+        \\default_model = "mock"
+        \\
+        \\[models."e2e-mock/mock"]
+        \\provider = "e2e-mock"
+        \\
+        \\[instance]
+        \\id = {f}
+        \\name = {f}
+        \\
+        \\[modules]
+        \\mesh = {}
+        \\hot_reload = false
+        \\
+        \\[mesh]
+        \\listen_host = "127.0.0.1"
+        \\listen_port = {d}
+        \\admission = {f}
+        \\
+        \\[serve]
+        \\host = "127.0.0.1"
+        \\webui_port = {d}
+        \\
+        \\[agent]
+        \\tools_dir = {f}
+        \\
+    , .{
+        std.json.fmt(opts.id, .{}),
+        std.json.fmt(name, .{}),
+        opts.mesh,
+        opts.mesh_port,
+        std.json.fmt(opts.admission, .{}),
+        opts.webui_port,
+        std.json.fmt(tools_manifests_dir, .{}),
+    });
+    defer gpa.free(toml);
+    try dir.writeFile(io, .{ .sub_path = "config.toml", .data = toml });
+}
+
+/// Sequential ports so parallel e2e tests do not steal a just-released bind.
+var next_port: std.atomic.Value(u16) = .init(23000);
+
+pub fn pickPort(io: std.Io) !u16 {
+    _ = io;
+    const port = next_port.fetchAdd(1, .monotonic);
+    if (port < 23000) return error.CannotBindPort;
+    return port;
+}
+
+pub fn spawnServe(io: std.Io, cwd: std.Io.Dir, webui_port: u16) !Serve {
+    var port_buf: [8]u8 = undefined;
+    const port_s = try std.fmt.bufPrint(&port_buf, "{d}", .{webui_port});
+    const argv = [_][]const u8{ clanker_bin, "serve", "--host", "127.0.0.1", "--webui-port", port_s };
+    const child = try std.process.spawn(io, .{
+        .argv = &argv,
+        .cwd = .{ .dir = cwd },
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    });
+    return .{ .child = child, .webui_port = webui_port, .mesh_port = 0 };
+}
+
+pub fn waitHttp(io: std.Io, gpa: std.mem.Allocator, url: []const u8, timeout_ms: u64) !void {
+    const start = std.Io.Timestamp.now(io, .awake).nanoseconds;
+    const budget = timeout_ms * std.time.ns_per_ms;
+    while (true) {
+        if (httpGet(io, gpa, url)) |body| {
+            gpa.free(body);
+            return;
+        } else |_| {}
+        const now = std.Io.Timestamp.now(io, .awake).nanoseconds;
+        if (now - start > budget) return error.ServeTimeout;
+        std.Io.sleep(io, .{ .nanoseconds = 40 * std.time.ns_per_ms }, .awake) catch {};
+    }
+}
+
+pub fn httpGet(io: std.Io, gpa: std.mem.Allocator, url: []const u8) ![]u8 {
+    var http: std.http.Client = .{ .allocator = gpa, .io = io };
+    defer http.deinit();
+    var body: std.Io.Writer.Allocating = .init(gpa);
+    errdefer body.deinit();
+    const res = try http.fetch(.{
+        .location = .{ .url = url },
+        .method = .GET,
+        .headers = .{ .user_agent = .{ .override = "clanker-e2e" } },
+        .response_writer = &body.writer,
+    });
+    if (@intFromEnum(res.status) >= 400) return error.HttpError;
+    return body.toOwnedSlice();
+}
+
+pub fn httpPost(io: std.Io, gpa: std.mem.Allocator, url: []const u8, payload: []const u8) ![]u8 {
+    var http: std.http.Client = .{ .allocator = gpa, .io = io };
+    defer http.deinit();
+    var body: std.Io.Writer.Allocating = .init(gpa);
+    errdefer body.deinit();
+    const res = try http.fetch(.{
+        .location = .{ .url = url },
+        .method = .POST,
+        .payload = payload,
+        .headers = .{
+            .user_agent = .{ .override = "clanker-e2e" },
+            .content_type = .{ .override = "application/json" },
+        },
+        .response_writer = &body.writer,
+    });
+    if (@intFromEnum(res.status) >= 400) return error.HttpError;
+    return body.toOwnedSlice();
+}
+
+pub fn bin() []const u8 {
+    return clanker_bin;
+}

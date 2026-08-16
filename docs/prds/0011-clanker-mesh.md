@@ -1,4 +1,4 @@
-# PRD - Clanker Mesh (TCP peer-to-peer clustering)
+# PRD — Clanker Mesh (TCP peer-to-peer clustering)
 
 ## Status
 
@@ -532,9 +532,10 @@ Soft:
    Edit `tools/zig/peers.zig` / `src/peers/phonebook.zig` (path label).
    Edit `src/doctor.zig` (the three warnings).
    Edit `src/main.zig` (comptime import).
-   Thin Fleet / status rows + pending banner in `ui/app/` (then
+   Thin Fleet / status rows + pending banner in `ui/app/` and the Mesh
+   plugin (`ui/plugins/mesh/`) for join/leave/admit/deny (then
    `zig build tools` + serve restart). No TLS. No workspace/file
-   frames.
+   frames. Two-process e2e: `tests/e2e/mesh_test.zig`.
 
 2. **Phase 2: TLS + pinning.** TLS wrapper on the same framing; pin
    store `state/mesh/pins.json` (id → pin). Doctor warning for

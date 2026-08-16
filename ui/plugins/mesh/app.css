@@ -1,0 +1,63 @@
+/* Mesh operator view. */
+
+.mesh-members,
+.mesh-pending {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.mesh-member,
+.mesh-pending-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+}
+
+.mesh-member[data-down="true"] { border-style: dashed; }
+
+.mesh-member-id { font-size: 13px; }
+
+.mesh-up[data-state="ok"] { color: var(--ok, #2fae4d); }
+.mesh-up[data-state="down"] { color: var(--danger, #d33); }
+
+.mesh-join-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.mesh-join-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  min-width: 16rem;
+  flex: 1 1 16rem;
+}
+
+.mesh-join-form input {
+  font: inherit;
+  font-size: 16px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--fg);
+}
+
+#mesh-leave-self { margin-top: var(--space-2); }
+
+.mesh-error .run-empty { margin-top: 0; }
+
+@media (max-width: 40rem) {
+  .mesh-join-form input { font-size: 16px; }
+}

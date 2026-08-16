@@ -267,6 +267,9 @@ pub fn build(b: *std.Build) void {
     const search_js_test = b.addSystemCommand(&.{ "node", "--test" });
     search_js_test.addFileArg(b.path("ui/plugins/search/search.test.mjs"));
     test_step.dependOn(&search_js_test.step);
+    const mesh_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    mesh_js_test.addFileArg(b.path("ui/plugins/mesh/mesh.test.mjs"));
+    test_step.dependOn(&mesh_js_test.step);
     const arena_js_test = b.addSystemCommand(&.{ "node", "--test" });
     arena_js_test.addFileArg(b.path("ui/app/features/arena.test.mjs"));
     test_step.dependOn(&arena_js_test.step);

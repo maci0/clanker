@@ -176,9 +176,15 @@ fn hitFrom(
         if (jsonNum(c.object, "input")) |ci| hit.cost_in = ci;
         if (jsonNum(c.object, "output")) |co| hit.cost_out = co;
     };
-    if (m.object.get("reasoning")) |r| if (r == .bool) hit.reasoning = r.bool;
-    if (m.object.get("tool_call")) |t| if (t == .bool) hit.tool_call = t.bool;
-    if (m.object.get("temperature")) |t| if (t == .bool) hit.temperature_ok = t.bool;
+    if (m.object.get("reasoning")) |r| {
+        if (r == .bool) hit.reasoning = r.bool;
+    }
+    if (m.object.get("tool_call")) |t| {
+        if (t == .bool) hit.tool_call = t.bool;
+    }
+    if (m.object.get("temperature")) |t| {
+        if (t == .bool) hit.temperature_ok = t.bool;
+    }
     hit.capabilities = models_dev.capabilities(arena, m) catch &.{};
     return hit;
 }

@@ -197,6 +197,17 @@ The `thinking` guest owns the classifier via `ck_llm` (same
 `ui/plugins/schedule/` and stays on after a pre-migration
 `state/webui_plugins.json` via `inherit_on`.
 
+**Resolved 2026-08-16 (inherit_on asset gate + stats + catalog search):**
+The plugin asset handler was still reading the raw store `enabled`
+array, so schedule/search/compare 404'd after an older
+`state/webui_plugins.json` while the System panel showed them on.
+`listedEnabled` now reads each addon's computed `enabled`.
+`GET /api/stats` relays the `model_stats` guest. Catalog search
+(`collectHits` / `writeSearch` in `src/llm/catalog.zig`) is shared by
+`GET /api/catalog` and `clanker providers catalog`. A catalog guest is
+still blocked: `state/models-dev.json` is ~3.7 MiB and will not fit the
+guest arena next to a JSON parse.
+
 The whole tree reviewed against the philosophy README/AGENTS.md now state.
 Reference pattern for migrations: `tools/zig/logs.zig` (native handler
 deleted, guest owns the logic, pure helper host-tested) and the three
@@ -205,24 +216,18 @@ recorder splits (native writer at the choke point, guest reader:
 
 **Bug, fix first**
 
-- **The webui plugin registry exists twice and disagrees.** Native
-  (`handleWebuiPlugins`, `src/cli.zig`) seeds `files`+`music` on a missing
-  `state/webui_plugins.json`; the `webui_addon` guest does not, so on a
-  fresh checkout the page shows them enabled while the guest sees them
-  disabled — and `webui_addon action=enable` then writes an enabled list
-  containing only the new addon, silently switching Files and Music off.
-  Fix: the HTTP handlers call the guest; the seed moves into
-  `webui_addon.zig`; the native scan/toggle copies die.
+- **The webui plugin registry exists twice and disagrees.** Done (guest
+  owns scan/seed/toggle). Follow-up done: the asset gate now reads each
+  addon's computed `enabled` (inherit_on), not the raw store list.
 
 **Route-to-guest migrations (guest already exists or is trivial)**
 
-- `/api/workflows` reimplements what the `workflows` guest lists; one
-  `toolJson` call replaces it.
+- `/api/workflows` — done (`toolJson` to the `workflows` guest).
+- `GET /api/stats` — done (`toolJson` to `model_stats`).
 - `/api/sessions` listing — done (guest `format=json`; mutations stay native).
 - `/api/providers` listing — done (guest `action:list` emits the picker
   contract; live `/models` fill for an empty map stays native).
-- `/api/goals` GET is a raw `state/goals.json` read while the writes
-  already bridge to `goal_add`/`goal_update`.
+- `/api/goals` GET — done (`goal_update` `action:list`; `running` overlay stays native).
 - `/api/schedule` — done (guest owns list/toggle/add/remove; Fire stays native).
 - `/api/files` (~200 native lines, hand-rolled `..` clamp instead of the
   sandbox's `safeJoin`) duplicates `list_files`/`read_file`/`find_files`.
@@ -240,10 +245,10 @@ recorder splits (native writer at the choke point, guest reader:
   `tools/zig/thinking_logic.zig` (host-tested). The `thinking` guest is
   the same classify via `ck_llm`. Provider resolution and the fail-open
   `client.chat` call stay native (timeout + credentials).
-- models.dev catalog fetch/search (`loadModelsDev`, `handleCatalog*`) —
-  guest with `network_allow:["models.dev"]` +
-  `fs_prefixes:["state/models-dev.json"]`; config-load's snapshot read
-  path stays native.
+- models.dev catalog search is one helper (`catalog.collectHits`) used by
+  `GET /api/catalog` and `clanker providers catalog`. Fetch/refresh stays
+  native: the snapshot is ~3.7 MiB and will not fit the guest arena next
+  to a JSON parse. Config-load's snapshot read path stays native.
 - `src/doctor.zig` — read-only checks overlapping the `status` guest;
   every needed privilege is expressible in a descriptor.
 - `chatrooms.fanOut` makes native HTTP posts to peers while
