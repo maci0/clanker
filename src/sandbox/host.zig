@@ -3491,7 +3491,11 @@ fn sweepAgedLocks(sb: *Sandbox, state_base: std.Io.Dir, dir: []const u8) void {
         if (doomed.items.len >= cas_lock_sweep_max) break;
         const record = d.readFileAlloc(io, entry.name, sb.gpa, .limited(4096)) catch continue;
         defer sb.gpa.free(record);
-        if (!cas_lock_record.agedOut(record, now, cas_lock_record.keep_ms)) continue;
+        const stale = if (record.len == 0)
+            recordlessLockSettled(sb, d, entry.name, now)
+        else
+            cas_lock_record.agedOut(record, now, cas_lock_record.keep_ms);
+        if (!stale) continue;
         const name = sb.gpa.dupe(u8, entry.name) catch continue;
         doomed.append(sb.gpa, name) catch {
             sb.gpa.free(name);
@@ -3511,6 +3515,31 @@ fn sweepAgedLocks(sb: *Sandbox, state_base: std.Io.Dir, dir: []const u8) void {
         swept += 1;
     }
     if (swept > 0) log.log(.info, "[fs_write_if] swept {d} lock file(s) unused for 12h from {s}", .{ swept, dir });
+}
+
+/// Whether a lock file carrying *no record at all* has been sitting long
+/// enough to remove.
+///
+/// `cas_lock_record.agedOut` reads a timestamp out of the record and answers
+/// "not old" when it cannot, which is right for a record it fails to parse and
+/// wrong for a file that has none: those were invisible to every sweeper and
+/// accumulated without limit. 32 of them, all zero-byte and all older than the
+/// holder record itself, had to be removed by hand from this checkout on
+/// 2026-08-17.
+///
+/// Zero length is the discriminator, and it is a narrow one on purpose. A live
+/// acquisition is zero-byte only between `createFileRetry` and
+/// `writeLockHolder`, and it holds the lock across both, so the caller's
+/// `lock_nonblocking` probe already refuses that case; the age floor covers only
+/// the sliver where a writer has opened the file and not yet locked it. A
+/// non-empty record that will not parse is still left alone -- unknown is not
+/// old, and that rule is what keeps a garbage record from dating to 1970 and
+/// taking live locks with it.
+fn recordlessLockSettled(sb: *Sandbox, d: std.Io.Dir, name: []const u8, now_ms: i64) bool {
+    const st = d.statFile(sb.io, name, .{}) catch return false;
+    const mtime_ms: i64 = @intCast(@divTrunc(st.mtime.nanoseconds, std.time.ns_per_ms));
+    if (now_ms < mtime_ms) return false; // clock moved, not an aged file
+    return now_ms - mtime_ms >= cas_lock_sweep_interval_ms;
 }
 
 /// How many lock files one pass may remove. A pass runs inside someone else's
@@ -7371,6 +7400,63 @@ test "a CAS write sweeps aged lock files and keeps fresh or held ones" {
     try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, aged, .{}));
     _ = try tmp.dir.statFile(io, fresh, .{});
     _ = try tmp.dir.statFile(io, held, .{});
+    holder.close(io);
+}
+
+test "a recordless lock file is swept once settled, never while fresh or held" {
+    // `agedOut` reads a timestamp out of the record, so a lock file with no
+    // record was invisible to both sweepers and would have sat there forever:
+    // 32 such files, all zero-byte, all predating the holder record, were found
+    // in this checkout on 2026-08-17 and had to be removed by hand.
+    //
+    // Length is the discriminator, not content. A live acquisition is
+    // zero-byte only between `createFileRetry` and `writeLockHolder`, and it
+    // holds the lock across both, so the flock guard already covers the
+    // in-flight case; the age floor covers the sliver where a writer has opened
+    // the file but not yet locked it. A non-empty record that cannot be parsed
+    // stays untouched -- unknown is still not old.
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state/locks");
+
+    const settled = "state/locks/" ++ "4" ** 64 ++ ".lock";
+    const fresh = "state/locks/" ++ "5" ** 64 ++ ".lock";
+    const held = "state/locks/" ++ "6" ** 64 ++ ".lock";
+    const garbage = "state/locks/" ++ "7" ** 64 ++ ".lock";
+    for ([_][]const u8{ settled, fresh, held }) |p| {
+        try tmp.dir.writeFile(io, .{ .sub_path = p, .data = "" });
+    }
+    try tmp.dir.writeFile(io, .{ .sub_path = garbage, .data = "not a record at all\n" });
+
+    const now: i64 = @intCast(log.unixMilliseconds());
+    const old_ns: i128 = @as(i128, now - 2 * 60 * 60 * 1000) * std.time.ns_per_ms;
+    for ([_][]const u8{ settled, held, garbage }) |p| {
+        try tmp.dir.setTimestamps(io, p, .{ .modify_timestamp = .{ .new = .{ .nanoseconds = @intCast(old_ns) } } });
+    }
+    const holder = try tmp.dir.createFile(io, held, .{ .truncate = false, .lock = .exclusive });
+
+    var sb = Sandbox{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = undefined,
+    };
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, tmp.dir, "docs/note.md", "", "hi"));
+
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, settled, .{}));
+    _ = try tmp.dir.statFile(io, fresh, .{});
+    _ = try tmp.dir.statFile(io, held, .{});
+    _ = try tmp.dir.statFile(io, garbage, .{});
     holder.close(io);
 }
 
