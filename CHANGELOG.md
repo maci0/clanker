@@ -485,6 +485,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker commit` now writes the plan it previewed. It called `smart_commit`
+  twice — a dry run for the preview, then an independent apply — and each call
+  asked the model to group the diff again, so the messages and the grouping
+  that landed could differ from the ones just confirmed. Observed on a ten-file
+  diff whose second reply was truncated at the tool's token grant: an approved
+  `fix(smart_commit): …` plan was committed as one
+  `chore: update working tree`. The confirmed plan is now handed to the write
+  through a new `commits` input on `smart_commit`, which writes it as given and
+  refuses any file the current diff does not hold. One grouping call per
+  `clanker commit` instead of two, so runs are also cheaper.
 - `clanker commit` in the default `staged` scope now commits the staged
   content, not the working-tree copy. It staged each group's files with
   `git add` and then committed them by pathspec, and both of those take the
@@ -559,7 +569,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   transcript as one row per line. Up/Down move the cursor between draft
   lines — which also scrolls a draft taller than the box, since the box
   follows the cursor's line — and fall through to history recall at the
-  first/last line. Mouse drag now selects inside the input box too (it was
+  first/last line; the mouse wheel does the same when the pointer is over
+  the input box. Mouse drag now selects inside the input box too (it was
   transcript-only, and Konsole intercepts the Ctrl+Shift+C fallback), with
   the same copy-on-release. Multi-line pastes (bracketed and Ctrl+Shift+V)
   keep their line structure instead of being folded to spaces, and history

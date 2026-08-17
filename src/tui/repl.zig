@@ -1403,7 +1403,8 @@ const keys_help =
     \\                    the hosting terminal may intercept Ctrl-Shift-C
     \\  Ctrl-Shift-V, Shift-Insert   paste from the system clipboard
     \\  Ctrl-U/K/W, Ctrl-Y   kill to start/end/word, then yank
-    \\  mouse wheel       scroll the transcript
+    \\  mouse wheel       scroll the transcript, or the draft when the
+    \\                    pointer is over the input box
     \\  mouse drag        select text, transcript or input box (copies on
     \\                    release)
     \\  Shift+drag        the terminal's own selection (bypasses clanker)
@@ -3989,6 +3990,21 @@ const Model = struct {
         if (m.type == .press) {
             switch (m.button) {
                 .wheel_up, .wheel_down => {
+                    // Over the composer, a notch walks the cursor one draft
+                    // line — the box follows the cursor's line, so this
+                    // scrolls a tall draft without a second scroll state.
+                    // At the draft's edge (or in a single-line buffer) the
+                    // move refuses and the notch is spent, never leaked into
+                    // transcript scrolling: the pointer says which surface
+                    // the user is scrolling.
+                    const wheel_row: u16 = @intCast(@max(0, m.row));
+                    if (self.composer_bottom > self.composer_top and
+                        wheel_row >= self.composer_top and wheel_row < self.composer_bottom)
+                    {
+                        if (self.composerCursorVertical(m.button == .wheel_up))
+                            ctx.redraw = true;
+                        return;
+                    }
                     self.view_end = scrollWheelEnd(
                         self.view_end,
                         self.lineCount(),
