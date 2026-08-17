@@ -138,23 +138,27 @@ max_context_requests = 5
 each confirmed with `git show`, as quoted under Reproduction. The struct
 default of 3 was confirmed at `src/config.zig:694`.
 
-### Not verified
+### Resolved: it was the first case, and it is its own defect
 
-One claim carried across from the clanker-d7 audit could **not** be confirmed
-here, and is recorded as unverified rather than dropped or repeated as fact:
-that `state/improvements.jsonl` still lists this improvement as accepted, so
-the loop believed it had a budget it did not have.
+This record originally carried a claim from the clanker-d7 audit that the
+shared ledger still listed `imp-1786938760641431811` as accepted, so the loop
+believed it had a budget it did not have. That claim was flagged unverified
+here rather than repeated, because the id is in no ledger this checkout reads.
 
-`imp-1786938760641431811` does not appear in that file, nor in
-`/home/yannick/code/ywy50/clanker-state/state/improvements.jsonl`, the only
-other ledger on this host outside the trash. The checkout's ledger was last
-written 08-16 12:00, a day before the commit that carries the id. Either the
-improve runs behind these commits write their ledger somewhere else — an
-isolated run's `state` is a symlink, so a staging copy has its own — or they
-are not appending to one at all. Which of those it is has not been
-established, and it is worth its own look: an improve loop whose commits carry
-`imp-` ids that its ledger never records cannot answer "what did this loop
-already try?", which is the question the ledger exists for.
+It has since been chased down and is **not** true, and the truth is worse:
+the improve engine appends its ledger to a real `state/` directory inside each
+`.clanker-worktrees/` copy, which is never merged back. The shared ledger has
+been frozen since 2026-08-16 12:00 and 23 of 25 committed `imp-` ids are
+absent from it, so a day and a half of accepted and rejected improvements are
+invisible to the next run. The two ledgers this record could not tell apart
+were one file: the checkout's `state` is a symlink to `clanker-state`.
+
+That has its own record, including a live hazard about not cleaning up the
+worktrees:
+[`2026-08-17-improve-ledger-written-to-a-worktree-copy.md`](2026-08-17-improve-ledger-written-to-a-worktree-copy.md).
+
+The reason it was caught is that it was written down as unverified instead of
+being smoothed into the narrative.
 
 ## Method traps
 
@@ -190,7 +194,8 @@ and were not re-run here.
   A gate cannot judge intent, but "this diff touches `config.toml` and its
   subject mentions neither config nor a key name" is a cheap warning, and
   `clanker commit` already groups a diff by topic.
-- The ledger gap under "Not verified" above.
+- The ledger gap above turned out to be its own defect and has its own record:
+  [`2026-08-17-improve-ledger-written-to-a-worktree-copy.md`](2026-08-17-improve-ledger-written-to-a-worktree-copy.md), open.
 
 ## References
 

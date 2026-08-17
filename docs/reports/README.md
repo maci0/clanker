@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [The improve ledger is written to a worktree copy that is never merged back](bugs/2026-08-17-improve-ledger-written-to-a-worktree-copy.md) — Open
+
 - [A stray config.toml hunk reverts to the struct default and nothing surfaces it](bugs/2026-08-17-config-hunk-deleted-as-collateral-reverts-silently.md) — Resolved
 
 - [A CAS lock name hashes the path string, so one target can have two locks](bugs/2026-08-17-cas-lock-name-hashes-an-unresolved-path.md) — Resolved
