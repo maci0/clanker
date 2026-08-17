@@ -40,6 +40,12 @@ pub const Error = error{
     NoSuchEntry,
     TaskTooLong,
     TaskEmpty,
+    /// `state/schedule.json` exists but could not be read back as an entry
+    /// list. Every mutation rewrites the whole file, so this cannot be
+    /// answered with an empty list: doing that turns one unreadable store
+    /// into a `schedule add` that deletes every other entry. The operator is
+    /// told to fix or move the file instead.
+    StoreUnreadable,
 };
 
 /// One scheduled entry. Field names are the JSON keys; `state/schedule.json`
@@ -121,11 +127,11 @@ pub const Session = struct {
     }
 };
 
-/// Takes the lock and reads the store. A missing or unparseable file is an
-/// empty schedule rather than a failure: `run-due` runs unattended from cron,
-/// and refusing to start because nothing has been scheduled yet would be the
-/// wrong call. A file that parses as neither is warned about so the operator
-/// finds out before the next write replaces it.
+/// Takes the lock and reads the store. A *missing* file is an empty schedule
+/// rather than a failure: `run-due` runs unattended from cron, and refusing to
+/// start because nothing has been scheduled yet would be the wrong call. A
+/// file that exists but cannot be read back is `Error.StoreUnreadable` — see
+/// `readEntries`, and note that the caller goes on to `save()` over it.
 pub fn open(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir) !Session {
     ensure_dir.ensureDir(base, io, state_dir) catch |err| {
         log.log(.warn, "schedule: could not create {s}: {s}", .{ state_dir, @errorName(err) });
@@ -134,27 +140,38 @@ pub fn open(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: 
     errdefer guard.release();
 
     var entries: std.ArrayList(Entry) = .empty;
-    if (base.readFileAlloc(io, store_path, arena, .limited(max_store_bytes)) catch null) |raw| {
-        const trimmed = std.mem.trim(u8, raw, " \t\r\n");
-        if (trimmed.len > 0) {
-            if (std.json.parseFromSliceLeaky([]Entry, arena, trimmed, .{ .ignore_unknown_fields = true }) catch null) |parsed| {
-                try entries.appendSlice(arena, parsed);
-            } else {
-                log.log(.warn, "schedule: {s} is not a readable entry list; treating it as empty", .{store_path});
-            }
-        }
-    }
+    if (try readEntries(io, arena, base)) |parsed| try entries.appendSlice(arena, parsed);
     return .{ .io = io, .gpa = gpa, .arena = arena, .base = base, .guard = guard, .entries = entries };
+}
+
+/// The store, or null when there is no file yet. Only a missing file is an
+/// empty schedule; an I/O error, a store past `max_store_bytes`, or JSON that
+/// will not parse is `StoreUnreadable`, because `writeEntries` replaces the
+/// whole file and an empty list here is persisted as a deletion of every
+/// entry. The ledger append below already draws this line (`FileNotFound` vs
+/// everything else, with read headroom over the trim cap); the store used to
+/// swallow both and log "treating it as empty".
+fn readEntries(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) !?[]Entry {
+    const raw = base.readFileAlloc(io, store_path, arena, .limited(max_store_bytes)) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => {
+            log.log(.error_, "schedule: cannot read {s}: {s}", .{ store_path, @errorName(err) });
+            return Error.StoreUnreadable;
+        },
+    };
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    if (trimmed.len == 0) return null;
+    return std.json.parseFromSliceLeaky([]Entry, arena, trimmed, .{ .ignore_unknown_fields = true }) catch {
+        log.log(.error_, "schedule: {s} is not a readable entry list; fix or move it", .{store_path});
+        return Error.StoreUnreadable;
+    };
 }
 
 /// Reads the store without taking the lock. For `schedule list` and anything
 /// else that only displays: taking a write lock to print a table would block
 /// behind a run that may take minutes.
 pub fn read(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]Entry {
-    const raw = base.readFileAlloc(io, store_path, arena, .limited(max_store_bytes)) catch return &.{};
-    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
-    if (trimmed.len == 0) return &.{};
-    return std.json.parseFromSliceLeaky([]Entry, arena, trimmed, .{ .ignore_unknown_fields = true }) catch &.{};
+    return (try readEntries(io, arena, base)) orelse &.{};
 }
 
 fn writeEntries(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, entries: []const Entry) !void {
@@ -339,7 +356,7 @@ test "entries round-trip through the store, keeping absent overrides absent" {
     try testing.expectEqual(false, back[1].enabled);
 }
 
-test "a corrupt store reads as empty instead of taking the command down" {
+test "a corrupt store refuses the command instead of reading as empty" {
     var threaded = testIo();
     defer threaded.deinit();
     const io = threaded.io();
@@ -347,12 +364,37 @@ test "a corrupt store reads as empty instead of taking the command down" {
     defer tmp.cleanup();
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
+    const arena = arena_state.allocator();
 
     try tmp.dir.createDirPath(io, state_dir);
     try tmp.dir.writeFile(io, .{ .sub_path = store_path, .data = "{ not json" });
-    var s = try open(io, testing.allocator, arena_state.allocator(), tmp.dir);
-    defer s.close();
-    try testing.expectEqual(@as(usize, 0), s.entries.items.len);
+
+    // Reading it as empty is not a safe degradation: every mutation rewrites
+    // the whole file, so the next `schedule add` would persist the empty list
+    // and drop every entry the operator had. Both the write path and the
+    // display path say so rather than showing an empty schedule.
+    try testing.expectError(Error.StoreUnreadable, open(io, testing.allocator, arena, tmp.dir));
+    try testing.expectError(Error.StoreUnreadable, read(io, arena, tmp.dir));
+
+    // And the file the operator has to fix is still there, untouched.
+    const raw = try tmp.dir.readFileAlloc(io, store_path, arena, .limited(max_store_bytes));
+    try testing.expectEqualStrings("{ not json", raw);
+}
+
+test "an empty or missing store is the one read that means no entries" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try testing.expectEqual(@as(usize, 0), (try read(io, arena, tmp.dir)).len);
+    try tmp.dir.createDirPath(io, state_dir);
+    try tmp.dir.writeFile(io, .{ .sub_path = store_path, .data = "  \n" });
+    try testing.expectEqual(@as(usize, 0), (try read(io, arena, tmp.dir)).len);
 }
 
 test "ids are sequential and never reuse a removed one" {
