@@ -269,6 +269,7 @@ command, while `clanker <option> -h` explains that option (for example,
 | `mesh [status\|join\|leave\|pending\|admit\|deny]` | Join or leave the mesh, or inspect it (`--webui-port` picks the local serve) |
 | `serve [--host <addr>] [--serve-as <name>]... [--webui-port <port>]` | HTTP API + web UI (loopback, port 17921 by default) |
 | `graph [run-id]` | List runs, or render one as an ASCII timeline |
+| `graph answer [run-id]` | Print a recorded run's final answer |
 | `gate` | Run the full deterministic gate (build/test/tools/fmt/lint/release-contract) |
 | `autolearn` | Aggregate usage into roadmap items |
 | `setup` | Guided first run: check config, keys and tools |

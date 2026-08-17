@@ -37,6 +37,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker graph answer [run-id]` prints the final answer a recorded run
+  produced — the latest run's, or the named run's. The graph was already
+  the only durable copy of an answer once the terminal scrolls
+  (`clanker run` saves no session), but nothing could read it back and it
+  kept only a 4000-byte preview; the final node now retains up to 64 KiB,
+  and an older or longer record says how much of the answer it holds
+  (docs/reports/investigations/2026-08-17-missing-clanker-tool-no-verb-prints-a-runs-final-answer.md).
+- `clanker reports rename <path> <new-slug>` (and a `rename` action on the
+  `reports` tool and `POST /api/reports`) moves a record to a new filename
+  inside its own store, rewrites its inventory link under compare-and-swap,
+  and lists every file in the two stores still naming the old record. A
+  `missing-clanker-tool-` filename marker survives the rename whether or
+  not the new slug carries it — enforced by the tool, like `create`
+  (docs/reports/investigations/2026-08-17-missing-clanker-tool-record-stores-cannot-rename-a-record.md).
 - A `missing-tool` record kind on `clanker reports create` (and the
   `reports` tool), for documenting a basic verb clanker lacks. The record
   lands in the investigations store with the tool inserting

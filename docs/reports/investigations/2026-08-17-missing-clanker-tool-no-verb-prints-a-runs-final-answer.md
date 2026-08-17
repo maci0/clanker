@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **Question:** clanker run prints the answer once to stdout; after it scrolls away there is no way back to it. clanker graph run-<id> shows the timeline (sizes, durations, 'done 0 B, length') but not the text; clanker sessions / session export cover repl-*/sess-* transcripts, not run-* records. Recovering an answer means hand-parsing state/runs/run-<id>.json. A basic operator verb is missing: print the final answer (and per-node output) of a recorded run.
-- **Finding:** Investigating.
-- **Resolution:** Pending.
+- **Finding:** Resolved on 2026-08-17. Resolved on 2026-08-17. clanker graph answer [run-id] prints a run's recorded final answer (graph guest answer mode); the final node now retains up to 64 KiB (graph_mod.final_answer_cap) instead of the 4000-byte preview, and an older or truncated record says how much of the answer it holds. Verified live (the empty length-stopped run explains itself) and by the graph-answer assertion in tests/e2e/tool_roundtrip_test.zig.
+- **Resolution:** Resolved on 2026-08-17. Resolved on 2026-08-17. clanker graph answer [run-id] prints a run's recorded final answer (graph guest answer mode); the final node now retains up to 64 KiB (graph_mod.final_answer_cap) instead of the 4000-byte preview, and an older or truncated record says how much of the answer it holds. Verified live (the empty length-stopped run explains itself) and by the graph-answer assertion in tests/e2e/tool_roundtrip_test.zig.
 
 ## Status
 
-Investigating.
+Resolved on 2026-08-17. Resolved on 2026-08-17. clanker graph answer [run-id] prints a run's recorded final answer (graph guest answer mode); the final node now retains up to 64 KiB (graph_mod.final_answer_cap) instead of the 4000-byte preview, and an older or truncated record says how much of the answer it holds. Verified live (the empty length-stopped run explains itself) and by the graph-answer assertion in tests/e2e/tool_roundtrip_test.zig.
 
 ## Trigger and scope
 

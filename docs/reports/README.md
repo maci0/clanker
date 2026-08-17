@@ -151,11 +151,11 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
-- [Record stores have no rename or move action](investigations/2026-08-17-missing-clanker-tool-record-stores-cannot-rename-a-record.md) — Investigating
+- [Record stores have no rename or move action](investigations/2026-08-17-missing-clanker-tool-record-stores-cannot-rename-a-record.md) — Resolved
 
 - [TUI cannot scroll above an expanded reply](investigations/2026-08-17-tui-cannot-scroll-above-expanded-reply.md) — Resolved
 
-- [No CLI verb prints a completed run's final answer](investigations/2026-08-17-missing-clanker-tool-no-verb-prints-a-runs-final-answer.md) — Investigating
+- [No CLI verb prints a completed run's final answer](investigations/2026-08-17-missing-clanker-tool-no-verb-prints-a-runs-final-answer.md) — Resolved
 
 - [TUI fold shows a stray turn arrow and cannot be scrolled through](investigations/2026-08-17-tui-fold-arrow-and-scroll.md) — Resolved
 

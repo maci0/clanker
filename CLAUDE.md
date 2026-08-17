@@ -70,8 +70,8 @@ because the other exists.
 
 ### `clanker reports`
 
-`list`, `search`, `open`, `create`, `append`, `update`, `status`. Records
-start with `## TL;DR`. States are `open`, `investigating`, `resolved`,
+`list`, `search`, `open`, `create`, `append`, `update`, `status`, `rename`.
+Records start with `## TL;DR`. States are `open`, `investigating`, `resolved`,
 `reopened`, `closed`. Create an investigation while tracing, then a bug report
 and a runbook once recovery is confirmed:
 
@@ -199,6 +199,7 @@ Two layers with the same four verb names, deliberately separate
 | Find a conversation by content | `clanker session search "<query>"` |
 | Export one conversation as HTML | `clanker session export <id> [path]` |
 | List runs, or draw one as a timeline | `clanker graph [run-id]` |
+| Print a recorded run's final answer | `clanker graph answer [run-id]` |
 | Token usage per provider and model | `clanker stats` |
 | List registered WASM tools | `clanker tools list` |
 | List, switch, validate, scaffold plugins | `clanker plugins [list\|on\|off\|validate\|new]` |

@@ -776,6 +776,7 @@ iter 2
 | `sessions`, `history` | List saved conversations |
 | `session export <id> [path]` | Write one saved session as a self-contained HTML transcript. Defaults to `state/exports/<id>.html`; a second positional names the file instead. One document, no scripts and no external stylesheet, font or image, so it opens from `file://` with no network. A session's text is model and tool output, so every field is HTML-escaped on the way in (`tools/zig/session_export.zig`) and markup in a transcript renders as the characters that were typed. There is deliberately no upload and no public URL: sharing is copying the file |
 | `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
+| `graph answer [run-id]` | Print a recorded run's final answer (64 KiB retained per run) |
 | `tools list` | List registered tools |
 | `plugins [list\|validate [path]\|new <name>]` | List plugins, check a manifest, or scaffold a new tool |
 | `eval [name] [--tasks]` | Run evals |
@@ -837,7 +838,7 @@ clanker reports append docs/reports/investigations/2026-08-16-run-livelock.md "#
 clanker reports update docs/reports/investigations/2026-08-16-run-livelock.md "Investigating." "Resolved."
 ```
 
-`create` writes a TL;DR-first scaffold and adds it to the matching inventory; its kind is `bug`, `investigation`, `missing-tool` or `runbook`, report slugs start `YYYY-MM-DD-`, and runbook slugs are lowercase and hyphenated. `missing-tool` records a basic verb clanker lacks: it lands in the investigations store and the tool inserts `missing-clanker-tool-` into the filename after the date itself, so these records are findable by name without trusting the author to mark them. `append` adds markdown to the end of a record and `update` replaces one exact passage. Both are compare-and-swap writes: a concurrent documentation edit is refused rather than overwritten, so reopen the record and retry against its current text. A refused write exits 1, a usage mistake exits 2.
+`create` writes a TL;DR-first scaffold and adds it to the matching inventory; its kind is `bug`, `investigation`, `missing-tool` or `runbook`, report slugs start `YYYY-MM-DD-`, and runbook slugs are lowercase and hyphenated. `missing-tool` records a basic verb clanker lacks: it lands in the investigations store and the tool inserts `missing-clanker-tool-` into the filename after the date itself, so these records are findable by name without trusting the author to mark them. `rename <path> <new-slug>` moves a record inside its own store, rewrites the inventory link under compare-and-swap, preserves a `missing-clanker-tool-` marker whether or not the new slug carries it, and lists every in-store file still naming the old record (mentions elsewhere in the tree are outside the tool's grants — search for them). `append` adds markdown to the end of a record and `update` replaces one exact passage. Both are compare-and-swap writes: a concurrent documentation edit is refused rather than overwritten, so reopen the record and retry against its current text. A refused write exits 1, a usage mistake exits 2.
 
 ### Open decisions (RFCs)
 
