@@ -916,15 +916,32 @@ pub const Agent = struct {
                     log.log(.info, "Stop hook forced another step at iteration {d}", .{iteration + 1});
                     continue;
                 }
+                // A reply the provider cut at the completion-token cap
+                // (finish_reason "length") is not the answer that was asked
+                // for. Cut before any text arrived, it is no answer at all:
+                // returning it as success meant the process exited 0 with
+                // nothing on stdout, and a script reading the exit status
+                // believed the task succeeded (observed live,
+                // docs/reports/bugs/2026-08-17-run-reports-success-on-empty-length-stop.md).
+                // Empty-by-truncation fails the run; truncated-but-present
+                // returns the partial answer with a loud warning.
+                const answer_len = if (resp.message.content) |c| c.len else 0;
+                const cut = if (resp.finish_reason) |fr| std.mem.eql(u8, fr, "length") else false;
                 try g.add(self.ctx.gpa, .{
                     .kind = .final,
                     .iteration = iteration + 1,
                     .label = "final",
                     .detail = resp.finish_reason orelse "",
-                    .result_bytes = if (resp.message.content) |c| c.len else 0,
+                    .result_bytes = answer_len,
                     .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
+                    .ok = !(cut and answer_len == 0),
                     .output = graph_mod.truncatedPreview(resp.message.content orelse ""),
                 });
+                if (cut and answer_len == 0) {
+                    log.log(.error_, "final reply hit the completion-token limit before any text; raise max_tokens (or the tool's grant) and retry", .{});
+                    return error.AnswerTruncatedToEmpty;
+                }
+                if (cut) log.log(.warn, "final answer was cut at the completion-token limit; it is incomplete", .{});
                 return try self.finish(messages, resp);
             }
             const calls = maybe_calls.?;

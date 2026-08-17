@@ -141,6 +141,18 @@ pub fn textTurn(gpa: std.mem.Allocator, text: []const u8) ![]const u8 {
     return w.toOwnedSlice();
 }
 
+/// An OpenAI-compat streaming SSE body whose reply hit the completion-token
+/// cap before emitting any text: no content delta, `finish_reason:"length"`.
+/// The shape a truncated-to-empty answer really arrives in (observed live:
+/// docs/reports/bugs/2026-08-17-run-reports-success-on-empty-length-stop.md).
+pub fn emptyLengthTurn(gpa: std.mem.Allocator) ![]const u8 {
+    var w: std.Io.Writer.Allocating = .init(gpa);
+    defer w.deinit();
+    try w.writer.writeAll("data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":4096,\"total_tokens\":4106}}\n\n");
+    try w.writer.writeAll("data: [DONE]\n\n");
+    return w.toOwnedSlice();
+}
+
 /// An OpenAI-compat *non-streaming* completion body carrying one text answer.
 /// A guest's `ck_llm` goes through `client.chat`, not `chatStream`, so an SSE
 /// body reaches it as `SyntaxError` and the guest takes its fallback path

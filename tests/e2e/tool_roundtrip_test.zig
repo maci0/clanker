@@ -54,6 +54,36 @@ test "clanker run: a tool call round-trips through the real sandbox" {
     try std.testing.expect(std.mem.find(u8, third_request, "hello.txt") != null);
 }
 
+test "clanker run: an answer truncated to empty is a failure, not silence" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Regression: the final reply hits the completion cap before emitting a
+    // byte (finish_reason "length", empty content). The run used to exit 0
+    // with no answer and no warning, so a script reading the exit status
+    // believed the task succeeded (observed live, run-1786940774).
+    const turn0 = try mock_llm.emptyLengthTurn(gpa);
+    defer gpa.free(turn0);
+
+    const mock = try mock_llm.Server.start(io, gpa, &.{turn0});
+    defer mock.stop();
+    try harness.writeMockConfig(io, tmp.dir, gpa, mock.port);
+    try harness.linkZigOut(io, tmp.dir);
+
+    var result = try harness.run(gpa, io, tmp.dir, &.{ "run", "say hi" });
+    defer result.deinit(gpa);
+
+    if (result.ok()) std.debug.print("clanker run unexpectedly succeeded.\nstdout: {s}\nstderr: {s}\n", .{ result.stdout, result.stderr });
+    try std.testing.expect(!result.ok());
+    // The failure names the cause, so the operator knows to raise the cap.
+    try std.testing.expect(std.mem.find(u8, result.stderr, "completion-token limit") != null);
+}
+
 test "clanker run --worktree: goal and session state stay in the checkout" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
