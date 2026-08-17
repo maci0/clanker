@@ -3405,14 +3405,16 @@ fn casLockPath(sb: *Sandbox, base: std.Io.Dir, full: []const u8) ![]u8 {
         try std.fmt.allocPrint(sb.gpa, "{s}/{s}/locks", .{ root, state_dir });
     defer sb.gpa.free(dir);
     const state_base = sb.state_base_dir orelse base;
-    // ensureDir, not createDirPath: an isolated run's `state` is meant to be a
-    // symlink to the checkout's, and createDirPath alone reports NotDir on
-    // that. "Meant to be" is load-bearing -- `linkCheckoutStateAt` has two
-    // silent skip paths and four of ten worktrees here have a private real
-    // `state/` instead (docs/reports/bugs/2026-08-17-improve-ledger-written-to-a-worktree-copy.md),
-    // so this has to work either way. It does: the lock directory resolves
-    // against `shared_root`, which is the checkout whether or not the link
-    // was made.
+    // ensureDir, not createDirPath: an isolated run's `state` is a symlink to
+    // the checkout's (`linkCheckoutStateAt`), and createDirPath alone reports
+    // NotDir on that. An improve worktree is the other shape and this has to
+    // work there too: `linkSharedState` gives it a real private `state/` on
+    // purpose and links only `improvements.jsonl` and `history`, because a
+    // symlink under `state/` is safe only where the *host* reads the path --
+    // `safeJoinSecure`'s no-follow walk refuses a symlinked component to a
+    // guest. Resolving the lock directory against `shared_root` is what keeps
+    // both shapes on one lock inode per target, and it is allowed by that same
+    // rule: this path is host bookkeeping and never goes through `safeJoin`.
     try ensure_dir.ensureDir(state_base, sb.io, dir);
     sweepAgedLocks(sb, state_base, dir);
 
