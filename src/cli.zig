@@ -36,6 +36,7 @@ const raw_http = @import("util/raw_http.zig");
 const toml_edit = @import("util/toml_edit.zig");
 const json_util = @import("util/json.zig");
 const commit_logic = @import("commit_logic");
+const preset_mod = @import("preset/preset.zig");
 // tui/transcript.zig's MdStream is still used by cmdRun's own run_md; the
 // rest of tui/* (input, region, statusbar, palette, approval, term) was
 // exclusive to the REPL that's now src/tui/repl.zig, and was
@@ -3821,9 +3822,39 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
     // The manifests came from the worktree (they are tracked, so it has them),
     // but the wasm they name did not: keep pointing at the harness's own build.
     if (harness_root) |root| try reg.rebaseWasmPaths(arena, root);
-    const tool_defs = try reg.toToolDefs(arena);
+    var tool_defs = try reg.toToolDefs(arena);
+    var preset_obj: ?preset_mod.Preset = null;
+    if (opts.preset) |name| {
+        const preset_dir = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch {
+            log.log(.error_, "preset '{s}' not found (no presets/ directory)", .{name});
+            return error.PresetNotFound;
+        };
+        var dir = preset_dir;
+        defer dir.close(io);
+        preset_obj = preset_mod.loadFromFile(io, arena, dir, name) catch |err| {
+            log.log(.error_, "preset '{s}' failed to load: {s}", .{ name, @errorName(err) });
+            return err;
+        };
+        // Filter tool defs by preset allow/deny via helper.
+        var names: std.ArrayList([]const u8) = .empty;
+        for (tool_defs) |d| try names.append(arena, d.name);
+        const allowed_names = try preset_mod.filterNames(arena, preset_obj.?, names.items);
+        var filtered: std.ArrayList(types.ToolDef) = .empty;
+        for (tool_defs) |d| {
+            for (allowed_names) |n| if (std.mem.eql(u8, d.name, n)) {
+                try filtered.append(arena, d);
+                break;
+            };
+        }
+        tool_defs = try filtered.toOwnedSlice(arena);
+        log.log(.info, "preset '{s}' active: {d} tools allowed", .{ name, tool_defs.len });
+    }
 
     var a = try agent.Agent.init(&ctx, arena, provider, &cfg, &reg, tool_defs);
+    if (preset_obj) |p| if (p.system_prompt_append.len > 0) {
+        // Append preset persona after clanker's own prompt, per PRD 0033 non-goal (append, not replace).
+        a.system_prompt_text = try std.fmt.allocPrint(arena, "{s}\n\n{s}", .{ a.system_prompt_text, p.system_prompt_append });
+    };
     defer a.deinit();
     a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
     var messages: std.ArrayList(types.Message) = .empty;
