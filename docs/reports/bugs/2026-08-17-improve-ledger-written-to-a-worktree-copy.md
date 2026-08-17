@@ -3,21 +3,19 @@
 ## TL;DR
 
 - **What failed:** An improve worktree's state/improvements.jsonl is symlinked back to the checkout's, and the first whole-file rewrite of it replaces that link with a private regular file: atomic_write.writeFile is temp-file-plus-rename, and a rename lands on the *link itself*. Every append the run makes afterwards is discarded with the worktree. The shared ledger was frozen from 2026-08-16 12:00 until it was backfilled on 2026-08-17; of the 24 imp- ids committed in that window 21 are absent from it and no copy of them survives. The engine skips candidates history records as accepted or rejected, so it can re-propose what it already rejected.
-- **Impact:** the loop cannot see what it already tried. AGENTS.md states the
-  class is "recorded in \`state/improvements.jsonl\` and rendered in history
-  block of next prompt, so loop sees what it produced", and the engine skips
-  any candidate whose words history already records as accepted or rejected.
-  A day and a half of that history is invisible, so rejected ideas can be
-  re-proposed and the \`inert\`/\`test_only\` consecutive counters read from
-  the same truncated history.
-- **Resolution:** Resolved on 2026-08-17. atomic_write.writeFile renames onto a symlinked destination's target instead of onto the link, so an improve worktree's linked state/improvements.jsonl and config.local.toml keep their links; three unit tests, the first failing NotLink on the old code. Recovery first: the ten worktree ledgers were drained into the shared one (1130 to 1139) and the three reverted entries restored. zig build test 1510/1521, clanker gate 8/8.
-  link target and renames onto *that*, so a linked path keeps its link and the
-  write lands where every reader looks. Three unit tests cover the
-  same-directory, relative-subdirectory and absolute link-target spellings; the
-  first fails with \`NotLink\` on the old code. The surviving worktree ledgers
-  were drained into the shared one before the fix landed (1130 → 1139 lines,
-  exactly the ten worktrees' combined delta), so the do-not-clean-up hazard
-  below is retired.
+- **Impact:** not lost history — a live engine reasoning from a stale status.
+  \`alreadyAccepted\` reads the \`status\` field to decide what the loop may
+  re-propose, and three improvements a human had reverted still read
+  \`accepted\` in the shared ledger because the flip that recorded the reverts
+  landed in a worktree copy. The loop was free to re-offer all three. It was
+  also self-sustaining: the flip never reaching the shared file is exactly why
+  every later run re-found the same three reverts and re-clobbered its own
+  link. Beyond that, AGENTS.md states the class is "recorded in
+  \`state/improvements.jsonl\` and rendered in history block of next prompt,
+  so loop sees what it produced" — a day and a half of that history was
+  invisible, so rejected ideas could be re-proposed and the
+  \`inert\`/\`test_only\` consecutive counters read from a truncated log.
+- **Resolution:** Resolved on 2026-08-17. atomic_write.writeFile renames onto a symlinked destination's target instead of onto the link, so an improve worktree's linked state/improvements.jsonl and config.local.toml keep their links; three unit tests, the first failing NotLink on the old code. Recovery first: the ten worktree ledgers were drained into the shared one (1130 to 1139) and the three reverted entries restored. zig build test 1510/1521, clanker gate 8/8. Landed as 3a87fe0a.
 
 ## Status
 

@@ -10,7 +10,6 @@
   parse error and not a missing symbol — it is a silent change of behaviour
   that reads as normal.
 - **Resolution:** Resolved on 2026-08-17. Restored in d19dc878 by session clanker-d7; verified here with clanker --dump-config (max_context_requests = 5) and git show on all three commits. No code change: the record exists for the auditing method and the config-vs-source asymmetry.
-  and the two method traps below, are from session clanker-d7.
 
 ## Status
 

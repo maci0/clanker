@@ -9,9 +9,6 @@
   synthesis runs, so `docs/ROADMAP.md` was still updated — the failure loses
   the LLM rewrite, not the run.
 - **Resolution:** Resolved on 2026-08-17. Grant raised to 16000 in tools/zig/autolearn_logic.zig synthesis_max_tokens and tools/manifests/autolearn.tool.json; emptyCompletionCause in src/sandbox/host.zig names the cause. Verified by rerunning clanker --model deepseek-v4-pro autolearn (4458 completion tokens, section written) and clanker gate all-pass.
-  together to 16000 tokens (`tools/zig/autolearn_logic.zig`
-  `synthesis_max_tokens`), and `ck_llm` now logs why any completion came back
-  with no content.
 
 ## Status
 
