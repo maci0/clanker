@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [An agent run hangs forever when a provider accepts the connection and goes quiet](bugs/2026-08-17-agent-llm-call-has-no-deadline.md) — Resolved
+
 - [SIGWINCH runs vaxis winsize callbacks in the signal handler, panicking std.Io and recursing through recover()](bugs/2026-08-17-tui-resize-crash-sigwinch-in-signal-handler.md) — Resolved
 
 - [A goal loop stops dead on a single AnswerTruncatedToEmpty instead of retrying the turn](bugs/2026-08-17-goal-loop-dies-on-one-truncated-reply.md) — Resolved
