@@ -26,7 +26,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (summary.len == 0) return lib.fail(out, "summary is empty");
 
     const provider: ?[]const u8 = if (req.provider.len > 0) req.provider else null;
-    const raw = lib.llmSystem(logic.system_prompt, summary, provider, 256) catch |err| {
+    // 0 keeps the descriptor's grant (`tools/manifests/advisor.tool.json`),
+    // which carries the reasoning headroom this call needs. The old 256 was
+    // sized for the note alone — a <150-word JSON object — so on a reasoning
+    // model the trace consumed it and `parseNote` saw an empty string.
+    const raw = lib.llmSystem(logic.system_prompt, summary, provider, 0) catch |err| {
         return lib.fail(out, switch (err) {
             error.SandboxDenied => "refused by sandbox policy",
             error.NetworkError => "advisor request did not complete",

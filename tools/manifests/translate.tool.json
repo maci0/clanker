@@ -28,7 +28,7 @@
   },
   "config": {
     "lang": "en",
-    "max_tokens": 2048
+    "max_tokens": 6144
   },
   "category": "transform",
   "config_editable": [

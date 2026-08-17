@@ -18,7 +18,7 @@
     "instruction": "Translate the human-readable text in this JSON tool result into {{lang}}. Keep the exact same structure, keys, and value types. Leave identifiers, URLs, file paths, code, and numbers untouched. If nothing needs translating, return the input unchanged.",
     "lang": "en",
     "mode": "json",
-    "max_tokens": 2048
+    "max_tokens": 6144
   },
   "category": "transform",
   "config_editable": ["instruction", "lang", "mode", "max_tokens"]

@@ -65,7 +65,7 @@
   "config": {
     "chains_dir": "chains",
     "max_steps": 16,
-    "max_tokens": 2048
+    "max_tokens": 6144
   },
   "config_editable": [
     "max_steps",

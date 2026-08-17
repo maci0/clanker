@@ -103,7 +103,7 @@
   "config": {
     "max_rounds": 4,
     "judge": "self",
-    "max_tokens": 1400
+    "max_tokens": 5496
   },
   "category": "agent",
   "config_editable": [

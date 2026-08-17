@@ -63,7 +63,7 @@
   ],
   "network_allow": [],
   "config": {
-    "max_tokens": 600,
+    "max_tokens": 4996,
     "judge": "auto",
     "synthesize": false
   },

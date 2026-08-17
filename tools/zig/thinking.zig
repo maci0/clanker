@@ -27,7 +27,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     const prompt = logic.classifyPrompt(lib.alloc, text) catch return lib.fail(out, "could not build classifier prompt");
     const provider: ?[]const u8 = if (req.provider.len > 0) req.provider else null;
-    const raw = lib.llmWith(prompt, provider, 5) catch |err| {
+    // 0 keeps the descriptor's grant, which is where this budget is sized
+    // (`tools/manifests/thinking.tool.json`). It used to ask for 5 — one word
+    // and nothing else — which is a correct content budget and an unusable
+    // total: a reasoning model spends the grant on its trace first, so the
+    // classifier returned an empty string on every call and `parseLevel` fell
+    // through to `medium` for every turn of every run.
+    const raw = lib.llmWith(prompt, provider, 0) catch |err| {
         return lib.fail(out, switch (err) {
             error.SandboxDenied => "refused by sandbox policy",
             error.NetworkError => "classifier request did not complete",

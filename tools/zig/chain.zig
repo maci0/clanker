@@ -4,11 +4,15 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const budget = @import("llm_budget.zig");
 
 const Config = struct {
     chains_dir: []const u8 = "chains",
     max_steps: u32 = 16,
-    max_tokens: u32 = 2048,
+    /// Output cap for an inline `mutate` step. 2048 is what the rewritten
+    /// text needs; the headroom is what a reasoning model spends before it
+    /// writes any of it.
+    max_tokens: u32 = budget.withHeadroom(2048),
 };
 
 const Step = struct {

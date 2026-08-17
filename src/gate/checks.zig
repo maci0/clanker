@@ -8,6 +8,7 @@ const std = @import("std");
 const build_options = @import("build_options");
 const log = @import("../util/log.zig");
 const toml_bridge = @import("../util/toml_bridge.zig");
+const llm_budget = @import("llm_budget");
 
 /// A cold `zig build test` can print more than one MiB while rebuilding its
 /// dependency graph. Gate output is retained only until the result is logged
@@ -370,6 +371,23 @@ pub fn toolDescriptorGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, t
         } else {
             try problems.append(gpa, try std.fmt.allocPrint(arena, "{s} has no \"wasm\" key", .{entry.name}));
         }
+
+        // An `"llm": true` descriptor that grants fewer tokens than a model
+        // spends reasoning returns empty content on every call, and returns it
+        // as a success: HTTP 200, `finish_reason: "length"`, the whole budget
+        // in `reasoning_content`. Nothing downstream can tell that apart from
+        // a model with nothing to say, which is how the same bug reached both
+        // the compaction summary and the autolearn synthesis. The floor is
+        // `llm_budget.reasoning_headroom`; a descriptor that omits the key is
+        // not claiming a budget and is left alone.
+        const grants_llm = if (obj.get("llm")) |v| v == .bool and v.bool else false;
+        if (grants_llm) {
+            if (obj.get("config")) |cfg| if (cfg == .object) {
+                if (cfg.object.get("max_tokens")) |mt| if (mt == .integer and mt.integer < llm_budget.reasoning_headroom) {
+                    try problems.append(gpa, try std.fmt.allocPrint(arena, "{s} grants max_tokens {d}, leaving no room to reason (a thinking model spends the grant on reasoning first and answers with empty content; the floor is {d})", .{ entry.name, mt.integer, llm_budget.reasoning_headroom }));
+                };
+            };
+        }
     }
 
     if (problems.items.len > 0) {
@@ -430,6 +448,45 @@ test "toolDescriptorGate rejects duplicate names and missing wasm" {
     defer tmp2.cleanup();
     const none = try toolDescriptorGate(gpa, io, tmp2.dir, "manifests");
     try std.testing.expect(none.ok);
+}
+
+test "toolDescriptorGate refuses an llm grant with no room to reason" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "manifests");
+    try tmp.dir.createDirPath(io, "zig-out/tools");
+    try tmp.dir.writeFile(io, .{ .sub_path = "zig-out/tools/good.wasm", .data = "{}" });
+
+    // A grant sized for the answer alone: the shape that made every guest
+    // report an empty completion on a reasoning model.
+    try tmp.dir.writeFile(io, .{ .sub_path = "manifests/t.tool.json", .data = "{\"name\":\"t\",\"wasm\":\"zig-out/tools/good.wasm\",\"llm\":true,\"config\":{\"max_tokens\":256}}" });
+    var bad = try toolDescriptorGate(gpa, io, tmp.dir, "manifests");
+    defer bad.deinit(gpa);
+    try std.testing.expect(!bad.ok);
+    try std.testing.expect(std.mem.find(u8, bad.detail, "no room to reason") != null);
+
+    // Content plus the headroom passes.
+    try tmp.dir.writeFile(io, .{ .sub_path = "manifests/t.tool.json", .data = "{\"name\":\"t\",\"wasm\":\"zig-out/tools/good.wasm\",\"llm\":true,\"config\":{\"max_tokens\":4352}}" });
+    const ok = try toolDescriptorGate(gpa, io, tmp.dir, "manifests");
+    try std.testing.expect(ok.ok);
+
+    // Omitting the key is not a violation to report here: the descriptor is
+    // not claiming a budget, and the tools that do this reach a model through
+    // `ck_subagent`/`ck_swarm` (whole agent turns, budgeted by the harness) or
+    // ignore the completion entirely, like the `providers` liveness ping.
+    try tmp.dir.writeFile(io, .{ .sub_path = "manifests/t.tool.json", .data = "{\"name\":\"t\",\"wasm\":\"zig-out/tools/good.wasm\",\"llm\":true}" });
+    const bare = try toolDescriptorGate(gpa, io, tmp.dir, "manifests");
+    try std.testing.expect(bare.ok);
+
+    // A budget on a descriptor with no llm grant is some other tool's setting.
+    try tmp.dir.writeFile(io, .{ .sub_path = "manifests/t.tool.json", .data = "{\"name\":\"t\",\"wasm\":\"zig-out/tools/good.wasm\",\"config\":{\"max_tokens\":8}}" });
+    const unrelated = try toolDescriptorGate(gpa, io, tmp.dir, "manifests");
+    try std.testing.expect(unrelated.ok);
 }
 
 /// Runs `zig ast-check` on each changed `.zig` file individually. A syntax

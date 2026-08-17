@@ -115,6 +115,33 @@ The harness reads exactly three keys out of `config` for itself — `provider`,
 `model` and `max_tokens` — to aim `ck_llm` at a specific backend. Everything
 else reaches the guest untouched.
 
+`max_tokens` is the grant, and a guest may only lower it (`clampCkLlmMaxTokens`
+takes the smaller of the request and the grant), never raise it: otherwise a
+confused or injected tool call bills an unbounded completion against the
+operator's key.
+
+**Size it for a model that reasons, not for the answer.** `max_tokens` bounds
+*output*, and on a reasoning model the reasoning trace is output: the provider
+fills `reasoning_content` first and only then emits `content`. A grant sized
+for the answer alone is spent before a visible token exists, and the provider
+still answers 200 — empty `content`, `finish_reason: "length"` — so the guest
+sees an empty string and reports that the model said nothing. The floor is
+`reasoning_headroom` in [`tools/zig/llm_budget.zig`](../tools/zig/llm_budget.zig)
+(4096 tokens on top of the content budget), and `toolDescriptorGate` fails any
+`"llm": true` descriptor that grants less. Capabilities cannot be used to
+decide this: `Model.capabilities` is filled from the models.dev snapshot and is
+empty on any checkout that has not run `clanker providers refresh`.
+
+The ceiling is not a bill — the grant caps what a call *may* generate, not what
+it does. Measured on `deepseek-v4-pro`, the effort classifier spends 95 tokens
+against its 4096 grant.
+
+Omitting the key is a different statement from setting a small one. A
+descriptor with `"llm": true` and no `config.max_tokens` falls back to the host
+default and is not claiming a budget — `providers` pings with `max_tokens: 1`
+and ignores the completion entirely, and `rlm`, `subagent` and `swarm` reach a
+model through `ck_subagent`/`ck_swarm`, whole agent turns the harness budgets.
+
 Editability is opt-in per key on purpose. A plugin's config is often
 structural, not tunable: the nine `chat_*` descriptors share one `chat.wasm` and
 select their behaviour with `"op"`, so letting a machine-local override reach

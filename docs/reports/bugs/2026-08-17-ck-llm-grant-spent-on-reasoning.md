@@ -123,26 +123,66 @@ completion came back with no visible content" in `src/sandbox/host.zig` pins
 all three cases and the content-present case. The test was written first and
 failed on the undeclared identifier before the function existed.
 
+## The rest of the audit
+
+Done in the same session. Every `"llm": true` descriptor, read from
+`tools/manifests/` on 2026-08-17, and what it grants now:
+
+| tool | was | now | content budget it is sized around |
+|---|---|---|---|
+| `thinking` | 5 | 4096 | one word; the budget is headroom |
+| `advisor` | 256 | 4352 | a <150-word JSON note |
+| `compare` | 600 | 4996 | its largest call, the 900-token synthesis |
+| `arena` | 1400 | 5496 | its largest call, the 1400-token combatant turn |
+| `chain` | 2048 | 6144 | a 2048-token `mutate` step |
+| `mutate` | 2048 | 6144 | a 2048-token rewrite |
+| `translate` | 2048 | 6144 | a 2048-token translation |
+| `smart_commit` | 4096 | 8192 | a 4096-token JSON grouping |
+| `providers` | 1024 (default) | unchanged | pings with `max_tokens: 1` and never reads the completion |
+| `rlm`, `subagent`, `swarm` | 1024 (default) | unchanged | no `ck_llm` call; they reach a model through `ck_subagent`/`ck_swarm`, which the harness budgets |
+
+Each new grant is its content budget plus `llm_budget.reasoning_headroom`.
+Two of these were failing *silently*, which is why the audit mattered more than
+the one reported failure: `thinking` and `advisor` are fail-open, so the effort
+classifier had been returning `''` and falling through to `medium` for every
+turn of every run on a reasoning model, and the advisor's note never parsed.
+
+`thinking` and `advisor` now pass `0` (keep the grant) rather than naming a
+number, so their budget has one home. `arena`, `chain` and `compare` keep
+per-call numbers because their calls genuinely differ in size, and each is now
+written as `budget.withHeadroom(<content>)` rather than a bare literal.
+
+### Verified
+
+The classifier prompt from `thinking_logic.classifyPrompt`, replayed against
+`api.deepseek.com` with `deepseek-v4-pro` at the old grant and the new one:
+
+| `max_tokens` | `finish_reason` | completion | reasoning | `content` |
+|---|---|---|---|---|
+| 5 | `length` | 5 | 5 | `''` |
+| 4096 | `stop` | 95 | 92 | `'xhigh'` |
+
+The 95 is the answer to the cost objection: the grant caps what a call may
+generate, not what it does, so raising it does not make a non-reasoning model
+dearer. `clanker compare` with two DeepSeek entrants returns full answers from
+both.
+
 ## Follow-up
 
-The audit the compaction bug asked for is still not finished. Grants of the
-other `"llm": true` descriptors, read from `tools/manifests/` on 2026-08-17:
+`toolDescriptorGate` now fails any `"llm": true` descriptor whose
+`config.max_tokens` is under `llm_budget.reasoning_headroom`, so a new tool
+cannot reintroduce this. It runs in the improve loop's gate set; wiring it into
+`clanker gate`'s eight would mean editing `verifyGates` in `src/cli.zig`, which
+another session held for the whole of this one, and is not done.
 
-| tool | `config.max_tokens` |
-|---|---|
-| `thinking` | 5 |
-| `advisor` | 256 |
-| `compare` | 600 |
-| `arena` | 1400 |
-| `chain`, `mutate`, `translate` | 2048 |
-| `smart_commit` | 4096 |
-| `providers`, `rlm`, `subagent`, `swarm` | grant default 1024 |
-
-Each of these is below a reasoning model's spend on a non-trivial prompt, so
-each returns empty content on one. What that costs differs per tool and none
-of it is measured here: `thinking` and `advisor` fail open, so they degrade
-silently; `compare` and `translate` surface an empty answer. Raising them is
-not done and each needs its own sizing.
+The compaction path has a second, separate exposure that is **not** fixed here:
+`summarizeMessages` picks its budget with `sampling.hasThinking`, which reads
+`Model.capabilities`, which `applyCatalogSpecs` leaves empty when
+`state/models-dev.json` is absent — and `load` never downloads it. This
+checkout has no snapshot, so `hasThinking` is false for every model here and
+the 4096-token thinking branch from `d2628464` never fires. Not verified
+against a live compaction; established by reading `applyCatalogSpecs` and by
+`clanker providers models` reporting no capabilities for either DeepSeek model.
 
 ## References
 

@@ -29,6 +29,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const m = @import("arena_match.zig");
+const budget = @import("llm_budget.zig");
 
 const alloc = lib.alloc;
 
@@ -45,16 +46,19 @@ const Settings = struct {
     /// 120-word move on purpose — a reasoning model spends tokens before it
     /// writes anything, and a turn truncated to nothing is scored as a
     /// forfeited round, which is a worse outcome than a slightly dearer call.
-    max_tokens: u32 = 1400,
+    /// 1400 was that intent under-measured: the reasoning trace alone runs to
+    /// thousands of tokens, so the headroom is now explicit rather than a
+    /// guess folded into one number.
+    max_tokens: u32 = budget.withHeadroom(1400),
 };
 
 /// Cap for one judge call. A judgment is two numbers and a sentence.
-const judge_max_tokens: u32 = 500;
+const judge_max_tokens: u32 = budget.withHeadroom(500);
 
 /// Cap for the closing synthesis. Higher than a judge call because this is the
 /// one piece of prose a caller actually reads, and a verdict truncated
 /// mid-sentence is the failure this number exists to prevent.
-const synthesis_max_tokens: u32 = 1200;
+const synthesis_max_tokens: u32 = budget.withHeadroom(1200);
 
 fn settings() Settings {
     return std.json.parseFromSliceLeaky(Settings, alloc, lib.config(), .{ .ignore_unknown_fields = true }) catch Settings{};

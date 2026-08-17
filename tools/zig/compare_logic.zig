@@ -17,6 +17,7 @@
 //! of its own answer before anyone reads it).
 
 const std = @import("std");
+const budget = @import("llm_budget.zig");
 
 /// A comparison of one is not a comparison.
 pub const min_entrants: usize = 2;
@@ -28,16 +29,19 @@ pub const max_entrants: usize = 8;
 
 /// Output cap per entrant, and the reason a comparison is affordable: the
 /// question being asked is "which of these answers is better", which a reader
-/// can only judge on answers short enough to read side by side.
-pub const default_max_tokens: u32 = 600;
+/// can only judge on answers short enough to read side by side. The 600-token
+/// answer is still the point; the headroom on top is what a reasoning entrant
+/// spends before writing it, and without it such an entrant returns nothing
+/// and forfeits the comparison it was added to.
+pub const default_max_tokens: u32 = budget.withHeadroom(600);
 
 /// Cap for the judge call. A judgment is a label and a sentence.
-pub const judge_max_tokens: u32 = 400;
+pub const judge_max_tokens: u32 = budget.withHeadroom(400);
 
 /// Cap for the optional synthesis. Higher than the judge call because this is
 /// prose someone reads, and a merged answer truncated mid-sentence is worse
 /// than no merged answer at all.
-pub const synthesis_max_tokens: u32 = 900;
+pub const synthesis_max_tokens: u32 = budget.withHeadroom(900);
 
 /// Positional, never derived from the provider: label 0 is "A" whichever model
 /// landed in slot 0.

@@ -4,7 +4,7 @@ const build_zon = @import("build.zig.zon");
 // Pure-logic modules under tools/zig/ that don't export the tool ABI (run/scratch/host_arena).
 // They are imported by other tools, not standalone guests, so the wasm build skips them
 // and `zig build test` runs their tests on the host target instead.
-const host_tested_helpers = [_][]const u8{ "advisor_logic", "alphaxiv_client", "arena_match", "autolearn_logic", "autoresearch_logic", "cards", "cas_lock_record", "commit_logic", "compare_logic", "doc_scaffold", "feedback_logic", "flat_json", "gh_url", "goal_store", "graph_listing", "hashline", "kernel_magic", "log_view", "manifest_scan", "memory_embed", "model_stats_logic", "patch_logic", "providers_logic", "research_queries", "rewind_logic", "run_plan_logic", "schedule_cron", "schedule_logic", "search_parse", "session_export_logic", "sessions_logic", "skills_logic", "spill_logic", "strip_xml", "symbolic_regression_logic", "thinking_logic", "webui_addon_logic", "workflows_logic" };
+const host_tested_helpers = [_][]const u8{ "advisor_logic", "alphaxiv_client", "arena_match", "autolearn_logic", "autoresearch_logic", "cards", "cas_lock_record", "commit_logic", "compare_logic", "doc_scaffold", "feedback_logic", "flat_json", "gh_url", "goal_store", "graph_listing", "hashline", "kernel_magic", "llm_budget", "log_view", "manifest_scan", "memory_embed", "model_stats_logic", "patch_logic", "providers_logic", "research_queries", "rewind_logic", "run_plan_logic", "schedule_cron", "schedule_logic", "search_parse", "session_export_logic", "sessions_logic", "skills_logic", "spill_logic", "strip_xml", "symbolic_regression_logic", "thinking_logic", "webui_addon_logic", "workflows_logic" };
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
@@ -125,6 +125,11 @@ pub fn build(b: *std.Build) void {
                     .target = exe_target,
                     .optimize = optimize,
                 }) },
+                .{ .name = "llm_budget", .module = b.createModule(.{
+                    .root_source_file = b.path("tools/zig/llm_budget.zig"),
+                    .target = exe_target,
+                    .optimize = optimize,
+                }) },
                 .{ .name = "advisor_logic", .module = b.createModule(.{
                     .root_source_file = b.path("tools/zig/advisor_logic.zig"),
                     .target = exe_target,
@@ -232,6 +237,11 @@ pub fn build(b: *std.Build) void {
             }) },
             .{ .name = "thinking_logic", .module = b.createModule(.{
                 .root_source_file = b.path("tools/zig/thinking_logic.zig"),
+                .target = test_target,
+                .optimize = optimize,
+            }) },
+            .{ .name = "llm_budget", .module = b.createModule(.{
+                .root_source_file = b.path("tools/zig/llm_budget.zig"),
                 .target = test_target,
                 .optimize = optimize,
             }) },
