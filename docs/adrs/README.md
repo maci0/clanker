@@ -81,6 +81,7 @@ its current text.
 ## Inventory
 
 <!-- inventory:adr:start -->
+- [ADR 0027 — Lifecycle hooks are a Claude-dialect bridge via execUnderPolicy](0027-lifecycle-hooks-are-a-claude-dialect-bridge-via.md) — Accepted
 - [ADR 0026 — ACP server is minimal automation-only over stdio](0026-acp-server-is-minimal-automation-only-over-stdio.md) — Accepted
 - [ADR 0025 — MCP client is a native bridge with qualified tool names and a registry dispatch kind](0025-mcp-client-is-a-native-bridge-with-qualified-tool-names.md) — Accepted
 - [ADR 0024 — Config profiles are a file overlay with --profile and --dump-config](0024-config-profiles-are-a-file-overlay-with-profile-and-dump.md) — Accepted
