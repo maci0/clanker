@@ -1145,9 +1145,13 @@ test "an unreadable log is an error from markReverted, not zero flips" {
     // A missing log is the ordinary first run: no error, zero flips.
     try std.testing.expectEqual(@as(usize, 0), try hist.markReverted(&.{.{ .id = "imp-none", .reason = "r" }}));
 
-    // A directory where the log file belongs makes every read of it fail.
+    // A log that exists but cannot be read (a directory in its place) must
+    // be an error, not zero flips. The lock file stays in place, exactly as
+    // it would for a log that went bad under an existing history.
+    try hist.append("imp-dir", .accepted, "i", "will become unreadable", &.{"src/a.zig"}, 0, 1, "", &.{}, .behavior);
+    try tmp.dir.deleteFile(io, "state/improvements.jsonl");
     try ensure_dir.ensureDir(tmp.dir, io, "state/improvements.jsonl");
-    _ = hist.markReverted(&.{.{ .id = "imp-none", .reason = "r" }}) catch return;
+    _ = hist.markReverted(&.{.{ .id = "imp-dir", .reason = "r" }}) catch return;
     return error.TestUnexpectedResult;
 }
 
