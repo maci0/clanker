@@ -193,10 +193,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
-- The reply fold header in `clanker repl` (`▸ reply, N more lines` /
-  `▾ reply`) now draws in bold accent instead of the dim tool tint. It is
-  the fold's only toggle, and dim made it vanish into the tool lines
-  around it.
+- The reply fold header in `clanker repl` is now hard to overlook: bold,
+  underlined, and worded as the control it is — `▸ reply, N more lines
+  (click to expand)` / `▾ reply (click to fold)`. It is the fold's only
+  toggle and used to draw in the dim tool tint, vanishing into the tool
+  lines around it; a bold-accent attempt was no better on themes whose
+  accent sits near the body-text color, so the prominence now comes from
+  the underline and the wording, which hold in every theme.
 - Compare-and-swap locks moved out of the source tree. `ck_fs_write_if`
   now locks on `state/locks/<sha256-of-target-path>.lock` instead of a
   `<target>.ck_cas.lock` sidecar beside the file it guards (ADR 0031,

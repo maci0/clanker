@@ -2345,11 +2345,11 @@ const Model = struct {
     fn foldHeader(self: *const Model, arena: std.mem.Allocator, fold: Fold) []const u8 {
         _ = self;
         const hidden = fold.count - foldShownLines(fold);
-        if (hidden == 0) return "\xe2\x96\xbe reply";
-        return std.fmt.allocPrint(arena, "\xe2\x96\xb8 reply, {d} more line{s}", .{
+        if (hidden == 0) return "\xe2\x96\xbe reply (click to fold)";
+        return std.fmt.allocPrint(arena, "\xe2\x96\xb8 reply, {d} more line{s} (click to expand)", .{
             hidden,
             if (hidden == 1) "" else "s",
-        }) catch "\xe2\x96\xb8 reply";
+        }) catch "\xe2\x96\xb8 reply (click to expand)";
     }
 
     /// Flip the fold at `idx` open or closed. The animation carries it the
@@ -4599,6 +4599,13 @@ const Model = struct {
         const prompt_style: vaxis.Style = if (active.rgb) |c| .{ .bold = true, .fg = .{ .rgb = c.prompt } } else .{ .bold = true };
         const accent_style: vaxis.Style = if (active.rgb) |c| .{ .fg = .{ .rgb = c.accent } } else .{};
         const brand_style: vaxis.Style = if (active.rgb) |c| .{ .bold = true, .fg = .{ .rgb = c.accent } } else .{ .bold = true };
+        // The fold header's own style: bold + underline, hyperlink-shaped.
+        // Prominence can't come from color alone — a theme's accent may sit
+        // arbitrarily close to body text (bold accent proved invisible on
+        // one), and dim buried it among the tool lines. The underline holds
+        // in every theme, and with the "(click to …)" wording the header
+        // reads as the link it is.
+        const fold_style: vaxis.Style = if (active.rgb) |c| .{ .bold = true, .ul_style = .single, .fg = .{ .rgb = c.accent } } else .{ .bold = true, .ul_style = .single };
         @memset(surface.buffer, .{ .style = .{}, .default = true });
 
         // Held through the self.lines read loop below, not just the
@@ -4867,10 +4874,7 @@ const Model = struct {
                 // `clearRetainingCapacity` would otherwise keep appending
                 // into a buffer the previous frame's arena already freed.
                 self.fold_hits.append(self.arena, .{ .row = row, .fold = fk }) catch {};
-                // Bold accent, not the dim tool tint: the header is the
-                // fold's only toggle, and dim made it vanish into the tool
-                // lines around it — easy to overlook, so never clicked.
-                writeWrapped(surface, &row, bottom, text_width, self.foldHeader(ctx.arena, f), brand_style);
+                writeWrapped(surface, &row, bottom, text_width, self.foldHeader(ctx.arena, f), fold_style);
                 row += 1;
                 if (shown < f.count) {
                     // In scrollback the fold may straddle the anchored `view_end`
