@@ -109,6 +109,27 @@ test "excluded calls are transparent and different calls reset" {
     try std.testing.expect((try guard.observe(arena, "read", "{\"a\":1,\"b\":2}", &thresholds, &.{})) == null);
 }
 
+test "the running count is what an abort threshold reads, not the reminder list" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var guard: LoopGuard = .{};
+    // The reminder thresholds stop at 5; an abort threshold above them still
+    // has to be reachable, so the count must keep climbing past the last one.
+    const thresholds = [_]u32{ 3, 5 };
+    for (0..7) |_| _ = try guard.observe(arena, "jobs", "{\"op\":\"list\"}", &thresholds, &.{});
+    try std.testing.expectEqual(@as(u32, 7), guard.count);
+
+    // A different call resets it, so an abort threshold cannot fire on a run
+    // that is varying its arguments (the shape the reminders already miss).
+    _ = try guard.observe(arena, "jobs", "{\"op\":\"wait\"}", &thresholds, &.{});
+    try std.testing.expectEqual(@as(u32, 1), guard.count);
+
+    // An excluded call is transparent: it neither counts nor breaks a chain.
+    _ = try guard.observe(arena, "todo_list", "{}", &thresholds, &.{"todo_*"});
+    try std.testing.expectEqual(@as(u32, 1), guard.count);
+}
+
 test "configured thresholds fire once and stop after the maximum" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

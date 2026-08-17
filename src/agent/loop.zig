@@ -333,6 +333,16 @@ pub const Agent = struct {
     session_id: []const u8 = "",
     /// Optional injected registry (tests). Null uses the process-global one.
     subprocs: ?*@import("subprocess.zig").Registry = null,
+    /// Spill ids this run has already written. Pruning is request-only, so the
+    /// pruned copy (locator and all) is discarded after each request and the
+    /// same oversized tool result is re-pruned from the pristine history on
+    /// every following iteration. Without this, every iteration reloaded the
+    /// `spill` guest and rewrote a content-addressed file with the bytes
+    /// already in it. The locator still has to be applied every iteration —
+    /// it is what the request copy carries — so this gates the write, not the
+    /// locator. Arena-backed, so it dies with the run, which is also the last
+    /// moment a locator can be resolved.
+    spilled_ids: std.StringHashMapUnmanaged(void) = .empty,
 
     /// Frees session-scoped resources (gpa-owned wasm_cache). Call when the
     /// Agent is no longer needed (end of a REPL session / single-shot run).
@@ -989,6 +999,17 @@ pub const Agent = struct {
                 if (try repeat_guard.observe(self.arena, tc.name, tc.arguments, self.cfg.agent.repeat_tool_thresholds, self.cfg.agent.repeat_tool_exclude)) |event| {
                     try repeat_events.append(self.arena, event);
                     log.log(.info, "loop guard reminder: tool '{s}' repeated {d} times", .{ event.tool_name, event.count });
+                }
+                // The reminders are advice, and a model that ignores advice
+                // repeats until `max_iterations`, buying a completion per
+                // round. This is the terminal counterpart, deliberately shaped
+                // like `error.CompactionStalled`: past the configured count,
+                // the turn stops with a named error instead of being told
+                // again.
+                const abort_at = self.cfg.agent.repeat_tool_abort_threshold;
+                if (abort_at > 0 and repeat_guard.count >= abort_at) {
+                    log.log(.error_, "tool '{s}' called with the same arguments {d} times in a row: the run is repeating itself instead of making progress", .{ tc.name, repeat_guard.count });
+                    return error.RepeatedToolCalls;
                 }
             }
             // Execute tool calls in parallel for distinct tool names (each on
@@ -2542,11 +2563,28 @@ pub const Agent = struct {
         const spills = try spill_mod.collectSpills(self.arena, session_id, pruned, originals);
         if (spills.len == 0) return 0;
 
+        // Locators first, and for every spill: they are what the request copy
+        // carries, and a spill written on an earlier iteration still needs one
+        // on this one. Only the ids never written go on to the guest.
+        var pending: std.ArrayList(spill_mod.Spill) = .empty;
+        var wrote: usize = 0;
+        for (spills) |sp| {
+            if (self.spilled_ids.contains(&sp.id)) {
+                try spill_mod.applyLocator(self.arena, &pruned[sp.index], &sp.id);
+                wrote += 1;
+                continue;
+            }
+            try pending.append(self.arena, sp);
+        }
+        // The id is the hash of the content, so an id already on disk names a
+        // file holding exactly these bytes. Loading and compiling the guest to
+        // rewrite them is the per-iteration cost this skips.
+        if (pending.items.len == 0) return wrote;
+
         const mod = try runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, self.reg, "spill", null);
         defer mod.deinit();
 
-        var wrote: usize = 0;
-        for (spills) |sp| {
+        for (pending.items) |sp| {
             var enc: std.Io.Writer.Allocating = .init(self.arena);
             var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
             try s.beginObject();
@@ -2569,6 +2607,9 @@ pub const Agent = struct {
             const resp = std.json.parseFromSliceLeaky(struct { ok: bool = false }, self.arena, raw, .{ .ignore_unknown_fields = true }) catch continue;
             if (!resp.ok) continue;
             try spill_mod.applyLocator(self.arena, &pruned[sp.index], &sp.id);
+            // Recorded only after the guest confirmed the write, so a failed
+            // write is retried next iteration rather than remembered as done.
+            try self.spilled_ids.put(self.arena, try self.arena.dupe(u8, &sp.id), {});
             wrote += 1;
         }
         return wrote;
@@ -3123,10 +3164,17 @@ fn chatWithFallbackChain(
     var chain_i: usize = 0;
     while (true) {
         stream_tally = .{ .n = 0, .inner = on_delta };
+        // Both branches run under a deadline, because neither `chat` nor
+        // `chatStream` can end a wedged read on its own: `std.http.Client` has
+        // no read timeout and cancellation cannot reach a thread blocked on an
+        // established connection. Without one, a provider that accepts the
+        // connection and goes quiet is not a slow turn, it is a run that never
+        // returns — and no retry fires, because a call that never returns
+        // never produces an error to classify.
         const result = if (on_delta != null)
-            client.chatStream(ctx, arena, p, err_detail, streamTallyWrap, stop_flag)
+            client.chatStreamWithTimeout(ctx, arena, p, err_detail, streamTallyWrap, stop_flag, cfg.agent.request_timeout_ms, cfg.agent.stream_idle_timeout_ms)
         else
-            client.chat(ctx, arena, p, err_detail);
+            client.chatWithDeadline(ctx, arena, p, err_detail, cfg.agent.request_timeout_ms);
 
         if (result) |resp| {
             if (!std.mem.eql(u8, p.provider.name, primary)) {
@@ -3137,6 +3185,12 @@ fn chatWithFallbackChain(
         } else |err| {
             last_err = err;
             if (err == error.Interrupted) return err;
+            // A deadline that lapsed is not retried against the same provider.
+            // `chat`/`chatStream` already retried every transport error and
+            // retryable status before this point; a hang is none of those, and
+            // asking the same silent endpoint again costs a second full
+            // deadline before any recovery starts. The fallback chain below is
+            // the retry, and it retries somewhere else.
             if (on_delta != null and stream_tally.n > 0) return err;
             if (reports.items.len > 0) try reports.appendSlice(ctx.gpa, "; ");
             try reports.appendSlice(ctx.gpa, p.provider.name);
