@@ -2513,6 +2513,87 @@ fn networkAllowed(allow: []const []const u8, hostname: []const u8) bool {
     return false;
 }
 
+/// Wall-clock ceiling for one guest HTTP request.
+///
+/// `std.http.Client` has no read timeout of its own (`ConnectTcpOptions.timeout`
+/// is declared and never referenced -- see `client.Abort`), so a host that is
+/// allowlisted, accepts the connection and then says nothing blocks the calling
+/// thread forever. That thread is the agent's turn: an unbounded `web_fetch`
+/// does not fail a tool call, it ends the run with no error to classify. One
+/// minute is well past any page a tool has business fetching and well short of
+/// "never".
+const http_timeout_ms: u32 = 60_000;
+
+/// What one guest HTTP request did, kept apart from `Err.network` so the log
+/// and the guest can tell a timeout, an oversized body and a refused connection
+/// from each other. Collapsing all three into one code is why a wedged fetch
+/// used to be indistinguishable from a DNS failure in the operator's log.
+const HttpOutcome = union(enum) {
+    /// Bytes written into the caller's response buffer.
+    ok: usize,
+    /// Response arrived with a >= 400 status.
+    status: u16,
+    /// Body outgrew `max_http_bytes`; the fixed writer refused the rest.
+    too_large,
+    /// Transport failure, carrying `@errorName` of the cause.
+    transport: []const u8,
+};
+
+/// The arguments `httpFetchTask` needs, bundled so it can be handed to
+/// `io.concurrent` as a single value.
+const HttpFetchArgs = struct {
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    url: []const u8,
+    method: std.http.Method,
+    payload: ?[]const u8,
+    extra_headers: []const std.http.Header,
+    /// Caller-owned; stays alive until the task is joined or cancelled.
+    out: []u8,
+};
+
+/// The fetch half of `httpImpl`, as a concurrent task so the caller can put a
+/// deadline on it. Every exit sets `done`, or the waiter is never woken.
+///
+/// The client is created *here* rather than passed in: `abort` has to point at
+/// a live client for the whole blocking read and at nothing once it is torn
+/// down, and owning both in one scope is what makes that pairing checkable.
+fn httpFetchTask(args: HttpFetchArgs, abort: *client.Abort, done: *std.Io.Event) HttpOutcome {
+    defer done.set(args.io);
+
+    var http: std.http.Client = .{ .allocator = args.gpa, .io = args.io };
+    defer http.deinit();
+    abort.arm(args.io, &http);
+    defer abort.disarm(args.io);
+
+    var w: std.Io.Writer = .fixed(args.out);
+    const result = http.fetch(.{
+        .location = .{ .url = args.url },
+        .method = args.method,
+        .payload = args.payload,
+        .headers = .{ .user_agent = .{ .override = "clanker-tool/" ++ build_options.version } },
+        .extra_headers = args.extra_headers,
+        .response_writer = &w,
+        // network_allow only checks `hostname` in httpImpl, once, against the
+        // requested URL. std.http.Client auto-follows redirects by default,
+        // and a redirect target is never re-checked against that allowlist;
+        // an allowed host could 302 the sandboxed tool to an internal address
+        // (e.g. a cloud metadata IP) the allowlist exists to block. Refusing
+        // redirects outright keeps every request confined to the host that
+        // was actually checked.
+        .redirect_behavior = .not_allowed,
+    }) catch |err| return switch (err) {
+        // The only writer is the fixed buffer above, so a write failure is
+        // always "the body did not fit", never a socket problem.
+        error.WriteFailed => .too_large,
+        else => .{ .transport = @errorName(err) },
+    };
+
+    const status = @intFromEnum(result.status);
+    if (status >= 400) return .{ .status = status };
+    return .{ .ok = w.end };
+}
+
 fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {
     const uri = std.Uri.parse(url) catch return Err.invalid;
     const hostname = switch (uri.host orelse return Err.invalid) {
@@ -2533,38 +2614,86 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
     var custom_hdrs: [max_custom_headers]std.http.Header = undefined;
     const n_custom = parseCustomHeaders(arena, hdr_json, &custom_hdrs);
 
-    var http: std.http.Client = .{ .allocator = h.sandbox.gpa, .io = h.sandbox.io };
-    defer http.deinit();
-
     const resp_buf = h.sandbox.gpa.alloc(u8, h.sandbox.max_http_bytes) catch return Err.too_large;
     defer h.sandbox.gpa.free(resp_buf);
-    var w: std.Io.Writer = .fixed(resp_buf);
 
     const req_method = httpMethodFromCode(method) orelse return Err.invalid;
     const has_body = req_method == .POST or req_method == .PUT or req_method == .PATCH;
-    const result = http.fetch(.{
-        .location = .{ .url = url },
+    const args: HttpFetchArgs = .{
+        .io = h.sandbox.io,
+        .gpa = h.sandbox.gpa,
+        .url = url,
         .method = req_method,
         .payload = if (has_body) body else null,
-        .headers = .{ .user_agent = .{ .override = "clanker-tool/" ++ build_options.version } },
         .extra_headers = if (n_custom > 0) custom_hdrs[0..n_custom] else &.{},
-        .response_writer = &w,
-        // network_allow only checks `hostname` above, once, against the
-        // requested URL. std.http.Client auto-follows redirects by default,
-        // and a redirect target is never re-checked against that allowlist;
-        // an allowed host could 302 the sandboxed tool to an internal address
-        // (e.g. a cloud metadata IP) the allowlist exists to block. Refusing
-        // redirects outright keeps every request confined to the host that
-        // was actually checked.
-        .redirect_behavior = .not_allowed,
-    }) catch return Err.network;
+        .out = resp_buf,
+    };
 
-    const response = resp_buf[0..w.end];
-    if (@intFromEnum(result.status) >= 400) {
-        log.log(.warn, "[sandbox] http request to '{s}' failed with status {d}", .{ url, @intFromEnum(result.status) });
+    const outcome = httpWithTimeout(h.sandbox.io, args, http_timeout_ms) orelse {
+        log.log(.warn, "[sandbox] http request to '{s}' timed out after {d}ms", .{ url, http_timeout_ms });
         return Err.network;
+    };
+
+    return switch (outcome) {
+        .ok => |n| h.writeResult(mem_bytes, resp_buf[0..n]),
+        .status => |code| blk: {
+            log.log(.warn, "[sandbox] http request to '{s}' failed with status {d}", .{ url, code });
+            break :blk Err.network;
+        },
+        .too_large => blk: {
+            log.log(.warn, "[sandbox] http response from '{s}' exceeded max_http_bytes ({d})", .{ url, h.sandbox.max_http_bytes });
+            break :blk Err.too_large;
+        },
+        .transport => |name| blk: {
+            log.log(.warn, "[sandbox] http request to '{s}' failed: {s}", .{ url, name });
+            break :blk Err.network;
+        },
+    };
+}
+
+/// Runs `httpFetchTask` under a wall-clock ceiling, returning null when the
+/// budget is spent. On timeout the armed connections are shut down *before*
+/// the task is cancelled: `Io.Future.cancel` cannot rescue a thread parked in
+/// a blocking read on an established connection and would wedge the canceller
+/// alongside it, whereas `shutdown(2)` makes that read return end-of-stream so
+/// the task unwinds on its own (see `client.Abort`).
+fn httpWithTimeout(io: std.Io, args: HttpFetchArgs, timeout_ms: u32) ?HttpOutcome {
+    var abort: client.Abort = .{};
+    var done: std.Io.Event = .unset;
+
+    if (timeout_ms == 0) return httpFetchTask(args, &abort, &done);
+
+    var future = io.concurrent(httpFetchTask, .{ args, &abort, &done }) catch |err| {
+        // No worker to run it on. Refuse rather than falling back to an
+        // unbounded call: an ungoverned wait is the failure being prevented.
+        log.log(.warn, "[sandbox] http request to '{s}' could not start: {s}", .{ args.url, @errorName(err) });
+        return .{ .transport = @errorName(err) };
+    };
+    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
+    });
+    while (!done.isSet()) {
+        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
+            // Spurious wakeups report Timeout too, so the deadline decides
+            // whether the budget is really spent, not this return.
+            error.Timeout => {
+                if (done.isSet()) break;
+                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
+                abort.trigger(io);
+                // cancel() joins the task, so nothing is left writing into the
+                // caller's response buffer or header slice after this returns.
+                _ = future.cancel(io);
+                return null;
+            },
+            error.Canceled => {
+                abort.trigger(io);
+                _ = future.cancel(io);
+                return null;
+            },
+        };
     }
-    return h.writeResult(mem_bytes, response);
+    return future.await(io);
 }
 
 test "parseCustomHeaders parses valid JSON object into headers" {
