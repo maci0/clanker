@@ -33,6 +33,7 @@ const thinking = @import("thinking.zig");
 const ttsr = @import("ttsr.zig");
 const sampling = @import("../llm/sampling_profiles.zig");
 const session = @import("session.zig");
+const preset_mod = @import("../preset/preset.zig");
 
 /// How many iterations before the budget runs out the wrap-up warning is
 /// injected. Skipped entirely on budgets small enough that the warning
@@ -2792,7 +2793,6 @@ pub const Agent = struct {
                 }
             }
             if (self.preset) |preset| {
-                const preset_mod = @import("../preset/preset.zig");
                 if (!preset_mod.allowed(preset.*, tc.name)) {
                     log.log(.info, "preset: tool '{s}' denied by active preset", .{tc.name});
                     results[i] = try toolErrorJson(self.arena, "preset denied {s}: this tool is not allowed by the active preset. Pick another tool or switch presets.", .{tc.name});

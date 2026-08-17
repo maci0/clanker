@@ -14,7 +14,6 @@
 
 const std = @import("std");
 const log = @import("../util/log.zig");
-const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
 

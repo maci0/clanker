@@ -98,9 +98,10 @@ pub fn register(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, entry: Entr
         // timestamps, but a re-run against a reused path should not leave two
         // rows disagreeing about which goal owns it.
         if (std.mem.eql(u8, e.path, entry.path)) continue;
-        list.append(arena, e) catch return;
+        list.append(arena, e) catch |err| return log.log(.warn, "worktree {s} could not be recorded in {s}: {s} (it will show up as unlinked)", .{ entry.path, registry_path, @errorName(err) });
     }
-    list.append(arena, entry) catch return;
+    list.append(arena, entry) catch |err|
+        return log.log(.warn, "worktree {s} could not be recorded in {s}: {s} (it will show up as unlinked)", .{ entry.path, registry_path, @errorName(err) });
     write(io, dir, arena, list.items) catch |err|
         log.log(.warn, "worktree {s} could not be recorded in {s}: {s} (it will show up as unlinked)", .{ entry.path, registry_path, @errorName(err) });
 }
@@ -168,6 +169,10 @@ pub fn reconcile(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, apply: boo
 
     var out: Outcome = .{};
     var kept: std.ArrayList(Entry) = .empty;
+    // A row that fails to make it into `kept` would be dropped by the rewrite
+    // below, de-registering a worktree whose commits are still the deliverable.
+    // The registry is left exactly as it was instead.
+    var keep_failed = false;
     for (entries) |e| {
         // Gone from disk: someone removed it by hand, which is allowed and
         // needs no complaint, only the row dropped.
@@ -177,7 +182,9 @@ pub fn reconcile(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, apply: boo
         };
         if (e.goal_id.len == 0) {
             out.unlinked += 1;
-            kept.append(arena, e) catch {};
+            kept.append(arena, e) catch {
+                keep_failed = true;
+            };
             continue;
         }
         // A goal that is gone from goals.json entirely is treated as live, not
@@ -185,28 +192,38 @@ pub fn reconcile(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, apply: boo
         // its run produced, and guessing the other way loses them.
         const status = statuses.get(e.goal_id) orelse {
             out.live += 1;
-            kept.append(arena, e) catch {};
+            kept.append(arena, e) catch {
+                keep_failed = true;
+            };
             continue;
         };
         if (!statusRetires(status)) {
             out.live += 1;
-            kept.append(arena, e) catch {};
+            kept.append(arena, e) catch {
+                keep_failed = true;
+            };
             continue;
         }
         if (!branchMerged(gpa, io, e.branch, e.base_branch)) {
             out.kept_unmerged += 1;
             log.log(.warn, "worktree {s} (goal {s}, {s}) still has commits {s} does not: keeping it and branch {s}", .{ e.path, e.goal_id, status, e.base_branch, e.branch });
-            kept.append(arena, e) catch {};
+            kept.append(arena, e) catch {
+                keep_failed = true;
+            };
             continue;
         }
         if (!apply) {
             out.removed += 1;
-            kept.append(arena, e) catch {};
+            kept.append(arena, e) catch {
+                keep_failed = true;
+            };
             continue;
         }
         if (!gitOk(gpa, io, &.{ "git", "worktree", "remove", "--force", e.path })) {
             log.log(.warn, "could not remove worktree {s}; leaving it registered", .{e.path});
-            kept.append(arena, e) catch {};
+            kept.append(arena, e) catch {
+                keep_failed = true;
+            };
             continue;
         }
         // -d, not -D: the merged check above already passed, so a refusal here
@@ -216,9 +233,12 @@ pub fn reconcile(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, apply: boo
         log.log(.info, "retired worktree {s} and branch {s} (goal {s} is {s}, merged into {s})", .{ e.path, e.branch, e.goal_id, status, e.base_branch });
     }
 
-    if (kept.items.len != entries.len)
+    if (keep_failed) {
+        log.log(.warn, "could not hold every worktree row in memory; leaving {s} untouched so no live worktree is de-registered", .{registry_path});
+    } else if (kept.items.len != entries.len) {
         write(io, dir, arena, kept.items) catch |err|
             log.log(.warn, "could not rewrite {s}: {s}", .{ registry_path, @errorName(err) });
+    }
 
     return out;
 }
@@ -357,4 +377,51 @@ test "reconcile classifies by goal status and drops rows whose worktree is gone"
     // The vanished row is dropped; the other three survive the rewrite.
     const rows = read(io, tmp.dir, arena);
     try std.testing.expectEqual(@as(usize, 3), rows.len);
+}
+
+test "reconcile never de-registers a live worktree when an allocation fails" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "live");
+    try tmp.dir.createDirPath(io, "none");
+    try tmp.dir.createDirPath(io, "missing-goal");
+    try ensure_dir.ensureDir(tmp.dir, io, "state");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data =
+        \\[{"id":"g-live","status":"active"},{"id":"g-arch","status":"archived"}]
+    });
+    const registry =
+        \\[{"path":"live","branch":"b1","base_branch":"main","goal_id":"g-live"},
+        \\ {"path":"none","branch":"b2","base_branch":"main","goal_id":""},
+        \\ {"path":"missing-goal","branch":"b3","base_branch":"main","goal_id":"g-deleted"},
+        \\ {"path":"vanished","branch":"b4","base_branch":"main","goal_id":"g-arch"}]
+    ;
+
+    // Fail every allocation point in turn. Whichever one gives out, a row whose
+    // directory is still on disk must survive: the rewrite is what would drop
+    // it, and dropping it strands the commits the run produced.
+    var fail_index: usize = 0;
+    while (fail_index < 64) : (fail_index += 1) {
+        try tmp.dir.writeFile(io, .{ .sub_path = registry_path, .data = registry });
+
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        _ = reconcile(failing.allocator(), io, tmp.dir, false);
+
+        var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena_state.deinit();
+        for ([_][]const u8{ "live", "none", "missing-goal" }) |path| {
+            var found = false;
+            for (read(io, tmp.dir, arena_state.allocator())) |row|
+                if (std.mem.eql(u8, row.path, path)) {
+                    found = true;
+                };
+            if (!found) {
+                std.debug.print("row '{s}' lost with fail_index={d}\n", .{ path, fail_index });
+                return error.LiveWorktreeDeregistered;
+            }
+        }
+    }
 }
