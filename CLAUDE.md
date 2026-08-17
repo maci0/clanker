@@ -260,7 +260,11 @@ By hand, mind which copy each form takes: `clanker git commit -m "…" --
 <paths>` commits the **worktree** copy of those paths and leaves the rest of
 the index staged, so it lands one session's files only where index and
 worktree already agree; a hunk-narrowed index is landed by committing the
-index itself, `clanker git commit -m "…"` with nothing else staged.
+index itself, `clanker git commit -m "…"` with nothing else staged. `--amend`
+belongs in neither form: it reads as "edit my last commit" and behaves as a
+commit with no pathspec, so it takes the whole index and folds a concurrent
+session's staged slice into your commit
+([runbook](docs/runbooks/concurrent-agent-sessions-on-one-checkout.md)).
 
 ### Cleaning up after runs
 

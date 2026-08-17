@@ -114,6 +114,24 @@ git worktree remove /tmp/push-$USER
 Rebasing in the shared checkout is impossible with unstaged changes present,
 and stashing is what loses other sessions work. Neither is the answer.
 
+**`git commit --amend` commits the whole index, including everything another
+session staged.** It reads as "edit my last commit" and behaves as "commit
+with no pathspec", so amending in the shared checkout while a peer holds
+staged work silently folds their slice into your commit under your message —
+observed 2026-08-17, 8 files and 207 insertions belonging to another session
+swallowed by a two-file documentation amend. The pathspec form is not an
+escape either: `--amend -- <paths>` still carries whatever the index already
+had. Amend only in a throwaway worktree, or not at all. If the commit is
+already pushed, amending needs a force-push on top, which is a second reason
+not to.
+
+Recovering from it, before pushing: `git reset --soft <your-commit>` puts
+HEAD back and leaves everything staged, then `git restore --staged <your
+paths>` hands the index back to its owner with their entries exactly as they
+were. Re-commit yours with the pathspec form, which takes the worktree copy
+and never consults the index. Then tell the owner to verify against their own
+expectation rather than your account of it.
+
 **A shared inventory file with several sessions hunks in it** — stage only
 your own hunk and leave the rest for its owner. `git add -p` cannot do this
 from an agent session: it is interactive, and this harness refuses

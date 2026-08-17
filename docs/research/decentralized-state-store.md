@@ -2,7 +2,7 @@
 
 ## Status
 
-Current — searched 2026-08-16. Draft 4: names the topology axis (central store vs full replication per host) and the CP/AP axis, and surveys 17 candidates across both. No recommendation -- the choice belongs in an RFC.
+Current — searched 2026-08-16, option B and its evidence rows corrected 2026-08-17. Draft 4: names the topology axis (central store vs full replication per host) and the CP/AP axis, and surveys 17 candidates across both. No recommendation -- the choice belongs in an RFC. The 2026-08-17 pass changed no verdict: it records that the in-tree CAS the note measures against was itself defective until then, so "already works" under option B now means what the note assumed it meant.
 
 Research is evidence, not a decision: it records what exists, how good it is,
 and how confident the finding is. The decision that follows belongs in an
@@ -358,8 +358,8 @@ short.
 
 - **What it is:** keep the filesystem as the store, but give guests real
   concurrency primitives through host functions instead of raw writes. Today
-  that is one function, `ck_fs_write_if` (`src/sandbox/host.zig:3117`).
-- **Maturity:** in-tree and working for small documents.
+  that is one function, `ck_fs_write_if` (`src/sandbox/host.zig:3282`).
+- **Maturity:** in-tree, and correct for small documents **as of 2026-08-17** — it was not when this note was written. See the update below before relying on the "already tested" claim under Pros.
 - **Fit:** partial, and the gap is measurable. Whole-file CAS is O(file) per
   write and bounded by `max_fs_bytes` (1 MiB default, `:178`). Against the table
   above it covers row 2 (4 KB documents) and cannot cover row 1 at all — the
@@ -380,6 +380,43 @@ short.
 - **Evidence:** `src/sandbox/host.zig:3110-3175`; `src/util/file_lock.zig:1-13`
   records the measured lost-update rate this class of bug produces — *"six
   writers posting ten messages each kept twelve of sixty."*
+
+**Update 2026-08-17 — the primitive was hardened; option B was not taken.**
+Read this before treating the row above as closed. Three defects were found
+and fixed in the CAS itself, all of them in what this note assumed already
+worked:
+
+1. The lock name hashed the joined path *string*, so one file had a lock per
+   spelling — `./state/goals.json` under the default `agent.sandbox_root` and
+   `/abs/checkout/state/goals.json` under an isolated run worktree
+   `shared_root`. Two writers took two lock inodes on one file, so neither
+   excluded the other and the earlier write was lost: exactly the failure the
+   `file_lock.zig` quote above measures, reintroduced by the lock relocation
+   that [ADR 0031](../adrs/0031-compare-and-swap-locks-live-in-state-locks-keyed-by-a-hash.md)
+   decided. The name is now the hash of the resolved target.
+2. The lock *directory* resolved against the process cwd while the target
+   resolved against the sandbox root, so a sandbox rooted in a test tmp tree
+   or an improve worktree wrote its locks into whichever `state/` the process
+   happened to sit in. Both now resolve against the run own root.
+3. Aged lock files were only ever removed by an operator typing `clanker
+   janitor --yes`, which the ADR read as though it were automatic.
+   `ck_fs_write_if` now sweeps them itself.
+
+Record: [bug](../reports/bugs/2026-08-17-cas-lock-name-hashes-an-unresolved-path.md),
+decision it implements: [ADR 0031](../adrs/0031-compare-and-swap-locks-live-in-state-locks-keyed-by-a-hash.md).
+Code: `resolvedLockKey`, `casLockPath` and `sweepAgedLocks` in
+`src/sandbox/host.zig:3391-3600`, retention shared with the `janitor` guest via
+`tools/zig/cas_lock_record.zig`.
+
+**What this does not change: every Con above still stands.** The CAS still goes
+through `safeJoinSecure` (`src/sandbox/host.zig:3294`) and `rootForPath`, so it
+is exactly as exposed to sandbox hardening as before; it is still whole-file and
+still capped at `max_fs_bytes` (`src/sandbox/host.zig:194`), so it still cannot
+cover row 1; contention still degrades quadratically; and there is still no
+cross-host story. Neither missing primitive was added — `ck_state_append` does
+not exist, and granularity is still per file. The fix moved this option from
+*claimed to work* to *actually works* at the scope it already had. It did not
+widen that scope, and it is not an argument for choosing B.
 
 ---
 
@@ -1155,7 +1192,10 @@ Each prompt answered explicitly, including the ones that do not apply.
 - **Already in the tree.** Four things, and this is the most important section of
   the note. (1) `clanker serve`'s HTTP API is a state service that is not yet
   used as one. (2) `ck_fs_write_if` is a working CAS primitive that is
-  under-generalized rather than missing. (3) `src/peers/chatrooms.zig` already
+  under-generalized rather than missing — it became one on 2026-08-17, when
+  three defects that let two writers hold two locks on one file were fixed
+  ([bug](../reports/bugs/2026-08-17-cas-lock-name-hashes-an-unresolved-path.md));
+  the under-generalization is unchanged. (3) `src/peers/chatrooms.zig` already
   does durable append + HTTP fan-out with per-peer backoff — a working prototype
   of replicated state that nobody has named as one. (4) **PRD 0011 has already
   designed the access path**: `ck_mesh` as a name-gated host channel whose host
@@ -1216,7 +1256,7 @@ tiers are independent decisions.
 | Option | Maturity | Fit | Main risk |
 |---|---|---|---|
 | A. `ck_state` channel → local serve | In-tree pattern (`ck_mesh`) | Removes the worktree fragility; makes tier 2 swappable | Serve becomes a hard dependency of every run |
-| B. Generalize `ck_fs_write_if` | In-tree | Small documents only | Still goes through `safeJoinSecure`, so it does not fix the break |
+| B. Generalize `ck_fs_write_if` | In-tree, primitive fixed 2026-08-17 | Small documents only | Still goes through `safeJoinSecure`, so it does not fix the break |
 
 **Tier 2 — where state lives.** `Topology` and `Partition` are the two axes;
 "Full state per host" is the column that answers "one host dies, the rest still
@@ -1287,8 +1327,10 @@ Five observations for whoever writes the RFC, none of them a recommendation:
 | Worktree state sharing is two halves that must agree | `src/improve/worktree.zig:288-318`, `src/sandbox/host.zig:4714-4750` | 2026-08-16 | high |
 | The pair has broken in practice | [bug](../reports/bugs/2026-08-14-worktree-state-symlink-notdir.md), [investigation](../reports/investigations/2026-08-14-isolated-cli-worktree-notdir.md), `git log 44071710` | 2026-08-16 | high |
 | A sandbox refusal on a state write reproduces today | `graph write ... refused by this tool's sandbox policy`, emitted by every `clanker run` in this session | 2026-08-16 | high |
-| `ck_fs_write_if` is whole-file SHA-256 CAS under a lock sidecar | `src/sandbox/host.zig:3110-3175` | 2026-08-16 | high |
-| CAS cannot cover the hot logs (1 MiB cap vs 3.2 MB file) | `src/sandbox/host.zig:178`; `du -sh state/*` | 2026-08-16 | high |
+| `ck_fs_write_if` is whole-file SHA-256 CAS under a lock file | `src/sandbox/host.zig:3292-3389` | 2026-08-17 | high |
+| The lock is `state/locks/<sha256-of-resolved-target>.lock`, not a `<target>.ck_cas.lock` sidecar | [ADR 0031](../adrs/0031-compare-and-swap-locks-live-in-state-locks-keyed-by-a-hash.md) | 2026-08-17 | high |
+| The CAS lost updates across path spellings until 2026-08-17 | [bug](../reports/bugs/2026-08-17-cas-lock-name-hashes-an-unresolved-path.md) | 2026-08-17 | high |
+| CAS cannot cover the hot logs (1 MiB cap vs 3.2 MB file) | `src/sandbox/host.zig:194`; `du -sh state/*` | 2026-08-17 | high |
 | Lost updates are measured, not theoretical | `src/util/file_lock.zig:1-13` | 2026-08-16 | high |
 | `networkAllowed` matches the hostname only and ignores the port, so a `["127.0.0.1"]` grant admits any local port | `src/sandbox/host.zig:2350-2368`, tests at `:508-525` | 2026-08-16 | high |
 | `clanker serve` exposes 43 distinct `/api/*` routes | `src/cli.zig`, counted | 2026-08-16 | high |
