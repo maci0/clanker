@@ -1,0 +1,11 @@
+{
+  "name": "spill",
+  "kind": "task",
+  "description": "spill with {\"list\": true} must list spill directories as ok:true without requiring any spilled file to exist. Goes red when fs_prefixes or the spill serialization breaks; stays green on empty state/spills.",
+  "prompt": "Use the spill tool with input {\"list\": true}. Look at the tool's JSON result. If its ok field is true and it has a spills or list field, reply with exactly SHAPE_OK. Otherwise reply with exactly SHAPE_BAD.",
+  "requires_tool": "spill",
+  "criteria": [
+    { "includes": ["SHAPE_OK"] },
+    { "excludes": ["SHAPE_BAD"] }
+  ]
+}
