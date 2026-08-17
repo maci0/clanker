@@ -1215,9 +1215,7 @@ test "append still trims and dedups when the retained window exceeds 1 MiB" {
     }
 
     // Only the newest 256 of 300 survive, and the oldest surviving line is
-    // m44 (m0..m43 were trimmed). The log is ~1.1 MiB, past the old cap, so
-    // verify against the file rather than readHistory (whose display read is
-    // separately capped at 1 MiB).
+    // m44 (m0..m43 were trimmed). The log is ~1.1 MiB, past the old cap.
     const raw = try tmp.dir.readFileAlloc(io, log_path, std.testing.allocator, .limited(4 * 1024 * 1024));
     defer std.testing.allocator.free(raw);
     var lines: std.ArrayList([]const u8) = .empty;
@@ -1245,6 +1243,21 @@ test "append still trims and dedups when the retained window exceeds 1 MiB" {
     const raw2 = try tmp.dir.readFileAlloc(io, log_path, std.testing.allocator, .limited(4 * 1024 * 1024));
     defer std.testing.allocator.free(raw2);
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, raw2, "\"id\":\"m299\""));
+
+    // Every reader of the same log must be capped the same way the writer
+    // trims it. `readFileAlloc` answers `error.StreamTooLong` rather than a
+    // short read, and each of these turns that into an empty result, so the
+    // fixed 1 MiB cap they used to carry silently emptied the agent inbox,
+    // the board fold and the room list on any room this size.
+    const hist = try readHistory(tmp.dir, io, arena, "", &cfg, "dev", 0, 5);
+    try std.testing.expectEqual(@as(usize, 5), hist.len);
+    const asc = try readHistoryAsc(tmp.dir, io, arena, "", &cfg, "dev", 0, 5);
+    try std.testing.expectEqual(@as(usize, 5), asc.msgs.len);
+    const fresh = try readNew(tmp.dir, io, arena, "", &cfg, .{ .id = "m290" });
+    try std.testing.expectEqual(@as(usize, inbox_limit), fresh.len);
+    const rooms = try listRooms(tmp.dir, io, arena, "", &cfg);
+    try std.testing.expectEqual(@as(usize, 1), rooms.len);
+    try std.testing.expectEqual(@as(usize, 256), rooms[0].messages);
 }
 
 test "readHistoryAsc pages oldest-first and extends through a shared boundary timestamp" {

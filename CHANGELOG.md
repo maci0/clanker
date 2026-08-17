@@ -612,6 +612,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A chatroom log larger than 1 MiB no longer reads as an empty room. The
+  writer trims the log to `chatrooms.max_history` entries and sizes its own
+  read to that window, but the readers kept a fixed 1 MiB cap;
+  `readFileAlloc` answers `error.StreamTooLong` rather than a short read,
+  and each reader turned that into an empty result. Past roughly 250
+  messages at the 4 KiB send cap — well inside the default 500-entry
+  history — the agent inbox stopped surfacing peer messages, `clanker chat
+  history` and `GET /api/chat/messages` returned nothing, `clanker chat
+  rooms` and `GET /api/chat/rooms` listed no rooms, and the board's forward
+  fold saw an empty log. All of them now read under the same cap the writer
+  trims to, computed in one place.
+
 - `POST /api/run` no longer replaces a session's whole history when it
   cannot read it. The handler loads the stored messages, appends the turn,
   and rewrites the file from that list, but every load failure was
