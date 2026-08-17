@@ -322,7 +322,34 @@ run/ask/steer command surface, and the three recorder write paths.
 
 ## Autolearn
 
-Automatically observed from usage patterns (state/autolearn.jsonl, last 7 days). Refresh with `clanker autolearn`.
+Automatically observed from usage patterns (`state/autolearn.jsonl`, last 7 days). Refresh with `clanker autolearn`.
 
-- No actionable observations yet — run a few tasks, then `clanker autolearn`.
+- [ ] Optimize the highest-traffic tools: `read_file`, `repo_search`, and `git`.  
+  These tools dominate the observed tool calls and drive most long-running sessions; prioritize their correctness, caching, and error recovery.
 
+- [ ] Harden `file_ops` argument validation.  
+  Repeated calls failed with `move and copy need "to": the destination path`, so require/emit the destination before invoking move/copy.
+
+- [ ] Align sandbox `fs_prefixes` with files the harness is asked to touch.  
+  `file_ops`, `list_files`, and `edit_file` were refused for `CHANGELOG.md`, `.local/TODO.md`, `.local`, and `zig-out/gate-failure.txt`; add these to the tool manifest or stop trying to access them.
+
+- [ ] Allow git in the tool sandbox manifest.  
+  Git failed with `running git: refused by this tool's sandbox policy ... exec_allow`; whitelist required git subcommands so read-only repo checks do not fail.
+
+- [ ] Validate `read_file` calls before dispatch.  
+  Observed `missing required field: path` and `path is outside the sandbox`; guard against empty paths and only call with sandbox-visible paths.
+
+- [ ] Add a fallback for `zig_std` symbol lookup.  
+  One lookup failed with `looking up the std symbol: not found`; retry with a narrower query or fall back to repo/stdlib search.
+
+- [ ] Auto-narrow oversized `repo_search` queries.  
+  A query failed with `running the search: too large for one call — ask for a smaller range or narrow the query`; split or constrain large searches automatically.
+
+- [ ] Re-evaluate `deepseek-v4-flash` as the default tool-work model.  
+  It was used in 24 observed runs and powers most tool calls; tune temperature, max tokens, and cost or confirm it should stay default.
+
+- [ ] Set prompt/token budgets for `deepseek-v4-pro`.  
+  Observed pro runs reached 6.6M+ prompt tokens, 95k completion tokens, and up to ~25 minutes; route routine tool calls to flash and cap long-context pro sessions.
+
+- [ ] Limit `qwen3.8-27b-tuned` to tool-free tasks or enable tool calling.  
+  Its observed run returned no tools (`tools: []`) and took 41 seconds, indicating it is not currently suitable for tool-required turns.
