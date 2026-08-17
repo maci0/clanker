@@ -90,7 +90,18 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
     while (attempt < 3) : (attempt += 1) {
         var loaded = try load();
         if (loaded.alarms.items.len >= max_alarms) return lib.fail(out, "alarm list is full (50); cancel some first");
-        const id = try std.fmt.allocPrint(lib.alloc, "a-{d}-{d}", .{ fire, loaded.alarms.items.len });
+        // An id must be unique across the whole store, not just this
+        // creation's list length: cancels recycle lengths, so two alarms
+        // at the same fire time could otherwise share an id and a later
+        // done/cancel would hit both. Scan the store for the highest
+        // numeric suffix and take the next one.
+        var next: u64 = 0;
+        for (loaded.alarms.items) |a| {
+            const field = std.mem.lastIndexOfScalar(u8, a.id, '-') orelse continue;
+            const num = std.fmt.parseInt(u64, a.id[field + 1 ..], 10) catch continue;
+            if (num >= next) next = num + 1;
+        }
+        const id = try std.fmt.allocPrint(lib.alloc, "a-{d}-{d}", .{ fire, next });
         try loaded.alarms.append(lib.alloc, .{ .id = id, .ts = fire, .message = message, .set_ts = now, .every = every });
         if (try store(loaded)) {
             const reply = try std.fmt.allocPrint(lib.alloc, "{{\"ok\":true,\"id\":\"{s}\",\"fires_in_seconds\":{d}}}", .{ id, fire - now });
