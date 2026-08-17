@@ -29,7 +29,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const actual = lib.optStr(parsed, "actual");
     const severity = lib.optStr(parsed, "severity") orelse "normal";
     const environment = lib.optStr(parsed, "environment");
-    const component = lib.optStr(parsed, "component");
+    const component = lib.optStr(parsed, "component") orelse inferComponent(title_raw);
     const room = lib.optStr(parsed, "room");
     const repro = lib.optStr(parsed, "repro");
     const fix_hint = lib.optStr(parsed, "fix_hint");
@@ -154,5 +154,13 @@ fn mapSeverity(sev: []const u8) ?[]const u8 {
     if (std.ascii.eqlIgnoreCase(sev, "low") or
         std.ascii.eqlIgnoreCase(sev, "minor"))
         return "low";
+    return null;
+}
+
+fn inferComponent(title: []const u8) ?[]const u8 {
+    const tokens = [_][]const u8{ "llm", "tui", "sandbox", "schedule", "serve", "tools" };
+    for (tokens) |tok| {
+        if (std.ascii.indexOfIgnoreCase(title, tok)) |_| return tok;
+    }
     return null;
 }
