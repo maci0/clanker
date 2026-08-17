@@ -20,6 +20,13 @@ const atomic_write = @import("../util/atomic_write.zig");
 pub const stat_path = "token_stats.jsonl";
 /// Hard cap on the log so a busy harness cannot grow state without bound.
 pub const max_log_bytes = 32 << 20;
+/// Headroom every reader must allow above the cap. The cap is enforced by the
+/// *next* `append`, which trims only after seeing `size > max_log_bytes`, so a
+/// log legitimately sits over the cap between the write that crossed it and the
+/// write that trims it. A reader limited to exactly `max_log_bytes` fails on
+/// that file, and both readers here answer a read failure with "no records",
+/// which is indistinguishable from a fresh install.
+pub const read_slack_bytes = 1 << 16;
 
 pub const Record = struct {
     ts: i64,
@@ -117,7 +124,13 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     // Trim the log when it outgrows the cap. Done before the file is opened
     // below because trimming atomically replaces it.
     if (base.statFile(io, path, .{})) |st| {
-        if (st.size > max_log_bytes) trimLog(base, io, gpa, arena, path) catch {};
+        // Reported, not fatal: the append below still succeeds, but a trim that
+        // keeps failing is the difference between a bounded log and one that
+        // grows until the disk fills, and nothing else on this path would ever
+        // say so. Every other failure here logs; this one used to be the
+        // exception.
+        if (st.size > max_log_bytes) trimLog(base, io, gpa, arena, path) catch |err|
+            log.log(.warn, "[stats] trim of {s} failed ({d} bytes over cap): {s}", .{ path, st.size -| max_log_bytes, @errorName(err) });
     } else |_| {}
 
     var line_buf: [1024]u8 = undefined;
@@ -171,7 +184,7 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
 /// Rewrites the log keeping only the newest lines (used when it hits the cap).
 fn trimLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, path: []const u8) !void {
     _ = arena;
-    const raw = try base.readFileAlloc(io, path, gpa, .limited(max_log_bytes + (1 << 16)));
+    const raw = try base.readFileAlloc(io, path, gpa, .limited(max_log_bytes + read_slack_bytes));
     defer gpa.free(raw);
     // Keep the last 1000 lines.
     var lines: std.ArrayList([]const u8) = .empty;
@@ -199,7 +212,13 @@ fn trimLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.
 /// read + line-split + parse loop cannot drift between them.
 fn parseRecords(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, path: []const u8) ![]Record {
     var out: std.ArrayList(Record) = .empty;
-    const raw = base.readFileAlloc(io, path, arena, .limited(max_log_bytes)) catch return &[_]Record{};
+    const raw = base.readFileAlloc(io, path, arena, .limited(max_log_bytes + read_slack_bytes)) catch |err| {
+        // Missing is the ordinary case (nothing has run yet) and stays quiet.
+        // Anything else -- unreadable, or past the cap plus its slack -- would
+        // otherwise report zero usage as if the harness had never run.
+        if (err != error.FileNotFound) log.log(.warn, "[stats] read of {s} failed: {s}", .{ path, @errorName(err) });
+        return &[_]Record{};
+    };
     var lines = std.mem.splitScalar(u8, raw, '\n');
     while (lines.next()) |line| {
         if (line.len == 0) continue;
@@ -282,10 +301,16 @@ pub fn totals(stats: []const Stat) Stat {
 }
 
 /// Serializes {ok, stats, totals} for the ck_stats host fn and /api/stats.
+///
+/// The body grows to fit. It used to be built in a fixed 64 KiB buffer, which
+/// is a ceiling on a list with no bound: one row per (provider, model) pair
+/// ever recorded, at roughly 400 bytes each. Past ~150 pairs -- an OpenRouter
+/// or `clanker compare` user reaches that without trying -- the write failed
+/// and `ck_stats` answered `too_large`, so the whole stats surface went from
+/// working to erroring on a threshold nothing announced.
 pub fn statsJSON(arena: std.mem.Allocator, stats: []const Stat, total: Stat) ![]const u8 {
-    var buf: [64 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
     try s.beginObject();
     try s.objectField("ok");
     try s.write(true);
@@ -361,7 +386,7 @@ pub fn statsJSON(arena: std.mem.Allocator, stats: []const Stat, total: Stat) ![]
     try s.endObject();
     try s.endObject();
     try s.endObject();
-    return arena.dupe(u8, buf[0..w.end]);
+    return out.toOwnedSlice();
 }
 
 // ------------------------------------------------------------------- tests --
@@ -510,6 +535,65 @@ test "statsJSON serializes stats + totals" {
     try std.testing.expectEqual(@as(i64, 2), totals_obj.get("calls").?.integer);
     try std.testing.expectEqual(@as(i64, 350), totals_obj.get("total_tokens").?.integer);
     try std.testing.expect(totals_obj.get("cost") != null);
+}
+
+test "statsJSON serializes more pairs than a fixed buffer held" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // One row per (provider, model) pair ever recorded, and nothing bounds how
+    // many of those a harness accumulates. At ~400 bytes a row the old 64 KiB
+    // buffer ran out around 150, and `ck_stats` turned that into `too_large`.
+    const pairs = 600;
+    const stats = try arena.alloc(Stat, pairs);
+    for (stats, 0..) |*st, i| {
+        st.* = .{
+            .provider = try std.fmt.allocPrint(arena, "openrouter-{d}", .{i}),
+            .model = try std.fmt.allocPrint(arena, "vendor/some-fairly-long-model-name-{d}", .{i}),
+            .calls = 1,
+            .total_tokens = 2,
+            .ok_calls = 1,
+        };
+    }
+
+    const json_out = try statsJSON(arena, stats, totals(stats));
+    try std.testing.expect(json_out.len > 64 * 1024);
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, json_out, .{});
+    try std.testing.expectEqual(@as(usize, pairs), parsed.object.get("stats").?.array.items.len);
+    try std.testing.expectEqual(@as(i64, pairs), parsed.object.get("totals").?.object.get("calls").?.integer);
+}
+
+test "an over-cap log still aggregates instead of reporting no usage" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // `append` trims only on the write *after* the cap is crossed, so a log
+    // sitting just over it is a state the writer produces on purpose. A reader
+    // limited to exactly the cap failed here and answered "no records", which
+    // reads as a fresh install rather than as a read that did not happen.
+    const line =
+        \\{"ts":1,"provider":"p","model":"m","prompt_tokens":1,"completion_tokens":1,"total_tokens":2,"cache_hit":0,"cache_miss":1,"cost":0.0,"duration_ms":1}
+    ;
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(std.testing.allocator);
+    while (body.items.len <= max_log_bytes) {
+        try body.appendSlice(std.testing.allocator, line);
+        try body.append(std.testing.allocator, '\n');
+    }
+    try tmp.dir.writeFile(io, .{ .sub_path = stat_path, .data = body.items });
+
+    const stats = try aggregate(tmp.dir, io, std.testing.allocator, arena, "");
+    try std.testing.expectEqual(@as(usize, 1), stats.len);
+    try std.testing.expect(stats[0].calls > 0);
+    try std.testing.expectEqual(stats[0].calls * 2, stats[0].total_tokens);
 }
 
 test "thinking metadata aggregates into CLI and API distributions" {

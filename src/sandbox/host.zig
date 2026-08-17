@@ -2696,6 +2696,44 @@ fn httpWithTimeout(io: std.Io, args: HttpFetchArgs, timeout_ms: u32) ?HttpOutcom
     return future.await(io);
 }
 
+test "httpWithTimeout gives up on a host that accepts and never answers" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // The failure this exists to prevent: a host that is allowlisted, completes
+    // the TCP handshake, and then sends nothing. The kernel's backlog accepts
+    // for us, so `fetch` gets a live connection and blocks in a read that no
+    // amount of `Io.Future.cancel` can rescue. Never accepting in this test is
+    // deliberate -- an accept loop would only add a thread that must be joined.
+    var addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var server = try std.Io.net.IpAddress.listen(&addr, io, .{});
+    defer server.deinit(io);
+    const port = server.socket.address.getPort();
+
+    var url_buf: [64]u8 = undefined;
+    const url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/", .{port});
+
+    var out: [1024]u8 = undefined;
+    const started = std.Io.Timestamp.now(io, .awake);
+    const outcome = httpWithTimeout(io, .{
+        .io = io,
+        .gpa = allocator,
+        .url = url,
+        .method = .GET,
+        .payload = null,
+        .extra_headers = &.{},
+        .out = &out,
+    }, 300);
+    const elapsed_ms = @divTrunc(started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms);
+
+    // Null is the timeout, and it has to arrive on the budget rather than on
+    // the OS connect timeout (~75s) that unbounded callers used to wait out.
+    try std.testing.expect(outcome == null);
+    try std.testing.expect(elapsed_ms < 30_000);
+}
+
 test "parseCustomHeaders parses valid JSON object into headers" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

@@ -612,6 +612,22 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A sandboxed tool's HTTP request (`ck_http`, so `web_fetch` and every other
+  network-granted tool) now runs under a 60s wall-clock ceiling instead of
+  waiting forever. `std.http.Client` has no read timeout, so an allowlisted
+  host that completed the TCP handshake and then sent nothing blocked the
+  agent's turn indefinitely, with no error for the run to classify and
+  nothing in the log; the connection is now shut down the way the LLM client
+  already rescues a wedged completion, and the timeout is logged with the URL.
+- A sandboxed tool's failed HTTP request now says why. Every failure --
+  DNS, TLS, refused connection, a body past `max_http_bytes` -- collapsed
+  into the same unlogged `network` code, so an on-call operator saw one
+  indistinguishable error for four different causes. The transport failure
+  is now logged with its cause and an oversized response reports `too_large`
+  rather than `network`.
+- `clanker stats`' log trim no longer fails silently. Every other failure on
+  the token-stats append path was logged; a trim that kept failing left
+  `state/token_stats.jsonl` growing past its cap with nothing reporting it.
 - An atomic write to a symlinked path no longer replaces the symlink with a
   private regular file. The write is a temp file plus a rename, and a rename
   lands on the *link itself*, so every later write went somewhere no other
