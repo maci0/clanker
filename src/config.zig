@@ -805,6 +805,11 @@ pub const Memory = struct {
 
 pub const Modules = struct {
     mcp: bool = true,
+    /// Consume external MCP servers' tools (`[mcp_servers.*]`). Off by default:
+    /// an MCP server runs outside the WASM sandbox with the same trust as a
+    /// line in `exec_allow` — PRD 0032 stays behind this flag until the bridge
+    /// lands.
+    mcp_client: bool = false,
     /// Agent Client Protocol stdio server (`clanker acp`). Opt-in because it
     /// exposes a full agent, unlike MCP's tool-only surface.
     acp: bool = false,
@@ -849,6 +854,7 @@ pub const Modules = struct {
 /// modules struct (and reset all flags to struct defaults).
 pub const ModulesFields = struct {
     mcp: bool = false,
+    mcp_client: bool = false,
     acp: bool = false,
     peers: bool = false,
     a2a: bool = false,
@@ -2269,6 +2275,7 @@ pub const Config = struct {
 
     fn applyModulesFields(dst: *Modules, src: Modules, fields: ModulesFields) void {
         if (fields.mcp) dst.mcp = src.mcp;
+        if (fields.mcp_client) dst.mcp_client = src.mcp_client;
         if (fields.acp) dst.acp = src.acp;
         if (fields.peers) dst.peers = src.peers;
         if (fields.a2a) dst.a2a = src.a2a;
@@ -2618,6 +2625,7 @@ pub const Config = struct {
         var mf = ModulesFields{};
         const fields = [_]struct { key: []const u8, ptr: *bool, present: *bool }{
             .{ .key = "mcp", .ptr = &m.mcp, .present = &mf.mcp },
+            .{ .key = "mcp_client", .ptr = &m.mcp_client, .present = &mf.mcp_client },
             .{ .key = "acp", .ptr = &m.acp, .present = &mf.acp },
             .{ .key = "peers", .ptr = &m.peers, .present = &mf.peers },
             .{ .key = "a2a", .ptr = &m.a2a, .present = &mf.a2a },
@@ -2639,10 +2647,9 @@ pub const Config = struct {
             .{ .key = "mesh", .ptr = &m.mesh, .present = &mf.mesh },
         };
         warnUnknownKeys(obj, &.{
-            "mcp",         "acp",       "peers",           "a2a",          "webui",      "graphs",
-            "sessions",    "goal",      "goal_auto_steer", "token_budget", "streaming",  "dotenv",
-            "hot_reload",  "autolearn", "subagents",       "rlm",          "multimodal", "chatrooms",
-            "token_stats", "mesh",
+            "mcp",       "mcp_client", "acp",             "peers",        "a2a",       "webui",       "graphs",
+            "sessions",  "goal",       "goal_auto_steer", "token_budget", "streaming", "dotenv",      "hot_reload",
+            "autolearn", "subagents",  "rlm",             "multimodal",   "chatrooms", "token_stats", "mesh",
         }, "modules");
         for (fields) |f| {
             if (obj.get(f.key)) |val| {
