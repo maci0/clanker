@@ -32,6 +32,9 @@ pub const Error = error{
     Duplicate,
     NoSuchWorkspace,
     Builtin,
+    /// The registry file is there but does not read back as a workspace list.
+    /// Not an empty registry: see `load`.
+    StoreUnreadable,
 };
 
 /// One named folder of a project. `name` is the operator's label for the
@@ -140,14 +143,16 @@ fn fromStored(arena: std.mem.Allocator, stored: []const StoredWorkspace) ![]Work
     return out.toOwnedSlice(arena);
 }
 
-/// Reads the registry. A missing or unparseable file is an empty list.
+/// Reads the registry. A missing (or empty) file is an empty list.
 ///
 /// A file that is *there* and cannot be read is not: `add`, `remove` and
 /// `setRoots` all load, mutate and then `save` the whole list, so answering
 /// "empty" for an unreadable registry makes the next mutation write a one-entry
 /// file over every workspace the operator had, and report success. `FileNotFound`
 /// is the only error that means empty; every other one is surfaced so those
-/// callers refuse to mutate instead.
+/// callers refuse to mutate instead. That covers JSON that will not parse just
+/// as much as an I/O failure — the write that follows replaces the file either
+/// way, and a hand-edit with a trailing comma is the likelier of the two.
 pub fn load(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]Workspace {
     const raw = base.readFileAlloc(io, store_path, arena, .limited(max_store_bytes)) catch |err| switch (err) {
         error.FileNotFound => return &.{},
@@ -159,8 +164,8 @@ pub fn load(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]Workspace
     const trimmed = std.mem.trim(u8, raw, " \t\r\n");
     if (trimmed.len == 0) return &.{};
     const stored = std.json.parseFromSliceLeaky([]StoredWorkspace, arena, trimmed, .{ .ignore_unknown_fields = true }) catch {
-        log.log(.warn, "workspaces: {s} is not a readable list; treating it as empty", .{store_path});
-        return &.{};
+        log.log(.error_, "workspaces: {s} is not a readable list; fix or move it", .{store_path});
+        return Error.StoreUnreadable;
     };
     return fromStored(arena, stored);
 }
@@ -557,4 +562,33 @@ test "an unreadable registry refuses the mutation instead of wiping it" {
     // Still the file that was there, byte for byte: nothing was written through.
     const after = try tmp.dir.readFileAlloc(io, store_path, arena, .limited(4 * max_store_bytes));
     try std.testing.expectEqual(oversized.len, after.len);
+}
+
+test "a registry that will not parse refuses the mutation too" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "root");
+    const root = try tmp.dir.realPathFileAlloc(io, "root", arena);
+    _ = try add(io, gpa, arena, tmp.dir, "keep", root, "", 1);
+
+    // A hand-edit that broke the JSON is the same hazard as a failed read: the
+    // mutation below rewrites the whole file, so "empty" here would persist as
+    // a deletion of every workspace.
+    const broken = "[{\"id\":\"keep\",}]";
+    try tmp.dir.writeFile(io, .{ .sub_path = store_path, .data = broken });
+
+    try std.testing.expectError(Error.StoreUnreadable, load(io, arena, tmp.dir));
+    try std.testing.expectError(Error.StoreUnreadable, add(io, gpa, arena, tmp.dir, "second", root, "", 2));
+
+    const after = try tmp.dir.readFileAlloc(io, store_path, arena, .limited(max_store_bytes));
+    try std.testing.expectEqualStrings(broken, after);
 }

@@ -612,6 +612,24 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A `state/` file that exists but cannot be read back is no longer treated as
+  an empty one. `state/schedule.json`, `state/workspaces.json` and
+  `state/room_meta.json` are each read-modify-write: every mutation loads the
+  whole file, edits one record, and writes all of it back. Answering an I/O
+  error or unparseable JSON with an empty list therefore did not degrade the
+  next `clanker schedule add`, workspace `add`, or `clanker chat topic`/`pin`
+  — it made that command persist the empty list, silently deleting every
+  other entry and reporting success. Only a missing file now means empty;
+  anything else refuses the write and names the file to fix. `clanker
+  schedule list` likewise reports the unreadable store instead of printing an
+  empty schedule.
+- Room topics and pins no longer stop saving once `state/room_meta.json`
+  outgrows 64 KiB. The whole file was serialised into a fixed stack frame, so
+  past that every `clanker chat topic` and `clanker chat pin` failed
+  `TooLarge` for good; the buffer is now sized by the content. Pins are also
+  capped at 200 per room, oldest dropped first — they were the one chatroom
+  structure with no bound, inside the file every metadata write rewrites
+  whole.
 - A chatroom log larger than 1 MiB no longer reads as an empty room. The
   writer trims the log to `chatrooms.max_history` entries and sizes its own
   read to that window, but the readers kept a fixed 1 MiB cap;
