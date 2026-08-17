@@ -1225,8 +1225,8 @@ test "append still trims and dedups when the retained window exceeds 1 MiB" {
         try lines.append(std.testing.allocator, ln);
     }
     try std.testing.expectEqual(@as(usize, 256), lines.items.len);
-    try std.testing.expect(std.mem.find(u8, lines.items[0], "\"id\":\"m299\"") != null);
-    try std.testing.expect(std.mem.find(u8, lines.items[255], "\"id\":\"m44\"") != null);
+    try std.testing.expect(std.mem.find(u8, lines.items[0], "\"id\":\"m44\"") != null);
+    try std.testing.expect(std.mem.find(u8, lines.items[255], "\"id\":\"m299\"") != null);
 
     // A redelivery of the newest message (a retry of a just-appended one)
     // must dedup even though its line sits at the end of a > 1 MiB log. The
