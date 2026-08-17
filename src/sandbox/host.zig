@@ -3259,14 +3259,10 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
 
     // Lock on a separate file, not on the file being rewritten (a replace
     // invalidates a lock held on the replaced inode).
-    // Parent dirs first: the lock sits next to the target, so a first write
-    // into a missing directory (`sub/dir/schedule.json`) must not FileNotFound
-    // the lock file.
-    if (std.mem.findScalarLast(u8, full, '/')) |slash| {
-        if (slash > 0) base.createDirPath(sb.io, full[0..slash]) catch {};
-    }
-
-    const lock_path = std.fmt.allocPrint(sb.gpa, "{s}.ck_cas.lock", .{full}) catch return Err.invalid;
+    const lock_path = casLockPath(sb, base, full) catch |err| {
+        log.log(.warn, "[fs_write_if] could not prepare lock dir for '{s}': {s}", .{ sub_path, @errorName(err) });
+        return Err.invalid;
+    };
     defer sb.gpa.free(lock_path);
     // Through the retrying create, like appendLocked: the sidecar does not
     // exist before the first CAS on a path, so the first concurrent writers
@@ -3278,6 +3274,7 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
         return Err.invalid;
     };
     defer lock_file.close(sb.io);
+    writeLockHolder(sb, lock_file, full);
 
     // Read current contents (missing file -> empty).
     const current = base.readFileAlloc(sb.io, full, sb.gpa, .limited(sb.max_fs_bytes)) catch |err| switch (err) {
@@ -3301,12 +3298,103 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
         return Err.mismatch;
     }
 
+    // Parent dirs, only now that the write is going to happen: a first write
+    // into a missing directory (`sub/dir/schedule.json`) has to create it, but
+    // a mismatch above is the ordinary contention outcome and must not leave a
+    // directory tree behind for a file it never wrote.
+    if (std.mem.findScalarLast(u8, full, '/')) |slash| {
+        if (slash > 0) base.createDirPath(sb.io, full[0..slash]) catch {};
+    }
+
     // Write (replace) the file.
     base.writeFile(sb.io, .{ .sub_path = full, .data = data }) catch |err| switch (err) {
         error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
         else => return Err.invalid,
     };
     return Err.ok;
+}
+
+/// Where the compare-and-swap advisory lock for `full` lives: ADR 0020, one
+/// lock inode per target path under `{state_dir}/locks/` rather than a
+/// `<target>.ck_cas.lock` sidecar beside the target.
+///
+/// A lock file is never unlinked — unlinking one while it is held moves the
+/// lock onto an unreachable inode and lets a second writer lock a fresh file
+/// at the same name, so both believe they hold it (see
+/// `docs/reports/investigations/2026-08-16-ck-cas-lock-sidecars.md`). The file
+/// is therefore permanent by design, which is exactly why it must not sit in
+/// the source tree: every record ever CAS-written left one behind, and every
+/// improve worktree inherited a copy.
+///
+/// The name is a SHA-256 of the resolved target path, so distinct targets
+/// still serialise independently and two checkouts sharing one `state/` do not
+/// collide. `state` is a shared prefix (see `shared_prefixes`), so a worktree
+/// run reaches the checkout's lock directory through its `state` symlink and
+/// maps a given target to the same lock inode the checkout does — which is the
+/// property mutual exclusion actually needs.
+/// Width of the lock-holder record, including its trailing newline.
+const lock_holder_record_len = 256;
+
+/// Records who most recently took this lock, and when, inside the lock file.
+///
+/// This is diagnostics, never correctness. The lock is a `flock` (see
+/// `std.Io.Threaded` `have_flock`), and the kernel releases a `flock` when the
+/// last descriptor on it closes — on a clean return, on a panic, on SIGKILL,
+/// on the machine losing power. A `flock` is therefore never stale, no holder
+/// has to prove liveness, and nothing may ever refuse or steal a lock on the
+/// strength of what is written here. `src/util/run_lock.zig` is the opposite
+/// case and shows the difference: it is a *pid file*, which a dead owner does
+/// leave behind, so it reclaims one by probing the owner with signal 0 — a
+/// liveness question, still not a clock.
+///
+/// What the record answers is the question a hung write raises and a zero-byte
+/// name cannot: which run is inside `fs_write_if` on which file, and since
+/// when. It describes the *last acquisition*, not a live hold — releasing is a
+/// close, and a close cannot write, so the record outlives it. Whether the
+/// lock is held right now is only ever answered by trying to take it:
+/// `flock -n state/locks/<name>.lock true`.
+///
+/// Fixed width at offset 0 because `std.Io.File` exposes no truncate: a
+/// shorter record would leave the tail of a longer previous one behind, and
+/// the line would then read as a lie.
+fn writeLockHolder(sb: *Sandbox, file: std.Io.File, target: []const u8) void {
+    var buf: [lock_holder_record_len]u8 = @splat(' ');
+    buf[lock_holder_record_len - 1] = '\n';
+
+    const tool = if (sb.tool_self_name.len > 0) sb.tool_self_name else "host";
+    var head: [128]u8 = undefined;
+    const prefix = std.fmt.bufPrint(&head, "pid={d} acquired_ms={d} tool={s} target=", .{
+        @as(u32, @intCast(std.c.getpid())),
+        log.unixMilliseconds(),
+        tool[0..@min(tool.len, 32)],
+    }) catch return;
+
+    const room = lock_holder_record_len - 1;
+    const n = @min(prefix.len, room);
+    @memcpy(buf[0..n], prefix[0..n]);
+    // Keep the *tail* of the path when it does not fit: the basename is what
+    // identifies the target, and the leading checkout root is the same for
+    // every record in the directory.
+    const t = @min(target.len, room - n);
+    @memcpy(buf[n..][0..t], target[target.len - t ..]);
+
+    file.writePositionalAll(sb.io, &buf, 0) catch |err| {
+        log.log(.warn, "[fs_write_if] could not record the lock holder: {s}", .{@errorName(err)});
+    };
+}
+
+fn casLockPath(sb: *Sandbox, base: std.Io.Dir, full: []const u8) ![]u8 {
+    const state_dir = if (sb.state_dir.len > 0) sb.state_dir else "state";
+    const dir = try std.fmt.allocPrint(sb.gpa, "{s}/locks", .{std.mem.trimEnd(u8, state_dir, "/")});
+    defer sb.gpa.free(dir);
+    // ensureDir, not createDirPath: an isolated run's `state` is a symlink to
+    // the checkout's, and createDirPath alone reports NotDir on that.
+    try ensure_dir.ensureDir(base, sb.io, dir);
+
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update(full);
+    const name = std.fmt.bytesToHex(hasher.finalResult(), .lower);
+    return std.fmt.allocPrint(sb.gpa, "{s}/{s}.lock", .{ dir, name });
 }
 
 /// ck_getenv(name), alias of ck_env, kept for modules linked against the
@@ -6862,6 +6950,75 @@ test "fsWriteIfImpl creates missing parent directories" {
     const got = try tmp.dir.readFileAlloc(io, "sub/dir/schedule.json", gpa, .limited(1 << 20));
     defer gpa.free(got);
     try std.testing.expectEqualStrings("{\"entries\":[]}", got);
+}
+
+test "fsWriteIfImpl leaves no lock sidecar beside the target and no dirs on mismatch" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var sb = Sandbox{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = undefined,
+    };
+
+    // ADR 0020: the lock lives under state/locks/, so a CAS write must not
+    // drop a permanent `<target>.ck_cas.lock` into the tree it wrote into.
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, tmp.dir, "docs/note.md", "", "hello"));
+    try std.testing.expectError(
+        error.FileNotFound,
+        tmp.dir.statFile(io, "docs/note.md.ck_cas.lock", .{}),
+    );
+    const lock_dir = try tmp.dir.statFile(io, "state/locks", .{});
+    try std.testing.expectEqual(std.Io.File.Kind.directory, lock_dir.kind);
+
+    // One lock inode per target path, and the name carries no part of the
+    // target: a reader must not be able to reconstruct `docs/note.md` from it.
+    var locks = try tmp.dir.openDir(io, "state/locks", .{ .iterate = true });
+    defer locks.close(io);
+    var it = locks.iterate();
+    var lock_count: usize = 0;
+    while (try it.next(io)) |entry| {
+        lock_count += 1;
+        try std.testing.expect(std.mem.endsWith(u8, entry.name, ".lock"));
+        try std.testing.expect(std.mem.indexOf(u8, entry.name, "note") == null);
+    }
+    try std.testing.expectEqual(@as(usize, 1), lock_count);
+
+    // The lock file carries who took it and when, so a write that hangs is
+    // attributable. It is fixed width, so a later shorter record cannot leave
+    // the tail of an earlier longer one behind.
+    var it2 = locks.iterate();
+    const entry = (try it2.next(io)).?;
+    const rec = try locks.readFileAlloc(io, entry.name, gpa, .limited(1 << 12));
+    defer gpa.free(rec);
+    try std.testing.expectEqual(@as(usize, lock_holder_record_len), rec.len);
+    try std.testing.expectEqual(@as(u8, '\n'), rec[rec.len - 1]);
+    try std.testing.expect(std.mem.startsWith(u8, rec, "pid="));
+    try std.testing.expect(std.mem.indexOf(u8, rec, " acquired_ms=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rec, "target=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rec, "docs/note.md") != null);
+
+    // A mismatch is the ordinary contention outcome. It used to run
+    // createDirPath before the compare, so a refused write still materialised
+    // a directory tree for a file that never existed.
+    const stale = "0" ** 64;
+    try std.testing.expectEqual(
+        Err.mismatch,
+        fsWriteIfImpl(&sb, tmp.dir, "never/written/here.md", stale, "nope"),
+    );
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "never", .{}));
 }
 
 test "a tool may run only the commands its manifest names" {

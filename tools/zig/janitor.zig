@@ -17,12 +17,28 @@ const graph_listing = @import("graph_listing.zig");
 const keep_runs: usize = 200;
 const keep_logs: usize = 20;
 
+/// How long a compare-and-swap lock file is kept after its last acquisition.
+///
+/// Not a liveness timeout: `ck_fs_write_if` locks with `flock`, and the kernel
+/// releases an `flock` when the holding descriptor closes -- on a crash, on
+/// SIGKILL, on power loss -- so a lock is never stale and never needs
+/// reclaiming. This is a retention window for the lock *file*, which is a
+/// different thing. The file is named for a hash of its target path, so a
+/// target that recurs (a repo document) keeps re-acquiring the same lock and
+/// its record stays fresh, while an ephemeral target (a test's tmp tree, an
+/// improve staging copy) leaves a lock no later write will ever reuse.
+///
+/// Twelve hours is far above the cost of the operation it guards. A CAS write
+/// is a read, a hash and a write; a record last acquired half a day ago is not
+/// one a live writer is sitting inside.
+const keep_lock_ms: i64 = 12 * 60 * 60 * 1000;
+
 const Candidate = struct {
     path: []const u8,
     bytes: u64,
     kind: Kind,
 
-    const Kind = enum { staging, run, improve_log };
+    const Kind = enum { staging, run, improve_log, cas_lock };
 };
 
 fn isImpId(name: []const u8) bool {

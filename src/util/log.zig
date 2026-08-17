@@ -63,7 +63,7 @@ pub fn getContext() []const u8 {
     return context;
 }
 
-fn unixMilliseconds() i128 {
+pub fn unixMilliseconds() i128 {
     var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
     _ = std.c.clock_gettime(.REALTIME, &ts);
     return @as(i128, ts.sec) * std.time.ms_per_s + @divTrunc(@as(i128, ts.nsec), std.time.ns_per_ms);

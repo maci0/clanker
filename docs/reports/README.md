@@ -139,6 +139,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [ck_cas.lock sidecars still accumulating in the source tree](investigations/2026-08-17-ck-cas-lock-sidecars-still-accumulating.md) — Investigating
+
 - [GET /api/events logs as ERROR status=0 and counts as an http error](investigations/2026-08-17-sse-requests-logged-as-errors.md) — Resolved
 
 - [TUI Shift+Enter logs vaxis_parser unhandled ss3 instead of newline](investigations/2026-08-17-tui-shift-enter-ss3-unhandled.md) — Resolved
