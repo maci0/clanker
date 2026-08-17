@@ -98,6 +98,7 @@ and Implementation lists checkable file-level phases.
 | [0038](0038-http-endpoints-for-the-record-stores.md) | HTTP endpoints for the record stores | Shipped |  |
 | [0039](0039-repl-block-level-markdown-tables-block-quotes-nested-lists.md) | REPL block-level markdown: tables, block quotes, nested lists | Shipped |  |
 | [0040](0040-repl-multi-line-input-shift-enter-newline-enter-submits.md) | REPL multi-line input: Shift+Enter newline, Enter submits | Shipped |  |
+| [0041](0041-repl-image-multimodal-input-attach-and-drag-drop-to-image-in.md) | REPL image/multimodal input: /attach and drag-drop to image_in | Draft |  |
 <!-- inventory:prd:end -->
 
 ## Recommended build order (Drafts)

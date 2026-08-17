@@ -81,6 +81,7 @@ its current text.
 ## Inventory
 
 <!-- inventory:adr:start -->
+- [ADR 0023 — REPL image/multimodal input via /attach and drag-drop to image_in](0023-repl-image-multimodal-input-via-attach-and-drag-drop-to.md) — Accepted
 - [ADR 0022 — REPL multi-line input via Shift+Enter (Enter still submits)](0022-repl-multi-line-input-via-shift-enter-enter-still-submits.md) — Accepted
 - [ADR 0021 — REPL block-level markdown renders in-place in repl.zig](0021-repl-block-level-markdown-renders-in-place-in-repl-zig.md) — Accepted
 - [ADR 0020 — A workspace is a multi-root project whose board is its #general room](0020-a-workspace-is-a-multi-root-project-whose-board-is-its.md) — Accepted
