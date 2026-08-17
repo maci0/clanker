@@ -105,8 +105,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (std.ascii.startsWithIgnoreCase(title_raw, "[bug]")) {
             break :blk title_raw;
         }
-        const n = std.fmt.bufPrint(&title_buf, "[BUG] {s}", .{title_raw}) catch title_raw;
-        break :blk n;
+        const prefix_len: usize = 5; // "[BUG] "
+        const max_title = title_buf.len - prefix_len;
+        const t = if (title_raw.len > max_title) title_raw[0..max_title] else title_raw;
+        break :blk std.fmt.bufPrint(&title_buf, "[BUG] {s}", .{t}) catch title_raw;
     };
 
     // Build the kanban_add args as JSON
