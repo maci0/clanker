@@ -22,7 +22,6 @@ const log = @import("../util/log.zig");
 const json_util = @import("../util/json.zig");
 const tool_out = @import("../util/tool_out.zig");
 const utf8 = @import("../util/utf8.zig");
-const mock_server = @import("../llm/mock_server.zig");
 const advisor = @import("advisor.zig");
 const prune = @import("prune.zig");
 const spill_mod = @import("spill.zig");
@@ -4314,6 +4313,9 @@ test "nextFallbackProvider skips unknown names and already-tried ones" {
 }
 
 test "answerAsParent answers through the parent's provider" {
+    // Test-only mock, imported locally like client.zig does: nothing in the
+    // production build should carry the mock LLM server in its import surface.
+    const mock_server = @import("../llm/mock_server.zig");
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
     defer threaded.deinit();

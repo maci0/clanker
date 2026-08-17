@@ -2058,6 +2058,12 @@ fn commandAccepts(cmd: Command, flag: Flag) bool {
 }
 
 pub fn run(init: std.process.Init, opts: Options) !void {
+    // chatrooms.fanOut must not import the sandbox runtime: the sandbox host
+    // imports chatrooms for the `ck_chat` bridge, so that would close the
+    // peers <-> sandbox import cycle. Every message-sending path (serve, the
+    // chat verbs, repl, mcp, acp) funnels through here, so inject the runner
+    // once, before any of them can fire.
+    chatrooms.peers_runner = runPeersTool;
     switch (opts.command) {
         // Requested output (--help, --version), not an error: stdout, exit 0.
         .help => {
@@ -4845,6 +4851,29 @@ fn toolJson(
     };
     defer mod.deinit();
     const raw = try mod.executeTool(if (input.len > 0) input else "{}");
+    defer gpa.free(raw);
+    return arena.dupe(u8, raw);
+}
+
+/// Runs the sandboxed `peers` tool with `input` (a `chat_fanout` request body)
+/// and returns its raw JSON output (arena-owned). Injected into
+/// `chatrooms.peers_runner` at startup: chatrooms needs the sandboxed fan-out
+/// but must not import the sandbox runtime (the host imports chatrooms for the
+/// `ck_chat` bridge, so that would close the peers <-> sandbox cycle), so the
+/// entry point that owns the runtime supplies the call. Mirrors what
+/// `chatrooms.fanOut` used to do inline: `peers` tool, no llm context.
+fn runPeersTool(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    cfg: *const config.Config,
+    input: []const u8,
+) anyerror![]u8 {
+    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
+    const mod = try runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, "peers", null);
+    defer mod.deinit();
+    const raw = try mod.executeTool(input);
     defer gpa.free(raw);
     return arena.dupe(u8, raw);
 }

@@ -22,8 +22,6 @@ const atomic_write = @import("../util/atomic_write.zig");
 const file_lock = @import("../util/file_lock.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
 const utf8 = @import("../util/utf8.zig");
-const registry = @import("../toolhost/registry.zig");
-const runtime = @import("../sandbox/runtime.zig");
 
 /// Guards the read-modify-write in `append`. Separate from the log so that
 /// trimming, which replaces the log, cannot invalidate a held lock.
@@ -888,6 +886,26 @@ const FanOutReply = struct {
     results: []const FanOutResult = &.{},
 };
 
+/// Runs the sandboxed `peers` tool with a `chat_fanout` request body and
+/// returns its raw JSON output (arena-owned).
+///
+/// `fanOut` must not import `sandbox/runtime.zig` to get this: the sandbox
+/// host imports this module for the `ck_chat` bridge, so a top-level import
+/// here would close the `peers <-> sandbox` import cycle. The entry point
+/// that owns the runtime (`cli.zig`) injects the runner once at startup,
+/// before any message can be sent; `null` means "no runner injected, the
+/// message stays local".
+pub const PeersRunner = *const fn (
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    cfg: *const config_mod.Config,
+    input: []const u8,
+) anyerror![]u8;
+
+pub var peers_runner: ?PeersRunner = null;
+
 /// The `chat_fanout` request body for the `peers` tool.
 fn encodeFanOut(enc: *std.Io.Writer.Allocating, msg: Message, skip: []const []const u8) !void {
     var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };
@@ -940,20 +958,17 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, environ_
     };
     const input = enc.written();
 
-    var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
-        log.log(.error_, "chat fan-out: tool registry load failed: {s}", .{@errorName(err)});
+    const runner = peers_runner orelse {
+        // Only cli.zig injects the runner (at startup). A miss means no
+        // entry point ever did, and the message stays local — logged as an
+        // error because a deployed mesh cannot see a silent non-delivery.
+        log.log(.error_, "chat fan-out: 'peers' tool runner not injected; message stays local", .{});
         return;
     };
-    const mod = runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, "peers", null) catch |err| {
-        log.log(.error_, "chat fan-out: 'peers' tool load failed: {s}", .{@errorName(err)});
-        return;
-    };
-    defer mod.deinit();
-    const raw = mod.executeTool(input) catch |err| {
+    const raw = runner(io, gpa, arena, environ_map, cfg, input) catch |err| {
         log.log(.error_, "chat fan-out: 'peers' tool failed: {s}", .{@errorName(err)});
         return;
     };
-    defer gpa.free(raw);
 
     const reply = std.json.parseFromSliceLeaky(FanOutReply, arena, raw, .{ .ignore_unknown_fields = true }) catch {
         log.log(.error_, "chat fan-out: the tool answered something that is not JSON", .{});
