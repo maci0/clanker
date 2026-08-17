@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [A status change keeps the old text of a multi-line TL;DR bullet](bugs/2026-08-17-status-truncates-a-multi-line-tldr-bullet.md) — Open
+
 - [clanker commit --yes auto-applies the degraded fallback plan](bugs/2026-08-17-commit-yes-applies-a-degraded-fallback-plan.md) — Resolved
 
 - [The improve ledger is written to a worktree copy that is never merged back](bugs/2026-08-17-improve-ledger-written-to-a-worktree-copy.md) — Resolved
