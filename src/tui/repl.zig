@@ -3484,7 +3484,11 @@ const Model = struct {
     fn jumpToCurrentHitLocked(self: *Model) void {
         if (self.search_hits.items.len == 0) return;
         const hit = self.search_hits.items[@min(self.search_idx, self.search_hits.items.len - 1)];
-        self.view_end = searchViewEnd(hit, self.lines.items.len, self.availRows());
+        // Inline rather than `scrollBounds()`: the caller already holds the
+        // bridge lock and the mutex is not reentrant.
+        const width = if (self.last_text_width > 0) self.last_text_width else 80;
+        const floor = topWindowEnd(self.lines.items, self.folds.items, self.availRows(), width);
+        self.view_end = searchViewEnd(hit, self.lines.items.len, self.availRows(), floor);
     }
 
     /// Down/Up (and Ctrl-N/Ctrl-P) step through hits, wrapping at both ends
@@ -3903,15 +3907,18 @@ const Model = struct {
                 // (`scrollUpEnd` and friends, below `tailWindow`); this just
                 // feeds it the current anchor and last-drawn height.
                 if (key.matches(vaxis.Key.page_up, .{})) {
-                    self.view_end = scrollUpEnd(self.view_end, self.lineCount(), self.availRows());
+                    const b = self.scrollBounds();
+                    self.view_end = scrollUpEnd(self.view_end, b.count, self.availRows(), b.floor);
                     return ctx.consumeAndRedraw();
                 }
                 if (key.matches(vaxis.Key.page_down, .{})) {
-                    self.view_end = scrollDownEnd(self.view_end, self.lineCount(), self.availRows());
+                    const b = self.scrollBounds();
+                    self.view_end = scrollDownEnd(self.view_end, b.count, self.availRows(), b.floor);
                     return ctx.consumeAndRedraw();
                 }
                 if (self.view_end != null and key.matches(vaxis.Key.home, .{})) {
-                    self.view_end = scrollHomeEnd(self.lineCount(), self.availRows());
+                    const b = self.scrollBounds();
+                    self.view_end = scrollHomeEnd(b.count, b.floor);
                     return ctx.consumeAndRedraw();
                 }
                 if (self.view_end != null and (key.matches(vaxis.Key.end, .{}) or key.matches(vaxis.Key.escape, .{}))) {
@@ -4140,10 +4147,11 @@ const Model = struct {
                             ctx.redraw = true;
                         return;
                     }
+                    const b = self.scrollBounds();
                     self.view_end = scrollWheelEnd(
                         self.view_end,
-                        self.lineCount(),
-                        self.availRows(),
+                        b.count,
+                        b.floor,
                         m.button == .wheel_up,
                     );
                     ctx.redraw = true;
@@ -4537,6 +4545,20 @@ const Model = struct {
         return self.lines.items.len;
     }
 
+    /// Line count plus the row-aware scroll floor (`topWindowEnd`) for the
+    /// key/wheel handlers, read together under the bridge lock so both
+    /// describe the same transcript. Uses the width of the last draw — the
+    /// wrap the reader is actually looking at.
+    fn scrollBounds(self: *Model) struct { count: usize, floor: usize } {
+        bridge_mutex.lockUncancelable(bridge_io);
+        defer bridge_mutex.unlock(bridge_io);
+        const width = if (self.last_text_width > 0) self.last_text_width else 80;
+        return .{
+            .count = self.lines.items.len,
+            .floor = topWindowEnd(self.lines.items, self.folds.items, self.availRows(), width),
+        };
+    }
+
     /// The transcript height as of the last draw, what one "page" means.
     /// Zero before the first frame, which the scroll math treats as a
     /// one-line page.
@@ -4676,8 +4698,22 @@ const Model = struct {
         // every frame, a resize changes `avail_rows`, and once everything
         // fits on screen the anchor dissolves back to tail-following.
         const line_count = self.lines.items.len;
-        if (self.view_end != null and line_count <= avail_rows) self.view_end = null;
-        if (self.view_end) |ve| self.view_end = clampViewEnd(ve, line_count, avail_rows);
+        // Overflow, the scrollbar, and the scroll bounds are all row
+        // questions, so they are answered by the row-aware walk
+        // (`topWindowEnd`), not by comparing line counts against row
+        // counts. The bar's column narrows the wrap width, so overflow is
+        // judged at full width first and the floor at the width the
+        // transcript actually wraps to.
+        const show_bar = topWindowEnd(self.lines.items, self.folds.items, avail_rows, max.width) < line_count;
+        const text_width: u16 = if (show_bar) max.width -| 1 else max.width;
+        // Recorded for the paths that need "the width of the last draw":
+        // the key/wheel handlers' `scrollBounds` and `maybeFoldReply`'s
+        // foldability judgement (which had been stuck on its 80-column
+        // fallback — this field was never assigned anywhere).
+        self.last_text_width = text_width;
+        const scroll_floor = topWindowEnd(self.lines.items, self.folds.items, avail_rows, text_width);
+        if (self.view_end != null and scroll_floor >= line_count) self.view_end = null;
+        if (self.view_end) |ve| self.view_end = clampViewEnd(ve, line_count, scroll_floor);
         const view_end = self.view_end orelse line_count;
 
         const spinner_glyphs = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
@@ -4798,8 +4834,6 @@ const Model = struct {
 
         // The scrollbar claims the rightmost column whenever the transcript
         // is taller than the region, so text wraps one column short of it.
-        const show_bar = line_count > avail_rows;
-        const text_width: u16 = if (show_bar) max.width -| 1 else max.width;
 
         var row: u16 = top;
         if (line_count == 0 and !streaming) {
@@ -5597,10 +5631,10 @@ fn findHits(lines: []const Line, needle: []const u8, gpa: std.mem.Allocator, out
 /// hard against the bottom edge where its surroundings are invisible.
 /// Clamped exactly like every other anchor, so a hit near either end of the
 /// transcript still yields a full window.
-fn searchViewEnd(hit: usize, line_count: usize, avail_rows: u16) ?usize {
-    if (line_count <= avail_rows) return null; // everything already visible
+fn searchViewEnd(hit: usize, line_count: usize, avail_rows: u16, floor: usize) ?usize {
+    if (floor >= line_count) return null; // everything already visible
     const half: usize = @max(1, avail_rows / 2);
-    return clampViewEnd(hit + half, line_count, avail_rows);
+    return clampViewEnd(hit + half, line_count, floor);
 }
 
 test "lineContains is a case-insensitive substring, not a subsequence" {
@@ -5645,15 +5679,15 @@ test "findHits reports matching line indices oldest first" {
 test "searchViewEnd centres a hit and clamps at both ends" {
     // 200 lines, 24 visible: a hit in the middle lands with ~half a screen
     // of context below it.
-    try std.testing.expectEqual(@as(?usize, 112), searchViewEnd(100, 200, 24));
+    try std.testing.expectEqual(@as(?usize, 112), searchViewEnd(100, 200, 24, 24));
     // A hit near the top still fills a whole window rather than showing
     // blank rows above line 0.
-    try std.testing.expectEqual(@as(?usize, 24), searchViewEnd(0, 200, 24));
-    try std.testing.expectEqual(@as(?usize, 24), searchViewEnd(5, 200, 24));
+    try std.testing.expectEqual(@as(?usize, 24), searchViewEnd(0, 200, 24, 24));
+    try std.testing.expectEqual(@as(?usize, 24), searchViewEnd(5, 200, 24, 24));
     // A hit near the bottom stops at the end of the transcript.
-    try std.testing.expectEqual(@as(?usize, 200), searchViewEnd(199, 200, 24));
-    // Nothing to scroll: stay following the tail.
-    try std.testing.expectEqual(@as(?usize, null), searchViewEnd(3, 10, 24));
+    try std.testing.expectEqual(@as(?usize, 200), searchViewEnd(199, 200, 24, 24));
+    // Nothing to scroll (floor at the line count): stay following the tail.
+    try std.testing.expectEqual(@as(?usize, null), searchViewEnd(3, 10, 24, 10));
 }
 
 /// One PgUp/PgDn stride: a screenful less one line of overlap so the reader
@@ -5662,30 +5696,71 @@ fn scrollPage(avail_rows: u16) usize {
     return if (avail_rows > 1) avail_rows - 1 else 1;
 }
 
+/// The lowest anchor worth scrolling to: the largest `view_end` whose
+/// window still reaches line 0. Rows are counted forward from the top,
+/// wrap-aware and fold-aware exactly as `tailWindow` counts them (a
+/// collapsed or animating fold is an atomic block, a fully open one is
+/// per-line plus its header row), until the screen is full. Returns
+/// `lines.len` when the whole transcript fits — nothing to scroll then.
+///
+/// This is what the scroll guards and `clampViewEnd`'s floor must use.
+/// They used to compare the *line* count against the screen's *row*
+/// count, which are only the same thing when nothing wraps and no fold
+/// exists; an expanded fold adds a header row (and its wraps), so a
+/// transcript could overflow the screen in rows while the guards saw it
+/// fitting in lines and refused to scroll at all — with the anchor floor
+/// stranded mid-fold when they did.
+fn topWindowEnd(lines: []const Line, folds: []const Fold, avail_rows: u16, width: u16) usize {
+    var rows: usize = 0;
+    var i: usize = 0;
+    while (i < lines.len) {
+        var line_rows: usize = lineRows(lines[i].text, width);
+        var next: usize = i + 1;
+        for (folds) |f| {
+            if (i >= f.start and i < f.start + f.count) {
+                const shown = foldShownLines(f);
+                if (shown >= f.count) {
+                    if (i == f.start) line_rows += 1;
+                } else {
+                    line_rows = 1;
+                    for (lines[f.start .. f.start + shown]) |l| line_rows += lineRows(l.text, width);
+                    next = f.start + f.count;
+                }
+                break;
+            }
+        }
+        if (rows + line_rows > avail_rows) return @max(1, i);
+        rows += line_rows;
+        i = next;
+    }
+    return lines.len;
+}
+
 /// Clamps an anchored window end to what can actually be shown: no earlier
-/// than one full screen from the top (the window always fills from line 0)
-/// and no later than the transcript's end.
-fn clampViewEnd(view_end: usize, line_count: usize, avail_rows: u16) usize {
-    const min_end = @min(line_count, avail_rows);
+/// than `floor` (`topWindowEnd` — below it the window gains no line) and
+/// no later than the transcript's end.
+fn clampViewEnd(view_end: usize, line_count: usize, floor: usize) usize {
+    const min_end = @min(line_count, floor);
     return @max(min_end, @min(view_end, line_count));
 }
 
 /// PgUp: one page up from `cur` (null = following the tail). Returns null:
-/// stay at the tail, when the whole transcript already fits on screen, so
-/// PgUp in a short session is a no-op rather than a stuck anchor.
-fn scrollUpEnd(cur: ?usize, line_count: usize, avail_rows: u16) ?usize {
-    if (line_count <= avail_rows) return null;
+/// stay at the tail, when the whole transcript already fits on screen
+/// (`floor` at the line count), so PgUp in a short session is a no-op
+/// rather than a stuck anchor.
+fn scrollUpEnd(cur: ?usize, line_count: usize, avail_rows: u16, floor: usize) ?usize {
+    if (floor >= line_count) return null;
     const end = cur orelse line_count;
-    return clampViewEnd(end -| scrollPage(avail_rows), line_count, avail_rows);
+    return clampViewEnd(end -| scrollPage(avail_rows), line_count, floor);
 }
 
 /// PgDn: one page down; reaching (or crossing) the tail dissolves the
 /// anchor back to tail-following rather than pinning at the last line.
-fn scrollDownEnd(cur: ?usize, line_count: usize, avail_rows: u16) ?usize {
+fn scrollDownEnd(cur: ?usize, line_count: usize, avail_rows: u16, floor: usize) ?usize {
     const end = cur orelse return null;
     const new_end = end + scrollPage(avail_rows);
     if (new_end >= line_count) return null;
-    return clampViewEnd(new_end, line_count, avail_rows);
+    return clampViewEnd(new_end, line_count, floor);
 }
 
 /// Lines one wheel notch moves. Three is the de-facto terminal default, and
@@ -5697,15 +5772,15 @@ const wheel_lines: usize = 3;
 /// `scrollDownEnd` — null means "follow the tail" — so the wheel and the
 /// paging keys leave `view_end` in states that are indistinguishable
 /// afterwards, and a reader can mix the two freely.
-fn scrollWheelEnd(cur: ?usize, line_count: usize, avail_rows: u16, up: bool) ?usize {
-    if (line_count <= avail_rows) return null;
+fn scrollWheelEnd(cur: ?usize, line_count: usize, floor: usize, up: bool) ?usize {
+    if (floor >= line_count) return null;
     const end = cur orelse line_count;
-    if (up) return clampViewEnd(end -| wheel_lines, line_count, avail_rows);
+    if (up) return clampViewEnd(end -| wheel_lines, line_count, floor);
     const new_end = end + wheel_lines;
     // Reaching the tail dissolves the anchor rather than pinning just short
     // of it, so scrolling down to the bottom resumes following new output.
     if (new_end >= line_count) return null;
-    return clampViewEnd(new_end, line_count, avail_rows);
+    return clampViewEnd(new_end, line_count, floor);
 }
 
 test "scrollWheelEnd nudges by a few lines and shares the paging contract" {
@@ -5731,11 +5806,11 @@ test "scrollWheelEnd nudges by a few lines and shares the paging contract" {
     try std.testing.expectEqual(@as(?usize, 24), end);
 }
 
-/// Home: jump to the very top (window [0, avail_rows)); null when there is
-/// no history above the first screen.
-fn scrollHomeEnd(line_count: usize, avail_rows: u16) ?usize {
-    if (line_count <= avail_rows) return null;
-    return avail_rows;
+/// Home: jump to the very top (the `topWindowEnd` floor, whose window
+/// reaches line 0); null when there is no history above the first screen.
+fn scrollHomeEnd(line_count: usize, floor: usize) ?usize {
+    if (floor >= line_count) return null;
+    return floor;
 }
 
 test "scrollPage is a screenful minus one line of overlap, never zero" {
@@ -5746,23 +5821,24 @@ test "scrollPage is a screenful minus one line of overlap, never zero" {
 }
 
 test "scrollUpEnd pages up and clamps at the top" {
-    // 100 lines, 24 visible: the first PgUp anchors a page above the tail.
-    try std.testing.expectEqual(@as(?usize, 77), scrollUpEnd(null, 100, 24));
-    // Walking further up clamps so the window still fills from line 0.
+    // 100 one-row lines, 24 visible (floor 24): the first PgUp anchors a
+    // page above the tail.
+    try std.testing.expectEqual(@as(?usize, 77), scrollUpEnd(null, 100, 24, 24));
+    // Walking further up clamps at the floor, whose window reaches line 0.
     var end: ?usize = null;
-    for (0..10) |_| end = scrollUpEnd(end, 100, 24);
+    for (0..10) |_| end = scrollUpEnd(end, 100, 24, 24);
     try std.testing.expectEqual(@as(?usize, 24), end);
     // Nothing above the first screen: stays following the tail.
-    try std.testing.expectEqual(@as(?usize, null), scrollUpEnd(null, 10, 24));
-    try std.testing.expectEqual(@as(?usize, null), scrollUpEnd(null, 24, 24));
+    try std.testing.expectEqual(@as(?usize, null), scrollUpEnd(null, 10, 24, 10));
+    try std.testing.expectEqual(@as(?usize, null), scrollUpEnd(null, 24, 24, 24));
 }
 
 test "scrollDownEnd pages down and dissolves at the tail" {
-    try std.testing.expectEqual(@as(?usize, 47), scrollDownEnd(24, 100, 24));
+    try std.testing.expectEqual(@as(?usize, 47), scrollDownEnd(24, 100, 24, 24));
     // A page that reaches past the last line returns to tail-following.
-    try std.testing.expectEqual(@as(?usize, null), scrollDownEnd(90, 100, 24));
+    try std.testing.expectEqual(@as(?usize, null), scrollDownEnd(90, 100, 24, 24));
     // Already at the tail (null anchor): PgDn stays there.
-    try std.testing.expectEqual(@as(?usize, null), scrollDownEnd(null, 100, 24));
+    try std.testing.expectEqual(@as(?usize, null), scrollDownEnd(null, 100, 24, 24));
 }
 
 test "scrollHomeEnd jumps to the top only when there is history above" {
@@ -5986,6 +6062,88 @@ test "tailWindow clamps a fold that straddles the anchored view_end" {
     const win_c = tailWindow(lines[0..3], &collapsed, 3, 1, 80);
     try std.testing.expectEqual(@as(usize, 1), win_c.start);
     try std.testing.expectEqual(@as(u16, 1), win_c.used_rows);
+}
+
+test "an expanded fold does not disable scrolling on a tall terminal" {
+    // Regression: every scroll guard compared the transcript's *line*
+    // count against the screen's *row* count. An expanded fold draws one
+    // header row on top of its lines, and wrapped lines draw several, so
+    // a transcript can overflow the screen in rows while staying under it
+    // in lines — the guards then answered "everything fits" and refused
+    // to scroll at all, which is how an expanded reply froze the view.
+    //
+    // 13 lines on a 13-row screen, but the open fold's header makes it
+    // 14 drawn rows: scrolling must be possible.
+    const lines = [_]Line{
+        .{ .text = "clanker> ask" },
+        .{ .text = "note" },
+        .{ .text = "L1" },
+        .{ .text = "L2" },
+        .{ .text = "L3" },
+        .{ .text = "L4" },
+        .{ .text = "L5" },
+        .{ .text = "L6" },
+        .{ .text = "L7" },
+        .{ .text = "L8" },
+        .{ .text = "L9" },
+        .{ .text = "L10" },
+        .{ .text = "receipt" },
+    };
+    const open = [_]Fold{.{ .start = 2, .count = 10, .expanded = true, .anim = 1 }};
+    const floor = topWindowEnd(&lines, &open, 13, 80);
+    // The largest anchor whose window still reaches line 0: 12 of the 13
+    // lines fit beside the header row.
+    try std.testing.expectEqual(@as(usize, 12), floor);
+    // One wheel notch up from the tail moves — it must not return null.
+    try std.testing.expect(scrollWheelEnd(null, lines.len, floor, true) != null);
+    // And the floor anchor's window reaches the very first line.
+    const win = tailWindow(lines[0..floor], &open, floor, 13, 80);
+    try std.testing.expectEqual(@as(usize, 0), win.start);
+
+    // Wholly fits (14 rows on a 14-row screen): floor is the line count
+    // and scrolling stays disabled.
+    try std.testing.expectEqual(@as(usize, 13), topWindowEnd(&lines, &open, 14, 80));
+    try std.testing.expectEqual(@as(?usize, null), scrollWheelEnd(null, lines.len, 13, true));
+}
+
+test "topWindowEnd is wrap- and fold-aware" {
+    // Plain one-row lines: same answer the old line-unit floor gave.
+    const plain = [_]Line{
+        .{ .text = "a" },
+        .{ .text = "b" },
+        .{ .text = "c" },
+        .{ .text = "d" },
+    };
+    try std.testing.expectEqual(@as(usize, 2), topWindowEnd(&plain, &[_]Fold{}, 2, 80));
+    try std.testing.expectEqual(@as(usize, 4), topWindowEnd(&plain, &[_]Fold{}, 9, 80));
+
+    // A wrapped line counts its rows: 25 cells at width 10 is 3 rows, so
+    // only it and one more line fit in 4 rows.
+    const wrapped = [_]Line{
+        .{ .text = "aaaaaaaaaaaaaaaaaaaaaaaaa" },
+        .{ .text = "b" },
+        .{ .text = "c" },
+        .{ .text = "d" },
+    };
+    try std.testing.expectEqual(@as(usize, 2), topWindowEnd(&wrapped, &[_]Fold{}, 4, 10));
+
+    // A collapsed fold is one header row and is jumped as a block: the
+    // floor never lands inside it.
+    const with_fold = [_]Line{
+        .{ .text = "a" },
+        .{ .text = "f1" },
+        .{ .text = "f2" },
+        .{ .text = "f3" },
+        .{ .text = "b" },
+    };
+    const collapsed = [_]Fold{.{ .start = 1, .count = 3, .expanded = false, .anim = 0 }};
+    // 3 rows: line a + header + line b — the whole list fits.
+    try std.testing.expectEqual(@as(usize, 5), topWindowEnd(&with_fold, &collapsed, 3, 80));
+    // 2 rows: line a + header fit; b does not. Floor is the block end.
+    try std.testing.expectEqual(@as(usize, 4), topWindowEnd(&with_fold, &collapsed, 2, 80));
+    // 1 row: the block does not fit; floor stops at its start but is
+    // never less than one line.
+    try std.testing.expectEqual(@as(usize, 1), topWindowEnd(&with_fold, &collapsed, 1, 80));
 }
 
 test "tailWindow scrolls line-by-line through a fully expanded fold" {
