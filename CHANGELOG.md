@@ -37,6 +37,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- The TUI composer previews slash commands as they are typed: a draft
+  starting with `/` lists the matching commands above the input box —
+  spelling, argument hint, and help — so `/go` shows `/goal` and what it
+  does before Tab or Enter is pressed. A bare `/` opens the discovery
+  list (first commands plus a pointer at the Ctrl-P palette), and once a
+  command's arguments are being typed its row stays on screen as a
+  signature hint. Preview rows are reserved from the transcript, never
+  drawn over it.
 - Deadlines on the agent's own model call, so a provider that accepts the
   connection and then goes quiet fails the turn instead of hanging the run
   forever. `agent.request_timeout_ms` bounds one non-streaming completion

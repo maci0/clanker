@@ -165,6 +165,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [pty e2e text assertions race vaxis's cell diff](investigations/2026-08-17-pty-text-assertions-race-the-cell-diff.md) — Resolved
+
 - [The two-spellings CAS-lock test failed one run in three with lock_count 2](investigations/2026-08-17-cas-lock-two-spellings-test-flaked-once.md) — Resolved
 
 - [Record search matches one exact substring, so multi-word queries miss existing records](investigations/2026-08-17-missing-clanker-tool-record-search-has-no-multi-word-semantics.md) — Investigating

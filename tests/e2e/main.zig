@@ -13,4 +13,6 @@ comptime {
     _ = @import("live_sse_test.zig");
     _ = @import("commit_apply_test.zig");
     _ = @import("pty_resize_test.zig");
+    _ = @import("pty.zig");
+    _ = @import("pty_preview_test.zig");
 }

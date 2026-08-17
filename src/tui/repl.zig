@@ -1650,7 +1650,8 @@ const keys_help =
     \\Keys:
     \\  Shift-Enter       insert a line break; the box grows one row per
     \\                    line (keypad Enter does the same)
-    \\  Tab               complete a /command
+    \\  Tab               complete a /command (typing / already previews
+    \\                    the matches above the box, with their help)
     \\  Ctrl-P            command palette (matches names and descriptions)
     \\  Ctrl-R            search transcript; Up/Down step through matches
     \\                    Enter stays on a match; Esc returns to the tail
@@ -1785,6 +1786,44 @@ fn longestCommonPrefix(matches: []const SpellingMatch) []const u8 {
         prefix = prefix[0..i];
     }
     return prefix;
+}
+
+/// How many rows the inline command preview may claim above the composer.
+/// The panel is a glance at what the draft could become, not a browser —
+/// the full list lives behind Ctrl-P — so past the cap the last row turns
+/// into a "more" pointer instead of the panel growing.
+const max_preview_rows = 8;
+
+/// The inline command preview: which registry entries the composer's current
+/// draft could become, recomputed from the draft text every frame so `/go`
+/// shows `/goal` and its help before Tab or Enter is pressed. Two modes:
+/// a bare `/prefix` lists every command with a spelling starting with it,
+/// deduplicated by entry (`/q` matches both `/quit` and its `/q` alias, one
+/// row), and `/command <args...>` keeps that one command's row on screen as
+/// a signature hint while its arguments are being typed. A draft holding a
+/// line break is a task in the making, never a command (`submit` would not
+/// dispatch it), so it previews nothing.
+fn commandPreviewSpecs(input: []const u8, out: *[command_registry.len]*const CommandSpec) []const *const CommandSpec {
+    if (std.mem.find(u8, input, newline_marker) != null) return out[0..0];
+    const trimmed = std.mem.trimStart(u8, input, " \t");
+    if (!looksLikeSlashCommand(trimmed)) return out[0..0];
+    if (std.mem.findScalar(u8, trimmed, ' ')) |sp| {
+        const pc = parseCommand(trimmed[0..sp]) orelse return out[0..0];
+        out[0] = pc.spec;
+        return out[0..1];
+    }
+    var buf: [max_completions]SpellingMatch = undefined;
+    var n: usize = 0;
+    for (matchingSpellings(trimmed, &buf)) |m| {
+        const seen = for (out[0..n]) |prev| {
+            if (prev == m.spec) break true;
+        } else false;
+        if (!seen and n < out.len) {
+            out[n] = m.spec;
+            n += 1;
+        }
+    }
+    return out[0..n];
 }
 
 /// Widest "spellings [hint]" cell in the registry, computed at comptime so
@@ -2195,6 +2234,44 @@ test "looksLikeSlashCommand separates typo'd commands from tasks" {
     try std.testing.expect(looksLikeSlashCommand("  /nope  "));
     try std.testing.expect(!looksLikeSlashCommand("hello /world"));
     try std.testing.expect(!looksLikeSlashCommand(""));
+}
+
+test "commandPreviewSpecs previews prefix matches, dedupes spellings, and hints signatures" {
+    var buf: [command_registry.len]*const CommandSpec = undefined;
+
+    // "/go" narrows to /goal alone, carrying its spec (and so its help).
+    const go = commandPreviewSpecs("/go", &buf);
+    try std.testing.expectEqual(@as(usize, 1), go.len);
+    try std.testing.expect(go[0].action == .goal);
+
+    // A command whose name and alias both match the prefix previews once.
+    const q = commandPreviewSpecs("/q", &buf);
+    try std.testing.expectEqual(@as(usize, 1), q.len);
+    try std.testing.expect(q[0].action == .quit);
+
+    // Bare "/" is discovery: every command, in registry (/help) order.
+    const all = commandPreviewSpecs("/", &buf);
+    try std.testing.expectEqual(command_registry.len, all.len);
+    try std.testing.expect(all[0].action == .help);
+
+    // Once arguments are being typed the matched command's row stays on
+    // screen as a signature hint, alias spellings included.
+    const sig = commandPreviewSpecs("/goal build the parser", &buf);
+    try std.testing.expectEqual(@as(usize, 1), sig.len);
+    try std.testing.expect(sig[0].action == .goal);
+    const alias_sig = commandPreviewSpecs("/history 3", &buf);
+    try std.testing.expectEqual(@as(usize, 1), alias_sig.len);
+
+    // Leading whitespace is tolerated the way parseCommand tolerates it.
+    try std.testing.expectEqual(@as(usize, 1), commandPreviewSpecs("  /go", &buf).len);
+
+    // Nothing previews for: a plain task, an unknown spelling (with or
+    // without arguments), or a multi-line draft.
+    try std.testing.expectEqual(@as(usize, 0), commandPreviewSpecs("fix the tests", &buf).len);
+    try std.testing.expectEqual(@as(usize, 0), commandPreviewSpecs("/xyzzy", &buf).len);
+    try std.testing.expectEqual(@as(usize, 0), commandPreviewSpecs("/xyzzy now", &buf).len);
+    try std.testing.expectEqual(@as(usize, 0), commandPreviewSpecs("/goal fix" ++ newline_marker ++ "more", &buf).len);
+    try std.testing.expectEqual(@as(usize, 0), commandPreviewSpecs("", &buf).len);
 }
 
 test "suggestSlashCommand offers did-you-mean for close misspellings" {
@@ -5113,10 +5190,45 @@ const Model = struct {
             self.mascot.mode != .input and
             mascot.fits(mascot_v, max.width, frame_bottom -| top);
         const mascot_row: u16 = frame_bottom -| mascot_v.rows;
-        const bottom = if (mascot_above) mascot_row else frame_bottom;
+        // Inline command preview: while the draft is a single line starting
+        // with `/`, the rows above the frame list which commands it could
+        // become — spelling, argument hint, and help — so `/go` answers
+        // "what is /goal" before anything is run. The rows are *reserved*
+        // from the transcript the same way the robot's are, never drawn
+        // over it, and they reuse the palette's session-lifetime labels
+        // because vaxis cells borrow their slices past this frame's return.
+        // Suppressed while a modal picker owns the screen; capped so a
+        // short terminal keeps a readable transcript.
+        var preview_buf: [command_registry.len]*const CommandSpec = undefined;
+        const preview_specs: []const *const CommandSpec = if (self.picker_open)
+            preview_buf[0..0]
+        else
+            commandPreviewSpecs(composer_text, &preview_buf);
+        const preview_room: u16 = (frame_bottom -| top) -| 4;
+        const preview_h: u16 = @min(@as(u16, @intCast(@min(preview_specs.len, max_preview_rows))), preview_room);
+        const bottom = (if (mascot_above) mascot_row else frame_bottom) -| preview_h;
         self.transcript_top = top;
         self.transcript_bottom = bottom;
         const avail_rows: u16 = if (bottom > top) bottom - top else 0;
+        if (preview_h > 0) {
+            for (0..preview_h) |i| {
+                const row_y: u16 = bottom + @as(u16, @intCast(i));
+                var col: u16 = 2;
+                if (i + 1 == preview_h and preview_specs.len > preview_h) {
+                    writeRowAt(surface, row_y, &col, "  \xe2\x80\xa6 more \xe2\x80\x94 Ctrl-P opens the full palette", dim);
+                    break;
+                }
+                const spec = preview_specs[i];
+                // Registry order is candidate order, but a pointer walk is
+                // cheaper to keep correct than an index equation.
+                const cand = for (self.command_candidates) |*c| {
+                    if (c.spec == spec) break c;
+                } else continue;
+                const split = cand.label.len - spec.help.len;
+                writeRowAt(surface, row_y, &col, cand.label[0..split], if (preview_specs.len == 1) accent_style else .{});
+                writeRowAt(surface, row_y, &col, cand.label[split..], dim);
+            }
+        }
 
         // Manual scrollback: while `view_end` is set the visible window is
         // anchored to an absolute line index, so a streaming turn appends to
@@ -5279,7 +5391,7 @@ const Model = struct {
             }
             if (row < bottom) row += 1;
             if (row < bottom) {
-                writeWrapped(surface, &row, bottom, text_width, "Tab completes /commands. Ctrl-P opens the palette. Ctrl-C quits when idle.", dim);
+                writeWrapped(surface, &row, bottom, text_width, "Type / to preview commands; Tab completes. Ctrl-P opens the palette. Ctrl-C quits when idle.", dim);
             }
         }
         // Transcript layout: the visible block is bottom-aligned, chat-style,
