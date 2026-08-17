@@ -888,6 +888,31 @@ const FanOutReply = struct {
     results: []const FanOutResult = &.{},
 };
 
+/// The `chat_fanout` request body for the `peers` tool.
+fn encodeFanOut(enc: *std.Io.Writer.Allocating, msg: Message, skip: []const []const u8) !void {
+    var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginObject();
+    try s.objectField("action");
+    try s.write("chat_fanout");
+    try s.objectField("room");
+    try s.write(msg.room);
+    try s.objectField("from");
+    try s.write(msg.from);
+    try s.objectField("text");
+    try s.write(msg.text);
+    try s.objectField("ts");
+    try s.print("{d}", .{msg.ts});
+    try s.objectField("id");
+    try s.write(msg.id);
+    if (msg.thread_ts) |tts| {
+        try s.objectField("thread_ts");
+        try s.write(tts);
+    }
+    try s.objectField("skip");
+    try s.write(skip);
+    try s.endObject();
+}
+
 fn fanOut(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, environ_map: *std.process.Environ.Map, cfg: *const config_mod.Config, msg: Message) void {
     if (!cfg.chatrooms.on) return;
     if (cfg.peers.len == 0) return;
@@ -906,27 +931,13 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, environ_
 
     var enc: std.Io.Writer.Allocating = .init(arena);
     defer enc.deinit();
-    var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };
-    s.beginObject() catch return;
-    s.objectField("action") catch return;
-    s.write("chat_fanout") catch return;
-    s.objectField("room") catch return;
-    s.write(msg.room) catch return;
-    s.objectField("from") catch return;
-    s.write(msg.from) catch return;
-    s.objectField("text") catch return;
-    s.write(msg.text) catch return;
-    s.objectField("ts") catch return;
-    s.print("{d}", .{msg.ts}) catch return;
-    s.objectField("id") catch return;
-    s.write(msg.id) catch return;
-    if (msg.thread_ts) |tts| {
-        s.objectField("thread_ts") catch return;
-        s.write(tts) catch return;
-    }
-    s.objectField("skip") catch return;
-    s.write(skip.items) catch return;
-    s.endObject() catch return;
+    // One `catch` for the whole encode: bailing out of each step silently left
+    // the message local with nothing said, while every other failure below
+    // names itself. Nothing here can fail except allocation.
+    encodeFanOut(&enc, msg, skip.items) catch |err| {
+        log.log(.error_, "chat fan-out: could not encode message {s}: {s}", .{ msg.id, @errorName(err) });
+        return;
+    };
     const input = enc.written();
 
     var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {

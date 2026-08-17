@@ -612,6 +612,31 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `state/goals.json` joins the stores above: a file that exists and cannot be
+  read back is no longer an empty goal list. `clanker run --goal <id>` used to
+  report the goal not found (and `POST /api/run` answered 404) when the store
+  was unreadable rather than the goal absent, and an auto-steered run silently
+  dropped its steering. The read now names which of the two it was: the
+  explicit form refuses, the HTTP form answers 500, and auto-steering still
+  degrades to an unsteered run but says so.
+- The REPL no longer loses a conversation without saying anything. Every
+  failure on the exit-path save (a session id that will not mint, an invalid
+  id, a failed write) was logged at `warn`, below the `error` threshold the
+  REPL raises before taking the alt screen, so nothing reached the operator.
+  A transcript that could not be fully assembled also used to be written
+  anyway, overwriting the saved session with a shorter one; it now refuses
+  rather than truncating.
+- `/goal` in the REPL reports what it could not record. A failed `goal_add`
+  or Kanban card creation was swallowed at every step, so the goal loop
+  started with nothing on the board and no explanation. The run still starts;
+  the transcript now carries the warning.
+- `clanker mesh` gives up on a local `clanker serve` that accepts the
+  connection and never answers. `std.http.Client` has no read timeout, so the
+  command blocked forever with nothing printed; each call now runs under a 15s
+  ceiling and reports the stall.
+- Chat fan-out names an encode failure instead of returning quietly, and a
+  staging copy that cannot list a directory says the staged tree is
+  incomplete rather than letting the staged build fail as a missing file.
 - A `state/` file that exists but cannot be read back is no longer treated as
   an empty one. `state/schedule.json`, `state/workspaces.json` and
   `state/room_meta.json` are each read-modify-write: every mutation loads the
