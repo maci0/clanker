@@ -5725,7 +5725,7 @@ fn cmdGoal(init: std.process.Init, opts: Options) !void {
                         };
                     }
                 }
-            } else |_| {}
+            }
         }
     }
     const task = try goal_prompt.task(arena, intent);
