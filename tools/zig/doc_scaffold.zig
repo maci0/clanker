@@ -378,7 +378,27 @@ fn findTldrField(text: []const u8, field: []const u8) ?TldrField {
             const after = scan + indent + marker.len;
             // The space after the marker belongs to the separator, not the
             // value: a rewrite writes its own.
-            return .{ .value_start = @min(after + 1, line_end), .line_end = line_end };
+            //
+            // A bullet's value runs to the end of its last continuation line,
+            // not the end of the marker's own line: a wrapped bullet's
+            // indented continuations are part of the value, and rewriting
+            // only the first line leaves the old tail stacked under the new
+            // value as two contradictory accounts. Continuation lines are
+            // indented deeper than the bullet's marker; a blank line, a line
+            // at the marker's own indent (the next bullet), or the section
+            // end all stop it.
+            var value_end = line_end;
+            var next = line_end + 1;
+            while (next < sec.body_end) {
+                const next_end = @min(std.mem.findPos(u8, text, next, "\n") orelse sec.body_end, sec.body_end);
+                const next_line = text[next..next_end];
+                if (std.mem.trim(u8, next_line, " \t\r").len == 0) break;
+                const next_indent = next_line.len - std.mem.trimStart(u8, next_line, " \t").len;
+                if (next_indent <= indent) break;
+                value_end = next_end;
+                next = next_end + 1;
+            }
+            return .{ .value_start = @min(after + 1, line_end), .line_end = value_end };
         }
         scan = line_end + 1;
     }
@@ -1219,6 +1239,46 @@ test "replaceTldrField reports a missing bullet or a missing TL;DR" {
     defer out.deinit();
     try std.testing.expect(!try replaceTldrField(&out.writer, no_bullet, "Resolution", "Resolved."));
     try std.testing.expect(!try replaceTldrField(&out.writer, "# Bug\n\n## Status\n\nOpen.\n", "Resolution", "Resolved."));
+}
+
+test "replaceTldrField drops a wrapped bullet's continuation lines" {
+    // A wrapped Resolution bullet's indented continuations are part of the
+    // value; rewriting only the first line used to leave the old tail stacked
+    // under the new value as two contradictory accounts.
+    const record =
+        "# Bug — x\n\n## TL;DR\n\n- **What failed:** it broke.\n- **Impact:** none.\n" ++
+        "- **Resolution:** Resolved on 2026-08-16. fixed in abc1234.\n" ++
+        "  link target and renames onto *that*, so the linked path keeps its\n" ++
+        "  link and the write lands where every reader looks.\n\n## Status\n\nOpen.\n";
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expect(try replaceTldrField(&out.writer, record, "Resolution", "Resolved on 2026-08-17. re-diagnosed."));
+    try std.testing.expectEqualStrings(
+        "# Bug — x\n\n## TL;DR\n\n- **What failed:** it broke.\n- **Impact:** none.\n" ++
+            "- **Resolution:** Resolved on 2026-08-17. re-diagnosed.\n\n## Status\n\nOpen.\n",
+        out.written(),
+    );
+    // A wrapped bullet's value reads whole, not as its first line.
+    try std.testing.expectEqualStrings(
+        "Resolved on 2026-08-16. fixed in abc1234.\n" ++
+            "  link target and renames onto *that*, so the linked path keeps its\n" ++
+            "  link and the write lands where every reader looks.",
+        tldrField(record, "Resolution").?,
+    );
+}
+
+test "replaceTldrField stops a wrapped bullet at the next bullet" {
+    const record =
+        "# Bug — x\n\n## TL;DR\n\n- **Resolution:** Resolved on 2026-08-16. fixed in abc1234.\n" ++
+        "  a wrapped continuation\n- **Impact:** none.\n\n## Status\n\nOpen.\n";
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expect(try replaceTldrField(&out.writer, record, "Resolution", "Resolved."));
+    // The next bullet survives; only the continuation is consumed.
+    try std.testing.expectEqualStrings(
+        "# Bug — x\n\n## TL;DR\n\n- **Resolution:** Resolved.\n- **Impact:** none.\n\n## Status\n\nOpen.\n",
+        out.written(),
+    );
 }
 
 test "tldrField reads a bullet's value and reports an absent one" {

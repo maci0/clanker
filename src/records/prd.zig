@@ -1,7 +1,7 @@
 //! `clanker prd <sub>`, the operator surface over the sandboxed `prd` tool
 //! (`tools/zig/prd.zig`).
 //!
-//! Same arrangement as `adr/command.zig` and `rfc/command.zig`: `cli.zig` owns
+//! Same arrangement as `adr.zig` and `rfc.zig`: `cli.zig` owns
 //! argument parsing and the sandbox, printing is neither, and the tool stays
 //! the single implementation of the store.
 //!
@@ -15,7 +15,7 @@ const std = @import("std");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
-const common = @import("../records/common.zig");
+const common = @import("common.zig");
 
 pub const Options = struct {
     /// "list" (default), "search", "open", "checklist", "create", "append",

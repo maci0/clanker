@@ -2,12 +2,12 @@
 
 ## Status
 
-Shipped — 2026-08-16. tools/zig/adr.zig, tools/zig/prd.zig and tools/zig/doc_scaffold.zig are the source of truth; src/adr/command.zig and src/prd/command.zig render for the CLI. No HTTP surface.
+Shipped — 2026-08-16. tools/zig/adr.zig, tools/zig/prd.zig and tools/zig/doc_scaffold.zig are the source of truth; src/records/adr.zig and src/records/prd.zig render for the CLI. No HTTP surface.
 
 Sources of truth: `tools/zig/adr.zig` and `tools/zig/prd.zig` (the guests),
 `tools/manifests/adr.tool.json` and `prd.tool.json` (the sandbox policy),
 `tools/zig/doc_scaffold.zig` (the shared, host-tested scaffolding), and
-`src/adr/command.zig` / `src/prd/command.zig` (rendering only). Surfaces:
+`src/records/adr.zig` / `src/records/prd.zig` (rendering only). Surfaces:
 the `adr` and `prd` tools in the agent's catalog, and `clanker adr` /
 `clanker prd` on the CLI. No HTTP or web UI surface yet.
 

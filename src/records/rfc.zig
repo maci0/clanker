@@ -1,7 +1,7 @@
 //! `clanker rfc <sub>`, the operator surface over the sandboxed `rfc` tool
 //! (`tools/zig/rfc.zig`).
 //!
-//! Same arrangement as `reports/command.zig` and `research/command.zig`, for
+//! Same arrangement as `reports.zig` and `research.zig`, for
 //! the same reason: `cli.zig` owns argument parsing and the sandbox, printing
 //! is neither, and the tool stays the single implementation of the store. The
 //! tool call arrives through the `Tool` callback below, so this module renders
@@ -16,7 +16,7 @@ const std = @import("std");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
-const common = @import("../records/common.zig");
+const common = @import("common.zig");
 
 pub const Options = struct {
     /// "list" (default), "search", "open", "checklist", "create", "append",

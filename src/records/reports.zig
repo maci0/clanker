@@ -16,7 +16,7 @@ const std = @import("std");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
-const common = @import("../records/common.zig");
+const common = @import("common.zig");
 
 pub const Options = struct {
     /// "list" (default), "search", "open", "create", "append", "update" or
@@ -354,7 +354,7 @@ pub fn renderList(arena: std.mem.Allocator, reports_index: []const u8, runbooks_
 /// the section has one at all: an empty column is 10 spaces of nothing in
 /// front of every title.
 ///
-/// Shared with `research/command.zig`, which lists the same inventory
+/// Shared with `research.zig`, which lists the same inventory
 /// entries in the same two columns: a second copy is how one listing gets a
 /// wider gutter than the other.
 pub fn statusWidth(entries: []const Entry) usize {

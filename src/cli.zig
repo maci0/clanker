@@ -66,11 +66,11 @@ const file_lock = @import("util/file_lock.zig");
 const utf8 = @import("util/utf8.zig");
 const gate_checks = @import("gate/checks.zig");
 const schedule_cmd = @import("schedule/command.zig");
-const reports_cmd = @import("reports/command.zig");
-const research_cmd = @import("research/command.zig");
-const rfc_cmd = @import("rfc/command.zig");
-const adr_cmd = @import("adr/command.zig");
-const prd_cmd = @import("prd/command.zig");
+const reports_cmd = @import("records/reports.zig");
+const research_cmd = @import("records/research.zig");
+const rfc_cmd = @import("records/rfc.zig");
+const adr_cmd = @import("records/adr.zig");
+const prd_cmd = @import("records/prd.zig");
 const proxy = @import("serve/proxy.zig");
 const schedule_runner = @import("schedule/runner.zig");
 const schedule_store = @import("schedule/store.zig");
@@ -144,25 +144,25 @@ pub const Command = enum {
     schedule,
     /// `reports list|search|open|create|append|update|status`: the same
     /// operational reports and runbooks the agent reads through the `reports`
-    /// tool, from a terminal. `src/reports/command.zig`.
+    /// tool, from a terminal. `src/records/reports.zig`.
     reports,
     /// `research list|plan|sweep|search|open|create|append|update|status`: the
     /// same research notes the agent gathers and writes through the `research`
-    /// tool, from a terminal. `src/research/command.zig`. Distinct from
+    /// tool, from a terminal. `src/records/research.zig`. Distinct from
     /// `autoresearch`, which drives the experiment engine in `src/research/`.
     research,
     /// `rfc list|search|open|checklist|create|append|update|recommend|status`:
     /// the open decisions under docs/rfcs/, through the same `rfc` tool the
-    /// agent uses. `src/rfc/command.zig`.
+    /// agent uses. `src/records/rfc.zig`.
     rfc,
     /// `adr list|search|open|create|append|update|status`: the decisions
     /// already made, under docs/adrs/, through the same `adr` tool the agent
-    /// uses. `src/adr/command.zig`. The RFC is the open question; this is the
+    /// uses. `src/records/adr.zig`. The RFC is the open question; this is the
     /// answer.
     adr,
     /// `prd list|search|open|checklist|create|append|update|status`: what a
     /// feature is meant to be, under docs/prds/, through the same `prd` tool
-    /// the agent uses. `src/prd/command.zig`.
+    /// the agent uses. `src/records/prd.zig`.
     prd,
     /// `preset list|show|new`: named tool + persona bundles (PRD 0033).
     preset,
@@ -5170,7 +5170,7 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
 /// `reports` tool, from a terminal: same records, same compare-and-swap
 /// writes, same inventory, because this goes through that tool rather than
 /// reimplementing the store beside it. Printing lives in
-/// `src/reports/command.zig`; what stays here is the tool call, which needs
+/// `src/records/reports.zig`; what stays here is the tool call, which needs
 /// the config, the registry and the sandbox this file owns.
 fn cmdReports(init: std.process.Init, opts: Options) !void {
     const io = init.io;
@@ -5202,7 +5202,7 @@ fn cmdReports(init: std.process.Init, opts: Options) !void {
 /// The research notes the agent gathers and writes through the `research`
 /// tool, from a terminal: same sweep, same notes, same inventory, because this
 /// goes through that tool rather than reimplementing the store beside it.
-/// Printing lives in `src/research/command.zig`; what stays here is the tool
+/// Printing lives in `src/records/research.zig`; what stays here is the tool
 /// call, which needs the config, the registry and the sandbox this file owns.
 fn cmdResearch(init: std.process.Init, opts: Options) !void {
     const io = init.io;
@@ -5233,7 +5233,7 @@ fn cmdResearch(init: std.process.Init, opts: Options) !void {
 /// The open decisions under docs/rfcs/, from a terminal: same records, same
 /// numbering, same index, because this goes through the `rfc` tool rather than
 /// reimplementing the store beside it. Printing lives in
-/// `src/rfc/command.zig`; what stays here is the tool call, which needs the
+/// `src/records/rfc.zig`; what stays here is the tool call, which needs the
 /// config, the registry and the sandbox this file owns.
 fn cmdRfc(init: std.process.Init, opts: Options) !void {
     const io = init.io;
@@ -5264,7 +5264,7 @@ fn cmdRfc(init: std.process.Init, opts: Options) !void {
 /// The decisions already made, under docs/adrs/, from a terminal: same
 /// records, same numbering, same index, because this goes through the `adr`
 /// tool rather than reimplementing the store beside it. Printing lives in
-/// `src/adr/command.zig`; what stays here is the tool call, which needs the
+/// `src/records/adr.zig`; what stays here is the tool call, which needs the
 /// config, the registry and the sandbox this file owns.
 fn cmdAdr(init: std.process.Init, opts: Options) !void {
     const io = init.io;
@@ -5295,7 +5295,7 @@ fn cmdAdr(init: std.process.Init, opts: Options) !void {
 ///
 /// What each feature is meant to be, under docs/prds/, from a terminal. Same
 /// arrangement as `cmdAdr` and `cmdRfc`: this function owns the tool call,
-/// `src/prd/command.zig` owns the rendering.
+/// `src/records/prd.zig` owns the rendering.
 fn cmdPrd(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -5503,7 +5503,7 @@ const ResearchTool = struct {
     }
 };
 
-/// Binds `toolJson` to the `reports` guest, so `src/reports/command.zig` can
+/// Binds `toolJson` to the `reports` guest, so `src/records/reports.zig` can
 /// call the tool without importing the sandbox.
 const ReportsTool = struct {
     init: std.process.Init,

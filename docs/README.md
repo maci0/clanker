@@ -822,7 +822,7 @@ A bare `clanker providers check` sweeps every configured provider in config orde
 
 ### Reports and runbooks
 
-The records in [docs/reports/](reports/) and [docs/runbooks/](runbooks/), from a terminal. `clanker reports` goes through the same sandboxed `reports` tool the agent calls (`tools/zig/reports.zig`), so both surfaces share one store, one inventory and one set of compare-and-swap writes; the CLI half is `src/reports/command.zig`, which only renders. Read them:
+The records in [docs/reports/](reports/) and [docs/runbooks/](runbooks/), from a terminal. `clanker reports` goes through the same sandboxed `reports` tool the agent calls (`tools/zig/reports.zig`), so both surfaces share one store, one inventory and one set of compare-and-swap writes; the CLI half is `src/records/reports.zig`, which only renders. Read them:
 
 ```bash
 clanker reports
@@ -844,7 +844,7 @@ clanker reports update docs/reports/investigations/2026-08-16-run-livelock.md "I
 
 ### Open decisions (RFCs)
 
-The decisions in [docs/rfcs/](rfcs/) that have not been made yet, from a terminal. `clanker rfc` goes through the same sandboxed `rfc` tool the agent calls (`tools/zig/rfc.zig`), so both surfaces share one store, one index and one set of compare-and-swap writes; the CLI half is `src/rfc/command.zig`, which only renders. Read them:
+The decisions in [docs/rfcs/](rfcs/) that have not been made yet, from a terminal. `clanker rfc` goes through the same sandboxed `rfc` tool the agent calls (`tools/zig/rfc.zig`), so both surfaces share one store, one index and one set of compare-and-swap writes; the CLI half is `src/records/rfc.zig`, which only renders. Read them:
 
 ```bash
 clanker rfc
@@ -875,7 +875,7 @@ clanker rfc status docs/rfcs/0007-http-client-for-the-proxy.md decided "Chose op
 
 The other half of the same story: an [ADR](adrs/) is what an RFC becomes once
 the decision is made. `clanker adr` goes through the sandboxed `adr` tool
-(`tools/zig/adr.zig`); the CLI half is `src/adr/command.zig`, which only
+(`tools/zig/adr.zig`); the CLI half is `src/records/adr.zig`, which only
 renders. Read them:
 
 ```bash
@@ -912,7 +912,7 @@ record destroys the only account of why the original constraint looked binding.
 What a feature is *meant to be*, in [docs/prds/](prds/) — distinct from a
 decision (an ADR), an open question (an RFC), and the shipped narrative
 ([ROADMAP.md](ROADMAP.md)). `clanker prd` calls the `prd` tool
-(`tools/zig/prd.zig`); `src/prd/command.zig` renders. Read them:
+(`tools/zig/prd.zig`); `src/records/prd.zig` renders. Read them:
 
 ```bash
 clanker prd

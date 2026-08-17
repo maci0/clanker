@@ -187,13 +187,13 @@ comptime {
     _ = @import("schedule/store.zig");
     _ = @import("schedule/runner.zig");
     _ = @import("schedule/command.zig");
-    _ = @import("records/common.zig");
-    _ = @import("reports/command.zig");
-    _ = @import("research/command.zig");
     _ = @import("preset/preset.zig");
-    _ = @import("rfc/command.zig");
-    _ = @import("adr/command.zig");
-    _ = @import("prd/command.zig");
+    _ = @import("records/common.zig");
+    _ = @import("records/reports.zig");
+    _ = @import("records/research.zig");
+    _ = @import("records/rfc.zig");
+    _ = @import("records/adr.zig");
+    _ = @import("records/prd.zig");
 }
 
 /// Resolves the Zig standard library directory at startup (via `zig env`),

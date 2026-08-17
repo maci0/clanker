@@ -1,11 +1,15 @@
 //! `clanker research <sub>`, the operator surface over the sandboxed `research`
 //! tool (`tools/zig/research.zig`).
 //!
-//! Same arrangement as `reports/command.zig`, for the same reason: `cli.zig`
+//! Same arrangement as `reports.zig`, for the same reason: `cli.zig`
 //! owns argument parsing and the sandbox, a subsystem's own printing is
 //! neither, and the tool stays the single implementation of the store. The
 //! tool call arrives through the `Tool` callback below, so this module renders
 //! and tests without a WASM runtime.
+//!
+//! Not `src/research/`, which is the unrelated `autoresearch` harness loop.
+//! This is the note-taking store under `docs/research/`; that one proposes a
+//! change, measures one scalar, and keeps the change only if the number moved.
 //!
 //! The tool answers in JSON shaped for a model: every angle, every source,
 //! every hit, each with the provenance a model needs to decide what to open. A
@@ -20,8 +24,8 @@ const std = @import("std");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
-const common = @import("../records/common.zig");
-const reports_cmd = @import("../reports/command.zig");
+const common = @import("common.zig");
+const reports_cmd = @import("reports.zig");
 
 pub const Options = struct {
     /// "list" (default), "plan", "sweep", "search", "open", "create",
@@ -264,7 +268,7 @@ fn strOf(v: std.json.Value, name: []const u8) []const u8 {
 
 /// The note inventory, read out of the index README the tool maintains.
 ///
-/// The parser is `reports/command.zig`'s: both indexes are the same
+/// The parser is `reports.zig`'s: both indexes are the same
 /// `<!-- inventory:kind:start -->` block of `- [title](link) — status` lines,
 /// written by the same `doc_scaffold.zig` helpers. One parser, so a change to
 /// the block shape cannot fix one listing and silently break the other.
