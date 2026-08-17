@@ -710,7 +710,7 @@ pub const Agent = struct {
         if (self.cfg.modules.chatrooms and self.cfg.chatrooms.on) {
             const state_dir = self.cfg.agent.state_dir;
             const cursor = chatrooms.readCursor(std.Io.Dir.cwd(), self.ctx.io, self.arena, state_dir);
-            const inbox = chatrooms.readNew(std.Io.Dir.cwd(), self.ctx.io, self.ctx.gpa, self.arena, state_dir, cursor) catch &[_]chatrooms.Message{};
+            const inbox = chatrooms.readNew(std.Io.Dir.cwd(), self.ctx.io, self.arena, state_dir, self.cfg, cursor) catch &[_]chatrooms.Message{};
             if (inbox.len > 0) {
                 var chat_buf: std.ArrayList(u8) = .empty;
                 defer chat_buf.deinit(self.ctx.gpa);

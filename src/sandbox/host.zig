@@ -2081,11 +2081,11 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         var msgs: []const chatrooms_mod.Message = undefined;
         var has_more = false;
         if (parsed.oldest orelse false) {
-            const asc = chatrooms_mod.readHistoryAsc(base, h.sandbox.io, arena, state_dir, room, after, chat_history_page_size) catch return Err.invalid;
+            const asc = chatrooms_mod.readHistoryAsc(base, h.sandbox.io, arena, state_dir, cfg, room, after, chat_history_page_size) catch return Err.invalid;
             msgs = asc.msgs;
             has_more = asc.has_more;
         } else {
-            const page = chatrooms_mod.readHistory(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room, after, chat_history_page_size + 1) catch return Err.invalid;
+            const page = chatrooms_mod.readHistory(base, h.sandbox.io, arena, state_dir, cfg, room, after, chat_history_page_size + 1) catch return Err.invalid;
             has_more = page.len > chat_history_page_size;
             msgs = page[0..@min(page.len, chat_history_page_size)];
         }
@@ -2130,7 +2130,7 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         s.endObject() catch return Err.too_large;
         return h.writeResult(bytes, out_buf[0..w.end]);
     } else if (std.mem.eql(u8, op, "rooms")) {
-        const rooms = chatrooms_mod.listRooms(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir) catch return Err.invalid;
+        const rooms = chatrooms_mod.listRooms(base, h.sandbox.io, arena, state_dir, cfg) catch return Err.invalid;
         const subs = chatrooms_mod.subscribedRooms(base, h.sandbox.io, arena, state_dir, cfg) catch return Err.invalid;
         // Load room metadata for topics
         const meta = chatrooms_mod.loadMeta(base, h.sandbox.io, arena, state_dir) catch std.json.ArrayHashMap(chatrooms_mod.RoomMeta){};

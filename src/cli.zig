@@ -6160,7 +6160,7 @@ fn cmdChat(init: std.process.Init, opts: Options) !void {
     const out = std.Io.File.stdout();
 
     if (std.mem.eql(u8, opts.chat_sub, "rooms")) {
-        const rooms = try chatrooms.listRooms(base, io, gpa, arena, state_dir);
+        const rooms = try chatrooms.listRooms(base, io, arena, state_dir, &cfg);
         const subs = try chatrooms.subscribedRooms(base, io, arena, state_dir, &cfg);
         try out.writeStreamingAll(io, "room\tmsgs\tlast_ts\tlast_from\tlast_text\n");
         var buf: [16 * 1024]u8 = undefined;
@@ -6182,7 +6182,7 @@ fn cmdChat(init: std.process.Init, opts: Options) !void {
         try out.writeStreamingAll(io, line);
     } else if (std.mem.eql(u8, opts.chat_sub, "history")) {
         const after: i64 = if (opts.message) |m| (std.fmt.parseInt(i64, m, 10) catch 0) else 0;
-        const msgs = try chatrooms.readHistory(base, io, gpa, arena, state_dir, opts.room.?, after, 50);
+        const msgs = try chatrooms.readHistory(base, io, arena, state_dir, &cfg, opts.room.?, after, 50);
         var buf: [16 * 1024]u8 = undefined;
         for (msgs) |m| {
             const line = std.fmt.bufPrint(&buf, "[{d}] {s}: {s}\n", .{ m.ts, m.from, m.text }) catch continue;
@@ -7448,7 +7448,7 @@ fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
         return;
     }
-    const msgs = chatrooms.readHistory(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, after, 50) catch |err| {
+    const msgs = chatrooms.readHistory(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg, room, after, 50) catch |err| {
         log.log(.error_, "GET /api/chat/messages room={s}: {s}", .{ room, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"history read failed\"}");
         return;
@@ -7966,7 +7966,7 @@ fn handleChatRooms(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const rooms = chatrooms.listRooms(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir) catch |err| {
+    const rooms = chatrooms.listRooms(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg) catch |err| {
         log.log(.error_, "GET /api/chat/rooms: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"room list failed\"}");
         return;
@@ -13802,7 +13802,7 @@ fn handleMeshMap(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, 
 
     var rooms: []const mesh.MapRoom = &.{};
     if (cfg.modules.chatrooms) {
-        const listed = chatrooms.listRooms(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir) catch &.{};
+        const listed = chatrooms.listRooms(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg) catch &.{};
         var mapped: std.ArrayList(mesh.MapRoom) = .empty;
         for (listed) |r| {
             mapped.append(arena, .{

@@ -84,6 +84,19 @@ fn logReadCap(max_history: u32) usize {
     return @as(usize, max_history) * (max_text_len * 2 + max_envelope_bytes);
 }
 
+/// The whole log under the cap the writer trims to. Every reader of
+/// `log_path` goes through here: `readFileAlloc` returns
+/// `error.StreamTooLong` rather than a short read when the file exceeds the
+/// limit, and each reader turns that into an empty result, so a cap below the
+/// retained window is not a partial answer but a silent no-messages one. The
+/// fixed 1 MiB cap this replaced did exactly that to the agent inbox, the
+/// board fold and the room list once a room passed ~250 messages at the 4 KiB
+/// text cap, well inside the default 500-entry history.
+fn readLog(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config) ![]u8 {
+    const path = try subPath(arena, state_dir, log_path);
+    return base.readFileAlloc(io, path, arena, .limited(logReadCap(cfg.chatrooms.max_history)));
+}
+
 pub const Reaction = struct {
     emoji: []const u8,
     from: []const u8,
@@ -191,10 +204,8 @@ fn parseLog(arena: std.mem.Allocator, raw: []const u8, out: *std.ArrayList(Messa
 }
 
 /// Newest-first messages in `room` with ts > `after`, limited to `limit`.
-pub fn readHistory(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, after: i64, limit: usize) ![]Message {
-    _ = gpa;
-    const path = subPath(arena, state_dir, log_path) catch return &[_]Message{};
-    const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return &[_]Message{};
+pub fn readHistory(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, room: []const u8, after: i64, limit: usize) ![]Message {
+    const raw = readLog(base, io, arena, state_dir, cfg) catch return &[_]Message{};
     var out: std.ArrayList(Message) = .empty;
     if (limit == 0) return out.toOwnedSlice(arena);
     // Walk lines from the end and stop at `limit`. Parsing every record
@@ -227,9 +238,8 @@ pub const AscPage = struct { msgs: []Message = &.{}, has_more: bool = false };
 /// message sharing the boundary timestamp: the caller's only cursor is
 /// `ts > after` (timestamps are seconds, so a burst shares one), and cutting
 /// a timestamp group mid-way would skip its remainder on the next page.
-pub fn readHistoryAsc(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, after: i64, limit: usize) !AscPage {
-    const path = subPath(arena, state_dir, log_path) catch return .{};
-    const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return .{};
+pub fn readHistoryAsc(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, room: []const u8, after: i64, limit: usize) !AscPage {
+    const raw = readLog(base, io, arena, state_dir, cfg) catch return .{};
     if (limit == 0) return .{};
     var out: std.ArrayList(Message) = .empty;
     // Keep only this room's page candidates. The log is shared across every
@@ -259,10 +269,8 @@ pub fn readHistoryAsc(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, st
 }
 
 /// Aggregate stats per room, newest-first by last activity.
-pub fn listRooms(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8) ![]RoomInfo {
-    _ = gpa;
-    const path = subPath(arena, state_dir, log_path) catch return &[_]RoomInfo{};
-    const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return &[_]RoomInfo{};
+pub fn listRooms(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config) ![]RoomInfo {
+    const raw = readLog(base, io, arena, state_dir, cfg) catch return &[_]RoomInfo{};
     var by_room: std.StringArrayHashMapUnmanaged(RoomInfo) = .empty;
     var lines = std.mem.splitScalar(u8, raw, '\n');
     while (lines.next()) |line| {
@@ -503,8 +511,7 @@ pub fn toggleReaction(
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
-    const path = try subPath(arena, state_dir, log_path);
-    const raw = base.readFileAlloc(io, path, arena, .limited(logReadCap(cfg.chatrooms.max_history))) catch return error.NotFound;
+    const raw = readLog(base, io, arena, state_dir, cfg) catch return error.NotFound;
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
@@ -551,8 +558,7 @@ pub fn editMessage(
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
-    const path = try subPath(arena, state_dir, log_path);
-    const raw = base.readFileAlloc(io, path, arena, .limited(logReadCap(cfg.chatrooms.max_history))) catch return error.NotFound;
+    const raw = readLog(base, io, arena, state_dir, cfg) catch return error.NotFound;
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
@@ -585,8 +591,7 @@ pub fn deleteMessage(
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
-    const path = try subPath(arena, state_dir, log_path);
-    const raw = base.readFileAlloc(io, path, arena, .limited(logReadCap(cfg.chatrooms.max_history))) catch return error.NotFound;
+    const raw = readLog(base, io, arena, state_dir, cfg) catch return error.NotFound;
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
@@ -1007,10 +1012,8 @@ pub fn subscribe(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
 /// Oldest-first messages after `cursor`, capped. Returning the oldest pending
 /// batch is essential: advancing a cursor after a newest-first capped batch
 /// permanently skipped every older pending message.
-pub fn readNew(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cursor: Cursor) ![]Message {
-    _ = gpa;
-    const path = subPath(arena, state_dir, log_path) catch return &[_]Message{};
-    const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return &[_]Message{};
+pub fn readNew(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, cursor: Cursor) ![]Message {
+    const raw = readLog(base, io, arena, state_dir, cfg) catch return &[_]Message{};
     // Walk lines from the end and stop at the cursor id: the cursor sits at
     // the newest message the agent has read, so pending messages are always
     // in the tail, and the old forward scan parsed every record in the log on
@@ -1116,22 +1119,22 @@ test "append + readHistory + listRooms round-trip" {
     const m2 = Message{ .room = "dev", .from = "other", .text = "hi back", .ts = 1001, .id = "m2" };
     try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, m2);
 
-    const hist = try readHistory(tmp.dir, io, std.testing.allocator, arena, "", "dev", 0, 50);
+    const hist = try readHistory(tmp.dir, io, arena, "", &cfg, "dev", 0, 50);
     try std.testing.expectEqual(@as(usize, 2), hist.len);
     try std.testing.expectEqualStrings("hi back", hist[0].text); // newest first
     try std.testing.expectEqualStrings("hello world", hist[1].text);
 
-    const after = try readHistory(tmp.dir, io, std.testing.allocator, arena, "", "dev", 1000, 50);
+    const after = try readHistory(tmp.dir, io, arena, "", &cfg, "dev", 1000, 50);
     try std.testing.expectEqual(@as(usize, 1), after.len);
     try std.testing.expectEqualStrings("hi back", after[0].text);
 
-    const rooms = try listRooms(tmp.dir, io, std.testing.allocator, arena, "");
+    const rooms = try listRooms(tmp.dir, io, arena, "", &cfg);
     try std.testing.expectEqual(@as(usize, 1), rooms.len);
     try std.testing.expectEqualStrings("dev", rooms[0].room);
     try std.testing.expectEqual(@as(usize, 2), rooms[0].messages);
     try std.testing.expectEqualStrings("other", rooms[0].last_from);
 
-    const fresh = try readNew(tmp.dir, io, std.testing.allocator, arena, "", .{ .ts = 1000 });
+    const fresh = try readNew(tmp.dir, io, arena, "", &cfg, .{ .ts = 1000 });
     try std.testing.expectEqual(@as(usize, 1), fresh.len);
 }
 
@@ -1167,14 +1170,14 @@ test "append trims to max_history and keeps the newest lines" {
     }
 
     // Only the newest 3 survive, oldest dropped first.
-    const hist = try readHistory(tmp.dir, io, std.testing.allocator, arena, "", "dev", 0, 50);
+    const hist = try readHistory(tmp.dir, io, arena, "", &cfg, "dev", 0, 50);
     try std.testing.expectEqual(@as(usize, 3), hist.len);
     try std.testing.expectEqualStrings("line 5", hist[0].text); // newest first
     try std.testing.expectEqualStrings("line 4", hist[1].text);
     try std.testing.expectEqualStrings("line 3", hist[2].text);
 
     // The trimmed log must still be a valid, parseable room file.
-    const rooms = try listRooms(tmp.dir, io, std.testing.allocator, arena, "");
+    const rooms = try listRooms(tmp.dir, io, arena, "", &cfg);
     try std.testing.expectEqual(@as(usize, 1), rooms.len);
     try std.testing.expectEqual(@as(usize, 3), rooms[0].messages);
 }
@@ -1280,7 +1283,7 @@ test "readHistoryAsc pages oldest-first and extends through a shared boundary ti
     // limit 2 cuts inside the ts=2 group: the page must extend through it
     // (4 messages: ts 1, 2, 2, 2), or the caller's next `after` cursor of 2
     // would skip the group's remainder.
-    const p1 = try readHistoryAsc(tmp.dir, io, arena, "", "board", 0, 2);
+    const p1 = try readHistoryAsc(tmp.dir, io, arena, "", &cfg, "board", 0, 2);
     try std.testing.expectEqual(@as(usize, 4), p1.msgs.len);
     try std.testing.expect(p1.has_more);
     try std.testing.expectEqualStrings("a", p1.msgs[0].id);
@@ -1288,19 +1291,19 @@ test "readHistoryAsc pages oldest-first and extends through a shared boundary ti
     try std.testing.expectEqualStrings("d", p1.msgs[3].id);
 
     // The next page picks up exactly where the cursor points.
-    const p2 = try readHistoryAsc(tmp.dir, io, arena, "", "board", 2, 2);
+    const p2 = try readHistoryAsc(tmp.dir, io, arena, "", &cfg, "board", 2, 2);
     try std.testing.expectEqual(@as(usize, 2), p2.msgs.len);
     try std.testing.expect(!p2.has_more);
     try std.testing.expectEqualStrings("e", p2.msgs[0].id);
     try std.testing.expectEqualStrings("f", p2.msgs[1].id);
 
     // A page that fits under the limit reports no more and stays ascending.
-    const all = try readHistoryAsc(tmp.dir, io, arena, "", "board", 0, 50);
+    const all = try readHistoryAsc(tmp.dir, io, arena, "", &cfg, "board", 0, 50);
     try std.testing.expectEqual(@as(usize, 6), all.msgs.len);
     try std.testing.expect(!all.has_more);
 
     // A zero limit is an empty page, not an underflow on `limit - 1`.
-    const none = try readHistoryAsc(tmp.dir, io, arena, "", "board", 0, 0);
+    const none = try readHistoryAsc(tmp.dir, io, arena, "", &cfg, "board", 0, 0);
     try std.testing.expectEqual(@as(usize, 0), none.msgs.len);
     try std.testing.expect(!none.has_more);
 }
@@ -1331,10 +1334,10 @@ test "inbox cursor drains a capped same-timestamp burst without loss" {
         });
     }
 
-    const first = try readNew(tmp.dir, io, std.testing.allocator, arena, "", .{});
+    const first = try readNew(tmp.dir, io, arena, "", &cfg, .{});
     try std.testing.expectEqual(@as(usize, inbox_limit), first.len);
     try std.testing.expectEqualStrings("burst-0", first[0].id);
-    const second = try readNew(tmp.dir, io, std.testing.allocator, arena, "", .{
+    const second = try readNew(tmp.dir, io, arena, "", &cfg, .{
         .id = first[first.len - 1].id,
         .ts = first[first.len - 1].ts,
     });
@@ -1432,7 +1435,7 @@ test "receive filters by subscription" {
     const out_room = Message{ .room = "other", .from = "peer", .text = "hi", .ts = 2, .id = "b" };
     try std.testing.expect(!try receive(tmp.dir, io, std.testing.allocator, arena, "", &cfg, out_room));
 
-    const hist = try readHistory(tmp.dir, io, std.testing.allocator, arena, "", "other", 0, 10);
+    const hist = try readHistory(tmp.dir, io, arena, "", &cfg, "other", 0, 10);
     try std.testing.expectEqual(@as(usize, 0), hist.len);
 }
 
@@ -1457,14 +1460,14 @@ test "receive ignores a redelivered message id" {
     // state as running once, not a second entry.
     try std.testing.expect(try receive(tmp.dir, io, std.testing.allocator, arena, "", &cfg, msg));
 
-    const hist = try readHistory(tmp.dir, io, std.testing.allocator, arena, "", "dev", 0, 10);
+    const hist = try readHistory(tmp.dir, io, arena, "", &cfg, "dev", 0, 10);
     try std.testing.expectEqual(@as(usize, 1), hist.len);
 
     // An id-less message (an old peer that never sent one) is never deduped.
     const no_id = Message{ .room = "dev", .from = "peer", .text = "no id here", .ts = 2, .id = "" };
     try std.testing.expect(try receive(tmp.dir, io, std.testing.allocator, arena, "", &cfg, no_id));
     try std.testing.expect(try receive(tmp.dir, io, std.testing.allocator, arena, "", &cfg, no_id));
-    const hist2 = try readHistory(tmp.dir, io, std.testing.allocator, arena, "", "dev", 0, 10);
+    const hist2 = try readHistory(tmp.dir, io, arena, "", &cfg, "dev", 0, 10);
     try std.testing.expectEqual(@as(usize, 3), hist2.len);
 }
 

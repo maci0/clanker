@@ -402,7 +402,7 @@ test "chat wasm tool executes (send + history via ck_chat)" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const hist = try chatrooms_mod.readHistory(tmp.dir, io, std.testing.allocator, arena, "", "dev", 0, 10);
+    const hist = try chatrooms_mod.readHistory(tmp.dir, io, arena, "", &cfg, "dev", 0, 10);
     try std.testing.expectEqual(@as(usize, 1), hist.len);
     try std.testing.expectEqualStrings("hello from wasm", hist[0].text);
     try std.testing.expectEqualStrings("test-clanker", hist[0].from);
