@@ -274,6 +274,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `clanker adr search`, `clanker prd search`, `clanker rfc search` and
+  `clanker research search` now cap each record at 50 printed matching
+  lines and name how many they hid (`… N more matching line(s) in
+  <path>`), the way `clanker reports search` already did. A record that
+  matched a query in hundreds of places used to push every other hit
+  below the fold in those four stores. The five stores' commands now
+  share one renderer (`src/records/common.zig`) rather than five copies
+  of it, along with the tool seam and the JSON field readers.
+
 - The reply fold header in `clanker repl` is now hard to overlook: bold,
   underlined, and worded as the control it is — `▸ reply, N more lines
   (click to expand)` / `▾ reply (click to fold)`. It is the fold's only

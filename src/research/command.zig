@@ -20,6 +20,7 @@ const std = @import("std");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
+const common = @import("../records/common.zig");
 const reports_cmd = @import("../reports/command.zig");
 
 pub const Options = struct {
@@ -39,35 +40,20 @@ pub const Options = struct {
     arg4: ?[]const u8 = null,
 };
 
-pub const Error = error{
-    BadSubcommand,
-    MissingArg,
-    /// The tool ran and refused the request (`{"ok":false,...}`), or answered
-    /// something this command cannot read. The detail is already logged.
-    ToolFailed,
-};
+pub const Error = common.Error;
 
-/// How this command reaches the `research` WASM tool. `cli.zig` owns the
-/// registry, the sandbox and the config a tool needs, so it passes the call in
-/// rather than this module reaching back into it. Tests pass a canned answer
-/// through the same seam.
-pub const Tool = struct {
-    ctx: *anyopaque,
-    call: *const fn (ctx: *anyopaque, input: []const u8) anyerror![]const u8,
-};
+pub const Tool = common.Tool;
 
 /// A snippet is a lead. Past this the line is prose that belongs in the page,
 /// not in a column of candidates, and an 80-column terminal cannot hold it
 /// anyway.
 const snippet_bytes: usize = 96;
-/// A matched line of a note, cut the same way `reports` cuts one.
-const match_column_bytes: usize = 68;
 /// Statuses are one word ("Draft", "Current", "Stale", "Superseded").
 const status_column_max: usize = 18;
 const status_column_min: usize = 10;
 
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
-    try out(init.io, try run(init.arena.allocator(), opts, tool));
+    try common.out(init.io, try run(init.arena.allocator(), opts, tool));
 }
 
 /// The whole subcommand surface as rendered text. `cmd` prints it to stdout;
@@ -93,7 +79,7 @@ pub fn run(arena: std.mem.Allocator, opts: Options, tool: Tool) anyerror![]const
 // ------------------------------------------------------------------ reading --
 
 fn list(arena: std.mem.Allocator, tool: Tool) ![]const u8 {
-    const result = try callTool(arena, tool, "{\"action\":\"list\"}");
+    const result = try common.callTool(arena, "research", tool, "{\"action\":\"list\"}");
     return renderList(arena, json_util.strFieldOrEmpty(result.object, "index"));
 }
 
@@ -107,8 +93,8 @@ fn search(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         .{ "action", "search" },
         .{ "query", query },
     });
-    const result = try callTool(arena, tool, input);
-    return renderSearch(arena, query, arrayField(result, "matches"));
+    const result = try common.callTool(arena, "research", tool, input);
+    return renderSearch(arena, query, common.arrayField(result, "matches"));
 }
 
 fn open(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
@@ -121,7 +107,7 @@ fn open(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         .{ "action", "open" },
         .{ "path", path },
     });
-    const result = try callTool(arena, tool, input);
+    const result = try common.callTool(arena, "research", tool, input);
     // The note is markdown that was written to be read; return it as it is.
     const text = json_util.strFieldOrEmpty(result.object, "text");
     if (text.len > 0 and text[text.len - 1] != '\n') return std.fmt.allocPrint(arena, "{s}\n", .{text});
@@ -141,7 +127,7 @@ fn plan(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         .{ "question", opts.arg2 orelse "" },
         .{ "depth", opts.arg3 orelse "standard" },
     });
-    const result = try callTool(arena, tool, input);
+    const result = try common.callTool(arena, "research", tool, input);
     return renderPlan(arena, result);
 }
 
@@ -155,7 +141,7 @@ fn sweep(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         .{ "topic", topic },
         .{ "depth", opts.arg2 orelse "standard" },
     });
-    const result = try callTool(arena, tool, input);
+    const result = try common.callTool(arena, "research", tool, input);
     return renderSweep(arena, result);
 }
 
@@ -172,7 +158,7 @@ fn create(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         .{ "title", title },
         .{ "question", question },
     });
-    const result = try callTool(arena, tool, input);
+    const result = try common.callTool(arena, "research", tool, input);
     const path = json_util.strFieldOrEmpty(result.object, "path");
 
     var w: std.Io.Writer.Allocating = .init(arena);
@@ -182,7 +168,7 @@ fn create(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     // half-filled note from being mistaken for a finished one.
     try w.writer.print("\nFill the TL;DR, the options and the out-of-the-box options:\n  clanker research open {s}\n", .{path});
     try w.writer.writeAll("\nEvery claim needs a link, the date it was read, and a confidence.\nMark anything unchecked as unverified.\n");
-    if (!boolField(result, "indexed")) {
+    if (!common.boolField(result, "indexed")) {
         try w.writer.writeAll("\nThe inventory was not updated (it changed concurrently). Add the link\nby hand in docs/research/README.md without replacing the other edit.\n");
     }
     return try w.toOwnedSlice();
@@ -208,7 +194,7 @@ fn append(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         .{ "path", path },
         .{ "content", content },
     });
-    const result = try callTool(arena, tool, input);
+    const result = try common.callTool(arena, "research", tool, input);
     return std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
 }
 
@@ -234,7 +220,7 @@ fn update(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         .{ "old", old },
         .{ "new", new },
     });
-    const result = try callTool(arena, tool, input);
+    const result = try common.callTool(arena, "research", tool, input);
     return std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
 }
 
@@ -248,7 +234,7 @@ fn setStatus(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         .{ "status", wanted },
         .{ "note", opts.arg3 orelse "" },
     });
-    const result = try callTool(arena, tool, input);
+    const result = try common.callTool(arena, "research", tool, input);
 
     var w: std.Io.Writer.Allocating = .init(arena);
     errdefer w.deinit();
@@ -256,7 +242,7 @@ fn setStatus(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         json_util.strFieldOrEmpty(result.object, "path"),
         json_util.strFieldOrEmpty(result.object, "status"),
     });
-    if (!boolField(result, "indexed")) {
+    if (!common.boolField(result, "indexed")) {
         try w.writer.writeAll("\nThe inventory line was not updated (the entry is missing or the index\nchanged concurrently). Set its status by hand in docs/research/README.md so\nthe index does not disagree with the note.\n");
     }
     return try w.toOwnedSlice();
@@ -284,38 +270,6 @@ fn request(arena: std.mem.Allocator, fields: []const [2][]const u8) ![]const u8 
     }
     try s.endObject();
     return w.written();
-}
-
-fn callTool(arena: std.mem.Allocator, tool: Tool, input: []const u8) !std.json.Value {
-    const raw = try tool.call(tool.ctx, input);
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
-        log.log(.error_, "research: the tool answered something that is not JSON", .{});
-        return Error.ToolFailed;
-    };
-    if (parsed != .object) {
-        log.log(.error_, "research: the tool answered something that is not a JSON object", .{});
-        return Error.ToolFailed;
-    }
-    const ok = parsed.object.get("ok");
-    if (ok == null or ok.? != .bool or !ok.?.bool) {
-        const detail = if (parsed.object.get("error")) |e|
-            (if (e == .string) e.string else "the tool refused the request")
-        else
-            "the tool refused the request";
-        log.log(.error_, "research: {s}", .{detail});
-        return Error.ToolFailed;
-    }
-    return parsed;
-}
-
-fn boolField(obj: std.json.Value, name: []const u8) bool {
-    const v = obj.object.get(name) orelse return false;
-    return v == .bool and v.bool;
-}
-
-fn arrayField(obj: std.json.Value, name: []const u8) []const std.json.Value {
-    const v = obj.object.get(name) orelse return &.{};
-    return if (v == .array) v.array.items else &.{};
 }
 
 fn strOf(v: std.json.Value, name: []const u8) []const u8 {
@@ -407,17 +361,7 @@ pub fn renderSearch(arena: std.mem.Allocator, query: []const u8, matches: []cons
     }
 
     try w.writer.print("{d} matching line(s) for \"{s}\"\n\n", .{ matches.len, query });
-    var last_file: []const u8 = "";
-    for (matches) |m| {
-        if (m != .object) continue;
-        const file = strOf(m, "file");
-        if (!std.mem.eql(u8, file, last_file)) {
-            if (last_file.len > 0) try w.writer.writeByte('\n');
-            try w.writer.print("  {s}\n", .{file});
-            last_file = file;
-        }
-        try w.writer.print("    {d: >5}  {s}\n", .{ intOf(m, "line"), cut(strOf(m, "text"), match_column_bytes) });
-    }
+    try common.renderMatchRows(&w.writer, matches);
     try w.writer.writeAll("\nNEXT\n\n");
     try w.writer.writeAll("  clanker research open <path>       read the note before trusting it\n");
     return w.written();
@@ -438,7 +382,7 @@ pub fn renderPlan(arena: std.mem.Allocator, result: std.json.Value) ![]const u8 
         if (v == .string) try w.writer.print("\nwarning: {s}\n", .{v.string});
     }
 
-    const queries = arrayField(result, "queries");
+    const queries = common.arrayField(result, "queries");
     if (queries.len > 0) {
         try w.writer.writeAll("\nQUERIES\n\n");
         const width = columnWidth(queries, "angle");
@@ -459,7 +403,7 @@ pub fn renderPlan(arena: std.mem.Allocator, result: std.json.Value) ![]const u8 
         }
     }
 
-    const sources = arrayField(result, "sources");
+    const sources = common.arrayField(result, "sources");
     if (sources.len > 0) {
         try w.writer.writeAll("SOURCES\n\n");
         const width = columnWidth(sources, "name");
@@ -474,7 +418,7 @@ pub fn renderPlan(arena: std.mem.Allocator, result: std.json.Value) ![]const u8 
         }
     }
 
-    const otb = arrayField(result, "out_of_the_box");
+    const otb = common.arrayField(result, "out_of_the_box");
     if (otb.len > 0) {
         try w.writer.writeAll("OUT-OF-THE-BOX OPTIONS\n\n");
         try w.writer.writeAll("  A sweep cannot return these. Answer each one explicitly.\n\n");
@@ -520,10 +464,10 @@ pub fn renderSweep(arena: std.mem.Allocator, result: std.json.Value) ![]const u8
         if (v == .string) try w.writer.print("\nwarning: {s}\n", .{v.string});
     }
 
-    const web = arrayField(result, "web");
-    const github = arrayField(result, "github");
-    const discussions = arrayField(result, "discussions");
-    const papers = arrayField(result, "papers");
+    const web = common.arrayField(result, "web");
+    const github = common.arrayField(result, "github");
+    const discussions = common.arrayField(result, "discussions");
+    const papers = common.arrayField(result, "papers");
 
     if (web.len > 0) {
         try w.writer.writeAll("\nWEB\n\n");
@@ -531,7 +475,7 @@ pub fn renderSweep(arena: std.mem.Allocator, result: std.json.Value) ![]const u8
             try w.writer.print("  {s}\n", .{strOf(hit, "title")});
             try w.writer.print("    {s}\n", .{strOf(hit, "url")});
             const snippet = strOf(hit, "snippet");
-            if (snippet.len > 0) try w.writer.print("    {s}\n", .{cut(snippet, snippet_bytes)});
+            if (snippet.len > 0) try w.writer.print("    {s}\n", .{common.ellipsize(snippet, snippet_bytes)});
             // Which angle found it, and which backend answered: a hit only one
             // backend returns is worth a different amount of trust.
             try w.writer.print("    [{s} · {s}]\n\n", .{ strOf(hit, "angle"), strOf(hit, "backend") });
@@ -544,7 +488,7 @@ pub fn renderSweep(arena: std.mem.Allocator, result: std.json.Value) ![]const u8
             try w.writer.print("  {s}\n", .{strOf(repo, "repo")});
             try w.writer.print("    {s}\n", .{strOf(repo, "url")});
             const desc = strOf(repo, "description");
-            if (desc.len > 0) try w.writer.print("    {s}\n", .{cut(desc, snippet_bytes)});
+            if (desc.len > 0) try w.writer.print("    {s}\n", .{common.ellipsize(desc, snippet_bytes)});
             // Stars alone flatter an abandoned repository; the last push and
             // the archived flag are what make the number mean anything.
             try w.writer.print("    {d} stars · {s} · {s} · pushed {s}{s}\n\n", .{
@@ -577,12 +521,12 @@ pub fn renderSweep(arena: std.mem.Allocator, result: std.json.Value) ![]const u8
             try w.writer.print("  {s}\n", .{strOf(paper, "title")});
             try w.writer.print("    {s}\n", .{strOf(paper, "url")});
             const summary = strOf(paper, "summary");
-            if (summary.len > 0) try w.writer.print("    {s}\n", .{cut(summary, snippet_bytes)});
+            if (summary.len > 0) try w.writer.print("    {s}\n", .{common.ellipsize(summary, snippet_bytes)});
             try w.writer.print("    published {s}\n\n", .{orDash(strOf(paper, "published"))});
         }
     }
 
-    const notes = arrayField(result, "notes");
+    const notes = common.arrayField(result, "notes");
     if (notes.len > 0) {
         try w.writer.writeAll("NOTES\n\n");
         for (notes) |n| {
@@ -613,17 +557,6 @@ fn boolOf(v: std.json.Value, name: []const u8) bool {
 /// keeps its shape and a missing licence is visibly missing.
 fn orDash(s: []const u8) []const u8 {
     return if (s.len == 0) "—" else s;
-}
-
-/// Cut to the column on a UTF-8 boundary: sweep text is full of em dashes and
-/// quotes, and half a codepoint renders as a replacement character right where
-/// the reader is trying to recognize the line.
-fn cut(s: []const u8, max: usize) []const u8 {
-    return utf8.cap(std.mem.trim(u8, s, " \t\r\n"), max);
-}
-
-fn out(io: std.Io, bytes: []const u8) !void {
-    try std.Io.File.stdout().writeStreamingAll(io, bytes);
 }
 
 // ---------------------------------------------------------------------- tests --
@@ -767,10 +700,10 @@ test "a refused tool call fails with the tool's own sentence, not a generic erro
     };
     var canned: Canned = .{ .answer = "{\"ok\":false,\"error\":\"depth must be quick, standard, or deep\"}" };
     const tool: Tool = .{ .ctx = &canned, .call = Canned.call };
-    try std.testing.expectError(Error.ToolFailed, callTool(arena.allocator(), tool, "{}"));
+    try std.testing.expectError(Error.ToolFailed, common.callTool(arena.allocator(), "research", tool, "{}"));
 
     canned.answer = "not json at all";
-    try std.testing.expectError(Error.ToolFailed, callTool(arena.allocator(), tool, "{}"));
+    try std.testing.expectError(Error.ToolFailed, common.callTool(arena.allocator(), "research", tool, "{}"));
 }
 
 test "request builds a flat object with every field escaped" {

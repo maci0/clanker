@@ -16,6 +16,7 @@ const std = @import("std");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
+const common = @import("../records/common.zig");
 
 pub const Options = struct {
     /// "list" (default), "search", "open", "create", "append", "update" or
@@ -35,25 +36,10 @@ pub const Options = struct {
     arg5: ?[]const u8 = null,
 };
 
-pub const Error = error{
-    BadSubcommand,
-    MissingArg,
-    /// The tool ran and refused the request (`{"ok":false,...}`), or answered
-    /// something this command cannot read. The detail is already logged.
-    ToolFailed,
-};
+pub const Error = common.Error;
 
-/// How this command reaches the `adr` WASM tool. `cli.zig` owns the registry,
-/// the sandbox and the config a tool needs, so it passes the call in rather
-/// than this module reaching back into it. Tests pass a canned answer through
-/// the same seam.
-pub const Tool = struct {
-    ctx: *anyopaque,
-    call: *const fn (ctx: *anyopaque, input: []const u8) anyerror![]const u8,
-};
+pub const Tool = common.Tool;
 
-/// A matched line of an ADR, cut the same way `rfc` cuts one.
-const match_column_bytes: usize = 68;
 /// Titles are the widest column and the least load-bearing: a reader who needs
 /// the whole one opens the record.
 const title_column_bytes: usize = 62;
@@ -80,8 +66,8 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
 // ------------------------------------------------------------------ reading --
 
 fn list(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
-    const result = try callTool(arena, tool, "{\"action\":\"list\"}");
-    try out(io, try renderList(arena, arrayField(result, "adrs"), unsignedField(result, "next_number")));
+    const result = try common.callTool(arena, "adr", tool, "{\"action\":\"list\"}");
+    try common.out(io, try renderList(arena, common.arrayField(result, "adrs"), common.unsignedField(result, "next_number")));
 }
 
 fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
@@ -100,13 +86,13 @@ fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try s.write(query);
     try s.endObject();
 
-    const result = try callTool(arena, tool, input.written());
-    try out(io, try renderSearch(
+    const result = try common.callTool(arena, "adr", tool, input.written());
+    try common.out(io, try renderSearch(
         arena,
         query,
-        arrayField(result, "adrs"),
-        arrayField(result, "rfcs"),
-        arrayField(result, "prds"),
+        common.arrayField(result, "adrs"),
+        common.arrayField(result, "rfcs"),
+        common.arrayField(result, "prds"),
     ));
 }
 
@@ -126,11 +112,11 @@ fn open(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
     try s.write(path);
     try s.endObject();
 
-    const result = try callTool(arena, tool, input.written());
+    const result = try common.callTool(arena, "adr", tool, input.written());
     // The ADR is markdown that was written to be read; print it as it is.
     const text = json_util.strFieldOrEmpty(result.object, "text");
-    try out(io, text);
-    if (text.len > 0 and text[text.len - 1] != '\n') try out(io, "\n");
+    try common.out(io, text);
+    if (text.len > 0 and text[text.len - 1] != '\n') try common.out(io, "\n");
 }
 
 // ------------------------------------------------------------------ writing --
@@ -161,12 +147,12 @@ fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     }
     try s.endObject();
 
-    const result = try callTool(arena, tool, input.written());
-    try out(io, try renderCreated(
+    const result = try common.callTool(arena, "adr", tool, input.written());
+    try common.out(io, try renderCreated(
         arena,
         json_util.strFieldOrEmpty(result.object, "path"),
         json_util.strFieldOrEmpty(result.object, "rfc"),
-        boolField(result, "indexed"),
+        common.boolField(result, "indexed"),
     ));
 }
 
@@ -217,8 +203,8 @@ fn append(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try s.write(content);
     try s.endObject();
 
-    const result = try callTool(arena, tool, input.written());
-    try out(io, try std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
+    const result = try common.callTool(arena, "adr", tool, input.written());
+    try common.out(io, try std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
 }
 
 fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
@@ -251,8 +237,8 @@ fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try s.write(new);
     try s.endObject();
 
-    const result = try callTool(arena, tool, input.written());
-    try out(io, try std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
+    const result = try common.callTool(arena, "adr", tool, input.written());
+    try common.out(io, try std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
 }
 
 fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
@@ -274,17 +260,17 @@ fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !v
     try s.write(note);
     try s.endObject();
 
-    const result = try callTool(arena, tool, input.written());
+    const result = try common.callTool(arena, "adr", tool, input.written());
     var w: std.Io.Writer.Allocating = .init(arena);
     defer w.deinit();
     try w.writer.print("{s} is now {s}\n", .{
         json_util.strFieldOrEmpty(result.object, "path"),
         json_util.strFieldOrEmpty(result.object, "status"),
     });
-    if (!boolField(result, "indexed")) {
+    if (!common.boolField(result, "indexed")) {
         try w.writer.writeAll("\nThe inventory line was not updated (the entry is missing or the index\nchanged concurrently). Set its status by hand in docs/adrs/README.md so\nthe index does not disagree with the record.\n");
     }
-    try out(io, w.written());
+    try common.out(io, w.written());
 }
 
 fn missingStatusArg(what: []const u8) Error {
@@ -293,50 +279,6 @@ fn missingStatusArg(what: []const u8) Error {
 }
 
 // ----------------------------------------------------------------- the tool --
-
-/// One call, one place that decides whether the answer is usable. A tool that
-/// refuses says why in `error`, and that sentence is written for whoever asked
-/// -- it names the conflict to reopen or the argument to fix -- so it is the
-/// message, not a generic failure.
-fn callTool(arena: std.mem.Allocator, tool: Tool, input: []const u8) !std.json.Value {
-    const raw = try tool.call(tool.ctx, input);
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
-        log.log(.error_, "adr: the tool answered something that is not JSON", .{});
-        return Error.ToolFailed;
-    };
-    if (parsed != .object) {
-        log.log(.error_, "adr: the tool answered something that is not a JSON object", .{});
-        return Error.ToolFailed;
-    }
-    const ok = parsed.object.get("ok");
-    if (ok == null or ok.? != .bool or !ok.?.bool) {
-        const detail = if (parsed.object.get("error")) |e|
-            (if (e == .string) e.string else "the tool refused the request")
-        else
-            "the tool refused the request";
-        log.log(.error_, "adr: {s}", .{detail});
-        return Error.ToolFailed;
-    }
-    return parsed;
-}
-
-fn boolField(obj: std.json.Value, name: []const u8) bool {
-    const v = obj.object.get(name) orelse return false;
-    return v == .bool and v.bool;
-}
-
-fn arrayField(obj: std.json.Value, name: []const u8) []const std.json.Value {
-    const v = obj.object.get(name) orelse return &.{};
-    return if (v == .array) v.array.items else &.{};
-}
-
-/// A count off the tool, never negative. `@intCast` of a negative `integer`
-/// wraps in ReleaseFast, so the sign is checked rather than assumed.
-fn unsignedField(obj: std.json.Value, name: []const u8) u64 {
-    const v = obj.object.get(name) orelse return 0;
-    if (v != .integer or v.integer < 0) return 0;
-    return @intCast(v.integer);
-}
 
 // -------------------------------------------------------------- the listing --
 
@@ -440,9 +382,9 @@ pub fn renderSearch(
     }
 
     try w.writer.print("{d} matching line(s) for \"{s}\"\n\n", .{ adrs.len + rfcs.len + prds.len, query });
-    try renderMatchGroup(&w.writer, "ADRS", adrs);
-    try renderMatchGroup(&w.writer, "RFCS", rfcs);
-    try renderMatchGroup(&w.writer, "PRDS", prds);
+    try common.renderMatchGroup(&w.writer, "ADRS", adrs);
+    try common.renderMatchGroup(&w.writer, "RFCS", rfcs);
+    try common.renderMatchGroup(&w.writer, "PRDS", prds);
     if (adrs.len > 0) {
         try w.writer.writeAll("An ADR matched: this is already decided. Read it before re-opening the\nquestion, and supersede it rather than editing it if it has to change.\n\n");
     } else if (rfcs.len > 0) {
@@ -451,44 +393,6 @@ pub fn renderSearch(
     try w.writer.writeAll("NEXT\n\n");
     try w.writer.writeAll("  clanker adr open <path>          read the record before trusting it\n");
     return w.written();
-}
-
-fn renderMatchGroup(w: *std.Io.Writer, heading: []const u8, matches: []const std.json.Value) !void {
-    if (matches.len == 0) return;
-    try w.print("{s}\n\n", .{heading});
-
-    var last_file: []const u8 = "";
-    for (matches) |m| {
-        if (m != .object) continue;
-        const file = json_util.strFieldOrEmpty(m.object, "file");
-        const text = json_util.strFieldOrEmpty(m.object, "text");
-        // A line number is printed unsigned: `{d}` on an i64 carries an
-        // explicit `+`, which reads as a diff marker in a column of numbers.
-        const line: u64 = blk: {
-            const l = m.object.get("line") orelse break :blk 0;
-            if (l != .integer or l.integer < 0) break :blk 0;
-            break :blk @intCast(l.integer);
-        };
-        if (!std.mem.eql(u8, file, last_file)) {
-            if (last_file.len > 0) try w.writeByte('\n');
-            try w.print("  {s}\n", .{file});
-            last_file = file;
-        }
-        try w.print("    {d: >5}  {s}\n", .{ line, ellipsize(text, match_column_bytes) });
-    }
-    try w.writeAll("\n");
-}
-
-/// One line of a record, cut to the column on a UTF-8 boundary. ADR text is
-/// full of em dashes and backticks, and half a codepoint renders as a
-/// replacement character right where the reader is trying to recognize it.
-fn ellipsize(s: []const u8, max: usize) []const u8 {
-    const flat = std.mem.trim(u8, s, " \t\r\n");
-    return utf8.cap(flat, max);
-}
-
-fn out(io: std.Io, bytes: []const u8) !void {
-    try std.Io.File.stdout().writeStreamingAll(io, bytes);
 }
 
 // -------------------------------------------------------------------- tests --
@@ -668,7 +572,7 @@ test "callTool reports the tool's own refusal sentence" {
     };
     var canned: Canned = .{ .payload = "{\"ok\":false,\"error\":\"a superseded ADR needs a note naming what supersedes it\"}" };
     const tool: Tool = .{ .ctx = &canned, .call = Canned.call };
-    try testing.expectError(Error.ToolFailed, callTool(arena, tool, "{}"));
+    try testing.expectError(Error.ToolFailed, common.callTool(arena, "adr", tool, "{}"));
 }
 
 test "unsignedField refuses a negative count instead of wrapping it" {
@@ -677,6 +581,6 @@ test "unsignedField refuses a negative count instead of wrapping it" {
     const arena = arena_state.allocator();
 
     const v = try parseValue(arena, "{\"next_number\":-1,\"good\":7}");
-    try testing.expectEqual(@as(u64, 0), unsignedField(v, "next_number"));
-    try testing.expectEqual(@as(u64, 7), unsignedField(v, "good"));
+    try testing.expectEqual(@as(u64, 0), common.unsignedField(v, "next_number"));
+    try testing.expectEqual(@as(u64, 7), common.unsignedField(v, "good"));
 }

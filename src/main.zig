@@ -186,6 +186,7 @@ comptime {
     _ = @import("schedule/store.zig");
     _ = @import("schedule/runner.zig");
     _ = @import("schedule/command.zig");
+    _ = @import("records/common.zig");
     _ = @import("reports/command.zig");
     _ = @import("research/command.zig");
     _ = @import("preset/preset.zig");

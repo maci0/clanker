@@ -16,6 +16,7 @@ const std = @import("std");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
+const common = @import("../records/common.zig");
 
 pub const Options = struct {
     /// "list" (default), "search", "open", "create", "append", "update" or
@@ -37,24 +38,9 @@ pub const Options = struct {
     kind: ?[]const u8 = null,
 };
 
-pub const Error = error{
-    BadSubcommand,
-    MissingArg,
-    /// The tool ran and refused the request (`{"ok":false,...}`), or answered
-    /// something this command cannot read. The detail is already logged.
-    ToolFailed,
-};
+pub const Error = common.Error;
 
-/// How this command reaches the `reports` WASM tool. `cli.zig` owns the
-/// registry, the sandbox and the config needed to load a tool, so it passes
-/// the call in rather than this module reaching back into it. Tests pass a
-/// canned answer through the same seam.
-pub const Tool = struct {
-    ctx: *anyopaque,
-    /// Takes the tool's JSON input, returns its JSON output. The result is
-    /// owned by the caller's arena.
-    call: *const fn (ctx: *anyopaque, input: []const u8) anyerror![]const u8,
-};
+pub const Tool = common.Tool;
 
 /// Statuses are one or two words ("Open", "Resolved", "Investigating"); a
 /// runbook's inventory line carries a sentence instead. Past this many bytes
@@ -63,17 +49,6 @@ const status_column_max: usize = 18;
 /// Narrowest status column, so a listing of only "Open" records still leaves
 /// the titles on a straight edge.
 const status_column_min: usize = 10;
-/// A matched line is one row of a search result; the rest of a 500-byte grep
-/// hit belongs in the record, not in the summary. Sized so the row, its
-/// four-space indent and its line number still fit an 80-column terminal,
-/// which is the width the rest of clanker's output is written to.
-const match_column_bytes: usize = 68;
-/// Most matching lines one record contributes to a search result. A runbook
-/// can match a query in hundreds of places, and printing them all pushes the
-/// useful hits below the fold of the same terminal the result is read on; the
-/// rest live in the record, where `clanker reports open <path>` shows them
-/// with their surrounding context instead of a uniform column.
-const max_search_lines_per_file: usize = 50;
 
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     const io = init.io;
@@ -96,10 +71,10 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
 // ------------------------------------------------------------------ reading --
 
 fn list(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
-    const result = try callTool(arena, tool, "{\"action\":\"list\"}");
+    const result = try common.callTool(arena, "reports", tool, "{\"action\":\"list\"}");
     const reports_index = json_util.strFieldOrEmpty(result.object, "reports_index");
     const runbooks_index = json_util.strFieldOrEmpty(result.object, "runbooks_index");
-    try out(io, try renderList(arena, reports_index, runbooks_index));
+    try common.out(io, try renderList(arena, reports_index, runbooks_index));
 }
 
 fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
@@ -121,8 +96,8 @@ fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try s.write(kind);
     try s.endObject();
 
-    const result = try callTool(arena, tool, input.written());
-    try out(io, try renderSearch(arena, query, kind, arrayField(result, "reports"), arrayField(result, "runbooks")));
+    const result = try common.callTool(arena, "reports", tool, input.written());
+    try common.out(io, try renderSearch(arena, query, kind, common.arrayField(result, "reports"), common.arrayField(result, "runbooks")));
 }
 
 fn open(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
@@ -141,12 +116,12 @@ fn open(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
     try s.write(path);
     try s.endObject();
 
-    const result = try callTool(arena, tool, input.written());
+    const result = try common.callTool(arena, "reports", tool, input.written());
     // The record is markdown that was written to be read; print it as it is
     // rather than reflowing someone's report in a pager-less terminal.
     const text = json_util.strFieldOrEmpty(result.object, "text");
-    try out(io, text);
-    if (text.len > 0 and text[text.len - 1] != '\n') try out(io, "\n");
+    try common.out(io, text);
+    if (text.len > 0 and text[text.len - 1] != '\n') try common.out(io, "\n");
 }
 
 // ------------------------------------------------------------------ writing --
@@ -173,7 +148,7 @@ fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try s.write(summary);
     try s.endObject();
 
-    const result = try callTool(arena, tool, input.written());
+    const result = try common.callTool(arena, "reports", tool, input.written());
     const path = json_util.strFieldOrEmpty(result.object, "path");
     var w: std.Io.Writer.Allocating = .init(arena);
     defer w.deinit();
@@ -181,10 +156,10 @@ fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     // The scaffold is a skeleton: saying so here is what keeps a half-filled
     // record from being mistaken for a finished one.
     try w.writer.print("\nFill in the evidence, resolution and verification:\n  clanker reports open {s}\n", .{path});
-    if (!boolField(result, "indexed")) {
+    if (!common.boolField(result, "indexed")) {
         try w.writer.writeAll("\nThe inventory was not updated (it changed concurrently). Add the link\nby hand from the index README without replacing the other edit.\n");
     }
-    try out(io, w.written());
+    try common.out(io, w.written());
 }
 
 fn rename(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
@@ -209,12 +184,12 @@ fn rename(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try s.write(slug);
     try s.endObject();
 
-    const result = try callTool(arena, tool, input.written());
+    const result = try common.callTool(arena, "reports", tool, input.written());
     const to = json_util.strFieldOrEmpty(result.object, "to");
     var w: std.Io.Writer.Allocating = .init(arena);
     defer w.deinit();
     try w.writer.print("renamed {s}\n     -> {s}\n", .{ path, to });
-    if (!boolField(result, "indexed")) {
+    if (!common.boolField(result, "indexed")) {
         try w.writer.writeAll("\nThe inventory link was not rewritten (missing or changed concurrently);\nfix the README line by hand.\n");
     }
     if (result.object.get("references")) |refs| {
@@ -226,7 +201,7 @@ fn rename(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
         }
     }
     try w.writer.writeAll("\nMentions outside docs/reports/ and docs/runbooks/ are not visible to the\nreports tool; search the tree for the old name to catch them.\n");
-    try out(io, w.written());
+    try common.out(io, w.written());
 }
 
 fn missingCreateArg(what: []const u8) Error {
@@ -256,8 +231,8 @@ fn append(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try s.write(content);
     try s.endObject();
 
-    const result = try callTool(arena, tool, input.written());
-    try out(io, try std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
+    const result = try common.callTool(arena, "reports", tool, input.written());
+    try common.out(io, try std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
 }
 
 fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
@@ -290,8 +265,8 @@ fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try s.write(new);
     try s.endObject();
 
-    const result = try callTool(arena, tool, input.written());
-    try out(io, try std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
+    const result = try common.callTool(arena, "reports", tool, input.written());
+    try common.out(io, try std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
 }
 
 fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
@@ -316,17 +291,17 @@ fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !v
     try s.write(note);
     try s.endObject();
 
-    const result = try callTool(arena, tool, input.written());
+    const result = try common.callTool(arena, "reports", tool, input.written());
     var w: std.Io.Writer.Allocating = .init(arena);
     defer w.deinit();
     try w.writer.print("{s} is now {s}\n", .{
         json_util.strFieldOrEmpty(result.object, "path"),
         json_util.strFieldOrEmpty(result.object, "status"),
     });
-    if (!boolField(result, "indexed")) {
+    if (!common.boolField(result, "indexed")) {
         try w.writer.writeAll("\nThe inventory line was not updated (the entry is missing or the index\nchanged concurrently). Set its status by hand in docs/reports/README.md so\nthe index does not disagree with the record.\n");
     }
-    try out(io, w.written());
+    try common.out(io, w.written());
 }
 
 fn missingStatusArg(what: []const u8) Error {
@@ -335,42 +310,6 @@ fn missingStatusArg(what: []const u8) Error {
 }
 
 // ----------------------------------------------------------------- the tool --
-
-/// One call, one place that decides whether the answer is usable. A tool that
-/// refuses says why in `error`, and that sentence is written for whoever asked
-/// -- it names the conflict to reopen or the argument to fix -- so it is the
-/// message, not a generic failure.
-fn callTool(arena: std.mem.Allocator, tool: Tool, input: []const u8) !std.json.Value {
-    const raw = try tool.call(tool.ctx, input);
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
-        log.log(.error_, "reports: the tool answered something that is not JSON", .{});
-        return Error.ToolFailed;
-    };
-    if (parsed != .object) {
-        log.log(.error_, "reports: the tool answered something that is not a JSON object", .{});
-        return Error.ToolFailed;
-    }
-    const ok = parsed.object.get("ok");
-    if (ok == null or ok.? != .bool or !ok.?.bool) {
-        const detail = if (parsed.object.get("error")) |e|
-            (if (e == .string) e.string else "the tool refused the request")
-        else
-            "the tool refused the request";
-        log.log(.error_, "reports: {s}", .{detail});
-        return Error.ToolFailed;
-    }
-    return parsed;
-}
-
-fn boolField(obj: std.json.Value, name: []const u8) bool {
-    const v = obj.object.get(name) orelse return false;
-    return v == .bool and v.bool;
-}
-
-fn arrayField(obj: std.json.Value, name: []const u8) []const std.json.Value {
-    const v = obj.object.get(name) orelse return &.{};
-    return if (v == .array) v.array.items else &.{};
-}
 
 // --------------------------------------------------------------- the listing --
 
@@ -589,66 +528,11 @@ pub fn renderSearch(
     }
 
     try w.writer.print("{d} matching line(s) for \"{s}\"\n\n", .{ reports.len + runbooks.len, query });
-    try renderMatchGroup(&w.writer, "REPORTS", reports);
-    try renderMatchGroup(&w.writer, "RUNBOOKS", runbooks);
+    try common.renderMatchGroup(&w.writer, "REPORTS", reports);
+    try common.renderMatchGroup(&w.writer, "RUNBOOKS", runbooks);
     try w.writer.writeAll("NEXT\n\n");
     try w.writer.writeAll("  clanker reports open <path>       read the record before trusting it\n");
     return w.written();
-}
-
-fn renderMatchGroup(w: *std.Io.Writer, heading: []const u8, matches: []const std.json.Value) !void {
-    if (matches.len == 0) return;
-    try w.print("{s}\n\n", .{heading});
-
-    var last_file: []const u8 = "";
-    var file_lines: usize = 0;
-    var skipped: usize = 0;
-    for (matches) |m| {
-        if (m != .object) continue;
-        const file = json_util.strFieldOrEmpty(m.object, "file");
-        if (!std.mem.eql(u8, file, last_file)) {
-            // Leaving a capped record: say what the listing refused, then the
-            // blank line that separates the next file's group.
-            if (last_file.len > 0 and skipped > 0) {
-                try w.print("    … {d} more matching line(s) in {s}\n", .{ skipped, last_file });
-            }
-            if (last_file.len > 0) try w.writeByte('\n');
-            last_file = file;
-            file_lines = 0;
-            skipped = 0;
-            try w.print("  {s}\n", .{file});
-        }
-        if (file_lines >= max_search_lines_per_file) {
-            skipped += 1;
-            continue;
-        }
-        file_lines += 1;
-        const text = json_util.strFieldOrEmpty(m.object, "text");
-        // A line number is printed unsigned: `{d}` on an i64 carries an
-        // explicit `+`, which reads as a diff marker in a column of numbers.
-        const line: u64 = blk: {
-            const l = m.object.get("line") orelse break :blk 0;
-            if (l != .integer or l.integer < 0) break :blk 0;
-            break :blk @intCast(l.integer);
-        };
-        try w.print("    {d: >5}  {s}\n", .{ line, ellipsize(text, match_column_bytes) });
-    }
-    if (last_file.len > 0 and skipped > 0) {
-        try w.print("    … {d} more matching line(s) in {s}\n", .{ skipped, last_file });
-    }
-    try w.writeAll("\n");
-}
-
-/// One line of a record, cut to the column on a UTF-8 boundary. Report text is
-/// full of em dashes and arrows, and half a codepoint renders as a replacement
-/// character right where the reader is trying to recognize the line.
-fn ellipsize(s: []const u8, max: usize) []const u8 {
-    const flat = std.mem.trim(u8, s, " \t\r\n");
-    return utf8.cap(flat, max);
-}
-
-fn out(io: std.Io, bytes: []const u8) !void {
-    try std.Io.File.stdout().writeStreamingAll(io, bytes);
 }
 
 // ---------------------------------------------------------------------- tests --
@@ -778,14 +662,14 @@ test "search caps a record's lines at the column and names how many were hidden"
     // reader knows the truncated file is where the rest lives.
     var matches: std.ArrayList(std.json.Value) = .empty;
     var i: usize = 0;
-    while (i < max_search_lines_per_file + 12) : (i += 1) {
+    while (i < common.match_lines_per_file_max + 12) : (i += 1) {
         try matches.append(arena, try std.json.parseFromSliceLeaky(std.json.Value, arena,
             \\{"file":"docs/runbooks/big.md","line":3,"text":"recurring phrase"}
         , .{}));
     }
 
     const text = try renderSearch(arena, "recurring", "all", &.{}, matches.items);
-    try std.testing.expectEqual(max_search_lines_per_file, std.mem.count(u8, text, "recurring phrase"));
+    try std.testing.expectEqual(common.match_lines_per_file_max, std.mem.count(u8, text, "recurring phrase"));
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "12 more matching line(s) in docs/runbooks/big.md"));
 }
 
@@ -804,12 +688,12 @@ test "a refused tool call fails with the tool's own sentence, not a generic erro
     };
 
     var refused: Canned = .{ .answer = "{\"ok\":false,\"error\":\"the record changed while appending\"}" };
-    try std.testing.expectError(Error.ToolFailed, callTool(arena, .{ .ctx = &refused, .call = Canned.call }, "{}"));
+    try std.testing.expectError(Error.ToolFailed, common.callTool(arena, "reports", .{ .ctx = &refused, .call = Canned.call }, "{}"));
 
     var garbage: Canned = .{ .answer = "not json" };
-    try std.testing.expectError(Error.ToolFailed, callTool(arena, .{ .ctx = &garbage, .call = Canned.call }, "{}"));
+    try std.testing.expectError(Error.ToolFailed, common.callTool(arena, "reports", .{ .ctx = &garbage, .call = Canned.call }, "{}"));
 
     var fine: Canned = .{ .answer = "{\"ok\":true,\"path\":\"docs/reports/bugs/a.md\"}" };
-    const parsed = try callTool(arena, .{ .ctx = &fine, .call = Canned.call }, "{}");
+    const parsed = try common.callTool(arena, "reports", .{ .ctx = &fine, .call = Canned.call }, "{}");
     try std.testing.expectEqualStrings("docs/reports/bugs/a.md", json_util.strFieldOrEmpty(parsed.object, "path"));
 }
