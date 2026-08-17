@@ -341,10 +341,18 @@ fn pipe(
         .idle_ns = timeoutNs(ctx.cfg.serve.proxy_idle_timeout_s, default_idle_s),
         .started = nowNs(ctx.io),
     };
-    const watcher = std.Thread.spawn(.{}, Watch.loop, .{&watch}) catch null;
+    const watcher = std.Thread.spawn(.{}, Watch.loop, .{&watch}) catch |err| {
+        // The watchdog is the only deadline this request has: the upstream
+        // `std.http.Client` has no read timeout of its own, so without it a
+        // provider that accepts and goes quiet hangs the connection forever.
+        // Proceeding without the deadline is not a smaller failure than
+        // refusing the request, so refuse rather than let the hang in.
+        log.log(.error_, "proxy: could not start the upstream deadline watchdog for provider {s} ({s}); refusing the request", .{ provider.name, @errorName(err) });
+        return error.SystemResources;
+    };
     defer {
         watch.stop.store(true, .release);
-        if (watcher) |t| t.join();
+        watcher.join();
     }
 
     rate_limit.waitFor(ctx.io, ctx.gpa, provider) catch return error.ConnectFailed;
@@ -405,7 +413,14 @@ fn pipe(
     var transfer: [client.http_scratch_buf_bytes]u8 = undefined;
     const reader = response.reader(&transfer);
     while (true) {
-        const nread = reader.readSliceShort(&buf) catch break;
+        const nread = reader.readSliceShort(&buf) catch |err| {
+            // The upstream died mid-body or the watchdog aborted a silent
+            // one. Nothing has been written to the client yet (this loop
+            // fills the buffer first), so report the failure instead of
+            // delivering a truncated body as a complete response with the
+            // status the upstream chose.
+            return if (watch.fired.load(.acquire)) error.Timeout else err;
+        };
         if (nread == 0) break;
         watch.markByte();
         if (body_buf.items.len + nread > raw_http.max_body_bytes) {
@@ -603,6 +618,10 @@ const Watch = struct {
     first: std.atomic.Value(bool) = .init(false),
     last: std.atomic.Value(i64) = .init(0),
     stop: std.atomic.Value(bool) = .init(false),
+    /// Set before `abort.trigger` so the request thread can tell "the
+    /// deadline elapsed" from "the upstream failed on its own" once the
+    /// aborted read returns.
+    fired: std.atomic.Value(bool) = .init(false),
 
     fn markByte(self: *Watch) void {
         self.first.store(true, .release);
@@ -615,12 +634,14 @@ const Watch = struct {
             const now = nowNs(self.io);
             if (!self.first.load(.acquire)) {
                 if (self.first_byte_ns > 0 and now - self.started > self.first_byte_ns) {
+                    self.fired.store(true, .release);
                     self.abort.trigger(self.io);
                     return;
                 }
             } else if (self.idle_ns > 0) {
                 const last = self.last.load(.acquire);
                 if (now - last > self.idle_ns) {
+                    self.fired.store(true, .release);
                     self.abort.trigger(self.io);
                     return;
                 }

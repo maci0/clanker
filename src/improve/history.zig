@@ -175,7 +175,17 @@ pub const History = struct {
         var guard = file_lock.acquire(self.io, self.base, self.state_dir, "improvements", self.gpa);
         defer guard.release();
 
-        const raw = self.dir().readFileAlloc(self.io, self.logPath(), self.gpa, .limited(1 << 24)) catch return 0;
+        const raw = self.dir().readFileAlloc(self.io, self.logPath(), self.gpa, .limited(1 << 24)) catch |err| switch (err) {
+            // No log yet means nothing to flip.
+            error.FileNotFound => return 0,
+            // A log that exists but cannot be read is not "no reverts to
+            // record": the caller treats a zero return as the steady state
+            // and stays silent, so carrying on would leave every accepted
+            // entry marked accepted and the loop re-proposing work a human
+            // already reverted. The entry write went through atomic_write,
+            // so this is a storage failure, not a torn read.
+            else => return err,
+        };
         defer self.gpa.free(raw);
 
         var buf: std.ArrayList(u8) = .empty;
@@ -1110,6 +1120,35 @@ test "a revert with no reason still flips the status" {
     const summary = try hist.recentSummary(arena, 6);
     try std.testing.expect(std.mem.find(u8, summary, "- reverted [behavior]: no reason given") != null);
     try std.testing.expect(std.mem.find(u8, summary, "a human reverted this, saying:") == null);
+}
+
+test "an unreadable log is an error from markReverted, not zero flips" {
+    // The engine treats a zero return as the steady state and stays silent;
+    // a log that exists but cannot be read must therefore surface as an
+    // error, or the revert sync records nothing and the loop re-proposes
+    // work a human already reverted. A missing log is the only "nothing to
+    // flip" case.
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    // A missing log is the ordinary first run: no error, zero flips.
+    try std.testing.expectEqual(@as(usize, 0), try hist.markReverted(&.{.{ .id = "imp-none", .reason = "r" }}));
+
+    // A directory where the log file belongs makes every read of it fail.
+    try tmp.dir.createDirPath(io, "state/improvements.jsonl");
+    _ = hist.markReverted(&.{.{ .id = "imp-none", .reason = "r" }}) catch return;
+    return error.TestUnexpectedResult;
 }
 
 test "firstLine trims, takes the first line, and clips to max" {
