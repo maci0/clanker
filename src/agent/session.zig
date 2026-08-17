@@ -82,6 +82,29 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
             try s.objectField("content");
             try s.write(c);
         }
+        // Attachments are model-visible input, so they belong in the log the
+        // next request is derived from. Dropping them here let `--continue`
+        // and `forkSession` resend "what is in this picture?" with no picture
+        // and no error. ponytail: base64 inline, same shape as the wire; the
+        // ceiling is that every turn rewrites the whole transcript, so a
+        // 4-image conversation re-serializes ~21 MB per save. Move the parts
+        // to a content-addressed sidecar under `state/sessions/<id>.files/`
+        // if that latency ever shows up.
+        if (m.images) |imgs| {
+            if (imgs.len > 0) {
+                try s.objectField("images");
+                try s.beginArray();
+                for (imgs) |img| {
+                    try s.beginObject();
+                    try s.objectField("mime");
+                    try s.write(img.mime);
+                    try s.objectField("b64");
+                    try s.write(img.b64);
+                    try s.endObject();
+                }
+                try s.endArray();
+            }
+        }
         if (m.tool_calls) |calls| {
             try s.objectField("tool_calls");
             try s.beginArray();
@@ -120,9 +143,17 @@ const StoredToolCall = struct {
     arguments: []const u8,
 };
 
+const StoredImage = struct {
+    mime: []const u8,
+    b64: []const u8,
+};
+
 pub const StoredMessage = struct {
     role: []const u8,
     content: ?[]const u8 = null,
+    /// Absent on every session written before attachments were persisted, so
+    /// an old transcript still decodes; it just has nothing to restore.
+    images: ?[]const StoredImage = null,
     tool_calls: ?[]const StoredToolCall = null,
     tool_call_id: ?[]const u8 = null,
 };
@@ -142,7 +173,10 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     _ = gpa;
     if (!validSessionId(id)) return error.InvalidSessionId;
     const path = try std.fmt.allocPrint(arena, "{s}/{s}.json", .{ store_dir, id });
-    const raw = try base.readFileAlloc(io, path, arena, .limited(1 << 24));
+    // 64 MiB, not 16: four max-size attachments (4 MB each, `max_run_images`
+    // in cli.zig) base64-expand to ~21 MB on their own, so a cap sized for
+    // text alone would refuse to load the very sessions that now round-trip.
+    const raw = try base.readFileAlloc(io, path, arena, .limited(1 << 26));
     const stored = try json.parseFromSliceLeaky(StoredSession, arena, raw, .{ .ignore_unknown_fields = true });
 
     var messages: std.ArrayList(types.Message) = .empty;
@@ -152,6 +186,13 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
             .content = sm.content,
             .tool_call_id = sm.tool_call_id,
         };
+        if (sm.images) |imgs| {
+            if (imgs.len > 0) {
+                var img_list: std.ArrayList(types.ImagePart) = .empty;
+                for (imgs) |img| try img_list.append(arena, .{ .mime = img.mime, .b64 = img.b64 });
+                msg.images = try img_list.toOwnedSlice(arena);
+            }
+        }
         if (sm.tool_calls) |calls| {
             var tc_list: std.ArrayList(types.ToolCall) = .empty;
             for (calls) |tc| try tc_list.append(arena, .{ .id = tc.id, .name = tc.name, .arguments = tc.arguments });
@@ -484,10 +525,17 @@ fn sessionMetaFromStored(arena: std.mem.Allocator, stored: StoredSession) !Sessi
     };
 }
 
+/// Counted the same way on both sides: `bytes` is written from the live
+/// messages and recomputed from the stored ones when the header is missing,
+/// so the two must agree or a session changes size just by being re-listed.
+/// Attachments count because they dominate a multimodal transcript.
 fn transcriptBytes(messages: []const types.Message) usize {
     var bytes: usize = 0;
     for (messages) |m| {
         if (m.content) |c| bytes += c.len;
+        if (m.images) |imgs| {
+            for (imgs) |img| bytes += img.b64.len;
+        }
         if (m.tool_calls) |calls| {
             for (calls) |tc| bytes += tc.arguments.len;
         }
@@ -499,6 +547,9 @@ fn storedTranscriptBytes(messages: []const StoredMessage) usize {
     var bytes: usize = 0;
     for (messages) |sm| {
         if (sm.content) |c| bytes += c.len;
+        if (sm.images) |imgs| {
+            for (imgs) |img| bytes += img.b64.len;
+        }
         if (sm.tool_calls) |calls| {
             for (calls) |tc| bytes += tc.arguments.len;
         }
@@ -894,6 +945,52 @@ test "session store rejects ids that can escape its directory" {
     try std.testing.expectError(error.InvalidSessionId, deleteSession(io, arena, tmp.dir, bad_id));
     try std.testing.expectError(error.InvalidSessionId, forkSession(io, std.testing.allocator, arena, tmp.dir, bad_id));
     try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "escaped.json", .{}));
+}
+
+test "a saved session round-trips its image attachments, including through a fork" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var imgs = [_]types.ImagePart{.{ .mime = "image/png", .b64 = "aGk=" }};
+    const messages = [_]types.Message{
+        .{ .role = .user, .content = "what is in this picture?", .images = &imgs },
+        .{ .role = .assistant, .content = "a greeting" },
+    };
+    try saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+        .id = "vision",
+        .title = "vision",
+        .messages = &messages,
+        .created = 0,
+        .updated = 0,
+    });
+
+    // The attachment is model-visible input, so resuming must resend it.
+    const loaded = try loadSession(io, std.testing.allocator, arena, tmp.dir, "vision");
+    const got = loaded.messages[0].images orelse return error.AttachmentDropped;
+    try std.testing.expectEqual(@as(usize, 1), got.len);
+    try std.testing.expectEqualStrings("image/png", got[0].mime);
+    try std.testing.expectEqualStrings("aGk=", got[0].b64);
+    // A message that never had one still decodes as having none.
+    try std.testing.expect(loaded.messages[1].images == null);
+
+    // forkSession round-trips through load+save, so it stripped them too.
+    const fork_id = try forkSession(io, std.testing.allocator, arena, tmp.dir, "vision");
+    const forked = try loadSession(io, std.testing.allocator, arena, tmp.dir, fork_id);
+    const fork_imgs = forked.messages[0].images orelse return error.AttachmentDropped;
+    try std.testing.expectEqualStrings("aGk=", fork_imgs[0].b64);
+
+    // The listing counter agrees with what a re-listing recomputes.
+    const metas = try listSessions(io, arena, tmp.dir);
+    for (metas) |m| {
+        if (!std.mem.eql(u8, m.id, "vision")) continue;
+        try std.testing.expectEqual(transcriptBytes(&messages), m.bytes);
+    }
 }
 
 test "session load rejects an unknown persisted message role" {
