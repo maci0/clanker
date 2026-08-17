@@ -179,6 +179,12 @@ pub const Options = struct {
     providers_sub: []const u8 = "check",
     provider: ?[]const u8 = null,
     model: ?[]const u8 = null,
+    /// `--reasoning-effort <none|low|medium|high|max>`: pin every turn's
+    /// reasoning effort for this invocation, applied as `agent
+    /// .reasoning_effort` after config load (see that field in config.zig for
+    /// the precedence). Validated at parse time so a typo is a usage error,
+    /// not a provider 400 mid-run. Null means the config decides.
+    reasoning_effort: ?config.ReasoningEffort = null,
     task: ?[]const u8 = null,
     /// `graph` only: the run id following an `answer` (or other mode) word,
     /// so `clanker graph answer run-<s>` reaches the guest as one args string.
@@ -633,6 +639,13 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             } else if (std.mem.eql(u8, a, "--model") or std.mem.eql(u8, a, "-m")) {
                 opts.model = try takeValue(args, &idx, inline_value, a, diag);
                 used = .model;
+            } else if (std.mem.eql(u8, a, "--reasoning-effort")) {
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                opts.reasoning_effort = config.ReasoningEffort.fromStr(v) orelse {
+                    setDiag(diag, v);
+                    return error.BadReasoningEffort;
+                };
+                used = .reasoning_effort;
             } else if (std.mem.eql(u8, a, "--session")) {
                 opts.session = try takeValue(args, &idx, inline_value, a, diag);
                 used = .session;
@@ -1775,6 +1788,7 @@ const Flag = enum {
     verbose,
     provider,
     model,
+    reasoning_effort,
     session,
     continue_last,
     mascot,
@@ -1827,6 +1841,7 @@ const Flag = enum {
             .verbose => "--verbose, -v",
             .provider => "--provider",
             .model => "--model",
+            .reasoning_effort => "--reasoning-effort",
             .session => "--session",
             .continue_last => "--continue, -c",
             .mascot => "--mascot[=<mode>]",
@@ -1885,6 +1900,7 @@ const Flag = enum {
             .verbose => "log diagnostic progress while clanker runs",
             .provider => "use this provider instead of the configured default",
             .model => "the model to use, or <provider>/<model> (alias -m)",
+            .reasoning_effort => "pin reasoning effort for every turn: none, low, medium, high, or max (beats config and auto-thinking)",
             .session => "resume a saved conversation by id",
             .continue_last => "pick up the most recently touched session",
             .mascot => "run the mascot: off, type, loop, place, or input",
@@ -1996,9 +2012,9 @@ const Spec = struct {
 /// `--verbose`/`-v`, `--help`/`-h` and `--version` are accepted everywhere and
 /// so are not listed per command.
 const specs = [_]Spec{
-    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal, .worktree, .preset }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--preset <name>    run with a preset from presets/<name>.toml\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
-    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .preset, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
-    .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model }, .detail = "Starts work immediately, then evaluates every completed agent turn\nagainst the supplied condition and continues until achieved, blocked,\nor the goal-turn budget ends. It does not require a write-goal draft\nor an added goal. Use `add-goal` when you want to persist a goal for a\nlater `run --goal <id>`, and `write-goal` when you only want a\nstructured draft." },
+    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .session, .continue_last, .goal, .worktree, .preset }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--preset <name>    run with a preset from presets/<name>.toml\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
+    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .session, .continue_last, .preset, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
+    .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort }, .detail = "Starts work immediately, then evaluates every completed agent turn\nagainst the supplied condition and continues until achieved, blocked,\nor the goal-turn budget ends. It does not require a write-goal draft\nor an added goal. Use `add-goal` when you want to persist a goal for a\nlater `run --goal <id>`, and `write-goal` when you only want a\nstructured draft." },
     .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the goal_write tool directly and prints a reviewable draft. It\nnever writes state/goals.json or starts an agent run." },
     .{ .command = .add_goal, .usage = "add-goal \"<objective>\" [\"<completion criterion>\"]", .blurb = "persist a goal without running it", .group = .work, .detail = "Calls the goal_add tool directly. It creates a goal-card and writes the\ngoals.json index, and prints the id, but never starts work. The criterion\nis optional: the goal loop drafts a measurable one on its first turn. Run\nit later with `clanker run --goal <id>` or from the goal board. Use\n`write-goal` first if you need help drafting the fields." },
     .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--iters <n>        cap the number of attempts (default 3)\n--dry-run          propose changes without applying them" },
@@ -2107,6 +2123,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .repl => try repl.cmdReplVaxis(init, .{
             .provider = opts.provider,
             .model = opts.model,
+            .reasoning_effort = opts.reasoning_effort,
             .session = opts.session,
             .continue_last = opts.continue_last,
             .mascot = opts.mascot,
@@ -3709,6 +3726,9 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
     // `var`, not `const`: an isolated run fills in agent.shared_root below,
     // once it knows which checkout it came from.
     var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    // The flag is the config key for one invocation; the agent loop reads
+    // only cfg, so apply it before anything captures the config.
+    if (opts.reasoning_effort) |re| cfg.agent.reasoning_effort = re;
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
     var provider_val = try resolveProvider(&cfg, opts);
@@ -16026,6 +16046,25 @@ test "a flag the command does not take is refused, not ignored" {
     // The same flag on a command that does take it is fine.
     const ok = try parse(&.{ "clanker", "run", "--model", "x", "do a thing" }, null);
     try std.testing.expectEqualStrings("x", ok.model.?);
+}
+
+test "--reasoning-effort parses on the agent commands and validates its value" {
+    // `run` takes it, and so does the bare invocation (which is the REPL).
+    const ok = try parse(&.{ "clanker", "run", "--reasoning-effort", "high", "do a thing" }, null);
+    try std.testing.expectEqual(config.ReasoningEffort.high, ok.reasoning_effort.?);
+    const bare = try parse(&.{ "clanker", "--reasoning-effort=low" }, null);
+    try std.testing.expectEqual(Command.repl, bare.command);
+    try std.testing.expectEqual(config.ReasoningEffort.low, bare.reasoning_effort.?);
+
+    // The value is validated at parse time, and the diagnostic names the bad
+    // spelling rather than the flag.
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.BadReasoningEffort, parse(&.{ "clanker", "run", "--reasoning-effort", "turbo", "x" }, &diag));
+    try std.testing.expectEqualStrings("turbo", diag);
+
+    // A command that never reaches a model refuses it rather than ignoring it.
+    try std.testing.expectError(error.FlagNotForCommand, parse(&.{ "clanker", "stats", "--reasoning-effort", "high" }, &diag));
+    try std.testing.expectEqualStrings("--reasoning-effort", diag);
 }
 
 test "every flag a command accepts has a help description" {

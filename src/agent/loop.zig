@@ -2370,6 +2370,13 @@ pub const Agent = struct {
     fn classifyEffort(self: *Agent, messages: []const types.Message) ?[]const u8 {
         self.ctx.thinking_level = null;
         self.ctx.thinking_classifier_ms = null;
+        // A pinned effort (`[agent] reasoning_effort`, set for one invocation
+        // by `--reasoning-effort`) makes the per-turn classifier moot: asking
+        // a model which effort to use only earns its call when nobody has
+        // already said. The pin rides `ChatParams.reasoning_effort`, the top
+        // of writeSamplingParams' precedence, so it also beats the per-model
+        // config and the sampling profile.
+        if (self.cfg.agent.reasoning_effort) |re| return @tagName(re);
         if (!self.cfg.agent.auto_thinking) return null;
         var i = messages.len;
         while (i > 0) {

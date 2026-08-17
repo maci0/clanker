@@ -477,6 +477,13 @@ pub const Agent = struct {
     /// or `fallback_providers` (array); a bare string becomes one entry so
     /// existing configs keep working. Empty means no reactive chain.
     fallback_providers: []const []const u8 = &.{},
+    /// Pin every agent turn's reasoning effort: "none", "low", "medium",
+    /// "high" or "max". Beats the `auto_thinking` classifier, the per-model
+    /// `reasoning_effort`, and the sampling-profile default; `none`
+    /// explicitly disables reasoning on providers that accept it. Null (the
+    /// default) leaves those lower layers in charge. The CLI's
+    /// `--reasoning-effort` (repl/run/goal) sets this for one invocation.
+    reasoning_effort: ?ReasoningEffort = null,
     /// Opt-in per-turn classifier that selects a sampling-profile
     /// `reasoning_effort` row. Off until a calibration eval justifies it.
     auto_thinking: bool = false,
@@ -605,6 +612,7 @@ pub const AgentFields = struct {
     provider_check_timeout_seconds: bool = false,
     confirm_writes: bool = false,
     fallback_provider: bool = false,
+    reasoning_effort: bool = false,
     auto_thinking: bool = false,
     thinking_classifier_model: bool = false,
     thinking_classifier_timeout_ms: bool = false,
@@ -2003,7 +2011,7 @@ pub const Config = struct {
             "ask_timeout_seconds",          "confirm_writes",               "provider_check_timeout_seconds", "fallback_provider",
             "fallback_providers",           "auto_thinking",                "thinking_classifier_model",      "thinking_classifier_timeout_ms",
             "worktree",                     "goal_worktree",                "git_worktree_on",                "isolated_cli",
-            "isolated_tui",                 "isolated_webui",
+            "isolated_tui",                 "isolated_webui",               "reasoning_effort",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -2180,6 +2188,14 @@ pub const Config = struct {
             a.fallback_providers = try jsonNameList(arena, k, "fallback_provider");
             f.fallback_provider = true;
         }
+        if (obj.get("reasoning_effort")) |k| {
+            const s = try jsonStr(k, "reasoning_effort");
+            a.reasoning_effort = ReasoningEffort.fromStr(s) orelse {
+                log.log(.error_, "agent: reasoning_effort \"{s}\" is not one of \"none\", \"low\", \"medium\", \"high\", \"max\"", .{s});
+                return error.UnknownReasoningEffort;
+            };
+            f.reasoning_effort = true;
+        }
         if (obj.get("auto_thinking")) |k| {
             a.auto_thinking = try jsonBool(k, "auto_thinking");
             f.auto_thinking = true;
@@ -2262,6 +2278,7 @@ pub const Config = struct {
         if (fields.provider_check_timeout_seconds) dst.provider_check_timeout_seconds = src.provider_check_timeout_seconds;
         if (fields.confirm_writes) dst.confirm_writes = src.confirm_writes;
         if (fields.fallback_provider) dst.fallback_providers = src.fallback_providers;
+        if (fields.reasoning_effort) dst.reasoning_effort = src.reasoning_effort;
         if (fields.auto_thinking) dst.auto_thinking = src.auto_thinking;
         if (fields.thinking_classifier_model) dst.thinking_classifier_model = src.thinking_classifier_model;
         if (fields.thinking_classifier_timeout_ms) dst.thinking_classifier_timeout_ms = src.thinking_classifier_timeout_ms;
@@ -4626,6 +4643,59 @@ test "an invalid reasoning_effort is rejected" {
         ,
     });
     try std.testing.expectError(error.UnknownReasoningEffort, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+}
+
+test "agent.reasoning_effort pins the per-turn effort and rejects unknown values" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[agent]
+        \\reasoning_effort = "high"
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(ReasoningEffort.high, cfg.agent.reasoning_effort.?);
+
+    // Absent, the per-model config and sampling profile stay in charge.
+    var tmp2 = std.testing.tmpDir(.{});
+    defer tmp2.cleanup();
+    try tmp2.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        ,
+    });
+    const bare = try Config.load(io, arena, tmp2.dir, "config.toml", "config.local.toml");
+    try std.testing.expect(bare.agent.reasoning_effort == null);
+
+    // Same validation as the per-model key: five levels, nothing else.
+    var tmp3 = std.testing.tmpDir(.{});
+    defer tmp3.cleanup();
+    try tmp3.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[agent]
+        \\reasoning_effort = "turbo"
+        ,
+    });
+    try std.testing.expectError(error.UnknownReasoningEffort, Config.load(io, arena, tmp3.dir, "config.toml", "config.local.toml"));
 }
 
 test "agent.git_remote_ops and exec_pattern_allow parse from config" {

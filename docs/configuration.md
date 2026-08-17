@@ -255,7 +255,7 @@ alias can keep its own `max_tokens` while inheriting the SKU's window.
 | `max_tokens` | int | models.dev `limit.output`, else 1024 | Per-request output-token cap. Omit to take the snapshot; a written value wins. |
 | `temperature` | float | unset | Sampling temperature. |
 | `top_p` | float | unset | Nucleus cutoff; best set *instead of* temperature, not alongside. |
-| `reasoning_effort` | string | unset | For reasoning models, sent as `reasoning_effort` on the OpenAI-compatible wire (Ollama, DeepSeek, OpenAI, …). One of `"none"`/`"low"`/`"medium"`/`"high"`/`"max"`; keeps chain-of-thought short so `content` stays populated. Unset omits the field; `"none"` disables reasoning explicitly. Invalid values are rejected at load. |
+| `reasoning_effort` | string | unset | For reasoning models, sent as `reasoning_effort` on the OpenAI-compatible wire (Ollama, DeepSeek, OpenAI, …). One of `"none"`/`"low"`/`"medium"`/`"high"`/`"max"`; keeps chain-of-thought short so `content` stays populated. Unset omits the field; `"none"` disables reasoning explicitly. Invalid values are rejected at load. `[agent] reasoning_effort` (or the CLI's `--reasoning-effort`) overrides it. |
 | `display` | string | models.dev `name` | UI label when the wire id is not what a person calls it (e.g. `kimi-k3` shown as `moonshotai/kimi-k3`). Display only. Omit to take the snapshot. |
 | `cost_per_1m_input` | float | models.dev `cost.input` | USD per 1M input tokens, for run cost accounting. Omit to take the snapshot. |
 | `cost_per_1m_output` | float | models.dev `cost.output` | USD per 1M output tokens. Omit to take the snapshot. |
@@ -325,7 +325,8 @@ Run-loop and path settings. The commonly-touched keys:
 | `ask_timeout_seconds` | 120 | How long a serve-side `ask_user`/confirm question waits for the browser before giving up. |
 | `confirm_writes` | `never` | Gate write-capable tool calls on a human's allow/deny. `browser` asks streaming web runs; `always` also opens the REPL's allow/deny modal. Runs with no human channel are never gated. |
 | `fallback_provider` / `fallback_providers` | (unset) | Ordered fallbacks after the selected provider cannot serve a request. A string or an array; later entries are tried in order. Also the preferred vision-routing target. |
-| `auto_thinking` | `false` | Per-turn classifier that selects a sampling-profile `reasoning_effort` row. Opt-in. |
+| `reasoning_effort` | (unset) | Pin every agent turn's reasoning effort: `"none"`/`"low"`/`"medium"`/`"high"`/`"max"`. Beats the `auto_thinking` classifier, the per-model `reasoning_effort`, and the sampling-profile default; `"none"` disables reasoning on providers that accept it. Unset leaves those lower layers in charge. The CLI's `--reasoning-effort` (repl/run/goal) sets it for one invocation. |
+| `auto_thinking` | `false` | Per-turn classifier that selects a sampling-profile `reasoning_effort` row. Opt-in, and moot while `reasoning_effort` above is set. |
 | `thinking_classifier_model` | (unset) | `provider` or `provider/model`. Empty = cheapest configured provider. |
 | `thinking_classifier_timeout_ms` | 3000 | Wall-clock classifier deadline; timeout aborts its HTTP connection and fails open. |
 | `compact_threshold_bytes` | 24000 | Compact conversation history past this size (`0` uses the model window). |

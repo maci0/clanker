@@ -265,6 +265,7 @@ pub fn main(init: std.process.Init) !void {
             else
                 cli.printUsageError(init.io, "'{s}' needs a value", .{shown}),
             error.BadIters => cli.printUsageError(init.io, "--iters wants a non-negative integer, got '{s}'", .{shown}),
+            error.BadReasoningEffort => cli.printUsageError(init.io, "--reasoning-effort wants none, low, medium, high, or max, got '{s}'", .{shown}),
             error.BadBudget => cli.printUsageError(init.io, "--budget wants a non-negative integer, got '{s}'", .{shown}),
             error.BadRounds => cli.printUsageError(init.io, "--rounds wants a non-negative integer, got '{s}'", .{shown}),
             error.BadPort => cli.printUsageError(init.io, "--webui-port wants a 16-bit port number, got '{s}'", .{shown}),

@@ -6982,6 +6982,10 @@ test "encodeComposerNewlines folds every break spelling to one marker" {
 pub const ReplOptions = struct {
     provider: ?[]const u8 = null,
     model: ?[]const u8 = null,
+    /// `--reasoning-effort`: pin every turn's effort for this session,
+    /// applied to `agent.reasoning_effort` after config load. Null means the
+    /// config decides.
+    reasoning_effort: ?config.ReasoningEffort = null,
     session: ?[]const u8 = null,
     continue_last: bool = false,
     /// `--mascot[=<mode>]`, unparsed. Null means the flag was absent, which is
@@ -7373,6 +7377,9 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     bridge_gpa = gpa;
     bridge_io = io;
     var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    // `--reasoning-effort` is the config key for one session; the agent loop
+    // reads only cfg, so apply it before anything captures the config.
+    if (opts.reasoning_effort) |re| cfg.agent.reasoning_effort = re;
     // A REPL owns the terminal and has one live conversation, so it is safe
     // to move this standalone process into its worktree before anything else
     // opens a cwd-relative file. (The concurrent Web UI cannot do that and

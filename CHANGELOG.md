@@ -37,6 +37,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `--reasoning-effort <none|low|medium|high|max>` on `clanker` (the bare
+  REPL), `run`, and `goal` pins every turn's reasoning effort for that
+  invocation, and a new `[agent] reasoning_effort` config key pins it
+  persistently. The pin beats the `auto_thinking` classifier, the
+  per-model `reasoning_effort`, and the sampling-profile default; a bad
+  value is a usage error at parse time.
 - `clanker graph answer [run-id]` prints the final answer a recorded run
   produced — the latest run's, or the named run's. The graph was already
   the only durable copy of an answer once the terminal scrolls

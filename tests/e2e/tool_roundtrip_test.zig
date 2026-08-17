@@ -63,6 +63,41 @@ test "clanker run: a tool call round-trips through the real sandbox" {
     try std.testing.expect(std.mem.find(u8, answered.stdout, final_text) != null);
 }
 
+test "clanker run --reasoning-effort pins the request's reasoning field" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const turn0 = try mock_llm.textTurn(gpa, "hi");
+    defer gpa.free(turn0);
+    const mock = try mock_llm.Server.start(io, gpa, &.{turn0});
+    defer mock.stop();
+    try harness.writeMockConfig(io, tmp.dir, gpa, mock.port);
+    try harness.linkZigOut(io, tmp.dir);
+
+    var result = try harness.run(gpa, io, tmp.dir, &.{ "run", "--reasoning-effort", "high", "say hi" });
+    defer result.deinit(gpa);
+    if (!result.ok()) std.debug.print("clanker run failed.\nstdout: {s}\nstderr: {s}\n", .{ result.stdout, result.stderr });
+    try std.testing.expect(result.ok());
+
+    // The pinned effort reaches the wire: the request body carries the flat
+    // OpenAI field (the mock provider's thinking_schema default).
+    try std.testing.expectEqual(@as(usize, 1), mock.requestCount());
+    const first = mock.request(0) orelse return error.MissingRequest;
+    try std.testing.expect(std.mem.find(u8, first, "\"reasoning_effort\":\"high\"") != null);
+
+    // A bad value is a usage error before any request is made.
+    var bad = try harness.run(gpa, io, tmp.dir, &.{ "run", "--reasoning-effort", "turbo", "say hi" });
+    defer bad.deinit(gpa);
+    try std.testing.expect(!bad.ok());
+    try std.testing.expect(std.mem.find(u8, bad.stderr, "--reasoning-effort") != null);
+    try std.testing.expectEqual(@as(usize, 1), mock.requestCount());
+}
+
 test "clanker run: an answer truncated to empty is a failure, not silence" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
