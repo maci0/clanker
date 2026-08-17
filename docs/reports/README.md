@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [A CAS lock name hashes the path string, so one target can have two locks](bugs/2026-08-17-cas-lock-name-hashes-an-unresolved-path.md) — Open
+
 - [An agent run hangs forever when a provider accepts the connection and goes quiet](bugs/2026-08-17-agent-llm-call-has-no-deadline.md) — Resolved
 
 - [SIGWINCH runs vaxis winsize callbacks in the signal handler, panicking std.Io and recursing through recover()](bugs/2026-08-17-tui-resize-crash-sigwinch-in-signal-handler.md) — Resolved
