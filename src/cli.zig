@@ -53,6 +53,7 @@ const mesh = @import("peers/mesh.zig");
 const mesh_cmd = @import("peers/command.zig");
 const mesh_net = @import("serve/mesh_net.zig");
 const live = @import("serve/live.zig");
+const webui_assets = @import("serve/webui_assets.zig");
 const skills_logic = @import("skills_logic");
 const providers_logic = @import("providers_logic");
 const doctor_mod = @import("doctor.zig");
@@ -95,6 +96,22 @@ const edit_distance = @import("util/edit_distance.zig");
 /// Sourced from build.zig.zon's `.version` field via the `build_options`
 /// module (see build.zig), so the two can no longer drift apart.
 pub const version = @import("build_options").version;
+
+// The static web UI asset layer belongs to `serve/`, not to the CLI. These
+// names keep the route handlers below reading the way they always did.
+const WebuiAssetKind = webui_assets.Kind;
+const webuiAssetKind = webui_assets.kindFor;
+const webui_asset_paths = webui_assets.asset_paths;
+const webui_vendor_files = webui_assets.vendor_files;
+const isWebuiAssetPath = webui_assets.isAssetPath;
+const isWebuiVendorFile = webui_assets.isVendorFile;
+const normalizeWebuiPath = webui_assets.normalizePath;
+const RenderCache = webui_assets.RenderCache;
+const GzipCache = webui_assets.GzipCache;
+const webuiRenderCache = webui_assets.renderCache;
+const webuiGzipCache = webui_assets.gzipCache;
+const gzipCached = webui_assets.gzipCached;
+const gzipAlloc = webui_assets.gzipAlloc;
 
 pub const Command = enum {
     help,
@@ -9208,119 +9225,6 @@ fn isWebuiRead(method: []const u8) bool {
     return std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "HEAD");
 }
 
-/// Every asset of the comptime-embedded page bundle, by request path. Vendored
-/// files (`/webui/vendor/*`), plugin assets (`/webui/plugins/*`), and
-/// theme JSON (`/webui/themes/*`), and command catalogs
-/// (`/webui/commands/*`) are served by their own routes and are
-/// deliberately not here.
-///
-/// One list, because there used to be two: the module gate (`is_webui`, which
-/// decides whether a disabled `modules.webui` should 404) and the asset route
-/// itself were hand-maintained copies of the same set, and
-/// `features/arena.js`, embedded and routed in `ui/webui.zig`, was
-/// missing from both, so the Arena view's dynamic `import()` 404'd. Keeping
-/// the set in one place is what stops the next module from doing the same.
-/// `ui/webui.zig`'s `assetFor` still has to learn each new path too;
-/// the test below walks the source tree and fails if a file exists that this
-/// list has never heard of.
-const webui_asset_paths = [_][]const u8{
-    "/webui/app.css",
-    "/webui/app.js",
-    "/webui/preact-boot.js",
-    "/webui/core/attachments.js",
-    "/webui/core/ai-disclosure.js",
-    "/webui/core/chat.js",
-    "/webui/core/composer.js",
-    "/webui/core/dialog.js",
-    "/webui/core/goals.js",
-    "/webui/core/icons.js",
-    "/webui/core/labels.js",
-    "/webui/core/logs.js",
-    "/webui/core/modelpicker.js",
-    "/webui/core/overlay.js",
-    "/webui/core/palette.js",
-    "/webui/core/plugins.js",
-    "/webui/core/scroll.js",
-    "/webui/core/run-metrics.js",
-    "/webui/core/search.js",
-    "/webui/core/status.js",
-    "/webui/core/stream.js",
-    "/webui/core/theme.js",
-    "/webui/core/slash.js",
-    "/webui/core/tools.js",
-    "/webui/core/ui.js",
-    "/webui/core/usage.js",
-    "/webui/core/utils.js",
-    "/webui/core/vendor.js",
-    "/webui/lib/board.js",
-    "/webui/lib/graph.js",
-    "/webui/lib/markdown.js",
-    "/webui/lib/runs-list.js",
-    "/webui/features/arena.js",
-    "/webui/features/arena3d.js",
-    "/webui/features/board.js",
-    "/webui/features/fleet.js",
-    "/webui/features/goals.js",
-    "/webui/features/knowledge.js",
-    "/webui/features/prompts.js",
-    "/webui/features/todos.js",
-    "/webui/features/models.js",
-};
-
-/// Vendored third-party JS under `ui/vendor/`, embedded in `ui/vendor.zig` and
-/// served from `/webui/vendor/*`. One list: a file added here without a route
-/// (or the reverse) ships bytes the browser cannot fetch.
-const webui_vendor_files = [_][]const u8{
-    "preact.module.js",
-    "htm.module.js",
-    "signals-core.module.js",
-    "d3-dag.min.js",
-    "hljs.min.js",
-    "mermaid.min.js",
-    "three.module.min.js",
-    "three.core.min.js",
-    "patternfly.min.css",
-    "patternfly-addons.css",
-};
-
-fn isWebuiVendorFile(name: []const u8) bool {
-    for (webui_vendor_files) |p| {
-        if (std.mem.eql(u8, p, name)) return true;
-    }
-    return false;
-}
-
-fn isWebuiAssetPath(path: []const u8) bool {
-    for (webui_asset_paths) |p| {
-        if (std.mem.eql(u8, p, path)) return true;
-    }
-    return false;
-}
-
-const WebuiPathNorm = struct {
-    path: []const u8,
-    tagged: bool,
-};
-
-/// Strip a `/webui/~<8-hex>/` cache-bust prefix. The tag itself is not verified
-/// against the current build: any well-formed prefix maps to the live asset so
-/// a mid-session rebuild does not 404 open tabs still holding the old URL.
-fn normalizeWebuiPath(raw: []const u8, buf: []u8) WebuiPathNorm {
-    const pfx = "/webui/~";
-    if (!std.mem.startsWith(u8, raw, pfx)) return .{ .path = raw, .tagged = false };
-    if (raw.len < pfx.len + 9 or raw[pfx.len + 8] != '/') return .{ .path = raw, .tagged = false };
-    const tag = raw[pfx.len .. pfx.len + 8];
-    for (tag) |c| {
-        const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
-        if (!ok) return .{ .path = raw, .tagged = false };
-    }
-    const rest = raw[pfx.len + 9 ..];
-    if (buf.len < "/webui/".len + rest.len) return .{ .path = raw, .tagged = false };
-    @memcpy(buf[0.."/webui/".len], "/webui/");
-    @memcpy(buf["/webui/".len..][0..rest.len], rest);
-    return .{ .path = buf[0 .. "/webui/".len + rest.len], .tagged = true };
-}
-
 /// Process-wide 8-hex tag derived from the webui wasm + key vendor embeds.
 /// Changes whenever `zig build tools` (or a host rebuild that embeds new
 /// vendor bytes) produces different content, so HTML can point browsers at a
@@ -9427,100 +9331,6 @@ fn withWebuiCacheUrls(arena: std.mem.Allocator, html: []const u8, tag: []const u
 fn webuiAssetCacheControl(untagged: []const u8) []const u8 {
     if (request_webui_tagged) return "public, max-age=31536000, immutable";
     return untagged;
-}
-
-/// One cache kind per first-party webui file. `.js` is only `/webui/app.js`:
-/// any other path that lands there serves app.js at the wrong URL, and the
-/// browser then requests `/webui/core/core/utils.js` (and the rest of app.js's
-/// relative imports) as 404s. Feature views carry their directory so they
-/// cannot alias `core/goals.js` / `lib/board.js`. `arena3d` is checked before
-/// `arena` so a suffix match cannot steal the shorter name.
-const WebuiAssetKind = enum {
-    css,
-    js,
-    boot,
-    board_view,
-    goals_view,
-    knowledge_view,
-    prompts_view,
-    arena_view,
-    arena3d_view,
-    todos_view,
-    models_view,
-    vendor,
-    chat,
-    labels,
-    goals,
-    stream,
-    theme,
-    slash,
-    overlay,
-    search,
-    composer,
-    ai_disclosure,
-    scroll,
-    run_metrics,
-    markdown,
-    graph,
-    board,
-    runs_list,
-    fleet,
-    utils,
-    icons,
-    ui,
-    dialog,
-    usage,
-    status,
-    attachments,
-    logs,
-    plugins,
-    palette,
-    modelpicker,
-    tools,
-};
-
-fn webuiAssetKind(target: []const u8) WebuiAssetKind {
-    if (std.mem.endsWith(u8, target, ".css")) return .css;
-    if (std.mem.endsWith(u8, target, "preact-boot.js")) return .boot;
-    if (std.mem.endsWith(u8, target, "features/board.js")) return .board_view;
-    if (std.mem.endsWith(u8, target, "features/goals.js")) return .goals_view;
-    if (std.mem.endsWith(u8, target, "features/knowledge.js")) return .knowledge_view;
-    if (std.mem.endsWith(u8, target, "features/prompts.js")) return .prompts_view;
-    if (std.mem.endsWith(u8, target, "features/arena3d.js")) return .arena3d_view;
-    if (std.mem.endsWith(u8, target, "features/arena.js")) return .arena_view;
-    if (std.mem.endsWith(u8, target, "features/todos.js")) return .todos_view;
-    if (std.mem.endsWith(u8, target, "features/models.js")) return .models_view;
-    if (std.mem.endsWith(u8, target, "vendor.js")) return .vendor;
-    if (std.mem.endsWith(u8, target, "chat.js")) return .chat;
-    if (std.mem.endsWith(u8, target, "labels.js")) return .labels;
-    if (std.mem.endsWith(u8, target, "goals.js")) return .goals;
-    if (std.mem.endsWith(u8, target, "stream.js")) return .stream;
-    if (std.mem.endsWith(u8, target, "theme.js")) return .theme;
-    if (std.mem.endsWith(u8, target, "core/slash.js")) return .slash;
-    if (std.mem.endsWith(u8, target, "overlay.js")) return .overlay;
-    if (std.mem.endsWith(u8, target, "search.js")) return .search;
-    if (std.mem.endsWith(u8, target, "composer.js")) return .composer;
-    if (std.mem.endsWith(u8, target, "ai-disclosure.js")) return .ai_disclosure;
-    if (std.mem.endsWith(u8, target, "scroll.js")) return .scroll;
-    if (std.mem.endsWith(u8, target, "run-metrics.js")) return .run_metrics;
-    if (std.mem.endsWith(u8, target, "lib/runs-list.js")) return .runs_list;
-    if (std.mem.endsWith(u8, target, "markdown.js")) return .markdown;
-    if (std.mem.endsWith(u8, target, "graph.js")) return .graph;
-    if (std.mem.endsWith(u8, target, "board.js")) return .board;
-    if (std.mem.endsWith(u8, target, "fleet.js")) return .fleet;
-    if (std.mem.endsWith(u8, target, "utils.js")) return .utils;
-    if (std.mem.endsWith(u8, target, "icons.js")) return .icons;
-    if (std.mem.endsWith(u8, target, "ui.js")) return .ui;
-    if (std.mem.endsWith(u8, target, "dialog.js")) return .dialog;
-    if (std.mem.endsWith(u8, target, "usage.js")) return .usage;
-    if (std.mem.endsWith(u8, target, "status.js")) return .status;
-    if (std.mem.endsWith(u8, target, "attachments.js")) return .attachments;
-    if (std.mem.endsWith(u8, target, "logs.js")) return .logs;
-    if (std.mem.endsWith(u8, target, "plugins.js")) return .plugins;
-    if (std.mem.endsWith(u8, target, "palette.js")) return .palette;
-    if (std.mem.endsWith(u8, target, "modelpicker.js")) return .modelpicker;
-    if (std.mem.endsWith(u8, target, "tools.js")) return .tools;
-    return .js;
 }
 
 /// The page's stylesheet and script. Same tool, same sandbox, same size guard
@@ -14907,132 +14717,13 @@ fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     if (!request_head) raw_http.writeAllFd(stream.socket.handle, out);
 }
 
-/// A gzipped vendor asset, compressed on first request and kept for the rest of
-/// the process. The inputs are embedded at build time and identical for every
-/// visitor, so compressing per request would burn CPU for the same bytes; the
-/// buffer is intentionally never freed, being a two-entry cache that lives as
-/// long as the server. A failed attempt (OOM, or output that didn't shrink) is
-/// remembered too, so it is not retried on every hit.
-const GzipCache = struct {
-    /// Connection threads race for this. Whoever moves it out of `idle`
-    /// compresses; anyone arriving meanwhile serves the file uncompressed for
-    /// that one request instead of blocking behind a ~100ms compression. A
-    /// lock would be the other option, but nothing here is worth waiting for:
-    /// the identity encoding is always a correct answer.
-    state: std.atomic.Value(State) = .init(.idle),
-    /// Only read after `state` reads `.ready`, which is stored with release
-    /// ordering after this is written.
-    body: []const u8 = &.{},
-
-    const State = enum(u8) { idle, compressing, ready, failed };
-};
-
-/// A rendered web UI asset, kept for the life of the process.
-///
-/// The markup, stylesheet and script are compiled into this binary, so they
-/// cannot change while it runs, and when a rebuild changes them, hot reload
-/// replaces the process, so a stale entry is not reachable. Without this every
-/// request paid for reading the tool's wasm off disk, instantiating a zwasm
-/// module, and JSON-decoding the result: 348ms and 187 KB for app.js on this
-/// machine, on a connection the server closes immediately afterwards.
-///
-/// Races are resolved the way GzipCache resolves them: whoever moves the state
-/// out of `idle` publishes, and a thread arriving meanwhile renders it the slow
-/// way for that one request rather than blocking. Rendering twice is wasteful,
-/// never wrong.
-const RenderCache = struct {
-    state: std.atomic.Value(State) = .init(.idle),
-    /// Only read after `state` reads `.ready`.
-    body: []const u8 = &.{},
-
-    const State = enum(u8) { idle, rendering, ready, failed };
-};
-
+/// Per-asset render and gzip caches, and the page's own pair. The bodies of
+/// the vendored files get theirs below; both structs and the kind-indexed
+/// arrays behind `webuiRenderCache` / `webuiGzipCache` live in
+/// `serve/webui_assets.zig`.
 var render_page: RenderCache = .{};
-var render_css: RenderCache = .{};
-var render_js: RenderCache = .{};
-var render_preact_boot: RenderCache = .{};
-var render_vendor: RenderCache = .{};
-var render_theme: RenderCache = .{};
-var render_markdown: RenderCache = .{};
-var render_graph: RenderCache = .{};
-var render_board: RenderCache = .{};
-var render_runs_list: RenderCache = .{};
-var render_board_view: RenderCache = .{};
-var render_goals_view: RenderCache = .{};
-var render_knowledge_view: RenderCache = .{};
-var render_prompts_view: RenderCache = .{};
-var render_arena_view: RenderCache = .{};
-var render_arena3d_view: RenderCache = .{};
-var render_todos_view: RenderCache = .{};
-var render_models_view: RenderCache = .{};
-var render_fleet: RenderCache = .{};
-var render_chat: RenderCache = .{};
-var render_labels: RenderCache = .{};
-var render_goals: RenderCache = .{};
-var render_stream: RenderCache = .{};
-var render_utils: RenderCache = .{};
-var render_icons: RenderCache = .{};
-var render_overlay: RenderCache = .{};
-var render_search: RenderCache = .{};
-var render_composer: RenderCache = .{};
-var render_ai_disclosure: RenderCache = .{};
-var render_scroll: RenderCache = .{};
-var render_run_metrics: RenderCache = .{};
-var render_dialog: RenderCache = .{};
-var render_usage: RenderCache = .{};
-var render_status: RenderCache = .{};
-var render_attachments: RenderCache = .{};
-var render_logs: RenderCache = .{};
-var render_plugins: RenderCache = .{};
-var render_palette: RenderCache = .{};
-var render_modelpicker: RenderCache = .{};
-var render_tools: RenderCache = .{};
-var render_ui: RenderCache = .{};
-var render_slash: RenderCache = .{};
-
 var gzip_page: GzipCache = .{};
-var gzip_css: GzipCache = .{};
-var gzip_js: GzipCache = .{};
-var gzip_preact_boot: GzipCache = .{};
-var gzip_vendor: GzipCache = .{};
-var gzip_theme: GzipCache = .{};
-var gzip_markdown: GzipCache = .{};
-var gzip_graph: GzipCache = .{};
-var gzip_board: GzipCache = .{};
-var gzip_runs_list: GzipCache = .{};
-var gzip_board_view: GzipCache = .{};
-var gzip_goals_view: GzipCache = .{};
-var gzip_knowledge_view: GzipCache = .{};
-var gzip_prompts_view: GzipCache = .{};
-var gzip_arena_view: GzipCache = .{};
-var gzip_arena3d_view: GzipCache = .{};
-var gzip_todos_view: GzipCache = .{};
-var gzip_models_view: GzipCache = .{};
-var gzip_fleet: GzipCache = .{};
-var gzip_chat: GzipCache = .{};
-var gzip_labels: GzipCache = .{};
-var gzip_goals: GzipCache = .{};
-var gzip_stream: GzipCache = .{};
-var gzip_utils: GzipCache = .{};
-var gzip_icons: GzipCache = .{};
-var gzip_overlay: GzipCache = .{};
-var gzip_search: GzipCache = .{};
-var gzip_composer: GzipCache = .{};
-var gzip_ai_disclosure: GzipCache = .{};
-var gzip_scroll: GzipCache = .{};
-var gzip_run_metrics: GzipCache = .{};
-var gzip_dialog: GzipCache = .{};
-var gzip_usage: GzipCache = .{};
-var gzip_status: GzipCache = .{};
-var gzip_attachments: GzipCache = .{};
-var gzip_logs: GzipCache = .{};
-var gzip_plugins: GzipCache = .{};
-var gzip_palette: GzipCache = .{};
-var gzip_modelpicker: GzipCache = .{};
-var gzip_tools: GzipCache = .{};
-var gzip_ui: GzipCache = .{};
-var gzip_slash: GzipCache = .{};
+
 var gzip_preact: GzipCache = .{};
 var gzip_htm: GzipCache = .{};
 var gzip_signals: GzipCache = .{};
@@ -15043,98 +14734,6 @@ var gzip_three: GzipCache = .{};
 var gzip_three_core: GzipCache = .{};
 var gzip_patternfly: GzipCache = .{};
 var gzip_patternfly_addons: GzipCache = .{};
-
-fn webuiRenderCache(kind: WebuiAssetKind) *RenderCache {
-    return switch (kind) {
-        .css => &render_css,
-        .js => &render_js,
-        .boot => &render_preact_boot,
-        .board_view => &render_board_view,
-        .goals_view => &render_goals_view,
-        .knowledge_view => &render_knowledge_view,
-        .prompts_view => &render_prompts_view,
-        .arena_view => &render_arena_view,
-        .arena3d_view => &render_arena3d_view,
-        .todos_view => &render_todos_view,
-        .models_view => &render_models_view,
-        .vendor => &render_vendor,
-        .chat => &render_chat,
-        .labels => &render_labels,
-        .goals => &render_goals,
-        .stream => &render_stream,
-        .theme => &render_theme,
-        .slash => &render_slash,
-        .overlay => &render_overlay,
-        .search => &render_search,
-        .composer => &render_composer,
-        .ai_disclosure => &render_ai_disclosure,
-        .scroll => &render_scroll,
-        .run_metrics => &render_run_metrics,
-        .markdown => &render_markdown,
-        .graph => &render_graph,
-        .board => &render_board,
-        .runs_list => &render_runs_list,
-        .fleet => &render_fleet,
-        .utils => &render_utils,
-        .icons => &render_icons,
-        .ui => &render_ui,
-        .dialog => &render_dialog,
-        .usage => &render_usage,
-        .status => &render_status,
-        .attachments => &render_attachments,
-        .logs => &render_logs,
-        .plugins => &render_plugins,
-        .palette => &render_palette,
-        .modelpicker => &render_modelpicker,
-        .tools => &render_tools,
-    };
-}
-
-fn webuiGzipCache(kind: WebuiAssetKind) *GzipCache {
-    return switch (kind) {
-        .css => &gzip_css,
-        .js => &gzip_js,
-        .boot => &gzip_preact_boot,
-        .board_view => &gzip_board_view,
-        .goals_view => &gzip_goals_view,
-        .knowledge_view => &gzip_knowledge_view,
-        .prompts_view => &gzip_prompts_view,
-        .arena_view => &gzip_arena_view,
-        .arena3d_view => &gzip_arena3d_view,
-        .todos_view => &gzip_todos_view,
-        .models_view => &gzip_models_view,
-        .vendor => &gzip_vendor,
-        .chat => &gzip_chat,
-        .labels => &gzip_labels,
-        .goals => &gzip_goals,
-        .stream => &gzip_stream,
-        .theme => &gzip_theme,
-        .slash => &gzip_slash,
-        .overlay => &gzip_overlay,
-        .search => &gzip_search,
-        .composer => &gzip_composer,
-        .ai_disclosure => &gzip_ai_disclosure,
-        .scroll => &gzip_scroll,
-        .run_metrics => &gzip_run_metrics,
-        .markdown => &gzip_markdown,
-        .graph => &gzip_graph,
-        .board => &gzip_board,
-        .runs_list => &gzip_runs_list,
-        .fleet => &gzip_fleet,
-        .utils => &gzip_utils,
-        .icons => &gzip_icons,
-        .ui => &gzip_ui,
-        .dialog => &gzip_dialog,
-        .usage => &gzip_usage,
-        .status => &gzip_status,
-        .attachments => &gzip_attachments,
-        .logs => &gzip_logs,
-        .plugins => &gzip_plugins,
-        .palette => &gzip_palette,
-        .modelpicker => &gzip_modelpicker,
-        .tools => &gzip_tools,
-    };
-}
 
 /// A JSON body, gzipped when the client takes it and the saving is worth the
 /// work. Uncached on purpose: these bodies are per-request (a session list, a
@@ -15154,56 +14753,6 @@ fn respondCompressible(arena: std.mem.Allocator, stream: std.Io.net.Stream, acce
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ out.len, encoding }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
     raw_http.writeAllFd(stream.socket.handle, out);
-}
-
-fn gzipCached(gpa: std.mem.Allocator, cache: *GzipCache, raw: []const u8) ?[]const u8 {
-    switch (cache.state.load(.acquire)) {
-        .ready => return cache.body,
-        .failed, .compressing => return null,
-        .idle => {},
-    }
-    if (cache.state.cmpxchgStrong(.idle, .compressing, .acq_rel, .acquire) != null) return null;
-
-    // .best, not .default: this runs once per process and the result is
-    // reused for every request after, so the extra CPU here is paid once
-    // while the smaller body is what every visitor actually downloads.
-    const compressed = gzipAlloc(gpa, raw, .best) orelse {
-        cache.state.store(.failed, .release);
-        return null;
-    };
-    // Published in this order so a thread that reads `.ready` is guaranteed to
-    // see the finished slice.
-    cache.body = compressed;
-    cache.state.store(.ready, .release);
-    return compressed;
-}
-
-fn gzipAlloc(gpa: std.mem.Allocator, raw: []const u8, level: std.compress.flate.Compress.Options) ?[]const u8 {
-    // Sized to the input: a compressed form that needs more room than the
-    // original is not worth serving, and running out of space here just means
-    // falling back to the identity encoding.
-    const dest = gpa.alloc(u8, raw.len) catch return null;
-    const window = gpa.alloc(u8, std.compress.flate.max_window_len) catch {
-        gpa.free(dest);
-        return null;
-    };
-    defer gpa.free(window);
-
-    var out: std.Io.Writer = .fixed(dest);
-    var compress = std.compress.flate.Compress.init(&out, window, .gzip, level) catch {
-        gpa.free(dest);
-        return null;
-    };
-    compress.writer.writeAll(raw) catch {
-        gpa.free(dest);
-        return null;
-    };
-    compress.finish() catch {
-        gpa.free(dest);
-        return null;
-    };
-
-    return dest[0..out.end];
 }
 
 /// Serves a vendored, build-time-embedded JS asset (webui/vendor/*). They are
