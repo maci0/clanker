@@ -19,7 +19,8 @@
     "state/staging",
     "state/runs",
     "state/logs",
-    "state/locks"
+    "state/locks",
+    "state/spills"
   ],
   "internal": true,
   "category": "harness"

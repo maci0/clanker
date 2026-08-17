@@ -71,6 +71,61 @@ pub fn pathFor(session_id: []const u8, id: []const u8, buf: []u8) ![]u8 {
     return std.fmt.bufPrint(buf, "state/spills/{s}/{s}.txt", .{ session_id, id });
 }
 
+/// How long a spilled tool result is kept after it was last written.
+///
+/// A spill is run-scoped scratch, not history. The locator that names one is
+/// written onto the *request* copy of a message, which is rebuilt from the
+/// saved transcript every iteration and thrown away after the request; a saved
+/// session never contains a locator. So once the run that spilled it is over,
+/// nothing can ask for the file again.
+///
+/// Twelve hours is therefore already generous — it is a margin for a long run,
+/// not a retention policy — and it matches `janitor`'s lock-file window so
+/// there is one number to remember rather than two.
+pub const keep_spill_ms: i64 = 12 * 60 * 60 * 1000;
+
+/// A file under `state/spills/<session>/` written by the `spill` guest:
+/// `<8 lowercase hex>.txt`. Checking the shape rather than just the suffix
+/// keeps the delete path off anything else that lands in the directory.
+pub fn isSpillFileName(name: []const u8) bool {
+    if (!std.mem.endsWith(u8, name, ".txt")) return false;
+    return validId(name[0 .. name.len - ".txt".len]);
+}
+
+/// Whether a spill written at `mtime_ms` has aged out by `now_ms`.
+///
+/// The id is a content hash, so spill file names carry no order at all and a
+/// newest-N rule has nothing to sort by; the timestamp is the only signal that
+/// separates a live run's spill from a dead one's. A file dated in the future
+/// (clock skew, a restored backup) is left alone rather than swept.
+pub fn spillAgedOut(now_ms: i64, mtime_ms: i64, keep_ms: i64) bool {
+    if (mtime_ms > now_ms) return false;
+    return now_ms - mtime_ms >= keep_ms;
+}
+
+test "only 8-hex .txt names under a spill directory are sweepable" {
+    try std.testing.expect(isSpillFileName("deadbeef.txt"));
+    try std.testing.expect(!isSpillFileName("DEADBEEF.txt"));
+    try std.testing.expect(!isSpillFileName("deadbeef"));
+    try std.testing.expect(!isSpillFileName("notes.txt"));
+    try std.testing.expect(!isSpillFileName("deadbee.txt"));
+    try std.testing.expect(!isSpillFileName(".txt"));
+    // The id a live run just derived is by construction a sweepable name.
+    const id = idFor("some oversized tool result", 7);
+    var buf: [16]u8 = undefined;
+    try std.testing.expect(isSpillFileName(try std.fmt.bufPrint(&buf, "{s}.txt", .{&id})));
+}
+
+test "a spill ages out only once it is older than the window" {
+    const now: i64 = 1_000_000_000;
+    try std.testing.expect(!spillAgedOut(now, now, keep_spill_ms));
+    try std.testing.expect(!spillAgedOut(now, now - keep_spill_ms + 1, keep_spill_ms));
+    try std.testing.expect(spillAgedOut(now, now - keep_spill_ms, keep_spill_ms));
+    try std.testing.expect(spillAgedOut(now, 0, keep_spill_ms));
+    // Skewed into the future: not aged, and not swept.
+    try std.testing.expect(!spillAgedOut(now, now + keep_spill_ms, keep_spill_ms));
+}
+
 test "parseId accepts only 8 lowercase hex" {
     try std.testing.expectEqualStrings("deadbeef", parseId("head\n[spill id=deadbeef]\n") orelse "");
     try std.testing.expect(parseId("[spill id=DEADBEEF]") == null);

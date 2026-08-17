@@ -14,6 +14,7 @@ const std = @import("std");
 const lib = @import("lib.zig");
 const graph_listing = @import("graph_listing.zig");
 const cas_lock_record = @import("cas_lock_record.zig");
+const spill_logic = @import("spill_logic.zig");
 
 const keep_runs: usize = 200;
 const keep_logs: usize = 20;
@@ -39,7 +40,7 @@ const Candidate = struct {
     bytes: u64,
     kind: Kind,
 
-    const Kind = enum { staging, run, improve_log, cas_lock };
+    const Kind = enum { staging, run, improve_log, cas_lock, spill };
 };
 
 fn isImpId(name: []const u8) bool {
@@ -77,6 +78,17 @@ fn removable(state_dir: []const u8, path: []const u8) bool {
     var buf4: [512]u8 = undefined;
     const locks_prefix = std.fmt.bufPrint(&buf4, "{s}/locks/", .{state_dir}) catch return false;
     if (std.mem.startsWith(u8, path, locks_prefix)) return isCasLock(path[locks_prefix.len..]);
+    var buf5: [512]u8 = undefined;
+    const spills_prefix = std.fmt.bufPrint(&buf5, "{s}/spills/", .{state_dir}) catch return false;
+    if (std.mem.startsWith(u8, path, spills_prefix)) {
+        // `<session>/<id>.txt`, one level deep and no deeper: the session
+        // segment is checked with the same rule the guest writes under, so a
+        // path that nests further cannot reach the delete.
+        const rest = path[spills_prefix.len..];
+        const slash = std.mem.findScalar(u8, rest, '/') orelse return false;
+        if (!spill_logic.validSessionId(rest[0..slash])) return false;
+        return spill_logic.isSpillFileName(rest[slash + 1 ..]);
+    }
     return false;
 }
 
@@ -180,7 +192,58 @@ fn scan(a: std.mem.Allocator, state_dir: []const u8) []const Candidate {
     collectOldest(a, state_dir, "runs", isRunGraph, keep_runs, .run, &out);
     collectOldest(a, state_dir, "logs", isImproveLog, keep_logs, .improve_log, &out);
     collectAgedLocks(a, state_dir, &out);
+    collectAgedSpills(a, state_dir, &out);
     return out.items;
+}
+
+/// Spilled tool results nothing can ask for any more.
+///
+/// A spill is run-scoped: the locator naming one is written onto the request
+/// copy of a message and discarded with it, so a finished run leaves files no
+/// later message refers to. Nothing swept them, and because every non-repl run
+/// shares the `default` bucket they collected there indefinitely.
+///
+/// Age is the only usable signal — a spill id is a hash of the content, so the
+/// names carry no order for a newest-N rule to sort by. A file whose stat
+/// cannot be read is left alone rather than treated as ancient.
+fn collectAgedSpills(a: std.mem.Allocator, state_dir: []const u8, out: *std.ArrayList(Candidate)) void {
+    const root = std.fmt.allocPrint(a, "{s}/spills", .{state_dir}) catch return;
+    const raw = lib.fsList(root) catch return;
+    const sessions = std.json.parseFromSliceLeaky(std.json.Value, a, raw, .{}) catch return;
+    if (sessions != .array) return;
+
+    const now_ms: i64 = @intFromFloat(lib.nowSeconds() * 1000.0);
+    for (sessions.array.items) |entry| {
+        if (entry != .string) continue;
+        var session = entry.string;
+        // Only directories: `fsList` marks them with a trailing slash.
+        if (session.len == 0 or session[session.len - 1] != '/') continue;
+        session = session[0 .. session.len - 1];
+        if (!spill_logic.validSessionId(session)) continue;
+
+        const dir = std.fmt.allocPrint(a, "{s}/{s}", .{ root, session }) catch continue;
+        const listing = lib.fsList(dir) catch continue;
+        const names = std.json.parseFromSliceLeaky(std.json.Value, a, listing, .{}) catch continue;
+        if (names != .array) continue;
+        for (names.array.items) |item| {
+            if (item != .string) continue;
+            if (!spill_logic.isSpillFileName(item.string)) continue;
+            const path = std.fmt.allocPrint(a, "{s}/{s}", .{ dir, item.string }) catch continue;
+            const st = lib.fsStat(path) catch continue;
+            const sv = std.json.parseFromSliceLeaky(std.json.Value, a, st, .{}) catch continue;
+            if (sv != .object) continue;
+            const mtime = switch (sv.object.get("mtime_ms") orelse continue) {
+                .integer => |n| n,
+                else => continue,
+            };
+            if (!spill_logic.spillAgedOut(now_ms, mtime, spill_logic.keep_spill_ms)) continue;
+            const size: u64 = switch (sv.object.get("size") orelse std.json.Value{ .integer = 0 }) {
+                .integer => |n| @intCast(@max(0, n)),
+                else => 0,
+            };
+            out.append(a, .{ .path = path, .bytes = size, .kind = .spill }) catch continue;
+        }
+    }
 }
 
 /// Compare-and-swap lock files whose last acquisition is older than
@@ -303,6 +366,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var runs_n: usize = 0;
     var logs_n: usize = 0;
     var locks_n: usize = 0;
+    var spills_n: usize = 0;
     for (candidates) |c| {
         total += c.bytes;
         switch (c.kind) {
@@ -310,6 +374,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .run => runs_n += 1,
             .improve_log => logs_n += 1,
             .cas_lock => locks_n += 1,
+            .spill => spills_n += 1,
         }
     }
 
@@ -335,6 +400,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (runs_n > 0) try text.appendSlice(a, try std.fmt.allocPrint(a, "  {d} run graphs beyond the newest {d}\n", .{ runs_n, keep_runs }));
     if (logs_n > 0) try text.appendSlice(a, try std.fmt.allocPrint(a, "  {d} improve logs beyond the newest {d}\n", .{ logs_n, keep_logs }));
     if (locks_n > 0) try text.appendSlice(a, try std.fmt.allocPrint(a, "  {d} compare-and-swap lock file{s} unused for {d}h (the target is gone or was never rewritten)\n", .{ locks_n, if (locks_n == 1) @as([]const u8, "") else "s", @divTrunc(keep_lock_ms, 60 * 60 * 1000) }));
+    if (spills_n > 0) try text.appendSlice(a, try std.fmt.allocPrint(a, "  {d} spilled tool result{s} older than {d}h (the run that could ask for them is over)\n", .{ spills_n, if (spills_n == 1) @as([]const u8, "") else "s", @divTrunc(spill_logic.keep_spill_ms, 60 * 60 * 1000) }));
 
     if (!apply) {
         try text.appendSlice(a, "\nNothing was deleted. Re-run with --yes to remove it.\n");
@@ -350,7 +416,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
         switch (c.kind) {
             .staging => lib.fsDeleteTree(a, c.path),
-            .run, .improve_log, .cas_lock => lib.fsDelete(c.path) catch {
+            .run, .improve_log, .cas_lock, .spill => lib.fsDelete(c.path) catch {
                 failed += 1;
                 continue;
             },
