@@ -93,6 +93,7 @@ projects, and the strongest case against the recommendation.
 ## Inventory
 
 <!-- inventory:rfc:start -->
+- [RFC 0017 — Deterministic tool-result pruning (bounded head/marker/tail)](0017-deterministic-tool-result-pruning-bounded-head-marker-tail.md) — Decided
 - [RFC 0016 — Loop-hygiene guard: deterministic repeated-tool reminder](0016-loop-hygiene-guard-deterministic-repeated-tool-reminder.md) — Decided
 - [RFC 0015 — Lifecycle hooks: Claude Code hooks.json bridge](0015-lifecycle-hooks-claude-code-hooks-json-bridge.md) — Decided
 - [RFC 0014 — ACP server: how clanker is driven as an agent by an IDE over the Agent Client Protocol](0014-acp-server-how-clanker-is-driven-as-an-agent-by-an-ide.md) — Decided
