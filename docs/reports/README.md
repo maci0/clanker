@@ -80,6 +80,10 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [Activity view shows only 'log' actions, so a board being worked on looks idle](bugs/2026-08-17-activity-view-shows-only-log-actions.md) — Resolved
+
+- [clanker commit writes one commit and reports the whole multi-commit plan as written](bugs/2026-08-17-smart-commit-sweeps-the-whole-index.md) — Resolved
+
 - [Every completed GET /api/events is logged at ERROR and counted as a server error](bugs/2026-08-17-sse-subscriptions-logged-as-server-errors.md) — Resolved
 
 - [Runs filter's 'failed' keyword throws a TypeError and could never match](bugs/2026-08-17-runs-filter-failed-keyword-throws.md) — Resolved

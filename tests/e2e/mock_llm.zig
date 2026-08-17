@@ -141,6 +141,20 @@ pub fn textTurn(gpa: std.mem.Allocator, text: []const u8) ![]const u8 {
     return w.toOwnedSlice();
 }
 
+/// An OpenAI-compat *non-streaming* completion body carrying one text answer.
+/// A guest's `ck_llm` goes through `client.chat`, not `chatStream`, so an SSE
+/// body reaches it as `SyntaxError` and the guest takes its fallback path
+/// instead of the one under test.
+pub fn jsonTurn(gpa: std.mem.Allocator, text: []const u8) ![]const u8 {
+    var w: std.Io.Writer.Allocating = .init(gpa);
+    defer w.deinit();
+    try w.writer.print(
+        "{{\"id\":\"e2e\",\"object\":\"chat.completion\",\"choices\":[{{\"index\":0,\"message\":{{\"role\":\"assistant\",\"content\":{f}}},\"finish_reason\":\"stop\"}}],\"usage\":{{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}}}",
+        .{std.json.fmt(text, .{})},
+    );
+    return w.toOwnedSlice();
+}
+
 /// An OpenAI-compat streaming SSE body carrying a single tool call, whole
 /// (arguments in one delta fragment rather than split across chunks — the
 /// client folds fragments by index either way, so one fragment is a faithful
@@ -168,4 +182,9 @@ test "textTurn and toolCallTurn produce parseable SSE frames" {
     defer gpa.free(call);
     try std.testing.expect(std.mem.find(u8, call, "\"name\":\"list_files\"") != null);
     try std.testing.expect(std.mem.find(u8, call, "\"finish_reason\":\"tool_calls\"") != null);
+
+    const plain = try jsonTurn(gpa, "{\"commits\":[]}");
+    defer gpa.free(plain);
+    try std.testing.expect(std.mem.find(u8, plain, "data: ") == null);
+    try std.testing.expect(std.mem.find(u8, plain, "\"content\":\"{\\\"commits\\\":[]}\"") != null);
 }

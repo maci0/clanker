@@ -82,12 +82,21 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     if (!dry) {
         for (ordered) |g| {
-            gitRun(try prepend("add", "--", g.files)) catch |err| {
+            var detail: []const u8 = "";
+            gitRun(try prepend("add", "--", g.files), &detail) catch |err| {
                 return lib.failErr(out, err, "git add");
             };
-            gitRun(&.{ "commit", "-m", g.message }) catch |err| {
+            if (detail.len > 0) return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "git add: {s}", .{detail}));
+            // Pathspec, not a bare `git commit`: a bare one commits the whole
+            // index, so anything staged before this tool ran was swept into the
+            // first group's commit and every later group found nothing left to
+            // commit -- while the reply still listed them all as written.
+            // Narrowing to the group's own files is safe because the `git add`
+            // above has just made index and worktree agree on exactly them.
+            gitRun(try commitArgs(g.message, g.files), &detail) catch |err| {
                 return lib.failErr(out, err, "git commit");
             };
+            if (detail.len > 0) return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "git commit: {s}", .{detail}));
         }
     }
 
@@ -150,8 +159,37 @@ fn gitOut(args: []const []const u8) ![]const u8 {
     };
 }
 
-fn gitRun(args: []const []const u8) !void {
-    _ = try lib.exec("git", args);
+/// Runs git and reports a non-zero exit through `detail` rather than letting it
+/// pass for success. `lib.exec` puts the process status in its JSON reply, not
+/// in a Zig error, so the old discarded result meant a `git commit` that had
+/// nothing to commit was still counted in the "committed N commit(s)" line.
+/// `detail` is set to git's stderr (or a stand-in) on failure and left alone
+/// otherwise, so one buffer can be reused across calls.
+fn gitRun(args: []const []const u8, detail: *[]const u8) !void {
+    const raw = try lib.exec("git", args);
+    const v = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch return;
+    if (v != .object) return;
+    const code: i64 = switch (v.object.get("code") orelse return) {
+        .integer => |i| i,
+        else => return,
+    };
+    if (code == 0) return;
+    const stderr = switch (v.object.get("stderr") orelse std.json.Value{ .string = "" }) {
+        .string => |s| std.mem.trim(u8, s, " \t\r\n"),
+        else => "",
+    };
+    detail.* = if (stderr.len > 0) stderr else try std.fmt.allocPrint(lib.alloc, "exited {d}", .{code});
+}
+
+/// `git commit -m <message> -- <files>`.
+fn commitArgs(message: []const u8, files: []const []const u8) ![]const []const u8 {
+    var out = try lib.alloc.alloc([]const u8, files.len + 4);
+    out[0] = "commit";
+    out[1] = "-m";
+    out[2] = message;
+    out[3] = "--";
+    @memcpy(out[4..], files);
+    return out;
 }
 
 fn prepend(a: []const u8, b: []const u8, rest: []const []const u8) ![]const []const u8 {
