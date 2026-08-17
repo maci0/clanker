@@ -146,11 +146,14 @@ HARNESS_TOOLING = """TOOLING
   call one implementation and a second one drifts from it.
 
   clanker reports search "<symptom>"   search reports and runbooks before diagnosing
-  clanker reports create ...           file the investigation, then the bug report
+  clanker reports create ...           file an investigation, bug report, or missing-tool
+                                       record (a basic verb clanker lacks)
+  clanker reports rename <old> <new>   move a record; its inventory link follows
   clanker rfc search "<decision>"      a matching ADR means the question is settled
   clanker gate                         build, test, tools, fmt, lint -- verify with this
   clanker commit                       group the working tree into commits
   clanker git <args...>                git in the checkout root
+  clanker graph answer [run-id]        print a recorded run's final answer
   clanker janitor                      clean up after runs, instead of rm or find
   clanker run "<task>"                 reach any tool that has no verb of its own
 
