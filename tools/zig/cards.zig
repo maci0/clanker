@@ -255,6 +255,14 @@ const SubtaskState = struct {
     done_at: Stamp = .{},
     removed_at: Stamp = .{},
     deps: std.ArrayListUnmanaged(DepState) = .empty,
+
+    fn dep(self: *SubtaskState, arena: std.mem.Allocator, on: []const u8) !*DepState {
+        for (self.deps.items) |*d| {
+            if (std.mem.eql(u8, d.on, on)) return d;
+        }
+        try self.deps.append(arena, .{ .on = on });
+        return &self.deps.items[self.deps.items.len - 1];
+    }
 };
 
 const DepState = struct {
@@ -272,8 +280,8 @@ const State = struct {
     body: []const u8 = "",
     column: []const u8 = default_column,
     priority: []const u8 = "normal",
-    assignee: []const u8 = "",
-    assigned_by: []const u8 = "",
+    assign_who: []const u8 = "",
+    assign_by: []const u8 = "",
     deadline: i64 = 0,
     goal: []const u8 = "",
     completion_criterion: []const u8 = "",
@@ -298,8 +306,11 @@ const State = struct {
     worktree_at: Stamp = .{},
     labels_at: Stamp = .{},
     /// Claims use the lowest-(ts, id) rule, so this records the winner rather
-    /// than the latest writer; an `assign` later than it overrides it.
+    /// than the latest writer. The winner's `claim_who` is one of the two
+    /// stamped writes that decide the assignee at projection; an `assign`
+    /// newer than it overrides it.
     claim_at: Stamp = .{},
+    claim_who: []const u8 = "",
     assign_at: Stamp = .{},
     /// A latch, not a last-writer-wins field: an undelete would have to beat
     /// every replica that already dropped the card, and a card recovered on
@@ -403,8 +414,8 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
         // itself, so a later assign or claim overrides it by the usual rule.
         if (act.who) |w| {
             if (w.len > 0) {
-                gop.value_ptr.assignee = w;
-                gop.value_ptr.assigned_by = m.from;
+                gop.value_ptr.assign_who = w;
+                gop.value_ptr.assign_by = m.from;
                 gop.value_ptr.assign_at = .{ .ts = m.ts, .id = m.id };
             }
         }
@@ -443,8 +454,8 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             }
             if (act.who) |v| {
                 if (c.assign_at.beaten(m.ts, m.id)) {
-                    c.assignee = v;
-                    c.assigned_by = m.from;
+                    c.assign_who = v;
+                    c.assign_by = m.from;
                     c.assign_at = .{ .ts = m.ts, .id = m.id };
                 }
             }
@@ -516,19 +527,21 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
                 c.column_at = .{ .ts = m.ts, .id = m.id };
             }
         } else if (std.mem.eql(u8, act.action, "claim")) {
-            // Lowest (ts, id) wins: the first claim holds the card.
+            // Lowest (ts, id) wins: the first claim holds the card. The winner
+            // only records its own stamp here; whether its self-assignment
+            // sticks is decided at projection, where a deliberate assign newer
+            // than the winning claim outranks it. Deciding there keeps the
+            // fold order-independent: a claim that later loses the latch (a
+            // lower claim arrives behind it) must not have written assignee.
             if (c.claim_at.id.len == 0 or wins(m.ts, m.id, c.claim_at.ts, c.claim_at.id)) {
                 c.claim_at = .{ .ts = m.ts, .id = m.id };
-                // A deliberate assign that is newer than this claim outranks it.
-                if (!c.assign_at.beaten(m.ts, m.id)) continue;
-                c.assignee = m.from;
-                c.assigned_by = m.from;
+                c.claim_who = m.from;
             }
         } else if (std.mem.eql(u8, act.action, "assign")) {
             const v = act.who orelse "";
             if (c.assign_at.beaten(m.ts, m.id)) {
-                c.assignee = v;
-                c.assigned_by = m.from;
+                c.assign_who = v;
+                c.assign_by = m.from;
                 c.assign_at = .{ .ts = m.ts, .id = m.id };
             }
         } else if (std.mem.eql(u8, act.action, "delete")) {
@@ -558,17 +571,10 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             const sid = act.subtask orelse continue;
             const on = act.on orelse continue;
             const s = try c.subtask(arena, sid, "", "");
-            var dep: ?*DepState = null;
-            for (s.deps.items) |*d| {
-                if (std.mem.eql(u8, d.on, on)) dep = d;
-            }
-            if (dep == null) {
-                try s.deps.append(arena, .{ .on = on });
-                dep = &s.deps.items[s.deps.items.len - 1];
-            }
-            if (dep.?.at.beaten(m.ts, m.id)) {
-                dep.?.off = act.off orelse false;
-                dep.?.at = .{ .ts = m.ts, .id = m.id };
+            const d = try s.dep(arena, on);
+            if (d.at.beaten(m.ts, m.id)) {
+                d.off = act.off orelse false;
+                d.at = .{ .ts = m.ts, .id = m.id };
             }
         } else if (std.mem.eql(u8, act.action, "depend")) {
             const on = act.on orelse continue;
@@ -640,6 +646,19 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
         for (c.deps.items) |d| {
             if (!d.off) try deps.append(arena, d.on);
         }
+        // The assignee is the later of the winning claim's self-assignment and
+        // the newest deliberate assign; both are stamped writes, so like every
+        // other field on the card this is decided by stamp, not arrival order.
+        var assignee: []const u8 = "";
+        var assigned_by: []const u8 = "";
+        if (c.claim_at.id.len > 0) {
+            assignee = c.claim_who;
+            assigned_by = c.claim_who;
+        }
+        if (c.assign_at.id.len > 0 and (c.claim_at.id.len == 0 or c.claim_at.beaten(c.assign_at.ts, c.assign_at.id))) {
+            assignee = c.assign_who;
+            assigned_by = c.assign_by;
+        }
         std.mem.sort(LogEntry, c.log.items, {}, struct {
             fn lt(_: void, a: LogEntry, b: LogEntry) bool {
                 return a.ts < b.ts;
@@ -654,8 +673,8 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             .body = c.body,
             .column = c.column,
             .priority = c.priority,
-            .assignee = c.assignee,
-            .assigned_by = c.assigned_by,
+            .assignee = assignee,
+            .assigned_by = assigned_by,
             .deadline = c.deadline,
             .goal = c.goal,
             .completion_criterion = c.completion_criterion,
@@ -864,6 +883,54 @@ test "concurrent claims resolve to the same winner in either log order" {
     try std.testing.expectEqualStrings("alpha", t1[0].assignee);
     try std.testing.expectEqualStrings("alpha", t2[0].assignee);
     try std.testing.expectEqualStrings("claimed", t1[0].status());
+}
+
+test "a claim and a newer assign converge on the assign, in either order" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The latch winner is the lowest claim (c1, ts 100); the assign (ts 150)
+    // is newer than it, so it owns the assignee. The losing claim (c2, ts 200)
+    // must not write the assignee even when it arrives first in the log.
+    const add = try encodeAdd(arena, "task");
+    const assign = try encode(arena, .{ .action = "assign", .todo = "m1", .who = "boss" });
+    const claim = try encodeClaim(arena, "m1");
+    const base = msg("m1", "x", 100, add);
+    const a = msg("a1", "boss", 150, assign);
+    const c_low = msg("c1", "alice", 100, claim);
+    const c_high = msg("c2", "carol", 200, claim);
+
+    const order1 = [_]Message{ base, a, c_high, c_low };
+    const order2 = [_]Message{ base, c_low, c_high, a };
+    const t1 = try derive(arena, &order1);
+    const t2 = try derive(arena, &order2);
+    try std.testing.expectEqualStrings("boss", t1[0].assignee);
+    try std.testing.expectEqualStrings("boss", t2[0].assignee);
+    try std.testing.expectEqualStrings("boss", t1[0].assigned_by);
+    try std.testing.expectEqualStrings("boss", t2[0].assigned_by);
+    try std.testing.expectEqualStrings("claimed", t1[0].status());
+}
+
+test "an assign older than the winning claim cannot take the card" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The assign (ts 50) predates the winning claim (c1, ts 100), so the claim
+    // owns the assignee even when the log delivers the assign last.
+    const add = try encodeAdd(arena, "task");
+    const assign = try encode(arena, .{ .action = "assign", .todo = "m1", .who = "boss" });
+    const claim = try encodeClaim(arena, "m1");
+    const base = msg("m1", "x", 100, add);
+    const a = msg("a1", "boss", 50, assign);
+    const c_low = msg("c1", "alice", 100, claim);
+    const c_high = msg("c2", "carol", 200, claim);
+
+    const order = [_]Message{ base, c_low, c_high, a };
+    const t = try derive(arena, &order);
+    try std.testing.expectEqualStrings("alice", t[0].assignee);
+    try std.testing.expectEqualStrings("alice", t[0].assigned_by);
 }
 
 test "claim delivered before its add still applies" {
