@@ -35,8 +35,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const fix_hint = lib.optStr(parsed, "fix_hint");
 
     // Validate severity → board priority mapping
-    const priority = mapSeverity(severity) orelse
-        return lib.fail(out, "severity must be one of: critical, high, normal, medium, low, minor");
+    const priority = mapSeverity(severity) orelse {
+        var buf: [128]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "severity must be one of: critical, high, normal, medium, low, minor (got \"{s}\")", .{severity}) catch return lib.fail(out, "invalid severity");
+        return lib.fail(out, msg);
+    };
 
     // Build the formatted body
     var body_buf: std.ArrayList(u8) = .empty;
