@@ -3052,7 +3052,8 @@ const Model = struct {
     /// Starts a continuing goal loop through the agent, exactly like
     /// `clanker goal "<prompt>"`. Only this path creates a board goal —
     /// ordinary chat never does. The Ready card is persisted before the loop
-    /// starts so the board mirror has a source.
+    /// starts so the board mirror has a source; the kanban Ready card is
+    /// created here too so the board shows it even without the web mirror.
     fn runGoalTask(self: *Model, ctx: *vxfw.EventContext, intent: []const u8) bool {
         {
             const input = std.fmt.allocPrint(self.arena, "{{\"objective\":{f}}}", .{std.json.fmt(intent, .{})}) catch null;
@@ -3062,6 +3063,25 @@ const Model = struct {
                     defer m.deinit();
                     if (m.executeTool(inp) catch null) |raw| {
                         defer self.gpa.free(raw);
+                        const parsed = std.json.parseFromSliceLeaky(std.json.Value, self.arena, raw, .{ .ignore_unknown_fields = true }) catch null;
+                        if (parsed) |val| if (val == .object) {
+                            if (val.object.get("ok")) |ok| if (ok == .bool and ok.bool) {
+                                if (val.object.get("goal")) |g| if (g == .object) {
+                                    if (g.object.get("id")) |id| if (id == .string) {
+                                        const title = if (intent.len > 512) intent[0..512] else intent;
+                                        const bi = std.fmt.allocPrint(self.arena, "{{\"op\":\"create\",\"title\":{f},\"column\":\"ready\",\"goal\":{f}}}", .{ std.json.fmt(title, .{}), std.json.fmt(id.string, .{}) }) catch null;
+                                        if (bi) |bin| {
+                                            const bmod = runtime.loadNamedTool(self.gpa, self.io, self.arena, self.ctx.environ_map, &self.cfg, &self.reg, "kanban", null) catch null;
+                                            if (bmod) |bm| {
+                                                defer bm.deinit();
+                                                const braw = bm.executeTool(bin) catch null;
+                                                if (braw) |br| self.gpa.free(br);
+                                            }
+                                        }
+                                    };
+                                };
+                            };
+                        };
                     }
                 }
             }

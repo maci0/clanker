@@ -5726,7 +5726,10 @@ fn cmdGoal(init: std.process.Init, opts: Options) !void {
     const intent = opts.task orelse return error.MissingTask;
     // Only /goal (and `clanker goal`) creates a board goal. Ordinary chat
     // never creates one. Persist first so the board mirror has a Ready-card
-    // source; the loop itself streams as the goal run.
+    // source; the loop itself streams as the goal run. The Ready card is
+    // created here so headless /goal has a board card even without the web
+    // UI's mirrorGoalsToBoard poll.
+    var created_goal_id: ?[]const u8 = null;
     {
         const input = std.fmt.allocPrint(arena, "{{\"objective\":{f}}}", .{std.json.fmt(intent, .{})}) catch null;
         if (input) |inp| {
@@ -5736,9 +5739,25 @@ fn cmdGoal(init: std.process.Init, opts: Options) !void {
                         if (parsed.object.get("ok")) |ok| if (ok == .bool and ok.bool) {
                             if (parsed.object.get("goal")) |g| if (g == .object) {
                                 if (g.object.get("id")) |id| if (id == .string) {
+                                    created_goal_id = id.string;
                                     log.log(.info, "created board goal {s} for /goal", .{id.string});
                                 };
                             };
+                        };
+                    }
+                }
+            }
+        }
+    }
+    if (created_goal_id) |gid| {
+        const title = if (intent.len > 512) intent[0..512] else intent;
+        const board_input = std.fmt.allocPrint(arena, "{{\"op\":\"create\",\"title\":{f},\"column\":\"ready\",\"goal\":{f}}}", .{ std.json.fmt(title, .{}), std.json.fmt(gid, .{}) }) catch null;
+        if (board_input) |bi| {
+            if (toolJson(io, init.gpa, arena, &cfg, init.environ_map, "kanban", bi) catch null) |braw| {
+                if (std.json.parseFromSliceLeaky(std.json.Value, arena, braw, .{ .ignore_unknown_fields = true }) catch null) |bparsed| {
+                    if (bparsed == .object) {
+                        if (bparsed.object.get("ok")) |bok| if (bok == .bool and bok.bool) {
+                            log.log(.info, "created Ready card for goal {s}", .{gid});
                         };
                     }
                 }
@@ -13950,11 +13969,27 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     // Persist the Ready goal for a `/goal` run before the loop starts so
     // the board mirror has a source. The web board normally sends a saved
     // id instead, but preserving this route keeps every public entry point
-    // on the one goal-loop contract.
+    // on the one goal-loop contract. The Ready card is created here so a
+    // headless /goal POST has a card even without the web mirror.
     const raw_goal_condition = goalSlashIntent(req.task);
     if (raw_goal_condition) |cond| {
-        const input = std.fmt.allocPrint(arena, "{{\"objective\":{f}}}", .{std.json.fmt(cond, .{})}) catch null;
-        if (input) |inp| _ = toolJson(io, gpa, arena, cfg, environ_map, "goal_add", inp) catch null;
+        if (std.fmt.allocPrint(arena, "{{\"objective\":{f}}}", .{std.json.fmt(cond, .{})}) catch null) |inp| {
+            if (toolJson(io, gpa, arena, cfg, environ_map, "goal_add", inp) catch null) |raw| {
+                if (std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch null) |parsed| {
+                    if (parsed == .object) {
+                        if (parsed.object.get("ok")) |ok| if (ok == .bool and ok.bool) {
+                            if (parsed.object.get("goal")) |g| if (g == .object) {
+                                if (g.object.get("id")) |id| if (id == .string) {
+                                    const title = if (cond.len > 512) cond[0..512] else cond;
+                                    const bi = std.fmt.allocPrint(arena, "{{\"op\":\"create\",\"title\":{f},\"column\":\"ready\",\"goal\":{f}}}", .{ std.json.fmt(title, .{}), std.json.fmt(id.string, .{}) }) catch null;
+                                    if (bi) |bin| _ = toolJson(io, gpa, arena, cfg, environ_map, "kanban", bin) catch null;
+                                };
+                            };
+                        };
+                    }
+                }
+            }
+        }
     }
     const requested_task = if (raw_goal_condition) |condition|
         goal_prompt.task(arena, condition) catch {
