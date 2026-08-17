@@ -721,6 +721,8 @@ Composer editing follows readline conventions: Ctrl-U kills to the start, Ctrl-K
 | `/plugins [on\|off <name>]`, `/plugin [on\|off <name>]` | `plugins` | List plugins or switch an optional one on or off; the REPL reloads its tool catalog after a change |
 | `/theme [name]` | in-process | List or switch the color theme (`mocha`, `latte`, `tokyonight`, …) |
 | `/autoresearch ...` | in-process | Measurement loop (see `/autoresearch --help`) |
+| `/research <sub> [args]` | direct tool | The research note store, same subcommands and rendering as `clanker research` |
+| `/rfc <sub> [args]` | direct tool | The RFC store, same subcommands and rendering as `clanker rfc` |
 | `/write-goal <intent>` | direct tool | Draft a structured goal; never saves or runs |
 | `/add-goal <objective> :: <completion criterion>` | direct tool | Save a structured goal; never runs it |
 | `/goal <condition>` | in-process | Start a goal loop; it keeps working until the condition is met, blocked, or cancelled. No draft or saved goal required |

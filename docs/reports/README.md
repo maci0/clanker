@@ -169,6 +169,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [The REPL had no /rfc although clanker rfc exists](investigations/2026-08-17-missing-clanker-tool-rfc-slash-command-in-tui.md) — Resolved
+
 - [pty e2e text assertions race vaxis's cell diff](investigations/2026-08-17-pty-text-assertions-race-the-cell-diff.md) — Resolved
 
 - [The two-spellings CAS-lock test failed one run in three with lock_count 2](investigations/2026-08-17-cas-lock-two-spellings-test-flaked-once.md) — Resolved

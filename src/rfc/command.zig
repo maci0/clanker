@@ -60,19 +60,24 @@ const title_column_bytes: usize = 58;
 const status_column_max: usize = 12;
 
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
-    const io = init.io;
-    const arena = init.arena.allocator();
+    try out(init.io, try run(init.arena.allocator(), opts, tool));
+}
+
+/// The whole subcommand surface as rendered text. `cmd` prints it to stdout;
+/// the TUI's `/rfc` folds the same text into the transcript, so both surfaces
+/// stay one implementation of the store's operator view.
+pub fn run(arena: std.mem.Allocator, opts: Options, tool: Tool) anyerror![]const u8 {
     const sub = opts.sub;
 
-    if (std.mem.eql(u8, sub, "list")) return list(io, arena, tool);
-    if (std.mem.eql(u8, sub, "search")) return search(io, arena, opts, tool);
-    if (std.mem.eql(u8, sub, "open")) return open(io, arena, opts, tool);
-    if (std.mem.eql(u8, sub, "checklist")) return checklist(io, arena, opts, tool);
-    if (std.mem.eql(u8, sub, "create")) return create(io, arena, opts, tool);
-    if (std.mem.eql(u8, sub, "append")) return append(io, arena, opts, tool);
-    if (std.mem.eql(u8, sub, "update")) return update(io, arena, opts, tool);
-    if (std.mem.eql(u8, sub, "recommend")) return recommend(io, arena, opts, tool);
-    if (std.mem.eql(u8, sub, "status")) return setStatus(io, arena, opts, tool);
+    if (std.mem.eql(u8, sub, "list")) return list(arena, tool);
+    if (std.mem.eql(u8, sub, "search")) return search(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "open")) return open(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "checklist")) return checklist(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "create")) return create(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "append")) return append(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "update")) return update(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "recommend")) return recommend(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "status")) return setStatus(arena, opts, tool);
 
     log.log(.error_, "unknown rfc subcommand '{s}' (expected list, search, open, checklist, create, append, update, recommend or status)", .{sub});
     return Error.BadSubcommand;
@@ -80,12 +85,12 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
 
 // ------------------------------------------------------------------ reading --
 
-fn list(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
+fn list(arena: std.mem.Allocator, tool: Tool) ![]const u8 {
     const result = try callTool(arena, tool, "{\"action\":\"list\"}");
-    try out(io, try renderList(arena, arrayField(result, "rfcs"), unsignedField(result, "next_number")));
+    return renderList(arena, arrayField(result, "rfcs"), unsignedField(result, "next_number"));
 }
 
-fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn search(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const query = opts.arg1 orelse {
         log.log(.error_, "rfc search needs a query: clanker rfc search \"http client\"", .{});
         return Error.MissingArg;
@@ -102,10 +107,10 @@ fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try s.endObject();
 
     const result = try callTool(arena, tool, input.written());
-    try out(io, try renderSearch(arena, query, arrayField(result, "rfcs"), arrayField(result, "adrs")));
+    return renderSearch(arena, query, arrayField(result, "rfcs"), arrayField(result, "adrs"));
 }
 
-fn open(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn open(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const path = opts.arg1 orelse {
         log.log(.error_, "rfc open needs a path: clanker rfc open docs/rfcs/<number>-<slug>.md", .{});
         return Error.MissingArg;
@@ -122,15 +127,15 @@ fn open(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
     try s.endObject();
 
     const result = try callTool(arena, tool, input.written());
-    // The RFC is markdown that was written to be read; print it as it is.
+    // The RFC is markdown that was written to be read; return it as it is.
     const text = json_util.strFieldOrEmpty(result.object, "text");
-    try out(io, text);
-    if (text.len > 0 and text[text.len - 1] != '\n') try out(io, "\n");
+    if (text.len > 0 and text[text.len - 1] != '\n') return std.fmt.allocPrint(arena, "{s}\n", .{text});
+    return text;
 }
 
 /// What an RFC has to pin down, and the question to put to whoever asked for
 /// it. This is the answer to "the request is too vague to draft from".
-fn checklist(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn checklist(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     var input: std.Io.Writer.Allocating = .init(arena);
     defer input.deinit();
     var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
@@ -144,12 +149,12 @@ fn checklist(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !v
     try s.endObject();
 
     const result = try callTool(arena, tool, input.written());
-    try out(io, try renderChecklist(arena, json_util.strFieldOrEmpty(result.object, "topic"), arrayField(result, "requirements")));
+    return renderChecklist(arena, json_util.strFieldOrEmpty(result.object, "topic"), arrayField(result, "requirements"));
 }
 
 // ------------------------------------------------------------------ writing --
 
-fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn create(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const title = opts.arg1 orelse return missingCreateArg("a title naming the decision");
     const overview = opts.arg2 orelse return missingCreateArg("an overview of what has to be decided and why now");
 
@@ -172,7 +177,7 @@ fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     const result = try callTool(arena, tool, input.written());
     const path = json_util.strFieldOrEmpty(result.object, "path");
     var w: std.Io.Writer.Allocating = .init(arena);
-    defer w.deinit();
+    errdefer w.deinit();
     try w.writer.print("created {s}\n", .{path});
     // The scaffold is a skeleton, and an RFC with one option is not a
     // decision: saying so here is what keeps a stub from being mistaken for a
@@ -183,7 +188,7 @@ fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     if (!boolField(result, "indexed")) {
         try w.writer.writeAll("\nThe inventory was not updated (it changed concurrently). Add the link\nby hand from docs/rfcs/README.md without replacing the other edit.\n");
     }
-    try out(io, w.written());
+    return try w.toOwnedSlice();
 }
 
 fn missingCreateArg(what: []const u8) Error {
@@ -191,7 +196,7 @@ fn missingCreateArg(what: []const u8) Error {
     return Error.MissingArg;
 }
 
-fn append(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn append(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const path = opts.arg1 orelse {
         log.log(.error_, "rfc append needs a path and markdown content: clanker rfc append docs/rfcs/<name>.md \"## Option C\\n\\n...\"", .{});
         return Error.MissingArg;
@@ -214,10 +219,10 @@ fn append(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try s.endObject();
 
     const result = try callTool(arena, tool, input.written());
-    try out(io, try std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
+    return std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
 }
 
-fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn update(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const path = opts.arg1 orelse {
         log.log(.error_, "rfc update needs a path, the exact old text, and its replacement", .{});
         return Error.MissingArg;
@@ -248,12 +253,12 @@ fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try s.endObject();
 
     const result = try callTool(arena, tool, input.written());
-    try out(io, try std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
+    return std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
 }
 
 /// The Recommendation section, which is the point of the document: a
 /// recommendation with no confidence number is an opinion.
-fn recommend(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn recommend(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const path = opts.arg1 orelse return missingRecommendArg("an RFC path");
     const text = opts.arg2 orelse return missingRecommendArg("the recommendation");
     const confidence_text = opts.arg3 orelse return missingRecommendArg("a confidence from 0 to 10");
@@ -285,10 +290,10 @@ fn recommend(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !v
     try s.endObject();
 
     const result = try callTool(arena, tool, input.written());
-    try out(io, try std.fmt.allocPrint(arena, "recommended on {s} at confidence {d}/10\n", .{
+    return std.fmt.allocPrint(arena, "recommended on {s} at confidence {d}/10\n", .{
         json_util.strFieldOrEmpty(result.object, "path"),
         unsignedField(result, "confidence"),
-    }));
+    });
 }
 
 fn missingRecommendArg(what: []const u8) Error {
@@ -296,7 +301,7 @@ fn missingRecommendArg(what: []const u8) Error {
     return Error.MissingArg;
 }
 
-fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn setStatus(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const path = opts.arg1 orelse return missingStatusArg("an RFC path");
     const wanted = opts.arg2 orelse return missingStatusArg("a status: draft, discussion, decided, deferred, withdrawn or superseded");
     const note = opts.arg3 orelse "";
@@ -317,7 +322,7 @@ fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !v
 
     const result = try callTool(arena, tool, input.written());
     var w: std.Io.Writer.Allocating = .init(arena);
-    defer w.deinit();
+    errdefer w.deinit();
     try w.writer.print("{s} is now {s}\n", .{
         json_util.strFieldOrEmpty(result.object, "path"),
         json_util.strFieldOrEmpty(result.object, "status"),
@@ -325,7 +330,7 @@ fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !v
     if (!boolField(result, "indexed")) {
         try w.writer.writeAll("\nThe inventory line was not updated (the entry is missing or the index\nchanged concurrently). Set its status by hand in docs/rfcs/README.md so\nthe index does not disagree with the record.\n");
     }
-    try out(io, w.written());
+    return try w.toOwnedSlice();
 }
 
 fn missingStatusArg(what: []const u8) Error {
