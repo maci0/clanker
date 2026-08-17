@@ -38,11 +38,18 @@ fn tableToJson(arena: std.mem.Allocator, table: toml.Table) !json.Value {
     return json.Value{ .object = obj };
 }
 
-fn valueToJson(arena: std.mem.Allocator, value: toml.Value) (std.mem.Allocator.Error || error{UnsupportedTomlType})!json.Value {
+fn valueToJson(arena: std.mem.Allocator, value: toml.Value) (std.mem.Allocator.Error || error{ UnsupportedTomlType, NonFiniteFloat })!json.Value {
     return switch (value) {
         .string => |s| json.Value{ .string = s },
         .integer => |i| json.Value{ .integer = i },
-        .float => |f| json.Value{ .float = f },
+        .float => |f| blk: {
+            // TOML allows inf and nan; JSON does not. Rejecting at the
+            // boundary keeps a non-finite value from drifting into
+            // downstream JSON serialization and turns it into a precise
+            // config-load failure naming the value's nature.
+            if (!std.math.isFinite(f)) return error.NonFiniteFloat;
+            break :blk json.Value{ .float = f };
+        },
         .boolean => |b| json.Value{ .bool = b },
         .date, .time, .datetime => error.UnsupportedTomlType,
         .array => |arr| blk: {
@@ -87,4 +94,15 @@ test "parseToJsonValue rejects date/time values, unused by clanker's config sche
     try std.testing.expectError(error.UnsupportedTomlType, parseToJsonValue(arena, "d = 2022-07-03"));
     try std.testing.expectError(error.UnsupportedTomlType, parseToJsonValue(arena, "t = 14:30:00"));
     try std.testing.expectError(error.UnsupportedTomlType, parseToJsonValue(arena, "dt = 2022-07-03T14:30:00"));
+}
+
+test "valueToJson rejects non-finite floats at the boundary" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try std.testing.expectError(error.NonFiniteFloat, valueToJson(arena, .{ .float = std.math.inf(f64) }));
+    try std.testing.expectError(error.NonFiniteFloat, valueToJson(arena, .{ .float = std.math.nan(f64) }));
+    // A finite float still crosses untouched.
+    const ok = try valueToJson(arena, .{ .float = 2.5 });
+    try std.testing.expectEqual(@as(f64, 2.5), ok.float);
 }
