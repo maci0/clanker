@@ -103,6 +103,58 @@ pushed to `github.com/ywy50/libvaxis` on the `ss3-keypad-enter` branch —
 same arrangement as `sixel-graphics` above: derived from this file, never
 its source.
 
+## vaxis-winch-self-pipe.patch
+
+Target: vaxis 0.6.0 (`zig-pkg/vaxis-0.6.0-*`). Apply with `patch -p1` inside
+that directory, after the two patches above — it touches `src/main.zig`, which
+`vaxis-sixel-graphics.patch` also edits.
+
+Unlike the other two, **clanker is broken without this one.** Resizing the
+terminal during `clanker repl` aborts the process and leaves the terminal in
+raw mode with the alt-screen still up and mouse tracking on — no scroll, no
+copy, and the panic message invisible inside the alt-screen that was never
+popped. There is no capability check that compiles the path out, because the
+path is "the operator resized the window". Full mechanism and measurements:
+[the bug report](../docs/reports/bugs/2026-08-17-tui-resize-crash-sigwinch-in-signal-handler.md).
+
+Two changes, one per link in the failure:
+
+- `tty.zig`: SIGWINCH becomes a self-pipe. `handleWinch` used to run the
+  registered winsize callbacks inside the signal handler, and those callbacks
+  are not async-signal-safe — `handler_mutex` and `Loop.winsizeCallback`'s
+  `postEvent -> queue.push` are `std.Io` operations. A `std.Io` call issued
+  from a signal that interrupted an `Io.Threaded` pool thread mid-syscall hits
+  `.blocked => unreachable` in `Syscall.start`, and `Loop.ttyRun` sits in
+  `readv` on the tty for the process's whole life, so it is the thread the
+  signal lands on. Now the handler does one raw `write(2)` onto a static pipe —
+  skipped when a wakeup is already queued, so a resize storm cannot fill the
+  buffer and make the handler block — and a detached plain `std.Thread` reads
+  that pipe and runs the callbacks normally. A plain thread is the whole trick:
+  `Io.Threaded.Thread.current` is null off the pool, so `Syscall.start` returns
+  early instead of inspecting a status that was never set.
+- `main.zig`: `recover()` stops going through `std.Io`. It is documented as
+  panic-context-only, and the panic it most needs to survive is one raised *by*
+  `std.Io` — so the buffered tty writer re-raised the identical panic from
+  inside the panic handler, ~6900 times, until the stack overflowed. It now
+  writes the reset string with raw `write(2)` and restores termios with
+  `tcsetattr`, and no longer calls `Tty.deinit`, whose `close` is also a
+  `std.Io` call. The tty is deliberately left open; the process is exiting.
+
+An uncontended `std.Io.Mutex.lock` is a CAS with no syscall, which is why the
+crash is intermittent rather than immediate: it needs a signal to land while
+the lock is already held. Measured on a pty harness, the unfixed build dies
+between 246 and 1594 resizes; the fixed one survived 5000 twice.
+
+The matching one-shot guard on clanker's side (`claimTerminalRecovery` in
+`src/main.zig`) is *not* in this patch — it is clanker's own source. Both are
+needed: this patch stops `recover()` raising the second panic, and the guard
+stops any future one recursing.
+
+Status: local-only, upstreamable as-is. This file is the only durable copy of
+both edits — `zig-pkg/` is gitignored, so a wipe or a re-fetch loses them and
+nothing in `git status` will say so. Verified 2026-08-17 to apply cleanly with
+`patch -p1` and reproduce the two files byte for byte.
+
 ## zwasm-lazy-mem-cksum.patch
 
 Target: zwasm 2.4.1 (`zig-pkg/zwasm-2.4.1-*`). Apply with `patch -p1` inside

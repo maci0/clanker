@@ -1,0 +1,170 @@
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -65,6 +65,17 @@
+ }
+ 
+ /// Resets the terminal state using the global tty instance. Use this only to recover during a panic
++///
++/// Runs in panic context, so it must not touch `std.Io`. The buffered tty
++/// writer and `Tty.deinit`'s `close` both go through it, and `std.Io` is the
++/// thing most likely to have raised the panic in the first place: a signal
++/// delivered to an `Io.Threaded` pool thread that is already inside a syscall
++/// makes the nested `Syscall.start` hit `.blocked => unreachable`. Recovering
++/// through that same path re-raises the identical panic from inside the panic
++/// handler, and the recursion runs the stack out before `std.debug.defaultPanic`
++/// — which has its own panic-during-panic guard — is ever reached. What the
++/// terminal needs back is a fixed byte string and the saved termios, and raw
++/// `write(2)` plus `tcsetattr` deliver both without `std.Io`.
+ pub fn recover() void {
+     if (tty.global_tty) |*gty| {
+         const reset: []const u8 = ctlseqs.csi_u_pop ++
+@@ -72,9 +83,23 @@
+             ctlseqs.bp_reset ++
+             ctlseqs.rmcup;
+ 
+-        gty.writer().writeAll(reset) catch {};
+-        gty.writer().flush() catch {};
+-        gty.deinit();
++        const fd = gty.fd.handle;
++        var off: usize = 0;
++        while (off < reset.len) {
++            const rc = std.posix.system.write(fd, reset.ptr + off, reset.len - off);
++            switch (std.posix.errno(rc)) {
++                .SUCCESS => {},
++                .INTR => continue,
++                else => break,
++            }
++            const n: usize = @intCast(rc);
++            if (n == 0) break;
++            off += n;
++        }
++
++        // The tty is left open on purpose: `Tty.deinit` would close it through
++        // `std.Io`, and the process is on its way down anyway.
++        std.posix.tcsetattr(fd, .FLUSH, gty.termios) catch {};
+     }
+ }
+ 
+--- a/src/tty.zig
++++ b/src/tty.zig
+@@ -51,6 +51,32 @@
+ 
+     var handler_installed: bool = false;
+ 
++    /// SIGWINCH self-pipe. The registered winsize callbacks are not
++    /// async-signal-safe: they take `handler_mutex` and push onto the event
++    /// queue, and both are `std.Io` operations. Issuing one from a signal that
++    /// interrupted a thread of the `Io.Threaded` pool is fatal — the pool
++    /// thread is already marked `.blocked` by the syscall the signal
++    /// interrupted, so the nested `Io.Threaded.Syscall.start` hits
++    /// `.blocked => unreachable` and panics. `Loop.ttyRun` sits in `readv` on
++    /// the tty for the process's whole life, so it is the thread SIGWINCH
++    /// usually lands on and the panic is a matter of when, not if.
++    ///
++    /// So `handleWinch` does the one thing a signal handler may do — a single
++    /// raw `write(2)` — and `winchDispatch` runs the callbacks in normal
++    /// thread context. The dispatcher is a plain `std.Thread`, never an
++    /// `Io.Threaded` worker, so `Io.Threaded.Thread.current` is null there and
++    /// its `std.Io` calls take the no-op path in `Syscall.start` instead.
++    var winch_pipe: [2]posix.fd_t = .{ -1, -1 };
++    var winch_thread: ?std.Thread = null;
++
++    /// One pending wakeup at a time. Without this a resize storm could fill
++    /// the pipe buffer and make the signal handler's `write` block, which
++    /// would stall whichever thread took the signal. Coalescing is also the
++    /// behaviour we want: each callback re-reads the *current* size with
++    /// `TIOCGWINSZ`, so N queued bytes and one queued byte produce the same
++    /// answer.
++    var winch_pending: std.atomic.Value(bool) = .init(false);
++
+     /// initializes a Tty instance by opening /dev/tty and "making it raw". A
+     /// signal handler is installed for SIGWINCH. No callbacks are installed, be
+     /// sure to register a callback when initializing the event loop
+@@ -62,6 +88,12 @@
+         const termios = try makeRaw(f.handle);
+ 
+         if (!handler_installed) {
++            // Before the handler: `handler_io` is what the dispatcher locks
++            // `handler_mutex` with, and the first signal may arrive during
++            // `sigaction` itself.
++            handler_io = io;
++            try startWinchDispatcher();
++
+             var act = posix.Sigaction{
+                 .handler = .{ .handler = PosixTty.handleWinch },
+                 .mask = switch (builtin.os.tag) {
+@@ -71,7 +103,6 @@
+                 .flags = 0,
+             };
+             posix.sigaction(posix.SIG.WINCH, &act, null);
+-            handler_io = io;
+             handler_installed = true;
+         }
+ 
+@@ -160,16 +191,59 @@
+         }
+     }
+ 
+-    fn handleWinch(_: std.posix.SIG) callconv(.c) void {
+-        handler_mutex.lock(handler_io) catch @panic("unable to lock SIGWINCH handlers");
+-        defer handler_mutex.unlock(handler_io);
+-        var i: usize = 0;
+-        while (i < handler_idx) : (i += 1) {
+-            const handler = handlers[i];
+-            handler.callback(handler.context);
++    /// Creates the self-pipe and starts the dispatcher. Called once, from
++    /// `init`, before the signal handler is installed.
++    fn startWinchDispatcher() !void {
++        if (winch_thread != null) return;
++
++        // `pipe2` where it exists, so the fds are not inherited by children;
++        // `std.c.pipe2` is `void` on platforms without it (macOS), hence the
++        // comptime test on the type rather than `@hasDecl`.
++        const rc = if (@TypeOf(posix.system.pipe2) != void)
++            posix.system.pipe2(&winch_pipe, .{ .CLOEXEC = true })
++        else
++            posix.system.pipe(&winch_pipe);
++        if (posix.errno(rc) != .SUCCESS) return error.SystemResources;
++
++        winch_thread = try std.Thread.spawn(.{}, winchDispatch, .{});
++        winch_thread.?.detach();
++    }
++
++    /// Runs for the life of the process on a plain OS thread, waking on each
++    /// byte `handleWinch` writes. See `winch_pipe` for why the callbacks
++    /// cannot run in the handler itself.
++    fn winchDispatch() void {
++        var buf: [16]u8 = undefined;
++        while (true) {
++            // Blocking `read(2)` straight on the fd. `std.posix.read` retries
++            // on EINTR itself and never enters `std.Io`.
++            const n = posix.read(winch_pipe[0], &buf) catch return;
++            if (n == 0) return; // write end closed; nothing left to wake for
++
++            // Clear before dispatching, not after: a SIGWINCH arriving while
++            // the callbacks run must queue another wakeup rather than be
++            // folded into the one already in flight and lost.
++            winch_pending.store(false, .release);
++
++            handler_mutex.lock(handler_io) catch return;
++            defer handler_mutex.unlock(handler_io);
++            var i: usize = 0;
++            while (i < handler_idx) : (i += 1) {
++                const handler = handlers[i];
++                handler.callback(handler.context);
++            }
+         }
+     }
+ 
++    fn handleWinch(_: std.posix.SIG) callconv(.c) void {
++        // Async-signal-safe, and nothing else may go here: one raw `write(2)`,
++        // skipped entirely when a wakeup is already queued. Everything the
++        // resize actually needs to do happens in `winchDispatch`.
++        if (winch_pending.swap(true, .acq_rel)) return;
++        const byte: [1]u8 = .{0};
++        _ = posix.system.write(winch_pipe[1], &byte, 1);
++    }
++
+     /// makeRaw enters the raw state for the terminal.
+     pub fn makeRaw(fd: posix.fd_t) !posix.termios {
+         const state = try posix.tcgetattr(fd);

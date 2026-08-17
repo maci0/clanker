@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **Question:** Resizing the terminal while clanker repl runs (mascot on) aborts with a 10001-frame recursive std.Io File.Writer trace and leaves the terminal without scroll/copy (mouse tracking still on). Tracing the initial panic via the core dump.
-- **Finding:** Investigating.
-- **Resolution:** Pending.
+- **Finding:** Resolved on 2026-08-17. Root-caused to vaxis running winsize callbacks inside the SIGWINCH handler (std.Io is unsafe there on a pool thread already blocked in readv) and to recover() re-entering std.Io and re-raising the same panic. Fixed by patches/vaxis-winch-self-pipe.patch and claimTerminalRecovery in src/main.zig. Verified by tests/e2e/pty_resize_test.zig, which fails with ReplCrashedOnResize at 568 resizes unfixed and passes fixed; clanker gate all green.
+- **Resolution:** Resolved on 2026-08-17. Root-caused to vaxis running winsize callbacks inside the SIGWINCH handler (std.Io is unsafe there on a pool thread already blocked in readv) and to recover() re-entering std.Io and re-raising the same panic. Fixed by patches/vaxis-winch-self-pipe.patch and claimTerminalRecovery in src/main.zig. Verified by tests/e2e/pty_resize_test.zig, which fails with ReplCrashedOnResize at 568 resizes unfixed and passes fixed; clanker gate all green.
 
 ## Status
 
-Investigating.
+Resolved on 2026-08-17. Root-caused to vaxis running winsize callbacks inside the SIGWINCH handler (std.Io is unsafe there on a pool thread already blocked in readv) and to recover() re-entering std.Io and re-raising the same panic. Fixed by patches/vaxis-winch-self-pipe.patch and claimTerminalRecovery in src/main.zig. Verified by tests/e2e/pty_resize_test.zig, which fails with ReplCrashedOnResize at 568 resizes unfixed and passes fixed; clanker gate all green.
 
 ## Trigger and scope
 
@@ -51,3 +51,94 @@ Three changes, smallest that removes both the trigger and the amplifier:
 3. clanker `src/main.zig handlePanic`: one-shot atomic guard so a panic raised inside the recovery write falls through to `std.debug.defaultPanic` (which has its own panicked-during-panic handling) instead of recursing.
 
 Verification: the pty repro harness (scratchpad resize_repro.py, copy in this record's Evidence section) crashes the current build in under ~200 resizes with sixel engaged; after the fix it must survive the full window, and a deliberate panic in the TUI must leave the terminal scrollable/copyable. Failing e2e first per AGENTS.md: tests/e2e/ has no pty helper yet; a pty resize-flood journey (fork + /dev/ptmx + TIOCSWINSZ flood, answer geometry-then-DA1) belongs in tests/e2e/ alongside journeys_test.zig. Then `clanker gate`, CHANGELOG under [Unreleased], patches/README.md entry for the new vaxis patch.
+## Fix implemented and measured (2026-08-17)
+
+All three changes from the fix plan are implemented. Each was measured
+separately on the pty repro harness, so the effect of each is attributable
+rather than inferred.
+
+### The harness
+
+`resize_repro.py` (scratchpad, reconstructed 2026-08-17 — the original
+session's copy was gone): `pty.fork()`, exec
+`zig-out/bin/clanker repl --mascot=loop --mascot-size=large --mascot-speed=7`,
+answer the XTSMGRAPHICS geometry report before DA1 so sixel engages, then
+change `TIOCSWINSZ` on the master on a fixed interval, optionally writing
+`abc\x7f` each tick to keep the event queue hot.
+
+### What the numbers say the cause is
+
+Two controls, both on the unfixed build, both 2 ms per tick:
+
+| run | SIGWINCH raised | keystrokes | outcome |
+|---|---|---|---|
+| same size every tick | no | yes | survived 3000 ticks |
+| changing size, no keystrokes | yes | no | SIGABRT at 1594 |
+
+So SIGWINCH is necessary and sufficient; the keystrokes and the mascot only
+raise the odds by making the mutex contended more often. This corrects a
+guess in the earlier evidence: the first run of the reconstructed harness
+used `--mascot=input` with no keystrokes and survived 600 resizes, which
+would have read as "not reproducible" without the controls.
+
+The crash is contention-gated, not signal-count-gated: `std.Io.Mutex.lock`
+only enters a syscall when the lock is already held, so an uncontended
+SIGWINCH handler returns without ever reaching `Syscall.start`.
+
+### What each change is worth
+
+Measured with `panic_cleanliness.py`, which floods until the child dies and
+then reports the trace size and whether the terminal reset ever reached the
+pty:
+
+| build | outcome | trace bytes | recursion frames | reset sequences delivered |
+|---|---|---|---|---|
+| none of the three | SIGABRT | 2,012,324 | 3336, unwinder cap hit | 0 of 4 |
+| `recover()` + panic guard only | SIGABRT | 8,759 | 3, no cap | 4 of 4 |
+| all three | survived 5000 resizes, twice | — | — | n/a |
+
+The middle row is the point of changes 2 and 3 on their own: the process
+still dies, but it dies in three frames and hands the terminal back, so the
+operator gets a readable panic in a usable terminal instead of a megabyte of
+repeated frames and a shell with no scroll, no copy and mouse tracking still
+on. That is the difference between a crash and an irrecoverable one, and it
+holds for **any** panic in the TUI, not only this one.
+
+### Delivery, not just survival
+
+Surviving a flood proves nothing on its own — a handler that dropped every
+resize would survive it too. `resize_delivers.py` settles the repl, changes
+the size once, and reads back which geometry the app redraws at. On the
+fixed build: 40 rows -> 45 -> 20, and columns 100 -> 200 -> 60, tracking
+exactly. The self-pipe coalesces bursts (one pending wakeup at a time) but
+loses no resize, because each callback re-reads the current size with
+`TIOCGWINSZ` rather than carrying a size through the pipe.
+
+## Regression test
+
+`tests/e2e/pty_resize_test.zig`, wired into `tests/e2e/main.zig`. It
+allocates a pty by hand (`/dev/ptmx`, `TIOCSPTLCK`, `TIOCGPTN`), forks, and
+gives the child the slave as its controlling terminal —
+`std.process.Child` cannot express this, because the child has to `setsid`
+and claim the tty between fork and exec and vaxis opens `/dev/tty`.
+
+Three things had to be right before it reproduced anything, each of which
+was a false green until measured:
+
+1. **The signal mask survives fork *and* exec.** The child must
+   `sigprocmask(SIG_SETMASK, empty)` before exec, or it inherits the test
+   runner's blocked mask and never receives SIGWINCH at all.
+2. **The flood has to be paced.** SIGWINCH is a standard signal, so a second
+   one raised while the first is still pending is coalesced, not queued.
+   Resizing as fast as the loop could spin collapsed ~4000 `TIOCSWINSZ`
+   calls into a handful of deliveries and the unfixed build passed. At 2 ms
+   per change the unfixed build dies at 598.
+3. **The delivery assertion has to read rows, not columns.** With an empty
+   transcript the repl draws nothing at the right edge, so the widest column
+   addressed stays at the mascot regardless of window width; the composer is
+   bottom-anchored, so the tallest row tracks the height on every frame.
+   Verified against the same measurement taken with the python probe in the
+   same environment: rows 40 -> 45 -> 20.
+
+Confirmed failing for the intended reason on the unfixed build
+(`ReplCrashedOnResize` after 598 resizes) and passing with the fix.

@@ -22,9 +22,36 @@ const config = @import("config.zig");
 // Zig version's 2-arg one, so it can't be used directly here.)
 pub const panic = std.debug.FullPanic(handlePanic);
 
+/// One-shot claim on the terminal reset, so a panic raised *by the reset
+/// itself* cannot recurse. `vaxis.recover()` writes to the tty, and on a
+/// `std.Io` panic (a signal landing on a pool thread already inside a syscall
+/// makes the nested `Io.Threaded.Syscall.start` hit `.blocked => unreachable`)
+/// that write raises the very same panic from inside this handler. Unguarded
+/// that recursed ~6900 times and overflowed the stack, printing 10001 frames
+/// and never reaching `std.debug.defaultPanic` — whose own panic-during-panic
+/// handling would have stopped it. See
+/// docs/reports/investigations/2026-08-16-tui-resize-crash.md.
+var recovery_claimed: std.atomic.Value(bool) = .init(false);
+
+/// True for the first caller only. Kept separate from `handlePanic` because
+/// `handlePanic` is `noreturn` and so cannot be called from a test.
+fn claimTerminalRecovery() bool {
+    return !recovery_claimed.swap(true, .seq_cst);
+}
+
 fn handlePanic(msg: []const u8, ret_addr: ?usize) noreturn {
-    vaxis.recover();
+    if (claimTerminalRecovery()) vaxis.recover();
     std.debug.defaultPanic(msg, ret_addr);
+}
+
+test "terminal recovery is claimed once, so a panic inside recover falls through" {
+    defer recovery_claimed.store(false, .seq_cst);
+
+    try std.testing.expect(claimTerminalRecovery());
+    // A panic raised by `vaxis.recover()` re-enters `handlePanic`; every
+    // re-entry must decline the reset and fall through to `defaultPanic`.
+    try std.testing.expect(!claimTerminalRecovery());
+    try std.testing.expect(!claimTerminalRecovery());
 }
 
 // clanker's own code logs through util/log.zig, but vendored dependencies

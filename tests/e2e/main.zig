@@ -12,4 +12,5 @@ comptime {
     _ = @import("records_api_test.zig");
     _ = @import("live_sse_test.zig");
     _ = @import("commit_apply_test.zig");
+    _ = @import("pty_resize_test.zig");
 }

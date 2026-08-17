@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [SIGWINCH runs vaxis winsize callbacks in the signal handler, panicking std.Io and recursing through recover()](bugs/2026-08-17-tui-resize-crash-sigwinch-in-signal-handler.md) — Resolved
+
 - [The autolearn synthesis grant is spent entirely on reasoning](bugs/2026-08-17-ck-llm-grant-spent-on-reasoning.md) — Resolved
 
 - [session_search and spill list broke their JSON shape on empty stores, failing improve-self capability evals](bugs/2026-08-17-capability-evals-reject-empty-store-tools.md) — Resolved
@@ -173,7 +175,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [TUI selection copy never reaches the system clipboard in terminals that ignore OSC 52 or intercept Ctrl+Shift+C](investigations/2026-08-16-tui-selection-copy-not-reaching-clipboard.md) — Resolved
 
-- [TUI crashes irrecoverably on terminal resize with mascot enabled](investigations/2026-08-16-tui-resize-crash.md) — Investigating
+- [TUI crashes irrecoverably on terminal resize with mascot enabled](investigations/2026-08-16-tui-resize-crash.md) — Resolved
 
 - [TUI Ctrl+C cannot interrupt a streaming turn while the picker or search modal is open](investigations/2026-08-16-tui-ctrl-c-swallowed-by-picker-and-search.md) — Resolved
 

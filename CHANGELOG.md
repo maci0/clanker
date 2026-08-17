@@ -539,6 +539,29 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Resizing the terminal during `clanker repl` no longer aborts the
+  process and wrecks the terminal. vaxis ran its winsize callbacks
+  inside the SIGWINCH handler, and those callbacks use `std.Io`; a
+  `std.Io` call from a signal that interrupted an `Io.Threaded` pool
+  thread mid-syscall hits `.blocked => unreachable`, and the read thread
+  sits in `readv` on the tty for the whole run, so it is the thread the
+  signal lands on. SIGWINCH now writes one byte to a self-pipe and a
+  plain thread runs the callbacks in normal context. Measured on a pty
+  harness: the old build aborted between 246 and 1594 resizes, the new
+  one survives 5000, and resizes are still applied (the app redraws at
+  each new geometry — bursts coalesce, none are lost).
+  ([bug](docs/reports/bugs/2026-08-17-tui-resize-crash-sigwinch-in-signal-handler.md))
+- A panic anywhere in `clanker repl` now leaves the terminal usable.
+  `vaxis.recover()` wrote the reset through a buffered `std.Io` writer,
+  so a panic raised *by* `std.Io` was raised again by the recovery
+  itself, from inside the panic handler, recursing until the stack
+  overflowed — 2 MB of trace, 3336 repeated frames, and not one of the
+  four reset sequences delivered, leaving raw mode, the alt-screen and
+  mouse tracking all still on with the panic message invisible inside
+  the alt-screen. `recover()` now uses raw `write(2)` plus `tcsetattr`,
+  and `handlePanic` claims the reset once so a panic during recovery
+  falls through to `std.debug.defaultPanic`. Same crash now prints three
+  frames and hands the terminal back.
 - `clanker autolearn --model <reasoning model>` no longer fails with
   "synthesizer returned an empty section". `max_tokens` bounds output,
   and on a reasoning model reasoning *is* output, so the 2500-token grant
