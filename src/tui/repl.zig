@@ -4867,7 +4867,10 @@ const Model = struct {
                 // `clearRetainingCapacity` would otherwise keep appending
                 // into a buffer the previous frame's arena already freed.
                 self.fold_hits.append(self.arena, .{ .row = row, .fold = fk }) catch {};
-                writeWrapped(surface, &row, bottom, text_width, self.foldHeader(ctx.arena, f), tool_style);
+                // Bold accent, not the dim tool tint: the header is the
+                // fold's only toggle, and dim made it vanish into the tool
+                // lines around it — easy to overlook, so never clicked.
+                writeWrapped(surface, &row, bottom, text_width, self.foldHeader(ctx.arena, f), brand_style);
                 row += 1;
                 if (shown < f.count) {
                     // In scrollback the fold may straddle the anchored `view_end`
