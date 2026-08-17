@@ -7,7 +7,6 @@ const log = @import("../util/log.zig");
 const protocol = @import("protocol.zig");
 const host = @import("host.zig");
 const config_mod = @import("../config.zig");
-const chatrooms_mod = @import("../peers/chatrooms.zig");
 const private_todos_mod = @import("../agent/private_todos.zig");
 const token_stats_mod = @import("../stats/tokens.zig");
 const registry = @import("../toolhost/registry.zig");
@@ -358,6 +357,7 @@ test "zwasm executes on a worker thread" {
 }
 
 test "chat wasm tool executes (send + history via ck_chat)" {
+    const chatrooms_mod = @import("../peers/chatrooms.zig");
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();

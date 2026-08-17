@@ -212,6 +212,66 @@ fn parseValue(arena: std.mem.Allocator, text: []const u8) !std.json.Value {
     return std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{});
 }
 
+test "request escapes strings, writes numbers unquoted, and omits an absent field" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try testing.expectEqualStrings(
+        "{\"action\":\"update\",\"old\":\"a \\\"quoted\\\" line\\n\"}",
+        try request(arena, &.{
+            .{ .name = "action", .value = .{ .text = "update" } },
+            .{ .name = "old", .value = .{ .text = "a \"quoted\" line\n" } },
+        }),
+    );
+
+    // A confidence is a number to the tool, not the string "7".
+    try testing.expectEqualStrings(
+        "{\"action\":\"recommend\",\"confidence\":7}",
+        try request(arena, &.{
+            .{ .name = "action", .value = .{ .text = "recommend" } },
+            .{ .name = "confidence", .value = .{ .number = 7 } },
+        }),
+    );
+
+    // An argument that was not given leaves out the field rather than sending
+    // a null: the tools read a missing field as "not supplied".
+    const absent: ?[]const u8 = null;
+    const given: ?[]const u8 = "kv-stores";
+    try testing.expectEqualStrings(
+        "{\"action\":\"checklist\"}",
+        try request(arena, &.{
+            .{ .name = "action", .value = .{ .text = "checklist" } },
+            .{ .name = "topic", .value = Field.optional(absent) },
+        }),
+    );
+    try testing.expectEqualStrings(
+        "{\"action\":\"checklist\",\"topic\":\"kv-stores\"}",
+        try request(arena, &.{
+            .{ .name = "action", .value = .{ .text = "checklist" } },
+            .{ .name = "topic", .value = Field.optional(given) },
+        }),
+    );
+
+    // Every field absent is still a well-formed object, not "{,}".
+    try testing.expectEqualStrings(
+        "{}",
+        try request(arena, &.{.{ .name = "topic", .value = Field.optional(absent) }}),
+    );
+}
+
+test "the field readers answer for a row that is not an object" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+
+    // A tool answer's array holds whatever the tool put there; a bare string
+    // row used to reach `.object` and panic rather than read as empty.
+    const row = try parseValue(arena_state.allocator(), "\"not an object\"");
+    try testing.expectEqual(false, boolField(row, "indexed"));
+    try testing.expectEqual(@as(usize, 0), arrayField(row, "matches").len);
+    try testing.expectEqual(@as(u64, 0), unsignedField(row, "line"));
+}
+
 test "renderMatchRows caps one file and says how many it refused" {
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena_state.deinit();

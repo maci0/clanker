@@ -661,13 +661,3 @@ test "a refused tool call fails with the tool's own sentence, not a generic erro
     canned.answer = "not json at all";
     try std.testing.expectError(Error.ToolFailed, common.callTool(arena.allocator(), "research", tool, "{}"));
 }
-
-test "request builds a flat object with every field escaped" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const json = try common.request(arena.allocator(), &.{
-        .{ .name = "action", .value = .{ .text = "update" } },
-        .{ .name = "old", .value = .{ .text = "a \"quoted\" line\n" } },
-    });
-    try std.testing.expectEqualStrings("{\"action\":\"update\",\"old\":\"a \\\"quoted\\\" line\\n\"}", json);
-}
