@@ -1,0 +1,5 @@
+# Example profile: `clanker --profile headless`
+# Minimal UI, no browser surface.
+[modules]
+webui = false
+sessions = true

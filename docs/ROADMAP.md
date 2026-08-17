@@ -314,20 +314,7 @@ crept back outside `providers/`)**
   with no provider surface; pin: byte-stable ordering for prompt-cache
   hits must stay host-controlled.
 
-**Profiles (from DSH's launcher, 2026-08-16)**
-
-`dsh --profile <name>` boots an ordered stack of plugin-bundle patch
-layers under user overrides, with `--patch` for extra overlays and
-`--dump-config` to print the composed tree. Clanker already has the
-layering (`config.toml` < `config.local.toml` < env < flags) but no way
-to NAME a stack: a "web" profile vs a "headless" profile vs a
-"free-endpoints" profile is today a hand-swapped config.local.toml.
-Candidate shape: `clanker --profile <name>` reading
-`profiles/<name>.toml` as an extra overlay between config.local.toml
-and the environment, plus a `--dump-config` that prints the merged
-result (the config-doc test already proves the schema is reflectable).
-Cheap, composes with hot reload, and gives the plugin surfaces a way to
-ship curated bundles.
+**Profiles (`--profile` + `--dump-config`)** — **shipped 2026-08-17:** `clanker --profile <name>` reads `profiles/<name>.toml` as an overlay between `config.local.toml` and env/flags (`src/config.zig:Config.loadWithProfile`, `src/cli.zig` global flags, `src/main.zig` --dump-config printer); `profiles/web.toml` and `profiles/headless.toml` ship as examples. Cheap, composes with hot reload, and gives the plugin surfaces a way to ship curated bundles. ([RFC 0012](../rfcs/0012-named-config-profiles-profile-and-dump-config.md) → [ADR 0024](../adrs/0024-config-profiles-are-a-file-overlay-with-profile-and-dump.md) → [PRD 0042](../prds/0042-config-profiles-profile-and-dump-config-file-overlay.md))
 
 **Verified clean / must stay core**
 

@@ -1,0 +1,8 @@
+# Example profile: `clanker --profile web`
+# Overlay applied between config.local.toml and env/flags; see ADR 0024.
+[serve]
+webui_port = 17921
+
+[modules]
+webui = true
+sessions = true
