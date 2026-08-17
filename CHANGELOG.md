@@ -544,6 +544,27 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   an indistinguishable empty string. The deterministic Autolearn section
   was always written before the synthesis pass ran, so a failing run
   still updated `docs/ROADMAP.md`.
+- Every other tool that reaches a model through `ck_llm` is now budgeted
+  for a reasoning model too, not just `autolearn`. `thinking`, `advisor`,
+  `compare`, `arena`, `chain`, `mutate`, `translate` and `smart_commit`
+  each granted what their answer needed and nothing for the reasoning
+  that precedes it, so on a thinking model each returned empty content.
+  The two fail-open ones failed silently: the effort classifier asked for
+  5 tokens — one word — and got `''` back on every call, so `auto_thinking`
+  had been resolving to `medium` for every turn of every run, and the
+  post-turn advisor's 256 never parsed as a note. Each grant is now its
+  content budget plus a 4096-token reasoning headroom
+  (`tools/zig/llm_budget.zig`), and `toolDescriptorGate` fails any
+  `"llm": true` descriptor granting less, so a new tool cannot
+  reintroduce it. Measured on `deepseek-v4-pro`: the classifier prompt
+  returns `''` at the old grant and `xhigh` at the new one, spending 95
+  tokens of it — the grant is a ceiling, not a spend, so this does not
+  make a non-reasoning model cost more.
+  `providers` is deliberately unchanged: its liveness ping asks for one
+  token and never reads the completion. `rlm`, `subagent` and `swarm`
+  reach a model through `ck_subagent`/`ck_swarm`, which the harness
+  budgets, not through this grant
+  (docs/reports/bugs/2026-08-17-ck-llm-grant-spent-on-reasoning.md).
 - Scrolling in `clanker repl` can now reach the messages above an expanded
   reply. The scroll guards, the anchor floor, the search jump, and the
   scrollbar all measured the transcript in *lines* against a screen
