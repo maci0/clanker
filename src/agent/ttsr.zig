@@ -58,10 +58,8 @@ pub const Pattern = struct {
             return std.mem.find(u8, hay, self.parts[0]) != null;
         }
         var rest = hay;
-        for (self.parts, 0..) |part, idx| {
+        for (self.parts) |part| {
             const at = std.mem.find(u8, rest, part) orelse return false;
-            if (idx == 0 and !self.leading_star and at != 0 and std.mem.find(u8, hay, part) == null)
-                return false;
             rest = rest[at + part.len ..];
         }
         return true;
