@@ -82,7 +82,7 @@ Project agents receive this workflow through the harness prompt and
 <!-- inventory:bug:start -->
 - [clanker commit --yes auto-applies the degraded fallback plan](bugs/2026-08-17-commit-yes-applies-a-degraded-fallback-plan.md) — Resolved
 
-- [The improve ledger is written to a worktree copy that is never merged back](bugs/2026-08-17-improve-ledger-written-to-a-worktree-copy.md) — Open
+- [The improve ledger is written to a worktree copy that is never merged back](bugs/2026-08-17-improve-ledger-written-to-a-worktree-copy.md) — Resolved
 
 - [A stray config.toml hunk reverts to the struct default and nothing surfaces it](bugs/2026-08-17-config-hunk-deleted-as-collateral-reverts-silently.md) — Resolved
 

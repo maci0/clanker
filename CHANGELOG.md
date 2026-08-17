@@ -598,6 +598,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- An atomic write to a symlinked path no longer replaces the symlink with a
+  private regular file. The write is a temp file plus a rename, and a rename
+  lands on the *link itself*, so every later write went somewhere no other
+  reader looks; the destination's link target is now resolved first and the
+  rename lands on that. This is what detached each `clanker improve-self`
+  worktree's `state/improvements.jsonl` from the checkout's ledger: the link
+  was made correctly, the first whole-file rewrite replaced it, and the
+  improvements recorded afterwards were discarded with the worktree, so the
+  loop could re-propose ideas it had already rejected. The same worktree's
+  `config.local.toml` is linked the same way and had the same defect.
+  Directory symlinks were never affected, which is why a `state -> …` link to
+  durable storage kept working.
 - `clanker commit --yes` no longer auto-applies the guest's fallback plan.
   When the grouping call fails or its reply is unusable (a reasoning model
   can spend the whole `max_tokens` grant on its trace and truncate the plan

@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-- **What failed:** Each improve-self run's state/ is a real directory inside its .clanker-worktrees/ copy, not a symlink to the shared state/, so every improvement it records lands there and is never merged back. The shared state/improvements.jsonl the next run reads has been frozen since 2026-08-16 12:00: of 25 imp- ids committed since, 23 are absent. The engine skips candidates history records as accepted or rejected, so it can re-propose what it already rejected.
+- **What failed:** An improve worktree's state/improvements.jsonl is symlinked back to the checkout's, and the first whole-file rewrite of it replaces that link with a private regular file: atomic_write.writeFile is temp-file-plus-rename, and a rename lands on the *link itself*. Every append the run makes afterwards is discarded with the worktree. The shared ledger was frozen from 2026-08-16 12:00 until it was backfilled on 2026-08-17; of the 24 imp- ids committed in that window 21 are absent from it and no copy of them survives. The engine skips candidates history records as accepted or rejected, so it can re-propose what it already rejected.
 - **Impact:** the loop cannot see what it already tried. AGENTS.md states the
   class is "recorded in \`state/improvements.jsonl\` and rendered in history
   block of next prompt, so loop sees what it produced", and the engine skips
@@ -10,14 +10,18 @@
   A day and a half of that history is invisible, so rejected ideas can be
   re-proposed and the \`inert\`/\`test_only\` consecutive counters read from
   the same truncated history.
-- **Resolution:** open. Not fixed — this record establishes the mechanism.
-  A live hazard comes with it: those worktree ledgers are the only copy of the
-  23 missing entries, and the only thing preserving them is \`clanker janitor\`
-  currently refusing to remove the worktrees.
+- **Resolution:** Resolved on 2026-08-17. atomic_write.writeFile renames onto a symlinked destination's target instead of onto the link, so an improve worktree's linked state/improvements.jsonl and config.local.toml keep their links; three unit tests, the first failing NotLink on the old code. Recovery first: the ten worktree ledgers were drained into the shared one (1130 to 1139) and the three reverted entries restored. zig build test 1510/1521, clanker gate 8/8.
+  link target and renames onto *that*, so a linked path keeps its link and the
+  write lands where every reader looks. Three unit tests cover the
+  same-directory, relative-subdirectory and absolute link-target spellings; the
+  first fails with \`NotLink\` on the old code. The surviving worktree ledgers
+  were drained into the shared one before the fix landed (1130 → 1139 lines,
+  exactly the ten worktrees' combined delta), so the do-not-clean-up hazard
+  below is retired.
 
 ## Status
 
-Open.
+Resolved on 2026-08-17. atomic_write.writeFile renames onto a symlinked destination's target instead of onto the link, so an improve worktree's linked state/improvements.jsonl and config.local.toml keep their links; three unit tests, the first failing NotLink on the old code. Recovery first: the ten worktree ledgers were drained into the shared one (1130 to 1139) and the three reverted entries restored. zig build test 1510/1521, clanker gate 8/8.
 
 ## Symptom and impact
 
@@ -29,7 +33,8 @@ accepted improvements; only its memory of them is missing.
 Every command below was run in this checkout on 2026-08-17, and the output is
 the actual output.
 
-The shared `state/` is a symlink, and the improve worktrees' are not:
+The checkout's `state/` is a symlink to durable storage, and the improve
+worktrees' are real directories:
 
 ```
 ls -ld state
@@ -43,9 +48,18 @@ state -> /home/yannick/code/ywy50/clanker-state/state
 for d in .clanker-worktrees/*/state; do test -L "$d" && echo SYMLINK || echo REALDIR; done
 ```
 
-Ten worktrees, ten `REALDIR`. That asymmetry is the whole defect: the checkout
-and `clanker-state` are one file, so a run in the checkout appends where the
-next run reads, while a run in a worktree appends to a private copy.
+Ten worktrees, ten `REALDIR`. **This is not the defect** — read as one it sent
+two sessions after the wrong function, and the Root cause section below
+untangles it. A real `state/` is what `linkSharedState` is written to produce
+for an improve worktree. The defect is one level down, in the two entries
+inside it that *are* linked back to the checkout:
+
+```
+ls -l .clanker-worktrees/*/state/improvements.jsonl .clanker-worktrees/*/state/history
+```
+
+Ten `history` symlinks, and ten `improvements.jsonl` regular files — same
+provisioning loop, same list, different outcome.
 
 Each worktree ledger is the shared file plus that run's own appends:
 
@@ -141,29 +155,62 @@ files outside the git tree, and `state/` is gitignored.
 
 ## Resolution
 
-Open. Nothing is fixed here; the record establishes the mechanism and the
-hazard so a fix can be scoped and the surviving history is not thrown away
-first.
+Fixed, in both halves, in that order — the recovery had to come first because
+the fix does not resurrect anything.
 
-A fix has two halves that must not be confused:
+**1. The surviving entries were recovered.** The ten worktree ledgers were
+drained into the shared one before any code changed: 1130 → 1139 lines, and
+the ten worktrees' deltas over the shared 1130 sum to exactly those 9
+appended entries (1+3+0+1+0+0+0+0+4+0).
 
-1. **Stop the divergence.** Make the whole-file write follow the link
-   instead of replacing it — resolve `state/improvements.jsonl` before the
-   rename in `atomic_write.writeFile`, or write through the resolved target.
-   Claimed on the board by session claude-20260817-135725, which holds
-   `src/util/atomic_write.zig`. Note the fix is general: any symlinked file
-   this helper rewrites has the same problem, not just the ledger.
-2. **Recover the 23 entries.** They exist only in the worktree copies. Any fix
-   that starts by cleaning up `.clanker-worktrees/` destroys them.
+That left a second, quieter loss the line counts do not show. Every one of the
+ten copies also differed from the shared ledger on the *same three existing
+lines* — `imp-1786839734969828365`, `imp-1786843447727583732` and
+`imp-1786846507181256994`, each `"status":"reverted"` in the worktrees and
+still `"status":"accepted"` in the shared file, with the reason field
+populated only in the worktrees:
 
-## Do not clean up the worktrees first
+```
+"detail":"removed from the tree without a revert commit: every line this change added is gone"
+```
 
-This is the live hazard and the reason this record exists now rather than
-after a fix.
+That is `markReverted`'s own output, and it is also the write that broke the
+link: three flips is why the rewrite ran at all, and because the flip never
+reached the shared ledger every later run re-found the same three reverts and
+re-clobbered its own link. The shared ledger has since been given those three
+lines verbatim from a worktree copy, so `alreadyAccepted` and `clanker revert`
+no longer read three human-reverted changes as accepted. Re-checking now, no
+line in any of the ten worktree ledgers is absent from the shared one.
 
-`clanker janitor` removes worktrees of archived or abandoned goals whose
-branch is already merged, and every one of these branches is merged. It is
-currently refusing them, which is the *only* thing preserving that history:
+Nothing beyond that was recoverable. Of the 24 `imp-` ids in the last 200
+commit subjects, 21 are absent from the shared ledger *and* from every
+surviving worktree copy — their worktrees were removed before anyone knew the
+entries lived only there. Those 21 are gone.
+
+**2. The divergence is stopped.** `atomic_write.writeFile` now reads the
+destination's link target and renames onto *that* instead of onto the link:
+
+- a relative target resolves against the directory holding the link, not
+  against `dir`;
+- an absolute target — the spelling `linkSharedState` writes — is used as-is,
+  because `openat` ignores the directory handle for an absolute path;
+- a path that is not a link, or does not exist yet, is written exactly as
+  before.
+
+The fix is general, not ledger-specific: every caller of this helper had the
+same defect on any symlinked destination. `config.local.toml` is the other one
+that is linked into an improve worktree today (`linkSharedState`), and
+`src/config.zig` rewrites it through this helper.
+
+Three unit tests in `src/util/atomic_write.zig` cover the three link spellings;
+the first fails with `NotLink` on the old code, and the whole suite is green
+with the new one.
+
+## The clean-up hazard, now retired
+
+While this record was open, the ten worktree ledgers held the only copy of
+every entry those runs had written, and `clanker janitor` was refusing to
+remove the worktrees for an unrelated reason:
 
 ```
 clanker janitor
@@ -174,11 +221,16 @@ worktrees:
   10 unrecognised in .clanker-worktrees/ -- an improve-self run may be using one right now, so these are never removed automatically
 ```
 
-That refusal is incidental, not a safeguard for this. Anyone who makes the
-janitor recognise these worktrees, or removes them by hand, deletes the only
-copy of 23 accepted and rejected improvements. Salvage the ledger deltas
-first — each worktree file is the shared 1130 lines plus its own appends, so
-the delta is a tail.
+That refusal was incidental, not a safeguard. It is no longer load-bearing:
+the deltas have been merged into the shared ledger (see Resolution), and
+re-checking each worktree copy for an id the shared ledger lacks now finds
+nothing. The worktrees can be removed like any other.
+
+The general lesson outlives the instance. A worktree's `state/` is not part of
+the git tree, so nothing about "the branch is merged" says its files were
+salvaged; `Worktree.merged` answers a question about commits only. Any change
+that makes the janitor recognise improve worktrees should still assume there
+is unmerged non-git state inside one.
 
 ## Verification
 
@@ -187,13 +239,64 @@ output is quoted there: the `state` symlink, the ten `REALDIR` worktree state
 directories, the line counts, the `grep -l` locating the missing id, the
 25/2/23 id count, and the janitor refusal.
 
-The 23-entry gap was established by session clanker-d7 and re-run here; the
+The entry gap was established by session clanker-d7 and re-run here; the
 mechanism above is session claude-20260817-135725's and was verified here by
-the `history`-versus-`improvements.jsonl` control. Its counts and mine differ
-by one at the boundary — it reports 24 ids with 1 in
-the shared ledger, this record 25 with 2 — because the cutoff for "since the
-ledger's last write" is picked slightly differently. The number that matters,
-23 absent, is the same by both methods.
+the `history`-versus-`improvements.jsonl` control. The counts differ by one at
+the boundary — clanker-d7 reports 24 ids with 1 in the shared ledger, an
+earlier draft of this record 25 with 2 — because the cutoff for "since the
+ledger's last write" is picked slightly differently. The final count against
+the last 200 commits is 24 ids with 3 present, 21 absent, and it is the same
+21 by every method tried.
+
+### The fix, and what proves each half
+
+Both of these are commands run in this checkout on 2026-08-17, not inference.
+
+**That the writer was `markReverted`, not some other whole-file write.** Each
+of the ten worktree copies is the shared ledger's full 1130 lines — it goes
+back to `imp-1786470823400993382`, months before that worktree existed — plus
+its own appends. A file created fresh, because the link was never made, would
+hold only its own run's entries. So the link existed and was read through, and
+then something rewrote the whole file. Diffing the shared prefix names what:
+three lines, all of them `"status":"accepted"` → `"status":"reverted"` with a
+`detail` reason added. That is `markReverted` and nothing else in the module
+writes that shape.
+
+**That all ten worktrees are improve worktrees**, so `linkSharedState` and not
+`linkCheckoutStateAt` provisioned them — the distinction the corrections above
+turn on:
+
+```
+for d in .clanker-worktrees/*/; do git -C "$d" rev-parse --abbrev-ref HEAD; done
+```
+
+Ten branches, every one `clanker/improve-self-<id>-main`. `createOn` passes
+`.improve` for that prefix and `.run` for `clanker/run-`, `clanker/webui-` and
+`clanker/tui-`; only the `.run` arm reaches `linkCheckoutStateAt`.
+
+**That the fix works.** Three unit tests in `src/util/atomic_write.zig` cover
+the three link-target spellings — same directory, relative in a subdirectory,
+and absolute. Reverting only the implementation and keeping the tests fails
+exactly one, and for the right reason:
+
+```
+error: 'util.atomic_write.test.writeFile follows a symlinked destination instead of replacing the link' failed:
+       link.jsonl is no longer a symlink: NotLink
+Build Summary: 295/297 steps succeeded (1 failed); 1507/1519 tests passed (11 skipped, 1 failed)
+```
+
+With the implementation restored: `zig build test` 1510/1521 passed (11
+skipped), and `clanker gate` 8/8, both in a clean worktree at the same commit
+so no other session's in-flight edits are in the tree.
+
+**That the recovery is complete.** No line of any of the ten worktree ledgers
+is missing from the shared one:
+
+```
+for w in .clanker-worktrees/*/state/improvements.jsonl; do grep -Fvx -f state/improvements.jsonl "$w" | wc -l; done
+```
+
+Ten zeros. Before the three flips were applied it printed ten threes.
 
 ### Correction
 
@@ -209,12 +312,38 @@ away, because the reason it was caught is that it was marked unverified.
 
 ## Follow-up
 
-- Whether the same divergence affects the other run-scoped files a worktree
-  copy writes — `state/runs/`, `state/token_stats.jsonl`, `state/autolearn.jsonl`
-  — is not checked here. The ledger was found by looking for one id; nothing
-  says it is the only file taking this path.
-- No gate or check asserts that an improve worktree's `state` is a link.
-  `clanker doctor` is the natural home for it.
+### Checked: the other run-scoped files an improve worktree writes
+
+This was open — "the ledger was found by looking for one id; nothing says it
+is the only file taking this path." It is now answered, and the answer is that
+`state/runs/`, `state/token_stats.jsonl` and `state/autolearn.jsonl` are not
+instances of this defect.
+
+They are not linked in the first place. `linkSharedState` links exactly two
+entries and copies a third set; the rest is deliberately worktree-local, and
+its own comment says why: "Runtime state (runs, sessions, stats, reasoning
+traces, plugin toggles) is deliberately neither linked nor copied: a fresh
+worktree legitimately starts empty." A file that was never a link cannot have
+its link replaced. Whether that isolation is the right policy is a separate
+question from this record; it is at least an intended one, and it is recorded
+in code.
+
+What the defect's scope actually is: **any leaf symlink** whose destination is
+rewritten through `atomic_write.writeFile`. Directory symlinks are not
+affected, which is why `state/history` survived in all ten worktrees and why
+the checkout's own `state -> clanker-state/state` was never at risk — a rename
+resolves the directory components of its target and lands *inside* them,
+touching only the final name. Beside the ledger, the one other leaf link an
+improve worktree gets today is `config.local.toml`, and `src/config.zig`
+rewrites it through this same helper. Both are fixed by the same change.
+
+### Still open: nothing asserts the links survive
+
+No gate or check asserts that an improve worktree's linked entries are still
+links. The unit tests added here pin the *write* helper's behaviour, which is
+where this defect lived, but they would not catch a future caller that
+rewrites a linked path some other way. `clanker doctor` remains the natural
+home for that assertion.
 
 ## References
 
