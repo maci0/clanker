@@ -151,7 +151,7 @@ fn open(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
 // ------------------------------------------------------------------ writing --
 
 fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
-    const kind = opts.arg1 orelse return missingCreateArg("a kind (bug, investigation or runbook)");
+    const kind = opts.arg1 orelse return missingCreateArg("a kind (bug, investigation, missing-tool or runbook)");
     const slug = opts.arg2 orelse return missingCreateArg("a slug");
     const title = opts.arg3 orelse return missingCreateArg("a title");
     const summary = opts.arg4 orelse return missingCreateArg("a TL;DR summary");

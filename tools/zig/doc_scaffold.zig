@@ -1127,3 +1127,28 @@ test "replaceTldrField ignores a matching bullet outside the TL;DR" {
         out.written(),
     );
 }
+
+/// The enforced filename marker for missing-tooling records: a record of a
+/// basic verb clanker lacks must be findable by name alone, so the reports
+/// tool inserts this into the slug itself rather than trusting the caller
+/// to have named it.
+pub const missing_tool_marker = "missing-clanker-tool-";
+
+/// Insert `missing_tool_marker` after a dated slug's `YYYY-MM-DD-` prefix,
+/// unless the caller already wrote it there. The input must have passed the
+/// dated-slug check (11-byte prefix ending in '-').
+pub fn markMissingToolSlug(alloc: std.mem.Allocator, slug: []const u8) ![]const u8 {
+    const rest = slug[11..];
+    if (std.mem.startsWith(u8, rest, missing_tool_marker)) return slug;
+    return std.fmt.allocPrint(alloc, "{s}" ++ missing_tool_marker ++ "{s}", .{ slug[0..11], rest });
+}
+
+test "markMissingToolSlug enforces the marker exactly once, after the date" {
+    const alloc = std.testing.allocator;
+    const marked = try markMissingToolSlug(alloc, "2026-08-17-no-verb-prints-a-runs-final-answer");
+    defer alloc.free(marked);
+    try std.testing.expectEqualStrings("2026-08-17-missing-clanker-tool-no-verb-prints-a-runs-final-answer", marked);
+    // Already marked: returned as-is, never doubled.
+    const kept = try markMissingToolSlug(alloc, "2026-08-17-missing-clanker-tool-no-rename-verb");
+    try std.testing.expectEqualStrings("2026-08-17-missing-clanker-tool-no-rename-verb", kept);
+}

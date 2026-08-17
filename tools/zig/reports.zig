@@ -8,6 +8,9 @@
 //!         {"action":"list"}
 //!         {"action":"open", "path":"docs/reports/investigations/foo.md"}
 //!         {"action":"create", "kind":"investigation", "slug":"2026-08-14-topic",
+//!           kinds: bug, investigation, missing-tool (a basic verb clanker
+//!           lacks; the tool inserts `missing-clanker-tool-` into the slug
+//!           itself so the record is findable by name), runbook
 //!          "title":"...", "summary":"..."}
 //!         {"action":"append", "path":"docs/reports/investigations/foo.md",
 //!          "content":"\n## New evidence\n\n...\n"}
@@ -126,7 +129,7 @@ fn open(obj: std.json.Value, out: *lib.Out) !void {
 
 fn create(obj: std.json.Value, out: *lib.Out) !void {
     const kind = lib.str(obj, "kind") catch
-        return lib.fail(out, "create needs kind: bug, investigation, or runbook");
+        return lib.fail(out, "create needs kind: bug, investigation, missing-tool, or runbook");
     const title = lib.str(obj, "title") catch
         return lib.fail(out, "create needs a non-empty title");
     const summary = lib.str(obj, "summary") catch
@@ -137,7 +140,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     if (summary.len > 500) return lib.fail(out, "summary is too long (maximum 500 bytes)");
 
     const target = targetFor(kind, slug) orelse
-        return lib.fail(out, "kind must be bug, investigation, or runbook; report slugs start YYYY-MM-DD-, runbook slugs use lowercase letters, digits, and hyphens");
+        return lib.fail(out, "kind must be bug, investigation, missing-tool, or runbook; report slugs start YYYY-MM-DD-, runbook slugs use lowercase letters, digits, and hyphens");
     var rendered: std.Io.Writer.Allocating = .init(lib.alloc);
     defer rendered.deinit();
     try renderScaffold(&rendered.writer, kind, title, summary);
@@ -153,7 +156,10 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     // one atomic operation. A CAS miss leaves the new record intact and tells
     // the caller exactly what to reconcile instead of overwriting a concurrent
     // documentation edit.
-    const indexed = addToInventory(kind, target, title) catch false;
+    // A missing-tool record lives in the investigations store and inventory;
+    // its own kind exists to enforce the filename marker and its scaffold.
+    const inventory_kind = if (std.mem.eql(u8, kind, "missing-tool")) "investigation" else kind;
+    const indexed = addToInventory(inventory_kind, target, title) catch false;
     var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();
@@ -400,6 +406,18 @@ fn targetFor(kind: []const u8, slug: []const u8) ?Target {
             .index_link = std.fmt.allocPrint(lib.alloc, "investigations/{s}.md", .{slug}) catch return null,
         };
     }
+    if (std.mem.eql(u8, kind, "missing-tool")) {
+        if (!isDatedSlug(slug)) return null;
+        // The filename carries the `missing-clanker-tool-` marker whether or
+        // not the caller wrote it: a record of absent tooling must be
+        // findable by name, and that is enforced here, not trusted.
+        const marked = doc.markMissingToolSlug(lib.alloc, slug) catch return null;
+        return .{
+            .path = std.fmt.allocPrint(lib.alloc, "{s}/investigations/{s}.md", .{ reports_dir, marked }) catch return null,
+            .index_path = reports_dir ++ "/README.md",
+            .index_link = std.fmt.allocPrint(lib.alloc, "investigations/{s}.md", .{marked}) catch return null,
+        };
+    }
     if (std.mem.eql(u8, kind, "runbook")) {
         if (!isSlug(slug)) return null;
         return .{
@@ -412,9 +430,18 @@ fn targetFor(kind: []const u8, slug: []const u8) ?Target {
 }
 
 fn renderScaffold(w: *std.Io.Writer, kind: []const u8, title: []const u8, summary: []const u8) !void {
-    const label = if (std.mem.eql(u8, kind, "bug")) "Bug" else if (std.mem.eql(u8, kind, "investigation")) "Investigation" else "Runbook";
+    const label = if (std.mem.eql(u8, kind, "bug")) "Bug" else if (std.mem.eql(u8, kind, "investigation")) "Investigation" else if (std.mem.eql(u8, kind, "missing-tool")) "Missing clanker tool" else "Runbook";
     try w.print("# {s} — {s}\n\n", .{ label, title });
     try w.writeAll("## TL;DR\n\n");
+    if (std.mem.eql(u8, kind, "missing-tool")) {
+        // Same `Finding`/`Resolution` bullets and `## Status` line as an
+        // investigation, so the `status` action's lifecycle applies to this
+        // record unchanged; the sections ask for what a missing-verb record
+        // must pin down.
+        try w.print("- **Missing tool:** {s}\n- **Finding:** Investigating.\n- **Resolution:** Pending.\n", .{summary});
+        try w.writeAll("\n## Status\n\nInvestigating.\n\n## What is missing\n\n## Why it is basic\n\n## Ad-hoc fallback used\n\n## Proposed shape\n\n## References\n\n- Related record: none yet\n");
+        return;
+    }
     if (std.mem.eql(u8, kind, "bug")) {
         try w.print("- **What failed:** {s}\n- **Impact:** To be confirmed.\n- **Resolution:** Open.\n", .{summary});
         try w.writeAll("\n## Status\n\nOpen.\n\n## Symptom and impact\n\n## Reproduction\n\n## Root cause\n\n## Resolution\n\n## Verification\n\n## Follow-up\n\n## References\n\n- Investigation: none yet\n");
