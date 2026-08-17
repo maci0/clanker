@@ -83,12 +83,15 @@ const git_value_options = [_][]const u8{
 /// The first argument of the given args, i.e. the git verb. Args that start
 /// with "-" (flags before the subcommand, like `git --version`) are skipped,
 /// and so is the value of a value-taking global option — the worktree path
-/// after `-C` must not be read as the verb.
+/// after `-C` must not be read as the verb. A bare `--` ends git's option
+/// parsing: everything after it is pathspec data, never a verb, so the scan
+/// stops there exactly like git's own parser.
 fn gitVerb(args: []const []const u8) ?[]const u8 {
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const a = args[i];
         if (a.len == 0) continue;
+        if (std.mem.eql(u8, a, "--")) return null;
         if (a[0] == '-') {
             for (git_value_options) |o| {
                 if (std.mem.eql(u8, a, o)) {
@@ -112,12 +115,16 @@ fn deniedVerb(args: []const []const u8, git_remote_ops: bool) ?[]const u8 {
     // Skip the value of a value-taking global option (e.g. the worktree path
     // after -C) so its data is not scanned for deny tokens; only real argv
     // positions are candidates. Mirrors how gitVerb locates the verb.
+    // A bare `--` ends git's option parsing: everything after it names paths,
+    // so a file literally called `checkout` (or any other deny token) must
+    // not be scanned. Mirrors git's own parser, described in gitcli(7).
     var skip_next = false;
     for (args) |a| {
         if (skip_next) {
             skip_next = false;
             continue;
         }
+        if (std.mem.eql(u8, a, "--")) return null;
         for (git_value_options) |o| {
             if (std.mem.eql(u8, o, a)) {
                 skip_next = true;
