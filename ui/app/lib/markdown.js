@@ -378,6 +378,24 @@ export function buildCodeBlock(lang, code) {
   copyBtn.textContent = "Copy";
   copyBtn.addEventListener("click", function () { copyText(shown.text, copyBtn, "Copy", codeEl); });
   head.appendChild(copyBtn);
+  var dlBtn = document.createElement("button");
+  dlBtn.type = "button";
+  dlBtn.className = "copy-code-btn";
+  dlBtn.textContent = "Download";
+  dlBtn.addEventListener("click", function () {
+    var extMap = { js:"js", ts:"ts", py:"py", sh:"sh", zig:"zig", json:"json", toml:"toml", html:"html", css:"css", go:"go", rs:"rs" };
+    var ext = extMap[langNorm] || "txt";
+    var blob = new Blob([shown.text], { type: "text/plain" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "snippet." + ext;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  });
+  head.appendChild(dlBtn);
   wrap.appendChild(head);
   wrap.appendChild(pre);
   if (panel) wrap.appendChild(panel);
