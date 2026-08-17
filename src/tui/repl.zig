@@ -441,6 +441,7 @@ fn tuiConfirm(tool_name: []const u8, args_preview: []const u8) bool {
 const RunThreadArgs = struct {
     model: *Model,
     task: []const u8,
+    pending_images: ?[]types.ImagePart = null,
     goal_condition: ?[]const u8 = null,
 };
 
@@ -522,6 +523,7 @@ fn runThreadMain(args: RunThreadArgs) void {
     if (self.cfg.agent.confirm_writes == .always) a.confirm_fn = &tuiConfirm;
     a.plan_mode = self.plan_mode;
     a.research_mode = self.research_mode;
+    if (args.pending_images) |imgs| a.pending_images = imgs;
 
     if (args.goal_condition) |condition| {
         var goal_ctx = TuiGoalLoopContext{ .model = self, .agent = &a, .condition = condition };
@@ -932,6 +934,8 @@ const CommandAction = union(enum) {
     plan,
     /// Toggle web-research runs for subsequent tasks (`/research [on|off]`).
     research,
+    /// Queue an image path for the next task submit (`/attach <path>`).
+    attach,
     /// Runs the named internal `cmd_*` tool via `runInternalTool`.
     tool: struct {
         name: []const u8,
@@ -979,6 +983,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/theme", .takes_args = true, .arg_hint = "[name]", .help = "list or switch color theme (mocha, latte, tokyonight, ...)", .action = .theme },
     .{ .name = "/plan", .takes_args = true, .arg_hint = "[on|off]", .help = "toggle plan mode (proposal only; write tools refused)", .action = .plan },
     .{ .name = "/research", .takes_args = true, .arg_hint = "[on|off]", .help = "toggle research mode (prefer web_search/web_fetch for current facts)", .action = .research },
+    .{ .name = "/attach", .takes_args = true, .arg_hint = "<path>", .help = "queue an image for the next task submit", .action = .attach },
     .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
 };
 
@@ -2039,6 +2044,10 @@ const Model = struct {
     plan_mode: bool = false,
     /// `/research` toggles web-research runs, matching the web UI's Research checkbox.
     research_mode: bool = false,
+    /// Pending images for the next submit, shown in the status bar and
+    /// sliced into `Agent.pending_images` by `submitTask`. Mirrors the web
+    /// composer's `attachments` (PRD 0041).
+    pending_attach_paths: std.ArrayList([]const u8) = .empty,
     /// Between a bracketed-paste start/end pair. `vxfw.TextField` is a
     /// single-line widget (Enter either submits or is a no-op, there is no
     /// way to insert a literal newline into one), so a multi-line paste's
@@ -2629,6 +2638,40 @@ const Model = struct {
                     "notice: research mode {s} (web_search/web_fetch preferred for current facts)",
                 ) == .bad_usage) return;
             },
+            .attach => {
+                const path = std.mem.trim(u8, pc.args, " \t");
+                if (path.len == 0) {
+                    self.lines.append(self.arena, .{ .text = "usage: /attach <path>  (image queued for next submit)", .dim = true }) catch {};
+                    return;
+                }
+                const max_images: usize = 4;
+                const max_bytes: usize = 4 * 1024 * 1024;
+                if (self.pending_attach_paths.items.len >= max_images) {
+                    self.lines.append(self.arena, .{ .text = "attach: at most 4 images per message", .dim = true }) catch {};
+                    return;
+                }
+                // Validate by opening and sizing — mirrors web limits.
+                var file = std.Io.Dir.cwd().openFile(self.io, path, .{ .mode = .read_only }) catch {
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "attach: cannot open '{s}'", .{path}) catch "attach: cannot open file", .dim = true }) catch {};
+                    return;
+                };
+                defer file.close(self.io);
+                const stat = file.stat(self.io) catch {
+                    self.lines.append(self.arena, .{ .text = "attach: cannot stat file", .dim = true }) catch {};
+                    return;
+                };
+                if (stat.size > max_bytes) {
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "attach: file too large ({d} bytes, limit {d})", .{ stat.size, max_bytes }) catch "attach: file too large", .dim = true }) catch {};
+                    return;
+                }
+                if (stat.kind == .directory) {
+                    self.lines.append(self.arena, .{ .text = "attach: path is a directory", .dim = true }) catch {};
+                    return;
+                }
+                const owned = self.arena.dupe(u8, path) catch return;
+                self.pending_attach_paths.append(self.arena, owned) catch return;
+                self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "attached: {s} ({d} queued)", .{ path, self.pending_attach_paths.items.len }) catch "attached", .dim = true }) catch {};
+            },
             .workflows => {
                 _ = self.runWorkflowsTool("");
             },
@@ -3126,6 +3169,25 @@ const Model = struct {
         self.summary_before = stats_mod.summaryState(self.messages.items);
 
         const owned_task = try self.arena.dupe(u8, task);
+        // Drain pending image attachments for this run; submit clears them so
+        // a later turn never re-sends an old attachment. Mirrors the web path
+        // where the composer clears after submit.
+        const attach_len = self.pending_attach_paths.items.len;
+        var pending_images: ?[]types.ImagePart = null;
+        if (attach_len > 0) {
+            var parts: std.ArrayList(types.ImagePart) = .empty;
+            for (self.pending_attach_paths.items) |apath| {
+                const buf = std.Io.Dir.cwd().readFileAlloc(self.io, apath, self.arena, .limited(4 * 1024 * 1024 + 1)) catch continue;
+                if (buf.len == 0 or buf.len > 4 * 1024 * 1024) continue;
+                const mime = if (std.mem.endsWith(u8, apath, ".png")) "image/png" else if (std.mem.endsWith(u8, apath, ".jpg") or std.mem.endsWith(u8, apath, ".jpeg")) "image/jpeg" else if (std.mem.endsWith(u8, apath, ".webp")) "image/webp" else "image/png";
+                const b64_len = (buf.len + 2) / 3 * 4;
+                const b64 = self.arena.alloc(u8, b64_len) catch continue;
+                const out_len = std.base64.standard.Encoder.encode(b64, buf);
+                parts.append(self.arena, .{ .mime = mime, .b64 = b64[0..out_len] }) catch continue;
+            }
+            if (parts.items.len > 0) pending_images = parts.items;
+            self.pending_attach_paths.clearRetainingCapacity();
+        }
         if (self.session_title.len == 0) {
             var title_buf: [session_mod.title_max]u8 = undefined;
             const t = session_mod.titleFromTask(&title_buf, owned_task);
@@ -3134,6 +3196,7 @@ const Model = struct {
         self.thread = try std.Thread.spawn(.{}, runThreadMain, .{RunThreadArgs{
             .model = self,
             .task = owned_task,
+            .pending_images = pending_images,
             .goal_condition = if (goal_condition) |condition| try self.arena.dupe(u8, condition) else null,
         }});
 

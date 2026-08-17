@@ -2,9 +2,9 @@
 
 ## Status
 
-Draft — opened 2026-08-17.
+In progress — thin slice shipped (see below).
 
-Single source `src/tui/repl.zig` (plus agent image_in path). Checklist pending.
+Single source `src/tui/repl.zig` (plus agent image_in path). `/attach` + image_in plumbing shipped; drag-drop/image paste deferred per thin-slice plan.
 
 ## Problem
 
@@ -46,10 +46,10 @@ Constraints: vaxis-native, image_in parity with web UI, size/type gating mirrore
 
 ## Acceptance criteria
 
-- [ ] `/attach <path>` enqueues and survives to submit
-- [ ] Drag-drop/image paste populates same queue
-- [ ] Queued images sent via `image_in` with task
-- [ ] `zig build test` + `zig build tools` green
+- [x] `/attach <path>` enqueues and survives to submit (pending_attach_paths + submitTask image_in)
+- [ ] Drag-drop/image paste populates same queue (follow-up)
+- [x] Queued images sent via `image_in` with task (RunThreadArgs pending_images → Agent.pending_images)
+- [x] `zig build test` + `zig build tools` green
 
 ## Open questions / future work
 
