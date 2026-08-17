@@ -696,6 +696,10 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
         };
         idx += 1;
     }
+    // Postcondition of the projection: `out` was sized by the same `removed`
+    // predicate that the loop skips with, so every slot is written exactly once.
+    // A drift between the two passes would silently emit zeroed or dropped cards.
+    std.debug.assert(idx == live);
     std.mem.sort(Card, out, {}, struct {
         fn lt(_: void, a: Card, b: Card) bool {
             return wins(a.ts, a.id, b.ts, b.id);
@@ -770,6 +774,14 @@ pub fn checklistReaches(card: *const Card, from: []const u8, sought: []const u8,
         for (sub.depends_on) |next| {
             if (checklistReaches(card, next, sought, depth + 1)) return true;
         }
+    }
+    return false;
+}
+
+/// Whether `id` names a checklist item on this card.
+pub fn hasSubtask(card: *const Card, id: []const u8) bool {
+    for (card.subtasks) |sub| {
+        if (std.mem.eql(u8, sub.id, id)) return true;
     }
     return false;
 }
@@ -1160,6 +1172,19 @@ test "done requires every checklist node and dependency cycles are detectable" {
     try std.testing.expect(!checklistReaches(&card, "b", "a", 0));
     try std.testing.expect(!checklistItemReady(&card, "a"));
     try std.testing.expect(checklistItemReady(&card, "b"));
+}
+
+test "hasSubtask names only items actually on the card" {
+    const subs = [_]Subtask{
+        .{ .id = "a", .text = "root" },
+        .{ .id = "b", .text = "child", .parent = "a" },
+    };
+    const card: Card = .{ .id = "c", .title = "goal", .created_by = "x", .ts = 1, .subtasks = &subs };
+    try std.testing.expect(hasSubtask(&card, "a"));
+    try std.testing.expect(hasSubtask(&card, "b"));
+    try std.testing.expect(!hasSubtask(&card, "missing"));
+    const empty: Card = .{ .id = "e", .title = "empty", .created_by = "x", .ts = 1 };
+    try std.testing.expect(!hasSubtask(&empty, "a"));
 }
 
 test "usage cannot be made to wrap or go negative" {

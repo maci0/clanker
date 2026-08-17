@@ -424,33 +424,28 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             return lib.fail(out, "subtask text must be 1-512 characters");
         if (req.parent_subtask_id) |parent| {
             const card = cards.get(list, req.id).?;
-            var found = false;
-            for (card.subtasks) |sub| {
-                if (std.mem.eql(u8, sub.id, parent)) found = true;
-            }
-            if (!found) return lib.fail(out, "no such parent checklist item on this card");
+            if (!cards.hasSubtask(card, parent)) return lib.fail(out, "no such parent checklist item on this card");
         }
         break :blk .{ .action = "subtask_add", .todo = req.id, .text = text, .subtask = subtask_id, .parent = req.parent_subtask_id };
     } else if (std.mem.eql(u8, op, "subtask_toggle")) blk: {
         const sid = subtask_id orelse return lib.fail(out, "which subtask?");
-        if ((req.done orelse true) and !cards.checklistItemReady(cards.get(list, req.id).?, sid))
+        const card = cards.get(list, req.id).?;
+        if (!cards.hasSubtask(card, sid)) return lib.fail(out, "no such checklist item on this card");
+        if ((req.done orelse true) and !cards.checklistItemReady(card, sid))
             return lib.fail(out, "finish this checklist item's dependencies first");
         break :blk .{ .action = "subtask_toggle", .todo = req.id, .subtask = sid, .done = req.done orelse true };
     } else if (std.mem.eql(u8, op, "subtask_remove")) blk: {
         const sid = subtask_id orelse return lib.fail(out, "which subtask?");
+        const card = cards.get(list, req.id).?;
+        if (!cards.hasSubtask(card, sid)) return lib.fail(out, "no such checklist item on this card");
         break :blk .{ .action = "subtask_remove", .todo = req.id, .subtask = sid };
     } else if (std.mem.eql(u8, op, "subtask_depend")) blk: {
         const sid = subtask_id orelse return lib.fail(out, "which checklist item?");
         const on = dep_id orelse return lib.fail(out, "which checklist item should it wait on?");
         if (std.mem.eql(u8, sid, on)) return lib.fail(out, "a checklist item cannot wait on itself");
         const card = cards.get(list, req.id).?;
-        var has_sid = false;
-        var has_on = false;
-        for (card.subtasks) |sub| {
-            if (std.mem.eql(u8, sub.id, sid)) has_sid = true;
-            if (std.mem.eql(u8, sub.id, on)) has_on = true;
-        }
-        if (!has_sid or !has_on) return lib.fail(out, "checklist dependency must name two items on this card");
+        if (!cards.hasSubtask(card, sid) or !cards.hasSubtask(card, on))
+            return lib.fail(out, "checklist dependency must name two items on this card");
         if (!(req.off orelse false) and cards.checklistReaches(card, on, sid, 0))
             return lib.fail(out, "checklist dependency would create a cycle");
         break :blk .{ .action = "subtask_depend", .todo = req.id, .subtask = sid, .on = on, .off = req.off orelse false };
