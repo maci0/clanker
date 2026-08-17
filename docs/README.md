@@ -803,7 +803,7 @@ iter 2
 | `serve [--host A] [--serve-as N]... [--webui-port N]` | HTTP server + web UI (loopback, port 17921 by default) |
 | `setup` | Guided first run: check config, keys and tools |
 | `doctor` | Diagnose config, credentials and build outputs (read-only, offline) |
-| `janitor [--yes]` | Sweep up staging copies, old run graphs and improve logs left behind by killed runs (also `clanker prune`) |
+| `janitor [--yes]` | Sweep up staging copies, old run graphs and improve logs left behind by killed runs, plus `state/locks/` entries unused for 12h (also `clanker prune`) |
 
 ### `providers check`
 
@@ -1320,7 +1320,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/sessions/search?q=` | GET | Every saved conversation with a message containing `q`, newest first, one row each: the first match in context plus a count of the others in that conversation. Case-insensitive substring, not the fuzzy match the sidebar filter uses on titles, because fuzzy over whole transcripts matches nearly everything. Queries under 3 characters return an empty result rather than an error, and the list is capped at 50 with `truncated` set |
 | `/api/schedule` | GET | Every scheduled entry with its next fire time, plus the last 20 ledger records. Relays the `schedule` guest. The next-fire reading is the one `clanker schedule list` prints, and it is omitted rather than zeroed when an entry can never fire (disabled, or a spec that parses to nothing) |
 | `/api/schedule/<id>` | POST | `{"enabled":true\|false}` pauses or resumes one entry via the `schedule` guest (same `state/schedule.json` `clanker schedule enable\|disable` writes). Resuming re-dates the window from now, so an entry parked for a month does not come back owing a run. Firing is deliberately not here: that is `run`/`run-due`, from cron or a terminal |
-| `/api/janitor` | GET | How much litter (staging copies, run graphs, improve logs) is reclaimable; read-only, never deletes |
+| `/api/janitor` | GET | How much litter (staging copies, run graphs, improve logs, aged compare-and-swap locks) is reclaimable; read-only, never deletes |
 | `/api/logs` | GET | Tail the instance's log output |
 | `/api/webui/plugins` | GET, POST | List web UI plugin assets, or toggle one |
 | `/webui/plugins/<name>` | GET | Serve a web UI plugin's static asset |

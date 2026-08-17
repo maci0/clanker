@@ -81,6 +81,7 @@ its current text.
 ## Inventory
 
 <!-- inventory:adr:start -->
+- [ADR 0031 — Compare-and-swap locks live in state/locks, keyed by a hash of the target path](0031-compare-and-swap-locks-live-in-state-locks-keyed-by-a-hash.md) — Accepted
 - [ADR 0030 — Agent presets are preset.toml multi-root with registry filter](0030-agent-presets-are-preset-toml-multi-root-with-registry.md) — Accepted
 - [ADR 0029 — Tool-result pruning is deterministic head/marker/tail on the request copy](0029-tool-result-pruning-is-deterministic-head-marker-tail-on.md) — Accepted
 - [ADR 0028 — Loop-hygiene guard is deterministic canonical chain with advisory reminders](0028-loop-hygiene-guard-is-deterministic-canonical-chain-with.md) — Accepted

@@ -106,7 +106,7 @@ projects, and the strongest case against the recommendation.
 - [RFC 0009 — REPL block-level markdown rendering](0009-repl-block-level-markdown-rendering.md) — Draft
 - [RFC 0008 — How an agent claims a shared resource before writing it](0008-claims-on-shared-resources.md) — Discussion
 - [RFC 0007 — HTTP surface for the five record-store tools](0007-records-http-surface.md) — Decided
-- [RFC 0006 — Where ck_cas lock sidecars live](0006-where-ck-cas-lock-sidecars-live.md) — Discussion
+- [RFC 0006 — Where ck_cas lock sidecars live](0006-where-ck-cas-lock-sidecars-live.md) — Decided
 - [RFC 0001 — Workspace, room, board, and folder hierarchy](0001-workspace-room-board-hierarchy.md) — Decided
 - [RFC 0002: Chat file upload into Knowledge / memory](0002-chat-upload-into-knowledge.md) — Decided (ADR 0014)
 - [RFC 0003: Attachments on a goal card (files and links)](0003-goal-card-file-attachments.md) — Discussion

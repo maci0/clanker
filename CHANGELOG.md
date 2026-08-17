@@ -193,6 +193,26 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- Compare-and-swap locks moved out of the source tree. `ck_fs_write_if`
+  now locks on `state/locks/<sha256-of-target-path>.lock` instead of a
+  `<target>.ck_cas.lock` sidecar beside the file it guards (ADR 0031,
+  from RFC 0006). A lock file is permanent by design — unlinking one
+  that is held breaks mutual exclusion — so every record ever written
+  through a record store left a zero-byte file next to it, and every
+  improve worktree inherited a copy. Existing sidecars are inert and can
+  be deleted; nothing creates them now.
+- A compare-and-swap lock file carries a fixed-width holder record
+  (`pid`, `acquired_ms`, `tool`, `target`), so a write that hangs names
+  the run and the moment instead of being a zero-byte name. It records
+  the last acquisition, not a live hold: whether a lock is held right
+  now is answered by `flock -n state/locks/<name>.lock true`.
+- `clanker janitor` sweeps compare-and-swap lock files whose recorded
+  acquisition is more than 12 hours old. This is a retention window for
+  the lock *file*, not a liveness timeout — an `flock` is released by
+  the kernel when the holding descriptor closes, crash included, so a
+  lock is never stale. A lock whose target recurs keeps re-acquiring and
+  never ages out; only one for a target that will not be written again
+  (a test tmp tree, an improve staging copy) does.
 - `GET /api/stats` relays the `model_stats` guest. The CLI table stays
   native (`src/stats` cannot be imported from WASM).
 - `GET /api/catalog` and `clanker providers catalog` share one search
@@ -485,6 +505,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `ck_fs_write_if` no longer creates the target's parent directories on a
+  hash mismatch. The lock used to live inside that directory, so the
+  directories had to exist before the compare; an ordinary contention
+  refusal therefore left a directory tree behind for a file it never
+  wrote. Parents are now created after the compare.
 - A long reply in `clanker repl` can be folded back in after being expanded.
   The `▸ reply, N more lines` header is the fold's only toggle, and the draw
   loop stopped drawing it (and registering its click target) once the reply
