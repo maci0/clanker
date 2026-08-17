@@ -309,6 +309,19 @@ pub fn main(init: std.process.Init) !void {
         else
             log.log(.warn, "CLANKER_LOG_LEVEL '{s}' is not one of debug|info|warn|error; ignoring", .{lvl});
     }
+    if (opts.profile) |p| log.log(.info, "profile '{s}' requested via --profile (overlay between local and env)", .{p});
+    if (opts.dump_config) {
+        const merged: ?config.Config = if (opts.profile) |p| blk: {
+            break :blk config.Config.loadWithProfile(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml", p) catch null;
+        } else config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch null;
+        if (merged) |c| {
+            var buf: [8192]u8 = undefined;
+            var w: std.Io.Writer = .fixed(&buf);
+            w.print("{any}\n", .{c}) catch {};
+            cli.writeStdOut(init.io, w.buffered()) catch {};
+        }
+        std.process.exit(0);
+    }
     if (opts.verbose) log.setLevel(.debug);
 
     // Load API keys and other secrets from $CLANKER_ENV_FILE or ./.env

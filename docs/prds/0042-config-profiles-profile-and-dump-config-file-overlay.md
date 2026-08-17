@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft — opened 2026-08-17.
+Shipped — 2026-08-17.
 
 Single source `src/config.zig` + `src/cli.zig` (+ `profiles/*.toml`).
 
@@ -47,9 +47,9 @@ Constraints: keep `config.toml < config.local.toml < profiles/<name>.toml < env 
 
 ## Acceptance criteria
 
-- [ ] `--profile <name>` merges overlay
-- [ ] `--dump-config` prints merged result
-- [ ] `zig build test` + `zig build tools` green
+- [x] `--profile <name>` merges overlay
+- [x] `--dump-config` prints merged result
+- [x] `zig build test` + `zig build tools` green
 
 ## Open questions / future work
 

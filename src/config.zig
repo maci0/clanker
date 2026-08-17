@@ -1053,6 +1053,10 @@ pub const Config = struct {
     /// Loads `file_name` (TOML) plus `local_file_name` (if present) from
     /// `dir`. All returned strings are allocated in `arena`.
     pub fn load(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8) !Config {
+        return loadWithProfile(io, arena, dir, file_name, local_file_name, null);
+    }
+
+    pub fn loadWithProfile(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8, profile: ?[]const u8) !Config {
         if (!diagnostics_suppressed) last_load_diagnostic = false;
         const base = (try loadFile(io, arena, dir, file_name, .required)).?;
         var cfg = base.cfg;
@@ -1066,6 +1070,14 @@ pub const Config = struct {
             // one, so the provenance has to move on exactly the same condition.
             if (local.cfg.default_provider_present) cfg.default_provider_from = local.path;
         }
+        // Named profile overlay: `profiles/<name>.toml` between local and env/flags.
+        if (profile) |prof| if (prof.len > 0) {
+            const prof_path = try std.fmt.allocPrint(arena, "profiles/{s}.toml", .{prof});
+            if (try loadFile(io, arena, dir, prof_path, .required)) |loaded| {
+                try merge(&cfg, loaded.cfg, arena);
+                if (loaded.models_table) |models| try distributeModels(arena, &cfg, models);
+            }
+        };
         // Checked on the merged result rather than per file. A local override
         // that only sets, say, `default_provider` has no "providers" section by
         // design, and warning about it points at a config that is in fact fine.

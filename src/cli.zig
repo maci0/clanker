@@ -398,6 +398,11 @@ pub const Options = struct {
     prd_arg2: ?[]const u8 = null,
     prd_arg3: ?[]const u8 = null,
     prd_arg4: ?[]const u8 = null,
+    /// Global `--profile <name>`: load `profiles/<name>.toml` as an overlay
+    /// between `config.local.toml` and env/flags (ADR 0024).
+    profile: ?[]const u8 = null,
+    /// Global `--dump-config`: print the merged config and exit.
+    dump_config: bool = false,
     /// `mesh <sub> [arg]`: "status" (default), "join" takes host:port,
     /// "leave"/"admit"/"deny" take a peer id. Absent leave is self-leave.
     mesh_sub: []const u8 = "status",
@@ -792,6 +797,12 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 const trimmed = std.mem.trim(u8, v, " \t");
                 if (trimmed.len > 0) try appendRepeatable(&opts.arena_positions, trimmed);
                 used = .arena_position;
+            } else if (std.mem.eql(u8, a, "--profile")) {
+                opts.profile = try takeValue(args, &idx, inline_value, a, diag);
+                used = .profile;
+            } else if (std.mem.eql(u8, a, "--dump-config")) {
+                opts.dump_config = true;
+                used = .dump_config;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
@@ -1781,6 +1792,8 @@ const Flag = enum {
     compare_reveal,
     schedule_tz,
     reports_kind,
+    profile,
+    dump_config,
 
     fn name(self: Flag) []const u8 {
         return switch (self) {
@@ -1830,6 +1843,8 @@ const Flag = enum {
             .compare_reveal => "--reveal",
             .schedule_tz => "--tz-offset",
             .reports_kind => "--kind",
+            .profile => "--profile",
+            .dump_config => "--dump-config",
         };
     }
 
@@ -1885,11 +1900,13 @@ const Flag = enum {
             .compare_reveal => "print the label-to-model key even with no verdict",
             .schedule_tz => "read cron fields at a fixed offset from UTC (±HH:MM)",
             .reports_kind => "narrow a reports search: all, report, or runbook",
+            .profile => "use a named config profile from profiles/<name>.toml",
+            .dump_config => "print the merged config and exit",
         };
     }
 
     fn global(self: Flag) bool {
-        return self == .verbose;
+        return self == .verbose or self == .profile or self == .dump_config;
     }
 };
 
@@ -2180,7 +2197,7 @@ fn writeStdErr(io: std.Io, bytes: []const u8) !void {
     try std.Io.File.stderr().writeStreamingAll(io, bytes);
 }
 
-fn writeStdOut(io: std.Io, bytes: []const u8) !void {
+pub fn writeStdOut(io: std.Io, bytes: []const u8) !void {
     try std.Io.File.stdout().writeStreamingAll(io, bytes);
 }
 

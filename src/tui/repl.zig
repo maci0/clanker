@@ -3180,10 +3180,10 @@ const Model = struct {
                 const buf = std.Io.Dir.cwd().readFileAlloc(self.io, apath, self.arena, .limited(4 * 1024 * 1024 + 1)) catch continue;
                 if (buf.len == 0 or buf.len > 4 * 1024 * 1024) continue;
                 const mime = if (std.mem.endsWith(u8, apath, ".png")) "image/png" else if (std.mem.endsWith(u8, apath, ".jpg") or std.mem.endsWith(u8, apath, ".jpeg")) "image/jpeg" else if (std.mem.endsWith(u8, apath, ".webp")) "image/webp" else "image/png";
-                const b64_len = (buf.len + 2) / 3 * 4;
-                const b64 = self.arena.alloc(u8, b64_len) catch continue;
-                const out_len = std.base64.standard.Encoder.encode(b64, buf);
-                parts.append(self.arena, .{ .mime = mime, .b64 = b64[0..out_len] }) catch continue;
+                const enc = std.base64.standard.Encoder;
+                const b64_buf = self.arena.alloc(u8, enc.calcSize(buf.len)) catch continue;
+                const b64 = enc.encode(b64_buf, buf);
+                parts.append(self.arena, .{ .mime = mime, .b64 = b64 }) catch continue;
             }
             if (parts.items.len > 0) pending_images = parts.items;
             self.pending_attach_paths.clearRetainingCapacity();
