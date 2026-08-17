@@ -117,11 +117,9 @@ fn trimLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.
     // it never exceeds the cap by more than a single line. Reading with the
     // same limit as the cap would fail with StreamTooLong on exactly the file
     // that needs trimming, the trim would silently never run once the log
-    // crossed the cap, and it would keep growing forever. A fixed slack does
-    // not help either: a single oversized detail/tool label can exceed any
-    // budget, so the read is uncapped and the rewrite below brings the file
-    // back under max_log_bytes.
-    const raw = try base.readFileAlloc(io, event_path, gpa, .unlimited);
+    // crossed the cap, and it would keep growing forever. Cover the one-line
+    // overshoot with a generous slack instead.
+    const raw = try base.readFileAlloc(io, event_path, gpa, .limited(max_log_bytes + (1 << 16)));
     defer gpa.free(raw);
     var lines: std.ArrayList([]const u8) = .empty;
     defer lines.deinit(gpa);

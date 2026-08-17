@@ -62,7 +62,6 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
                 else => return lib.fail(out, "in_minutes must be a number"),
             };
             if (mins < 0) return lib.fail(out, "in_minutes must not be negative");
-            if (mins > std.math.maxInt(i64) / 60) return lib.fail(out, "in_minutes is too large");
             break :blk now + mins * 60;
         }
         if (obj.get("at")) |v| {
@@ -82,7 +81,6 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
             else => return lib.fail(out, "every_minutes must be a number"),
         };
         if (mins < 1) return lib.fail(out, "every_minutes must be at least 1");
-        if (mins > std.math.maxInt(i64) / 60) return lib.fail(out, "every_minutes is too large");
         break :blk mins;
     };
 
@@ -90,18 +88,7 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
     while (attempt < 3) : (attempt += 1) {
         var loaded = try load();
         if (loaded.alarms.items.len >= max_alarms) return lib.fail(out, "alarm list is full (50); cancel some first");
-        // An id must be unique across the whole store, not just this
-        // creation's list length: cancels recycle lengths, so two alarms
-        // at the same fire time could otherwise share an id and a later
-        // done/cancel would hit both. Scan the store for the highest
-        // numeric suffix and take the next one.
-        var next: u64 = 0;
-        for (loaded.alarms.items) |a| {
-            const field = std.mem.lastIndexOfScalar(u8, a.id, '-') orelse continue;
-            const num = std.fmt.parseInt(u64, a.id[field + 1 ..], 10) catch continue;
-            if (num >= next) next = num + 1;
-        }
-        const id = try std.fmt.allocPrint(lib.alloc, "a-{d}-{d}", .{ fire, next });
+        const id = try std.fmt.allocPrint(lib.alloc, "a-{d}-{d}", .{ fire, loaded.alarms.items.len });
         try loaded.alarms.append(lib.alloc, .{ .id = id, .ts = fire, .message = message, .set_ts = now, .every = every });
         if (try store(loaded)) {
             const reply = try std.fmt.allocPrint(lib.alloc, "{{\"ok\":true,\"id\":\"{s}\",\"fires_in_seconds\":{d}}}", .{ id, fire - now });
@@ -114,12 +101,9 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
 fn doList(out: *lib.Out) !void {
     const loaded = try load();
     const now: i64 = @trunc(lib.nowSeconds());
-    // The fixed 64 KiB buffer could not hold the legal worst case: 50 alarms
-    // at 500 bytes each, with JSON escaping potentially tripling the message
-    // bytes, and a fixed writer panics on overflow. An arena-backed writer
-    // grows instead of crashing the guest on a full list.
-    var aw: std.Io.Writer.Allocating = .init(lib.alloc);
-    var s: std.json.Stringify = .{ .writer = &aw.writer, .options = .{} };
+    var jbuf: [65536]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&jbuf);
+    var s: std.json.Stringify = .{ .writer = &w, .options = .{} };
     try s.beginObject();
     try s.objectField("ok");
     try s.write(true);
@@ -143,7 +127,7 @@ fn doList(out: *lib.Out) !void {
     }
     try s.endArray();
     try s.endObject();
-    return out.writeAll(aw.written());
+    return out.writeAll(jbuf[0..w.end]);
 }
 
 /// Mark an alarm handled. A one-shot is removed (same as cancel); a
@@ -167,7 +151,7 @@ fn doDone(obj: std.json.ObjectMap, out: *lib.Out) !void {
             if (std.mem.eql(u8, a.id, id)) {
                 found = true;
                 if (a.every > 0) {
-                    const step: i64 = if (a.every > std.math.maxInt(i64) / 60) 60 else a.every * 60;
+                    const step = a.every * 60;
                     const behind = @max(now - a.ts, 0);
                     a.ts += (@divTrunc(behind, step) + 1) * step;
                     next_ts = a.ts;
@@ -233,13 +217,11 @@ fn load() !Loaded {
 /// True when the write landed; false on a CAS mismatch (caller re-reads and
 /// retries). Any other failure is a real error.
 fn store(loaded: Loaded) !bool {
-    // Same growth reason as doList: the worst-case alarm list (50 x 500-byte
-    // messages with JSON escaping) exceeds any fixed stack buffer worth
-    // having, and an overflow would abort the write with no retry.
-    var aw: std.Io.Writer.Allocating = .init(lib.alloc);
-    var s: std.json.Stringify = .{ .writer = &aw.writer, .options = .{ .whitespace = .indent_2 } };
+    var jbuf: [65536]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&jbuf);
+    var s: std.json.Stringify = .{ .writer = &w, .options = .{ .whitespace = .indent_2 } };
     try s.write(loaded.alarms.items);
-    lib.fsWriteIf(path, loaded.seen_hash, aw.written()) catch |err| switch (err) {
+    lib.fsWriteIf(path, loaded.seen_hash, jbuf[0..w.end]) catch |err| switch (err) {
         error.Mismatch => return false,
         else => return err,
     };

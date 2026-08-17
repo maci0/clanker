@@ -1,7 +1,7 @@
 {
   "name": "bugreport",
   "description": "File a structured bug report that lands on the Kanban board as a prioritised backlog card. Collects title, description, steps to reproduce, expected/actual behaviour, severity and environment into a formatted body, prefixes the title with [BUG], maps severity to board priority, and calls kanban_add. Use this instead of kanban_add when the work item is a bug: the template keeps reports consistent and searchable.",
-  "llm_description": "File a bug as a prioritized Kanban card (prefixes title with [BUG], maps severity to priority, calls kanban_add). Use instead of kanban_add for bugs. Input: {title (required, max 500 chars), description?, steps_to_reproduce?, expected?, actual?, severity?:'critical'|'high'|'normal'(default)|'medium'|'low'|'minor', component?, environment?, reproduc?, fix_hint?, room?(default 'board')}.",
+  "llm_description": "File a bug as a prioritized Kanban card (prefixes title with [BUG], maps severity to priority, calls kanban_add). Use instead of kanban_add for bugs. Input: {title (required, max 500 chars), description?, steps_to_reproduce?, expected?, actual?, severity?:'critical'|'high'|'normal'(default)|'medium'|'low'|'minor', component?, environment?, room?(default 'board')}.",
   "wasm": "zig-out/tools/bugreport.wasm",
   "input_schema": {
     "type": "object",
@@ -45,14 +45,6 @@
       "environment": {
         "type": "string",
         "description": "OS, Zig version, config, or anything else that matters for reproducing"
-      },
-      "repro": {
-        "type": "string",
-        "description": "A runnable shell command that reproduces the bug; the verifier runs it to confirm the bug and later to confirm a fix"
-      },
-      "fix_hint": {
-        "type": "string",
-        "description": "A hint about what is likely wrong and how to fix it"
       },
       "room": {
         "type": "string",
