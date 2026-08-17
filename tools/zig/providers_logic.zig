@@ -96,6 +96,35 @@ pub fn writeModel(s: *std.json.Stringify, name: []const u8, m: Model) !void {
 /// kind, base_url, rpm?, models:[...]}]}`. `default` is the picker field;
 /// `default_provider` / `model` stay so `action:check` consumers still parse.
 pub fn writeList(s: *std.json.Stringify, cfg: ConfigFile, filter: []const u8) !bool {
+    if (filter.len > 0) {
+        var found = false;
+        var it0 = cfg.providers.map.iterator();
+        while (it0.next()) |kv| {
+            if (std.mem.eql(u8, kv.key_ptr.*, filter)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            try s.beginObject();
+            try s.objectField("ok");
+            try s.write(false);
+            try s.objectField("error");
+            try s.write("not_configured");
+            try s.objectField("provider");
+            try s.write(filter);
+            try s.objectField("available");
+            try s.beginArray();
+            var ait = cfg.providers.map.iterator();
+            while (ait.next()) |akv| {
+                try s.write(akv.key_ptr.*);
+            }
+            try s.endArray();
+            try s.endObject();
+            return false;
+        }
+    }
+
     try s.beginObject();
     try s.objectField("ok");
     try s.write(true);
@@ -216,6 +245,11 @@ test "writeList filter misses and empty models flag a live fill" {
     var miss: std.Io.Writer.Allocating = .init(arena);
     var s2 = std.json.Stringify{ .writer = &miss.writer, .options = .{ .emit_null_optional_fields = false } };
     try std.testing.expect(!try writeList(&s2, cfg, "nope"));
+    const miss_raw = miss.written();
+    try std.testing.expect(std.mem.find(u8, miss_raw, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, miss_raw, "\"error\":\"not_configured\"") != null);
+    try std.testing.expect(std.mem.find(u8, miss_raw, "\"provider\":\"nope\"") != null);
+    try std.testing.expect(std.mem.find(u8, miss_raw, "\"available\":[\"ollama\"]") != null);
 }
 
 test "activeModelName falls back to the only declared model" {
