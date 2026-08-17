@@ -216,6 +216,25 @@ tool_result_prune_tail_bytes = 1024
 # these counts. Excluded patterns are transparent: they do not reset a chain.
 repeat_tool_thresholds = [3, 5, 8]
 repeat_tool_exclude = ["todo_add", "todo_close", "todo_list"]
+# Consecutive identical calls after which the turn fails instead of being
+# reminded again. The reminders above are advice; this is the terminal
+# counterpart. 0 disables it.
+repeat_tool_abort_threshold = 0
+# Deadlines on the model call itself. Without them a provider that accepts the
+# connection and then says nothing hangs the run forever: std.http.Client has
+# no read timeout, and no retry fires because a call that never returns never
+# produces an error. 0 on either leaves that clock unbounded.
+#
+# request_timeout_ms bounds one non-streaming completion end to end, and the
+# wait for the first bytes of a streaming one. Keep it well above the slowest
+# legitimate answer -- on a reasoning model the whole trace is generated before
+# the response arrives -- because on the non-streaming path it does cap total
+# generation time.
+request_timeout_ms = 900000
+# stream_idle_timeout_ms bounds the gap between reads once a stream is
+# flowing. It is separate because a healthy stream may run far past any
+# whole-call ceiling; what it does not do is fall silent mid-answer.
+stream_idle_timeout_ms = 120000
 git_remote_ops = false
 # Session kinds that isolate in a git worktree by default, as if that mode's
 # worktree/goal_worktree were "yes": any of "run", "goal", "tui", "schedule".

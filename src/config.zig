@@ -354,6 +354,30 @@ pub const Agent = struct {
     tool_result_prune_tail_bytes: usize = 1024,
     repeat_tool_thresholds: []const u32 = &.{ 3, 5, 8 },
     repeat_tool_exclude: []const []const u8 = &.{ "todo_add", "todo_close", "todo_list" },
+    /// Consecutive canonical-equivalent tool calls after which the turn fails
+    /// with `error.RepeatedToolCalls` instead of being reminded again.
+    ///
+    /// `repeat_tool_thresholds` only injects advice, so a model that ignores
+    /// it repeats until `max_iterations`, spending a completion per round. This
+    /// is the terminal counterpart, matching what `max_consecutive_compactions`
+    /// does for compaction. 0 disables it and leaves the reminders alone.
+    repeat_tool_abort_threshold: u32 = 0,
+    /// Wall-clock ceiling on one non-streaming completion, and on the wait for
+    /// the *first* bytes of a streaming one. 0 leaves both unbounded.
+    ///
+    /// This is the only thing standing between a run and an indefinite hang:
+    /// `std.http.Client` has no read timeout (`ConnectTcpOptions.timeout` is
+    /// declared and never referenced) and `Io.Future.cancel` cannot rescue a
+    /// thread blocked on an established connection, so a provider that accepts
+    /// the connection and then says nothing blocks the agent loop forever with
+    /// no error to retry. See `client.Abort` for the `shutdown(2)` lever that
+    /// makes the blocked read return.
+    request_timeout_ms: u32 = 0,
+    /// Longest gap between two reads of a streaming response before it is
+    /// abandoned. 0 leaves it unbounded. Separate from `request_timeout_ms`
+    /// because a healthy stream can legitimately run far past any whole-call
+    /// ceiling; what a healthy stream does not do is go quiet mid-answer.
+    stream_idle_timeout_ms: u32 = 0,
     max_total_tokens: ?u32 = null,
     /// Per-turn cap on input tokens; conversation is compacted before a turn
     /// whose content would exceed it.
@@ -588,6 +612,9 @@ pub const AgentFields = struct {
     tool_result_prune_tail_bytes: bool = false,
     repeat_tool_thresholds: bool = false,
     repeat_tool_exclude: bool = false,
+    repeat_tool_abort_threshold: bool = false,
+    request_timeout_ms: bool = false,
+    stream_idle_timeout_ms: bool = false,
     max_total_tokens: bool = false,
     max_tokens_per_turn: bool = false,
     max_history_tokens: bool = false,
@@ -2011,7 +2038,8 @@ pub const Config = struct {
             "ask_timeout_seconds",          "confirm_writes",               "provider_check_timeout_seconds", "fallback_provider",
             "fallback_providers",           "auto_thinking",                "thinking_classifier_model",      "thinking_classifier_timeout_ms",
             "worktree",                     "goal_worktree",                "git_worktree_on",                "isolated_cli",
-            "isolated_tui",                 "isolated_webui",               "reasoning_effort",
+            "isolated_tui",                 "isolated_webui",               "reasoning_effort",               "repeat_tool_abort_threshold",
+            "request_timeout_ms",           "stream_idle_timeout_ms",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -2054,6 +2082,18 @@ pub const Config = struct {
             }
             a.repeat_tool_thresholds = try thresholds.toOwnedSlice(arena);
             f.repeat_tool_thresholds = true;
+        }
+        if (obj.get("repeat_tool_abort_threshold")) |k| {
+            a.repeat_tool_abort_threshold = try jsonUnsigned(u32, k, "repeat_tool_abort_threshold");
+            f.repeat_tool_abort_threshold = true;
+        }
+        if (obj.get("request_timeout_ms")) |k| {
+            a.request_timeout_ms = try jsonUnsigned(u32, k, "request_timeout_ms");
+            f.request_timeout_ms = true;
+        }
+        if (obj.get("stream_idle_timeout_ms")) |k| {
+            a.stream_idle_timeout_ms = try jsonUnsigned(u32, k, "stream_idle_timeout_ms");
+            f.stream_idle_timeout_ms = true;
         }
         if (obj.get("repeat_tool_exclude")) |k| {
             a.repeat_tool_exclude = try jsonNameList(arena, k, "repeat_tool_exclude");
@@ -2254,6 +2294,9 @@ pub const Config = struct {
         if (fields.tool_result_prune_tail_bytes) dst.tool_result_prune_tail_bytes = src.tool_result_prune_tail_bytes;
         if (fields.repeat_tool_thresholds) dst.repeat_tool_thresholds = src.repeat_tool_thresholds;
         if (fields.repeat_tool_exclude) dst.repeat_tool_exclude = src.repeat_tool_exclude;
+        if (fields.repeat_tool_abort_threshold) dst.repeat_tool_abort_threshold = src.repeat_tool_abort_threshold;
+        if (fields.request_timeout_ms) dst.request_timeout_ms = src.request_timeout_ms;
+        if (fields.stream_idle_timeout_ms) dst.stream_idle_timeout_ms = src.stream_idle_timeout_ms;
         if (fields.max_total_tokens) dst.max_total_tokens = src.max_total_tokens;
         if (fields.max_tokens_per_turn) dst.max_tokens_per_turn = src.max_tokens_per_turn;
         if (fields.max_history_tokens) dst.max_history_tokens = src.max_history_tokens;
@@ -4417,6 +4460,45 @@ test "partial local agent keeps base tools_dir" {
     try std.testing.expectEqual(@as(usize, 1), cfg.agent.tools_dir.len);
     try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir[0]);
     try std.testing.expectEqualStrings(".", cfg.agent.sandbox_root);
+    try std.testing.expectEqual(@as(u32, 30), cfg.agent.max_iterations);
+}
+
+test "agent request deadlines and the repeat abort threshold parse and default to off" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\agent = { max_iterations = 30 }
+        ,
+    });
+    const base = try Config.load(io, arena, tmp.dir, "config.toml", "missing.local.toml");
+    // Unbounded unless asked for: the deadline is opt-in.
+    try std.testing.expectEqual(@as(u32, 0), base.agent.request_timeout_ms);
+    try std.testing.expectEqual(@as(u32, 0), base.agent.stream_idle_timeout_ms);
+    try std.testing.expectEqual(@as(u32, 0), base.agent.repeat_tool_abort_threshold);
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.local.toml",
+        .data =
+        \\agent = { request_timeout_ms = 300000, stream_idle_timeout_ms = 120000, repeat_tool_abort_threshold = 12 }
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(@as(u32, 300000), cfg.agent.request_timeout_ms);
+    try std.testing.expectEqual(@as(u32, 120000), cfg.agent.stream_idle_timeout_ms);
+    try std.testing.expectEqual(@as(u32, 12), cfg.agent.repeat_tool_abort_threshold);
+    // A partial local agent object must not reset what the base file set.
     try std.testing.expectEqual(@as(u32, 30), cfg.agent.max_iterations);
 }
 

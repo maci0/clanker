@@ -332,6 +332,9 @@ Run-loop and path settings. The commonly-touched keys:
 | `compact_threshold_bytes` | 24000 | Compact conversation history past this size (`0` uses the model window). |
 | `tool_result_prune_bytes`, `tool_result_prune_head_bytes`, `tool_result_prune_tail_bytes` | 8192, 4096, 1024 | Request-only head/tail pruning for oversized tool results. Threshold `0` disables it; saved transcripts remain exact. |
 | `repeat_tool_thresholds`, `repeat_tool_exclude` | `[3, 5, 8]`, todo tools | Advisory reminders for consecutive canonical-equivalent tool calls. Excluded name patterns (with optional `*`) neither increment nor reset a chain. |
+| `repeat_tool_abort_threshold` | 0 | Consecutive identical tool calls after which the turn fails with `RepeatedToolCalls` instead of being reminded again. `0` disables it. The reminders above are advice; a model that ignores them repeats until `max_iterations`, buying a completion per round. |
+| `request_timeout_ms` | 0 | Deadline on one non-streaming completion end to end, and on the wait for a streaming one's *first* bytes. `0` is unbounded — see [Request deadlines](#request-deadlines). |
+| `stream_idle_timeout_ms` | 0 | Longest gap between reads of a streaming response before it is abandoned. `0` is unbounded. |
 | `max_total_tokens`, `max_tokens_per_turn`, `max_history_tokens` | -, 4096, 16000 | Token budgets that drive compaction. `max_history_tokens` is lifted for a run when it sits below what compaction cannot remove — see [History budget and compaction](#history-budget-and-compaction). |
 | `tool_catalog` | true | Send full schemas only for hot tools; let the model request the rest by name (saves thousands of tokens/request with many tools). |
 | `hot_tools` | 10 | How many most-used tools keep their schemas loaded unasked. |
@@ -381,6 +384,49 @@ A run that still needs to compact on five consecutive iterations ends with
 both ceilings — the configured cap and what the model's window leaves compaction
 — because raising the cap only helps when the model has the room. The recovery
 is [the compaction thrash runbook](runbooks/agent-run-compaction-thrash.md).
+
+### Request deadlines
+
+A provider that accepts the TCP connection and then never answers does not make
+a turn slow — it makes the run stop forever. `std.http.Client` has no read
+timeout (`ConnectTcpOptions.timeout` is declared and never referenced), and
+cancellation cannot reach a thread parked in a read on an established
+connection, so nothing below the agent loop can end that wait. The retry
+machinery does not help either: `chat` and `chatStream` retry every transport
+error and retryable status, but a call that never returns never produces an
+error to classify. The deadline is what gives the hang a name.
+
+Two clocks, because a stream has two ways to stop:
+
+| Clock | Bounds | Applies to |
+|---|---|---|
+| `request_timeout_ms` | silence before any sign of life | whole call (non-streaming), first bytes (streaming) |
+| `stream_idle_timeout_ms` | gap between two reads | streaming only, once bytes are flowing |
+
+Set both, not just the idle one. A streaming read completes only when its 8 KiB
+buffer fills or the stream ends, so a provider that emits a few hundred bytes
+and then falls silent never finishes a read at all — to the idle clock that is
+indistinguishable from a provider that never answered, and only
+`request_timeout_ms` bounds it.
+
+They cannot be one number. On the non-streaming path `request_timeout_ms` caps
+total generation time, so it has to sit above the slowest legitimate answer —
+on a reasoning model the entire trace is generated before the response arrives.
+A streaming answer can legitimately run past any such ceiling, so bounding its
+total duration would abandon healthy work; what a healthy stream does not do is
+go quiet mid-answer, which is what `stream_idle_timeout_ms` measures. Every read
+that returns bytes counts as life, including SSE keepalives — a provider sending
+keepalives is answering.
+
+A lapsed deadline surfaces as `Timeout` and is **not** retried against the same
+provider: the same silent endpoint would cost a second full deadline before any
+recovery began. It goes straight to `agent.fallback_providers`, which is the
+retry, and it retries somewhere else. A stream that already delivered tokens
+fails outright rather than falling back, since the caller has seen part of an
+answer.
+
+Both default to `0`, which is unbounded and preserves the historical behaviour.
+The shipped `config.toml` sets real values.
 
 ## `[hooks]`
 
