@@ -12690,15 +12690,37 @@ fn handlePluginConfig(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
 
     // Read-modify-write of the whole file: other plugins' overrides live here
     // too and must survive an edit to this one.
+    // A file that exists but cannot be read or parsed is not an empty one:
+    // the write below replaces the whole document, so treating either failure
+    // as "no overrides yet" deletes every other plugin's settings and reports
+    // success. Only a missing file starts from empty.
     var store: std.json.Value = .{ .object = .{} };
-    if (std.Io.Dir.cwd().readFileAlloc(io, registry.plugin_config_state_path, arena, .limited(256 * 1024)) catch null) |raw| {
-        if (std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch null) |existing| {
-            if (existing == .object) store = existing;
+    if (std.Io.Dir.cwd().readFileAlloc(io, registry.plugin_config_state_path, arena, .limited(256 * 1024))) |raw| {
+        const existing = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch |err| {
+            log.log(.error_, "plugin config: {s} is not valid JSON ({s}); refusing to replace it", .{ registry.plugin_config_state_path, @errorName(err) });
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"the saved plugin config is not valid JSON; it was left untouched\"}");
+            return;
+        };
+        if (existing != .object) {
+            log.log(.error_, "plugin config: {s} is not a JSON object; refusing to replace it", .{registry.plugin_config_state_path});
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"the saved plugin config is not a JSON object; it was left untouched\"}");
+            return;
         }
+        store = existing;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => {
+            log.log(.error_, "plugin config: could not read {s} ({s}); refusing to replace it", .{ registry.plugin_config_state_path, @errorName(err) });
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"the saved plugin config could not be read; it was left untouched\"}");
+            return;
+        },
     }
     var merged: std.json.ObjectMap = .empty;
     if (store.object.get(name)) |prev| {
-        if (prev == .object) merged = prev.object.clone(arena) catch .empty;
+        if (prev == .object) merged = prev.object.clone(arena) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+            return;
+        };
     }
     var set = wanted.iterator();
     while (set.next()) |entry| {
@@ -14368,9 +14390,32 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             session_workspace = s.workspace;
             for (s.messages) |m| {
                 if (m.role == .system) continue;
-                messages.append(arena, m) catch {};
+                // Dropping a turn here is not a smaller failure than refusing
+                // the request: the save below rewrites the file from
+                // `messages`, so a silently skipped message is deleted from
+                // the stored conversation.
+                messages.append(arena, m) catch {
+                    respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory reading the session; it was left untouched\"}");
+                    return;
+                };
             }
-        } else |_| {}
+        } else |err| switch (err) {
+            // No file yet is an ordinary first turn.
+            error.FileNotFound => {},
+            error.InvalidSessionId => {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid session id\"}");
+                return;
+            },
+            // Anything else means the history is on disk and this request
+            // cannot read it. `saveSession` below writes the whole file from
+            // `messages`, so carrying on would trade the entire conversation
+            // for this one turn -- and report success while doing it.
+            else => {
+                log.log(.error_, "run: session '{s}' could not be read ({s}); refusing the turn rather than overwriting the history", .{ req.session, @errorName(err) });
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"the session could not be read; it was left untouched\"}");
+                return;
+            },
+        }
     }
     if (session_workspace.len > 0 and !validWorkspace(session_workspace)) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid workspace\"}");

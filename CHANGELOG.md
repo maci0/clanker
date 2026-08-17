@@ -612,6 +612,26 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `POST /api/run` no longer replaces a session's whole history when it
+  cannot read it. The handler loads the stored messages, appends the turn,
+  and rewrites the file from that list, but every load failure was
+  swallowed: an unreadable-but-present session file (permissions, a
+  truncated write, an I/O error) started the request from an empty list and
+  the save then deleted the conversation and reported success. Only
+  `FileNotFound` now means "first turn"; any other read failure answers 500
+  and leaves the file untouched, and an invalid session id answers 400.
+  `clanker run --session` already drew that line.
+- `POST /api/plugins/<name>/config` no longer wipes every other plugin's
+  overrides when it cannot read `state/plugin_config.json`. The edit is a
+  read-modify-write of the whole document, and an unreadable or unparseable
+  file was treated as "no overrides yet", so the write replaced it with just
+  the plugin being edited. A missing file still starts from empty; a read or
+  parse failure answers 500 and changes nothing.
+- `clanker janitor` no longer de-registers a live worktree when it runs out
+  of memory mid-pass. `reconcile` rebuilds `state/worktrees.json` from the
+  rows it decided to keep, and an allocation failure while collecting one
+  dropped it silently, stranding the commits that worktree holds. A failed
+  collection now leaves the registry exactly as it was, and says so.
 - Session compaction no longer strands a tool result with no `tool_calls` to
   answer, which providers reject outright (OpenAI 400s on a `tool` message not
   preceded by `tool_calls`; Anthropic rejects an unmatched `tool_result`).
