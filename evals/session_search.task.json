@@ -1,0 +1,15 @@
+{
+  "name": "session_search",
+  "kind": "task",
+  "description": "session_search must scan state/sessions for a substring and return ok:true with a hits array (or ok:false with a typed min-length error) without depending on any session existing. The prompt asks for a query that is guaranteed to be at least 3 characters, so the only environment-independent assertion is the shape: ok:true and a hits array, or the too-short error when that path is taken. Goes red when the fs_prefixes policy or the search wiring breaks; stays green on empty state/sessions.",
+  "prompt": "Use the session_search tool with input {\"q\": \"the\"}. Look at the tool's JSON result. If its ok field is true and it has a hits array (even if empty), reply with exactly SHAPE_OK. If its ok field is false and the error mentions the minimum length, reply with exactly SHAPE_OK. Otherwise reply with exactly SHAPE_BAD.",
+  "requires_tool": "session_search",
+  "criteria": [
+    {
+      "includes": ["SHAPE_OK"]
+    },
+    {
+      "excludes": ["SHAPE_BAD"]
+    }
+  ]
+}
