@@ -4,11 +4,11 @@
 
 - **What failed:** fsWriteIfImpl names its lock file for the SHA-256 of the joined path string, not a resolved path. state/goals.json is './state/goals.json' in an unisolated run and '/abs/checkout/state/goals.json' in an isolated one (shared_root is currentPathAlloc), so the two runs take two different lock inodes on the same file and neither excludes the other. The sidecar the change replaced could not split that way: both spellings named one file on disk.
 - **Impact:** Not observed on disk yet — no isolated run has CAS-written a shared path since the change landed. When it is reached, two writers to one shared file (`state/goals.json` is the reachable case) both pass the hash compare and both write, so the earlier write is lost.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-17. casLockPath now hashes the target with its directory part resolved (resolvedLockKey, src/sandbox/host.zig), so every spelling of one file maps to one lock inode, and the lock directory resolves against the run's own root rather than the process cwd. Two new tests: one asserts a relative-rooted and an absolute-rooted sandbox writing one file leave exactly one lock, the other that a sandbox rooted at a subdirectory writes nothing beside the process cwd. Both fail on the old code. clanker gate 8/8.
 
 ## Status
 
-Open.
+Resolved on 2026-08-17. casLockPath now hashes the target with its directory part resolved (resolvedLockKey, src/sandbox/host.zig), so every spelling of one file maps to one lock inode, and the lock directory resolves against the run's own root rather than the process cwd. Two new tests: one asserts a relative-rooted and an absolute-rooted sandbox writing one file leave exactly one lock, the other that a sandbox rooted at a subdirectory writes nothing beside the process cwd. Both fail on the old code. clanker gate 8/8.
 
 ## Symptom and impact
 
@@ -141,3 +141,4 @@ decision:
 - Decision: [ADR 0031 — Compare-and-swap locks live in state/locks, keyed by a hash of the target path](../../adrs/0031-compare-and-swap-locks-live-in-state-locks-keyed-by-a-hash.md)
 - Investigation: [ck_cas lock sidecars are never removed and bypass the create retry](../investigations/2026-08-16-ck-cas-lock-sidecars.md)
 - RFC: [0006 — Where ck_cas lock sidecars live](../../rfcs/0006-where-ck-cas-lock-sidecars-live.md)
+- Investigation: [the two-spellings test flaked once](../investigations/2026-08-17-cas-lock-two-spellings-test-flaked-once.md) — a concurrent session compiled this checkout mid-edit, after the failing test existed and before the keying fix landed, and its `zig build test` failed at `lock_count`. Filed by that session (clanker-7c) and resolved against this fix. It is a property of five sessions sharing one working tree, not of the change.

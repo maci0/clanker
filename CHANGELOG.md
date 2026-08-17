@@ -590,6 +590,32 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A compare-and-swap lock is now named for the target *file* rather than
+  for the text that named it, so two writers to one file cannot each take
+  a lock of their own. `ck_fs_write_if` hashed the joined path string, and
+  one file is spelled several ways: `./state/goals.json` under the default
+  `agent.sandbox_root`, `/abs/checkout/state/goals.json` under an isolated
+  run's `shared_root`, and the guest's own path under an absolute
+  `fs_prefixes` grant. Each spelling got its own lock inode, so an
+  isolated run and the checkout both passed the hash compare and both
+  wrote, losing the earlier write — the outcome the compare-and-swap
+  exists to refuse. The name now hashes the target with its directory part
+  resolved, which is also what makes two checkouts sharing one `state/`
+  independent rather than merely uncollided. The sidecar this replaced
+  could not split that way: every spelling named one file on disk.
+- Compare-and-swap lock files no longer accumulate in a state directory
+  they have nothing to do with. The lock directory resolved against the
+  process cwd while the target resolved against the sandbox root, so a
+  sandbox rooted in a test's tmp tree wrote a permanent lock file into the
+  operator's real `state/locks` — 328 of the 387 files there on
+  2026-08-17 named a `.zig-cache/tmp` target. It now resolves against the
+  run's own root (the checkout's `shared_root` when there is one, since
+  that is the tree an isolated run shares `state/` with) and honours
+  `state_base_dir`, so a throwaway tree's locks die with it. What remains
+  in a real `state/locks` is one file per document ever CAS-written, which
+  is re-acquired rather than added to; `clanker janitor` still sweeps the
+  ephemeral leftovers after 12h, and the lock files written under the old
+  name are orphans that age out through the same sweep.
 - A goal loop no longer dies on a single failed turn. A turn that errors
   (for example a completion whose whole token grant is spent on
   reasoning, `AnswerTruncatedToEmpty`) used to terminate the loop and
