@@ -1,19 +1,16 @@
 diff --git a/src/Parser.zig b/src/Parser.zig
-index d16f1a2..064b9b5 100644
+index d16f1a2..67d019a 100644
 --- a/src/Parser.zig
 +++ b/src/Parser.zig
-@@ -163,6 +163,10 @@ inline fn parseSs3(input: []const u8) Result {
+@@ -163,6 +163,7 @@ inline fn parseSs3(input: []const u8) Result {
          'E' => .{ .codepoint = Key.kp_begin },
          'F' => .{ .codepoint = Key.end },
          'H' => .{ .codepoint = Key.home },
-+        // Keypad Enter (DECKPAM), and what Konsole's default keytab sends
-+        // for Shift+Return (`key Return+Shift : "\EOM"`). Dropping it with
-+        // a warning made Shift+Enter unusable there.
 +        'M' => .{ .codepoint = Key.kp_enter },
          'P' => .{ .codepoint = Key.f1 },
          'Q' => .{ .codepoint = Key.f2 },
          'R' => .{ .codepoint = Key.f3 },
-@@ -868,6 +872,18 @@ test "parse: xterm key up" {
+@@ -868,6 +869,18 @@ test "parse: xterm key up" {
      }
  }
  
