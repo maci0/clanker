@@ -97,6 +97,7 @@ and Implementation lists checkable file-level phases.
 | [0037](0037-decision-and-spec-stores-on-the-cli.md) | Decision and spec stores on the CLI | Shipped |  |
 | [0038](0038-http-endpoints-for-the-record-stores.md) | HTTP endpoints for the record stores | Shipped |  |
 | [0039](0039-repl-block-level-markdown-tables-block-quotes-nested-lists.md) | REPL block-level markdown: tables, block quotes, nested lists | Shipped |  |
+| [0040](0040-repl-multi-line-input-shift-enter-newline-enter-submits.md) | REPL multi-line input: Shift+Enter newline, Enter submits | Shipped |  |
 <!-- inventory:prd:end -->
 
 ## Recommended build order (Drafts)

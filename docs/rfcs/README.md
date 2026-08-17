@@ -93,6 +93,7 @@ projects, and the strongest case against the recommendation.
 ## Inventory
 
 <!-- inventory:rfc:start -->
+- [RFC 0010 — REPL multi-line task input](0010-repl-multi-line-task-input.md) — Decided
 - [RFC 0009 — REPL block-level markdown in the vaxis transcript](0009-repl-block-level-markdown-in-the-vaxis-transcript.md) — Decided
 - [RFC 0009 — REPL block-level markdown rendering](0009-repl-block-level-markdown-rendering.md) — Draft
 - [RFC 0008 — How an agent claims a shared resource before writing it](0008-claims-on-shared-resources.md) — Discussion
