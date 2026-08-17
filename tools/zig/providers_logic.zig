@@ -37,7 +37,7 @@ pub const ConfigFile = struct {
 /// configured default, else the only declared model.
 pub fn activeModelName(p: Provider) []const u8 {
     if (p.default_model.len > 0) return p.default_model;
-    if (p.models.map.count() == 1) return p.models.map.keys()[0];
+    if (p.models.map.count() >= 1) return p.models.map.keys()[0];
     return "";
 }
 
