@@ -81,11 +81,16 @@ text.
 
 ### Why only the harness prompt carries the tooling rules
 
-All three levels share `repair_prompt`, but its `HARNESS_TOOLING` section is
-added for the `--fix-repairs-with` harness alone (`tooling=True`). It tells that
-run to use clanker's own verbs — `clanker reports search` before diagnosing,
-`clanker gate` to verify, `clanker commit`, `clanker run` for a tool with no
-verb — instead of ad-hoc `grep`, `find` or a hand-rolled `git` sequence.
+All three levels share `repair_prompt`, but its `TOOLING` section is built
+for the `--fix-repairs-with` harness alone (`tooling=harness_tooling(dir)`).
+It states the mandate — use clanker's own verbs instead of ad-hoc `grep`,
+`find` or a hand-rolled `git` sequence — and then embeds the checkout's
+`CLAUDE.md` verbatim, read at prompt-build time. The file is the verb
+catalog, so the section never holds a second copy that could drift; an
+unreadable `CLAUDE.md` degrades to the mandate alone, which still orders the
+harness to read the files itself. `consume_log` subtracts the section's size
+from the log's argv budget, keeping the assembled prompt under
+`MAX_ARG_STRLEN`.
 
 The two clanker levels do not need it and are left unchanged: a `clanker run`
 has those verbs as its own tools, and its system prompt already includes the

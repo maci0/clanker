@@ -152,13 +152,15 @@ escalation run's error lines and fixes it. Either way the loop then returns to
 from the clanker escalation run.
 
 The harness prompt carries one thing the two clanker prompts do not: a `TOOLING`
-section telling the harness to use Clanker's own verbs — `clanker reports
-search` before diagnosing, `clanker gate` to verify, `clanker commit` to commit,
-`clanker run` to reach a tool that has no verb of its own — instead of ad-hoc
-`grep`, `find` or a hand-rolled `git` sequence. A `clanker run` already has
-those verbs as tools and already reads `AGENTS.md`, so the repair and escalation
-prompts are unchanged; a harness has neither, and only Claude Code reads the
-`CLAUDE.md` that states the rule. See
+section with the mandate to use Clanker's own verbs instead of ad-hoc `grep`,
+`find` or a hand-rolled `git` sequence, followed by the checkout's `CLAUDE.md`
+embedded verbatim at prompt-build time. Embedding the live file is what keeps
+the section from becoming a copy that drifts: `CLAUDE.md` is the verb catalog,
+and a verb added there reaches every harness without touching this script. Its
+size comes out of the log's share of the argv budget, so the prompt stays under
+`MAX_ARG_STRLEN`. A `clanker run` already has those verbs as tools and already
+reads `AGENTS.md`, so the repair and escalation prompts are unchanged; a
+harness has neither, and only Claude Code reads `CLAUDE.md` on its own. See
 [docs/architecture.md](docs/architecture.md#why-only-the-harness-prompt-carries-the-tooling-rules).
 
 Both harnesses are resolved before the first `improve-self` batch, so a missing
