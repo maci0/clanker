@@ -485,6 +485,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker commit` now writes the commits it reports. Its apply path staged
+  each group's files and then ran a bare `git commit`, which commits the whole
+  index — so anything staged before the verb ran was swept into the first
+  group's commit and every later group found nothing left to commit. Each
+  group is now committed with a pathspec, leaving the rest of the index alone.
+  The condition needed something staged up front, which is what the
+  concurrent-sessions runbook asks a session to do; `clanker commit --all` on
+  a clean index was unaffected.
+- A `git` command that `clanker commit` runs and that fails is now a refusal
+  naming git's stderr. The exit status arrives inside the sandbox's exec
+  reply rather than as an error, and the result was discarded, so a
+  `git commit` with nothing to commit was still counted in the
+  "committed N commit(s)" line.
 - `clanker serve` no longer logs every completed `GET /api/events` at ERROR,
   nor counts it as a server error. The SSE handler writes its own `200 OK`
   rather than going through the shared responder, and it did not report that
