@@ -202,7 +202,23 @@ pub fn appendRecord(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, rec: R
         return;
     };
 
-    const existing = base.readFileAlloc(io, ledger_path, gpa, .limited(max_ledger_bytes)) catch null;
+    // Headroom over the cap on purpose: the trim below is what brings an
+    // over-cap file back under it, and a read limited to exactly the cap
+    // refuses that file instead, so a ledger that ever grew past the cap
+    // (an older build's larger cap, a hand-edit) could never be read again.
+    //
+    // `FileNotFound` is the only error that means "empty ledger". Every other
+    // one means the history is on disk and this call cannot see it, and the
+    // write below replaces the whole file: treating an unreadable ledger as an
+    // absent one silently trades the entire audit trail for one record, and
+    // reports success. Best effort is losing *this* record, never the file.
+    const existing: ?[]u8 = base.readFileAlloc(io, ledger_path, gpa, .limited(2 * max_ledger_bytes)) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => {
+            log.log(.warn, "schedule: could not read {s} ({s}); dropping this record rather than overwriting the history", .{ ledger_path, @errorName(err) });
+            return;
+        },
+    };
     defer if (existing) |e| gpa.free(e);
 
     var out: std.ArrayList(u8) = .empty;
@@ -388,6 +404,57 @@ test "the ledger appends one JSON line per fire and reads back newest first" {
     const with_junk = try std.fmt.allocPrint(arena, "{s}not json\n", .{raw});
     try tmp.dir.writeFile(io, .{ .sub_path = ledger_path, .data = with_junk });
     try testing.expectEqual(@as(usize, 2), (try readRecords(io, arena, tmp.dir, 10)).len);
+}
+
+test "a ledger already over the cap is trimmed, never replaced by the one new record" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try ensure_dir.ensureDir(tmp.dir, io, ledger_dir);
+
+    // Fill past the cap, then put a recognisable record last so front-trimming
+    // keeps it. A read limited to exactly the cap refuses this file, and the
+    // append then writes its single line over all of it.
+    const filler = "{\"ts\":1,\"id\":\"sch-0\",\"cron\":\"* * * * *\",\"task\":\"old\",\"trigger\":\"due\",\"ok\":true}\n";
+    var pre: std.ArrayList(u8) = .empty;
+    defer pre.deinit(testing.allocator);
+    while (pre.items.len <= max_ledger_bytes) try pre.appendSlice(testing.allocator, filler);
+    try pre.appendSlice(testing.allocator, "{\"ts\":999,\"id\":\"sch-9\",\"cron\":\"* * * * *\",\"task\":\"kept\",\"trigger\":\"due\",\"ok\":true}\n");
+    try tmp.dir.writeFile(io, .{ .sub_path = ledger_path, .data = pre.items });
+
+    appendRecord(io, testing.allocator, tmp.dir, .{ .ts = 1000, .id = "sch-1", .cron = "* * * * *", .task = "new", .trigger = "due", .ok = true });
+
+    const raw = try tmp.dir.readFileAlloc(io, ledger_path, arena, .limited(2 * max_ledger_bytes));
+    try testing.expect(raw.len <= max_ledger_bytes);
+    try testing.expect(raw.len > filler.len * 2);
+
+    const recs = try readRecords(io, arena, tmp.dir, 4);
+    try testing.expectEqual(@as(i64, 1000), recs[0].ts);
+    try testing.expectEqual(@as(i64, 999), recs[1].ts);
+}
+
+test "an unreadable ledger costs the new record, not the whole history" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // A directory where the ledger file belongs: readFileAlloc fails with
+    // something other than FileNotFound, which must not read as "no history".
+    try ensure_dir.ensureDir(tmp.dir, io, ledger_path);
+    appendRecord(io, testing.allocator, tmp.dir, .{ .ts = 1, .id = "sch-1", .cron = "* * * * *", .task = "t", .trigger = "due", .ok = true });
+
+    // Still a directory, so nothing was written through it.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    try testing.expectEqual(@as(usize, 0), (try readRecords(io, arena_state.allocator(), tmp.dir, 4)).len);
 }
 
 test "a task must be non-empty and bounded" {
