@@ -203,6 +203,7 @@ fn doCancel(obj: std.json.ObjectMap, out: *lib.Out) !void {
             if (std.mem.eql(u8, loaded.alarms.items[i].id, id)) {
                 _ = loaded.alarms.orderedRemove(i);
                 found = true;
+                break;
             } else i += 1;
         }
         if (!found) return lib.fail(out, "no alarm with that id");
