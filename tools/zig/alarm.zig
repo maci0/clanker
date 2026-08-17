@@ -104,6 +104,10 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
         const id = try std.fmt.allocPrint(lib.alloc, "a-{d}-{d}", .{ fire, next });
         try loaded.alarms.append(lib.alloc, .{ .id = id, .ts = fire, .message = message, .set_ts = now, .every = every });
         if (try store(loaded)) {
+            if (every > 0) {
+                const reply = try std.fmt.allocPrint(lib.alloc, "{{\"ok\":true,\"id\":\"{s}\",\"fires_in_seconds\":{d},\"every_minutes\":{d}}}", .{ id, fire - now, every });
+                return out.writeAll(reply);
+            }
             const reply = try std.fmt.allocPrint(lib.alloc, "{{\"ok\":true,\"id\":\"{s}\",\"fires_in_seconds\":{d}}}", .{ id, fire - now });
             return out.writeAll(reply);
         }
