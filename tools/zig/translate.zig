@@ -14,6 +14,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const model_reply = @import("model_reply.zig");
 
 const Settings = struct {
     lang: []const u8 = "en",
@@ -56,7 +57,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return declineJson(out, "translation call failed");
     };
 
-    const cleaned = stripFences(std.mem.trim(u8, answer, " \t\r\n"));
+    const cleaned = model_reply.stripFence(answer);
     // A translation that is no longer JSON would corrupt the tool result for
     // every later layer, so it is dropped rather than passed on.
     const is_json = std.json.validate(alloc, cleaned) catch false;
@@ -66,14 +67,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 }
 
 /// Models wrap JSON in ```json fences even when told not to.
-fn stripFences(s: []const u8) []const u8 {
-    if (!std.mem.startsWith(u8, s, "```")) return s;
-    const first_nl = std.mem.findScalar(u8, s, '\n') orelse return s;
-    const body = s[first_nl + 1 ..];
-    const close = std.mem.findLast(u8, body, "```") orelse return body;
-    return std.mem.trim(u8, body[0..close], " \t\r\n");
-}
-
 fn okJson(out: *lib.Out, payload: []const u8) !void {
     var buf: [64 * 1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);

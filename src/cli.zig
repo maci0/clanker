@@ -9778,6 +9778,37 @@ fn jsonObjectStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
     };
 }
 
+/// The `{"provider":…,"model":…}` body every config-writing endpoint takes,
+/// plus the whole object for the one handler that also reads optional fields
+/// off it. Answers the 400 itself and returns null, so a caller that gets
+/// null need only return. Four handlers carried byte-identical copies of
+/// this parse, down to the error strings.
+const ProviderModelBody = struct {
+    provider: []const u8,
+    model: []const u8,
+    object: std.json.ObjectMap,
+};
+
+fn parseProviderModelBody(arena: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) ?ProviderModelBody {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return null;
+    };
+    if (parsed != .object) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return null;
+    }
+    const provider = jsonObjectStr(parsed.object, "provider") orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing provider\"}");
+        return null;
+    };
+    const model = jsonObjectStr(parsed.object, "model") orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing model\"}");
+        return null;
+    };
+    return .{ .provider = provider, .model = model, .object = parsed.object };
+}
+
 fn readLocalConfig(io: std.Io, arena: std.mem.Allocator) ![]const u8 {
     return std.Io.Dir.cwd().readFileAlloc(io, local_config_name, arena, .limited(1 << 20)) catch |err| switch (err) {
         error.FileNotFound => "",
@@ -9785,56 +9816,11 @@ fn readLocalConfig(io: std.Io, arena: std.mem.Allocator) ![]const u8 {
     };
 }
 
-fn writeLocalConfig(io: std.Io, data: []const u8) !void {
-    try atomic_write.writeFile(io, std.Io.Dir.cwd(), local_config_name, data);
-}
-
-fn lookupCatalogModel(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8) !?std.json.Value {
-    const body = loadModelsDev(io, gpa, arena, false) catch return error.CatalogUnreachable;
-    const catalog = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true }) catch
-        return error.CatalogUnreadable;
-    if (catalog != .object) return error.CatalogUnreadable;
-    const provider_entry = catalog.object.get(provider) orelse return null;
-    return findCatalogModel(provider_entry, model);
-}
-
-/// `POST /api/config/model {"provider":…,"model":…}` — table-replace the
-/// catalog snippet for that model into `config.local.toml`. Never touches
-/// the shared `config.toml`.
-fn handleConfigModel(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    if (parsed != .object) {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    }
-    const provider = jsonObjectStr(parsed.object, "provider") orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing provider\"}");
-        return;
-    };
-    const model = jsonObjectStr(parsed.object, "model") orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing model\"}");
-        return;
-    };
-    const cat = lookupCatalogModel(io, gpa, arena, provider, model) catch |err| {
-        log.log(.error_, "POST /api/config/model: {s}", .{@errorName(err)});
-        respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"could not reach models.dev\"}");
-        return;
-    };
-    const entry = cat orelse {
-        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no catalog match\"}");
-        return;
-    };
-    const snippet = renderModelSnippet(arena, provider, model, entry) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not render snippet\"}");
-        return;
-    };
+/// Splice `snippet` (a complete TOML table, header line included) into
+/// config.local.toml and answer the `{ok,path,written,restart}` body both
+/// model-writing endpoints owe. They carried byte-identical copies of this
+/// read-splice-write-respond tail; one copy is one set of error strings.
+fn respondLocalConfigTableWrite(io: std.Io, arena: std.mem.Allocator, snippet: []const u8, stream: std.Io.net.Stream) void {
     const current = readLocalConfig(io, arena) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"config.local.toml unreadable\"}");
         return;
@@ -9861,6 +9847,46 @@ fn handleConfigModel(io: std.Io, gpa: std.mem.Allocator, body: []const u8, strea
     s.write(true) catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", out.written());
+}
+
+fn writeLocalConfig(io: std.Io, data: []const u8) !void {
+    try atomic_write.writeFile(io, std.Io.Dir.cwd(), local_config_name, data);
+}
+
+fn lookupCatalogModel(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8) !?std.json.Value {
+    const body = loadModelsDev(io, gpa, arena, false) catch return error.CatalogUnreachable;
+    const catalog = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true }) catch
+        return error.CatalogUnreadable;
+    if (catalog != .object) return error.CatalogUnreadable;
+    const provider_entry = catalog.object.get(provider) orelse return null;
+    return findCatalogModel(provider_entry, model);
+}
+
+/// `POST /api/config/model {"provider":…,"model":…}` — table-replace the
+/// catalog snippet for that model into `config.local.toml`. Never touches
+/// the shared `config.toml`.
+fn handleConfigModel(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const req = parseProviderModelBody(arena, body, stream) orelse return;
+    const provider = req.provider;
+    const model = req.model;
+    const cat = lookupCatalogModel(io, gpa, arena, provider, model) catch |err| {
+        log.log(.error_, "POST /api/config/model: {s}", .{@errorName(err)});
+        respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"could not reach models.dev\"}");
+        return;
+    };
+    const entry = cat orelse {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no catalog match\"}");
+        return;
+    };
+    const snippet = renderModelSnippet(arena, provider, model, entry) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not render snippet\"}");
+        return;
+    };
+    respondLocalConfigTableWrite(io, arena, snippet, stream);
 }
 
 /// `POST /api/config/default {"provider":…,"model":…}` — set the top-level
@@ -10121,22 +10147,9 @@ fn handleConfigDefault(io: std.Io, gpa: std.mem.Allocator, body: []const u8, str
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    if (parsed != .object) {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    }
-    const provider = jsonObjectStr(parsed.object, "provider") orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing provider\"}");
-        return;
-    };
-    const model = jsonObjectStr(parsed.object, "model") orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing model\"}");
-        return;
-    };
+    const req = parseProviderModelBody(arena, body, stream) orelse return;
+    const provider = req.provider;
+    const model = req.model;
 
     var current = readLocalConfig(io, arena) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"config.local.toml unreadable\"}");
@@ -10223,52 +10236,14 @@ fn handleConfigModelSet(io: std.Io, gpa: std.mem.Allocator, body: []const u8, st
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    if (parsed != .object) {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    }
-    const provider = jsonObjectStr(parsed.object, "provider") orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing provider\"}");
-        return;
-    };
-    const model = jsonObjectStr(parsed.object, "model") orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing model\"}");
-        return;
-    };
-    const snippet = renderModelConfigBlock(arena, provider, model, parsed.object) catch {
+    const req = parseProviderModelBody(arena, body, stream) orelse return;
+    const provider = req.provider;
+    const model = req.model;
+    const snippet = renderModelConfigBlock(arena, provider, model, req.object) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not render config\"}");
         return;
     };
-    const current = readLocalConfig(io, arena) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"config.local.toml unreadable\"}");
-        return;
-    };
-    const next = toml_edit.replaceTable(arena, current, snippet) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not edit config.local.toml\"}");
-        return;
-    };
-    writeLocalConfig(io, next) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"config.local.toml not writable\"}");
-        return;
-    };
-
-    var out: std.Io.Writer.Allocating = .init(arena);
-    var s = std.json.Stringify{ .writer = &out.writer };
-    s.beginObject() catch return;
-    s.objectField("ok") catch return;
-    s.write(true) catch return;
-    s.objectField("path") catch return;
-    s.write(local_config_name) catch return;
-    s.objectField("written") catch return;
-    s.write(snippet) catch return;
-    s.objectField("restart") catch return;
-    s.write(true) catch return;
-    s.endObject() catch return;
-    respond(stream, 200, "OK", out.written());
+    respondLocalConfigTableWrite(io, arena, snippet, stream);
 }
 
 /// `POST /api/config/model/remove {"provider":…,"model":…}` — deletes that
@@ -10282,22 +10257,9 @@ fn handleConfigModelRemove(io: std.Io, gpa: std.mem.Allocator, body: []const u8,
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    if (parsed != .object) {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    }
-    const provider = jsonObjectStr(parsed.object, "provider") orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing provider\"}");
-        return;
-    };
-    const model = jsonObjectStr(parsed.object, "model") orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing model\"}");
-        return;
-    };
+    const req = parseProviderModelBody(arena, body, stream) orelse return;
+    const provider = req.provider;
+    const model = req.model;
     const header = blk: {
         const key = std.fmt.allocPrint(arena, "{s}/{s}", .{ provider, model }) catch break :blk null;
         const quoted = tomlQuoted(arena, key) catch break :blk null;

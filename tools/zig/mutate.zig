@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const model_reply = @import("model_reply.zig");
 
 const Settings = struct {
     instruction: []const u8 = "",
@@ -56,7 +57,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return declineJson(out, "llm call failed");
     };
 
-    const cleaned = stripFences(std.mem.trim(u8, answer, " \t\r\n"));
+    const cleaned = model_reply.stripFence(answer);
     if (mode_is_json) {
         const is_json = std.json.validate(alloc, cleaned) catch false;
         if (!is_json) return declineJson(out, "model returned text that is not JSON");
@@ -81,14 +82,6 @@ fn interpolate(alloc: std.mem.Allocator, tmpl: []const u8, lang: []const u8, too
         }
     }
     return out.toOwnedSlice(alloc);
-}
-
-fn stripFences(s: []const u8) []const u8 {
-    if (!std.mem.startsWith(u8, s, "```")) return s;
-    const first_nl = std.mem.findScalar(u8, s, '\n') orelse return s;
-    const body = s[first_nl + 1 ..];
-    const close = std.mem.findLast(u8, body, "```") orelse return body;
-    return std.mem.trim(u8, body[0..close], " \t\r\n");
 }
 
 fn okJson(out: *lib.Out, payload: []const u8) !void {

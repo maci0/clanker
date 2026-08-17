@@ -17,6 +17,7 @@
 //! of its own answer before anyone reads it).
 
 const std = @import("std");
+const model_reply = @import("model_reply.zig");
 const budget = @import("llm_budget.zig");
 
 /// A comparison of one is not a comparison.
@@ -264,7 +265,7 @@ pub const Verdict = struct {
 /// defaulting to a winner: a judge that answers garbage must not become a judge
 /// that always picks A.
 pub fn parseVerdict(alloc: std.mem.Allocator, raw: []const u8, n: usize) ?Verdict {
-    const span = objectSpan(stripFence(raw)) orelse return null;
+    const span = model_reply.objectSpan(model_reply.stripFence(raw)) orelse return null;
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, span, .{}) catch return null;
     const obj = switch (parsed) {
         .object => |o| o,
@@ -285,49 +286,6 @@ pub fn parseVerdict(alloc: std.mem.Allocator, raw: []const u8, n: usize) ?Verdic
         .pos = pos,
         .reason = if (obj.get("reason")) |r| (if (r == .string) r.string else "") else "",
     };
-}
-
-fn stripFence(raw: []const u8) []const u8 {
-    var s = std.mem.trim(u8, raw, " \t\r\n");
-    if (!std.mem.startsWith(u8, s, "```")) return s;
-    s = s[3..];
-    if (std.mem.findScalar(u8, s, '\n')) |nl| s = s[nl + 1 ..];
-    if (std.mem.findLast(u8, s, "```")) |close| s = s[0..close];
-    return std.mem.trim(u8, s, " \t\r\n");
-}
-
-fn objectSpan(s: []const u8) ?[]const u8 {
-    const start = std.mem.findScalar(u8, s, '{') orelse return null;
-    var depth: usize = 0;
-    var in_string = false;
-    var escaped = false;
-    var i = start;
-    while (i < s.len) : (i += 1) {
-        const c = s[i];
-        if (escaped) {
-            escaped = false;
-            continue;
-        }
-        if (in_string) {
-            switch (c) {
-                '\\' => escaped = true,
-                '"' => in_string = false,
-                else => {},
-            }
-            continue;
-        }
-        switch (c) {
-            '"' => in_string = true,
-            '{' => depth += 1,
-            '}' => {
-                if (depth == 0) return null;
-                depth -= 1;
-                if (depth == 0) return s[start .. i + 1];
-            },
-            else => {},
-        }
-    }
-    return null;
 }
 
 pub fn isSafeId(id: []const u8) bool {

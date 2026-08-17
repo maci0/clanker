@@ -11,6 +11,7 @@
 //! Reference: docs/prds/0008-arena.md.
 
 const std = @import("std");
+const model_reply = @import("model_reply.zig");
 
 /// One combatant's reply per turn. Damage is deferred: an `attack` puts damage
 /// *in flight* and it only resolves once the target has answered it, which is
@@ -97,49 +98,6 @@ pub const Reply = struct {
     /// `resolveTarget` rather than trusted.
     target: ?[]const u8 = null,
 };
-
-fn stripFence(raw: []const u8) []const u8 {
-    var s = std.mem.trim(u8, raw, " \t\r\n");
-    if (!std.mem.startsWith(u8, s, "```")) return s;
-    s = s[3..];
-    if (std.mem.findScalar(u8, s, '\n')) |nl| s = s[nl + 1 ..];
-    if (std.mem.findLast(u8, s, "```")) |close| s = s[0..close];
-    return std.mem.trim(u8, s, " \t\r\n");
-}
-
-fn objectSpan(s: []const u8) ?[]const u8 {
-    const start = std.mem.findScalar(u8, s, '{') orelse return null;
-    var depth: usize = 0;
-    var in_string = false;
-    var escaped = false;
-    var i = start;
-    while (i < s.len) : (i += 1) {
-        const c = s[i];
-        if (escaped) {
-            escaped = false;
-            continue;
-        }
-        if (in_string) {
-            switch (c) {
-                '\\' => escaped = true,
-                '"' => in_string = false,
-                else => {},
-            }
-            continue;
-        }
-        switch (c) {
-            '"' => in_string = true,
-            '{' => depth += 1,
-            '}' => {
-                if (depth == 0) return null;
-                depth -= 1;
-                if (depth == 0) return s[start .. i + 1];
-            },
-            else => {},
-        }
-    }
-    return null;
-}
 
 fn optFloat(obj: std.json.ObjectMap, name: []const u8) ?f64 {
     const v = obj.get(name) orelse return null;
@@ -256,8 +214,8 @@ fn parseMoveObject(alloc: std.mem.Allocator, span: []const u8, truncated: bool) 
 /// points into `raw` or into allocator memory that outlives the call, so the
 /// caller must keep both alive.
 pub fn parseReply(alloc: std.mem.Allocator, raw: []const u8) Reply {
-    const body = stripFence(raw);
-    if (objectSpan(body)) |span| {
+    const body = model_reply.stripFence(raw);
+    if (model_reply.objectSpan(body)) |span| {
         if (parseMoveObject(alloc, span, false)) |reply| return reply;
     } else if (repairTruncated(alloc, body)) |repaired| {
         // A reply cut off mid-argument still chose a move, and that choice is
@@ -282,7 +240,7 @@ pub const Judgment = struct {
 /// caller reads as "score this move self-reported instead" — a judge that
 /// answers garbage must not silently become a judge that scores everything 0.
 pub fn parseJudgment(alloc: std.mem.Allocator, raw: []const u8) ?Judgment {
-    const span = objectSpan(stripFence(raw)) orelse return null;
+    const span = model_reply.objectSpan(model_reply.stripFence(raw)) orelse return null;
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, span, .{}) catch return null;
     const obj = switch (parsed) {
         .object => |o| o,

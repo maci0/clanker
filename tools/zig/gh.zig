@@ -11,48 +11,10 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const glob = @import("glob");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
-}
-
-/// Classic `*` glob, mirroring src/sandbox/host.zig's globMatch so the guest
-/// makes the same match the host does. `*` matches any run of non-'/' chars
-/// (which for an argv joined with spaces includes the spaces), `?` one.
-fn globMatch(pattern: []const u8, name: []const u8) bool {
-    var pi: usize = 0;
-    var ni: usize = 0;
-    var star_p: ?usize = null;
-    var star_n: usize = 0;
-    while (ni < name.len or pi < pattern.len) {
-        if (pi < pattern.len and pattern[pi] == '*') {
-            star_p = pi;
-            star_n = ni;
-            pi += 1;
-            continue;
-        }
-        if (ni < name.len and pi < pattern.len) {
-            if (pattern[pi] == '?' and name[ni] != '/') {
-                pi += 1;
-                ni += 1;
-                continue;
-            }
-            if (pattern[pi] == name[ni]) {
-                pi += 1;
-                ni += 1;
-                continue;
-            }
-        }
-        if (star_p) |sp| {
-            pi = sp + 1;
-            star_n += 1;
-            if (star_n > name.len) return false;
-            ni = star_n;
-            continue;
-        }
-        return false;
-    }
-    return true;
 }
 
 /// The exec_pattern_allow patterns the harness injected into this tool's
@@ -106,7 +68,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     var matched = false;
     for (patterns) |pat| {
-        if (globMatch(pat, joined)) {
+        if (glob.match(pat, joined)) {
             matched = true;
             break;
         }

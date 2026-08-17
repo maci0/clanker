@@ -3,6 +3,7 @@
 //! Tools filtering reuses the same predicate plan_mode/confirm_writes use for write-capable checks.
 
 const std = @import("std");
+const glob = @import("../util/glob.zig");
 
 pub const Preset = struct {
     description: []const u8 = "",
@@ -57,21 +58,10 @@ fn parseStringArray(alloc: std.mem.Allocator, line: []const u8) ![]const []const
     return out.toOwnedSlice(alloc);
 }
 
-fn globMatch(pattern: []const u8, name: []const u8) bool {
-    if (std.mem.indexOfScalar(u8, pattern, '*')) |star| {
-        const pre = pattern[0..star];
-        const suf = pattern[star + 1 ..];
-        if (!std.mem.startsWith(u8, name, pre)) return false;
-        if (suf.len == 0) return true;
-        return std.mem.endsWith(u8, name, suf);
-    }
-    return std.mem.eql(u8, pattern, name);
-}
-
 pub fn allowed(preset: Preset, tool_name: []const u8) bool {
-    for (preset.tools_deny) |pat| if (globMatch(pat, tool_name)) return false;
+    for (preset.tools_deny) |pat| if (glob.match(pat, tool_name)) return false;
     if (preset.tools_allow.len == 0) return true;
-    for (preset.tools_allow) |pat| if (globMatch(pat, tool_name)) return true;
+    for (preset.tools_allow) |pat| if (glob.match(pat, tool_name)) return true;
     return false;
 }
 

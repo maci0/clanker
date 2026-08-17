@@ -274,6 +274,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- Preset `tools_allow` / `tools_deny` patterns now match with the same glob
+  the sandbox uses everywhere else (`src/util/glob.zig`). The preset filter
+  carried its own approximation that honored only the first `*` and let the
+  prefix and suffix overlap, so `a*b*c` matched nothing and `ab*bc` matched
+  `abc`. Single-`*` patterns such as `kanban_*` are unaffected.
+
 - `clanker adr search`, `clanker prd search`, `clanker rfc search` and
   `clanker research search` now cap each record at 50 printed matching
   lines and name how many they hid (`… N more matching line(s) in

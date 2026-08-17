@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const model_reply = @import("model_reply.zig");
 const budget = @import("llm_budget.zig");
 
 const Config = struct {
@@ -149,7 +150,7 @@ fn executeSteps(out: *lib.Out, alloc: std.mem.Allocator, cfg: Config, steps: []c
                 try trace.append(alloc, .{ .index = idx, .kind = "mutate", .ok = false, .output = msg, .tool = "" });
                 if (st.stop_on_error orelse true) break else continue;
             };
-            const cleaned = stripFences(std.mem.trim(u8, answer, " \t\r\n"));
+            const cleaned = model_reply.stripFence(answer);
             if (std.mem.eql(u8, m.mode, "json")) {
                 const vv = std.json.parseFromSliceLeaky(std.json.Value, alloc, cleaned, .{}) catch {
                     const msg = try std.fmt.allocPrint(alloc, "mutate returned non-JSON: {s}", .{cleaned[0..@min(cleaned.len, 300)]});
@@ -350,14 +351,6 @@ fn jsonPath(root: std.json.Value, path: []const u8) ?std.json.Value {
         }
     }
     return cur;
-}
-
-fn stripFences(s: []const u8) []const u8 {
-    if (!std.mem.startsWith(u8, s, "```")) return s;
-    const first_nl = std.mem.findScalar(u8, s, '\n') orelse return s;
-    const body = s[first_nl + 1 ..];
-    const close = std.mem.findLast(u8, body, "```") orelse return body;
-    return std.mem.trim(u8, body[0..close], " \t\r\n");
 }
 
 fn listChains(out: *lib.Out, chains_dir: []const u8) !void {

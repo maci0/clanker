@@ -20,6 +20,7 @@ const chatrooms_mod = @import("../peers/chatrooms.zig");
 const private_todos_mod = @import("../agent/private_todos.zig");
 const file_lock = @import("../util/file_lock.zig");
 const utf8 = @import("../util/utf8.zig");
+const glob = @import("../util/glob.zig");
 const token_stats = @import("../stats/tokens.zig");
 const build_options = @import("build_options");
 const zwasm = @import("zwasm");
@@ -2913,43 +2914,9 @@ fn fsFindRecurse(h: *Host, s: *std.json.Stringify, dir: std.Io.Dir, prefix: []co
     }
 }
 
-/// Simple glob match: '*' matches zero or more non-'/' chars, '?' matches
-/// exactly one non-'/' char, everything else is literal (case-sensitive).
-pub fn globMatch(pattern: []const u8, name: []const u8) bool {
-    var pi: usize = 0;
-    var ni: usize = 0;
-    var star_p: ?usize = null;
-    var star_n: usize = 0;
-    while (ni < name.len or pi < pattern.len) {
-        if (pi < pattern.len and pattern[pi] == '*') {
-            star_p = pi;
-            star_n = ni;
-            pi += 1;
-            continue;
-        }
-        if (ni < name.len and pi < pattern.len) {
-            if (pattern[pi] == '?' and name[ni] != '/') {
-                pi += 1;
-                ni += 1;
-                continue;
-            }
-            if (pattern[pi] == name[ni]) {
-                pi += 1;
-                ni += 1;
-                continue;
-            }
-        }
-        if (star_p) |sp| {
-            pi = sp + 1;
-            star_n += 1;
-            if (star_n > name.len) return false;
-            ni = star_n;
-            continue;
-        }
-        return false;
-    }
-    return true;
-}
+/// Glob match, one implementation shared with the `gh`/`git` guests and the
+/// preset filter. See src/util/glob.zig.
+pub const globMatch = glob.match;
 
 /// ck_fs_grep(dir_path, pattern), search for lines containing a literal
 /// substring in files under a sandbox directory. Returns a JSON array of
