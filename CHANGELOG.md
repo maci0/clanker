@@ -37,6 +37,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- The REPL's `/effort`, `/model` and `/preset` all open the shared modal
+  picker from the bare command. `/effort` lists none/low/medium/high/max
+  plus `default`, one-line description per row, marks the currently
+  effective level and shows where it comes from (pin, `auto_thinking`
+  classifier, per-model config, or sampling profile); Enter pins
+  `agent.reasoning_effort` for the session and `default` clears the pin.
+  `/model` marks the active provider/model, shows a spec detail line for
+  the highlighted row (context window, cost per 1M in/out, category), and
+  lists only models whose provider passes the offline credential gate
+  `providers check` uses — an entry whose `api_key_env` is unset no longer
+  appears. `/preset` lists `presets/` with each preset's `description` as
+  its preview line and the active preset marked; in a non-blank session it
+  explains the blank-session rule instead of opening a dead picker.
 - `--reasoning-effort <none|low|medium|high|max>` on `clanker` (the bare
   REPL), `run`, and `goal` pins every turn's reasoning effort for that
   invocation, and a new `[agent] reasoning_effort` config key pins it
