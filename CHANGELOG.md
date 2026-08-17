@@ -37,6 +37,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `/rfc` in the REPL: the RFC store, with the same subcommands, records and
+  rendering as `clanker rfc` (`list`, `search`, `open`, `checklist`,
+  `create`, `append`, `update`, `recommend`, `status`), folded into the
+  transcript. Both surfaces call the same `rfc` tool through one
+  implementation, so what `/rfc` writes is what `clanker rfc` reads.
 - The TUI composer previews slash commands as they are typed: a draft
   starting with `/` lists the matching commands above the input box —
   spelling, argument hint, and help — so `/go` shows `/goal` and what it
