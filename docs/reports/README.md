@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [Peer cooldown table is never freed, so any command that reaches a down peer ends in a leak trace](bugs/2026-08-17-peer-cooldown-table-leaks-at-exit.md) — Open
+
 - [TUI reply fold can be opened but never closed again](bugs/2026-08-17-fold-header-vanishes-when-expanded.md) — Resolved
 
 - [origin/main did not compile: an if mixed the optional catch-null form with an error-union else clause](bugs/2026-08-17-pushed-main-mixed-optional-and-error-else.md) — Resolved
