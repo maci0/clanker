@@ -244,3 +244,53 @@ test "clanker commit writes one commit per group even when the index was already
     try std.testing.expect(std.mem.find(u8, left, "alpha.md") == null);
     try std.testing.expect(std.mem.find(u8, left, "beta.md") == null);
 }
+
+test "clanker commit --yes refuses to auto-apply a degraded fallback plan" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // A grouping reply cut off mid-JSON: what a reasoning model's answer
+    // looks like when the descriptor's max_tokens grant is spent before the
+    // plan is complete (completion_tokens == the grant, exactly). The guest
+    // cannot parse it and falls back to one generic commit -- which --yes
+    // must not write on its own: "yes" approved a model-grouped plan, not
+    // whatever the fallback produced.
+    const truncated = "{\"commits\":[{\"message\":\"feat: add the alpha no";
+    const turn = try mock_llm.jsonTurn(gpa, truncated);
+    defer gpa.free(turn);
+    const mock = try mock_llm.Server.start(io, gpa, &.{turn});
+    defer mock.stop();
+
+    try harness.writeMockConfig(io, tmp.dir, gpa, mock.port);
+    try harness.linkZigOut(io, tmp.dir);
+    try harness.initGitRepo(gpa, io, tmp.dir);
+    gpa.free(try git(gpa, io, tmp.dir, &.{ "git", "config", "user.name", "e2e" }));
+    gpa.free(try git(gpa, io, tmp.dir, &.{ "git", "config", "user.email", "e2e@example.invalid" }));
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "alpha.md", .data = "alpha\n" });
+    gpa.free(try git(gpa, io, tmp.dir, &.{ "git", "add", "alpha.md" }));
+    const before = try git(gpa, io, tmp.dir, &.{ "git", "log", "--oneline" });
+    defer gpa.free(before);
+
+    var result = try harness.run(gpa, io, tmp.dir, &.{ "commit", "--yes" });
+    defer result.deinit(gpa);
+
+    // The verb fails loudly instead of writing the fallback plan.
+    if (result.ok()) std.debug.print("degraded plan was auto-applied.\nstdout: {s}\n", .{result.stdout});
+    try std.testing.expect(!result.ok());
+    try std.testing.expect(std.mem.find(u8, result.stdout, "degraded") != null);
+
+    // And nothing was committed: the log is unchanged and the file is still
+    // staged for whoever retries.
+    const after = try git(gpa, io, tmp.dir, &.{ "git", "log", "--oneline" });
+    defer gpa.free(after);
+    try std.testing.expectEqual(countLines(before), countLines(after));
+    const staged = try git(gpa, io, tmp.dir, &.{ "git", "diff", "--staged", "--name-only" });
+    defer gpa.free(staged);
+    try std.testing.expect(std.mem.find(u8, staged, "alpha.md") != null);
+}

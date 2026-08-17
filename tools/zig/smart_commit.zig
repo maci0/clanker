@@ -53,6 +53,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const given = planFromInput(obj) catch
         return lib.fail(out, "commits must be a list of {message, files: [path, ...]}");
     var note: []const u8 = "";
+    var degraded = false;
     var ordered: []logic.Group = undefined;
     if (given) |g| {
         if (unstagedPlanFile(g, files.items)) |path| {
@@ -69,6 +70,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         const plan = try groupViaLlm(files.items, diff, max_commits);
         const groups = plan.groups;
         note = plan.note;
+        degraded = plan.degraded;
         ordered = groups;
         if (orderGroups(groups)) |ord| {
             var rearranged = try lib.alloc.alloc(logic.Group, groups.len);
@@ -130,6 +132,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (note.len > 0) {
         try s.objectField("note");
         try s.write(note);
+    }
+    if (degraded) {
+        // The plan below is a fallback, not the model's grouping. A caller
+        // writing without a human in the loop must not treat it as approved.
+        try s.objectField("degraded");
+        try s.write(true);
     }
     if (excluded.items.len > 0) {
         try s.objectField("excluded");
@@ -342,7 +350,7 @@ fn prepend(a: []const u8, b: []const u8, rest: []const []const u8) ![]const []co
     return out;
 }
 
-const GroupPlan = struct { groups: []logic.Group, note: []const u8 };
+const GroupPlan = struct { groups: []logic.Group, note: []const u8, degraded: bool = false };
 
 fn groupViaLlm(files: []const []const u8, diff: []const u8, max_commits: usize) !GroupPlan {
     const prompt = try std.fmt.allocPrint(lib.alloc,
@@ -359,10 +367,12 @@ fn groupViaLlm(files: []const []const u8, diff: []const u8, max_commits: usize) 
     const reply = lib.llm(prompt) catch return .{
         .groups = try oneGroup(files, "chore: update working tree"),
         .note = "llm call failed; fell back to one generic commit",
+        .degraded = true,
     };
     const groups = parseGroups(reply, files, max_commits) catch return .{
         .groups = try oneGroup(files, "chore: update working tree"),
         .note = "llm reply held no usable grouping (possibly truncated by the max_tokens grant); fell back to one generic commit",
+        .degraded = true,
     };
     return .{ .groups = groups, .note = "" };
 }

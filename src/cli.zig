@@ -6176,6 +6176,16 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
     if (dry) return;
     // Nothing to write, and nothing to confirm: the preview already said so.
     if (preview.commits.len == 0) return;
+    // --yes approved a model-grouped plan, not the guest's fallback: when the
+    // grouping call failed or its reply was unusable (a reasoning model
+    // spending the whole max_tokens grant truncates the plan JSON), the plan
+    // above is one generic commit, and auto-applying it is how a confirmed
+    // multi-commit plan once landed as `chore: update working tree`. A human
+    // confirming interactively still may, eyes open — the note is on screen.
+    if (preview.degraded and opts.apply) {
+        try writeStdOut(io, "refusing --yes: the grouping degraded to a fallback plan (see the note above); rerun clanker commit, or confirm interactively without --yes\n");
+        return error.DegradedCommitPlan;
+    }
     if (!opts.apply) {
         try writeStdOut(io, "Proceed? [y/N] ");
         var buf: [8]u8 = undefined;
@@ -6201,6 +6211,9 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
 const CommitPlan = struct {
     text: []const u8,
     commits: []const commit_logic.Commit,
+    /// The guest's own admission that `commits` is a fallback (grouping call
+    /// failed or answered unusably), not the model's grouping.
+    degraded: bool,
 };
 
 /// One `smart_commit` call, rendered for a terminal.
@@ -6279,6 +6292,7 @@ fn smartCommitPlan(
             .message = json_util.strFieldOrEmpty(parsed.object, "message"),
         }),
         .commits = commits.items,
+        .degraded = if (parsed.object.get("degraded")) |d| (d == .bool and d.bool) else false,
     };
 }
 

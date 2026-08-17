@@ -238,6 +238,12 @@ so the grouping model is called once and what lands is what was shown. It used
 to group again for the write, and a truncated second reply turned a confirmed
 plan into one `chore: update working tree` commit
 ([bug](docs/reports/bugs/2026-08-17-commit-applies-an-unconfirmed-plan.md)).
+When the grouping call itself fails or truncates (a reasoning model can spend
+the whole grant on its trace), the guest's fallback plan is marked `degraded`
+and `--yes` refuses to write it — nonzero exit, diff still staged — because
+"yes" approved a model-grouped plan, not the fallback; confirm interactively
+to accept it eyes-open
+([bug](docs/reports/bugs/2026-08-17-commit-yes-applies-a-degraded-fallback-plan.md)).
 In the default `staged` scope each group's commit is built in the
 index, so an index narrowed to one session's hunks (the concurrent-sessions
 runbook's route) commits exactly as staged and other sessions' unstaged edits

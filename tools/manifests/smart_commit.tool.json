@@ -5,7 +5,7 @@
   "wasm": "zig-out/tools/smart_commit.wasm",
   "llm": true,
   "config": {
-    "max_tokens": 8192
+    "max_tokens": 16384
   },
   "input_schema": {
     "type": "object",

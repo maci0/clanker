@@ -598,6 +598,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker commit --yes` no longer auto-applies the guest's fallback plan.
+  When the grouping call fails or its reply is unusable (a reasoning model
+  can spend the whole `max_tokens` grant on its trace and truncate the plan
+  JSON), smart_commit falls back to one generic `chore: update working
+  tree` commit; that fallback is now marked `degraded` in the reply, and
+  `--yes` refuses it with a nonzero exit and the diff still staged instead
+  of writing a commit nobody approved. Interactive confirmation can still
+  accept it, with the note on screen. The smart_commit grant also rises
+  8192 → 16384 so the ceiling is harder to hit in the first place.
 - A compare-and-swap lock is now named for the target *file* rather than
   for the text that named it, so two writers to one file cannot each take
   a lock of their own. `ck_fs_write_if` hashed the joined path string, and
