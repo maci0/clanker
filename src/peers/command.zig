@@ -125,6 +125,45 @@ fn writeOk(io: std.Io, raw: []const u8, comptime fmt: []const u8, args: anytype)
     try writeStdOut(io, line);
 }
 
+/// Wall-clock ceiling for one mesh control call.
+///
+/// `std.http.Client` has no read timeout of its own (`ConnectTcpOptions.timeout`
+/// is declared and never referenced -- see `llm/client.zig`'s `Abort`), so a
+/// local `clanker serve` that accepts the connection and then goes quiet
+/// blocks this command forever, with nothing printed and no error to report.
+/// Every call here is loopback to a process on the same host, so 15s is far
+/// past a healthy answer and well short of "never".
+const call_timeout_ms: i64 = 15_000;
+
+/// The fetch half of `call`, as a concurrent task so the caller can put a
+/// deadline on it. Every exit sets `done`, cancelation included, or the waiter
+/// is never woken. `body` outlives the task: `call` only returns after the
+/// future is awaited or cancelled (which joins).
+fn fetchTask(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    url: []const u8,
+    method: std.http.Method,
+    payload: []const u8,
+    body: *std.Io.Writer.Allocating,
+    done: *std.Io.Event,
+) anyerror!u16 {
+    defer done.set(io);
+    var http: std.http.Client = .{ .allocator = gpa, .io = io };
+    defer http.deinit();
+    const res = try http.fetch(.{
+        .location = .{ .url = url },
+        .method = method,
+        .payload = if (method == .POST) payload else null,
+        .headers = .{
+            .user_agent = .{ .override = "clanker/" ++ version },
+            .content_type = .{ .override = "application/json" },
+        },
+        .response_writer = &body.writer,
+    });
+    return @intFromEnum(res.status);
+}
+
 fn call(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -135,25 +174,58 @@ fn call(
     path: []const u8,
     payload: []const u8,
 ) ![]const u8 {
+    return callWithTimeout(io, gpa, arena, host, port, method, path, payload, call_timeout_ms);
+}
+
+fn callWithTimeout(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    host: []const u8,
+    port: u16,
+    method: std.http.Method,
+    path: []const u8,
+    payload: []const u8,
+    timeout_ms: i64,
+) ![]const u8 {
     const url = try controlUrl(arena, host, port, path);
-    var http: std.http.Client = .{ .allocator = gpa, .io = io };
-    defer http.deinit();
     var body: std.Io.Writer.Allocating = .init(gpa);
     defer body.deinit();
-    const res = http.fetch(.{
-        .location = .{ .url = url },
-        .method = method,
-        .payload = if (method == .POST) payload else null,
-        .headers = .{
-            .user_agent = .{ .override = "clanker/" ++ version },
-            .content_type = .{ .override = "application/json" },
-        },
-        .response_writer = &body.writer,
-    }) catch |err| {
+
+    var done: std.Io.Event = .unset;
+    var fut = io.concurrent(fetchTask, .{ io, gpa, url, method, payload, &body, &done }) catch {
+        // Waiting without a ceiling is the thing being avoided, so a missing
+        // worker is a refusal rather than a fall back to an unbounded call.
+        log.log(.error_, "mesh: no spare worker to run the request under a timeout", .{});
+        return Error.RequestFailed;
+    };
+    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
+    });
+    while (!done.isSet()) {
+        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
+            // Spurious wakeups report Timeout too, so the deadline decides
+            // whether the budget is really spent, not this return.
+            error.Timeout => {
+                if (done.isSet()) break;
+                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
+                // cancel() interrupts the blocking syscall and joins the task,
+                // so nothing is left writing into `body` after this returns.
+                if (fut.cancel(io)) |_| {} else |_| {}
+                log.log(.error_, "clanker serve at {s} accepted the connection and did not answer within {d}ms", .{ url, timeout_ms });
+                return Error.ServeNotRunning;
+            },
+            error.Canceled => {
+                if (fut.cancel(io)) |_| {} else |_| {}
+                return Error.RequestFailed;
+            },
+        };
+    }
+    const status_n = fut.await(io) catch |err| {
         log.log(.error_, "clanker serve is not reachable at {s} ({s}); start `clanker serve` with modules.mesh = true", .{ url, @errorName(err) });
         return Error.ServeNotRunning;
     };
-    const status_n = @intFromEnum(res.status);
     const text = try arena.dupe(u8, body.written());
     if (status_n == 404) {
         log.log(.error_, "modules.mesh is off; set it and restart `clanker serve`", .{});
@@ -253,6 +325,34 @@ test "controlUrl brackets v6 and leaves v4 bare" {
     const url6 = try controlUrl(std.testing.allocator, "::", 17922, "/api/mesh/join");
     defer std.testing.allocator.free(url6);
     try std.testing.expectEqualStrings("http://[::1]:17922/api/mesh/join", url6);
+}
+
+test "a serve that accepts and never answers ends on the budget, not never" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+
+    // The failure this exists to prevent: a local `clanker serve` that
+    // completes the TCP handshake and then sends nothing. The kernel backlog
+    // accepts for us, so `fetch` gets a live connection and blocks in a read.
+    // Never accepting is deliberate: an accept loop would only add a thread
+    // that has to be joined.
+    var addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var server = try std.Io.net.IpAddress.listen(&addr, io, .{});
+    defer server.deinit(io);
+    const port = server.socket.address.getPort();
+
+    const started = std.Io.Timestamp.now(io, .awake);
+    const outcome = callWithTimeout(io, allocator, arena_state.allocator(), "127.0.0.1", port, .GET, "/api/mesh/status", "", 300);
+    const elapsed_ms = @divTrunc(started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms);
+
+    try std.testing.expectError(Error.ServeNotRunning, outcome);
+    // On the budget rather than on the OS connect timeout (~75s) an unbounded
+    // call used to wait out, or never at all.
+    try std.testing.expect(elapsed_ms < 30_000);
 }
 
 test "renderStatus lists members and the listen line" {

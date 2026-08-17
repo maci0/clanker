@@ -58,6 +58,7 @@ const agent_loop = @import("../agent/loop.zig");
 const workflows_mod = @import("../agent/workflows.zig");
 const Agent = agent_loop.Agent;
 const log = @import("../util/log.zig");
+const utf8 = @import("../util/utf8.zig");
 const syntax = @import("syntax.zig");
 const theme_mod = @import("theme.zig");
 const width_mod = @import("width.zig");
@@ -3574,37 +3575,65 @@ const Model = struct {
     /// ordinary chat never does. The Ready card is persisted before the loop
     /// starts so the board mirror has a source; the kanban Ready card is
     /// created here too so the board shows it even without the web mirror.
+    /// Calls `goal_add` and returns the id of the record it wrote.
+    ///
+    /// Every step is an error rather than a null: this write is what makes
+    /// `/goal` a goal rather than an ordinary run, so the caller has to be
+    /// able to tell the operator which part of it did not happen. It used to
+    /// be a stack of `catch null` and `if (...) |x|` that ended in nothing.
+    fn persistGoal(self: *Model, intent: []const u8) ![]const u8 {
+        const input = try std.fmt.allocPrint(self.arena, "{{\"objective\":{f}}}", .{std.json.fmt(intent, .{})});
+        const mod = try runtime.loadNamedTool(self.gpa, self.io, self.arena, self.ctx.environ_map, &self.cfg, &self.reg, "goal_add", null);
+        defer mod.deinit();
+        const raw = try mod.executeTool(input);
+        defer self.gpa.free(raw);
+
+        const val = std.json.parseFromSliceLeaky(std.json.Value, self.arena, raw, .{ .ignore_unknown_fields = true }) catch
+            return error.GoalAddReplyNotJson;
+        if (val != .object) return error.GoalAddReplyNotJson;
+        const ok = val.object.get("ok") orelse return error.GoalAddRefused;
+        if (ok != .bool or !ok.bool) return error.GoalAddRefused;
+        const goal = val.object.get("goal") orelse return error.GoalAddReplyNotJson;
+        if (goal != .object) return error.GoalAddReplyNotJson;
+        const id = goal.object.get("id") orelse return error.GoalAddReplyNotJson;
+        if (id != .string or id.string.len == 0) return error.GoalAddReplyNotJson;
+        return id.string;
+    }
+
+    /// The Ready card mirroring a goal already written by `persistGoal`. The
+    /// goal record survives without it, so a failure here is a warning and not
+    /// a refusal — but the board is where the operator looks for the goal, so
+    /// it is not a silent one either.
+    fn createGoalCard(self: *Model, intent: []const u8, goal_id: []const u8) void {
+        const title = utf8.cap(intent, 512);
+        const input = std.fmt.allocPrint(
+            self.arena,
+            "{{\"op\":\"create\",\"title\":{f},\"column\":\"ready\",\"goal\":{f}}}",
+            .{ std.json.fmt(title, .{}), std.json.fmt(goal_id, .{}) },
+        ) catch |err| return self.noteGoalFailure("board card not created", err);
+        const mod = runtime.loadNamedTool(self.gpa, self.io, self.arena, self.ctx.environ_map, &self.cfg, &self.reg, "kanban", null) catch |err|
+            return self.noteGoalFailure("board card not created", err);
+        defer mod.deinit();
+        const raw = mod.executeTool(input) catch |err| return self.noteGoalFailure("board card not created", err);
+        self.gpa.free(raw);
+    }
+
+    /// The REPL owns the screen and raises the log threshold to `.error_`
+    /// before the alt screen exists, so anything the operator has to see about
+    /// a failed write goes in the transcript rather than to stderr.
+    fn noteGoalFailure(self: *Model, what: []const u8, err: anyerror) void {
+        const line = std.fmt.allocPrint(self.arena, "warning: {s} ({s})", .{ what, @errorName(err) }) catch what;
+        self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+    }
+
     fn runGoalTask(self: *Model, ctx: *vxfw.EventContext, intent: []const u8) bool {
-        {
-            const input = std.fmt.allocPrint(self.arena, "{{\"objective\":{f}}}", .{std.json.fmt(intent, .{})}) catch null;
-            if (input) |inp| {
-                const mod = runtime.loadNamedTool(self.gpa, self.io, self.arena, self.ctx.environ_map, &self.cfg, &self.reg, "goal_add", null) catch null;
-                if (mod) |m| {
-                    defer m.deinit();
-                    if (m.executeTool(inp) catch null) |raw| {
-                        defer self.gpa.free(raw);
-                        const parsed = std.json.parseFromSliceLeaky(std.json.Value, self.arena, raw, .{ .ignore_unknown_fields = true }) catch null;
-                        if (parsed) |val| if (val == .object) {
-                            if (val.object.get("ok")) |ok| if (ok == .bool and ok.bool) {
-                                if (val.object.get("goal")) |g| if (g == .object) {
-                                    if (g.object.get("id")) |id| if (id == .string) {
-                                        const title = if (intent.len > 512) intent[0..512] else intent;
-                                        const bi = std.fmt.allocPrint(self.arena, "{{\"op\":\"create\",\"title\":{f},\"column\":\"ready\",\"goal\":{f}}}", .{ std.json.fmt(title, .{}), std.json.fmt(id.string, .{}) }) catch null;
-                                        if (bi) |bin| {
-                                            const bmod = runtime.loadNamedTool(self.gpa, self.io, self.arena, self.ctx.environ_map, &self.cfg, &self.reg, "kanban", null) catch null;
-                                            if (bmod) |bm| {
-                                                defer bm.deinit();
-                                                const braw = bm.executeTool(bin) catch null;
-                                                if (braw) |br| self.gpa.free(br);
-                                            }
-                                        }
-                                    };
-                                };
-                            };
-                        };
-                    }
-                }
-            }
+        if (self.persistGoal(intent)) |gid| {
+            self.createGoalCard(intent, gid);
+        } else |err| {
+            // The loop still starts -- the operator asked for the work, not
+            // for the bookkeeping -- but saying nothing left them watching a
+            // goal run with no goal on the board and no way to know why.
+            self.noteGoalFailure("goal not saved", err);
         }
         const task = goal_prompt.task(self.arena, intent) catch return true;
         self.submitTaskWithGoal(ctx, task, intent) catch |err| {
@@ -3770,12 +3799,17 @@ const Model = struct {
         // persisting (at most the injected system prompt).
         if (!has_turn) return;
 
+        // `.error_` and not `.warn` on every failure below: this runs from the
+        // exit path, past `log.setLevel(.error_)`, so a `.warn` is dropped and
+        // the operator is told nothing at all while the whole conversation is
+        // lost. That is the same bug the comment above that `setLevel` call
+        // records for the mint failure.
         const id = self.session_id orelse (mintSessionId(self.io, self.arena) catch {
-            log.log(.warn, "repl: could not mint a session id; conversation not saved", .{});
+            log.log(.error_, "repl: could not mint a session id; conversation not saved", .{});
             return;
         });
         if (!session_mod.validSessionId(id)) {
-            log.log(.warn, "repl: refusing to save under invalid session id '{s}'", .{id});
+            log.log(.error_, "repl: refusing to save under invalid session id '{s}'", .{id});
             return;
         }
 
@@ -3786,7 +3820,14 @@ const Model = struct {
         var transcript: std.ArrayList(types.Message) = .empty;
         for (self.messages.items) |m| {
             if (m.role == .system) continue;
-            transcript.append(self.arena, m) catch {};
+            // Swallowing this wrote a *shorter* transcript over the session
+            // file and reported nothing: the turns that failed to append were
+            // gone from disk with the file still looking saved. A partial
+            // conversation is worse than the one already on disk.
+            transcript.append(self.arena, m) catch |err| {
+                log.log(.error_, "repl: session '{s}' not saved: transcript incomplete ({s})", .{ id, @errorName(err) });
+                return;
+            };
         }
         const title = if (self.session_title.len > 0) self.session_title else blk: {
             var title_buf: [session_mod.title_max]u8 = undefined;
@@ -3800,7 +3841,7 @@ const Model = struct {
             .created = if (self.session_created != 0) self.session_created else updated,
             .updated = updated,
         }) catch |err| {
-            log.log(.warn, "repl: session '{s}' not saved: {s}", .{ id, @errorName(err) });
+            log.log(.error_, "repl: session '{s}' not saved: {s}", .{ id, @errorName(err) });
             return;
         };
         self.session_id = id;

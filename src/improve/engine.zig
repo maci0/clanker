@@ -3048,7 +3048,14 @@ fn copyTreeInto(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, rel: []con
     };
     defer dir.close(io);
     var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
+    // A failed `next` ends the walk with the tree half-copied, which the
+    // staged build then reports as a missing source file rather than as a
+    // failed copy. Naming it here is the only place that difference is
+    // visible; every other failure in this function already says so.
+    while (it.next(io) catch |err| blk: {
+        log.log(.warn, "stage copy: listing '{s}' failed: {s}; the staged tree is incomplete", .{ rel, @errorName(err) });
+        break :blk null;
+    }) |entry| {
         const sub = std.fmt.allocPrint(gpa, "{s}/{s}", .{ rel, entry.name }) catch continue;
         defer gpa.free(sub);
         switch (entry.kind) {

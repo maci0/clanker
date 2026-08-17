@@ -3463,11 +3463,36 @@ fn goalFromObject(arena: std.mem.Allocator, obj: std.json.ObjectMap) !?GoalConte
     };
 }
 
+/// The goal array from `dir`/`state/goals.json`. Null means *no goal store*:
+/// a missing file, which is what a checkout that has never saved a goal looks
+/// like. A file that is there and cannot be read back is
+/// `error.GoalStoreUnreadable`, never an empty list — collapsing the two made
+/// a corrupt or unreadable store indistinguishable from "you have no goals",
+/// so `--goal <id>` reported the goal missing and an auto-steered run quietly
+/// dropped its steering. The error names which of the two it was.
+fn readGoalsArray(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !?[]const std.json.Value {
+    const goals_raw = dir.readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => {
+            log.log(.error_, "state/goals.json could not be read: {s}", .{@errorName(err)});
+            return error.GoalStoreUnreadable;
+        },
+    };
+    if (std.mem.trim(u8, goals_raw, " \t\r\n").len == 0) return null;
+    const root = std.json.parseFromSliceLeaky(std.json.Value, arena, goals_raw, .{}) catch {
+        log.log(.error_, "state/goals.json is not readable JSON; fix or move it", .{});
+        return error.GoalStoreUnreadable;
+    };
+    if (root != .array) {
+        log.log(.error_, "state/goals.json is not a goal list; fix or move it", .{});
+        return error.GoalStoreUnreadable;
+    }
+    return root.array.items;
+}
+
 fn loadGoalById(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, goal_id: []const u8) !?GoalContext {
-    const goals_raw = dir.readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch return null;
-    const root = std.json.parseFromSliceLeaky(std.json.Value, arena, goals_raw, .{}) catch return null;
-    if (root != .array) return null;
-    for (root.array.items) |item| {
+    const goals = try readGoalsArray(arena, io, dir) orelse return null;
+    for (goals) |item| {
         if (item != .object) continue;
         const obj = item.object;
         const idv = obj.get("id") orelse continue;
@@ -3481,13 +3506,11 @@ fn loadGoalById(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, goal_id: 
 /// then array order. This is what "the goal most recently set is steering
 /// runs" means in the web UI copy.
 fn findNewestActiveGoalIn(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !?GoalContext {
-    const goals_raw = dir.readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch return null;
-    const root = std.json.parseFromSliceLeaky(std.json.Value, arena, goals_raw, .{}) catch return null;
-    if (root != .array) return null;
+    const goals = try readGoalsArray(arena, io, dir) orelse return null;
     var best: ?GoalContext = null;
     var best_updated: i64 = std.math.minInt(i64);
     var best_index: usize = 0;
-    for (root.array.items, 0..) |item, i| {
+    for (goals, 0..) |item, i| {
         if (item != .object) continue;
         const obj = item.object;
         const status = json_util.strFieldOrEmpty(obj, "status");
@@ -3558,7 +3581,17 @@ fn resolveRunTask(
         return error.GoalNotFound;
     }
     if (!auto) return .{ .task = task, .goal_id = null };
-    if (try findNewestActiveGoalIn(arena, io, dir)) |g| {
+    // Auto-steering is opportunistic, so an unreadable store degrades the run
+    // to unsteered rather than refusing it — but it says so. `readGoalsArray`
+    // has already named the failure; this names what it cost.
+    const newest = findNewestActiveGoalIn(arena, io, dir) catch |err| switch (err) {
+        error.GoalStoreUnreadable => {
+            log.log(.warn, "running without goal steering: state/goals.json could not be read", .{});
+            return .{ .task = task, .goal_id = null };
+        },
+        else => return err,
+    };
+    if (newest) |g| {
         log.log(.info, "steering run with active goal {s}", .{g.id});
         return .{ .task = try taskWithGoal(arena, task, g), .goal_id = g.id };
     }
@@ -14048,7 +14081,16 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     const goal_condition = if (raw_goal_condition) |condition|
         condition
     else if (explicit_goal_id) |id| blk: {
-        const saved = (loadGoalById(arena, io, std.Io.Dir.cwd(), id) catch null) orelse {
+        // 404 only when the store was readable and the id is genuinely absent.
+        // An unreadable store is the server's problem, not the caller's, and
+        // answering "goal not found" sent the operator looking for a goal they
+        // had actually saved.
+        const found = loadGoalById(arena, io, std.Io.Dir.cwd(), id) catch |err| {
+            log.log(.error_, "goal '{s}' could not be loaded: {s}", .{ id, @errorName(err) });
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"state/goals.json could not be read\"}");
+            return;
+        };
+        const saved = found orelse {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"goal not found\"}");
             return;
         };
@@ -16298,6 +16340,40 @@ test "resolveRunTask attaches explicit and newest-active goals from real goals.j
     const none = try resolveRunTask(arena, io, tmp.dir, "plain", null, true);
     try std.testing.expectEqualStrings("plain", none.task);
     try std.testing.expect(none.goal_id == null);
+}
+
+test "an unreadable goals.json is not an empty goal list" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state");
+
+    // No store at all: nothing to steer with, and that is not a failure.
+    try std.testing.expectEqual(@as(?[]const std.json.Value, null), try readGoalsArray(arena, io, tmp.dir));
+
+    // A store that is there and will not parse. Answering "no goals" here made
+    // a saved goal look deleted: `--goal <id>` said not found, and an
+    // auto-steered run dropped its steering without a word.
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "[{\"id\":\"g1\",}]" });
+    try std.testing.expectError(error.GoalStoreUnreadable, readGoalsArray(arena, io, tmp.dir));
+    try std.testing.expectError(error.GoalStoreUnreadable, loadGoalById(arena, io, tmp.dir, "g1"));
+    try std.testing.expectError(error.GoalStoreUnreadable, resolveRunTask(arena, io, tmp.dir, "plain", "g1", false));
+
+    // Auto-steering is opportunistic, so it degrades to an unsteered run
+    // rather than refusing it -- but the goal id must not be invented.
+    const degraded = try resolveRunTask(arena, io, tmp.dir, "plain", null, true);
+    try std.testing.expectEqualStrings("plain", degraded.task);
+    try std.testing.expect(degraded.goal_id == null);
+
+    // A JSON document that is not a goal list is the same hazard.
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "{\"goals\":[]}" });
+    try std.testing.expectError(error.GoalStoreUnreadable, readGoalsArray(arena, io, tmp.dir));
 }
 
 test "runIterationBudget precedence: body override, then goal default, then global" {
