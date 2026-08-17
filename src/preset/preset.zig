@@ -75,6 +75,29 @@ pub fn allowed(preset: Preset, tool_name: []const u8) bool {
     return false;
 }
 
+/// Filter a slice of tool names through the preset's allow/deny rules. Pure, host-testable,
+/// and registry-agnostic: the CLI/agent can feed it tool-definition names without depending on
+/// the WASM registry shape. Empty allow means "everything except deny", matching preset.toml.
+pub fn filterNames(alloc: std.mem.Allocator, preset: Preset, names: []const []const u8) ![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    for (names) |n| if (allowed(preset, n)) try out.append(alloc, n);
+    return out.toOwnedSlice(alloc);
+}
+
+pub fn loadFromFile(io: std.Io, alloc: std.mem.Allocator, dir: std.Io.Dir, preset_name: []const u8) !Preset {
+    if (preset_name.len == 0) return error.PresetNameEmpty;
+    if (std.mem.findScalar(u8, preset_name, '/') != null or std.mem.findScalar(u8, preset_name, '\\') != null or std.mem.find(u8, preset_name, "..") != null)
+        return error.PresetNameInvalid;
+    const path = try std.fmt.allocPrint(alloc, "{s}.toml", .{preset_name});
+    defer alloc.free(path);
+    const text = std.Io.Dir.readFileAlloc(dir, io, path, alloc, .limited(64 * 1024)) catch |err| switch (err) {
+        error.FileNotFound => return error.PresetNotFound,
+        else => return err,
+    };
+    defer alloc.free(text);
+    return parseString(alloc, text);
+}
+
 test "preset parse + filter" {
     const alloc = std.testing.allocator;
     const txt =
@@ -100,4 +123,27 @@ test "preset allowlist" {
     try std.testing.expect(allowed(p, "read_file"));
     try std.testing.expect(allowed(p, "web_search"));
     try std.testing.expect(!allowed(p, "edit_file"));
+}
+
+test "preset filterNames respects deny then allow" {
+    const alloc = std.testing.allocator;
+    const p = Preset{ .tools_allow = &.{}, .tools_deny = &.{ "kanban_*", "edit_file" } };
+    const names = &[_][]const u8{ "read_file", "edit_file", "kanban_add", "web_search" };
+    const out = try filterNames(alloc, p, names);
+    defer alloc.free(out);
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expectEqualStrings("read_file", out[0]);
+    try std.testing.expectEqualStrings("web_search", out[1]);
+}
+
+test "preset loadFromFile validates name and missing preset" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try std.testing.expectError(error.PresetNameInvalid, loadFromFile(io, std.testing.allocator, tmp.dir, "../evil"));
+    try std.testing.expectError(error.PresetNotFound, loadFromFile(io, std.testing.allocator, tmp.dir, "nope"));
+    try tmp.dir.writeFile(io, .{ .sub_path = "ok.toml", .data = "description = \"hi\"\n" });
+    const p = try loadFromFile(io, std.testing.allocator, tmp.dir, "ok");
+    defer std.testing.allocator.free(p.description);
+    try std.testing.expectEqualStrings("hi", p.description);
 }
