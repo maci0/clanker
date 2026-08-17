@@ -659,6 +659,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   between. The window lives in one place, `cas_lock_record.keep_ms`, read
   by this pass and by the `janitor` guest. Lock files written under the old
   name are orphans from this release and age out through the same sweep.
+- A lock file carrying no record at all is swept too, on its mtime, once it
+  has gone untouched for longer than the sweep interval. Retention reads the
+  timestamp out of the holder record and treats one it cannot parse as
+  unknown rather than old — right for a garbage record, which must not date
+  to 1970 and take live locks with it, but it left a file with *no* record
+  invisible to every sweeper and accumulating without limit. Zero length is
+  the discriminator and is deliberately narrower than "unparseable": a live
+  acquisition is zero-byte only between creating its lock file and writing
+  the record, and it holds the lock across both, so the `lock_nonblocking`
+  probe already refuses that case.
 - A goal loop no longer dies on a single failed turn. A turn that errors
   (for example a completion whose whole token grant is spent on
   reasoning, `AnswerTruncatedToEmpty`) used to terminate the loop and
