@@ -229,6 +229,12 @@ narrowed to one session's hunks (the concurrent-sessions runbook's route) gets
 widened with other sessions' unstaged edits — commit a narrowed index with
 `clanker git commit` directly instead
 ([bug](docs/reports/bugs/2026-08-17-smart-commit-readds-worktree-files.md)).
+Each group is committed with a pathspec, so anything else staged stays staged;
+a bare `git commit` there used to sweep the whole index into the first group
+and leave the later ones nothing to commit, reported as written anyway
+([bug](docs/reports/bugs/2026-08-17-smart-commit-sweeps-the-whole-index.md)).
+`clanker git commit -m "…" -- <paths>` is the same trick by hand, and the way
+to land one session's files while another's stay staged.
 
 ### Cleaning up after runs
 
