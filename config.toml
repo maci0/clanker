@@ -600,3 +600,5 @@ python_wasi_max_memory_bytes = 268435456
 
 [improve]
 max_context_requests = 5
+capability_gate = true
+inert_gate = true
