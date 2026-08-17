@@ -3004,9 +3004,22 @@ const Model = struct {
     }
 
     /// Starts a continuing goal loop through the agent, exactly like
-    /// `clanker goal "<prompt>"`. It streams and remains cancellable as one
-    /// worker while completed turns are evaluated and continued.
+    /// `clanker goal "<prompt>"`. Only this path creates a board goal —
+    /// ordinary chat never does. The Ready card is persisted before the loop
+    /// starts so the board mirror has a source.
     fn runGoalTask(self: *Model, ctx: *vxfw.EventContext, intent: []const u8) bool {
+        {
+            const input = std.fmt.allocPrint(self.arena, "{{\"objective\":{f}}}", .{std.json.fmt(intent, .{})}) catch null;
+            if (input) |inp| {
+                const mod = runtime.loadNamedTool(self.gpa, self.io, self.arena, self.ctx.environ_map, &self.cfg, &self.reg, "goal_add", null) catch null;
+                if (mod) |m| {
+                    defer m.deinit();
+                    if (m.executeTool(inp) catch null) |raw| {
+                        defer self.gpa.free(raw);
+                    }
+                }
+            }
+        }
         const task = goal_prompt.task(self.arena, intent) catch return true;
         self.submitTaskWithGoal(ctx, task, intent) catch |err| {
             self.lines.append(self.arena, .{

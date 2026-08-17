@@ -1,7 +1,7 @@
 {
   "name": "goal_add",
-  "description": "Persist a structured goal without running it (write). The goal's board card is created separately by the web UI's board mirror (kanban_add); this tool only appends the durable goal record. Never executes the goal.",
-  "llm_description": "Persist a structured goal without running it. Required: \"objective\". Optional: \"completion_criterion\" (drafted by the goal loop when omitted), \"proof\", \"boundaries\", \"stop_rule\", \"max_iterations\" (integer 1..1000), \"worktree\" (branch/path). Returns its id. The board card is the goal's visible surface and is created/updated via the kanban_* tools.",
+  "description": "Persist a structured goal without running it (write). The goal's board card is created separately by the web UI's board mirror (kanban_add) in the Ready column; this tool only appends the durable goal record. Never executes the goal. Only call when the user explicitly used /goal, asked to save a goal, or asked to create a persisted goal — never for ordinary chat messages.",
+  "llm_description": "Persist a structured goal without running it — only when the user explicitly requested a goal via /goal, add-goal, or a direct request to save a goal. Never call for ordinary chat messages, questions, or status updates. Required: \"objective\". Optional: \"completion_criterion\" (drafted by the goal loop when omitted), \"proof\", \"boundaries\", \"stop_rule\", \"max_iterations\" (integer 1..1000), \"worktree\" (branch/path). Returns its id. The board card is placed in the Ready column via the kanban mirror.",
   "wasm": "zig-out/tools/add_goal.wasm",
   "input_schema": {
     "type": "object",

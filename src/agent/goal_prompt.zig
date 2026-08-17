@@ -19,7 +19,7 @@ pub const template =
     "This is the first turn of a continuing goal loop. Work toward the requested outcome and verify what you can; " ++
     "after this turn an evaluator will decide whether more turns are needed. " ++
     "Do not stop to require a goal_write draft or a goal_add record: those are optional, separate capabilities. " ++
-    "Use goal_write only when the user asks to draft or refine a structured goal, and use goal_add only when the user asks to persist one without running it.\n" ++
+    "Use goal_write only when the user explicitly asks to draft or refine a structured goal (via /write-goal or a direct request to draft), and use goal_add only when the user explicitly asks to persist one without running it (via /goal, add-goal, or a direct request to save a goal). Never turn an ordinary chat message, question, or status update into a goal — only an explicit /goal intent is a goal.\n" ++
     "\n" ++
     "Acceptance criteria: if the goal above does not already state a measurable completion criterion, draft one before working — something a script can check, such as time elapsed, a score reached, an eval passing, a file present, or a command exiting zero. Then write a test script at `scripts/verify-goal.sh` that checks that criterion and exits 0 only when it is met. If the goal already states a measurable criterion, use it verbatim and still write the same script. State the criterion plainly in your first message so the evaluator can judge it.";
 

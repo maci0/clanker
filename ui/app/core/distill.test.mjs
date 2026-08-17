@@ -57,7 +57,7 @@ test("sidebar title filter matches words the compact label drops", async functio
 
 test("Board filters sit behind a disclosure and Only mine is singular", function () {
   assert.match(html, /class="board-filter-fold"/);
-  assert.match(html, /Saves a Backlog card/);
+  assert.match(html, /Saves a Ready card/);
   const mines = html.match(/id="board-mine"/g) || [];
   assert.equal(mines.length, 1);
   assert.doesNotMatch(html, /id="board-filter-mine"/);

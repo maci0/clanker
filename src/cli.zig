@@ -5707,6 +5707,27 @@ fn cmdGoal(init: std.process.Init, opts: Options) !void {
         return error.ModuleDisabled;
     }
     const intent = opts.task orelse return error.MissingTask;
+    // Only /goal (and `clanker goal`) creates a board goal. Ordinary chat
+    // never creates one. Persist first so the board mirror has a Ready-card
+    // source; the loop itself streams as the goal run.
+    {
+        const input = std.fmt.allocPrint(arena, "{{\"objective\":{f}}}", .{std.json.fmt(intent, .{})}) catch null;
+        if (input) |inp| {
+            if (toolJson(io, init.gpa, arena, &cfg, init.environ_map, "goal_add", inp) catch null) |raw| {
+                if (std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch null) |parsed| {
+                    if (parsed == .object) {
+                        if (parsed.object.get("ok")) |ok| if (ok == .bool and ok.bool) {
+                            if (parsed.object.get("goal")) |g| if (g == .object) {
+                                if (g.object.get("id")) |id| if (id == .string) {
+                                    log.log(.info, "created board goal {s} for /goal", .{id.string});
+                                };
+                            };
+                        };
+                    }
+                }
+            } else |_| {}
+        }
+    }
     const task = try goal_prompt.task(arena, intent);
     var goal_opts = opts;
     goal_opts.task = task;
@@ -13861,9 +13882,16 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     }
 
     // The HTTP surface accepts the same raw `/goal <condition>` spelling as
-    // the CLI. The web board normally sends a saved id instead, but preserving
-    // this route keeps every public entry point on the one goal-loop contract.
+    // the CLI. Only /goal creates a board goal; ordinary chat never does.
+    // Persist the Ready goal for a `/goal` run before the loop starts so
+    // the board mirror has a source. The web board normally sends a saved
+    // id instead, but preserving this route keeps every public entry point
+    // on the one goal-loop contract.
     const raw_goal_condition = goalSlashIntent(req.task);
+    if (raw_goal_condition) |cond| {
+        const input = std.fmt.allocPrint(arena, "{{\"objective\":{f}}}", .{std.json.fmt(cond, .{})}) catch null;
+        if (input) |inp| _ = toolJson(io, gpa, arena, cfg, environ_map, "goal_add", inp) catch null;
+    }
     const requested_task = if (raw_goal_condition) |condition|
         goal_prompt.task(arena, condition) catch {
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not prepare goal task\"}");

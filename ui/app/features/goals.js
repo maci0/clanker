@@ -164,7 +164,7 @@ function mirrorGoalsToBoard(goals) {
         op: "create",
         title: title,
         body: g.completion_criterion || "",
-        column: goalPinnedColumn(g, isGoalRunning(g.id)) || "backlog",
+        column: goalPinnedColumn(g, isGoalRunning(g.id)) || "ready",
         goal: g.id,
         completion_criterion: g.completion_criterion || "",
         proof: g.proof || "",
