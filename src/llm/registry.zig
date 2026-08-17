@@ -65,6 +65,28 @@ pub fn forKind(kind: config.ProviderKind) *const Provider {
     return table[@intFromEnum(kind)];
 }
 
+/// Why a configured provider cannot possibly answer, decided from config and
+/// environment alone with nothing sent. This is the offline availability gate
+/// `clanker providers check` applies before it pings, extracted here so the
+/// TUI `/model` picker can apply the same filter without a second copy or a
+/// socket. Null means the provider is configured enough to attempt: a local
+/// keyless endpoint like ollama on 127.0.0.1 counts, and so does a Vertex
+/// entry whose URL is built from project/location at request time.
+pub fn unconfiguredReason(
+    arena: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    p: *const config.Provider,
+) ?[]const u8 {
+    if (p.base_url.len == 0 and !forKind(p.kind).auth.needs_project_location) return "base_url is empty";
+    if (p.base_url.len > 0 and !std.mem.startsWith(u8, p.base_url, "http://") and !std.mem.startsWith(u8, p.base_url, "https://"))
+        return std.fmt.allocPrint(arena, "base_url '{s}' has no http:// or https:// scheme", .{p.base_url}) catch "base_url has no scheme";
+    if (p.api_key_env) |env_name| {
+        if (environ_map.get(env_name) == null)
+            return std.fmt.allocPrint(arena, "{s} not set", .{env_name}) catch "api key env not set";
+    }
+    return null;
+}
+
 // ------------------------------------------------------------------- tests --
 
 test "every configurable kind resolves to its own provider" {
@@ -94,4 +116,32 @@ test "the registry covers exactly the kinds config accepts" {
     }
     try std.testing.expectEqual(std.enums.values(config.ProviderKind).len, registry.len);
     try std.testing.expect(config.ProviderKind.fromStr("no_such_kind") == null);
+}
+
+test "unconfiguredReason gates on URL scheme and api_key_env, keyless local passes" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("SET_KEY", "x");
+
+    var local = config.Provider{ .name = "local", .base_url = "http://127.0.0.1:11434/v1", .default_model = "m" };
+    try std.testing.expectEqual(@as(?[]const u8, null), unconfiguredReason(arena, &env, &local));
+
+    var missing = config.Provider{ .name = "remote", .base_url = "https://x", .default_model = "m" };
+    missing.api_key_env = "UNSET_KEY";
+    try std.testing.expect(unconfiguredReason(arena, &env, &missing) != null);
+
+    var set = missing;
+    set.api_key_env = "SET_KEY";
+    try std.testing.expectEqual(@as(?[]const u8, null), unconfiguredReason(arena, &env, &set));
+
+    var no_scheme = config.Provider{ .name = "bad", .base_url = "api.example.com", .default_model = "m" };
+    try std.testing.expect(unconfiguredReason(arena, &env, &no_scheme) != null);
+
+    // Vertex builds its URL from project/location, so an empty base_url is
+    // the usual config, not a missing setup.
+    var vertex_provider = config.Provider{ .name = "v", .kind = .vertex, .base_url = "", .default_model = "m" };
+    try std.testing.expectEqual(@as(?[]const u8, null), unconfiguredReason(arena, &env, &vertex_provider));
 }

@@ -2732,22 +2732,12 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         // been attempted and abandoned. It is only a problem when it is the
         // default, where it means the provider every unqualified command
         // reaches for cannot answer at all.
-        const unusable: ?[]const u8 = blk: {
-            // vertex_anthropic mints https://<location>-aiplatform.googleapis.com
-            // from project/location at request time, so an empty base_url is
-            // the usual config, not a missing setup. Doctor already treats
-            // a present service-account file as ok; this check used to
-            // disagree and call the default provider "not configured". Which
-            // kinds build the URL from project/location is on the vtable.
-            if (p.base_url.len == 0 and !providers.forKind(p.kind).auth.needs_project_location) break :blk "base_url is empty";
-            if (p.base_url.len > 0 and !std.mem.startsWith(u8, p.base_url, "http://") and !std.mem.startsWith(u8, p.base_url, "https://"))
-                break :blk try std.fmt.allocPrint(arena, "base_url '{s}' has no http:// or https:// scheme", .{p.base_url});
-            if (p.api_key_env) |env_name| {
-                if (init.environ_map.get(env_name) == null)
-                    break :blk try std.fmt.allocPrint(arena, "{s} not set", .{env_name});
-            }
-            break :blk null;
-        };
+        // Decided before any socket work, and shared with the REPL `/model`
+        // picker's offline filter (`providers.unconfiguredReason`): a provider
+        // that cannot possibly answer should not cost the sweep a connection
+        // attempt, and its line should be on screen before the ones that do
+        // take time.
+        const unusable: ?[]const u8 = providers.unconfiguredReason(arena, init.environ_map, &p);
         if (unusable) |reason| {
             if (is_default)
                 std.debug.print("  {s}: not configured ({s}) [default provider]\n", .{ name, reason })

@@ -82,6 +82,8 @@ Project agents receive this workflow through the harness prompt and
 <!-- inventory:bug:start -->
 - [SIGWINCH runs vaxis winsize callbacks in the signal handler, panicking std.Io and recursing through recover()](bugs/2026-08-17-tui-resize-crash-sigwinch-in-signal-handler.md) — Resolved
 
+- [A goal loop stops dead on a single AnswerTruncatedToEmpty instead of retrying the turn](bugs/2026-08-17-goal-loop-dies-on-one-truncated-reply.md) — Open
+
 - [The autolearn synthesis grant is spent entirely on reasoning](bugs/2026-08-17-ck-llm-grant-spent-on-reasoning.md) — Resolved
 
 - [session_search and spill list broke their JSON shape on empty stores, failing improve-self capability evals](bugs/2026-08-17-capability-evals-reject-empty-store-tools.md) — Resolved
@@ -155,6 +157,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [Record search matches one exact substring, so multi-word queries miss existing records](investigations/2026-08-17-missing-clanker-tool-record-search-has-no-multi-word-semantics.md) — Investigating
+
 - [No verb reads or sets a single config key](investigations/2026-08-17-missing-clanker-tool-no-verb-reads-or-sets-a-config-key.md) — Investigating
 
 - [Record stores have no rename or move action](investigations/2026-08-17-missing-clanker-tool-record-stores-cannot-rename-a-record.md) — Resolved

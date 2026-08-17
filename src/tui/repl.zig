@@ -59,6 +59,8 @@ const syntax = @import("syntax.zig");
 const theme_mod = @import("theme.zig");
 const width_mod = @import("width.zig");
 const sanitize = @import("sanitize.zig");
+const preset_mod = @import("../preset/preset.zig");
+const sampling = @import("../llm/sampling_profiles.zig");
 // `_mod` because saveConversation has a local named `transcript`.
 const transcript_mod = @import("transcript.zig");
 const stats_mod = @import("turn_stats.zig");
@@ -532,7 +534,6 @@ fn runThreadMain(args: RunThreadArgs) void {
     if (self.cfg.agent.confirm_writes == .always) a.confirm_fn = &tuiConfirm;
     a.plan_mode = self.plan_mode;
     if (self.preset_name) |pn| {
-        const preset_mod = @import("../preset/preset.zig");
         var dir = std.Io.Dir.cwd().openDir(self.io, "presets", .{}) catch null;
         if (dir) |*d| {
             defer d.close(self.io);
@@ -808,7 +809,8 @@ fn appendAnswerLines(arena: std.mem.Allocator, out: *std.ArrayList(Line), answer
 /// `Config.providers` so the picker can filter and sort without walking the
 /// nested map on every keystroke.
 /// Which list the shared modal picker is showing.
-const PickerKind = enum { model, theme, command };
+const PickerKind = enum { model, theme, command, effort, preset };
+
 
 const ModelCandidate = struct {
     provider: []const u8,
@@ -827,11 +829,15 @@ const ModelCandidate = struct {
 /// Flattens every configured provider's models into one list, in config
 /// order (providers, then models within a provider), which is what makes the
 /// picker's unfiltered list read as grouped-by-provider without a separate
-/// sort pass.
-fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config) ![]const ModelCandidate {
+/// sort pass. A provider whose credentials cannot possibly be present is
+/// skipped entirely (the same offline `unconfiguredReason` gate `providers
+/// check` applies before it pings), so the picker never offers a model the
+/// operator cannot call on this machine.
+fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map) ![]const ModelCandidate {
     var out: std.ArrayList(ModelCandidate) = .empty;
     var pit = cfg.providers.iterator();
     while (pit.next()) |pentry| {
+        if (providers.unconfiguredReason(arena, environ_map, pentry.value_ptr) != null) continue;
         const provider_start = out.items.len;
         var mit = pentry.value_ptr.models.iterator();
         while (mit.next()) |mentry| {
@@ -902,6 +908,8 @@ test "buildModelCandidates flattens providers in config order, one entry per mod
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
 
     var cfg = config.Config{};
     try cfg.providers.put(arena, "kimi-k3", try config.Provider.single(arena, "kimi-k3", "https://api.moonshot.ai/v1", .openai_compat, "kimi-k3", .{
@@ -914,7 +922,7 @@ test "buildModelCandidates flattens providers in config order, one entry per mod
         .context_window = 65536,
     }));
 
-    const cands = try buildModelCandidates(arena, &cfg);
+    const cands = try buildModelCandidates(arena, &cfg, &env);
     try std.testing.expectEqual(@as(usize, 2), cands.len);
     try std.testing.expectEqualStrings("kimi-k3", cands[0].provider);
     try std.testing.expectEqualStrings("moonshotai/kimi-k3", cands[0].display); // display overrides the bare model id
@@ -923,6 +931,197 @@ test "buildModelCandidates flattens providers in config order, one entry per mod
     try std.testing.expectEqualStrings("deepseek", cands[1].provider);
     try std.testing.expectEqualStrings("deepseek-chat", cands[1].display); // no display set: falls back to the model id
     try std.testing.expectEqual(@as(?f64, null), cands[1].cost_in);
+}
+
+test "buildModelCandidates excludes providers with no usable credentials" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("SET_KEY", "x");
+
+    var cfg = config.Config{};
+    var keyed = try config.Provider.single(arena, "keyed", "https://api.keyed.test/v1", .openai_compat, "m", .{});
+    keyed.api_key_env = "SET_KEY";
+    try cfg.providers.put(arena, "keyed", keyed);
+    var missing = try config.Provider.single(arena, "missing", "https://api.missing.test/v1", .openai_compat, "m", .{});
+    missing.api_key_env = "UNSET_KEY";
+    try cfg.providers.put(arena, "missing", missing);
+    try cfg.providers.put(arena, "local", try config.Provider.single(arena, "local", "http://127.0.0.1:11434/v1", .openai_compat, "m", .{}));
+
+    const cands = try buildModelCandidates(arena, &cfg, &env);
+    try std.testing.expectEqual(@as(usize, 2), cands.len);
+    try std.testing.expectEqualStrings("keyed", cands[0].provider);
+    try std.testing.expectEqualStrings("local", cands[1].provider);
+}
+
+// ---------------------------------------------------------------------
+// Reasoning-effort picker: the five wire levels plus a `default` choice
+// that clears the session pin. The effective level and its source are
+// resolved with the same precedence `Agent.classifyEffort` plus
+// `writeSamplingParams` apply, so the picker marks what the *next* turn
+// will actually use, not just what `[agent] reasoning_effort` says.
+// ---------------------------------------------------------------------
+
+/// Where the currently effective effort comes from, in descending precedence.
+const EffortSource = enum {
+    /// `[agent] reasoning_effort` (set by `--reasoning-effort` or `/effort`).
+    pin,
+    /// `agent.auto_thinking` runs the per-turn classifier; no single level.
+    classifier,
+    /// The active model's own `reasoning_effort` config.
+    per_model,
+    /// The use-case table in `sampling_profiles.zig` (thinking models only).
+    sampling_profile,
+    /// Nothing names an effort; the provider default wins.
+    none,
+};
+
+const EffortResolution = struct {
+    /// The deterministic level, when one is known before a turn runs. Null
+    /// for the classifier (it decides per turn) and for "nothing set".
+    level: ?config.ReasoningEffort,
+    source: EffortSource,
+};
+
+/// The same precedence `classifyEffort` (pin, then classifier) and
+/// `writeSamplingParams` (per-run, then model, then table) apply. Pure, so
+/// the picker header is unit-testable without a terminal or a turn.
+fn resolveEffort(cfg: *const config.Config, provider: *const config.Provider) EffortResolution {
+    if (cfg.agent.reasoning_effort) |re| return .{ .level = re, .source = .pin };
+    if (cfg.agent.auto_thinking) return .{ .level = null, .source = .classifier };
+    const model = provider.activeModel();
+    if (model.reasoning_effort) |re| return .{ .level = re, .source = .per_model };
+    // The use-case table only names an effort for thinking models, and a
+    // normal turn offers tools, so `.tool_use` is the representative row.
+    const rec = sampling.profile(.tool_use, model.capabilities);
+    if (rec.reasoning_effort) |re| {
+        return .{ .level = config.ReasoningEffort.fromStr(re), .source = .sampling_profile };
+    }
+    return .{ .level = null, .source = .none };
+}
+
+fn effortSourceLabel(source: EffortSource) []const u8 {
+    return switch (source) {
+        .pin => "pinned (agent.reasoning_effort)",
+        .classifier => "auto_thinking classifier",
+        .per_model => "per-model config",
+        .sampling_profile => "sampling profile",
+        .none => "unset (provider default)",
+    };
+}
+
+/// The six rows `/effort` shows: the five wire levels in order, then
+/// `default`, which clears the pin back to null. Descriptions are static
+/// string literals (read-only memory, never draw-stack), so the picker can
+/// borrow them straight into cells.
+const EffortChoice = union(enum) {
+    level: config.ReasoningEffort,
+    default,
+};
+
+const EffortOption = struct {
+    choice: EffortChoice,
+    /// Row text, static: "none", "low", "medium", "high", "max", "default".
+    label: []const u8,
+    /// Preview/detail line for the row. Static.
+    description: []const u8,
+};
+
+const effort_options = [_]EffortOption{
+    .{ .choice = .{ .level = .none }, .label = "none", .description = "no reasoning; fastest, cheapest answer" },
+    .{ .choice = .{ .level = .low }, .label = "low", .description = "a short reasoning pass before answering" },
+    .{ .choice = .{ .level = .medium }, .label = "medium", .description = "balanced reasoning depth" },
+    .{ .choice = .{ .level = .high }, .label = "high", .description = "thorough reasoning for hard problems" },
+    .{ .choice = .{ .level = .max }, .label = "max", .description = "maximum reasoning; slowest, most expensive" },
+    .{ .choice = .default, .label = "default", .description = "clear the pin; back to classifier/model/profile" },
+};
+
+/// Which row `/effort` marks as current: a deterministic level when the
+/// resolution names one, otherwise `default` (nothing is pinned). The pin
+/// itself is cleared by the `default` choice, so an unpinned session always
+/// highlights `default` unless a lower-precedence source still yields a
+/// concrete level.
+fn effortCurrentOption(res: EffortResolution) EffortChoice {
+    if (res.level) |re| return .{ .level = re };
+    return .default;
+}
+
+test "resolveEffort honours the classifyEffort precedence" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var p = try config.Provider.single(arena, "p", "https://p.test", .openai_compat, "m", .{});
+
+    var cfg = config.Config{};
+    try std.testing.expectEqual(EffortSource.none, (resolveEffort(&cfg, &p)).source);
+
+    cfg.agent.reasoning_effort = .high;
+    const pinned = resolveEffort(&cfg, &p);
+    try std.testing.expectEqual(EffortSource.pin, pinned.source);
+    try std.testing.expectEqual(config.ReasoningEffort.high, pinned.level.?);
+
+    cfg.agent.reasoning_effort = null;
+    cfg.agent.auto_thinking = true;
+    try std.testing.expectEqual(EffortSource.classifier, (resolveEffort(&cfg, &p)).source);
+
+    cfg.agent.auto_thinking = false;
+    var it = p.models.iterator();
+    it.next().?.value_ptr.reasoning_effort = .low;
+    const per_model = resolveEffort(&cfg, &p);
+    try std.testing.expectEqual(EffortSource.per_model, per_model.source);
+    try std.testing.expectEqual(config.ReasoningEffort.low, per_model.level.?);
+}
+
+test "effort picker marks the resolved level, or default when unpinned" {
+    const high = EffortResolution{ .level = .high, .source = .pin };
+    try std.testing.expectEqual(EffortChoice{ .level = .high }, effortCurrentOption(high));
+
+    const auto = EffortResolution{ .level = null, .source = .classifier };
+    try std.testing.expectEqual(EffortChoice.default, effortCurrentOption(auto));
+}
+
+/// One row of the `/preset` picker: a `presets/<name>.toml` bundle plus its
+/// `description` line. Built once at picker-open time into session-lifetime
+/// arena memory (the same lifetime the model/command candidates already
+/// have), so rows never borrow draw-stack cells.
+const PresetCandidate = struct {
+    name: []const u8,
+    description: []const u8,
+};
+
+/// Lists `presets/*.toml` the same way the CLI's `preset list` does (every
+/// `.toml` name, sorted), then loads each preset's `description` for the
+/// picker preview line. A missing/unparseable file is skipped rather than
+/// making the whole picker fail; the operator still sees the valid presets.
+fn buildPresetCandidates(arena: std.mem.Allocator, io: std.Io) ![]const PresetCandidate {
+    var list_dir = std.Io.Dir.cwd().openDir(io, "presets", .{ .iterate = true }) catch return &.{};
+    defer list_dir.close(io);
+    var names: std.ArrayList([]const u8) = .empty;
+    var it = list_dir.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".toml")) continue;
+        const name = entry.name[0 .. entry.name.len - 5];
+        try names.append(arena, try arena.dupe(u8, name));
+    }
+    std.mem.sort([]const u8, names.items, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lt);
+    // The iterate handle and the read handle are separate capabilities; load
+    // through a fresh read-only open the way the CLI's direct `/preset` path
+    // does.
+    var read_dir = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch return &.{};
+    defer read_dir.close(io);
+    var out: std.ArrayList(PresetCandidate) = .empty;
+    for (names.items) |name| {
+        const preset = preset_mod.loadFromFile(io, arena, read_dir, name) catch continue;
+        try out.append(arena, .{ .name = name, .description = preset.description });
+    }
+    return out.toOwnedSlice(arena);
 }
 
 // ---------------------------------------------------------------------
@@ -964,6 +1163,8 @@ const CommandAction = union(enum) {
     plan,
     /// Switch preset bundle for next task (`/preset <name>`), blank-session only.
     preset,
+    /// Pin the per-turn reasoning effort for this session (`/effort [level]`).
+    effort,
     /// Toggle web-research runs for subsequent tasks (`/research [on|off]`).
     research,
     /// Queue an image path for the next task submit (`/attach <path>`).
@@ -1015,6 +1216,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/theme", .takes_args = true, .arg_hint = "[name]", .help = "list or switch color theme (mocha, latte, tokyonight, ...)", .action = .theme },
     .{ .name = "/plan", .takes_args = true, .arg_hint = "[on|off]", .help = "toggle plan mode (proposal only; write tools refused)", .action = .plan },
     .{ .name = "/preset", .takes_args = true, .arg_hint = "<name>", .help = "switch preset bundle (allowed tools + persona) for next task", .action = .preset },
+    .{ .name = "/effort", .takes_args = true, .arg_hint = "[none|low|medium|high|max|default]", .help = "pin reasoning effort for every turn (picker with previews; default clears)", .action = .effort },
     .{ .name = "/research", .takes_args = true, .arg_hint = "[on|off]", .help = "toggle research mode (prefer web_search/web_fetch for current facts)", .action = .research },
     .{ .name = "/attach", .takes_args = true, .arg_hint = "<path>", .help = "queue an image for the next task submit", .action = .attach },
     .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
@@ -2154,6 +2356,9 @@ const Model = struct {
     model_candidates: []const ModelCandidate = &.{},
     /// Every slash command, flattened once at startup for the Ctrl-P palette.
     command_candidates: []const CommandCandidate = &.{},
+    /// Every `presets/<name>.toml`, loaded at `/preset` picker-open time (the
+    /// directory can change mid-session when the operator scaffolds a new one).
+    preset_candidates: []const PresetCandidate = &.{},
     picker_open: bool = false,
     /// What the open picker is choosing: a provider/model or a color theme.
     /// Both share the one modal (query line + arrow-select + Enter/Esc); the
@@ -2165,6 +2370,10 @@ const Model = struct {
     /// the same reason `status_buf` is one: cells borrow the slice until the
     /// frame flushes, which is after `drawModelPicker` has returned.
     picker_pos_buf: [32]u8 = undefined,
+    /// Detail line under the picker rows (model spec / effort source). A
+    /// Model field for the same reason as `picker_pos_buf`: vaxis cells
+    /// borrow the slice until the frame flushes.
+    picker_detail_buf: [192]u8 = undefined,
     /// The theme active when the theme picker opened, restored on Escape so a
     /// cancelled live-preview does not stick.
     theme_saved: ?[]const u8 = null,
@@ -2663,18 +2872,17 @@ const Model = struct {
             },
             .preset => {
                 const name = std.mem.trim(u8, pc.args, " \t");
-                if (name.len == 0) {
-                    self.lines.append(self.arena, .{ .text = "usage: /preset <name> (e.g. /preset research, /preset full)", .dim = true }) catch {};
-                    return;
-                }
-                // Blank-session-only guard: swapping tools mid-conversation would leave logged calls
-                // a narrower preset cannot explain. Also refuse while a turn is streaming.
+                // Blank-session-only guard, checked before either path so a
+                // bare `/preset` never opens a picker the guard would refuse.
                 if (self.messages.items.len > 1 or self.thread != null) {
                     self.lines.append(self.arena, .{ .text = "preset: only before any tool call or assistant message (blank session only)", .dim = true }) catch {};
                     return;
                 }
+                if (name.len == 0) {
+                    try self.openPresetPicker(ctx);
+                    return;
+                }
                 // Validate preset exists under presets/ (same helper CLI uses).
-                const preset_mod = @import("../preset/preset.zig");
                 var dir = std.Io.Dir.cwd().openDir(self.io, "presets", .{}) catch {
                     self.lines.append(self.arena, .{ .text = "preset: no presets/ directory", .dim = true }) catch {};
                     return;
@@ -2687,6 +2895,22 @@ const Model = struct {
                 self.preset_name = self.arena.dupe(u8, name) catch name;
                 _ = preset;
                 self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "notice: preset switched to {s}", .{name}) catch "notice: preset switched", .dim = true }) catch {};
+            },
+            .effort => {
+                const arg = std.mem.trim(u8, pc.args, " \t");
+                if (std.mem.eql(u8, arg, "default")) {
+                    self.cfg.agent.reasoning_effort = null;
+                    self.lines.append(self.arena, .{ .text = "notice: reasoning effort back to default (pin cleared)", .dim = true }) catch {};
+                    return;
+                }
+                if (config.ReasoningEffort.fromStr(arg)) |re| {
+                    self.cfg.agent.reasoning_effort = re;
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "notice: reasoning effort pinned to {s}", .{arg}) catch "notice: reasoning effort set", .dim = true }) catch {};
+                    return;
+                }
+                // Bare `/effort` or an unrecognised spelling opens the picker
+                // seeded with the spelling, so `high` is one Enter away.
+                try self.openEffortPicker(ctx, arg);
             },
             .attach => {
                 const path = std.mem.trim(u8, pc.args, " \t");
@@ -3415,6 +3639,32 @@ const Model = struct {
         self.picker_selected = 0;
     }
 
+    /// The effort picker: same modal over the five wire levels plus `default`.
+    /// The header names where the current effort comes from, and the current
+    /// level (or `default`, when nothing is pinned) is marked. No live preview:
+    /// an effort change only lands in the next turn's `classifyEffort`, so
+    /// there is nothing to repaint until Enter.
+    fn openEffortPicker(self: *Model, ctx: *vxfw.EventContext, seed_query: []const u8) !void {
+        try self.focusPicker(ctx);
+        self.picker_kind = .effort;
+        self.picker_open = true;
+        self.picker_query.clearRetainingCapacity();
+        self.picker_query.appendSlice(self.arena, seed_query) catch {};
+        self.picker_selected = 0;
+    }
+
+    /// The preset picker: same modal over `presets/*.toml`, name plus its
+    /// `description` line as the preview. Loads the directory at open time so
+    /// a preset scaffolded mid-session appears without a restart.
+    fn openPresetPicker(self: *Model, ctx: *vxfw.EventContext) !void {
+        try self.focusPicker(ctx);
+        self.picker_kind = .preset;
+        self.picker_open = true;
+        self.picker_query.clearRetainingCapacity();
+        self.picker_selected = 0;
+        self.preset_candidates = buildPresetCandidates(self.arena, self.io) catch &.{};
+    }
+
     /// Commands whose spelling or help text matches the query, in registry
     /// order. Same per-keystroke rescan as `filteredCandidates`, for the same
     /// reason: the list is a dozen entries, so bookkeeping to avoid the scan
@@ -3623,12 +3873,63 @@ const Model = struct {
         }
     }
 
+    /// Effort rows matching the query, in `effort_options` order (none →
+    /// max → default). The table is static and the descriptions are read-only
+    /// literals, so rows never borrow draw-stack memory.
+    fn filteredEffortOptions(self: *Model) []const EffortOption {
+        var out: std.ArrayList(EffortOption) = .empty;
+        for (&effort_options) |*o| {
+            var buf: [96]u8 = undefined;
+            const haystack = std.fmt.bufPrint(&buf, "{s} {s}", .{ o.label, o.description }) catch o.label;
+            if (fuzzyMatch(self.picker_query.items, haystack)) out.append(self.arena, o.*) catch break;
+        }
+        return out.items;
+    }
+
+    /// Presets whose name or description matches the query, in sorted name
+    /// order (the same order the CLI's `preset list` prints).
+    fn filteredPresets(self: *Model) []const PresetCandidate {
+        var out: std.ArrayList(PresetCandidate) = .empty;
+        for (self.preset_candidates) |c| {
+            var buf: [192]u8 = undefined;
+            const haystack = std.fmt.bufPrint(&buf, "{s} {s}", .{ c.name, c.description }) catch c.name;
+            if (fuzzyMatch(self.picker_query.items, haystack)) out.append(self.arena, c) catch break;
+        }
+        return out.items;
+    }
+
+    /// Enter on an effort row: pin the session (or clear it for `default`).
+    /// The pin lives in `self.cfg.agent.reasoning_effort`, the same field
+    /// `--reasoning-effort` sets, so `Agent.classifyEffort` honours it on the
+    /// next turn.
+    fn applyEffortSelection(self: *Model, choice: EffortChoice) void {
+        switch (choice) {
+            .default => {
+                self.cfg.agent.reasoning_effort = null;
+                self.lines.append(self.arena, .{ .text = "notice: reasoning effort back to default (pin cleared)", .dim = true }) catch {};
+            },
+            .level => |re| {
+                self.cfg.agent.reasoning_effort = re;
+                self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "notice: reasoning effort pinned to {s}", .{@tagName(re)}) catch "notice: reasoning effort set", .dim = true }) catch {};
+            },
+        }
+    }
+
+    /// Enter on a preset row: set the session preset name (the same field the
+    /// direct `/preset <name>` path sets) and confirm in the transcript.
+    fn applyPresetSelection(self: *Model, cand: PresetCandidate) void {
+        self.preset_name = cand.name;
+        self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "notice: preset switched to {s}", .{cand.name}) catch "notice: preset switched", .dim = true }) catch {};
+    }
+
     /// Count of entries in the open picker's filtered list.
     fn pickerLen(self: *Model) usize {
         return switch (self.picker_kind) {
             .model => self.filteredCandidates().len,
             .theme => self.filteredThemes().len,
             .command => self.filteredCommands().len,
+            .effort => self.filteredEffortOptions().len,
+            .preset => self.filteredPresets().len,
         };
     }
 
@@ -3761,6 +4062,14 @@ const Model = struct {
                         try self.runPaletteSelection(ctx, picked);
                         return ctx.consumeAndRedraw();
                     }
+                },
+                .effort => {
+                    const matches = self.filteredEffortOptions();
+                    if (matches.len > 0) self.applyEffortSelection(matches[@min(self.picker_selected, matches.len - 1)].choice);
+                },
+                .preset => {
+                    const matches = self.filteredPresets();
+                    if (matches.len > 0) self.applyPresetSelection(matches[@min(self.picker_selected, matches.len - 1)]);
                 },
             }
             try self.closeModelPicker(ctx);
@@ -5110,16 +5419,27 @@ const Model = struct {
         const theme_matches = if (is_theme) self.filteredThemes() else &[_][]const u8{};
         const model_matches = if (self.picker_kind == .model) self.filteredCandidates() else &[_]ModelCandidate{};
         const command_matches = if (is_command) self.filteredCommands() else &[_]CommandCandidate{};
+        const effort_matches = if (self.picker_kind == .effort) self.filteredEffortOptions() else &[_]EffortOption{};
+        const preset_matches = if (self.picker_kind == .preset) self.filteredPresets() else &[_]PresetCandidate{};
+        const current_effort: EffortChoice = if (self.picker_kind == .effort)
+            effortCurrentOption(resolveEffort(&self.cfg, &self.provider))
+        else
+            .default;
         const count = switch (self.picker_kind) {
             .theme => theme_matches.len,
             .model => model_matches.len,
             .command => command_matches.len,
+            .effort => effort_matches.len,
+            .preset => preset_matches.len,
         };
         const max_rows: u16 = 8;
         const rows_shown: u16 = @intCast(@min(count, max_rows));
+        // Model and effort get one extra row above the guide: the highlighted
+        // model's spec line, or where the effective effort comes from.
+        const detail_extra: u16 = if (count > 0 and (self.picker_kind == .model or self.picker_kind == .effort)) 1 else 0;
         // The picker commits on Enter, so teach its controls at the decision
         // point instead of expecting the user to remember the /help prose.
-        const h = pickerHeight(count, max_rows); // border + query + rows/empty + guide + border
+        const h = pickerHeight(count, max_rows) + detail_extra; // border + query + rows/empty + [detail] + guide + border
         if (surface.size.width < 8) return;
         const y = self.transcript_bottom -| h;
         clearBoxInterior(surface, 0, y, surface.size.width, h);
@@ -5129,6 +5449,8 @@ const Model = struct {
             .theme => "/theme ",
             .model => "/model ",
             .command => "> ",
+            .effort => "/effort ",
+            .preset => "/preset ",
         };
         writeRow(surface, y + 1, prompt, .{ .bold = true });
         var query_col: u16 = @intCast(prompt.len);
@@ -5140,6 +5462,8 @@ const Model = struct {
                 .theme => "  no matching theme",
                 .model => "  no matching provider/model",
                 .command => "  no matching command",
+                .effort => "  no matching effort level",
+                .preset => "  no matching preset",
             }, .{ .dim = true });
         } else {
             const sel = @min(self.picker_selected, count - 1);
@@ -5162,10 +5486,62 @@ const Model = struct {
                     .theme => theme_matches[idx],
                     .model => model_matches[idx].label,
                     .command => command_matches[idx].label,
+                    .effort => effort_matches[idx].label,
+                    .preset => preset_matches[idx].name,
                 };
                 writeRowAt(surface, row, &col, label, style);
+                // Effort and preset rows carry their one-line description
+                // inline (static/arena memory, never draw-stack); the active
+                // model and preset and the current effort are marked in place.
+                switch (self.picker_kind) {
+                    .effort => {
+                        if (std.meta.eql(effort_matches[idx].choice, current_effort))
+                            writeRowAt(surface, row, &col, "  (current)", style);
+                        writeRowAt(surface, row, &col, "  ", style);
+                        writeRowAt(surface, row, &col, effort_matches[idx].description, .{ .dim = true });
+                    },
+                    .preset => {
+                        if (self.preset_name) |pn| {
+                            if (std.mem.eql(u8, pn, preset_matches[idx].name))
+                                writeRowAt(surface, row, &col, "  (active)", style);
+                        }
+                        if (preset_matches[idx].description.len > 0) {
+                            writeRowAt(surface, row, &col, "  ", style);
+                            writeRowAt(surface, row, &col, preset_matches[idx].description, .{ .dim = true });
+                        }
+                    },
+                    .model => {
+                        const c = model_matches[idx];
+                        if (std.mem.eql(u8, c.provider, self.provider.name) and std.mem.eql(u8, c.model, self.provider.default_model))
+                            writeRowAt(surface, row, &col, "  (active)", style);
+                    },
+                    else => {},
+                }
                 row += 1;
             }
+        }
+        if (detail_extra == 1) {
+            const detail: []const u8 = switch (self.picker_kind) {
+                .model => blk: {
+                    const c = model_matches[@min(self.picker_selected, count - 1)];
+                    break :blk std.fmt.bufPrint(&self.picker_detail_buf, "  {s}/{s} · ctx {d} · ${d}/${d} per 1M{s}{s}", .{
+                        c.provider,
+                        c.display,
+                        c.context_window,
+                        c.cost_in orelse 0,
+                        c.cost_out orelse 0,
+                        if (c.category.len > 0) " · " else "",
+                        c.category,
+                    }) catch "";
+                },
+                .effort => blk: {
+                    const res = resolveEffort(&self.cfg, &self.provider);
+                    const level: []const u8 = if (res.level) |l| @tagName(l) else if (res.source == .classifier) "auto (per turn)" else "provider default";
+                    break :blk std.fmt.bufPrint(&self.picker_detail_buf, "  current: {s} — {s}", .{ level, effortSourceLabel(res.source) }) catch "";
+                },
+                else => "",
+            };
+            if (detail.len > 0) writeRow(surface, y + h - 3, detail, .{ .dim = true });
         }
         const sel = if (count > 0) @min(self.picker_selected, count - 1) else 0;
         const pos = if (count > max_rows)
@@ -5414,14 +5790,14 @@ fn pickerWindowStart(selected: usize, count: usize, max_rows: u16) usize {
 /// clipped suffix: constrained pickers progressively drop navigation detail
 /// while retaining the way out, including when a filter has zero results.
 fn pickerGuide(kind: PickerKind, empty: bool, width: u16) []const u8 {
-    const full: []const u8 = if (empty) switch (kind) {
-        .theme => "  no match · type or Backspace to edit · Esc cancel",
-        .model => "  no match · type or Backspace to edit · Esc cancel",
-        .command => "  no match · type or Backspace to edit · Esc cancel",
-    } else switch (kind) {
+    const full: []const u8 = if (empty)
+        "  no match · type or Backspace to edit · Esc cancel"
+    else switch (kind) {
         .theme => "  Up/Down preview · Enter keep · Esc cancel",
         .model => "  Up/Down move · Enter select · Esc cancel",
         .command => "  Up/Down move · Enter run or fill args · Esc cancel",
+        .effort => "  Up/Down move · Enter pin (default clears) · Esc cancel",
+        .preset => "  Up/Down move · Enter apply · Esc cancel",
     };
     const compact: []const u8 = if (empty)
         "  edit query · Esc cancel"
@@ -5429,6 +5805,8 @@ fn pickerGuide(kind: PickerKind, empty: bool, width: u16) []const u8 {
         .theme => "  Enter keep · Esc cancel",
         .model => "  Enter select · Esc cancel",
         .command => "  Enter run · Esc cancel",
+        .effort => "  Enter pin · Esc cancel",
+        .preset => "  Enter apply · Esc cancel",
     };
     if (width_mod.displayWidth(full) <= width) return full;
     if (width_mod.displayWidth(compact) <= width) return compact;
@@ -7573,7 +7951,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
             }) catch {};
         }
     }
-    model.model_candidates = buildModelCandidates(arena, &model.cfg) catch &.{};
+    model.model_candidates = buildModelCandidates(arena, &model.cfg, init.environ_map) catch &.{};
     model.command_candidates = buildCommandCandidates(arena) catch &.{};
     // A resumed conversation already occupies part of the window, so the
     // meter and the mid-turn compaction baseline start from what was loaded
