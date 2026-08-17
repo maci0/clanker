@@ -223,8 +223,13 @@ Adding one is one file, one registry row, one `ProviderKind` tag — never a new
 `clanker commit` is not `git commit`: it groups a staged (or `--all`) diff
 into conventional commits, validates the messages, and topo-sorts them on a
 grep graph, falling back to one commit on a degenerate cycle
-([PRD 0021](docs/prds/0021-smart-commit.md)). It dry-runs and confirms before
-executing. In the default `staged` scope each group's commit is built in the
+([PRD 0021](docs/prds/0021-smart-commit.md)). It dry-runs, confirms, and then
+writes *that* plan: the previewed `commits` list is handed back to the write,
+so the grouping model is called once and what lands is what was shown. It used
+to group again for the write, and a truncated second reply turned a confirmed
+plan into one `chore: update working tree` commit
+([bug](docs/reports/bugs/2026-08-17-commit-applies-an-unconfirmed-plan.md)).
+In the default `staged` scope each group's commit is built in the
 index, so an index narrowed to one session's hunks (the concurrent-sessions
 runbook's route) commits exactly as staged and other sessions' unstaged edits
 stay unstaged; it used to `git add` each group's files and commit them by

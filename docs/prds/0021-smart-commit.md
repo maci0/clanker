@@ -80,7 +80,8 @@ fully-guest tool; there is no host module.
 {
   "dry_run": true,
   "max_commits": 10,
-  "scope": "staged"
+  "scope": "staged",
+  "commits": [{ "message": "docs: add the note", "files": ["docs/note.md"] }]
 }
 ```
 
@@ -88,6 +89,14 @@ fully-guest tool; there is no host module.
 unstaged tracked files). `dry_run = true` returns the proposed groupings without
 executing any `git` commands. `max_commits` caps how many commits the LLM may
 propose; excess groups are merged into the last one.
+
+`commits` is a plan that has already been made: given one, the guest writes it
+instead of grouping again, in the order given, and refuses if it names a file
+this diff does not hold. It exists because a plan is confirmed before it is
+written, and asking a sampling model to group the same diff a second time
+answers a second time --- so the write has to be handed what was shown, not
+told to work it out again
+(docs/reports/bugs/2026-08-17-commit-applies-an-unconfirmed-plan.md).
 
 **Optional `commit.model`.** Grouping may use a provider/model distinct from the
 main agent via an optional config key (e.g. `[commit] model =
@@ -198,7 +207,9 @@ Proposed 3 commits:
 Proceed? [y/N]
 ```
 
-If confirmed, calls `smart_commit` with `dry_run = false`. In a terminal the
+If confirmed, calls `smart_commit` with `dry_run = false` and the previewed
+`commits` list, so the write is the plan that was confirmed and the grouping
+model is called once per `clanker commit`, not twice. In a terminal the
 prompt is a plain stdin read; under a browser session the confirmation goes
 through `serveConfirm` (`src/cli.zig`), the same path the `agent.confirm_writes`
 config uses to confirm tool writes. When the degenerate single-commit fallback
