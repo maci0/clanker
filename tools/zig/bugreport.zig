@@ -32,7 +32,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     // Validate severity → board priority mapping
     const priority = mapSeverity(severity) orelse
-        return lib.fail(out, "severity must be one of: critical, high, normal, low");
+        return lib.fail(out, "severity must be one of: critical, high, normal, medium, low, minor");
 
     // Build the formatted body
     var body_buf: std.ArrayList(u8) = .empty;
