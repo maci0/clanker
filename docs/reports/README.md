@@ -153,6 +153,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [No verb reads or sets a single config key](investigations/2026-08-17-missing-clanker-tool-no-verb-reads-or-sets-a-config-key.md) — Investigating
+
 - [Record stores have no rename or move action](investigations/2026-08-17-missing-clanker-tool-record-stores-cannot-rename-a-record.md) — Resolved
 
 - [TUI cannot scroll above an expanded reply](investigations/2026-08-17-tui-cannot-scroll-above-expanded-reply.md) — Resolved
