@@ -155,9 +155,10 @@ fn bit8(mask: u8, n: u8) bool {
 /// Parses a whole spec. Leading, trailing and repeated whitespace between
 /// fields are all fine, so a spec pasted out of a crontab keeps working.
 pub fn parse(spec: []const u8) ParseError!Spec {
+    const trimmed = std.mem.trim(u8, spec, " \t\r\n");
     var fields: [5][]const u8 = undefined;
     var count: usize = 0;
-    var it = std.mem.tokenizeAny(u8, spec, " \t");
+    var it = std.mem.tokenizeAny(u8, trimmed, " \t");
     while (it.next()) |f| {
         if (count == fields.len) return ParseError.WrongFieldCount;
         fields[count] = f;
