@@ -211,6 +211,7 @@ pub const AscPage = struct { msgs: []Message = &.{}, has_more: bool = false };
 pub fn readHistoryAsc(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, after: i64, limit: usize) !AscPage {
     const path = subPath(arena, state_dir, log_path) catch return .{};
     const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return .{};
+    if (limit == 0) return .{};
     var out: std.ArrayList(Message) = .empty;
     // Keep only this room's page candidates. The log is shared across every
     // room (board + chat + inbox), so materializing the whole file first
@@ -1216,6 +1217,11 @@ test "readHistoryAsc pages oldest-first and extends through a shared boundary ti
     const all = try readHistoryAsc(tmp.dir, io, arena, "", "board", 0, 50);
     try std.testing.expectEqual(@as(usize, 6), all.msgs.len);
     try std.testing.expect(!all.has_more);
+
+    // A zero limit is an empty page, not an underflow on `limit - 1`.
+    const none = try readHistoryAsc(tmp.dir, io, arena, "", "board", 0, 0);
+    try std.testing.expectEqual(@as(usize, 0), none.msgs.len);
+    try std.testing.expect(!none.has_more);
 }
 
 test "inbox cursor drains a capped same-timestamp burst without loss" {
