@@ -7857,12 +7857,7 @@ test "resolveMascot takes speed from the flag, the config, then 5" {
 /// Returns null when there are none, so a first `--continue` starts a fresh
 /// session rather than failing at someone who has not made one yet.
 fn latestSessionId(io: std.Io, arena: std.mem.Allocator) ?[]const u8 {
-    const metas = session_mod.listSessions(io, arena, std.Io.Dir.cwd()) catch return null;
-    var best: ?session_mod.SessionMeta = null;
-    for (metas) |m| {
-        if (best == null or m.updated > best.?.updated) best = m;
-    }
-    return if (best) |b| b.id else null;
+    return session_mod.latestSessionId(io, arena, std.Io.Dir.cwd());
 }
 
 /// A fresh conversation's id, minted the first time it is saved. The

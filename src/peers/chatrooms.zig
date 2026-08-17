@@ -53,9 +53,30 @@ pub const cursor_path = "chatrooms-cursor.json";
 pub const max_text_len = 4096;
 /// Room topic length cap. Enforced by the guest `chat` tool host function
 /// (src/sandbox/host.zig) and by POST /api/chat/topic, so both entry points
-/// reject the same input and a topic cannot overflow the room_meta.json
-/// buffer (saveMeta's 64 KiB fixed frame).
+/// reject the same input.
 pub const max_topic_len = 1024;
+/// Pins retained per room, newest kept. `togglePin` appends and the log
+/// trims to `max_history` under it, so without a bound the pin list is the
+/// one chatroom structure that grows forever — and it grows inside a file
+/// every topic and pin write rewrites whole.
+pub const max_pins_per_room = 200;
+/// Rooms whose metadata `room_meta.json` is read back. Rooms are created by
+/// sending to a name, so this is a cap on the file rather than on the domain;
+/// it exists so `metaReadCap` is derived from policy the way `logReadCap` is,
+/// instead of the fixed 1 MiB that preceded it.
+const max_meta_rooms: usize = 4096;
+
+/// The whole metadata file under a size the writer cannot exceed: each room
+/// costs a name, a capped topic, and at most `max_pins_per_room` message ids.
+/// A cap below what `saveMeta` can produce would make the file unreadable to
+/// its own writer, which is the failure `logReadCap` documents for the log.
+fn metaReadCap() usize {
+    // 128 bytes per pinned id: a locally minted one is ~40 (`m<ts>-<pid>-<seq>`)
+    // and a peer's is operator-controlled input, the same trust level as
+    // `max_envelope_bytes` above.
+    const per_room = max_topic_len * 2 + max_pins_per_room * 128 + 256;
+    return max_meta_rooms * per_room;
+}
 /// Reaction emoji length cap (bytes). Enforced by the guest `chat` tool host
 /// function (src/sandbox/host.zig) and by POST /api/chat/react, so both entry
 /// points reject the same input.
@@ -624,26 +645,41 @@ fn metaPath(arena: std.mem.Allocator, state_dir: []const u8) ![]const u8 {
     return std.fmt.allocPrint(arena, "{s}/room_meta.json", .{state_dir});
 }
 
+/// Every mutation of `room_meta.json` is read-modify-write: load the whole
+/// file, edit one room, write all of it back. That makes a failed *read* a
+/// destructive event, not a missing one, so only "no file yet" may become an
+/// empty map here. Swallowing every error into `{}` — what this used to do —
+/// meant one oversized, truncated, or half-written file turned the next
+/// `setTopic`/`togglePin` into a rewrite holding that single room, silently
+/// dropping every other room's topic and pins. Callers already report the
+/// error (`cli.zig` chat verbs, `ck_chat` in `sandbox/host.zig`), so refusing
+/// the write is visible where the loss was not. The read-only listing path in
+/// `host.zig` still falls back to an empty map on purpose: it renders topics
+/// and never writes.
 pub fn loadMeta(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8) !std.json.ArrayHashMap(RoomMeta) {
     const path = try metaPath(arena, state_dir);
-    const raw = base.readFileAlloc(io, path, arena, .limited(1024 * 1024)) catch
-        return std.json.ArrayHashMap(RoomMeta){};
-    const parsed = std.json.parseFromSliceLeaky(
+    const raw = base.readFileAlloc(io, path, arena, .limited(metaReadCap())) catch |err| switch (err) {
+        error.FileNotFound => return .{},
+        else => return err,
+    };
+    return std.json.parseFromSliceLeaky(
         std.json.ArrayHashMap(RoomMeta),
         arena,
         raw,
         .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
-    ) catch return std.json.ArrayHashMap(RoomMeta){};
-    return parsed;
+    );
 }
 
 fn saveMeta(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, meta: std.json.ArrayHashMap(RoomMeta)) !void {
     const path = try metaPath(arena, state_dir);
-    var buf: [64 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    s.write(meta) catch return error.TooLarge;
-    try atomic_write.writeFile(io, base, path, buf[0..w.end]);
+    // Sized by the room count, not by a fixed frame. The 64 KiB stack buffer
+    // this replaced put a hard ceiling on the *whole* file: past it every
+    // topic and pin write failed `TooLarge` for good, with no way back except
+    // editing the file by hand.
+    var w: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &w.writer, .options = .{ .emit_null_optional_fields = false } };
+    try s.write(meta);
+    try atomic_write.writeFile(io, base, path, w.written());
     _ = gpa;
 }
 
@@ -689,7 +725,11 @@ pub fn togglePin(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
         return false; // unpinned
     }
     try new_pins.append(arena, msg_id);
-    gop.value_ptr.pins = new_pins.items;
+    // Drop oldest past the cap rather than refusing the pin: the log the ids
+    // point into is itself trimmed to `max_history`, so the oldest pins are
+    // the ones already most likely to name a message that no longer exists.
+    const kept = new_pins.items;
+    gop.value_ptr.pins = if (kept.len > max_pins_per_room) kept[kept.len - max_pins_per_room ..] else kept;
     try saveMeta(base, io, gpa, arena, state_dir, meta);
     return true; // pinned
 }
@@ -1673,4 +1713,55 @@ test "edit, delete and react distinguish missing from not-owner" {
     try std.testing.expectError(error.NotFound, deleteMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "nope", "alice"));
     try std.testing.expectError(error.NotOwner, deleteMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "bob"));
     try deleteMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "alice");
+}
+
+test "an unreadable room_meta.json refuses the write instead of erasing the other rooms" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Two rooms with metadata, then the file is corrupted under us.
+    try setTopic(tmp.dir, io, std.testing.allocator, arena, "", "dev", "shipping");
+    try setTopic(tmp.dir, io, std.testing.allocator, arena, "", "ops", "on call");
+    try tmp.dir.writeFile(io, .{ .sub_path = "room_meta.json", .data = "{not json" });
+
+    // Metadata mutation is read-modify-write, so a failed read must not become
+    // an empty map: that rewrites the file with only the room being edited.
+    try std.testing.expectError(
+        error.SyntaxError,
+        setTopic(tmp.dir, io, std.testing.allocator, arena, "", "dev", "clobbered"),
+    );
+    const after = try tmp.dir.readFileAlloc(io, "room_meta.json", arena, .limited(4096));
+    try std.testing.expectEqualStrings("{not json", after);
+}
+
+test "pins stay bounded and a missing meta file is not an error" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // No file yet is the one read failure that legitimately means "empty".
+    try std.testing.expectEqual(@as(?[]const []const u8, null), try getPins(tmp.dir, io, arena, "", "dev"));
+
+    var i: usize = 0;
+    while (i < max_pins_per_room + 5) : (i += 1) {
+        _ = try togglePin(tmp.dir, io, std.testing.allocator, arena, "", "dev", try std.fmt.allocPrint(arena, "m{d}", .{i}));
+    }
+    const pins = (try getPins(tmp.dir, io, arena, "", "dev")).?;
+    try std.testing.expectEqual(max_pins_per_room, pins.len);
+    // Oldest dropped, newest kept.
+    try std.testing.expectEqualStrings("m5", pins[0]);
+    try std.testing.expectEqualStrings(try std.fmt.allocPrint(arena, "m{d}", .{max_pins_per_room + 4}), pins[pins.len - 1]);
 }

@@ -1628,41 +1628,6 @@ fn primaryFlagName(f: Flag) []const u8 {
     return n[0..end];
 }
 
-fn editDistance(a: []const u8, b: []const u8) usize {
-    var previous: [33]usize = undefined;
-    var current: [33]usize = undefined;
-    for (0..b.len + 1) |i| previous[i] = i;
-    for (a, 0..) |ac, ai| {
-        current[0] = ai + 1;
-        for (b, 0..) |bc, bi| {
-            const substitution = previous[bi] + @intFromBool(ac != bc);
-            current[bi + 1] = @min(@min(previous[bi + 1] + 1, current[bi] + 1), substitution);
-        }
-        @memcpy(previous[0 .. b.len + 1], current[0 .. b.len + 1]);
-    }
-    return previous[b.len];
-}
-
-/// True when `a` is `b` with one adjacent pair swapped (`--modle` / `--model`).
-fn isAdjacentTransposition(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len or a.len < 2) return false;
-    var i: usize = 0;
-    var swaps: usize = 0;
-    while (i < a.len) {
-        if (a[i] == b[i]) {
-            i += 1;
-            continue;
-        }
-        if (i + 1 < a.len and a[i] == b[i + 1] and a[i + 1] == b[i]) {
-            swaps += 1;
-            i += 2;
-            continue;
-        }
-        return false;
-    }
-    return swaps == 1;
-}
-
 fn renderUsage(buf: []u8) []const u8 {
     var w: std.Io.Writer = .fixed(buf);
     w.print("clanker {s}\n\nusage: clanker [command] [options]\n       clanker            with no command, starts the REPL\n", .{version}) catch {};
