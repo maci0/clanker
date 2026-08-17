@@ -3404,7 +3404,34 @@ fn gitVerbAllowed(argv: []const []const u8, remote_ops: bool) bool {
     const v = verb orelse return false;
     const local = [_][]const u8{ "status", "diff", "log", "show", "add", "commit", "ls-files", "rev-parse", "branch", "worktree" };
     for (local) |allowed| if (std.mem.eql(u8, v, allowed)) return true;
+    if (gitIndexVerbAllowed(v, argv)) return true;
     return remote_ops and (std.mem.eql(u8, v, "push") or std.mem.eql(u8, v, "merge") or std.mem.eql(u8, v, "checkout"));
+}
+
+/// The index verbs smart_commit needs to commit a group from the index rather
+/// than from the working tree: `git add` stages the worktree copy and
+/// `git commit -- <paths>` commits the worktree copy, so neither can honor an
+/// index a session narrowed to its own hunks.
+///
+/// Each is granted only in the form that cannot write the working tree.
+/// `git read-tree -u` updates it, and a bare `git restore <path>` discards
+/// uncommitted work exactly the way the denied `checkout` does; those forms
+/// stay out. `write-tree` only writes objects.
+fn gitIndexVerbAllowed(verb: []const u8, argv: []const []const u8) bool {
+    if (std.mem.eql(u8, verb, "write-tree")) return true;
+    if (std.mem.eql(u8, verb, "read-tree")) {
+        for (argv[1..]) |a| {
+            if (std.mem.eql(u8, a, "-u") or std.mem.eql(u8, a, "--update")) return false;
+        }
+        return true;
+    }
+    if (!std.mem.eql(u8, verb, "restore")) return false;
+    var staged = false;
+    for (argv[1..]) |a| {
+        if (std.mem.eql(u8, a, "-W") or std.mem.eql(u8, a, "--worktree")) return false;
+        if (std.mem.eql(u8, a, "-S") or std.mem.eql(u8, a, "--staged")) staged = true;
+    }
+    return staged;
 }
 
 /// The rewind guest may `git stash apply|show <hash>` to restore a checkpoint
@@ -5366,6 +5393,24 @@ test "git exec permits named local verbs and blocks network plumbing" {
     try std.testing.expect(gitVerbAllowed(&.{ "git", "--git-dir=.local/worktrees/wt/.git", "--work-tree=.local/worktrees/wt", "add", "x" }, false));
     try std.testing.expect(gitVerbAllowed(&.{ "git", "--git-dir", ".local/worktrees/wt/.git", "--work-tree", ".local/worktrees/wt", "push", "origin", "branch" }, true));
     try std.testing.expect(!gitVerbAllowed(&.{ "git", "-C", ".local/worktrees/wt", "ls-remote" }, false));
+}
+
+test "git index verbs are allowed only in the forms that cannot touch the worktree" {
+    // smart_commit builds each group's commit in the index so a hunk-narrowed
+    // index is committed as staged. Only the index-only forms are granted.
+    try std.testing.expect(gitVerbAllowed(&.{ "git", "write-tree" }, false));
+    try std.testing.expect(gitVerbAllowed(&.{ "git", "read-tree", "HEAD" }, false));
+    try std.testing.expect(gitVerbAllowed(&.{ "git", "read-tree", "--empty" }, false));
+    try std.testing.expect(gitVerbAllowed(&.{ "git", "restore", "--staged", "--source=abc123", "--", "a.zig" }, false));
+
+    // `git read-tree -u` writes the working tree, and `git restore` without
+    // --staged overwrites worktree files -- that is what `checkout` is denied
+    // for, so neither form may ride in on the new grant.
+    try std.testing.expect(!gitVerbAllowed(&.{ "git", "read-tree", "-u", "--reset", "HEAD" }, false));
+    try std.testing.expect(!gitVerbAllowed(&.{ "git", "read-tree", "--update", "HEAD" }, false));
+    try std.testing.expect(!gitVerbAllowed(&.{ "git", "restore", "--", "a.zig" }, false));
+    try std.testing.expect(!gitVerbAllowed(&.{ "git", "restore", "--staged", "--worktree", "--", "a.zig" }, false));
+    try std.testing.expect(!gitVerbAllowed(&.{ "git", "restore", "--staged", "-W", "--", "a.zig" }, false));
 }
 
 test "patternNamesCmd matches only the first command token" {

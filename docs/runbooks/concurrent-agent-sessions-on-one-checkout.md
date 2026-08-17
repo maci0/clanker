@@ -149,6 +149,14 @@ index is narrowed to yours. Verify before committing:
 git diff --cached docs/reports/README.md
 ```
 
+`clanker commit` honors that narrowed index: in its default `staged` scope it
+builds each group's commit from the staged content, so the other sessions'
+lines stay unstaged in the working tree. Before that fix it ran `git add` and
+committed by pathspec, and both take the working-tree copy, so it would have
+committed the whole file. By hand, commit the index itself with a bare
+`clanker git commit -m "…"` — a pathspec `git commit -- <path>` takes the
+working-tree copy too.
+
 **The tree is already tangled.** Message every session and ask three
 questions: do you own the in-progress git operation, will you hold every
 `.git`-writing command until I say done, and do you have edits not yet

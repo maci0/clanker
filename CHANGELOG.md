@@ -485,7 +485,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
-- `clanker commit` now writes the commits it reports. Its apply path staged
+- `clanker commit` in the default `staged` scope now commits the staged
+  content, not the working-tree copy. It staged each group's files with
+  `git add` and then committed them by pathspec, and both of those take the
+  working-tree copy — so an index narrowed to one session's hunks (what
+  `docs/runbooks/concurrent-agent-sessions-on-one-checkout.md` tells a session
+  to do on a shared file) was silently widened with the rest of the file,
+  including another session's half-finished edits, and what landed was not
+  what the dry run previewed. Each group's commit is now built in the index
+  from the staged state, so unstaged edits stay unstaged; the index is put
+  back afterwards, including after a failure. `clanker commit --all` is
+  unchanged, since taking the working tree is the point of that scope.
   each group's files and then ran a bare `git commit`, which commits the whole
   index — so anything staged before the verb ran was swept into the first
   group's commit and every later group found nothing left to commit. Each

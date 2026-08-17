@@ -81,22 +81,28 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
 
     if (!dry) {
-        for (ordered) |g| {
-            var detail: []const u8 = "";
-            gitRun(try prepend("add", "--", g.files), &detail) catch |err| {
-                return lib.failErr(out, err, "git add");
-            };
-            if (detail.len > 0) return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "git add: {s}", .{detail}));
-            // Pathspec, not a bare `git commit`: a bare one commits the whole
-            // index, so anything staged before this tool ran was swept into the
-            // first group's commit and every later group found nothing left to
-            // commit -- while the reply still listed them all as written.
-            // Narrowing to the group's own files is safe because the `git add`
-            // above has just made index and worktree agree on exactly them.
-            gitRun(try commitArgs(g.message, g.files), &detail) catch |err| {
-                return lib.failErr(out, err, "git commit");
-            };
-            if (detail.len > 0) return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "git commit: {s}", .{detail}));
+        if (std.mem.eql(u8, scope, "all")) {
+            for (ordered) |g| {
+                var detail: []const u8 = "";
+                gitRun(try prepend("add", "--", g.files), &detail) catch |err| {
+                    return lib.failErr(out, err, "git add");
+                };
+                if (detail.len > 0) return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "git add: {s}", .{detail}));
+                // Pathspec, not a bare `git commit`: a bare one commits the
+                // whole index, so anything staged before this tool ran was
+                // swept into the first group's commit and every later group
+                // found nothing left to commit -- while the reply still listed
+                // them all as written. A pathspec commit takes the working-tree
+                // copy of the named paths and disregards what is staged for
+                // any other path, which is exactly scope "all".
+                gitRun(try commitArgs(g.message, g.files), &detail) catch |err| {
+                    return lib.failErr(out, err, "git commit");
+                };
+                if (detail.len > 0) return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "git commit: {s}", .{detail}));
+            }
+        } else {
+            const problem = try commitGroupsFromIndex(ordered);
+            if (problem.len > 0) return lib.fail(out, problem);
         }
     }
 
@@ -179,6 +185,77 @@ fn gitRun(args: []const []const u8, detail: *[]const u8) !void {
         else => "",
     };
     detail.* = if (stderr.len > 0) stderr else try std.fmt.allocPrint(lib.alloc, "exited {d}", .{code});
+}
+
+/// Commits each group in scope "staged" from the index, so the content that
+/// lands is the content the groups were computed from.
+///
+/// Neither obvious route can do this. `git add -- <files>` replaces the staged
+/// copy with the working-tree copy, and `git commit -- <files>` commits the
+/// working-tree copy of those paths outright -- so an index a session narrowed
+/// to its own hunks (the route in
+/// docs/runbooks/concurrent-agent-sessions-on-one-checkout.md) was widened with
+/// whatever else was in the file, including another session's half-finished
+/// edits.
+///
+/// The route that does work builds each commit in the index: save the full
+/// staged state as a tree, then per group reset the index to the base commit,
+/// restore that group's entries from the saved tree, and commit the index. No
+/// step writes the working tree, so unstaged edits are still unstaged
+/// afterwards. The index is put back from the saved tree at the end -- also
+/// after a failure, since a half-built index would look like lost work.
+fn commitGroupsFromIndex(groups: []const logic.Group) ![]const u8 {
+    const tree_raw = gitOut(&.{"write-tree"}) catch return "git write-tree failed";
+    const tree = std.mem.trim(u8, tree_raw, " \t\r\n");
+    if (tree.len == 0) return "git write-tree wrote no tree; is this a git repository?";
+
+    const problem = commitEachFromIndex(tree, groups) catch |err|
+        try std.fmt.allocPrint(lib.alloc, "committing from the index failed: {s}", .{@errorName(err)});
+
+    var detail: []const u8 = "";
+    gitRun(&.{ "read-tree", tree }, &detail) catch {};
+    if (problem.len == 0 and detail.len > 0)
+        return try std.fmt.allocPrint(lib.alloc, "commits were written but the index could not be restored: {s} (git read-tree {s} restores it)", .{ detail, tree });
+    return problem;
+}
+
+/// One commit per group, each built in the index. Returns "" when every group
+/// committed; the caller restores the index either way.
+fn commitEachFromIndex(tree: []const u8, groups: []const logic.Group) ![]const u8 {
+    var detail: []const u8 = "";
+    // An empty repository has no HEAD to reset the index to.
+    gitRun(&.{ "rev-parse", "--verify", "--quiet", "HEAD" }, &detail) catch {};
+    const base: []const []const u8 = if (detail.len == 0)
+        &.{ "read-tree", "HEAD" }
+    else
+        &.{ "read-tree", "--empty" };
+
+    for (groups) |g| {
+        detail = "";
+        gitRun(base, &detail) catch |err| return try std.fmt.allocPrint(lib.alloc, "git read-tree: {s}", .{@errorName(err)});
+        if (detail.len > 0) return try std.fmt.allocPrint(lib.alloc, "git read-tree: {s}", .{detail});
+
+        gitRun(try restoreArgs(tree, g.files), &detail) catch |err| return try std.fmt.allocPrint(lib.alloc, "git restore: {s}", .{@errorName(err)});
+        if (detail.len > 0) return try std.fmt.allocPrint(lib.alloc, "git restore: {s}", .{detail});
+
+        // Bare on purpose here: the index was just built to hold this group and
+        // nothing else, so there is no wider index left for it to sweep.
+        gitRun(&.{ "commit", "-m", g.message }, &detail) catch |err| return try std.fmt.allocPrint(lib.alloc, "git commit: {s}", .{@errorName(err)});
+        if (detail.len > 0) return try std.fmt.allocPrint(lib.alloc, "git commit: {s}", .{detail});
+    }
+    return "";
+}
+
+/// `git restore --source=<tree> --staged -- <files>`: index only, never the
+/// working tree.
+fn restoreArgs(tree: []const u8, files: []const []const u8) ![]const []const u8 {
+    var out = try lib.alloc.alloc([]const u8, files.len + 4);
+    out[0] = "restore";
+    out[1] = try std.fmt.allocPrint(lib.alloc, "--source={s}", .{tree});
+    out[2] = "--staged";
+    out[3] = "--";
+    @memcpy(out[4..], files);
+    return out;
 }
 
 /// `git commit -m <message> -- <files>`.

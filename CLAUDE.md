@@ -224,17 +224,23 @@ Adding one is one file, one registry row, one `ProviderKind` tag — never a new
 into conventional commits, validates the messages, and topo-sorts them on a
 grep graph, falling back to one commit on a degenerate cycle
 ([PRD 0021](docs/prds/0021-smart-commit.md)). It dry-runs and confirms before
-executing. Its apply path re-adds each group's files whole, so an index
-narrowed to one session's hunks (the concurrent-sessions runbook's route) gets
-widened with other sessions' unstaged edits — commit a narrowed index with
-`clanker git commit` directly instead
+executing. In the default `staged` scope each group's commit is built in the
+index, so an index narrowed to one session's hunks (the concurrent-sessions
+runbook's route) commits exactly as staged and other sessions' unstaged edits
+stay unstaged; it used to `git add` each group's files and commit them by
+pathspec, and **both of those take the worktree copy**, which widened the
+commit
 ([bug](docs/reports/bugs/2026-08-17-smart-commit-readds-worktree-files.md)).
-Each group is committed with a pathspec, so anything else staged stays staged;
-a bare `git commit` there used to sweep the whole index into the first group
-and leave the later ones nothing to commit, reported as written anyway
+`--all` still commits by pathspec, which is what that scope means and leaves
+anything else staged alone; a bare `git commit` there used to sweep the whole
+index into the first group and leave the later ones nothing to commit,
+reported as written anyway
 ([bug](docs/reports/bugs/2026-08-17-smart-commit-sweeps-the-whole-index.md)).
-`clanker git commit -m "…" -- <paths>` is the same trick by hand, and the way
-to land one session's files while another's stay staged.
+By hand, mind which copy each form takes: `clanker git commit -m "…" --
+<paths>` commits the **worktree** copy of those paths and leaves the rest of
+the index staged, so it lands one session's files only where index and
+worktree already agree; a hunk-narrowed index is landed by committing the
+index itself, `clanker git commit -m "…"` with nothing else staged.
 
 ### Cleaning up after runs
 

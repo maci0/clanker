@@ -1,12 +1,20 @@
 //! Black-box `clanker commit`: the plan it reports and the commits it writes
-//! have to be the same thing. The apply path runs `git add` per group and then
+//! have to be the same thing, in both directions.
+//!
+//! One commit per group: the apply path ran `git add` per group and then a bare
 //! `git commit`, which commits the whole index -- so anything staged before the
-//! verb ran lands in the first group's commit, and the later groups find
+//! verb ran landed in the first group's commit, and the later groups found
 //! nothing left to commit.
 //!
-//! Staging before running the verb is not an odd thing to do: it is what
+//! The staged content and nothing more: `git add` stages the working-tree copy
+//! and a pathspec `git commit -- <files>` commits the working-tree copy, so an
+//! index narrowed to one session's hunks was widened with whatever else was in
+//! those files.
+//!
+//! Neither shape is odd: staging first, and narrowing the index to one
+//! session's hunks, are both what
 //! docs/runbooks/concurrent-agent-sessions-on-one-checkout.md tells a session
-//! to do so it commits only its own paths.
+//! to do so it commits only its own work.
 
 const std = @import("std");
 const mock_llm = @import("mock_llm.zig");
@@ -40,6 +48,68 @@ fn countLines(s: []const u8) usize {
         if (line.len > 0) n += 1;
     }
     return n;
+}
+
+test "clanker commit in scope staged commits the index, not the worktree" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const plan =
+        "{\"commits\":[" ++
+        "{\"message\":\"docs: add the shared note\",\"files\":[\"shared.md\"]}," ++
+        "{\"message\":\"docs: add the other note\",\"files\":[\"other.md\"]}]}";
+    const turn = try mock_llm.jsonTurn(gpa, plan);
+    defer gpa.free(turn);
+    const mock = try mock_llm.Server.start(io, gpa, &.{ turn, turn });
+    defer mock.stop();
+
+    try harness.writeMockConfig(io, tmp.dir, gpa, mock.port);
+    try harness.linkZigOut(io, tmp.dir);
+    try harness.initGitRepo(gpa, io, tmp.dir);
+    gpa.free(try git(gpa, io, tmp.dir, &.{ "git", "config", "user.name", "e2e" }));
+    gpa.free(try git(gpa, io, tmp.dir, &.{ "git", "config", "user.email", "e2e@example.invalid" }));
+
+    // The shape docs/runbooks/concurrent-agent-sessions-on-one-checkout.md
+    // produces: this session's line is staged, another session's line is in the
+    // worktree and deliberately left out of the index.
+    try tmp.dir.writeFile(io, .{ .sub_path = "shared.md", .data = "mine\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "other.md", .data = "other\n" });
+    gpa.free(try git(gpa, io, tmp.dir, &.{ "git", "add", "shared.md", "other.md" }));
+    try tmp.dir.writeFile(io, .{ .sub_path = "shared.md", .data = "mine\ntheirs-unfinished\n" });
+
+    var result = try harness.run(gpa, io, tmp.dir, &.{ "commit", "--yes" });
+    defer result.deinit(gpa);
+    if (!result.ok()) std.debug.print("clanker commit failed.\nstdout: {s}\nstderr: {s}\n", .{ result.stdout, result.stderr });
+    try std.testing.expect(result.ok());
+
+    // The commit carries the staged content only. `git add` before the commit,
+    // or a pathspec `git commit -- <files>`, would both have swept the other
+    // session's line in.
+    const touching = try git(gpa, io, tmp.dir, &.{ "git", "log", "-1", "--format=%H", "--", "shared.md" });
+    defer gpa.free(touching);
+    const rev = std.mem.trim(u8, touching, " \t\r\n");
+    try std.testing.expect(rev.len > 0);
+    const blob = try std.fmt.allocPrint(gpa, "{s}:shared.md", .{rev});
+    defer gpa.free(blob);
+    const in_history = try git(gpa, io, tmp.dir, &.{ "git", "show", blob });
+    defer gpa.free(in_history);
+    if (std.mem.find(u8, in_history, "theirs-unfinished") != null)
+        std.debug.print("commit widened to the worktree copy:\n{s}\n", .{in_history});
+    try std.testing.expect(std.mem.find(u8, in_history, "theirs-unfinished") == null);
+    try std.testing.expect(std.mem.find(u8, in_history, "mine") != null);
+
+    // The other session's edit is still in the worktree, still unstaged.
+    const worktree = try tmp.dir.readFileAlloc(io, "shared.md", gpa, .limited(1 << 16));
+    defer gpa.free(worktree);
+    try std.testing.expect(std.mem.find(u8, worktree, "theirs-unfinished") != null);
+    const unstaged = try git(gpa, io, tmp.dir, &.{ "git", "diff", "--name-only" });
+    defer gpa.free(unstaged);
+    try std.testing.expect(std.mem.find(u8, unstaged, "shared.md") != null);
 }
 
 test "clanker commit writes one commit per group even when the index was already full" {

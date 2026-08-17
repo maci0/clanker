@@ -155,14 +155,28 @@ level (nodes with the same depth), source files (`src/`, `lib/`, non-test files)
 sort before test files, doc files (`*.md`, `docs/`), and config files
 (`*.toml`, `*.json`, `*.yaml` at the repo root).
 
-**Step 6: execution.** For each ordered group:
-1. `git add -- <files>` (stage only the group's files).
-2. `git commit -m "<message>"`.
+**Step 6: execution.** Which copy of each file the commit takes is the whole of
+this step. `git add -- <files>` stages the *working-tree* copy, and
+`git commit -m "<message>" -- <files>` commits the *working-tree* copy of those
+paths while disregarding what is staged elsewhere. Neither can commit an index
+a session has narrowed to its own hunks.
 
-If any `git commit` fails (pre-commit hook, empty staging area, etc.),
+`scope = "all"` means the working tree, so it takes that route: per ordered
+group, `git add -- <files>` then `git commit -m "<message>" -- <files>`. The
+pathspec is what leaves anything else staged untouched.
+
+`scope = "staged"` means the index, so each commit is built there instead:
+`git write-tree` saves the full staged state as a tree, then per ordered group
+`git read-tree HEAD` (`--empty` in a repository with no commit yet),
+`git restore --source=<tree> --staged -- <files>`, and a bare
+`git commit -m "<message>"` of that index. No step writes the working tree, so
+unstaged edits are still unstaged afterwards. `git read-tree <tree>` puts the
+index back at the end, and also after a failure, so a half-built index cannot
+be mistaken for lost work.
+
+If any git step fails (pre-commit hook, empty staging area, etc.),
 `smart_commit` stops and returns the error with the partial list of commits
-already made. No rollback is attempted; the user is left with a partially
-committed working tree.
+already made. Commits already written are not rolled back.
 
 **Conventional commit validation.** A valid message starts with one of the 11
 types, optionally followed by a scope in parentheses and a colon:
