@@ -93,6 +93,7 @@ projects, and the strongest case against the recommendation.
 ## Inventory
 
 <!-- inventory:rfc:start -->
+- [RFC 0013 — MCP client configuration: how clanker consumes external MCP servers](0013-mcp-client-configuration-how-clanker-consumes-external-mcp.md) — Decided
 - [RFC 0012 — Named config profiles (--profile and --dump-config)](0012-named-config-profiles-profile-and-dump-config.md) — Decided
 - [RFC 0011 — REPL image/multimodal input](0011-repl-image-multimodal-input.md) — Decided
 - [RFC 0010 — REPL multi-line task input](0010-repl-multi-line-task-input.md) — Decided
