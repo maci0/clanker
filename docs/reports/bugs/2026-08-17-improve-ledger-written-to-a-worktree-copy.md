@@ -80,41 +80,60 @@ against that ledger:
 
 ## Root cause
 
-The improve engine stages each pass into a git worktree under
-`.clanker-worktrees/`, and that copy gets a real `state/` directory rather
-than a link to the shared one. The ledger append therefore succeeds — nothing
-errors, nothing warns — into a file that is discarded with the worktree.
+An improve worktree's `state/` is a real directory *by design*, not by
+accident. `linkSharedState` in `src/improve/worktree.zig` builds it that way:
+`createDirPath` makes `state/`, `state/runs/` and `state/sessions/` as real
+directories, and then symlinks exactly two entries back to the checkout —
+`state/improvements.jsonl` and `state/history`.
 
-ADR 0017 and the `ensureDir` note in AGENTS.md both describe an isolated run's
-`state` as a *symlink*, and `ck_fs_write_if` was given `ensureDir` precisely
-because of it. The obvious reading is therefore that improve worktrees simply
-never got that treatment.
+The split is deliberate, and the function says why: "The dividing line for
+everything under state/ is WHO reads the path." A symlink is safe only where
+the *host* reads it, because `safeJoinSecure`'s no-follow walk correctly
+refuses symlinked components for any path a sandboxed tool traverses — a
+linked `state/runs` broke graph's write test in every worktree, and a linked
+`learnings.md` denies the learnings tool. `improvements.jsonl` qualifies for a
+link precisely because only the engine's `History` touches it.
 
-That reading is wrong, and this record made it before checking. The engine
-does try. `linkCheckoutStateAt` in `src/improve/worktree.zig` walks `host.shared_prefixes`
-and symlinks `state` (named by `sharedDirectory`) from the worktree back to the
-checkout, and its own comment describes exactly this failure -- "native
-session/run writes later create a private `state/` in the worktree. The two
-readers then disagree about the same run."
+So the ledger *is* linked, and the link is correct. What breaks it is the
+write. `atomic_write.writeFile` is a temp file plus an atomic rename, and a
+rename onto `state/improvements.jsonl` replaces **the symlink itself** with a
+real file. Every append after that is private to the worktree and is thrown
+away with it.
 
-Nor is it stale code that postdates these worktrees: the linking landed in
-`c6dfd690` on 08-14 23:41, and all ten worktrees were created on 08-17 between
-11:23 and 16:17. The treatment is attempted, and something skips it.
+The proof sits in the same directory, as a control. Of the two linked entries,
+one is still a link and one is not:
 
-**Which skip path fires is not established.** That function has exactly two --
-`checkout.access(io, name, .{}) catch continue`, and `symLink(...)` with
-`error.PathAlreadyExists => {}` -- and this record does not say which.
+```
+lrwxrwxrwx history -> /home/yannick/code/maci0/clanker/state/history
+-rw-r--r-- improvements.jsonl
+```
 
-One piece of evidence rules out the obvious guess. The worktree `state` is not
-a copy of the shared directory: it holds 11 entries against the shared
-directory's 41 -- `autolearn.jsonl`, `improvements.jsonl`, `learnings.md`,
-`reasoning.jsonl`, `runs`, `sessions`, `staging`, `token_stats.jsonl` and two
-lock files, exactly the set an improve run writes. Nothing bulk-copied
-`state/`; a private directory was created and populated. That fits the
-`PathAlreadyExists` branch and not a wholesale copy, but the ordering that
-would prove it has not been traced. The checkout's own `state` being a symlink
-to `clanker-state` may matter to `access` and to `symLink` target resolution
-here, and is worth checking first.
+`history` is a directory: nothing rename-rewrites it, so its link survives.
+`improvements.jsonl` is a file that gets whole-file rewrites, so it does not.
+The other real files beside them — `autolearn.jsonl`, `learnings.md`,
+`reasoning.jsonl`, `token_stats.jsonl` — were never linked at all, by the
+sandbox rule above, so they are not evidence of anything.
+
+### Two earlier accounts in this record were wrong
+
+Both are left visible because each was stated more confidently than it was
+checked, which is the failure this store exists to prevent.
+
+1. The first said improve worktrees "do not get that treatment, and nothing
+   checks that they do" — that the `state` symlink was simply never made.
+2. The second corrected it to `linkCheckoutStateAt` attempting the link and
+   something skipping it, and named two skip paths. That is the wrong
+   function: `linkCheckoutStateAt` links whole shared directories for
+   *isolated runs*; the improve worktree path is `linkSharedState`, which
+   deliberately does not link `state/` as a directory at all.
+
+The evidence that settles it — `history` still linked beside an unlinked
+`improvements.jsonl` — was available from the first `ls -la` and was not run
+until session clanker-55 questioned whether a rename could produce a real
+directory. It cannot, and that objection is also wrong: a rename through a
+*directory* symlink lands inside the target, but `improvements.jsonl` is a
+symlink to a *file*, and a rename onto it replaces the link. The mechanism
+claimed by session claude-20260817-135725 was right from the start.
 
 Only the merge-back crosses the worktree boundary, and it carries commits, not
 state. `Worktree.merged` answers "did promotion land?" — it says nothing about
@@ -128,11 +147,12 @@ first.
 
 A fix has two halves that must not be confused:
 
-1. **Stop the divergence.** Find which of the two skip paths in
-   `linkCheckoutStateAt` fires and close it, so the append lands in the shared
-   ledger. The intent and the code are already there (ADR 0017, `c6dfd690`);
-   this is a link that is attempted and silently not made, which is why no
-   layer reports anything.
+1. **Stop the divergence.** Make the whole-file write follow the link
+   instead of replacing it — resolve `state/improvements.jsonl` before the
+   rename in `atomic_write.writeFile`, or write through the resolved target.
+   Claimed on the board by session claude-20260817-135725, which holds
+   `src/util/atomic_write.zig`. Note the fix is general: any symlinked file
+   this helper rewrites has the same problem, not just the ledger.
 2. **Recover the 23 entries.** They exist only in the worktree copies. Any fix
    that starts by cleaning up `.clanker-worktrees/` destroys them.
 
@@ -167,8 +187,10 @@ output is quoted there: the `state` symlink, the ten `REALDIR` worktree state
 directories, the line counts, the `grep -l` locating the missing id, the
 25/2/23 id count, and the janitor refusal.
 
-The mechanism was established by session clanker-d7 and re-run here. Its
-counts and mine differ by one at the boundary — it reports 24 ids with 1 in
+The 23-entry gap was established by session clanker-d7 and re-run here; the
+mechanism above is session claude-20260817-135725's and was verified here by
+the `history`-versus-`improvements.jsonl` control. Its counts and mine differ
+by one at the boundary — it reports 24 ids with 1 in
 the shared ledger, this record 25 with 2 — because the cutoff for "since the
 ledger's last write" is picked slightly differently. The number that matters,
 23 absent, is the same by both methods.
