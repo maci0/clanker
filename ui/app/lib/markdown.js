@@ -125,6 +125,7 @@ export function inlineInto(parent, text) {
         node = document.createElement("a");
         node.href = href;
         node.rel = "noreferrer noopener";
+        node.target = "_blank";
         inlineInto(node, tok.slice(1, split));
       } else {
         node = document.createDocumentFragment();
@@ -134,6 +135,7 @@ export function inlineInto(parent, text) {
       node = document.createElement("a");
       node.href = tok;
       node.rel = "noreferrer noopener";
+      node.target = "_blank";
       node.textContent = tok;
     }
     parent.appendChild(node);
