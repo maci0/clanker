@@ -68,6 +68,12 @@ const status_column_min: usize = 10;
 /// four-space indent and its line number still fit an 80-column terminal,
 /// which is the width the rest of clanker's output is written to.
 const match_column_bytes: usize = 68;
+/// Most matching lines one record contributes to a search result. A runbook
+/// can match a query in hundreds of places, and printing them all pushes the
+/// useful hits below the fold of the same terminal the result is read on; the
+/// rest live in the record, where `clanker reports open <path>` shows them
+/// with their surrounding context instead of a uniform column.
+const max_search_lines_per_file: usize = 50;
 
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     const io = init.io;
@@ -552,9 +558,28 @@ fn renderMatchGroup(w: *std.Io.Writer, heading: []const u8, matches: []const std
     try w.print("{s}\n\n", .{heading});
 
     var last_file: []const u8 = "";
+    var file_lines: usize = 0;
+    var skipped: usize = 0;
     for (matches) |m| {
         if (m != .object) continue;
         const file = json_util.strFieldOrEmpty(m.object, "file");
+        if (!std.mem.eql(u8, file, last_file)) {
+            // Leaving a capped record: say what the listing refused, then the
+            // blank line that separates the next file's group.
+            if (last_file.len > 0 and skipped > 0) {
+                try w.print("    … {d} more matching line(s) in {s}\n", .{ skipped, last_file });
+            }
+            if (last_file.len > 0) try w.writeByte('\n');
+            last_file = file;
+            file_lines = 0;
+            skipped = 0;
+            try w.print("  {s}\n", .{file});
+        }
+        if (file_lines >= max_search_lines_per_file) {
+            skipped += 1;
+            continue;
+        }
+        file_lines += 1;
         const text = json_util.strFieldOrEmpty(m.object, "text");
         // A line number is printed unsigned: `{d}` on an i64 carries an
         // explicit `+`, which reads as a diff marker in a column of numbers.
@@ -563,12 +588,10 @@ fn renderMatchGroup(w: *std.Io.Writer, heading: []const u8, matches: []const std
             if (l != .integer or l.integer < 0) break :blk 0;
             break :blk @intCast(l.integer);
         };
-        if (!std.mem.eql(u8, file, last_file)) {
-            if (last_file.len > 0) try w.writeByte('\n');
-            try w.print("  {s}\n", .{file});
-            last_file = file;
-        }
         try w.print("    {d: >5}  {s}\n", .{ line, ellipsize(text, match_column_bytes) });
+    }
+    if (last_file.len > 0 and skipped > 0) {
+        try w.print("    … {d} more matching line(s) in {s}\n", .{ skipped, last_file });
     }
     try w.writeAll("\n");
 }
@@ -700,6 +723,27 @@ test "search groups hits by record and says so when there are none" {
     const empty = try renderSearch(arena, "nothing here", "all", &.{}, &.{});
     try std.testing.expect(std.mem.find(u8, empty, "no report or runbook mentions \"nothing here\"") != null);
     try std.testing.expect(std.mem.find(u8, empty, "clanker reports create investigation") != null);
+}
+
+test "search caps a record's lines at the column and names how many were hidden" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // One record with more hits than the column allows: the printed lines
+    // stay bounded, and a hint names the ones the listing refused so a
+    // reader knows the truncated file is where the rest lives.
+    var matches: std.ArrayList(std.json.Value) = .empty;
+    var i: usize = 0;
+    while (i < max_search_lines_per_file + 12) : (i += 1) {
+        try matches.append(arena, try std.json.parseFromSliceLeaky(std.json.Value, arena,
+            \\{"file":"docs/runbooks/big.md","line":3,"text":"recurring phrase"}
+        , .{}));
+    }
+
+    const text = try renderSearch(arena, "recurring", "all", &.{}, matches.items);
+    try std.testing.expectEqual(max_search_lines_per_file, std.mem.count(u8, text, "recurring phrase"));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "12 more matching line(s) in docs/runbooks/big.md"));
 }
 
 test "a refused tool call fails with the tool's own sentence, not a generic error" {
