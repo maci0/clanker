@@ -67,19 +67,24 @@ const status_column_max: usize = 18;
 const status_column_min: usize = 10;
 
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
-    const io = init.io;
-    const arena = init.arena.allocator();
+    try out(init.io, try run(init.arena.allocator(), opts, tool));
+}
+
+/// The whole subcommand surface as rendered text. `cmd` prints it to stdout;
+/// the TUI's `/research` folds the same text into the transcript, so both
+/// surfaces stay one implementation of the store's operator view.
+pub fn run(arena: std.mem.Allocator, opts: Options, tool: Tool) anyerror![]const u8 {
     const sub = opts.sub;
 
-    if (std.mem.eql(u8, sub, "list")) return list(io, arena, tool);
-    if (std.mem.eql(u8, sub, "plan")) return plan(io, arena, opts, tool);
-    if (std.mem.eql(u8, sub, "sweep")) return sweep(io, arena, opts, tool);
-    if (std.mem.eql(u8, sub, "search")) return search(io, arena, opts, tool);
-    if (std.mem.eql(u8, sub, "open")) return open(io, arena, opts, tool);
-    if (std.mem.eql(u8, sub, "create")) return create(io, arena, opts, tool);
-    if (std.mem.eql(u8, sub, "append")) return append(io, arena, opts, tool);
-    if (std.mem.eql(u8, sub, "update")) return update(io, arena, opts, tool);
-    if (std.mem.eql(u8, sub, "status")) return setStatus(io, arena, opts, tool);
+    if (std.mem.eql(u8, sub, "list")) return list(arena, tool);
+    if (std.mem.eql(u8, sub, "plan")) return plan(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "sweep")) return sweep(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "search")) return search(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "open")) return open(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "create")) return create(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "append")) return append(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "update")) return update(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "status")) return setStatus(arena, opts, tool);
 
     log.log(.error_, "unknown research subcommand '{s}' (expected list, plan, sweep, search, open, create, append, update or status)", .{sub});
     return Error.BadSubcommand;
@@ -87,12 +92,12 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
 
 // ------------------------------------------------------------------ reading --
 
-fn list(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
+fn list(arena: std.mem.Allocator, tool: Tool) ![]const u8 {
     const result = try callTool(arena, tool, "{\"action\":\"list\"}");
-    try out(io, try renderList(arena, json_util.strFieldOrEmpty(result.object, "index")));
+    return renderList(arena, json_util.strFieldOrEmpty(result.object, "index"));
 }
 
-fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn search(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const query = opts.arg1 orelse {
         log.log(.error_, "research search needs a query: clanker research search \"embedded kv\"", .{});
         return Error.MissingArg;
@@ -103,10 +108,10 @@ fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
         .{ "query", query },
     });
     const result = try callTool(arena, tool, input);
-    try out(io, try renderSearch(arena, query, arrayField(result, "matches")));
+    return renderSearch(arena, query, arrayField(result, "matches"));
 }
 
-fn open(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn open(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const path = opts.arg1 orelse {
         log.log(.error_, "research open needs a path: clanker research open docs/research/<name>.md", .{});
         return Error.MissingArg;
@@ -117,15 +122,15 @@ fn open(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
         .{ "path", path },
     });
     const result = try callTool(arena, tool, input);
-    // The note is markdown that was written to be read; print it as it is.
+    // The note is markdown that was written to be read; return it as it is.
     const text = json_util.strFieldOrEmpty(result.object, "text");
-    try out(io, text);
-    if (text.len > 0 and text[text.len - 1] != '\n') try out(io, "\n");
+    if (text.len > 0 and text[text.len - 1] != '\n') return std.fmt.allocPrint(arena, "{s}\n", .{text});
+    return text;
 }
 
 // ---------------------------------------------------------------- gathering --
 
-fn plan(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn plan(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const topic = opts.arg1 orelse {
         log.log(.error_, "research plan needs a topic: clanker research plan \"embedded key-value stores\" \"which one fits a single-writer sidecar?\"", .{});
         return Error.MissingArg;
@@ -137,10 +142,10 @@ fn plan(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
         .{ "depth", opts.arg3 orelse "standard" },
     });
     const result = try callTool(arena, tool, input);
-    try out(io, try renderPlan(arena, result));
+    return renderPlan(arena, result);
 }
 
-fn sweep(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn sweep(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const topic = opts.arg1 orelse {
         log.log(.error_, "research sweep needs a topic: clanker research sweep \"embedded key-value stores\" deep", .{});
         return Error.MissingArg;
@@ -151,12 +156,12 @@ fn sweep(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void 
         .{ "depth", opts.arg2 orelse "standard" },
     });
     const result = try callTool(arena, tool, input);
-    try out(io, try renderSweep(arena, result));
+    return renderSweep(arena, result);
 }
 
 // ------------------------------------------------------------------ writing --
 
-fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn create(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const slug = opts.arg1 orelse return missingCreateArg("a slug");
     const title = opts.arg2 orelse return missingCreateArg("a title");
     const question = opts.arg3 orelse return missingCreateArg("the question the note answers");
@@ -171,7 +176,7 @@ fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     const path = json_util.strFieldOrEmpty(result.object, "path");
 
     var w: std.Io.Writer.Allocating = .init(arena);
-    defer w.deinit();
+    errdefer w.deinit();
     try w.writer.print("created {s}\n", .{path});
     // The scaffold is a skeleton of prompts. Saying so here is what keeps a
     // half-filled note from being mistaken for a finished one.
@@ -180,7 +185,7 @@ fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     if (!boolField(result, "indexed")) {
         try w.writer.writeAll("\nThe inventory was not updated (it changed concurrently). Add the link\nby hand in docs/research/README.md without replacing the other edit.\n");
     }
-    try out(io, w.written());
+    return try w.toOwnedSlice();
 }
 
 fn missingCreateArg(what: []const u8) Error {
@@ -188,7 +193,7 @@ fn missingCreateArg(what: []const u8) Error {
     return Error.MissingArg;
 }
 
-fn append(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn append(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const path = opts.arg1 orelse {
         log.log(.error_, "research append needs a path and markdown content: clanker research append docs/research/<name>.md -- \"## Finding\\n\\n...\"", .{});
         return Error.MissingArg;
@@ -204,10 +209,10 @@ fn append(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
         .{ "content", content },
     });
     const result = try callTool(arena, tool, input);
-    try out(io, try std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
+    return std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
 }
 
-fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn update(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const path = opts.arg1 orelse {
         log.log(.error_, "research update needs a path, the exact old text, and its replacement", .{});
         return Error.MissingArg;
@@ -230,10 +235,10 @@ fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
         .{ "new", new },
     });
     const result = try callTool(arena, tool, input);
-    try out(io, try std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
+    return std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
 }
 
-fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+fn setStatus(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const path = opts.arg1 orelse return missingStatusArg("a note path");
     const wanted = opts.arg2 orelse return missingStatusArg("a state: draft, current, stale or superseded");
 
@@ -246,7 +251,7 @@ fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !v
     const result = try callTool(arena, tool, input);
 
     var w: std.Io.Writer.Allocating = .init(arena);
-    defer w.deinit();
+    errdefer w.deinit();
     try w.writer.print("{s} is now {s}\n", .{
         json_util.strFieldOrEmpty(result.object, "path"),
         json_util.strFieldOrEmpty(result.object, "status"),
@@ -254,7 +259,7 @@ fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !v
     if (!boolField(result, "indexed")) {
         try w.writer.writeAll("\nThe inventory line was not updated (the entry is missing or the index\nchanged concurrently). Set its status by hand in docs/research/README.md so\nthe index does not disagree with the note.\n");
     }
-    try out(io, w.written());
+    return try w.toOwnedSlice();
 }
 
 fn missingStatusArg(what: []const u8) Error {

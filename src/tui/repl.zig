@@ -50,6 +50,7 @@ const subprocess = @import("../agent/subprocess.zig");
 const dap = @import("../debug/dap.zig");
 const goal_prompt = @import("../agent/goal_prompt.zig");
 const goal_loop = @import("../agent/goal_loop.zig");
+const research_cmd = @import("../research/command.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const sandbox_host = @import("../sandbox/host.zig");
 const agent_loop = @import("../agent/loop.zig");
@@ -1179,7 +1180,9 @@ const CommandAction = union(enum) {
     preset,
     /// Pin the per-turn reasoning effort for this session (`/effort [level]`).
     effort,
-    /// Toggle web-research runs for subsequent tasks (`/research [on|off]`).
+    /// Toggle web-research runs for subsequent tasks (`/websearch [on|off]`).
+    websearch,
+    /// The research note store, same subcommands as `clanker research`.
     research,
     /// Queue an image path for the next task submit (`/attach <path>`).
     attach,
@@ -1231,7 +1234,8 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/plan", .takes_args = true, .arg_hint = "[on|off]", .help = "toggle plan mode (proposal only; write tools refused)", .action = .plan },
     .{ .name = "/preset", .takes_args = true, .arg_hint = "<name>", .help = "switch preset bundle (allowed tools + persona) for next task", .action = .preset },
     .{ .name = "/effort", .takes_args = true, .arg_hint = "[none|low|medium|high|max|default]", .help = "pin reasoning effort for every turn (picker with previews; default clears)", .action = .effort },
-    .{ .name = "/research", .takes_args = true, .arg_hint = "[on|off]", .help = "toggle research mode (prefer web_search/web_fetch for current facts)", .action = .research },
+    .{ .name = "/websearch", .takes_args = true, .arg_hint = "[on|off]", .help = "toggle web-research mode (prefer web_search/web_fetch for current facts)", .action = .websearch },
+    .{ .name = "/research", .takes_args = true, .arg_hint = "<sub> [args]", .help = "research notes, same store as clanker research: list, search, open, plan, sweep, create, append, update, status", .action = .research },
     .{ .name = "/attach", .takes_args = true, .arg_hint = "<path>", .help = "queue an image for the next task submit", .action = .attach },
     .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
 };
@@ -1904,6 +1908,66 @@ test "REPL accepts the CLI aliases for sessions and plugins" {
             else => return error.TestExpectedToolCommand,
         }
     }
+}
+
+/// Splits one REPL command line into words, honoring double quotes ("a b" is
+/// one token) so `/research create slug "A title" "The question?"` carries
+/// multi-word arguments the way the shell does for the CLI. No escape
+/// syntax: the composer is one line, and a quote inside a word ends the
+/// group. Pure and arena-allocated, so the picker/test can call it directly.
+fn splitCommandLine(arena: std.mem.Allocator, line: []const u8) ![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    var i: usize = 0;
+    while (i < line.len) {
+        while (i < line.len and (line[i] == ' ' or line[i] == '\t')) i += 1;
+        if (i >= line.len) break;
+        if (line[i] == '"') {
+            const start = i + 1;
+            var end = start;
+            while (end < line.len and line[end] != '"') end += 1;
+            try out.append(arena, line[start..end]);
+            i = if (end < line.len) end + 1 else end;
+        } else {
+            const start = i;
+            while (i < line.len and line[i] != ' ' and line[i] != '\t') i += 1;
+            try out.append(arena, line[start..i]);
+        }
+    }
+    return out.items;
+}
+
+test "splitCommandLine honors double quotes and collapses whitespace" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const plain = try splitCommandLine(arena, "search embedded kv");
+    try std.testing.expectEqual(@as(usize, 3), plain.len);
+    try std.testing.expectEqualStrings("search", plain[0]);
+
+    const quoted = try splitCommandLine(arena, "create embedded-kv \"Embedded KV stores\" \"Which one fits?\"");
+    try std.testing.expectEqual(@as(usize, 4), quoted.len);
+    try std.testing.expectEqualStrings("Embedded KV stores", quoted[2]);
+    try std.testing.expectEqualStrings("Which one fits?", quoted[3]);
+
+    const empty_quote = try splitCommandLine(arena, "update p \"old\" \"\"");
+    try std.testing.expectEqual(@as(usize, 4), empty_quote.len);
+    try std.testing.expectEqualStrings("", empty_quote[3]);
+
+    const unterminated = try splitCommandLine(arena, "search \"half open");
+    try std.testing.expectEqual(@as(usize, 2), unterminated.len);
+    try std.testing.expectEqualStrings("half open", unterminated[1]);
+
+    try std.testing.expectEqual(@as(usize, 0), (try splitCommandLine(arena, "   ")).len);
+}
+
+test "/research is the record store and /websearch is the mode toggle" {
+    const store = parseCommand("/research search embedded") orelse return error.TestExpectedCommand;
+    try std.testing.expect(store.spec.action == .research);
+    try std.testing.expectEqualStrings("search embedded", store.args);
+
+    const toggle = parseCommand("/websearch on") orelse return error.TestExpectedCommand;
+    try std.testing.expect(toggle.spec.action == .websearch);
 }
 
 test "plugins command forwards its documented toggle arguments" {
@@ -2875,15 +2939,16 @@ const Model = struct {
                     "notice: plan mode {s} (write-capable tools refused while on)",
                 ) == .bad_usage) return;
             },
-            .research => {
+            .websearch => {
                 if (toggleSessionMode(
                     self,
                     pc.args,
                     &self.research_mode,
-                    "usage: /research [on|off] (bare /research toggles)",
-                    "notice: research mode {s} (web_search/web_fetch preferred for current facts)",
+                    "usage: /websearch [on|off] (bare /websearch toggles)",
+                    "notice: web-research mode {s} (web_search/web_fetch preferred for current facts)",
                 ) == .bad_usage) return;
             },
+            .research => self.runResearchCommand(pc.args),
             .preset => {
                 const name = std.mem.trim(u8, pc.args, " \t");
                 // Blank-session-only guard, checked before either path so a
@@ -3054,6 +3119,44 @@ const Model = struct {
     /// Runs one internal `cmd_*` WASM tool ({"args":"<text>"} -> {"text":"..."})
     /// and folds its output into the transcript as dim lines. Returns true so
     /// submit treats it as handled.
+    /// `/research <sub> [args...]`: the same store, subcommands and rendering
+    /// as `clanker research`, folded into the transcript instead of stdout.
+    /// The line is tokenized into the CLI's own Options and handed to
+    /// `research_cmd.run`, so the tool input and the rendering stay one
+    /// implementation across both surfaces.
+    fn runResearchCommand(self: *Model, args_line: []const u8) void {
+        const tokens = splitCommandLine(self.arena, args_line) catch {
+            self.lines.append(self.arena, .{ .text = "error: /research: out of memory", .dim = true }) catch {};
+            return;
+        };
+        var opts: research_cmd.Options = .{};
+        if (tokens.len > 0) opts.sub = tokens[0];
+        if (tokens.len > 1) opts.arg1 = tokens[1];
+        if (tokens.len > 2) opts.arg2 = tokens[2];
+        if (tokens.len > 3) opts.arg3 = tokens[3];
+        if (tokens.len > 4) opts.arg4 = tokens[4];
+        const text = research_cmd.run(self.arena, opts, .{ .ctx = self, .call = &researchToolCall }) catch |err| {
+            const hint: []const u8 = switch (err) {
+                research_cmd.Error.BadSubcommand, research_cmd.Error.MissingArg => "; same subcommands as clanker research",
+                else => "",
+            };
+            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: /research: {s}{s}", .{ @errorName(err), hint }) catch "error: /research failed", .dim = true }) catch {};
+            return;
+        };
+        // Transcript entries hold one logical row each; never store '\n'.
+        var it = std.mem.splitScalar(u8, std.mem.trimEnd(u8, text, "\n"), '\n');
+        while (it.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch break;
+    }
+
+    fn researchToolCall(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
+        const self: *Model = @ptrCast(@alignCast(ctx));
+        const mod = try runtime.loadNamedTool(self.gpa, self.io, self.arena, self.ctx.environ_map, &self.cfg, &self.reg, "research", null);
+        defer mod.deinit();
+        const raw = try mod.executeTool(input);
+        defer self.gpa.free(raw);
+        return try self.arena.dupe(u8, raw);
+    }
+
     fn runInternalTool(self: *Model, tool_name: []const u8, args: []const u8) bool {
         var ibuf: [8192]u8 = undefined;
         var iw: std.Io.Writer = .fixed(&ibuf);

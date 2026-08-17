@@ -578,6 +578,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   when `modules.mesh` is on and the peer is connected, else HTTP. Serve
   listens when the module is on. `POST /api/mesh/join` dials.
 
+### Changed
+
+- The REPL's `/research` now means what `clanker research` means: the
+  research note store, same subcommands (`list`, `search`, `open`,
+  `plan`, `sweep`, `create`, `append`, `update`, `status`), same
+  rendering, folded into the transcript. The old `/research` was an
+  unrelated web-preference toggle squatting on the name; that toggle is
+  now `/websearch [on|off]`. Multi-word arguments take double quotes:
+  `/research create embedded-kv "Embedded KV stores" "Which one fits?"`.
+
 ### Fixed
 
 - A goal loop no longer dies on a single failed turn. A turn that errors
