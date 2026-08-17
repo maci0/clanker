@@ -476,11 +476,56 @@ pub fn start(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, on_c
     log.log(.info, "mesh listening on {s}", .{listen_s});
 }
 
+/// One bounded window for the whole JOIN exchange: the connect below and the
+/// ack read (`SO_RCVTIMEO` further down) each get this much, so a dead peer is
+/// reported after ~10s instead of waiting out the kernel's own connect
+/// timeout (~2 minutes on Linux when SYNs are dropped) on the CLI thread.
+const join_wait_ns: i96 = 10 * std.time.ns_per_s;
+
+/// `addr.connect` runs the TCP handshake on the caller's thread, and the
+/// Threaded io has no connect timeout of its own (its `ConnectOptions.timeout`
+/// is an unimplemented TODO that panics). An unreachable peer therefore hung
+/// the JOIN on the kernel connect timeout. Run the connect as a concurrent
+/// task and cancel it at the deadline, the same shape as `httpGetDeadline` in
+/// cli.zig: cancel interrupts the blocking syscall and joins the task, and the
+/// connect itself errdefers its socket, so nothing leaks out of the window.
+fn connectBounded(io: std.Io, addr: std.Io.net.IpAddress) !std.Io.net.Stream {
+    var done: std.Io.Event = .unset;
+    var fut = io.concurrent(connectTask, .{ io, addr, &done }) catch return error.ConcurrencyUnavailable;
+    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = join_wait_ns },
+    });
+    while (!done.isSet()) {
+        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
+            // Spurious wakeups report Timeout too, so the deadline decides
+            // whether the budget is really spent, not this return.
+            error.Timeout => {
+                if (done.isSet()) break;
+                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
+                _ = fut.cancel(io) catch {};
+                return error.Timeout;
+            },
+            error.Canceled => {
+                _ = fut.cancel(io) catch {};
+                return error.Canceled;
+            },
+        };
+    }
+    return fut.await(io);
+}
+
+fn connectTask(io: std.Io, addr: std.Io.net.IpAddress, done: *std.Io.Event) anyerror!std.Io.net.Stream {
+    defer done.set(io);
+    var a = addr;
+    return a.connect(io, .{ .mode = .stream });
+}
+
 pub fn join(gpa: std.mem.Allocator, address: []const u8) !void {
     const rt = runtime orelse return error.MeshOff;
     const hp = try parseHostPort(address);
     const addr = try parseAddr(hp.host, hp.port);
-    const stream = try addr.connect(rt.io, .{ .mode = .stream });
+    const stream = try connectBounded(rt.io, addr);
     // Every failure below leaves this scope, and the socket has to go with it.
     // The explicit closes only covered the branches written out longhand; the
     // `try`s -- a short allocation, a peer whose frame is malformed or over
@@ -514,8 +559,9 @@ pub fn join(gpa: std.mem.Allocator, address: []const u8) !void {
     defer acc.deinit(gpa);
     var tmp: [4096]u8 = undefined;
     // Residual posix: raw TCP mesh socket recv-timeout option, same hand-rolled
-    // socket family as readLoop above.
-    const tv: std.posix.timeval = .{ .sec = 10, .usec = 0 };
+    // socket family as readLoop above. Same window as the connect above, so the
+    // whole JOIN exchange is bounded to ~2 * join_wait_ns on a dead peer.
+    const tv: std.posix.timeval = .{ .sec = @intCast(@divTrunc(join_wait_ns, std.time.ns_per_s)), .usec = 0 };
     std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch |err|
         log.log(.warn, "mesh: read timeout not set while joining a peer, the join wait is unbounded: {s}", .{@errorName(err)});
     var accepted = false;
