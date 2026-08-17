@@ -33,6 +33,21 @@ const std = @import("std");
 /// Total bytes of a record, including the trailing newline.
 pub const record_len = 256;
 
+/// How long a lock file is kept after its last acquisition.
+///
+/// Not a liveness timeout -- see above for why an `flock` is never stale. It is
+/// a retention window for the *file*, which is named for a hash of its target:
+/// a target that recurs keeps re-acquiring the same lock and its record stays
+/// fresh, while an ephemeral target leaves a lock no later write will reuse.
+/// Twelve hours is far above the cost of the operation it guards; a CAS write
+/// is a read, a hash and a write, so a record last acquired half a day ago is
+/// not one a live writer is sitting inside.
+///
+/// Both sweepers read it from here -- the host's own pass on the `ck_fs_write_if`
+/// path and the `janitor` guest -- so there is one retention policy rather than
+/// two that agree until one is edited.
+pub const keep_ms: i64 = 12 * 60 * 60 * 1000;
+
 /// Renders the record for one acquisition into `buf`, padding with spaces.
 ///
 /// Over-long inputs are truncated rather than refused: this runs on the CAS
@@ -79,18 +94,18 @@ pub fn acquiredMs(record: []const u8) ?i64 {
     return std.fmt.parseInt(i64, raw, 10) catch null;
 }
 
-/// Whether the janitor may sweep the lock file this record came from: nothing
-/// has re-acquired it for `keep_ms`.
+/// Whether a sweep may remove the lock file this record came from: nothing has
+/// re-acquired it for `window_ms` (callers pass `keep_ms`).
 ///
 /// This is a retention rule for the *file*, never a liveness verdict on the
 /// lock -- see the module doc for why an `flock` can never be stale. Two
 /// records are deliberately not old: one that cannot be parsed, which would
 /// otherwise date to 1970 and take the whole directory with it, and one stamped
 /// in the future, which is a clock that moved rather than a lock that aged.
-pub fn agedOut(record: []const u8, now_ms: i64, keep_ms: i64) bool {
+pub fn agedOut(record: []const u8, now_ms: i64, window_ms: i64) bool {
     const acquired = acquiredMs(record) orelse return false;
     if (now_ms < acquired) return false;
-    return now_ms - acquired >= keep_ms;
+    return now_ms - acquired >= window_ms;
 }
 
 /// The target path this lock guards, or null if unreadable. Truncated for a

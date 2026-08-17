@@ -21,19 +21,11 @@ const keep_logs: usize = 20;
 
 /// How long a compare-and-swap lock file is kept after its last acquisition.
 ///
-/// Not a liveness timeout: `ck_fs_write_if` locks with `flock`, and the kernel
-/// releases an `flock` when the holding descriptor closes -- on a crash, on
-/// SIGKILL, on power loss -- so a lock is never stale and never needs
-/// reclaiming. This is a retention window for the lock *file*, which is a
-/// different thing. The file is named for a hash of its target path, so a
-/// target that recurs (a repo document) keeps re-acquiring the same lock and
-/// its record stays fresh, while an ephemeral target (a test's tmp tree, an
-/// improve staging copy) leaves a lock no later write will ever reuse.
-///
-/// Twelve hours is far above the cost of the operation it guards. A CAS write
-/// is a read, a hash and a write; a record last acquired half a day ago is not
-/// one a live writer is sitting inside.
-const keep_lock_ms: i64 = 12 * 60 * 60 * 1000;
+/// From the shared record module, because the host sweeps the same directory on
+/// the `ck_fs_write_if` path: a second copy of the number here would be a
+/// second retention policy the moment either is edited. Why twelve hours and
+/// why this is not a liveness timeout is written there.
+const keep_lock_ms: i64 = cas_lock_record.keep_ms;
 
 const Candidate = struct {
     path: []const u8,

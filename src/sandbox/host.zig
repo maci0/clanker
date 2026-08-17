@@ -3408,6 +3408,7 @@ fn casLockPath(sb: *Sandbox, base: std.Io.Dir, full: []const u8) ![]u8 {
     // ensureDir, not createDirPath: an isolated run's `state` is a symlink to
     // the checkout's, and createDirPath alone reports NotDir on that.
     try ensure_dir.ensureDir(state_base, sb.io, dir);
+    sweepAgedLocks(sb, state_base, dir);
 
     const key = try resolvedLockKey(sb, base, full);
     defer sb.gpa.free(key);
@@ -3415,6 +3416,111 @@ fn casLockPath(sb: *Sandbox, base: std.Io.Dir, full: []const u8) ![]u8 {
     hasher.update(key);
     const name = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     return std.fmt.allocPrint(sb.gpa, "{s}/{s}.lock", .{ dir, name });
+}
+
+/// Name of the file whose mtime spaces out the lock sweep. Not a lock file:
+/// `casLockName` refuses it, so a pass never sweeps its own marker.
+const cas_lock_sweep_marker = ".swept";
+
+/// How often a process walks `state/locks` looking for files to sweep. The
+/// retention window is twelve hours (`cas_lock_record.keep_ms`), so an hour
+/// between passes costs at most an hour of delay on a file that has already
+/// been unused for half a day.
+const cas_lock_sweep_interval_ms: i64 = 60 * 60 * 1000;
+
+/// Deletes lock files under `dir` that nothing has re-acquired for
+/// `cas_lock_record.keep_ms` and that nobody holds right now.
+///
+/// ADR 0031 says `state/locks` is swept; ADR 0008 says nothing in clanker
+/// fires on its own, and `clanker janitor` deletes only when an operator types
+/// `--yes`. The two are reconciled on this path rather than by a daemon: the
+/// code that creates lock files removes the ones that are finished with, so the
+/// sweep happens for an operator who never runs the janitor at all. The
+/// `janitor` guest keeps its own pass for the same directory, and both decide
+/// with the same shared rule (`cas_lock_record.agedOut`), so there is one
+/// retention policy and not two.
+///
+/// Age alone must never license the delete. The record names the *last
+/// acquisition*, not a live hold, so a writer that has been inside
+/// `fs_write_if` since before the window still holds a lock whose record looks
+/// old. The only honest question is whether the lock can be taken, and that is
+/// what `lock_nonblocking` asks: `error.WouldBlock` means held, and the file
+/// stays. Unlinking a held lock is the hazard the permanent-file design exists
+/// to avoid -- the lock moves to an unreachable inode and a second writer locks
+/// a fresh file at the same name, both believing they hold it. The unlink
+/// therefore happens *while holding* the lock, so nothing can take it between
+/// the check and the delete.
+///
+/// Best effort throughout: this is housekeeping attached to someone else's
+/// write, and no failure here may fail that write.
+fn sweepAgedLocks(sb: *Sandbox, state_base: std.Io.Dir, dir: []const u8) void {
+    const io = sb.io;
+    const now: i64 = @intCast(log.unixMilliseconds());
+
+    var d = state_base.openDir(io, dir, .{ .iterate = true }) catch return;
+    defer d.close(io);
+
+    // One pass per interval, per directory rather than per process: several
+    // clanker processes share one state directory, and a marker they can all
+    // see is what keeps them from each walking it.
+    if (d.statFile(io, cas_lock_sweep_marker, .{})) |st| {
+        const stamped = @divTrunc(st.mtime.nanoseconds, std.time.ns_per_ms);
+        if (now >= stamped and now - stamped < cas_lock_sweep_interval_ms) return;
+    } else |_| {}
+    d.writeFile(io, .{ .sub_path = cas_lock_sweep_marker, .data = "" }) catch return;
+
+    // Names first, deletes after: unlinking during iteration can make a
+    // directory walk skip entries.
+    var doomed: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (doomed.items) |n| sb.gpa.free(n);
+        doomed.deinit(sb.gpa);
+    }
+    var it = d.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!casLockName(entry.name)) continue;
+        if (doomed.items.len >= cas_lock_sweep_max) break;
+        const record = d.readFileAlloc(io, entry.name, sb.gpa, .limited(4096)) catch continue;
+        defer sb.gpa.free(record);
+        if (!cas_lock_record.agedOut(record, now, cas_lock_record.keep_ms)) continue;
+        const name = sb.gpa.dupe(u8, entry.name) catch continue;
+        doomed.append(sb.gpa, name) catch {
+            sb.gpa.free(name);
+            continue;
+        };
+    }
+
+    var swept: usize = 0;
+    for (doomed.items) |name| {
+        const f = d.createFile(io, name, .{
+            .truncate = false,
+            .lock = .exclusive,
+            .lock_nonblocking = true,
+        }) catch continue; // WouldBlock: held right now, so not ours to remove.
+        defer f.close(io);
+        d.deleteFile(io, name) catch continue;
+        swept += 1;
+    }
+    if (swept > 0) log.log(.info, "[fs_write_if] swept {d} lock file(s) unused for 12h from {s}", .{ swept, dir });
+}
+
+/// How many lock files one pass may remove. A pass runs inside someone else's
+/// compare-and-swap write, so it is bounded work; what it does not reach this
+/// hour, the next pass does.
+const cas_lock_sweep_max: usize = 512;
+
+/// A lock file is named for the hex SHA-256 of its target. Checking the shape
+/// rather than the suffix keeps the sweep off anything else in the directory --
+/// the sweep marker included. Mirrors `isCasLock` in `tools/zig/janitor.zig`.
+fn casLockName(name: []const u8) bool {
+    if (!std.mem.endsWith(u8, name, ".lock")) return false;
+    const stem = name[0 .. name.len - ".lock".len];
+    if (stem.len != 64) return false;
+    for (stem) |c| {
+        if (!std.ascii.isHex(c)) return false;
+    }
+    return true;
 }
 
 /// The string a lock name is hashed from: `full` with its directory part
@@ -7084,8 +7190,10 @@ test "fsWriteIfImpl leaves no lock sidecar beside the target and no dirs on mism
     var it = locks.iterate();
     var lock_count: usize = 0;
     while (try it.next(io)) |entry| {
+        // The sweep marker shares the directory and is not a lock.
+        if (std.mem.eql(u8, entry.name, cas_lock_sweep_marker)) continue;
         lock_count += 1;
-        try std.testing.expect(std.mem.endsWith(u8, entry.name, ".lock"));
+        try std.testing.expect(casLockName(entry.name));
         try std.testing.expect(std.mem.indexOf(u8, entry.name, "note") == null);
     }
     try std.testing.expectEqual(@as(usize, 1), lock_count);
@@ -7094,7 +7202,9 @@ test "fsWriteIfImpl leaves no lock sidecar beside the target and no dirs on mism
     // attributable. It is fixed width, so a later shorter record cannot leave
     // the tail of an earlier longer one behind.
     var it2 = locks.iterate();
-    const entry = (try it2.next(io)).?;
+    const entry = while (try it2.next(io)) |e| {
+        if (casLockName(e.name)) break e;
+    } else unreachable; // the count above already found exactly one
     const rec = try locks.readFileAlloc(io, entry.name, gpa, .limited(1 << 12));
     defer gpa.free(rec);
     try std.testing.expectEqual(@as(usize, cas_lock_record.record_len), rec.len);
@@ -7165,7 +7275,10 @@ test "a CAS lock is keyed by the resolved target, so two spellings share one loc
     defer locks.close(io);
     var it = locks.iterate();
     var lock_count: usize = 0;
-    while (try it.next(io)) |_| lock_count += 1;
+    // Lock files only: the sweep's own marker lives in this directory too.
+    while (try it.next(io)) |entry| {
+        if (casLockName(entry.name)) lock_count += 1;
+    }
     try std.testing.expectEqual(@as(usize, 1), lock_count);
 }
 
@@ -7199,6 +7312,98 @@ test "CAS locks live under the sandbox root, not beside the process cwd" {
     const lock_dir = try tmp.dir.statFile(io, "proj/state/locks", .{});
     try std.testing.expectEqual(std.Io.File.Kind.directory, lock_dir.kind);
     try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "state", .{}));
+}
+
+test "a CAS write sweeps aged lock files and keeps fresh or held ones" {
+    // ADR 0031's Consequences say state/locks is swept, and nothing in clanker
+    // fires on its own (ADR 0008) -- so the sweep has to happen on the path
+    // that creates the files. An operator who never types `clanker janitor
+    // --yes` would otherwise keep every lock file forever.
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state/locks");
+
+    const now: i64 = @intCast(log.unixMilliseconds());
+    const aged_ms = now - 13 * 60 * 60 * 1000;
+    const aged = "state/locks/" ++ "0" ** 64 ++ ".lock";
+    const fresh = "state/locks/" ++ "1" ** 64 ++ ".lock";
+    const held = "state/locks/" ++ "2" ** 64 ++ ".lock";
+
+    var rec: [cas_lock_record.record_len]u8 = undefined;
+    cas_lock_record.render(&rec, 1, aged_ms, "reports", "docs/target-that-is-gone.md");
+    try tmp.dir.writeFile(io, .{ .sub_path = aged, .data = &rec });
+    try tmp.dir.writeFile(io, .{ .sub_path = held, .data = &rec });
+    cas_lock_record.render(&rec, 2, now, "reports", "docs/written-just-now.md");
+    try tmp.dir.writeFile(io, .{ .sub_path = fresh, .data = &rec });
+
+    // An aged record is not a held lock: the record names the *last*
+    // acquisition and a hold is only ever answered by trying to take it. A
+    // writer that has been inside fs_write_if since before the window must
+    // keep its lock file.
+    const holder = try tmp.dir.createFile(io, held, .{ .truncate = false, .lock = .exclusive });
+
+    var sb = Sandbox{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = undefined,
+    };
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, tmp.dir, "docs/note.md", "", "hello"));
+
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, aged, .{}));
+    _ = try tmp.dir.statFile(io, fresh, .{});
+    _ = try tmp.dir.statFile(io, held, .{});
+    holder.close(io);
+}
+
+test "the lock sweep is rate limited by its marker, not run on every CAS write" {
+    // The sweep walks a directory, so it must not run once per compare-and-swap
+    // write. The marker's mtime is what spaces the passes out, and it is shared
+    // between processes for the same reason the lock is.
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var sb = Sandbox{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = undefined,
+    };
+
+    // First write: the marker does not exist, so this pass sweeps and stamps it.
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, tmp.dir, "docs/one.md", "", "1"));
+    _ = try tmp.dir.statFile(io, "state/locks/" ++ cas_lock_sweep_marker, .{});
+
+    const now: i64 = @intCast(log.unixMilliseconds());
+    const aged = "state/locks/" ++ "3" ** 64 ++ ".lock";
+    var rec: [cas_lock_record.record_len]u8 = undefined;
+    cas_lock_record.render(&rec, 1, now - 13 * 60 * 60 * 1000, "reports", "docs/gone.md");
+    try tmp.dir.writeFile(io, .{ .sub_path = aged, .data = &rec });
+
+    // Second write, well inside the interval: no walk, so the aged file is
+    // still there. It goes on the next pass.
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, tmp.dir, "docs/two.md", "", "2"));
+    _ = try tmp.dir.statFile(io, aged, .{});
 }
 
 test "a tool may run only the commands its manifest names" {

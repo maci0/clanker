@@ -613,9 +613,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   that is the tree an isolated run shares `state/` with) and honours
   `state_base_dir`, so a throwaway tree's locks die with it. What remains
   in a real `state/locks` is one file per document ever CAS-written, which
-  is re-acquired rather than added to; `clanker janitor` still sweeps the
-  ephemeral leftovers after 12h, and the lock files written under the old
-  name are orphans that age out through the same sweep.
+  is re-acquired rather than added to.
+- The 12h lock sweep now happens on its own. ADR 0031 said `state/locks`
+  was swept, but the only sweeper was `clanker janitor`, which reports by
+  default and deletes with `--yes` — and nothing in clanker fires on its
+  own (ADR 0008), so on a host with no cron entry for
+  `clanker schedule run-due` the directory grew forever. `ck_fs_write_if`
+  now sweeps it: the code that creates lock files removes the ones nothing
+  will reuse, which adds no daemon and no scheduling thread. A pass runs at
+  most hourly, paced by the mtime of a `.swept` marker in the directory so
+  every write does not walk it, and it deletes at most 512 files per pass.
+  A candidate is opened with `lock_nonblocking` first and skipped if
+  `error.WouldBlock` says someone holds it — the record dates the last
+  acquisition, not a live hold, so age alone must never license the delete
+  — and the unlink happens while holding the lock so nothing can take it in
+  between. The window lives in one place, `cas_lock_record.keep_ms`, read
+  by this pass and by the `janitor` guest. Lock files written under the old
+  name are orphans from this release and age out through the same sweep.
 - A goal loop no longer dies on a single failed turn. A turn that errors
   (for example a completion whose whole token grant is spent on
   reasoning, `AnswerTruncatedToEmpty`) used to terminate the loop and

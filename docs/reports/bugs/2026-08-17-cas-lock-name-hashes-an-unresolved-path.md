@@ -142,3 +142,67 @@ decision:
 - Investigation: [ck_cas lock sidecars are never removed and bypass the create retry](../investigations/2026-08-16-ck-cas-lock-sidecars.md)
 - RFC: [0006 — Where ck_cas lock sidecars live](../../rfcs/0006-where-ck-cas-lock-sidecars-live.md)
 - Investigation: [the two-spellings test flaked once](../investigations/2026-08-17-cas-lock-two-spellings-test-flaked-once.md) — a concurrent session compiled this checkout mid-edit, after the failing test existed and before the keying fix landed, and its `zig build test` failed at `lock_count`. Filed by that session (clanker-7c) and resolved against this fix. It is a property of five sessions sharing one working tree, not of the change.
+## What moved, the code or the decision
+
+The code. ADR 0031 was accepted on a Decision that says, verbatim, *"The
+hash is over the resolved path, so distinct targets still serialise
+independently and two checkouts sharing one state directory do not
+collide."* The landed `casLockPath` hashed the joined string and resolved
+the lock directory against the process cwd, so the implementation never
+matched the sentence the decision was accepted on. This fix brings the code
+into line with the ADR; the ADR needs no amendment on that point and must
+not be superseded. Audited independently by session clanker-d7, which
+verified the rest of ADR 0031 against origin/main and found only this
+clause unimplemented.
+
+## Retention is eligibility, not a schedule
+
+One claim in the ADR *was* wrong and is now corrected in place: its
+Consequences read as though the 12h janitor sweep bounds the growth of
+`state/locks`. It does not. Nothing in clanker fires on its own (ADR 0008),
+`clanker janitor` deletes only with `--yes`, and this host has no schedule
+entry and nothing invoking `clanker schedule run-due` — `clanker schedule
+list` is empty and `systemctl --user list-timers` carries only
+`clanker-state-backup.timer`. Twelve hours is when a lock file *becomes
+eligible*, not when it goes away.
+
+What bounds the growth is this fix, at the source: 328 of the 387 files
+came from sandboxes rooted in test tmp trees, and those locks now live and
+die with the tree they belong to. What is left in a real `state/locks` is
+one file per document ever CAS-written, re-acquired rather than added to.
+
+Every file written under the old key is an orphan from this commit on,
+including the 387 counted above. They are inert, and they become sweepable
+12h after their last acquisition — the oldest was 9.5h old when this was
+written, so `clanker janitor` still reported no eligible lock. One
+`clanker janitor --yes` after that window clears them. Nothing should `rm`
+them while sessions are running: unlinking a lock file that is held moves
+the lock to an unreachable inode and lets a second writer lock a fresh file
+at the same name, which is the hazard the whole permanent-lock-file design
+exists to avoid.
+## The sweep now runs without an operator
+
+The retention claim in ADR 0031 is now implemented rather than amended.
+`ck_fs_write_if` sweeps `state/locks` itself: the code that creates lock
+files removes the ones nothing will reuse, so an operator who never runs
+`clanker janitor --yes` still ends up with a bounded directory. This adds no
+daemon and no scheduling thread, so ADR 0008 is untouched — the work rides
+the write that caused it.
+
+Three properties keep it honest:
+
+Age never licenses a delete on its own. The record names the *last
+acquisition*, not a live hold, so a writer that has been inside
+`fs_write_if` since before the window has an old-looking record and a real
+lock. Each candidate is therefore opened with `lock_nonblocking`, and
+`error.WouldBlock` — held right now — leaves it alone. The unlink happens
+while holding the lock, so nothing can take it between the check and the
+delete.
+
+A pass is rate limited by the mtime of a `.swept` marker in the directory,
+one pass an hour, shared across processes because the state directory is.
+Without it every compare-and-swap write would walk the directory.
+
+The retention window is one constant, `cas_lock_record.keep_ms`, read by
+both sweepers — this one and the `janitor` guest — so there is one policy
+rather than two that agree until someone edits one.
