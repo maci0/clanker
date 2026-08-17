@@ -37,6 +37,32 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- Deadlines on the agent's own model call, so a provider that accepts the
+  connection and then goes quiet fails the turn instead of hanging the run
+  forever. `agent.request_timeout_ms` bounds one non-streaming completion
+  end to end and the wait for a streaming one's first bytes;
+  `agent.stream_idle_timeout_ms` bounds the gap between reads once a
+  stream is flowing. Both default to `0` (unbounded, the previous
+  behaviour); the shipped `config.toml` sets 900000 and 120000. A lapsed
+  deadline surfaces as `Timeout` and goes straight to
+  `agent.fallback_providers` rather than being retried against the same
+  silent endpoint. Set both: a streaming read completes only on a full
+  8 KiB buffer or end of stream, so a stream that dies after a few
+  hundred bytes is the first-byte clock's case, not the idle clock's.
+- `agent.repeat_tool_abort_threshold` fails a turn with `RepeatedToolCalls`
+  after that many consecutive canonical-equivalent tool calls, the
+  terminal counterpart to the advisory `agent.repeat_tool_thresholds`
+  reminders. Defaults to `0` (off).
+- `clanker janitor` sweeps spilled tool results under `state/spills/`
+  older than 12h. A spill is run-scoped — its locator lives only on the
+  request copy of a message, never in a saved transcript — so once the run
+  ends nothing can ask for the file again. Nothing had ever removed them,
+  and because every non-repl run shares the `default` bucket they
+  accumulated there indefinitely.
+- `ck_fs_stat` reports `mtime_ms`. Spill ids are content hashes, so their
+  file names carry no order for a newest-N rule to sort by; the timestamp
+  is what lets the sweep tell a live run's spill from a dead one's.
+
 - The REPL's `/effort`, `/model` and `/preset` all open the shared modal
   picker from the bare command. `/effort` lists none/low/medium/high/max
   plus `default`, one-line description per row, marks the currently
@@ -47,7 +73,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   the highlighted row (context window, cost per 1M in/out, category), and
   lists only models whose provider passes the offline credential gate
   `providers check` uses — an entry whose `api_key_env` is unset no longer
-  appears. `/preset` lists `presets/` with each preset's `description` as
+  appears. A keyless loopback provider (vllm, ollama) is additionally
+  probed with one local TCP connect: a stopped local server's models no
+  longer list either, while nothing is ever pinged over a network. `/preset` lists `presets/` with each preset's `description` as
   its preview line and the active preset marked; in a non-blank session it
   explains the blank-session rule instead of opening a dead picker.
 - `--reasoning-effort <none|low|medium|high|max>` on `clanker` (the bare
@@ -551,6 +579,24 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   listens when the module is on. `POST /api/mesh/join` dials.
 
 ### Fixed
+
+- A goal loop no longer dies on a single failed turn. A turn that errors
+  (for example a completion whose whole token grant is spent on
+  reasoning, `AnswerTruncatedToEmpty`) used to terminate the loop and
+  discard the run's context; it now counts as a failed turn — the next
+  turn is told the error and to re-check state before redoing work — and
+  only three consecutive failures block the goal. An evaluator error is
+  treated as a conservative continue, matching how unreadable evaluator
+  output was already handled.
+- Tool-result spilling no longer reloads the `spill` WASM guest and
+  rewrites the same file on every agent iteration. Pruning is
+  request-only, so the pruned copy carrying the locator is discarded
+  after each request and the same oversized result is re-pruned from the
+  pristine history next iteration; the spill id is a content hash, so
+  every one of those writes wrote bytes already on disk. Ids written in a
+  run are now remembered, and the guest is loaded only when there is
+  something new to write. Locators are still applied every iteration —
+  they are what the request copy carries.
 
 - Resizing the terminal during `clanker repl` no longer aborts the
   process and wrecks the terminal. vaxis ran its winsize callbacks

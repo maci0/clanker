@@ -17,6 +17,13 @@ pub const reason_log_bytes: usize = 500;
 
 pub const Verdict = enum { continue_, achieved, blocked };
 
+/// Consecutive failed turns tolerated before the goal is blocked. A turn that
+/// errors (a truncated completion, a transport failure after the client's own
+/// retries) is an outcome the loop can continue past — the next turn re-reads
+/// state — but a turn that fails every time is not progress, and burning the
+/// whole turn budget on it would hide the failure behind "budget exhausted".
+pub const max_consecutive_turn_failures: u32 = 3;
+
 const verdict_names = std.StaticStringMap(Verdict).initComptime(.{
     .{ "achieved", .achieved },
     .{ "blocked", .blocked },
@@ -65,9 +72,39 @@ pub fn run(
     var owned_task: ?[]const u8 = null;
     defer if (owned_task) |t| alloc.free(t);
     var turn: u32 = 1;
+    var consecutive_failures: u32 = 0;
     while (turn <= limit) : (turn += 1) {
-        const answer = try callbacks.run_turn(callbacks.context, turn, task);
-        const decision = try callbacks.evaluate(callbacks.context, turn, answer);
+        const answer = callbacks.run_turn(callbacks.context, turn, task) catch |err| {
+            // A failed turn is judged like a failed turn, not a dead loop
+            // (docs/reports/bugs/2026-08-17-goal-loop-dies-on-one-truncated-reply.md):
+            // the error is surfaced to the next turn's prompt, and only a
+            // streak of failures — no successful turn between them — blocks.
+            consecutive_failures += 1;
+            if (consecutive_failures >= max_consecutive_turn_failures) {
+                return .{
+                    .verdict = .blocked,
+                    .turns = turn,
+                    .reason = "consecutive agent turns failed before producing an answer; see the run log for the per-turn errors",
+                };
+            }
+            if (callbacks.on_decision) |on_decision| on_decision(callbacks.context, turn, .{
+                .verdict = .continue_,
+                .reason = "the turn failed before producing an answer; starting a recovery turn",
+            });
+            if (turn == limit) break;
+            const next = try failedTurnTask(alloc, condition, turn + 1, @errorName(err));
+            if (owned_task) |t| alloc.free(t);
+            owned_task = next;
+            task = next;
+            continue;
+        };
+        consecutive_failures = 0;
+        // An evaluator that errors outright gets the same conservative
+        // treatment parseDecision gives unreadable output: keep working.
+        const decision = callbacks.evaluate(callbacks.context, turn, answer) catch Decision{
+            .verdict = .continue_,
+            .reason = "the evaluator failed to run; verify the condition directly and continue working",
+        };
         if (callbacks.on_decision) |on_decision| on_decision(callbacks.context, turn, decision);
         switch (decision.verdict) {
             .achieved, .blocked => {
@@ -86,6 +123,17 @@ pub fn run(
         .turns = limit,
         .reason = "goal-turn budget exhausted before the completion condition could be verified",
     };
+}
+
+/// The prompt after a turn that errored instead of answering. The work may be
+/// partially done (tools ran before the failure), so the next turn is told to
+/// re-check state before redoing anything rather than assume a clean slate.
+pub fn failedTurnTask(alloc: std.mem.Allocator, condition: []const u8, next_turn: u32, err_name: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(
+        alloc,
+        "Goal-loop turn {d}. The previous turn failed with error {s} before producing an answer; its work may be partially done. Re-check the current state before redoing anything, then continue toward the completion condition.\n\nCompletion condition:\n{s}",
+        .{ next_turn, err_name, condition },
+    );
 }
 
 /// The prompt for the follow-up agent turn. It names the evaluator's reason
@@ -120,6 +168,78 @@ pub fn parseDecision(alloc: std.mem.Allocator, text: []const u8) Decision {
     const verdict = verdict_names.get(parsed.status) orelse
         return .{ .verdict = .continue_, .reason = "the evaluator returned an unknown status; verify the condition directly and continue working" };
     return .{ .verdict = verdict, .reason = reason };
+}
+
+test "goal loop survives a failed turn and continues to achieved" {
+    // One truncated completion (AnswerTruncatedToEmpty and kin) must count
+    // as a failed turn, not end the loop: the next turn re-reads state and
+    // carries on. See docs/reports/bugs/2026-08-17-goal-loop-dies-on-one-truncated-reply.md.
+    const State = struct {
+        calls: u32 = 0,
+        saw_failure_task: bool = false,
+        fn runTurn(ctx: *anyopaque, _: u32, task: []const u8) ![]const u8 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.calls += 1;
+            if (self.calls == 1) return error.AnswerTruncatedToEmpty;
+            if (std.mem.find(u8, task, "previous turn failed") != null) self.saw_failure_task = true;
+            return "recovered";
+        }
+        fn evaluate(_: *anyopaque, _: u32, _: []const u8) !Decision {
+            return .{ .verdict = .achieved, .reason = "verified" };
+        }
+    };
+    var state = State{};
+    const outcome = try run(std.testing.allocator, "done", "start", 5, .{
+        .context = &state,
+        .run_turn = State.runTurn,
+        .evaluate = State.evaluate,
+    });
+    try std.testing.expectEqual(Verdict.achieved, outcome.verdict);
+    try std.testing.expectEqual(@as(u32, 2), state.calls);
+    try std.testing.expect(state.saw_failure_task);
+}
+
+test "goal loop blocks after consecutive turn failures instead of erroring" {
+    const State = struct {
+        fn runTurn(_: *anyopaque, _: u32, _: []const u8) ![]const u8 {
+            return error.AnswerTruncatedToEmpty;
+        }
+        fn evaluate(_: *anyopaque, _: u32, _: []const u8) !Decision {
+            return .{ .verdict = .continue_, .reason = "unreachable" };
+        }
+    };
+    var state = State{};
+    const outcome = try run(std.testing.allocator, "done", "start", 10, .{
+        .context = &state,
+        .run_turn = State.runTurn,
+        .evaluate = State.evaluate,
+    });
+    try std.testing.expectEqual(Verdict.blocked, outcome.verdict);
+    try std.testing.expectEqual(max_consecutive_turn_failures, outcome.turns);
+    try std.testing.expect(std.mem.find(u8, outcome.reason, "failed") != null);
+}
+
+test "goal loop treats an evaluator error as a conservative continue" {
+    const State = struct {
+        evals: u32 = 0,
+        fn runTurn(_: *anyopaque, _: u32, _: []const u8) ![]const u8 {
+            return "worked";
+        }
+        fn evaluate(ctx: *anyopaque, _: u32, _: []const u8) !Decision {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.evals += 1;
+            if (self.evals == 1) return error.ConnectionRefused;
+            return .{ .verdict = .achieved, .reason = "verified" };
+        }
+    };
+    var state = State{};
+    const outcome = try run(std.testing.allocator, "done", "start", 5, .{
+        .context = &state,
+        .run_turn = State.runTurn,
+        .evaluate = State.evaluate,
+    });
+    try std.testing.expectEqual(Verdict.achieved, outcome.verdict);
+    try std.testing.expectEqual(@as(u32, 2), state.evals);
 }
 
 test "goal loop continues until the evaluator marks achieved" {

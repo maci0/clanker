@@ -4,11 +4,11 @@
 
 - **What failed:** goal loop run-1786958796 died at iteration 127 after ~12 minutes of exploration: the model's reply hit the 16384-token completion cap with only reasoning_content, chatWithFallbackChain surfaced AnswerTruncatedToEmpty, and the loop terminated, discarding all progress. For clanker run failing is right; a goal loop is documented to continue until achieved, blocked, or budget-limited, so one length-stopped turn should count as a failed turn and be retried, not end the loop.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-17. Fixed in src/agent/goal_loop.zig (failed turn -> recovery turn, blocked after 3 consecutive failures); verified by three unit tests beside run() and a green zig build test
 
 ## Status
 
-Open.
+Resolved on 2026-08-17. Fixed in src/agent/goal_loop.zig (failed turn -> recovery turn, blocked after 3 consecutive failures); verified by three unit tests beside run() and a green zig build test
 
 ## Symptom and impact
 
@@ -42,3 +42,10 @@ The goal loop treats AnswerTruncatedToEmpty from a turn like any failed turn: re
 ## Workaround
 
 Raise the model's max_tokens so reasoning has headroom (this checkout: deepseek-v4-pro 16384 -> 32768 in config.local.toml) and restart the goal from scratch.
+## Resolution
+
+Fixed in src/agent/goal_loop.zig: run() now catches a run_turn error, counts it as a failed turn, and continues with a failedTurnTask prompt naming the error and telling the next turn to re-check state before redoing work. Only max_consecutive_turn_failures (3) failures in a row — with no successful turn between them — return a blocked outcome; the budget path is unchanged. An evaluate error is treated as the same conservative continue parseDecision already returns for unreadable output. on_decision surfaces a synthetic continue decision for each failed turn so goal logs show the recovery.
+
+## Verification
+
+Three unit tests beside run(): a turn that fails once then succeeds reaches achieved in 2 calls and the recovery prompt names the failure; a turn that always fails returns blocked after exactly 3 turns (not an error, not budget exhaustion); an evaluator that errors once is a continue and the loop achieves on the next evaluation. zig build test green on the combined tree.

@@ -82,7 +82,7 @@ Project agents receive this workflow through the harness prompt and
 <!-- inventory:bug:start -->
 - [SIGWINCH runs vaxis winsize callbacks in the signal handler, panicking std.Io and recursing through recover()](bugs/2026-08-17-tui-resize-crash-sigwinch-in-signal-handler.md) — Resolved
 
-- [A goal loop stops dead on a single AnswerTruncatedToEmpty instead of retrying the turn](bugs/2026-08-17-goal-loop-dies-on-one-truncated-reply.md) — Open
+- [A goal loop stops dead on a single AnswerTruncatedToEmpty instead of retrying the turn](bugs/2026-08-17-goal-loop-dies-on-one-truncated-reply.md) — Resolved
 
 - [The autolearn synthesis grant is spent entirely on reasoning](bugs/2026-08-17-ck-llm-grant-spent-on-reasoning.md) — Resolved
 
