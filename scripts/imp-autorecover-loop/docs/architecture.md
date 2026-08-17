@@ -79,6 +79,36 @@ Earlier attempts survive only as one sentence of context each (`A clanker repair
 run already tried to fix this and exited with status 1.`), not as embedded log
 text.
 
+### Why only the harness prompt carries the tooling rules
+
+All three levels share `repair_prompt`, but its `HARNESS_TOOLING` section is
+added for the `--fix-repairs-with` harness alone (`tooling=True`). It tells that
+run to use clanker's own verbs — `clanker reports search` before diagnosing,
+`clanker gate` to verify, `clanker commit`, `clanker run` for a tool with no
+verb — instead of ad-hoc `grep`, `find` or a hand-rolled `git` sequence.
+
+The two clanker levels do not need it and are left unchanged: a `clanker run`
+has those verbs as its own tools, and its system prompt already includes the
+checkout's `AGENTS.md`.
+
+An outside harness has neither, and cannot be relied on to pick the rule up from
+the checkout. It is written in `CLAUDE.md`, which only some harnesses read:
+
+| harness | reads | sees `CLAUDE.md`? |
+|---|---|---|
+| `claude -p --permission-mode acceptEdits` | `CLAUDE.md` | yes |
+| `codex exec` | `AGENTS.md` | no |
+| `grok --always-approve -p` | `AGENTS.md` | no |
+| `dsh --profile headless` | harness-defined | not assumed |
+
+`AGENTS.md` carries the record-store rules but not the "use the verb" mandate,
+so without the section in the prompt, whether a harness honors it depends on
+which entry the `FIXERS` menu selected.
+
+The section costs about 1.2 KiB of the argv budget. `LOG_BUDGET` is one budget
+for every level, sized for the largest prompt, so it reserves 16 KiB of headroom
+rather than 8 KiB.
+
 A log becomes prompt text through three steps, in `loop.py`:
 
 1. `read_log` — decode bytes, replace NUL (illegal in argv), keep everything else

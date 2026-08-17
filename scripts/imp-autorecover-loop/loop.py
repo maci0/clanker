@@ -44,7 +44,9 @@ IMPROVEMENT_GOALS = (
 # E2BIG before the harness ever starts, so a run log has to be reduced before it is
 # handed over as the prompt.
 MAX_ARG_STRLEN = 32 * os.sysconf("SC_PAGE_SIZE")
-LOG_BUDGET = MAX_ARG_STRLEN - 8192  # headroom for the prompt around the log
+# Headroom for the prompt around the log. One budget for every level, sized for
+# the largest prompt, which is the harness one with HARNESS_TOOLING in it.
+LOG_BUDGET = MAX_ARG_STRLEN - 16384
 # Which lines are worth repairing. This picks prompt content only; whether to
 # repair at all stays an exit-status decision, because Clanker's passing tests
 # emit [ERROR] on purpose while validating bad configuration.
@@ -125,6 +127,35 @@ WATCHDOG
   A stopped run counts as a failed run, so the level below it
   repairs it exactly as it would any other failure.
 """
+# Only the outside harness gets this. A clanker run already has clanker's verbs
+# as its own tools and its system prompt already carries the checkout's
+# AGENTS.md, so the two clanker levels are left exactly as they were. The
+# harnesses are the ones that would otherwise reach for grep, find and a
+# hand-rolled git sequence: the mandate to use clanker's verbs is written in
+# CLAUDE.md, and of the configurable harnesses only Claude Code reads that file
+# — codex and grok read AGENTS.md, which does not carry it. Without this
+# section, whether a harness honors the mandate depends on which one the menu
+# happened to select.
+HARNESS_TOOLING = """TOOLING
+  This checkout is maci0/clanker: clanker is both the program you are repairing
+  and the tool you repair it with. Read CLAUDE.md and AGENTS.md in the checkout
+  root before starting. When clanker implements a verb for what you are about to
+  do, use that verb. Ad-hoc shell -- grep, find, rm, hand-written markdown, a
+  hand-rolled git sequence -- is the fallback for what clanker does not
+  implement, never the default, because the CLI, the web UI and the agent all
+  call one implementation and a second one drifts from it.
+
+  clanker reports search "<symptom>"   search reports and runbooks before diagnosing
+  clanker reports create ...           file the investigation, then the bug report
+  clanker rfc search "<decision>"      a matching ADR means the question is settled
+  clanker gate                         build, test, tools, fmt, lint -- verify with this
+  clanker commit                       group the working tree into commits
+  clanker git <args...>                git in the checkout root
+  clanker janitor                      clean up after runs, instead of rm or find
+  clanker run "<task>"                 reach any tool that has no verb of its own
+
+  clanker --help and clanker <verb> --help list the rest; read one before guessing
+  at flags. Use zig-out/bin/clanker when clanker is not on PATH."""
 DETAIL_LINE = re.compile(r"^\s+\S")  # traceback frames and other indented detail
 # Fields that differ on every line of an otherwise identical repeated error.
 NOISE = re.compile(r"\b(?:ts_ms|request_id|pid|elapsed_ms|duration_ms)=\S+")
@@ -374,10 +405,10 @@ def repair_errors(log_path: Path) -> str:
     return fit_to_argv(error_report(read_log(log_path)))
 
 
-def consume_log(log_path: Path, failure: str, *, source: str) -> str:
+def consume_log(log_path: Path, failure: str, *, source: str, tooling: bool = False) -> str:
     """Build the repair prompt from a log, and drop the log either way."""
     try:
-        return repair_prompt(repair_errors(log_path), failure, source=source)
+        return repair_prompt(repair_errors(log_path), failure, source=source, tooling=tooling)
     finally:
         log_path.unlink(missing_ok=True)
 
@@ -410,9 +441,12 @@ def resolve_clanker(explicit: str, clanker_dir: Path) -> str | None:
     return str(built) if os.access(built, os.X_OK) else None
 
 
-def repair_prompt(errors: str, failure: str, *, source: str) -> str:
+def repair_prompt(errors: str, failure: str, *, source: str, tooling: bool = False) -> str:
+    """The repair prompt for one level. `tooling` adds the clanker-verb section,
+    which only the outside harness needs; a clanker run has those verbs already."""
+    section = f"\n{HARNESS_TOOLING}\n" if tooling else ""
     return f"""use the reports tool and fix the errors for {source} as well as any other issues you encounter along the way. update any related documentation as you go. work, commit and push to main branch as per the repository rules for maci0/clanker repo. {failure} these are the error lines from that run:
-
+{section}
 ----- BEGIN UNTRUSTED {source.upper()} ERRORS -----
 {errors}
 ----- END UNTRUSTED {source.upper()} ERRORS -----
@@ -615,7 +649,9 @@ def main() -> int:
 
         if pending is not None:
             # Level 4: the outside harness, fixing the failed escalation run.
-            prompt = consume_log(pending.log_path, previous_repair or "", source=ESCALATE_SOURCE)
+            prompt = consume_log(
+                pending.log_path, previous_repair or "", source=ESCALATE_SOURCE, tooling=True
+            )
             pending = None
             harness = args.fix_repairs_command
             print(f"==> repairing the failed clanker escalation run with {harness[0]}", flush=True)

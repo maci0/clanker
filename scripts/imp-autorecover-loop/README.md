@@ -151,6 +151,16 @@ escalation run's error lines and fixes it. Either way the loop then returns to
 `improve-self` and continues indefinitely. It triggers only on a non-zero exit
 from the clanker escalation run.
 
+The harness prompt carries one thing the two clanker prompts do not: a `TOOLING`
+section telling the harness to use Clanker's own verbs — `clanker reports
+search` before diagnosing, `clanker gate` to verify, `clanker commit` to commit,
+`clanker run` to reach a tool that has no verb of its own — instead of ad-hoc
+`grep`, `find` or a hand-rolled `git` sequence. A `clanker run` already has
+those verbs as tools and already reads `AGENTS.md`, so the repair and escalation
+prompts are unchanged; a harness has neither, and only Claude Code reads the
+`CLAUDE.md` that states the rule. See
+[docs/architecture.md](docs/architecture.md#why-only-the-harness-prompt-carries-the-tooling-rules).
+
 Both harnesses are resolved before the first `improve-self` batch, so a missing
 one fails immediately rather than hours later when a repair finally needs it.
 
