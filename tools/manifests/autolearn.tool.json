@@ -26,7 +26,7 @@
   "internal": true,
   "llm": true,
   "config": {
-    "max_tokens": 2500
+    "max_tokens": 16000
   },
   "category": "harness"
 }

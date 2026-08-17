@@ -533,6 +533,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker autolearn --model <reasoning model>` no longer fails with
+  "synthesizer returned an empty section". `max_tokens` bounds output,
+  and on a reasoning model reasoning *is* output, so the 2500-token grant
+  sized for the section was spent entirely on `reasoning_content`: the
+  provider answered 200 with empty `content` and `finish_reason: length`.
+  The grant is now 16000, and `ck_llm` logs why any completion came back
+  empty — a truncated reasoning spend, a truncation with no reasoning, or
+  a model that simply answered nothing — instead of handing every guest
+  an indistinguishable empty string. The deterministic Autolearn section
+  was always written before the synthesis pass ran, so a failing run
+  still updated `docs/ROADMAP.md`.
 - Scrolling in `clanker repl` can now reach the messages above an expanded
   reply. The scroll guards, the anchor floor, the search jump, and the
   scrollbar all measured the transcript in *lines* against a screen

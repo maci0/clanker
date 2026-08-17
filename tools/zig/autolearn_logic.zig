@@ -8,6 +8,14 @@ const std = @import("std");
 /// must not blow the prompt; only whole lines, so JSON fragments are never cut.
 pub const max_observation_bytes: usize = 64 * 1024;
 
+/// Output budget for the synthesis call, and the value the descriptor grants
+/// (`ck_llm` clamps a request to the grant, so the two must move together).
+/// Sized for a reasoning model, not for the section alone: `max_tokens` bounds
+/// reasoning and content together, and a section-sized 2500 was spent entirely
+/// on reasoning by deepseek-v4-pro, which answered 200 with empty content and
+/// failed the run as "synthesizer returned an empty section".
+pub const synthesis_max_tokens: u32 = 16000;
+
 pub const system_prompt =
     \\You are the autolearn synthesizer for the clanker agent harness. You
     \\review raw usage observations from past runs and write an actionable

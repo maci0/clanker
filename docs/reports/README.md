@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [The autolearn synthesis grant is spent entirely on reasoning](bugs/2026-08-17-ck-llm-grant-spent-on-reasoning.md) — Resolved
+
 - [session_search and spill list broke their JSON shape on empty stores, failing improve-self capability evals](bugs/2026-08-17-capability-evals-reject-empty-store-tools.md) — Resolved
 
 - [TUI scrolling cannot reach the messages above an expanded reply](bugs/2026-08-17-scroll-cannot-reach-above-expanded-reply.md) — Resolved

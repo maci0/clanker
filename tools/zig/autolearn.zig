@@ -214,7 +214,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .prompt = prompt,
             .provider = provider,
             .model = model,
-            .max_tokens = 2500,
+            .max_tokens = logic.synthesis_max_tokens,
         }) catch |err| {
             return lib.fail(out, switch (err) {
                 error.SandboxDenied => "refused by sandbox policy",
@@ -224,7 +224,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             });
         };
         if (std.mem.trim(u8, synthesized, " \t\r\n").len == 0)
-            return lib.fail(out, "synthesizer returned an empty section");
+            return lib.fail(out, "synthesizer returned an empty section (the [llm] log line names the cause; a reasoning model can spend the whole max_tokens grant before emitting content)");
         try upsertRoadmap(alloc, synthesized);
     }
 

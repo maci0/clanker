@@ -754,6 +754,26 @@ fn clampCkLlmMaxTokens(requested: ?u32, granted: u32) u32 {
     return @min(requested orelse cap, cap);
 }
 
+/// Why a completion carried no visible content, or null when it carried some.
+///
+/// `max_tokens` bounds *output*, and on a reasoning model reasoning is output:
+/// the provider spends the grant on `reasoning_content` first and only then
+/// emits content. A grant sized for the answer alone therefore runs out before
+/// a single visible token, and the provider still answers 200 — `content: ""`,
+/// `finish_reason: "length"`, the whole budget in `completion_tokens`. Handing
+/// that back as an ordinary empty string makes every guest report that the
+/// model returned nothing, which names the symptom and hides the one fact that
+/// fixes it. Verified against deepseek-v4-pro on 2026-08-17: a 64-token grant
+/// came back with 64 reasoning tokens and an empty `content`.
+fn emptyCompletionCause(content: []const u8, finish_reason: ?[]const u8, reasoning: ?[]const u8) ?[]const u8 {
+    if (content.len > 0) return null;
+    const truncated = if (finish_reason) |fr| std.mem.eql(u8, fr, "length") else false;
+    if (!truncated) return "the model returned no content";
+    if (reasoning) |r| if (r.len > 0)
+        return "the model spent the whole max_tokens grant on reasoning; raise the tool descriptor's config.max_tokens";
+    return "the completion was cut off at the max_tokens grant before any content";
+}
+
 /// ck_llm(request) -> completion text in the host arena. The request is either
 /// a bare prompt or a JSON object:
 /// `{"prompt": "...", "provider": "<name>", "model": "<name>", "system": "...", "max_tokens": N}`.
@@ -845,6 +865,16 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         @intCast(@min(content.len / 4, std.math.maxInt(u32)));
     const llm_ms = @divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(h.sandbox.io, .awake)).nanoseconds, std.time.ns_per_ms);
     log.log(.info, "[llm] ✓ ck_llm … {d}ms (~{d} est. tokens)", .{ llm_ms, est_tokens });
+    // An empty completion still returns to the guest as an empty string, so a
+    // fail-open caller degrades as before; the cause is logged because the
+    // guest cannot see finish_reason or the reasoning spend to report it.
+    if (emptyCompletionCause(content, resp.finish_reason, resp.reasoning)) |why| {
+        // Completion tokens, not the `est_tokens` total: the grant bounds
+        // output alone, so a total that includes the prompt cannot be read
+        // against it.
+        const spent: u64 = if (resp.usage) |u| u.completion_tokens else 0;
+        log.log(.warn, "[llm] ck_llm answered with no content ({d} of {d} max_tokens spent): {s}", .{ spent, max_tokens, why });
+    }
     if (h.sandbox.session_token_budget > 0) {
         if (h.sandbox.used_session_tokens + est_tokens > h.sandbox.session_token_budget) {
             log.log(.warn, "[llm] session token budget exceeded", .{});
@@ -6266,6 +6296,36 @@ test "ck_llm max_tokens cannot exceed the descriptor grant" {
     try std.testing.expectEqual(@as(u32, 1024), clampCkLlmMaxTokens(99_999, 1024));
     try std.testing.expectEqual(@as(u32, 1024), clampCkLlmMaxTokens(4_000_000_000, 0));
     try std.testing.expectEqual(@as(u32, 256), clampCkLlmMaxTokens(256, 0));
+}
+
+test "ck_llm names why a completion came back with no visible content" {
+    // Content present: nothing to diagnose, whatever the other fields say.
+    try std.testing.expect(emptyCompletionCause("text", "length", "thought") == null);
+
+    // The reasoning-budget case: a thinking model spent the whole max_tokens
+    // grant before emitting a visible token. The grant is the actionable part.
+    try std.testing.expectEqualStrings(
+        "the model spent the whole max_tokens grant on reasoning; raise the tool descriptor's config.max_tokens",
+        emptyCompletionCause("", "length", "We need answer user.").?,
+    );
+
+    // Truncated with no reasoning at all is still a budget problem, but not
+    // the reasoning one, so it must not claim reasoning it did not see.
+    try std.testing.expectEqualStrings(
+        "the completion was cut off at the max_tokens grant before any content",
+        emptyCompletionCause("", "length", null).?,
+    );
+
+    // Anything else that answers empty is a model-side refusal or a stop, and
+    // the honest answer is that we do not know which.
+    try std.testing.expectEqualStrings(
+        "the model returned no content",
+        emptyCompletionCause("", "stop", null).?,
+    );
+    try std.testing.expectEqualStrings(
+        "the model returned no content",
+        emptyCompletionCause("", null, null).?,
+    );
 }
 
 test "Host.writeResult enforces the arena cap and memory bounds" {
