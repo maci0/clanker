@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [clanker run exits clean when the final reply is length-truncated to empty](bugs/2026-08-17-run-reports-success-on-empty-length-stop.md) — Open
+
 - [TUI scrolling never advances through a fully expanded fold](bugs/2026-08-17-expanded-fold-cannot-be-scrolled-through.md) — Resolved
 
 - [TUI expanded reply fold shows a stray › on its first body line](bugs/2026-08-17-fold-first-line-keeps-turn-arrow.md) — Resolved
@@ -145,6 +147,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [No CLI verb prints a completed run's final answer](investigations/2026-08-17-no-verb-prints-a-runs-final-answer.md) — Investigating
+
 - [TUI fold shows a stray turn arrow and cannot be scrolled through](investigations/2026-08-17-tui-fold-arrow-and-scroll.md) — Resolved
 
 - [ck_cas.lock sidecars still accumulating in the source tree](investigations/2026-08-17-ck-cas-lock-sidecars-still-accumulating.md) — Resolved
