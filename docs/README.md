@@ -837,7 +837,7 @@ clanker reports append docs/reports/investigations/2026-08-16-run-livelock.md "#
 clanker reports update docs/reports/investigations/2026-08-16-run-livelock.md "Investigating." "Resolved."
 ```
 
-`create` writes a TL;DR-first scaffold and adds it to the matching inventory; its kind is `bug`, `investigation` or `runbook`, report slugs start `YYYY-MM-DD-`, and runbook slugs are lowercase and hyphenated. `append` adds markdown to the end of a record and `update` replaces one exact passage. Both are compare-and-swap writes: a concurrent documentation edit is refused rather than overwritten, so reopen the record and retry against its current text. A refused write exits 1, a usage mistake exits 2.
+`create` writes a TL;DR-first scaffold and adds it to the matching inventory; its kind is `bug`, `investigation`, `missing-tool` or `runbook`, report slugs start `YYYY-MM-DD-`, and runbook slugs are lowercase and hyphenated. `missing-tool` records a basic verb clanker lacks: it lands in the investigations store and the tool inserts `missing-clanker-tool-` into the filename after the date itself, so these records are findable by name without trusting the author to mark them. `append` adds markdown to the end of a record and `update` replaces one exact passage. Both are compare-and-swap writes: a concurrent documentation edit is refused rather than overwritten, so reopen the record and retry against its current text. A refused write exits 1, a usage mistake exits 2.
 
 ### Open decisions (RFCs)
 

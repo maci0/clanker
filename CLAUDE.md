@@ -79,6 +79,14 @@ and a runbook once recovery is confirmed:
 clanker reports create investigation <YYYY-MM-DD-slug> "<title>" "<TL;DR>"
 ```
 
+A basic verb clanker lacks is documented with the `missing-tool` kind — the
+tool inserts `missing-clanker-tool-` into the filename itself, so these
+records are findable by name without trusting the author to mark them:
+
+```bash
+clanker reports create missing-tool <YYYY-MM-DD-slug> "<title>" "<TL;DR>"
+```
+
 ### `clanker research`
 
 `list`, `plan`, `sweep`, `search`, `open`, `create`, `append`, `update`,

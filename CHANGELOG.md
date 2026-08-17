@@ -37,6 +37,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- A `missing-tool` record kind on `clanker reports create` (and the
+  `reports` tool), for documenting a basic verb clanker lacks. The record
+  lands in the investigations store with the tool inserting
+  `missing-clanker-tool-` into the filename after the date — enforced by
+  the tool itself rather than trusted from the caller — so absent tooling
+  is findable by name; the scaffold asks for the ad-hoc fallback used and
+  the proposed verb, and the normal `status` lifecycle applies.
 - A browsable run list in the web UI's Runs view. The view had only a
   `<select>`, which can show one run at a time, so a page of recorded runs
   could not be read without opening the dropdown and none of it was dated —
@@ -512,6 +519,24 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Scrolling in `clanker repl` can now reach the messages above an expanded
+  reply. The scroll guards, the anchor floor, the search jump, and the
+  scrollbar all measured the transcript in *lines* against a screen
+  measured in *rows*; an expanded fold's header row and any wrapped line
+  broke that equivalence, so a reply taller than the screen either
+  disabled scrolling entirely (tall terminal: overflow in rows, "fits" in
+  lines) or stranded the window partway with the earliest lines
+  unreachable. Every scroll bound now comes from a wrap- and fold-aware
+  row walk
+  (docs/reports/bugs/2026-08-17-scroll-cannot-reach-above-expanded-reply.md).
+  Found alongside: the width used to judge whether a reply folds was never
+  recorded, so foldability had always been judged at an 80-column
+  fallback; it now follows the drawn width.
+- `clanker run` no longer exits 0 with nothing on stdout when the final
+  reply is cut at the completion-token cap before any text arrives: the
+  run now fails with an error naming the limit, and a truncated but
+  non-empty final answer is returned with a loud warning
+  (docs/reports/bugs/2026-08-17-run-reports-success-on-empty-length-stop.md).
 - An expanded reply fold in `clanker repl` no longer shows a stray `›` on
   its first body line. The turn arrow marks where a reply's prose begins,
   but a folded reply's `▾ reply` header already does that, so the arrow
