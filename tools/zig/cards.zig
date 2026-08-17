@@ -570,6 +570,7 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
         } else if (std.mem.eql(u8, act.action, "subtask_depend")) {
             const sid = act.subtask orelse continue;
             const on = act.on orelse continue;
+            if (on.len == 0 or std.mem.eql(u8, on, sid)) continue; // no self-dependency
             const s = try c.subtask(arena, sid, "", "");
             const d = try s.dep(arena, on);
             if (d.at.beaten(m.ts, m.id)) {
@@ -1139,6 +1140,26 @@ test "a subtask_add with a pinned id re-folds to one item" {
     try std.testing.expectEqual(@as(usize, 1), folded[0].subtasks.len);
     try std.testing.expectEqualStrings("task-1", folded[0].subtasks[0].id);
     try std.testing.expectEqualStrings("merge the PR", folded[0].subtasks[0].text);
+}
+
+test "subtask_depend on itself is refused like a card-level self-dependency" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The `depend` action refuses `on == target` in the fold; a raw
+    // `subtask_depend` message folding `on == subtask` must too, or the item
+    // blocks itself forever (`checklistItemReady` can never hold) and the
+    // card can never enter Done.
+    const messages = [_]Message{
+        msg("m1", "x", 100, try encodeAdd(arena, "loop")),
+        msg("a1", "x", 101, try encode(arena, .{ .action = "subtask_add", .todo = "m1", .text = "item" })),
+        msg("loop", "x", 102, try encode(arena, .{ .action = "subtask_depend", .todo = "m1", .subtask = "a1", .on = "a1" })),
+    };
+    const folded = try derive(arena, &messages);
+    try std.testing.expectEqual(@as(usize, 1), folded[0].subtasks.len);
+    try std.testing.expectEqual(@as(usize, 0), folded[0].subtasks[0].depends_on.len);
+    try std.testing.expect(checklistItemReady(&folded[0], "a1"));
 }
 
 test "checklist items nest and carry independent dependency edges" {

@@ -1537,7 +1537,16 @@ pub const Agent = struct {
     fn compactionKeepStart(messages: []const types.Message, estimated_tokens: usize, threshold: usize) ?usize {
         if (estimated_tokens <= threshold) return null;
         if (!compactable(messages)) return null;
-        return tailStart(messages);
+        const keep_start = tailStart(messages);
+        // The walk back stops at 1 whether or not it found a safe split, so a
+        // history whose whole middle is tool results lands here with nothing
+        // between the system prompt and the tail. [[Agent.compactMiddle]] would
+        // then *insert* the summary rather than replace anything -- growing the
+        // history it was called to shrink, and pushing a `tool` message behind
+        // a synthetic user message with no `tool_calls` to answer. Decline
+        // instead: there is no middle to reclaim either way.
+        if (keep_start <= 1) return null;
+        return keep_start;
     }
 
     /// Whether there is anything to compact: system + one middle message + the
@@ -3913,6 +3922,27 @@ test "compactionKeepStart walks back so a tool result is never orphaned from its
     const keep = Agent.compactionKeepStart(&msgs, 10_000, 1) orelse return error.TestUnexpectedResult;
     try std.testing.expect(msgs[keep].role != .tool);
     try std.testing.expectEqual(@as(usize, 2), keep);
+}
+
+test "compactionKeepStart declines when the walk back finds no safe split" {
+    // 8 messages puts the naive window start at index 2, and both index 2 and
+    // index 1 are tool results, so the walk back bottoms out at 1. There is no
+    // middle to summarize there: compactMiddle would insert the summary rather
+    // than replace anything, growing the history and stranding msgs[1] behind
+    // a synthetic user message that issued no tool_calls.
+    const msgs = [_]types.Message{
+        .{ .role = .system, .content = "sys" }, // 0
+        .{ .role = .tool, .tool_call_id = "c1", .content = "t1" }, // 1
+        .{ .role = .tool, .tool_call_id = "c2", .content = "t2" }, // 2
+        .{ .role = .user, .content = "u1" },
+        .{ .role = .assistant, .content = "a1" },
+        .{ .role = .user, .content = "u2" },
+        .{ .role = .assistant, .content = "a2" },
+        .{ .role = .user, .content = "u3" },
+    };
+    try std.testing.expect(Agent.compactable(&msgs));
+    try std.testing.expectEqual(@as(usize, 1), Agent.tailStart(&msgs));
+    try std.testing.expect(Agent.compactionKeepStart(&msgs, 10_000, 1) == null);
 }
 
 test "compactionKeepStart returns null when the history fits the threshold" {

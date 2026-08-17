@@ -612,6 +612,22 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Session compaction no longer strands a tool result with no `tool_calls` to
+  answer, which providers reject outright (OpenAI 400s on a `tool` message not
+  preceded by `tool_calls`; Anthropic rejects an unmatched `tool_result`).
+  `session.compactMessages` drops a prefix of the non-system messages, so the
+  budget cutoff could land between an assistant message carrying the calls and
+  the results answering it; the surviving results then led the history. It hit
+  a resumed session on the turn it was compacted for (`clanker run --continue`,
+  `--session`) and a REPL session on the launch after the one that saved it,
+  and nothing downstream repaired it — `dropDanglingToolExchange` only cleans
+  the *tail*. Leading tool results now go with the prefix that orphaned them,
+  the invariant the agent loop's own compactor already guarded.
+- The agent loop's compaction now declines when the walk back past tool results
+  reaches the system prompt without finding a safe split, instead of *inserting*
+  a summary at index 1: `replaceRange` with a zero-length range grew the history
+  the pass was called to shrink, and left the tool result behind a synthetic
+  user message that had issued no calls.
 - The Vertex access-token exchange now runs under a wall-clock ceiling (10s).
   `std.http.Client` has no read timeout of its own, so a token endpoint that
   resolved, accepted the connection and then said nothing blocked forever, and
