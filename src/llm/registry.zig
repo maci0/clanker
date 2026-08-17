@@ -87,7 +87,70 @@ pub fn unconfiguredReason(
     return null;
 }
 
+/// Host/port of an explicit loopback `base_url` (`127.0.0.1` or `localhost`
+/// with a literal port), null for anything else. Only loopback endpoints are
+/// probe candidates: a remote provider's reachability is not knowable without
+/// network traffic, but a local server that refuses its own port is simply
+/// not running, and `unconfiguredReason` deliberately passes keyless local
+/// providers, so without the probe a stopped vllm/ollama still lists.
+pub const LoopbackEndpoint = struct { port: u16 };
+
+pub fn loopbackEndpoint(base_url: []const u8) ?LoopbackEndpoint {
+    const rest = if (std.mem.find(u8, base_url, "://")) |i| base_url[i + 3 ..] else base_url;
+    var host_end: usize = rest.len;
+    for (rest, 0..) |c, i| {
+        if (c == ':' or c == '/') {
+            host_end = i;
+            break;
+        }
+    }
+    const host = rest[0..host_end];
+    if (!std.mem.eql(u8, host, "127.0.0.1") and !std.mem.eql(u8, host, "localhost")) return null;
+    if (host_end >= rest.len or rest[host_end] != ':') return null;
+    const after = rest[host_end + 1 ..];
+    const port_end = std.mem.indexOfScalar(u8, after, '/') orelse after.len;
+    const port = std.fmt.parseInt(u16, after[0..port_end], 10) catch return null;
+    return .{ .port = port };
+}
+
+/// One TCP connect to 127.0.0.1:port. Loopback answers immediately (accept
+/// or refuse; no route to wait on), so this is the offline-adjacent probe the
+/// `/model` picker may run at build time without pinging any provider
+/// endpoint over a network. Errors other than an outright refusal keep the
+/// provider listed: the probe exists to drop what is provably not running,
+/// never to hide what it cannot judge.
+pub fn loopbackAlive(io: std.Io, port: u16) bool {
+    const addr = std.Io.net.IpAddress.parseIp4("127.0.0.1", port) catch return true;
+    var stream = addr.connect(io, .{ .mode = .stream }) catch |err| switch (err) {
+        error.ConnectionRefused => return false,
+        else => return true,
+    };
+    stream.close(io);
+    return true;
+}
+
 // ------------------------------------------------------------------- tests --
+
+test "loopbackEndpoint parses only explicit loopback host:port urls" {
+    try std.testing.expectEqual(@as(u16, 11434), loopbackEndpoint("http://127.0.0.1:11434/v1").?.port);
+    try std.testing.expectEqual(@as(u16, 8000), loopbackEndpoint("http://localhost:8000").?.port);
+    try std.testing.expect(loopbackEndpoint("https://api.deepseek.com") == null);
+    try std.testing.expect(loopbackEndpoint("http://127.0.0.1/v1") == null); // no literal port
+    try std.testing.expect(loopbackEndpoint("http://192.168.1.4:8000/v1") == null);
+    try std.testing.expect(loopbackEndpoint("") == null);
+}
+
+test "loopbackAlive distinguishes a listening loopback port from a refused one" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var server = try std.Io.net.IpAddress.listen(&addr, io, .{});
+    const port = server.socket.address.getPort();
+    try std.testing.expect(loopbackAlive(io, port));
+    server.deinit(io);
+    try std.testing.expect(!loopbackAlive(io, port));
+}
 
 test "every configurable kind resolves to its own provider" {
     for (std.enums.values(config.ProviderKind)) |kind| {

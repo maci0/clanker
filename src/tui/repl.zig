@@ -811,7 +811,6 @@ fn appendAnswerLines(arena: std.mem.Allocator, out: *std.ArrayList(Line), answer
 /// Which list the shared modal picker is showing.
 const PickerKind = enum { model, theme, command, effort, preset };
 
-
 const ModelCandidate = struct {
     provider: []const u8,
     model: []const u8,
@@ -833,11 +832,20 @@ const ModelCandidate = struct {
 /// skipped entirely (the same offline `unconfiguredReason` gate `providers
 /// check` applies before it pings), so the picker never offers a model the
 /// operator cannot call on this machine.
-fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map) ![]const ModelCandidate {
+fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, io: ?std.Io) ![]const ModelCandidate {
     var out: std.ArrayList(ModelCandidate) = .empty;
     var pit = cfg.providers.iterator();
     while (pit.next()) |pentry| {
         if (providers.unconfiguredReason(arena, environ_map, pentry.value_ptr) != null) continue;
+        // A keyless loopback provider (vllm/ollama) passes the credential
+        // gate whether or not its server is running; one local TCP connect
+        // settles it without pinging anything over a network. Null io skips
+        // the probe (unit tests exercise the flattening, not the machine).
+        if (io) |the_io| {
+            if (providers.loopbackEndpoint(pentry.value_ptr.base_url)) |lb| {
+                if (!providers.loopbackAlive(the_io, lb.port)) continue;
+            }
+        }
         const provider_start = out.items.len;
         var mit = pentry.value_ptr.models.iterator();
         while (mit.next()) |mentry| {
@@ -922,7 +930,7 @@ test "buildModelCandidates flattens providers in config order, one entry per mod
         .context_window = 65536,
     }));
 
-    const cands = try buildModelCandidates(arena, &cfg, &env);
+    const cands = try buildModelCandidates(arena, &cfg, &env, null);
     try std.testing.expectEqual(@as(usize, 2), cands.len);
     try std.testing.expectEqualStrings("kimi-k3", cands[0].provider);
     try std.testing.expectEqualStrings("moonshotai/kimi-k3", cands[0].display); // display overrides the bare model id
@@ -950,7 +958,7 @@ test "buildModelCandidates excludes providers with no usable credentials" {
     try cfg.providers.put(arena, "missing", missing);
     try cfg.providers.put(arena, "local", try config.Provider.single(arena, "local", "http://127.0.0.1:11434/v1", .openai_compat, "m", .{}));
 
-    const cands = try buildModelCandidates(arena, &cfg, &env);
+    const cands = try buildModelCandidates(arena, &cfg, &env, null);
     try std.testing.expectEqual(@as(usize, 2), cands.len);
     try std.testing.expectEqualStrings("keyed", cands[0].provider);
     try std.testing.expectEqualStrings("local", cands[1].provider);
@@ -7951,7 +7959,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
             }) catch {};
         }
     }
-    model.model_candidates = buildModelCandidates(arena, &model.cfg, init.environ_map) catch &.{};
+    model.model_candidates = buildModelCandidates(arena, &model.cfg, init.environ_map, init.io) catch &.{};
     model.command_candidates = buildCommandCandidates(arena) catch &.{};
     // A resumed conversation already occupies part of the window, so the
     // meter and the mid-turn compaction baseline start from what was loaded
