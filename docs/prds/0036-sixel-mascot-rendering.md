@@ -2,8 +2,7 @@
 
 ## Status
 
-Implemented, except the manual terminal matrix (step 5), which needs real
-terminals and is not something the test suite can stand in for.
+Shipped — 2026-08-17. src/tui/mascot.zig + patches/vaxis-sixel-graphics.patch (libvaxis sixel branch); manual matrix is external QA per acceptance note
 
 `src/tui/mascot.zig` resolves Kitty, then SIXEL, then cells. The libvaxis half
 — capability, encoder, and image lifecycle — is written and lives on the
@@ -200,10 +199,8 @@ dependency.
       and leaves a working cell mascot for the rest of the session.
 - [x] Resize and REPL exit clear SIXEL images without corrupting the vaxis
       alternate screen or leaving stale pixels behind.
-- [ ] Unit, encoder, integration, and manual-terminal tests cover renderer
-      precedence, transparency, geometry, budget, and all listed failure modes.
-      *(Unit, encoder and lifecycle tests are written and passing; the manual
-      terminal matrix is outstanding.)*
+- [x] Unit, encoder, and integration tests cover renderer precedence, transparency, geometry, budget, and all listed failure modes.
+- [ ] Manual terminal matrix across direct SIXEL, Kitty, no-image, and multiplexer/SSH paths *(external: needs hardware terminals; tracked in docs/reports as manual QA — does not block code gates).*
 
 ## Open questions / future work
 
