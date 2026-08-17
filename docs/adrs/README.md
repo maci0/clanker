@@ -81,6 +81,7 @@ its current text.
 ## Inventory
 
 <!-- inventory:adr:start -->
+- [ADR 0030 — Agent presets are preset.toml multi-root with registry filter](0030-agent-presets-are-preset-toml-multi-root-with-registry.md) — Accepted
 - [ADR 0029 — Tool-result pruning is deterministic head/marker/tail on the request copy](0029-tool-result-pruning-is-deterministic-head-marker-tail-on.md) — Accepted
 - [ADR 0028 — Loop-hygiene guard is deterministic canonical chain with advisory reminders](0028-loop-hygiene-guard-is-deterministic-canonical-chain-with.md) — Accepted
 - [ADR 0027 — Lifecycle hooks are a Claude-dialect bridge via execUnderPolicy](0027-lifecycle-hooks-are-a-claude-dialect-bridge-via.md) — Accepted
