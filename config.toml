@@ -279,7 +279,7 @@ repl_exec_allow = []
 #
 # Ordered providers tried after the selected one cannot serve a request.
 # Either spelling works; a bare string becomes a one-entry chain.
-# fallback_providers = ["deepseek", "openai"]
+fallback_providers = ["deepseek", "openai"]
 # fallback_provider = "deepseek"
 #
 # Per-turn classifier that picks a reasoning_effort. Off until a calibration
