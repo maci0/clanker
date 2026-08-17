@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const ensure_dir = @import("../util/ensure_dir.zig");
+const append_line = @import("../util/append_line.zig");
 const file_lock = @import("../util/file_lock.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
@@ -157,27 +158,8 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
         return;
     };
     defer file.close(io);
-    const size = (file.stat(io) catch |err| {
-        log.log(.warn, "[stats] stat failed: {s}", .{@errorName(err)});
-        return;
-    }).size;
-    var wbuf: [512]u8 = undefined;
-    var fw = file.writer(io, &wbuf);
-    fw.seekToUnbuffered(size) catch |err| {
-        log.log(.warn, "[stats] seek failed: {s}", .{@errorName(err)});
-        return;
-    };
-    fw.interface.writeAll(line) catch |err| {
-        log.log(.warn, "[stats] write failed: {s}", .{@errorName(err)});
-        return;
-    };
-    fw.interface.writeAll("\n") catch |err| {
-        log.log(.warn, "[stats] write failed: {s}", .{@errorName(err)});
-        return;
-    };
-    fw.flush() catch |err| {
-        log.log(.warn, "[stats] flush failed: {s}", .{@errorName(err)});
-        return;
+    append_line.appendLine(io, file, line) catch |err| {
+        log.log(.warn, "[stats] append failed: {s}", .{@errorName(err)});
     };
 }
 

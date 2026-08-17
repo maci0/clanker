@@ -135,6 +135,7 @@ comptime {
     _ = @import("util/dotenv.zig");
     _ = @import("util/log.zig");
     _ = @import("util/redact.zig");
+    _ = @import("util/append_line.zig");
     _ = @import("util/atomic_write.zig");
     _ = @import("util/file_lock.zig");
     _ = @import("util/disk_cap.zig");

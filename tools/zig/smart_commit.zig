@@ -286,10 +286,20 @@ fn commitGroupsFromIndex(groups: []const logic.Group) ![]const u8 {
         try std.fmt.allocPrint(lib.alloc, "committing from the index failed: {s}", .{@errorName(err)});
 
     var detail: []const u8 = "";
-    gitRun(&.{ "read-tree", tree }, &detail) catch {};
-    if (problem.len == 0 and detail.len > 0)
-        return try std.fmt.allocPrint(lib.alloc, "commits were written but the index could not be restored: {s} (git read-tree {s} restores it)", .{ detail, tree });
-    return problem;
+    // A failed restore is reported whether or not the commits themselves went
+    // through, and the error from the call itself counts as a failure: it used
+    // to be discarded, so a read-tree that never ran left `detail` empty and
+    // the half-built index -- the thing this whole routine exists to avoid --
+    // was reported as a clean success.
+    gitRun(&.{ "read-tree", tree }, &detail) catch |err| {
+        if (detail.len == 0) detail = @errorName(err);
+    };
+    if (detail.len == 0) return problem;
+
+    const restore = try std.fmt.allocPrint(lib.alloc, "the index could not be restored: {s} (git read-tree {s} restores it)", .{ detail, tree });
+    if (problem.len == 0)
+        return try std.fmt.allocPrint(lib.alloc, "commits were written but {s}", .{restore});
+    return try std.fmt.allocPrint(lib.alloc, "{s}; {s}", .{ problem, restore });
 }
 
 /// One commit per group, each built in the index. Returns "" when every group

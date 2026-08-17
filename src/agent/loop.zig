@@ -17,6 +17,7 @@ const autolearn = @import("auto_learn.zig");
 const chatrooms = @import("../peers/chatrooms.zig");
 const file_lock = @import("../util/file_lock.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
+const append_line = @import("../util/append_line.zig");
 const log = @import("../util/log.zig");
 const json_util = @import("../util/json.zig");
 const tool_out = @import("../util/tool_out.zig");
@@ -1299,25 +1300,38 @@ pub const Agent = struct {
     /// since it bypassed the lock other state logs use (see file_lock.zig).
     fn recordReasoning(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8, task: []const u8, reasoning: []const u8) void {
         _ = arena;
-        ensure_dir.ensureDir(std.Io.Dir.cwd(), io, "state") catch return;
+        ensure_dir.ensureDir(std.Io.Dir.cwd(), io, "state") catch |err| {
+            log.log(.warn, "recordReasoning: state directory unusable: {s}", .{@errorName(err)});
+            return;
+        };
         const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         var buf: [reasoning_record_buf_bytes]u8 = undefined;
         var w: std.Io.Writer = .fixed(&buf);
-        var s = std.json.Stringify{ .writer = &w, .options = .{} };
-        s.beginObject() catch return;
-        s.objectField("ts") catch return;
-        s.print("{d}", .{ts}) catch return;
-        s.objectField("provider") catch return;
-        s.write(provider) catch return;
-        s.objectField("model") catch return;
-        s.write(model) catch return;
-        s.objectField("task") catch return;
-        s.write(utf8.cap(task, reasoning_record_task_chars)) catch return;
-        s.objectField("reasoning") catch return;
-        s.write(utf8.cap(reasoning, reasoning_record_reasoning_chars)) catch return;
-        s.endObject() catch return;
+        // Encoding into a fixed buffer can overflow on a long trace. That drops
+        // the record either way, but it says so rather than looking like a turn
+        // that never reasoned.
+        encodeReasoning(&w, ts, provider, model, task, reasoning) catch |err| {
+            log.log(.warn, "recordReasoning: encode failed: {s}", .{@errorName(err)});
+            return;
+        };
 
         appendReasoningLine(std.Io.Dir.cwd(), io, gpa, buf[0..w.end]);
+    }
+
+    fn encodeReasoning(w: *std.Io.Writer, ts: i64, provider: []const u8, model: []const u8, task: []const u8, reasoning: []const u8) !void {
+        var s = std.json.Stringify{ .writer = w, .options = .{} };
+        try s.beginObject();
+        try s.objectField("ts");
+        try s.print("{d}", .{ts});
+        try s.objectField("provider");
+        try s.write(provider);
+        try s.objectField("model");
+        try s.write(model);
+        try s.objectField("task");
+        try s.write(utf8.cap(task, reasoning_record_task_chars));
+        try s.objectField("reasoning");
+        try s.write(utf8.cap(reasoning, reasoning_record_reasoning_chars));
+        try s.endObject();
     }
 
     fn appendReasoningLine(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, line: []const u8) void {
@@ -1327,7 +1341,9 @@ pub const Agent = struct {
         // Trim before opening for append below: trimming rewrites the file
         // and would otherwise contend with the handle about to be held open.
         if (base.statFile(io, reasoning_path, .{})) |st| {
-            if (st.size > reasoning_max_log_bytes) trimReasoningLog(base, io, gpa) catch {};
+            if (st.size > reasoning_max_log_bytes) trimReasoningLog(base, io, gpa) catch |err| {
+                log.log(.warn, "recordReasoning: trim failed: {s}", .{@errorName(err)});
+            };
         } else |_| {}
 
         const file = base.createFile(io, reasoning_path, .{ .truncate = false }) catch |err| {
@@ -1335,13 +1351,9 @@ pub const Agent = struct {
             return;
         };
         defer file.close(io);
-        const size = (file.stat(io) catch return).size;
-        var wbuf: [512]u8 = undefined;
-        var fw = file.writer(io, &wbuf);
-        fw.seekToUnbuffered(size) catch return;
-        fw.interface.writeAll(line) catch return;
-        fw.interface.writeAll("\n") catch return;
-        fw.flush() catch return;
+        append_line.appendLine(io, file, line) catch |err| {
+            log.log(.warn, "recordReasoning: failed to append to {s}: {s}", .{ reasoning_path, @errorName(err) });
+        };
     }
 
     /// Rewrites state/reasoning.jsonl keeping only the newest

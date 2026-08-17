@@ -15,6 +15,7 @@
 
 const std = @import("std");
 const ensure_dir = @import("../util/ensure_dir.zig");
+const append_line = @import("../util/append_line.zig");
 const log = @import("../util/log.zig");
 const file_lock = @import("../util/file_lock.zig");
 const atomic_write = @import("../util/atomic_write.zig");
@@ -100,13 +101,9 @@ fn appendLine(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
         return;
     };
     defer file.close(io);
-    const size = (file.stat(io) catch return).size;
-    var wbuf: [512]u8 = undefined;
-    var fw = file.writer(io, &wbuf);
-    fw.seekToUnbuffered(size) catch return;
-    fw.interface.writeAll(line) catch return;
-    fw.interface.writeAll("\n") catch return;
-    fw.flush() catch return;
+    append_line.appendLine(io, file, line) catch |err| {
+        log.log(.warn, "autolearn: failed to append to {s}: {s}", .{ event_path, @errorName(err) });
+    };
 }
 
 /// Rewrites the log keeping only the newest `keep_lines` lines.

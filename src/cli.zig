@@ -6726,7 +6726,12 @@ fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const confi
     // Residual posix: raw socket recv-timeout option for the hand-rolled HTTP
     // server loops below.
     const tv: std.posix.timeval = .{ .sec = connection_read_timeout_seconds, .usec = 0 };
-    std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
+    // This option is the only bound on the reads below. Without it the thread
+    // blocks forever on a client that connects and says nothing, and 64 of
+    // those exhaust max_connection_threads and stop the server accepting -- so
+    // a failure to set it is named rather than left to look like a hang.
+    std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch |err|
+        log.log(.warn, "serve: read timeout not set on connection, reads are unbounded: {s}", .{@errorName(err)});
     var requests: u8 = 0;
     while (requests < max_keep_alive_requests) : (requests += 1) {
         request_keep_alive = false;

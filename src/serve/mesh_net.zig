@@ -376,7 +376,8 @@ fn acceptOne(arg: *Conn) void {
     // Residual posix: raw TCP mesh socket recv-timeout option, same hand-rolled
     // socket family as readLoop above.
     const tv: std.posix.timeval = .{ .sec = 10, .usec = 0 };
-    std.posix.setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
+    std.posix.setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch |err|
+        log.log(.warn, "mesh: read timeout not set on inbound peer socket, reads are unbounded: {s}", .{@errorName(err)});
     var joined = false;
     while (!joined and !rt.stop.load(.monotonic)) {
         const n = std.posix.read(fd, &tmp) catch break;
@@ -480,6 +481,14 @@ pub fn join(gpa: std.mem.Allocator, address: []const u8) !void {
     const hp = try parseHostPort(address);
     const addr = try parseAddr(hp.host, hp.port);
     const stream = try addr.connect(rt.io, .{ .mode = .stream });
+    // Every failure below leaves this scope, and the socket has to go with it.
+    // The explicit closes only covered the branches written out longhand; the
+    // `try`s -- a short allocation, a peer whose frame is malformed or over
+    // rt.max_frame -- returned straight past them, so a peer that reliably
+    // failed the handshake leaked one descriptor per join attempt. The stream
+    // is only handed on once spawnRead takes it, and errdefer does not run on
+    // the success path.
+    errdefer stream.close(rt.io);
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -499,7 +508,6 @@ pub fn join(gpa: std.mem.Allocator, address: []const u8) !void {
     try join_s.endObject();
     const payload = join_out.written();
     if (!writeFrame(stream.socket.handle, gpa, payload)) {
-        stream.close(rt.io);
         return error.JoinWrite;
     }
     var acc: std.ArrayList(u8) = .empty;
@@ -508,44 +516,43 @@ pub fn join(gpa: std.mem.Allocator, address: []const u8) !void {
     // Residual posix: raw TCP mesh socket recv-timeout option, same hand-rolled
     // socket family as readLoop above.
     const tv: std.posix.timeval = .{ .sec = 10, .usec = 0 };
-    std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
+    std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch |err|
+        log.log(.warn, "mesh: read timeout not set while joining a peer, the join wait is unbounded: {s}", .{@errorName(err)});
     var accepted = false;
     var peer_from: []const u8 = "";
     while (!accepted) {
         const n = std.posix.read(stream.socket.handle, &tmp) catch {
-            stream.close(rt.io);
             return error.JoinRead;
         };
         if (n == 0) {
-            stream.close(rt.io);
             return error.JoinClosed;
         }
         try acc.appendSlice(gpa, tmp[0..n]);
         const dec = (try mesh.decodeFrame(acc.items, rt.max_frame)) orelse continue;
         const header = mesh.parseHeader(arena, dec.payload) catch {
-            stream.close(rt.io);
             return error.JoinBadAck;
         };
         if (header.kind != .join_ack) {
-            stream.close(rt.io);
             return error.JoinBadAck;
         }
         const p = payloadObj(arena, dec.payload) catch {
-            stream.close(rt.io);
             return error.JoinBadAck;
         };
         if (p.get("accepted")) |av| if (av == .bool and !av.bool) {
-            stream.close(rt.io);
             return error.JoinRefused;
         };
         peer_from = header.from;
         accepted = true;
     }
+    // Registered only once the reader owns the socket. The other order left a
+    // member pointing at a descriptor no thread was reading and the errdefer
+    // above had just closed, so the next fanOut wrote to whatever number the
+    // OS handed out next.
+    try spawnRead(rt, stream);
     rt.mu.lock();
     remember(rt, peer_from, peer_from, stream.socket.handle);
     rt.mu.unlock();
     live.noteMesh("join", peer_from);
-    try spawnRead(rt, stream);
 }
 
 fn spawnRead(rt: *Runtime, stream: std.Io.net.Stream) !void {
