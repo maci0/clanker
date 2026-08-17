@@ -6,10 +6,6 @@
 //! a clear in-tool message naming the verb and the allowed set, instead of the
 //! generic "refused by this tool's sandbox policy" the host would produce.
 //! The host still enforces the deny; this list never widens it.
-//! `allowed_verbs` is also enforced as the in-tool permit list: a verb
-//! outside it (git init, git config, git mv, git apply, ...) is refused
-//! before exec unless a git-naming exec_pattern_allow grants the exact argv
-//! or git_remote_ops lifts push/merge/checkout.
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -83,15 +79,12 @@ const git_value_options = [_][]const u8{
 /// The first argument of the given args, i.e. the git verb. Args that start
 /// with "-" (flags before the subcommand, like `git --version`) are skipped,
 /// and so is the value of a value-taking global option — the worktree path
-/// after `-C` must not be read as the verb. A bare `--` ends git's option
-/// parsing: everything after it is pathspec data, never a verb, so the scan
-/// stops there exactly like git's own parser.
+/// after `-C` must not be read as the verb.
 fn gitVerb(args: []const []const u8) ?[]const u8 {
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const a = args[i];
         if (a.len == 0) continue;
-        if (std.mem.eql(u8, a, "--")) return null;
         if (a[0] == '-') {
             for (git_value_options) |o| {
                 if (std.mem.eql(u8, a, o)) {
@@ -115,16 +108,12 @@ fn deniedVerb(args: []const []const u8, git_remote_ops: bool) ?[]const u8 {
     // Skip the value of a value-taking global option (e.g. the worktree path
     // after -C) so its data is not scanned for deny tokens; only real argv
     // positions are candidates. Mirrors how gitVerb locates the verb.
-    // A bare `--` ends git's option parsing: everything after it names paths,
-    // so a file literally called `checkout` (or any other deny token) must
-    // not be scanned. Mirrors git's own parser, described in gitcli(7).
     var skip_next = false;
     for (args) |a| {
         if (skip_next) {
             skip_next = false;
             continue;
         }
-        if (std.mem.eql(u8, a, "--")) return null;
         for (git_value_options) |o| {
             if (std.mem.eql(u8, o, a)) {
                 skip_next = true;
@@ -141,19 +130,6 @@ fn deniedVerb(args: []const []const u8, git_remote_ops: bool) ?[]const u8 {
 
 fn isGitRemoteOpToken(t: []const u8) bool {
     return std.mem.eql(u8, t, "push") or std.mem.eql(u8, t, "merge") or std.mem.eql(u8, t, "checkout");
-}
-
-/// Whether a verb may run without a git-naming exec_pattern_allow grant. A
-/// verb is permitted when it is on the allow list, or, with git_remote_ops
-/// set, when it is one of the verbs that setting lifts (push/merge/checkout,
-/// none of which appear on the allow list). It never widens the host's
-/// sandbox: the deny list and the host are still the final word.
-fn verbPermitted(verb: []const u8, git_remote_ops: bool) bool {
-    for (allowed_verbs) |v| {
-        if (std.mem.eql(u8, v, verb)) return true;
-    }
-    if (git_remote_ops and isGitRemoteOpToken(verb)) return true;
-    return false;
 }
 
 /// Classic `*` glob, mirroring src/sandbox/host.zig's globMatch so the guest
@@ -262,45 +238,27 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // deny tokens for the args it grants. This mirrors the host.
     var governed = false;
     var allowed = false;
-    var governing_patterns: std.ArrayList([]const u8) = .empty;
-    defer governing_patterns.deinit(lib.alloc);
-    var joined: []const u8 = "";
     if (policy.patterns.len > 0) {
         var join_buf: [2048]u8 = undefined;
-        var jw: std.Io.Writer = .fixed(&join_buf);
-        jw.writeAll("git") catch {};
+        var w: std.Io.Writer = .fixed(&join_buf);
+        w.writeAll("git") catch {};
         for (args.items) |a| {
-            jw.writeByte(' ') catch {};
-            jw.writeAll(a) catch {};
+            w.writeByte(' ') catch {};
+            w.writeAll(a) catch {};
         }
-        joined = join_buf[0..jw.end];
+        const joined = join_buf[0..w.end];
         for (policy.patterns) |pat| {
             if (!patternNamesCmd(pat, "git")) continue;
             governed = true;
-            governing_patterns.append(lib.alloc, pat) catch {};
             if (globMatch(pat, joined)) allowed = true;
         }
     }
 
     if (governed) {
         if (!allowed) {
-            var msg_buf: [1024]u8 = undefined;
-            var mw: std.Io.Writer = .fixed(&msg_buf);
-            mw.writeAll("git is governed by exec_pattern_allow and this invocation matches no pattern.\nInvocation: ") catch {};
-            mw.writeAll(joined) catch {};
-            mw.writeAll("\nMatching git patterns:") catch {};
-            if (governing_patterns.items.len == 0) {
-                mw.writeAll(" (none)") catch {};
-            } else {
-                for (governing_patterns.items, 0..) |pat, i| {
-                    if (i > 0) mw.writeAll("; ") catch {};
-                    mw.writeAll(pat) catch {};
-                }
-            }
-            return lib.fail(out, msg_buf[0..mw.end]);
+            return lib.fail(out, "git is governed by exec_pattern_allow and this invocation matches no pattern");
         }
-        // allowed: skip the deny-list and the allow list; a matching
-        // git-naming pattern grants the exact argv.
+        // allowed: skip the deny-list; the matching pattern grants the argv.
     } else if (deniedVerb(args.items, policy.git_remote_ops)) |denied| {
         const verb = gitVerb(args.items);
         var msg_buf: [512]u8 = undefined;
@@ -316,26 +274,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
         w.writeAll(". Remote/history-rewriting verbs need a human at a real terminal.") catch {};
         return lib.fail(out, msg_buf[0..w.end]);
-    } else if (gitVerb(args.items)) |verb| {
-        // The allow list is a real gate, not just the text of the deny
-        // message: a verb that is neither denied nor allowed (git init,
-        // git config, git mv, git apply, ...) is refused here rather than
-        // passed to the sandbox. git_remote_ops lifts push/merge/checkout,
-        // which are not on the allow list; the host's deny list is still the
-        // final word either way.
-        if (!verbPermitted(verb, policy.git_remote_ops)) {
-            var msg_buf: [512]u8 = undefined;
-            var tw: std.Io.Writer = .fixed(&msg_buf);
-            tw.writeAll("git '") catch {};
-            tw.writeAll(verb) catch {};
-            tw.writeAll("' is not on git's allowed list. Allowed: ") catch {};
-            for (allowed_verbs, 0..) |v, i| {
-                if (i > 0) tw.writeAll(", ") catch {};
-                tw.writeAll(v) catch {};
-            }
-            tw.writeAll(". Reading and local staging only; other verbs need a human at a real terminal.") catch {};
-            return lib.fail(out, msg_buf[0..tw.end]);
-        }
     }
 
     const result = lib.exec("git", args.items) catch |err| {
