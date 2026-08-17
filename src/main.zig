@@ -119,7 +119,7 @@ comptime {
     _ = @import("agent/thinking.zig");
     _ = @import("agent/ttsr.zig");
     _ = @import("agent/subprocess.zig");
-    _ = @import("agent/kernel.zig");
+    _ = @import("sandbox/kernel.zig");
     _ = @import("debug/dap.zig");
     _ = @import("peers/mesh.zig");
     _ = @import("peers/command.zig");
@@ -166,6 +166,7 @@ comptime {
     _ = @import("llm/gcp_jwt.zig");
     _ = @import("llm/vertex_token.zig");
     _ = @import("peers/chatrooms.zig");
+    _ = @import("peers/notifications.zig");
     _ = @import("agent/private_todos.zig");
     _ = @import("stats/tokens.zig");
     _ = @import("tui/width.zig");
@@ -181,8 +182,8 @@ comptime {
     _ = @import("serve/proxy_transcode.zig");
     _ = @import("cli.zig");
     _ = @import("doctor.zig");
-    _ = @import("research/harness.zig");
-    _ = @import("research/auto_research.zig");
+    _ = @import("autoresearch/harness.zig");
+    _ = @import("autoresearch/loop.zig");
     _ = @import("agent/workflows.zig");
     _ = @import("agent/goal_prompt.zig");
     _ = @import("agent/goal_loop.zig");

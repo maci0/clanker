@@ -1,13 +1,26 @@
-//! On-disk models.dev snapshot: lookup and specs.
+//! On-disk models.dev snapshot: the store, plus lookup and specs.
 //!
-//! The file lives at `state/models-dev.json` (legacy `state/cache/`). This
-//! module only reads it. Download/refresh stays in `cli.zig` so config load
-//! never hits the network.
+//! models.dev is a public, unauthenticated directory of provider/model specs
+//! (context window, pricing, capabilities) maintained outside this repo, so a
+//! model's metadata need not be hand-typed into config.toml and kept in sync.
+//! The snapshot is downloaded once (first catalog use, or `providers refresh`
+//! / `POST /api/catalog/refresh`) and then read forever: serve start and
+//! catalog search never touch the network while it is present. The older 24h
+//! cache path is still read so an existing download survives an upgrade.
+//!
+//! The file lives at `state/models-dev.json` (legacy `state/cache/`). Where it
+//! lives and how it is read and written is this module's, so no caller spells
+//! either path again. The *download* stays in `cli.zig` (`loadModelsDev`) so
+//! config load never hits the network; `api_url` is here because the store and
+//! the address it is populated from are one fact.
 
 const std = @import("std");
+const atomic_write = @import("../util/atomic_write.zig");
+const ensure_dir = @import("../util/ensure_dir.zig");
 
 pub const store_path = "state/models-dev.json";
 pub const legacy_path = "state/cache/models-dev.json";
+pub const api_url = "https://models.dev/api.json";
 
 pub const Specs = struct {
     context_window: ?u32 = null,
@@ -28,6 +41,14 @@ fn readFile(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator, path: []const
 pub fn readLocal(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator) ?[]const u8 {
     if (readFile(io, dir, arena, store_path)) |body| return body;
     return readFile(io, dir, arena, legacy_path);
+}
+
+/// Replace the snapshot with `body`, creating `state/` if this is the first
+/// populate. Atomic: a torn write would leave every later read parsing half a
+/// file.
+pub fn writeLocal(io: std.Io, dir: std.Io.Dir, body: []const u8) !void {
+    try ensure_dir.ensureDir(dir, io, "state");
+    try atomic_write.writeFile(io, dir, store_path, body);
 }
 
 fn hostOf(url: []const u8) ?[]const u8 {
@@ -234,4 +255,61 @@ test "specs skips a zero context or output rather than treating it as a cap" {
     const s = try specs(arena, m);
     try std.testing.expect(s.context_window == null);
     try std.testing.expect(s.max_tokens == null);
+}
+
+test "readLocal prefers state/models-dev.json over the legacy cache path" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try tmp.dir.createDirPath(io, "state/cache");
+    try tmp.dir.writeFile(io, .{ .sub_path = legacy_path, .data = "legacy" });
+    try tmp.dir.writeFile(io, .{ .sub_path = store_path, .data = "current" });
+    const body = readLocal(io, tmp.dir, arena) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("current", body);
+}
+
+test "readLocal falls back to the legacy 24h cache path" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try tmp.dir.createDirPath(io, "state/cache");
+    try tmp.dir.writeFile(io, .{ .sub_path = legacy_path, .data = "legacy" });
+    const body = readLocal(io, tmp.dir, arena) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("legacy", body);
+}
+
+test "readLocal treats a missing or empty file as absent" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try std.testing.expect(readLocal(io, tmp.dir, arena) == null);
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.writeFile(io, .{ .sub_path = store_path, .data = "" });
+    try std.testing.expect(readLocal(io, tmp.dir, arena) == null);
+}
+
+test "writeLocal creates state/ on the first populate and replaces the snapshot" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try writeLocal(io, tmp.dir, "first");
+    try std.testing.expectEqualStrings("first", readLocal(io, tmp.dir, arena) orelse return error.TestUnexpectedResult);
+    try writeLocal(io, tmp.dir, "second");
+    try std.testing.expectEqualStrings("second", readLocal(io, tmp.dir, arena) orelse return error.TestUnexpectedResult);
 }

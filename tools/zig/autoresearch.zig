@@ -1,6 +1,6 @@
 //! autoresearch: list runs, tail a run's ledger, or append a run's ledger
 //! entry. `op: "append"` is the ledger write the native engine loop
-//! (`src/research/auto_research.zig`) calls once per iteration, fs-scoped to
+//! (`src/autoresearch/loop.zig`) calls once per iteration, fs-scoped to
 //! state/autoresearch/ like the read ops; the entry shape and the stdout/
 //! stderr tail live in autoresearch_logic.zig, shared with the native loop.
 const std = @import("std");

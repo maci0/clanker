@@ -1,5 +1,5 @@
 //! Pure ledger logic for the autoresearch engine, shared between the native
-//! loop (`src/research/auto_research.zig`) and the `autoresearch` WASM tool
+//! loop (`src/autoresearch/loop.zig`) and the `autoresearch` WASM tool
 //! (`tools/zig/autoresearch.zig`). The tool owns the ledger write
 //! (`op: "append"`, fs-scoped to state/autoresearch/); the loop imports the
 //! same module for the per-iteration compare and for the stdout/stderr tails

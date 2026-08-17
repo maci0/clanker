@@ -48,6 +48,7 @@ const tui_transcript = @import("tui/transcript.zig");
 const tui_stats = @import("tui/turn_stats.zig");
 const repl = @import("tui/repl.zig");
 const chatrooms = @import("peers/chatrooms.zig");
+const notifications = @import("peers/notifications.zig");
 const phonebook = @import("peers/phonebook.zig");
 const mesh = @import("peers/mesh.zig");
 const mesh_cmd = @import("peers/command.zig");
@@ -166,7 +167,7 @@ pub const Command = enum {
     /// `research list|plan|sweep|search|open|create|append|update|status`: the
     /// same research notes the agent gathers and writes through the `research`
     /// tool, from a terminal. `src/records/research.zig`. Distinct from
-    /// `autoresearch`, which drives the experiment engine in `src/research/`.
+    /// `autoresearch`, which drives the experiment engine in `src/autoresearch/`.
     research,
     /// `rfc list|search|open|checklist|create|append|update|recommend|status`:
     /// the open decisions under docs/rfcs/, through the same `rfc` tool the
@@ -2900,36 +2901,6 @@ fn renderConfiguredProviderModels(arena: std.mem.Allocator, provider: *const con
     return rendered.written();
 }
 
-/// Public, unauthenticated directory of provider/model specs (context window,
-/// pricing, capabilities) maintained outside this repo. Used so a model's
-/// metadata does not have to be hand-typed into config.toml and kept in sync
-/// by hand.
-const models_dev_url = "https://models.dev/api.json";
-
-/// Durable snapshot of that directory. Downloaded once (first catalog use, or
-/// `providers refresh` / POST /api/catalog/refresh) and then read forever.
-/// Serve start and catalog search do not hit the network when this file is
-/// present. The older 24h cache path is still read so an existing download
-/// is not thrown away on upgrade.
-const models_dev_store_path = "state/models-dev.json";
-const models_dev_legacy_path = "state/cache/models-dev.json";
-
-fn readModelsDevFile(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator, path: []const u8) ?[]const u8 {
-    const body = dir.readFileAlloc(io, path, arena, .limited(64 * 1024 * 1024)) catch return null;
-    if (body.len == 0) return null;
-    return body;
-}
-
-fn readModelsDevLocal(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator) ?[]const u8 {
-    if (readModelsDevFile(io, dir, arena, models_dev_store_path)) |body| return body;
-    return readModelsDevFile(io, dir, arena, models_dev_legacy_path);
-}
-
-fn writeModelsDevLocal(io: std.Io, dir: std.Io.Dir, body: []const u8) !void {
-    try ensure_dir.ensureDir(dir, io, "state");
-    try atomic_write.writeFile(io, dir, models_dev_store_path, body);
-}
-
 /// Wall-clock ceiling for the models.dev catalog fetch.
 ///
 /// `std.http.Client` has no read timeout of its own (`ConnectTcpOptions.timeout`
@@ -2949,10 +2920,10 @@ const models_dev_timeout_ms: i64 = 30_000;
 fn loadModelsDev(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, refresh: bool) ![]const u8 {
     const cwd = std.Io.Dir.cwd();
     if (!refresh) {
-        if (readModelsDevLocal(io, cwd, arena)) |body| return body;
+        if (models_dev.readLocal(io, cwd, arena)) |body| return body;
     }
-    const body = try httpGetDeadline(io, gpa, arena, models_dev_url, null, models_dev_timeout_ms);
-    writeModelsDevLocal(io, cwd, body) catch |err|
+    const body = try httpGetDeadline(io, gpa, arena, models_dev.api_url, null, models_dev_timeout_ms);
+    models_dev.writeLocal(io, cwd, body) catch |err|
         log.log(.warn, "could not store models.dev catalog: {s}", .{@errorName(err)});
     return body;
 }
@@ -2967,7 +2938,7 @@ fn cmdProvidersRefresh(init: std.process.Init) !void {
         return err;
     };
     const out = std.Io.File.stdout();
-    try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "wrote {s} ({d} bytes)\n", .{ models_dev_store_path, body.len }));
+    try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "wrote {s} ({d} bytes)\n", .{ models_dev.store_path, body.len }));
 }
 
 /// `clanker providers catalog <query>`, search the local models.dev snapshot
@@ -7249,62 +7220,6 @@ const NotifyRequestBody = struct {
     id: ?[]const u8 = null,
 };
 
-const NotificationRecord = struct {
-    from: []const u8,
-    kind: []const u8,
-    topic: []const u8,
-    payload: std.json.Value,
-    ts: i64,
-    received_at: i64,
-    id: ?[]const u8 = null,
-};
-
-const notifications_max_bytes = 1 << 20;
-
-fn storeNotification(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, record: NotificationRecord) !void {
-    try ensure_dir.ensureDir(base, io, "state");
-    var guard = file_lock.acquire(io, base, "state", "notifications", gpa);
-    defer guard.release();
-
-    const file_path = "state/notifications.jsonl";
-    const maybe_existing = base.readFileAlloc(io, file_path, gpa, .limited(notifications_max_bytes)) catch null;
-    defer if (maybe_existing) |e| gpa.free(e);
-    const existing = maybe_existing orelse &[_]u8{};
-
-    // The log itself is the bounded delivery ledger. The check and rewrite
-    // share one lock, so simultaneous redeliveries cannot both append.
-    if (record.id) |id| if (id.len > 0) {
-        var lines = std.mem.splitScalar(u8, existing, '\n');
-        while (lines.next()) |line| {
-            if (line.len == 0) continue;
-            var parsed_arena = std.heap.ArenaAllocator.init(gpa);
-            defer parsed_arena.deinit();
-            const prior = std.json.parseFromSliceLeaky(NotificationRecord, parsed_arena.allocator(), line, .{ .ignore_unknown_fields = true }) catch continue;
-            if (prior.id) |prior_id| if (std.mem.eql(u8, prior_id, id)) return;
-        }
-    };
-
-    var line_buf: [64 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&line_buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    try s.write(record);
-
-    var out_list = std.ArrayList(u8).empty;
-    defer out_list.deinit(gpa);
-    try out_list.appendSlice(gpa, existing);
-    if (existing.len > 0 and existing[existing.len - 1] != '\n') try out_list.append(gpa, '\n');
-    try out_list.appendSlice(gpa, line_buf[0..w.end]);
-    try out_list.append(gpa, '\n');
-    if (out_list.items.len > notifications_max_bytes) {
-        const floor = out_list.items.len - notifications_max_bytes;
-        const newline = std.mem.findScalarPos(u8, out_list.items, floor, '\n') orelse floor;
-        const keep = @min(newline + 1, out_list.items.len);
-        std.mem.copyForwards(u8, out_list.items[0 .. out_list.items.len - keep], out_list.items[keep..]);
-        out_list.shrinkRetainingCapacity(out_list.items.len - keep);
-    }
-    try atomic_write.writeFile(io, base, file_path, out_list.items);
-}
-
 const A2ARequest = struct {
     id: ?std.json.Value = null,
     method: ?[]const u8 = null,
@@ -7328,43 +7243,13 @@ fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: st
     // Seconds since epoch, matching the `ts` field cmdNotify sends and the
     // units used for session created/updated timestamps elsewhere.
     const received_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    const record = NotificationRecord{ .from = from, .kind = kind, .topic = topic, .payload = payload, .ts = ts, .received_at = received_at, .id = parsed.id };
-    storeNotification(io, gpa, std.Io.Dir.cwd(), record) catch |err| {
+    const record = notifications.Record{ .from = from, .kind = kind, .topic = topic, .payload = payload, .ts = ts, .received_at = received_at, .id = parsed.id };
+    notifications.store(io, gpa, std.Io.Dir.cwd(), record) catch |err| {
         log.log(.error_, "POST /api/notify: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"notify failed\"}");
         return;
     };
     respond(stream, 200, "OK", "{\"ok\":true}");
-}
-
-test "notification redelivery is stored once" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const first = NotificationRecord{
-        .from = "peer",
-        .kind = "message",
-        .topic = "",
-        .payload = .{ .string = "hello" },
-        .ts = 1,
-        .received_at = 2,
-        .id = "delivery-1",
-    };
-    try storeNotification(io, std.testing.allocator, tmp.dir, first);
-    try storeNotification(io, std.testing.allocator, tmp.dir, first);
-
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const raw = try tmp.dir.readFileAlloc(io, "state/notifications.jsonl", arena_state.allocator(), .limited(notifications_max_bytes));
-    var count: usize = 0;
-    var lines = std.mem.splitScalar(u8, raw, '\n');
-    while (lines.next()) |line| if (line.len > 0) {
-        count += 1;
-    };
-    try std.testing.expectEqual(@as(usize, 1), count);
 }
 
 const ChatMessageBody = struct {
@@ -9710,7 +9595,7 @@ fn handleCatalogRefresh(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.S
     s.objectField("bytes") catch return;
     s.write(owned.len) catch return;
     s.objectField("path") catch return;
-    s.write(models_dev_store_path) catch return;
+    s.write(models_dev.store_path) catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", out.written());
 }
@@ -16866,49 +16751,6 @@ test "providers refresh is a recognized subcommand" {
     try std.testing.expectEqualStrings("refresh", opts.providers_sub);
 }
 
-test "readModelsDevLocal prefers state/models-dev.json over the legacy cache path" {
-    const io = std.testing.io;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    try tmp.dir.createDirPath(io, "state/cache");
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/cache/models-dev.json", .data = "legacy" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/models-dev.json", .data = "current" });
-    const body = readModelsDevLocal(io, tmp.dir, arena) orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqualStrings("current", body);
-}
-
-test "readModelsDevLocal falls back to the legacy 24h cache path" {
-    const io = std.testing.io;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    try tmp.dir.createDirPath(io, "state/cache");
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/cache/models-dev.json", .data = "legacy" });
-    const body = readModelsDevLocal(io, tmp.dir, arena) orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqualStrings("legacy", body);
-}
-
-test "readModelsDevLocal treats a missing or empty file as absent" {
-    const io = std.testing.io;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    try std.testing.expect(readModelsDevLocal(io, tmp.dir, arena) == null);
-    try tmp.dir.createDirPath(io, "state");
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/models-dev.json", .data = "" });
-    try std.testing.expect(readModelsDevLocal(io, tmp.dir, arena) == null);
-}
-
 test "catalogCapabilities is the one translation both the CLI snippet and /api/catalog use" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -17236,7 +17078,7 @@ fn cmdAutoresearch(init: std.process.Init, opts: Options) !void {
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
     var provider_val = try resolveProvider(&cfg, opts);
     const provider = &provider_val;
-    const autoresearch_mod = @import("research/auto_research.zig");
+    const autoresearch_mod = @import("autoresearch/loop.zig");
     var eng = autoresearch_mod.Loop{ .ctx = &ctx, .arena = arena, .provider = provider, .cfg = &cfg };
     try eng.run(.{ .targets = targets.items, .harness_argv = harness_argv.items, .metric_name = opts.research_metric orelse "score", .metric_pattern = opts.research_pattern orelse "", .direction = opts.research_direction, .iters = opts.iters, .dry_run = false, .research_dir = "state/autoresearch", .budget_seconds = opts.research_budget });
 }

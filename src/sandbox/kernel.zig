@@ -1,9 +1,14 @@
 //! Persistent Python eval-kernel supervisor (PRD 0016). One process per
 //! (session, kind), stdio JSON lines, state in `__main__` across cells.
 //! Host-tested so persist / reset / SIGTERM cannot drift from the PRD.
+//!
+//! Lives beside `host.zig` because `ck_kernel` is its only caller: this is
+//! the privileged channel's implementation, not an agent-loop concern. The
+//! process table it registers into stays in `agent/subprocess.zig`, which
+//! DAP shares and which keys on the session.
 
 const std = @import("std");
-const subprocess = @import("subprocess.zig");
+const subprocess = @import("../agent/subprocess.zig");
 
 pub const supervisor_src =
     \\import ast, io, json, os, subprocess, sys, time, traceback

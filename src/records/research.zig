@@ -7,7 +7,7 @@
 //! tool call arrives through the `Tool` callback below, so this module renders
 //! and tests without a WASM runtime.
 //!
-//! Not `src/research/`, which is the unrelated `autoresearch` harness loop.
+//! Not `src/autoresearch/`, which is the unrelated experiment-harness loop.
 //! This is the note-taking store under `docs/research/`; that one proposes a
 //! change, measures one scalar, and keeps the change only if the number moved.
 //!
