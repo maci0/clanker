@@ -254,6 +254,8 @@ pub const Agent = struct {
     /// predicate confirm-before-write gates on), so a plan run can research
     /// freely but cannot change anything, whatever the model decides.
     plan_mode: bool = false,
+    /// Active preset for this Agent (filtered Registry). Null means full.
+    preset: ?*const @import("../preset/preset.zig").Preset = null,
     /// Research mode (the composer's Research toggle): [[research_mode_suffix]]
     /// is threaded into the system prompt, directing the run to consult
     /// web_search/web_fetch for current, sourced facts. A directive, not a
@@ -2701,6 +2703,14 @@ pub const Agent = struct {
                         results[i] = try toolErrorJson(self.arena, "plan mode: the {s} tool can change state and was not executed. Describe this action as a step in your plan instead.", .{tc.name});
                         continue;
                     }
+                }
+            }
+            if (self.preset) |preset| {
+                const preset_mod = @import("../preset/preset.zig");
+                if (!preset_mod.allowed(preset.*, tc.name)) {
+                    log.log(.info, "preset: tool '{s}' denied by active preset", .{tc.name});
+                    results[i] = try toolErrorJson(self.arena, "preset denied {s}: this tool is not allowed by the active preset. Pick another tool or switch presets.", .{tc.name});
+                    continue;
                 }
             }
             const pre_hook = try self.runLifecycleHook(.PreToolUse, tc.name, try self.hookPayload(.PreToolUse, tc.name, tc.arguments, ""));

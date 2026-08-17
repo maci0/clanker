@@ -3851,10 +3851,16 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
     }
 
     var a = try agent.Agent.init(&ctx, arena, provider, &cfg, &reg, tool_defs);
-    if (preset_obj) |p| if (p.system_prompt_append.len > 0) {
-        // Append preset persona after clanker's own prompt, per PRD 0033 non-goal (append, not replace).
-        a.system_prompt_text = try std.fmt.allocPrint(arena, "{s}\n\n{s}", .{ a.system_prompt_text, p.system_prompt_append });
-    };
+    // Keep preset object alive on the run arena so the Agent's borrowed pointer stays valid.
+    if (preset_obj) |p| {
+        const stored = try arena.create(preset_mod.Preset);
+        stored.* = p;
+        a.preset = stored;
+        if (p.system_prompt_append.len > 0) {
+            // Append preset persona after clanker's own prompt, per PRD 0033 non-goal (append, not replace).
+            a.system_prompt_text = try std.fmt.allocPrint(arena, "{s}\n\n{s}", .{ a.system_prompt_text, p.system_prompt_append });
+        }
+    }
     defer a.deinit();
     a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
     var messages: std.ArrayList(types.Message) = .empty;

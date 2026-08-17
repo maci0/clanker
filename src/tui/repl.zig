@@ -166,11 +166,20 @@ fn toggleSessionMode(
 }
 
 fn idlePhaseLabel(self: *const Model, buf: []u8) []const u8 {
-    if (!self.plan_mode and !self.research_mode) return "ready";
-    if (self.plan_mode and self.research_mode)
+    const preset_suffix: []const u8 = if (self.preset_name) |pn| std.fmt.allocPrint(self.arena, " · {s}", .{pn}) catch "" else "";
+    if (!self.plan_mode and !self.research_mode) {
+        if (preset_suffix.len > 0) return std.fmt.bufPrint(buf, "ready{s}", .{preset_suffix}) catch "ready";
+        return "ready";
+    }
+    if (self.plan_mode and self.research_mode) {
+        if (preset_suffix.len > 0) return std.fmt.bufPrint(buf, "ready · plan · research{s}", .{preset_suffix}) catch "ready";
         return std.fmt.bufPrint(buf, "ready · plan · research", .{}) catch "ready";
-    if (self.plan_mode)
+    }
+    if (self.plan_mode) {
+        if (preset_suffix.len > 0) return std.fmt.bufPrint(buf, "ready · plan{s}", .{preset_suffix}) catch "ready";
         return std.fmt.bufPrint(buf, "ready · plan", .{}) catch "ready";
+    }
+    if (preset_suffix.len > 0) return std.fmt.bufPrint(buf, "ready · research{s}", .{preset_suffix}) catch "ready";
     return std.fmt.bufPrint(buf, "ready · research", .{}) catch "ready";
 }
 
@@ -522,6 +531,24 @@ fn runThreadMain(args: RunThreadArgs) void {
     a.ask_fn = &tuiAsk;
     if (self.cfg.agent.confirm_writes == .always) a.confirm_fn = &tuiConfirm;
     a.plan_mode = self.plan_mode;
+    if (self.preset_name) |pn| {
+        const preset_mod = @import("../preset/preset.zig");
+        var dir = std.Io.Dir.cwd().openDir(self.io, "presets", .{}) catch null;
+        if (dir) |*d| {
+            defer d.close(self.io);
+            if (preset_mod.loadFromFile(self.io, self.arena, d.*, pn) catch null) |preset| {
+                const stored = self.arena.create(preset_mod.Preset) catch null;
+                if (stored) |s| {
+                    // Names leak via parseString dupes; keep stored for gate predicate.
+                    s.* = preset;
+                    a.preset = s;
+                    if (preset.system_prompt_append.len > 0) {
+                        a.system_prompt_text = std.fmt.allocPrint(self.arena, "{s}\n\n{s}", .{ a.system_prompt_text, preset.system_prompt_append }) catch a.system_prompt_text;
+                    }
+                }
+            }
+        }
+    }
     a.research_mode = self.research_mode;
     if (args.pending_images) |imgs| a.pending_images = imgs;
 
@@ -932,6 +959,8 @@ const CommandAction = union(enum) {
     theme,
     /// Toggle proposal-only runs for subsequent tasks (`/plan [on|off]`).
     plan,
+    /// Switch preset bundle for next task (`/preset <name>`), blank-session only.
+    preset,
     /// Toggle web-research runs for subsequent tasks (`/research [on|off]`).
     research,
     /// Queue an image path for the next task submit (`/attach <path>`).
@@ -982,6 +1011,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/compare", .takes_args = true, .arg_hint = "...", .help = "one prompt to several models at once, answers unlabeled (see /compare --help)", .action = .compare },
     .{ .name = "/theme", .takes_args = true, .arg_hint = "[name]", .help = "list or switch color theme (mocha, latte, tokyonight, ...)", .action = .theme },
     .{ .name = "/plan", .takes_args = true, .arg_hint = "[on|off]", .help = "toggle plan mode (proposal only; write tools refused)", .action = .plan },
+    .{ .name = "/preset", .takes_args = true, .arg_hint = "<name>", .help = "switch preset bundle (allowed tools + persona) for next task", .action = .preset },
     .{ .name = "/research", .takes_args = true, .arg_hint = "[on|off]", .help = "toggle research mode (prefer web_search/web_fetch for current facts)", .action = .research },
     .{ .name = "/attach", .takes_args = true, .arg_hint = "<path>", .help = "queue an image for the next task submit", .action = .attach },
     .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
@@ -2042,6 +2072,8 @@ const Model = struct {
     /// `/plan` toggles proposal-only runs (write-capable tools refused), matching
     /// the web UI's Plan checkbox for this session.
     plan_mode: bool = false,
+    /// Active preset name for this session (filtered Registry). Null = full.
+    preset_name: ?[]const u8 = null,
     /// `/research` toggles web-research runs, matching the web UI's Research checkbox.
     research_mode: bool = false,
     /// Pending images for the next submit, shown in the status bar and
@@ -2637,6 +2669,33 @@ const Model = struct {
                     "usage: /research [on|off] (bare /research toggles)",
                     "notice: research mode {s} (web_search/web_fetch preferred for current facts)",
                 ) == .bad_usage) return;
+            },
+            .preset => {
+                const name = std.mem.trim(u8, pc.args, " \t");
+                if (name.len == 0) {
+                    self.lines.append(self.arena, .{ .text = "usage: /preset <name> (e.g. /preset research, /preset full)", .dim = true }) catch {};
+                    return;
+                }
+                // Blank-session-only guard: swapping tools mid-conversation would leave logged calls
+                // a narrower preset cannot explain. Also refuse while a turn is streaming.
+                if (self.messages.items.len > 1 or self.thread != null) {
+                    self.lines.append(self.arena, .{ .text = "preset: only before any tool call or assistant message (blank session only)", .dim = true }) catch {};
+                    return;
+                }
+                // Validate preset exists under presets/ (same helper CLI uses).
+                const preset_mod = @import("../preset/preset.zig");
+                var dir = std.Io.Dir.cwd().openDir(self.io, "presets", .{}) catch {
+                    self.lines.append(self.arena, .{ .text = "preset: no presets/ directory", .dim = true }) catch {};
+                    return;
+                };
+                defer dir.close(self.io);
+                const preset = preset_mod.loadFromFile(self.io, self.arena, dir, name) catch |err| {
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "preset '{s}' not found: {s}", .{ name, @errorName(err) }) catch "preset not found", .dim = true }) catch {};
+                    return;
+                };
+                self.preset_name = self.arena.dupe(u8, name) catch name;
+                _ = preset;
+                self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "notice: preset switched to {s}", .{name}) catch "notice: preset switched", .dim = true }) catch {};
             },
             .attach => {
                 const path = std.mem.trim(u8, pc.args, " \t");
