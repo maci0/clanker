@@ -544,11 +544,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   parser dropped (now mapped to keypad Enter by
   `patches/vaxis-ss3-keypad-enter.patch`); terminals speaking the kitty
   keyboard protocol report the chord as Enter+Shift and land in the same
-  handler. The composer grows one row per line and each line renders on its
-  own row, and the submitted task carries real newlines. Multi-line pastes (bracketed and
-  Ctrl+Shift+V) now keep their line structure the same way instead of being
-  folded to spaces, and Up/Down history recall restores it. Documented in
-  the repl keys help
+  handler. The composer grows one row per line, each line renders on its own
+  row, and the submitted task carries real newlines, echoed into the
+  transcript as one row per line. Up/Down move the cursor between draft
+  lines — which also scrolls a draft taller than the box, since the box
+  follows the cursor's line — and fall through to history recall at the
+  first/last line. Mouse drag now selects inside the input box too (it was
+  transcript-only, and Konsole intercepts the Ctrl+Shift+C fallback), with
+  the same copy-on-release. Multi-line pastes (bracketed and Ctrl+Shift+V)
+  keep their line structure instead of being folded to spaces, and history
+  recall restores it. Documented in the repl keys help
   (docs/reports/investigations/2026-08-17-tui-shift-enter-ss3-unhandled.md).
 - `std.log` output from vendored dependencies (vaxis included) is routed
   through clanker's leveled logger instead of std's raw stderr handler, so

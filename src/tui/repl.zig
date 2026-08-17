@@ -1395,7 +1395,8 @@ const keys_help =
     \\  Ctrl-P            command palette (matches names and descriptions)
     \\  Ctrl-R            search transcript; Up/Down step through matches
     \\                    Enter stays on a match; Esc returns to the tail
-    \\  Up/Down           recall previous input
+    \\  Up/Down           move between draft lines, then recall history
+    \\                    at the edges
     \\  PgUp/PgDn         page transcript (Home: top; End/Esc: tail)
     \\  Ctrl-C            stop the current turn, or quit when idle
     \\  Ctrl-Shift-C      copy the selection (or the input line)
@@ -1403,7 +1404,8 @@ const keys_help =
     \\  Ctrl-Shift-V, Shift-Insert   paste from the system clipboard
     \\  Ctrl-U/K/W, Ctrl-Y   kill to start/end/word, then yank
     \\  mouse wheel       scroll the transcript
-    \\  mouse drag        select transcript text (copies on release)
+    \\  mouse drag        select text, transcript or input box (copies on
+    \\                    release)
     \\  Shift+drag        the terminal's own selection (bypasses clanker)
 ;
 
@@ -2050,6 +2052,22 @@ const Model = struct {
     has_selection: bool = false,
     sel_start: vxfw.Point = .{ .row = 0, .col = 0 },
     sel_end: vxfw.Point = .{ .row = 0, .col = 0 },
+    /// Screen region of the composer's interior text cells (borders
+    /// excluded); `bottom`/`right` exclusive. Refreshed every draw so mouse
+    /// selection can tell the composer from the transcript.
+    composer_top: u16 = 0,
+    composer_bottom: u16 = 0,
+    composer_left: u16 = 0,
+    composer_right: u16 = 0,
+    /// Whether the live selection anchors in the composer, decided at press.
+    /// A selection never spans both regions: they scroll independently, so a
+    /// mixed span would not name any coherent text.
+    sel_in_composer: bool = false,
+    /// The composer child surface from the last frame, same lifetime as
+    /// `last_surface`. Selection highlight and extraction must use the child:
+    /// the parent's cells underneath it are blank, and at composite time the
+    /// child covers anything painted on the parent.
+    last_input_surface: ?vxfw.Surface = null,
     /// The last frame's rendered cells, kept only to read back the plain
     /// text under a selection (surface.readCell), its backing arena is the
     /// draw arena, valid until the next redraw actually runs, which is
@@ -3053,7 +3071,21 @@ const Model = struct {
         // task and the streamed reply land there, and hiding them behind a
         // frozen window would make Enter look like it did nothing.
         self.view_end = null;
-        self.lines.append(self.arena, .{ .text = try std.fmt.allocPrint(self.arena, "clanker> {s}", .{task}), .user = true }) catch {};
+        // One transcript entry per line of the task: each Line is one logical
+        // row (see the draw loop), and an embedded '\n' in an entry is a
+        // control byte the cell writers must never see.
+        {
+            var task_lines = std.mem.splitScalar(u8, task, '\n');
+            var first_line = true;
+            while (task_lines.next()) |seg| {
+                const text = if (first_line)
+                    try std.fmt.allocPrint(self.arena, "clanker> {s}", .{seg})
+                else
+                    try self.arena.dupe(u8, seg);
+                self.lines.append(self.arena, .{ .text = text, .user = true }) catch {};
+                first_line = false;
+            }
+        }
         self.history.append(self.arena, try self.arena.dupe(u8, task)) catch {};
         self.hist_idx = self.history.items.len;
         self.hist_draft = "";
@@ -3841,13 +3873,16 @@ const Model = struct {
                     }
                     return;
                 }
-                // REPL history recall.
+                // In a multi-line draft, Up/Down move the cursor between
+                // lines first (which also scrolls a draft taller than the
+                // box, since drawComposer follows the cursor's line); at the
+                // top/bottom edge they fall through to history recall.
                 if (key.matches(vaxis.Key.up, .{})) {
-                    self.historyPrev();
+                    if (!self.composerCursorVertical(true)) self.historyPrev();
                     return ctx.consumeAndRedraw();
                 }
                 if (key.matches(vaxis.Key.down, .{})) {
-                    self.historyNext();
+                    if (!self.composerCursorVertical(false)) self.historyNext();
                     return ctx.consumeAndRedraw();
                 }
                 // Slash-command completion, styled after readline: one match
@@ -3954,12 +3989,28 @@ const Model = struct {
             }
         }
         if (m.button != .left and m.type != .release) return;
-        const row = std.math.clamp(
-            @as(u16, @intCast(@max(0, m.row))),
-            self.transcript_top,
-            if (self.transcript_bottom > 0) self.transcript_bottom - 1 else 0,
-        );
-        const col: u16 = @intCast(@max(0, m.col));
+        const raw_row: u16 = @intCast(@max(0, m.row));
+        const raw_col: u16 = @intCast(@max(0, m.col));
+        // The press decides which region the selection lives in — composer
+        // or transcript — and the whole drag stays clamped to that region.
+        // The two scroll independently, so a span across both would not name
+        // any coherent text.
+        if (m.type == .press) {
+            self.sel_in_composer = self.composer_bottom > self.composer_top and
+                raw_row >= self.composer_top and raw_row < self.composer_bottom;
+        }
+        const row = if (self.sel_in_composer)
+            std.math.clamp(raw_row, self.composer_top, self.composer_bottom -| 1)
+        else
+            std.math.clamp(
+                raw_row,
+                self.transcript_top,
+                if (self.transcript_bottom > 0) self.transcript_bottom - 1 else 0,
+            );
+        const col = if (self.sel_in_composer)
+            std.math.clamp(raw_col, self.composer_left, self.composer_right -| 1)
+        else
+            raw_col;
         switch (m.type) {
             .press => {
                 self.mouse_down = true;
@@ -3982,7 +4033,7 @@ const Model = struct {
                 // fold header opens or closes that reply. Checked before the
                 // selection path so a plain click is a toggle, not an empty
                 // copy of a zero-width selection.
-                if (!self.has_selection) {
+                if (!self.has_selection and !self.sel_in_composer) {
                     for (self.fold_hits.items) |hit| {
                         if (hit.row == row) {
                             self.toggleFold(hit.fold);
@@ -3993,6 +4044,27 @@ const Model = struct {
                     }
                 }
                 if (!self.has_selection) return;
+                // A composer selection reads the composer child surface (the
+                // parent's cells under it are blank), translated to child
+                // coordinates.
+                if (self.sel_in_composer) {
+                    const child = self.last_input_surface orelse return;
+                    const a: vxfw.Point = .{
+                        .row = self.sel_start.row -| self.composer_top,
+                        .col = self.sel_start.col -| self.composer_left,
+                    };
+                    const b: vxfw.Point = .{
+                        .row = self.sel_end.row -| self.composer_top,
+                        .col = self.sel_end.col -| self.composer_left,
+                    };
+                    if (a.row >= child.size.height or b.row >= child.size.height) return;
+                    const text = extractSelectionText(ctx.alloc, child, a, b) catch return;
+                    defer ctx.alloc.free(text);
+                    try ctx.copyToClipboard(text);
+                    clipboard.copyBestEffort(self.gpa, self.io, self.ctx.environ_map, text);
+                    ctx.redraw = true;
+                    return;
+                }
                 const surface = self.last_surface orelse return;
                 const text = extractSelectionText(ctx.alloc, surface, self.sel_start, self.sel_end) catch return;
                 defer ctx.alloc.free(text);
@@ -4128,6 +4200,22 @@ const Model = struct {
         }
         surface.cursor = .{ .col = @min(cursor_screen_col, width - 1), .row = layout.cursor_line - first };
         return surface;
+    }
+
+    /// Moves the cursor one composer line up or down, keeping the display
+    /// column. Returns false at the first/last line (or in a single-line
+    /// buffer) so Up/Down fall through to history recall — the readline
+    /// convention for multi-line editing.
+    fn composerCursorVertical(self: *Model, up: bool) bool {
+        const first = self.text_field.buf.firstHalf();
+        const text = std.mem.concat(self.gpa, u8, &.{ first, self.text_field.buf.secondHalf() }) catch return false;
+        defer self.gpa.free(text);
+        const target = composerVerticalMove(text, first.len, up) orelse return false;
+        if (target < first.len)
+            self.text_field.buf.moveGapLeft(first.len - target)
+        else
+            self.text_field.buf.moveGapRight(target - first.len);
+        return true;
     }
 
     /// `TextField.toOwnedSlice` plus marker decoding: every path that takes
@@ -4531,6 +4619,11 @@ const Model = struct {
         // expects it rather than floating at the top of a tall frame.
         const input_row = box_y + box_h -| 2 -| composer_extra;
         children[0] = .{ .origin = .{ .row = input_row, .col = 2 }, .surface = input_surf };
+        self.composer_top = input_row;
+        self.composer_bottom = input_row + composer_extra + 1;
+        self.composer_left = 2;
+        self.composer_right = 2 + input_w;
+        self.last_input_surface = input_surf;
 
         // The scrollbar claims the rightmost column whenever the transcript
         // is taller than the region, so text wraps one column short of it.
@@ -4678,7 +4771,22 @@ const Model = struct {
 
         if (show_bar) drawScrollbar(surface, max.width - 1, top, bottom, start, view_end, line_count, rule_style, accent_style);
 
-        if (self.has_selection) highlightSelection(surface, self.sel_start, self.sel_end);
+        if (self.has_selection) {
+            if (self.sel_in_composer) {
+                // Painted into the child, translated to its coordinates: the
+                // composer surface is composited over the parent, so a
+                // highlight painted on the parent would be covered.
+                highlightSelection(input_surf, .{
+                    .row = self.sel_start.row -| self.composer_top,
+                    .col = self.sel_start.col -| self.composer_left,
+                }, .{
+                    .row = self.sel_end.row -| self.composer_top,
+                    .col = self.sel_end.col -| self.composer_left,
+                });
+            } else {
+                highlightSelection(surface, self.sel_start, self.sel_end);
+            }
+        }
         if (self.search_open) self.drawSearchBar(surface, rule_style, accent_style);
         if (self.picker_open) self.drawModelPicker(surface, rule_style, tool_style);
         if (self.ask_open) self.drawAskModal(surface, rule_style, tool_style);
@@ -5690,9 +5798,26 @@ fn nextCell(text: []const u8, i: *usize) ?Cell {
         var peek: std.unicode.Utf8Iterator = .{ .bytes = text, .i = i.* };
         const next = peek.nextCodepointSlice() orelse break;
         if (width_mod.displayWidth(next) != 0) break;
+        // Control bytes are zero-width too, but absorbing one hides it inside
+        // the previous cell: a '\n' riding along as "4\n" slips past
+        // writeWrapped's newline check and reaches the terminal raw, walking
+        // the cursor off the row (the multi-line task echo staircase).
+        if (next.len == 1 and (next[0] < 0x20 or next[0] == 0x7F)) break;
         i.* = peek.i;
     }
     return .{ .bytes = text[start..i.*], .width = w };
+}
+
+test "nextCell never absorbs a control byte into the preceding cell" {
+    // '\n' is zero-width; absorbed into "a"'s cell it would reach the
+    // terminal raw and walk the cursor off the row.
+    var i: usize = 0;
+    const first = nextCell("a\nb", &i).?;
+    try std.testing.expectEqualStrings("a", first.bytes);
+    const second = nextCell("a\nb", &i).?;
+    try std.testing.expectEqualStrings("\n", second.bytes);
+    const third = nextCell("a\nb", &i).?;
+    try std.testing.expectEqualStrings("b", third.bytes);
 }
 
 test "nextCell measures wide codepoints and keeps combining marks with their base" {
@@ -6190,6 +6315,56 @@ fn composerLayout(text: []const u8, cursor_byte: usize) ComposerLayout {
         out.line_count = idx + 1;
     }
     return out;
+}
+
+/// Byte position of the cursor moved one composer line up or down, keeping
+/// the display column (clamped to the target line's width); null when the
+/// cursor is already on the first/last line, which is the caller's cue to
+/// fall through to history recall.
+fn composerVerticalMove(text: []const u8, cursor_byte: usize, up: bool) ?usize {
+    const layout = composerLayout(text, cursor_byte);
+    if (up and layout.cursor_line == 0) return null;
+    if (!up and layout.cursor_line + 1 >= layout.line_count) return null;
+    const target_line = if (up) layout.cursor_line - 1 else layout.cursor_line + 1;
+
+    var it = std.mem.splitSequence(u8, text, newline_marker);
+    var idx: u16 = 0;
+    var off: usize = 0;
+    while (it.next()) |seg| : (idx += 1) {
+        if (idx == target_line) {
+            var i: usize = 0;
+            var cols: u16 = 0;
+            while (i < seg.len) {
+                var j = i;
+                const c = nextCell(seg, &j) orelse break;
+                if (cols + c.width > layout.cursor_cols) break;
+                cols += c.width;
+                i = j;
+            }
+            return off + i;
+        }
+        off += seg.len + newline_marker.len;
+    }
+    return null;
+}
+
+test "composerVerticalMove keeps the column and stops at the edges" {
+    const text = "abcd" ++ newline_marker ++ "xy" ++ newline_marker ++ "12345";
+    const line2 = 4 + newline_marker.len;
+    const line3 = line2 + 2 + newline_marker.len;
+
+    // Down from "ab|cd" lands after "xy" (target line shorter than the column).
+    try std.testing.expectEqual(@as(?usize, line2 + 2), composerVerticalMove(text, 2, false));
+    // Down from "xy|" keeps column 2 into "12|345".
+    try std.testing.expectEqual(@as(?usize, line3 + 2), composerVerticalMove(text, line2 + 2, false));
+    // Up from "123|45" keeps what fits of column 3.
+    try std.testing.expectEqual(@as(?usize, line2 + 2), composerVerticalMove(text, line3 + 3, true));
+    // The edges yield null so history recall still works.
+    try std.testing.expectEqual(@as(?usize, null), composerVerticalMove(text, 2, true));
+    try std.testing.expectEqual(@as(?usize, null), composerVerticalMove(text, line3 + 1, false));
+    // A single-line buffer never captures the keys.
+    try std.testing.expectEqual(@as(?usize, null), composerVerticalMove("abc", 1, true));
+    try std.testing.expectEqual(@as(?usize, null), composerVerticalMove("abc", 1, false));
 }
 
 test "composerLayout maps the cursor through markers to a line and column" {
