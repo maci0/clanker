@@ -894,6 +894,16 @@ pub fn estimatedTokens(message: types.Message) usize {
 /// Drops oldest non-system messages until the estimated token count fits under
 /// `max_tokens` so long sessions auto-compact instead of exceeding the context
 /// window. Token count is estimated as chars/4 (a rough heuristic).
+///
+/// Dropping stops at a tool-call boundary. What is removed is always a prefix
+/// of the non-system messages, so the budget cutoff can land between an
+/// assistant message carrying `tool_calls` and the `tool` messages answering
+/// it, leaving a tool result with nothing to answer to. Every provider rejects
+/// that (OpenAI 400s on a `tool` message not preceded by `tool_calls`;
+/// Anthropic rejects an unmatched `tool_result` block), and nothing downstream
+/// repairs it — [[Agent.dropDanglingToolExchange]] only cleans the tail. So
+/// once anything has been dropped, leading tool results go with it, the same
+/// invariant [[Agent.tailStart]] guards on the other compactor.
 pub fn compactMessages(messages: *std.ArrayList(types.Message), max_tokens: usize) void {
     var total: usize = 0;
     for (messages.items) |m| total +|= estimatedTokens(m);
@@ -902,11 +912,20 @@ pub fn compactMessages(messages: *std.ArrayList(types.Message), max_tokens: usiz
     // message shifts the whole tail, which is O(n^2) once a long session
     // needs many messages trimmed. Writing survivors back in place is O(n).
     var write: usize = 0;
+    // True until a non-system message survives; only then can a `tool` message
+    // have a call to answer.
+    var orphaning = true;
     for (messages.items) |m| {
-        if (total > max_tokens and m.role != .system) {
+        if (m.role == .system) {
+            messages.items[write] = m;
+            write += 1;
+            continue;
+        }
+        if (total > max_tokens or (orphaning and m.role == .tool)) {
             total -|= estimatedTokens(m);
             continue;
         }
+        orphaning = false;
         messages.items[write] = m;
         write += 1;
     }
@@ -1095,6 +1114,44 @@ test "compactMessages preserves system messages even when they exceed the budget
 
     try std.testing.expectEqual(@as(usize, 1), messages.items.len);
     try std.testing.expectEqual(types.Role.system, messages.items[0].role);
+}
+
+test "compactMessages never leaves a tool result with no tool_calls to answer" {
+    var messages: std.ArrayList(types.Message) = .empty;
+    defer messages.deinit(std.testing.allocator);
+    // The budget is spent by the system prompt and the tail, so the cutoff
+    // lands on the assistant message carrying the calls and its two results
+    // become the leading survivors.
+    try messages.appendSlice(std.testing.allocator, &.{
+        .{ .role = .system, .content = "sys" },
+        .{ .role = .user, .content = "aaaaaaaaaaaaaaaa" },
+        .{ .role = .assistant, .tool_calls = &.{
+            .{ .id = "c1", .name = "read", .arguments = "aaaaaaaaaaaaaaaa" },
+            .{ .id = "c2", .name = "read", .arguments = "aaaaaaaaaaaaaaaa" },
+        } },
+        .{ .role = .tool, .tool_call_id = "c1", .content = "r1" },
+        .{ .role = .tool, .tool_call_id = "c2", .content = "r2" },
+        .{ .role = .assistant, .content = "done" },
+    });
+
+    compactMessages(&messages, 3);
+
+    // Every surviving tool message answers a tool_call still in the list.
+    for (messages.items, 0..) |m, i| {
+        if (m.role != .tool) continue;
+        var answered = false;
+        for (messages.items[0..i]) |prior| {
+            for (prior.tool_calls orelse &.{}) |tc| {
+                if (std.mem.eql(u8, tc.id, m.tool_call_id.?)) answered = true;
+            }
+        }
+        try std.testing.expect(answered);
+    }
+    // The tail and the system prompt still survive; only the orphaned
+    // exchange went with the over-budget prefix.
+    try std.testing.expectEqual(@as(usize, 2), messages.items.len);
+    try std.testing.expectEqual(types.Role.system, messages.items[0].role);
+    try std.testing.expectEqualStrings("done", messages.items[1].content.?);
 }
 
 test "latestSessionId picks the most recently updated session" {
