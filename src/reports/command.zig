@@ -87,8 +87,9 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     if (std.mem.eql(u8, sub, "append")) return append(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "update")) return update(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(io, arena, opts, tool);
+    if (std.mem.eql(u8, sub, "rename")) return rename(io, arena, opts, tool);
 
-    log.log(.error_, "unknown reports subcommand '{s}' (expected list, search, open, create, append, update or status)", .{sub});
+    log.log(.error_, "unknown reports subcommand '{s}' (expected list, search, open, create, append, update, status or rename)", .{sub});
     return Error.BadSubcommand;
 }
 
@@ -183,6 +184,48 @@ fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     if (!boolField(result, "indexed")) {
         try w.writer.writeAll("\nThe inventory was not updated (it changed concurrently). Add the link\nby hand from the index README without replacing the other edit.\n");
     }
+    try out(io, w.written());
+}
+
+fn rename(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+    const path = opts.arg1 orelse {
+        log.log(.error_, "reports rename needs a path and the new filename stem: clanker reports rename docs/reports/bugs/<name>.md <new-slug>", .{});
+        return Error.MissingArg;
+    };
+    const slug = opts.arg2 orelse {
+        log.log(.error_, "reports rename needs the new filename stem after the path (report slugs start YYYY-MM-DD-)", .{});
+        return Error.MissingArg;
+    };
+
+    var input: std.Io.Writer.Allocating = .init(arena);
+    defer input.deinit();
+    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("action");
+    try s.write("rename");
+    try s.objectField("path");
+    try s.write(path);
+    try s.objectField("slug");
+    try s.write(slug);
+    try s.endObject();
+
+    const result = try callTool(arena, tool, input.written());
+    const to = json_util.strFieldOrEmpty(result.object, "to");
+    var w: std.Io.Writer.Allocating = .init(arena);
+    defer w.deinit();
+    try w.writer.print("renamed {s}\n     -> {s}\n", .{ path, to });
+    if (!boolField(result, "indexed")) {
+        try w.writer.writeAll("\nThe inventory link was not rewritten (missing or changed concurrently);\nfix the README line by hand.\n");
+    }
+    if (result.object.get("references")) |refs| {
+        if (refs == .array and refs.array.items.len > 0) {
+            try w.writer.writeAll("\nStill naming the old record:\n");
+            for (refs.array.items) |r| {
+                if (r == .string) try w.writer.print("  {s}\n", .{r.string});
+            }
+        }
+    }
+    try w.writer.writeAll("\nMentions outside docs/reports/ and docs/runbooks/ are not visible to the\nreports tool; search the tree for the old name to catch them.\n");
     try out(io, w.written());
 }
 

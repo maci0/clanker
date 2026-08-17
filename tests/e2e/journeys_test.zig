@@ -68,6 +68,51 @@ test "operator journey: schedule add then list shows the task" {
     std.debug.print("pass: operator journey: schedule add then list shows the task\n", .{});
 }
 
+test "operator journey: reports rename moves the record, its inventory line, and keeps the marker" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try harness.writeMockConfig(io, tmp.dir, gpa, 9);
+    try harness.linkZigOut(io, tmp.dir);
+
+    // The store's inventory README with the markers create/rename maintain.
+    try tmp.dir.createDirPath(io, "docs/reports/investigations");
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/reports/README.md", .data = "# Reports\n\n<!-- inventory:bug:start -->\nNo reports yet.\n<!-- inventory:bug:end -->\n\n<!-- inventory:investigation:start -->\nNo reports yet.\n<!-- inventory:investigation:end -->\n" });
+
+    // create with an unmarked slug: the tool inserts the marker itself.
+    var created = try harness.run(gpa, io, tmp.dir, &.{ "reports", "create", "missing-tool", "2026-08-17-e2e-rename-target", "A record to rename", "TL;DR for the rename journey" });
+    defer created.deinit(gpa);
+    if (!created.ok()) std.debug.print("reports create failed.\nstdout: {s}\nstderr: {s}\n", .{ created.stdout, created.stderr });
+    try std.testing.expect(created.ok());
+    const marked = "docs/reports/investigations/2026-08-17-missing-clanker-tool-e2e-rename-target.md";
+    try std.testing.expect(std.mem.find(u8, created.stdout, marked) != null);
+
+    // rename with a slug that drops the marker: it survives anyway.
+    var renamed = try harness.run(gpa, io, tmp.dir, &.{ "reports", "rename", marked, "2026-08-17-e2e-renamed" });
+    defer renamed.deinit(gpa);
+    if (!renamed.ok()) std.debug.print("reports rename failed.\nstdout: {s}\nstderr: {s}\n", .{ renamed.stdout, renamed.stderr });
+    try std.testing.expect(renamed.ok());
+    const new_path = "docs/reports/investigations/2026-08-17-missing-clanker-tool-e2e-renamed.md";
+    try std.testing.expect(std.mem.find(u8, renamed.stdout, new_path) != null);
+
+    // The file moved and the old name is gone.
+    const moved = try tmp.dir.readFileAlloc(io, new_path, gpa, .limited(1 << 20));
+    defer gpa.free(moved);
+    try std.testing.expect(std.mem.find(u8, moved, "A record to rename") != null);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.readFileAlloc(io, marked, gpa, .limited(1 << 20)));
+
+    // The inventory line follows the record.
+    const index = try tmp.dir.readFileAlloc(io, "docs/reports/README.md", gpa, .limited(1 << 20));
+    defer gpa.free(index);
+    try std.testing.expect(std.mem.find(u8, index, "investigations/2026-08-17-missing-clanker-tool-e2e-renamed.md") != null);
+    try std.testing.expect(std.mem.find(u8, index, "e2e-rename-target") == null);
+    std.debug.print("pass: operator journey: reports rename moves the record, its inventory line, and keeps the marker\n", .{});
+}
+
 test "operator journey: rfc create then list shows the decision" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});

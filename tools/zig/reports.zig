@@ -42,6 +42,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (std.mem.eql(u8, action, "append")) return append(obj, out);
     if (std.mem.eql(u8, action, "update")) return update(obj, out);
     if (std.mem.eql(u8, action, "status")) return status(obj, out);
+    if (std.mem.eql(u8, action, "rename")) return rename(obj, out);
     return lib.fail(out, "action must be search, list, open, create, append, update, or status");
 }
 
@@ -329,6 +330,139 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     }
     try s.endObject();
     lib.commit(out, &w);
+}
+
+/// Move a record to a new filename inside its own store. The store never
+/// changes — the slug is a name, not a destination. The inventory link is
+/// rewritten under compare-and-swap, and every other mention of the old
+/// name that this tool can see (its two stores) is reported back so the
+/// caller fixes references deliberately instead of discovering them broken.
+/// A `missing-clanker-tool-` marker survives the rename: enforced here the
+/// same way `create` enforces it, not trusted from the caller.
+fn rename(obj: std.json.Value, out: *lib.Out) !void {
+    const path = lib.str(obj, "path") catch
+        return lib.fail(out, "rename needs the current path of a record");
+    if (!isAllowedPath(path)) return lib.fail(out, "path must be a markdown file below docs/reports/ or docs/runbooks/");
+    const slug_raw = lib.str(obj, "slug") catch
+        return lib.fail(out, "rename needs the new filename stem in slug");
+    const dir_end = std.mem.lastIndexOfScalar(u8, path, '/') orelse
+        return lib.fail(out, "path has no directory");
+    const dir = path[0..dir_end];
+    const old_name = path[dir_end + 1 ..];
+    const old_stem = old_name[0 .. old_name.len - ".md".len];
+    const runbook = std.mem.startsWith(u8, path, runbooks_dir ++ "/");
+    if (runbook) {
+        if (!isSlug(slug_raw)) return lib.fail(out, "runbook slugs use lowercase letters, digits, and hyphens");
+    } else if (!isDatedSlug(slug_raw))
+        return lib.fail(out, "report slugs start YYYY-MM-DD-");
+    const slug = if (!runbook and std.mem.find(u8, old_stem, doc.missing_tool_marker) != null)
+        try doc.markMissingToolSlug(lib.alloc, slug_raw)
+    else
+        slug_raw;
+    const new_path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}.md", .{ dir, slug });
+    if (std.mem.eql(u8, new_path, path)) return lib.fail(out, "the record already has that name");
+    if (lib.fsRead(new_path)) |_| {
+        return lib.fail(out, "a record already exists at the new name");
+    } else |_| {}
+    _ = lib.fsRead(path) catch |err| return lib.failErr(out, err, "opening the record before rename");
+    lib.fsRename(path, new_path) catch |err| return lib.failErr(out, err, "renaming the record");
+
+    // The inventory link is the second copy of the name; rewrite it under
+    // CAS like every other index edit. The links are store-relative.
+    const store_root = if (runbook) runbooks_dir else reports_dir;
+    const old_link = path[store_root.len + 1 ..];
+    const new_link = new_path[store_root.len + 1 ..];
+    const index_path: []const u8 = if (runbook) runbooks_dir ++ "/README.md" else reports_dir ++ "/README.md";
+    const indexed = renameInventoryLink(index_path, old_link, new_link) catch false;
+
+    // Everything else that still says the old name, as far as this tool can
+    // see: its grants cover only the two stores, so mentions elsewhere in
+    // the tree have to be searched by the caller. A failed scan must not
+    // read as "no references" — the reply says which it was.
+    var refs: std.ArrayList([]const u8) = .empty;
+    var refs_ok = true;
+    collectReferences(&refs, reports_dir, old_stem) catch {
+        refs_ok = false;
+    };
+    collectReferences(&refs, runbooks_dir, old_stem) catch {
+        refs_ok = false;
+    };
+
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("action");
+    try s.write("rename");
+    try s.objectField("from");
+    try s.write(path);
+    try s.objectField("to");
+    try s.write(new_path);
+    try s.objectField("indexed");
+    try s.write(indexed);
+    if (!indexed) {
+        try s.objectField("note");
+        try s.write("the record was renamed, but its inventory line could not be rewritten (missing link or a concurrent edit); fix the README link by hand");
+    }
+    try s.objectField("references");
+    try s.beginArray();
+    for (refs.items) |r| try s.write(r);
+    try s.endArray();
+    try s.objectField("references_note");
+    try s.write(if (refs_ok)
+        "files inside docs/reports/ and docs/runbooks/ still naming the old record; mentions elsewhere in the tree are outside this tool's grants — search for the old name there too"
+    else
+        "the reference scan failed, so this list is incomplete — search both stores and the rest of the tree for the old name by hand");
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
+/// Rewrite every inventory occurrence of `old_link` to `new_link` in one
+/// compare-and-swap write. Returns false when the link is absent or the
+/// index changed concurrently. The global replace cannot touch another
+/// record's link: links are store-relative with one directory level and a
+/// `.md` suffix, so no link is a substring of a different one.
+fn renameInventoryLink(index_path: []const u8, old_link: []const u8, new_link: []const u8) !bool {
+    const raw = try lib.fsRead(index_path);
+    const index = try lib.alloc.dupe(u8, raw);
+    const expected = try lib.alloc.dupe(u8, try lib.hash(index));
+    if (std.mem.find(u8, index, old_link) == null) return false;
+    const size = std.mem.replacementSize(u8, index, old_link, new_link);
+    const updated = try lib.alloc.alloc(u8, size);
+    _ = std.mem.replace(u8, index, old_link, new_link, updated);
+    lib.fsWriteIf(index_path, expected, updated) catch |err| switch (err) {
+        error.Mismatch => return false,
+        else => return err,
+    };
+    return true;
+}
+
+/// Append to `refs` each file under `root` whose text still contains
+/// `needle`, as store-rooted paths, skipping the inventory README (already
+/// rewritten) and duplicates.
+fn collectReferences(refs: *std.ArrayList([]const u8), root: []const u8, needle: []const u8) !void {
+    const raw = lib.fsGrep(root, needle) catch |err| switch (err) {
+        error.NotFound => return,
+        else => return err,
+    };
+    const hits = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch return error.UnparsableGrepResult;
+    if (hits != .array) return error.UnparsableGrepResult;
+    for (hits.array.items) |hit| {
+        if (hit != .object) continue;
+        const file = hit.object.get("file") orelse continue;
+        if (file != .string) continue;
+        if (std.mem.eql(u8, file.string, "README.md")) continue;
+        const full = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ root, file.string });
+        var seen = false;
+        for (refs.items) |r| {
+            if (std.mem.eql(u8, r, full)) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen) try refs.append(lib.alloc, full);
+    }
 }
 
 /// The inventory kind a path belongs to, or null when the path is not a

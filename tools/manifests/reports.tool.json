@@ -8,8 +8,8 @@
     "properties": {
       "action": {
         "type": "string",
-        "enum": ["search", "list", "open", "create", "append", "update", "status"],
-        "description": "search is the default; list returns both indexes; open reads one record; create scaffolds and indexes a new record; append adds evidence to a record; update replaces one exact passage; status sets a bug's or investigation's lifecycle state in the record and the inventory together."
+        "enum": ["search", "list", "open", "create", "append", "update", "status", "rename"],
+        "description": "search is the default; list returns both indexes; open reads one record; create scaffolds and indexes a new record; append adds evidence to a record; update replaces one exact passage; status sets a bug's or investigation's lifecycle state in the record and the inventory together; rename moves a record to a new filename in its own store, rewrites its inventory link, preserves a missing-clanker-tool- marker, and reports remaining references to the old name."
       },
       "query": {
         "type": "string",
@@ -44,7 +44,7 @@
       },
       "slug": {
         "type": "string",
-        "description": "Filename stem for create. Reports must start YYYY-MM-DD-; runbooks use lowercase letters, digits, and hyphens."
+        "description": "Filename stem for create and rename. Reports must start YYYY-MM-DD-; runbooks use lowercase letters, digits, and hyphens. For kind missing-tool (and any rename of a record whose name carries it), the tool inserts missing-clanker-tool- after the date itself."
       },
       "title": {
         "type": "string",
