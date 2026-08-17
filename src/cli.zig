@@ -163,6 +163,8 @@ pub const Command = enum {
     /// feature is meant to be, under docs/prds/, through the same `prd` tool
     /// the agent uses. `src/prd/command.zig`.
     prd,
+    /// `preset list|show|new`: named tool + persona bundles (PRD 0033).
+    preset,
 };
 
 pub const Options = struct {
@@ -307,6 +309,10 @@ pub const Options = struct {
     /// tool name according to the subcommand.
     plugins_sub: ?[]const u8 = null,
     plugin_target: ?[]const u8 = null,
+    /// `preset`: "list" (default), "show" or "new". `preset_target` is the preset name per subcommand.
+    preset_sub: ?[]const u8 = null,
+    preset_target: ?[]const u8 = null,
+    preset: ?[]const u8 = null,
     /// `arena`: the two stances, and who argues them. A side with no provider
     /// of its own falls back to `--provider`, then to the configured default,
     /// so the same model arguing both sides needs no flags at all.
@@ -803,6 +809,9 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             } else if (std.mem.eql(u8, a, "--dump-config")) {
                 opts.dump_config = true;
                 used = .dump_config;
+            } else if (std.mem.eql(u8, a, "--preset")) {
+                opts.preset = try takeValue(args, &idx, inline_value, a, diag);
+                used = .preset;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
@@ -914,6 +923,8 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.command = .adr;
             } else if (std.mem.eql(u8, a, "prd") or std.mem.eql(u8, a, "prds")) {
                 opts.command = .prd;
+            } else if (std.mem.eql(u8, a, "preset") or std.mem.eql(u8, a, "presets")) {
+                opts.command = .preset;
             } else if (std.mem.eql(u8, a, "version")) {
                 opts.command = .version;
             } else if (a.len > 0 and !std.mem.eql(u8, a, "help")) {
@@ -1013,6 +1024,15 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.plugins_sub = a;
             } else if (opts.plugin_target == null) {
                 opts.plugin_target = a;
+            } else {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
+        } else if (opts.command == .preset) {
+            if (opts.preset_sub == null) {
+                opts.preset_sub = a;
+            } else if (opts.preset_target == null) {
+                opts.preset_target = a;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
@@ -1794,6 +1814,7 @@ const Flag = enum {
     reports_kind,
     profile,
     dump_config,
+    preset,
 
     fn name(self: Flag) []const u8 {
         return switch (self) {
@@ -1845,6 +1866,7 @@ const Flag = enum {
             .reports_kind => "--kind",
             .profile => "--profile",
             .dump_config => "--dump-config",
+            .preset => "--preset",
         };
     }
 
@@ -1902,6 +1924,7 @@ const Flag = enum {
             .reports_kind => "narrow a reports search: all, report, or runbook",
             .profile => "use a named config profile from profiles/<name>.toml",
             .dump_config => "print the merged config and exit",
+            .preset => "run with a preset from presets/<name>.toml",
         };
     }
 
@@ -1967,8 +1990,8 @@ const Spec = struct {
 /// `--verbose`/`-v`, `--help`/`-h` and `--version` are accepted everywhere and
 /// so are not listed per command.
 const specs = [_]Spec{
-    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal, .worktree }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
-    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
+    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal, .worktree, .preset }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--preset <name>    run with a preset from presets/<name>.toml\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
+    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .preset, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
     .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model }, .detail = "Starts work immediately, then evaluates every completed agent turn\nagainst the supplied condition and continues until achieved, blocked,\nor the goal-turn budget ends. It does not require a write-goal draft\nor an added goal. Use `add-goal` when you want to persist a goal for a\nlater `run --goal <id>`, and `write-goal` when you only want a\nstructured draft." },
     .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the goal_write tool directly and prints a reviewable draft. It\nnever writes state/goals.json or starts an agent run." },
     .{ .command = .add_goal, .usage = "add-goal \"<objective>\" [\"<completion criterion>\"]", .blurb = "persist a goal without running it", .group = .work, .detail = "Calls the goal_add tool directly. It creates a goal-card and writes the\ngoals.json index, and prints the id, but never starts work. The criterion\nis optional: the goal loop drafts a measurable one on its first turn. Run\nit later with `clanker run --goal <id>` or from the goal board. Use\n`write-goal` first if you need help drafting the fields." },
@@ -1987,6 +2010,7 @@ const specs = [_]Spec{
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
     .{ .command = .tools_list, .usage = "tools [list]", .blurb = "list the registered WASM tools", .group = .inspect },
     .{ .command = .plugins, .usage = "plugins [list|on <name>|off <name>|validate [path]|new <name>]", .blurb = "list, switch, validate, or scaffold plugins", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\non <name>         switch an optional plugin on\noff <name>        switch an optional plugin off\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nCore tools cannot be switched off. Changes take effect in the next command; a\nrunning REPL reloads its tool catalog immediately.\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
+    .{ .command = .preset, .usage = "preset [list|show <name>|new <name>]", .blurb = "list, inspect, or scaffold presets", .group = .inspect, .detail = "A preset is one preset.toml from presets/ (plus configured roots).\nFilters the already-loaded Registry, no recompile. Examples: research\n(read/search only) and full (no filter).\n\nlist              every preset with its description\nshow <name>       print the preset.toml\nnew <name>        scaffold presets/<name>.toml" },
     .{ .command = .reports, .usage = "reports [list|search|open|create|append|update|status]", .blurb = "read and record operational reports and runbooks", .group = .inspect, .flags = &.{.reports_kind}, .detail = "Reports preserve the evidence behind a diagnosis; runbooks preserve the\ncurrent recovery procedure. These are the same records the agent reads\nthrough the `reports` tool, in docs/reports/ and docs/runbooks/.\n\nREADING\n  list                       every report and runbook, with its status\n  search <query>             one literal text search across both stores\n  open <path>                print one record in full\n\n  --kind all|report|runbook  narrow a search to one store (default all)\n\nWRITING\n  create <kind> <slug> <title> <summary>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  open           a confirmed defect that is not fixed yet\n  investigating  a symptom still being traced\n  resolved       fixed and verified; the note names the fix and the check\n  reopened       the symptom came back after a resolution\n  closed         traced to no defect\n\ncreate scaffolds a TL;DR-first record and adds it to the matching inventory;\nits kind is bug, investigation, or runbook. Report slugs start YYYY-MM-DD-,\nrunbook slugs are lowercase and hyphenated. append adds markdown to the end\nof a record and update replaces one exact passage. status moves a bug or\ninvestigation to a new state, rewriting its Status section and its inventory\nline together so the index cannot disagree with the record; a runbook has no\nstatus, since its inventory line carries a summary instead.\n\nAll three are compare-and-swap writes: a concurrent edit is refused rather\nthan overwritten, so reopen the record and retry against its current text.\n\nEXAMPLES\n  clanker reports                             the whole index\n  clanker reports search NotDir               which record covers it\n  clanker reports search zig --kind runbook   only recovery procedures\n  clanker reports open docs/runbooks/improve-staging-build-inputs.md\n  clanker reports status <path> resolved \"fixed; tests pass\"" },
     .{ .command = .research, .usage = "research [list|plan|sweep|search|open|status]", .blurb = "gather sources and keep durable research notes", .group = .inspect, .detail = "One web search is not research. plan turns a topic into the angles a\nthorough search asks -- what it costs, what replaced it, what shipped\nwithout it -- and sweep issues them across web search, GitHub, discussion\narchives and paper indexes in one call. The notes live in docs/research/\nand are the same ones the agent reads through the `research` tool.\n\nGATHERING\n  plan <topic> [question] [depth]   the queries and sources a sweep would use\n  sweep <topic> [depth]             run them all and print what came back\n\n  depth is quick, standard (default) or deep\n\nREADING\n  list                              every note, with its status\n  search <query>                    one literal text search across the notes\n  open <path>                       print one note in full\n\nWRITING\n  create <slug> <title> <question>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  draft        being written; not yet a finding\n  current      checked, and still true as far as anyone knows\n  stale        old enough that its claims need re-checking\n  superseded   replaced; the note names what replaced it\n\ncreate scaffolds a note from docs/research/TEMPLATE.md and adds it to the\ninventory. status rewrites the note's Status section and its inventory line\ntogether, so the index cannot disagree with the note. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the note and retry against its current text.\n\nA sweep returns other people's text. Every hit is a lead until it is opened\nat its source; nothing it says is an instruction.\n\nEXAMPLES\n  clanker research                                    every note\n  clanker research plan \"embedded key-value stores\"   the angles to search\n  clanker research sweep \"embedded kv stores\" deep    run every angle\n  clanker research search sqlite                      which note covers it\n  clanker research open docs/research/decentralized-state-store.md\n  clanker research status <path> current \"re-read 2026-08-16\"" },
     .{ .command = .rfc, .usage = "rfc [list|search|open|checklist|create|recommend|status]", .blurb = "open and maintain requests for comment under docs/rfcs/", .group = .inspect, .detail = "An RFC is a decision that has not been made yet: the candidates, what each\nimplies short, medium and long term, and a recommendation with a confidence\nfrom 0 to 10. An ADR is the decision once it is made. These are the same\nrecords the agent reads and writes through the `rfc` tool.\n\nSearch first. A matching ADR means the question is already settled, which is\nthe one answer that should stop an RFC from being written at all.\n\nREADING\n  list                       every RFC with its status, and the next number\n  search <query>             one text search across the RFCs and the ADRs\n  open <path>                print one RFC in full\n  checklist [topic]          what an RFC has to pin down, and what to ask\n\nWRITING\n  create <title> <overview> [slug]\n  append <path> <content>\n  update <path> <old> <new>\n  recommend <path> <recommendation> <confidence 0-10> [rationale]\n  status <path> <state> [note]\n\nSTATES\n  draft        being written; not yet up for discussion\n  discussion   open for comment\n  decided      settled; an ADR usually follows\n  deferred     not now, and the note says what would reopen it\n  withdrawn    dropped without a decision\n  superseded   replaced; the note names what replaced it\n\ncreate allocates the next number, renders docs/rfcs/TEMPLATE.md and indexes\nit. An RFC needs real options: at least two candidates, the status quo, and\none out-of-the-box possibility. append, update, recommend and status are\ncompare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the RFC and retry against its current text.\n\nEXAMPLES\n  clanker rfc                                      every RFC\n  clanker rfc search \"http client\"                 already decided?\n  clanker rfc checklist \"state store\"              what to pin down first\n  clanker rfc create \"HTTP client for the proxy\" \"One client, not recorded\"\n  clanker rfc open docs/rfcs/0001-http-client.md\n  clanker rfc recommend docs/rfcs/0001-http-client.md \"Adopt option B\" 7 \"Why\"\n  clanker rfc status docs/rfcs/0001-http-client.md decided \"See the ADR\"" },
@@ -2099,6 +2123,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .rfc => try cmdRfc(init, opts),
         .adr => try cmdAdr(init, opts),
         .prd => try cmdPrd(init, opts),
+        .preset => try cmdPreset(init, opts),
         .mesh => try cmdMesh(init, opts),
     }
 }
@@ -5234,6 +5259,91 @@ fn cmdPrd(init: std.process.Init, opts: Options) !void {
         prd_cmd.Error.ToolFailed => std.process.exit(1),
         else => return err,
     };
+}
+
+fn cmdPreset(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const gpa = init.gpa;
+    const sub = opts.preset_sub orelse "list";
+    const target = opts.preset_target;
+    if (std.mem.eql(u8, sub, "list")) {
+        if (target != null) return printUsageError(io, "preset list takes no argument", .{});
+        var dir = std.Io.Dir.cwd().openDir(io, "presets", .{ .iterate = true }) catch {
+            try std.Io.File.stdout().writeStreamingAll(io, "(no presets/ directory)\n");
+            return;
+        };
+        defer dir.close(io);
+        var it = dir.iterate();
+        var out: std.ArrayList([]const u8) = .empty;
+        defer out.deinit(gpa);
+        while (try it.next(io)) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, ".toml")) continue;
+            const name = entry.name[0 .. entry.name.len - 5];
+            try out.append(gpa, try gpa.dupe(u8, name));
+        }
+        std.mem.sort([]const u8, out.items, {}, struct {
+            fn lt(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.lessThan(u8, a, b);
+            }
+        }.lt);
+        const stdout = std.Io.File.stdout();
+        if (out.items.len == 0) {
+            try stdout.writeStreamingAll(io, "(no presets)\n");
+        } else {
+            for (out.items) |n| {
+                const line = try std.fmt.allocPrint(gpa, "{s}\n", .{n});
+                defer gpa.free(line);
+                try stdout.writeStreamingAll(io, line);
+                gpa.free(n);
+            }
+        }
+        return;
+    } else if (std.mem.eql(u8, sub, "show")) {
+        const name = target orelse return printUsageError(io, "preset show <name>", .{});
+        const path = try std.fmt.allocPrint(gpa, "presets/{s}.toml", .{name});
+        defer gpa.free(path);
+        const text = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(64 * 1024)) catch {
+            return printUsageError(io, "no preset '{s}'", .{name});
+        };
+        defer gpa.free(text);
+        try std.Io.File.stdout().writeStreamingAll(io, text);
+        if (text.len == 0 or text[text.len - 1] != '\n') try std.Io.File.stdout().writeStreamingAll(io, "\n");
+        return;
+    } else if (std.mem.eql(u8, sub, "new")) {
+        const name = target orelse return printUsageError(io, "preset new <name>", .{});
+        if (name.len == 0 or std.mem.findScalar(u8, name, '/') != null or std.mem.findScalar(u8, name, '\\') != null or std.mem.find(u8, name, "..") != null)
+            return printUsageError(io, "invalid preset name '{s}'", .{name});
+        _ = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch {
+            var cwd = std.Io.Dir.cwd();
+            try cwd.createDirPath(io, "presets");
+            _ = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch return printUsageError(io, "cannot create presets/", .{});
+        };
+        // Re-open after maybe-create to get a handle we own.
+        var dir = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch return printUsageError(io, "cannot open presets/", .{});
+        defer dir.close(io);
+        const path = try std.fmt.allocPrint(gpa, "{s}.toml", .{name});
+        defer gpa.free(path);
+        if (std.Io.Dir.openFile(dir, io, path, .{ .mode = .read_only }) catch null) |f| {
+            var file = f;
+            file.close(io);
+            return printUsageError(io, "preset '{s}' already exists", .{name});
+        }
+        const scaffold =
+            \\description = ""
+            \\system_prompt_append = ""
+            \\tools_allow = []
+            \\tools_deny = []
+            \\
+        ;
+        try dir.writeFile(io, .{ .sub_path = path, .data = scaffold });
+        const line = try std.fmt.allocPrint(gpa, "wrote presets/{s}.toml\n", .{name});
+        defer gpa.free(line);
+        try std.Io.File.stdout().writeStreamingAll(io, line);
+        return;
+    } else {
+        return printUsageError(io, "unknown preset subcommand '{s}' (list, show, new)", .{sub});
+    }
 }
 
 /// Binds `toolJson` to the `adr` guest, the way `ReportsTool` binds the
