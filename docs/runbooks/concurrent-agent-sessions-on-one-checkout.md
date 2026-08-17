@@ -173,6 +173,27 @@ written to disk. Wait for all of them to answer. Then:
 Symptom: a file you were editing is gone, or an `Edit` returns *File does not
 exist* for a path you wrote minutes ago.
 
+Two mechanisms produce this, and they take different halves of your work:
+
+- **A concurrent rebase.** `git rebase` needs a clean tree, so a session
+  starting one clears what you had uncommitted. On 2026-08-17 a rebase in this
+  checkout discarded four tracked-file edits while leaving the new *untracked*
+  files (a test and a record) in place — which reads as "most of my work is
+  still here" and hides the loss. `git status` naming a rebase in progress
+  (`interactive rebase in progress; onto <sha>`) is the tell.
+- **A concurrent `clanker commit` before fcf193a5.** Its apply path staged its
+  own group and then ran a bare `git commit`, which commits the *whole* index,
+  so anything you had staged went into their commit. That is fixed — each
+  group is committed with a pathspec now — but any release before it behaves
+  the old way, and the symptom is a commit of yours that lands with fewer
+  files than you staged. Look for your content with
+  `git log -S '<a string you wrote>' -- <path>`: it is usually in their commit
+  rather than lost.
+
+Write down what you changed as you go, or keep an idempotent restore script
+outside the tree. Reconstructing four edits from a transcript is quick; a
+second sweep while you reconstruct is not, and a script makes the retry free.
+
 **First, copy anything you can still see to a path outside the working tree.**
 
 ```bash
