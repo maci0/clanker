@@ -238,25 +238,42 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // deny tokens for the args it grants. This mirrors the host.
     var governed = false;
     var allowed = false;
+    var governing_patterns: std.ArrayList([]const u8) = .empty;
+    defer governing_patterns.deinit(lib.alloc);
+    var joined: []const u8 = "";
     if (policy.patterns.len > 0) {
         var join_buf: [2048]u8 = undefined;
-        var w: std.Io.Writer = .fixed(&join_buf);
-        w.writeAll("git") catch {};
+        var jw: std.Io.Writer = .fixed(&join_buf);
+        jw.writeAll("git") catch {};
         for (args.items) |a| {
-            w.writeByte(' ') catch {};
-            w.writeAll(a) catch {};
+            jw.writeByte(' ') catch {};
+            jw.writeAll(a) catch {};
         }
-        const joined = join_buf[0..w.end];
+        joined = join_buf[0..jw.end];
         for (policy.patterns) |pat| {
             if (!patternNamesCmd(pat, "git")) continue;
             governed = true;
+            governing_patterns.append(lib.alloc, pat) catch {};
             if (globMatch(pat, joined)) allowed = true;
         }
     }
 
     if (governed) {
         if (!allowed) {
-            return lib.fail(out, "git is governed by exec_pattern_allow and this invocation matches no pattern");
+            var msg_buf: [1024]u8 = undefined;
+            var mw: std.Io.Writer = .fixed(&msg_buf);
+            mw.writeAll("git is governed by exec_pattern_allow and this invocation matches no pattern.\nInvocation: ") catch {};
+            mw.writeAll(joined) catch {};
+            mw.writeAll("\nMatching git patterns:") catch {};
+            if (governing_patterns.items.len == 0) {
+                mw.writeAll(" (none)") catch {};
+            } else {
+                for (governing_patterns.items, 0..) |pat, i| {
+                    if (i > 0) mw.writeAll("; ") catch {};
+                    mw.writeAll(pat) catch {};
+                }
+            }
+            return lib.fail(out, msg_buf[0..mw.end]);
         }
         // allowed: skip the deny-list; the matching pattern grants the argv.
     } else if (deniedVerb(args.items, policy.git_remote_ops)) |denied| {
