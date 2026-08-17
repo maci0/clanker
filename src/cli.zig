@@ -2937,6 +2937,19 @@ fn writeModelsDevLocal(io: std.Io, dir: std.Io.Dir, body: []const u8) !void {
     try atomic_write.writeFile(io, dir, models_dev_store_path, body);
 }
 
+/// Wall-clock ceiling for the models.dev catalog fetch.
+///
+/// `std.http.Client` has no read timeout of its own (`ConnectTcpOptions.timeout`
+/// is declared and never referenced -- see `llm/client.zig`'s `Abort`), so a
+/// host that resolves, accepts the connection and then says nothing blocks the
+/// calling thread forever. Two of this fetch's callers are `clanker serve`
+/// request handlers, and `handleCatalogSearch` reaches it while holding
+/// `catalog_cache_mutex`: unbounded there, one wedged CDN connection takes the
+/// catalog away from every later request in the process, not just its own.
+/// The snapshot is a few MiB over a public CDN, so 30s is well past a healthy
+/// fetch and well short of "never".
+const models_dev_timeout_ms: i64 = 30_000;
+
 /// The models.dev catalog body. Disk when present; the network only when the
 /// file is missing (first populate) or `refresh` is set. A failed refresh
 /// does not silently keep the old file as if it succeeded.
@@ -2945,7 +2958,7 @@ fn loadModelsDev(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, r
     if (!refresh) {
         if (readModelsDevLocal(io, cwd, arena)) |body| return body;
     }
-    const body = try httpGet(io, gpa, arena, models_dev_url, null);
+    const body = try httpGetDeadline(io, gpa, arena, models_dev_url, null, models_dev_timeout_ms);
     writeModelsDevLocal(io, cwd, body) catch |err|
         log.log(.warn, "could not store models.dev catalog: {s}", .{@errorName(err)});
     return body;
@@ -3160,10 +3173,8 @@ fn httpGet(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []
 /// cannot afford that, so a spent budget is reported as no answer.
 ///
 /// Null on every failure, timeout included, so the caller treats a slow
-/// provider exactly as it treats an absent one. Unlike the sweep this does not
-/// fall back to an unbounded call when there is no spare concurrency: waiting
-/// without a ceiling is the thing being avoided, and the caller already has a
-/// well-defined behaviour for a provider that did not answer.
+/// provider exactly as it treats an absent one. `httpGetDeadline` is the same
+/// call for callers that have to say *which* failure it was.
 fn httpGetWithTimeout(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -3172,9 +3183,29 @@ fn httpGetWithTimeout(
     bearer: ?[]const u8,
     budget_ms: i64,
 ) ?[]const u8 {
+    return httpGetDeadline(io, gpa, arena, url, bearer, budget_ms) catch null;
+}
+
+/// `httpGet` under a wall-clock ceiling, reporting *why* it ended: the fetch's
+/// own error, or `error.Timeout` when the budget went first. An operator
+/// reading "could not reach models.dev: Timeout" knows to look at the network,
+/// where a collapsed "it did not answer" tells them nothing.
+///
+/// Unlike the provider sweep this does not fall back to an unbounded call when
+/// there is no spare concurrency: waiting without a ceiling is the thing being
+/// avoided, so a missing worker is `error.ConcurrencyUnavailable`, not a hang.
+fn httpGetDeadline(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    url: []const u8,
+    bearer: ?[]const u8,
+    budget_ms: i64,
+) ![]const u8 {
     var done: std.Io.Event = .unset;
     if (budget_ms <= 0) return httpGetTask(io, gpa, arena, url, bearer, &done);
-    var fut = io.concurrent(httpGetTask, .{ io, gpa, arena, url, bearer, &done }) catch return null;
+    var fut = io.concurrent(httpGetTask, .{ io, gpa, arena, url, bearer, &done }) catch
+        return error.ConcurrencyUnavailable;
     const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
         .clock = .awake,
         .raw = .{ .nanoseconds = @as(i96, budget_ms) * std.time.ns_per_ms },
@@ -3188,19 +3219,21 @@ fn httpGetWithTimeout(
                 if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
                 // cancel() interrupts the blocking syscall and joins the task,
                 // so nothing is left writing into `arena` after this returns.
-                _ = fut.cancel(io);
-                return null;
+                // Whatever the joined task was about to return is moot; the
+                // budget already decided the answer.
+                if (fut.cancel(io)) |_| {} else |_| {}
+                return error.Timeout;
             },
             error.Canceled => {
-                _ = fut.cancel(io);
-                return null;
+                if (fut.cancel(io)) |_| {} else |_| {}
+                return error.Canceled;
             },
         };
     }
     return fut.await(io);
 }
 
-/// The fetch half of `httpGetWithTimeout`, as a concurrent task. Every exit has
+/// The fetch half of `httpGetDeadline`, as a concurrent task. Every exit has
 /// to set `done`, cancelation included, or the waiter is never woken.
 fn httpGetTask(
     io: std.Io,
@@ -3209,9 +3242,9 @@ fn httpGetTask(
     url: []const u8,
     bearer: ?[]const u8,
     done: *std.Io.Event,
-) ?[]const u8 {
+) anyerror![]const u8 {
     defer done.set(io);
-    return httpGet(io, gpa, arena, url, bearer) catch null;
+    return httpGet(io, gpa, arena, url, bearer);
 }
 
 /// `clanker autolearn`, review usage observations, refresh the roadmap
@@ -10479,7 +10512,14 @@ fn handleProviderModels(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.C
         const key = environ_map.get(env_name) orelse break :blk null;
         break :blk std.fmt.allocPrint(arena, "Bearer {s}", .{key}) catch null;
     } else null;
-    const body = httpGet(io, gpa, arena, url, bearer) catch {
+    // Bounded like `writeLiveModels`, off the same knob and for the same
+    // reason: this is a serve worker calling a host config points it at, and an
+    // unbounded fetch to one that accepts and goes quiet never returns the
+    // thread. The error name goes to the log so 502 stays free of provider
+    // internals.
+    const budget_s = provider.check_timeout_seconds orelse cfg.agent.provider_check_timeout_seconds;
+    const body = httpGetDeadline(io, gpa, arena, url, bearer, @as(i64, budget_s) * std.time.ms_per_s) catch |err| {
+        log.log(.warn, "provider '{s}' /models did not answer: {s}", .{ name, @errorName(err) });
         respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"provider /models did not answer\"}");
         return;
     };
@@ -16991,6 +17031,52 @@ test "a provider that never answers costs the sweep its budget, not the OS conne
     // timeout, not that cancelation lands on a particular millisecond.
     try std.testing.expect(spent >= 900);
     try std.testing.expect(spent < 15000);
+}
+
+test "httpGetDeadline gives up on a silent host and names the timeout" {
+    // Same endpoint shape as the sweep test above -- a bound socket nobody
+    // accepts from, so the handshake and the request write both succeed and the
+    // read then blocks forever. `loadModelsDev` and `GET /api/providers/models`
+    // reach the network through this call from `clanker serve` worker threads,
+    // and `handleCatalogSearch` does so holding `catalog_cache_mutex`: without
+    // the ceiling one wedged connection keeps that lock for the life of the
+    // process. `error.Timeout` rather than a collapsed null is what puts the
+    // cause in the operator's log.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var port: u16 = 0;
+    var server: ?std.Io.net.Server = null;
+    for (0..64) |i| {
+        port = 24000 + @as(u16, @intCast(i * 7 % 3000));
+        const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
+        server = std.Io.net.IpAddress.listen(&addr, io, .{}) catch continue;
+        break;
+    }
+    var listener = server orelse return error.CannotBindTestPort;
+    defer listener.socket.close(io);
+
+    // Whatever the canceled request allocated is abandoned with it, so this
+    // runs on an arena: a canceled HTTP request is not a leak to report.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const url = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}/api.json", .{port});
+    const t0 = std.Io.Timestamp.now(io, .awake);
+    const res = httpGetDeadline(io, arena, arena, url, null, 1000);
+    const spent = elapsedMs(io, t0);
+
+    try std.testing.expectError(error.Timeout, res);
+    // Loose bounds: that the budget is what ended it, not that cancelation
+    // lands on a particular millisecond.
+    try std.testing.expect(spent >= 900);
+    try std.testing.expect(spent < 15000);
+
+    // The null-returning shape over the same call still reports "no answer",
+    // so the picker's behaviour for a slow provider is unchanged.
+    try std.testing.expectEqual(@as(?[]const u8, null), httpGetWithTimeout(io, arena, arena, url, null, 1000));
 }
 
 // ------------------------------------------------------- providers catalog --
