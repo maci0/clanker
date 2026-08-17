@@ -21,6 +21,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     const title_raw = lib.str(parsed, "title") catch
         return lib.fail(out, "missing required field: title");
+    if (std.mem.trim(u8, title_raw, " \t\r\n").len == 0)
+        return lib.fail(out, "title must be a non-empty string");
     const description = lib.optStr(parsed, "description");
     const steps = lib.optStr(parsed, "steps_to_reproduce");
     const expected = lib.optStr(parsed, "expected");
