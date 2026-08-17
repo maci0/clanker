@@ -349,3 +349,27 @@ it as the original.
 - `.agents/agent-rules/maci0-clanker.md` — the explicit-path staging rule this
   runbook extends.
 - `.agents/agent-rules/todo.md` — the board, its claim markers and session ids.
+## A green gate does not survive a rebase
+
+`clanker gate` certifies the tree it ran on. The push flow under concurrency
+is usually gate → commit → `pull --rebase` → push, and the rebase splices in
+commits the gate never saw — so a passing gate before the rebase says nothing
+about what gets pushed after it. This happened on 2026-08-17: 2ff411c9 was
+gated green, rebased onto 6cddda0e (which did not compile), and pushed;
+origin/main stayed broken until 395f912d.
+
+After any `pull --rebase` that actually pulled commits, re-verify before
+pushing — `zig build` at minimum, the full gate when the pulled commits touch
+what yours do:
+
+```bash
+clanker git pull --rebase --autostash origin main
+```
+
+```bash
+zig build
+```
+
+```bash
+clanker git push origin main
+```
