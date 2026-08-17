@@ -62,6 +62,7 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
                 else => return lib.fail(out, "in_minutes must be a number"),
             };
             if (mins < 0) return lib.fail(out, "in_minutes must not be negative");
+            if (mins > std.math.maxInt(i64) / 60) return lib.fail(out, "in_minutes is too large");
             break :blk now + mins * 60;
         }
         if (obj.get("at")) |v| {
@@ -81,6 +82,7 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
             else => return lib.fail(out, "every_minutes must be a number"),
         };
         if (mins < 1) return lib.fail(out, "every_minutes must be at least 1");
+        if (mins > std.math.maxInt(i64) / 60) return lib.fail(out, "every_minutes is too large");
         break :blk mins;
     };
 
@@ -151,7 +153,7 @@ fn doDone(obj: std.json.ObjectMap, out: *lib.Out) !void {
             if (std.mem.eql(u8, a.id, id)) {
                 found = true;
                 if (a.every > 0) {
-                    const step = a.every * 60;
+                    const step: i64 = if (a.every > std.math.maxInt(i64) / 60) 60 else a.every * 60;
                     const behind = @max(now - a.ts, 0);
                     a.ts += (@divTrunc(behind, step) + 1) * step;
                     next_ts = a.ts;
