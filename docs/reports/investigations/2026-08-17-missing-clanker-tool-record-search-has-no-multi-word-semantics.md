@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **Missing tool:** reports search 'concurrent sessions' returns nothing while docs/runbooks/concurrent-agent-sessions-on-one-checkout.md exists: the query is one exact substring per line, so two words that never appear adjacent find no record. Missing: a search that ANDs terms per record. Workaround: single-word queries.
-- **Finding:** Investigating.
-- **Resolution:** Pending.
+- **Finding:** Resolved on 2026-08-17. Implemented: search splits the query into terms every record must contain, quoted phrases stay exact; doc_scaffold.searchTerms/intersectHits with the guest half in tools/zig/records_grep.zig, shared by all five stores.
+- **Resolution:** Resolved on 2026-08-17. Implemented: search splits the query into terms every record must contain, quoted phrases stay exact; doc_scaffold.searchTerms/intersectHits with the guest half in tools/zig/records_grep.zig, shared by all five stores.
 
 ## Status
 
-Investigating.
+Resolved on 2026-08-17. Implemented: search splits the query into terms every record must contain, quoted phrases stay exact; doc_scaffold.searchTerms/intersectHits with the guest half in tools/zig/records_grep.zig, shared by all five stores.
 
 ## What is missing
 
