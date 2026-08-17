@@ -3306,7 +3306,7 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
     // race to create it, and a plain create loses that race on macOS with a
     // spurious FileNotFound (file_lock.createFileRetry has the story). Mapping
     // that to Err.invalid refuses a write that was never in conflict.
-    const lock_file = file_lock.createFileRetry(sb.io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| {
+    const lock_file = file_lock.createFileRetry(sb.io, sb.state_base_dir orelse base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| {
         log.log(.warn, "[fs_write_if] could not acquire lock for '{s}': {s}", .{ sub_path, @errorName(err) });
         return Err.invalid;
     };
@@ -3351,24 +3351,6 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
     return Err.ok;
 }
 
-/// Where the compare-and-swap advisory lock for `full` lives: ADR 0031, one
-/// lock inode per target path under `{state_dir}/locks/` rather than a
-/// `<target>.ck_cas.lock` sidecar beside the target.
-///
-/// A lock file is never unlinked — unlinking one while it is held moves the
-/// lock onto an unreachable inode and lets a second writer lock a fresh file
-/// at the same name, so both believe they hold it (see
-/// `docs/reports/investigations/2026-08-16-ck-cas-lock-sidecars.md`). The file
-/// is therefore permanent by design, which is exactly why it must not sit in
-/// the source tree: every record ever CAS-written left one behind, and every
-/// improve worktree inherited a copy.
-///
-/// The name is a SHA-256 of the resolved target path, so distinct targets
-/// still serialise independently and two checkouts sharing one `state/` do not
-/// collide. `state` is a shared prefix (see `shared_prefixes`), so a worktree
-/// run reaches the checkout's lock directory through its `state` symlink and
-/// maps a given target to the same lock inode the checkout does — which is the
-/// property mutual exclusion actually needs.
 /// Records who most recently took this lock, and when, inside the lock file,
 /// so a write that hangs is attributable to a run and a moment rather than
 /// being a zero-byte name. Format and rationale: `tools/zig/cas_lock_record.zig`,
@@ -3390,18 +3372,93 @@ fn writeLockHolder(sb: *Sandbox, file: std.Io.File, target: []const u8) void {
     };
 }
 
+/// Where the compare-and-swap advisory lock for `full` lives: ADR 0031, one
+/// lock inode per target *file* under `{state_dir}/locks/` rather than a
+/// `<target>.ck_cas.lock` sidecar beside the target.
+///
+/// A lock file is never unlinked — unlinking one while it is held moves the
+/// lock onto an unreachable inode and lets a second writer lock a fresh file
+/// at the same name, so both believe they hold it (see
+/// `docs/reports/investigations/2026-08-16-ck-cas-lock-sidecars.md`). The file
+/// is therefore permanent by design, which is exactly why it must not sit in
+/// the source tree: every record ever CAS-written left one behind, and every
+/// improve worktree inherited a copy.
+///
+/// The name is a SHA-256 of the target with its directory part resolved
+/// (`resolvedLockKey`), so every spelling of one file maps to one lock inode
+/// while distinct files still serialise independently and two checkouts
+/// sharing one `state/` do not collide.
 fn casLockPath(sb: *Sandbox, base: std.Io.Dir, full: []const u8) ![]u8 {
-    const state_dir = if (sb.state_dir.len > 0) sb.state_dir else "state";
-    const dir = try std.fmt.allocPrint(sb.gpa, "{s}/locks", .{std.mem.trimEnd(u8, state_dir, "/")});
+    const state_dir = std.mem.trimEnd(u8, if (sb.state_dir.len > 0) sb.state_dir else "state", "/");
+
+    // Which tree the lock directory belongs to. A relative state dir resolves
+    // against the run's own root -- `shared_root` when there is one, since that
+    // is the checkout an isolated run shares `state/` with -- and never against
+    // the process cwd. The target is resolved against that same root, and a
+    // lock that lands in a different tree guards nothing: a sandbox rooted in a
+    // test's tmp tree used to write permanent lock files into the operator's
+    // real `state/locks`, 328 of the 387 files there on 2026-08-17.
+    const root = std.mem.trimEnd(u8, if (sb.shared_root.len > 0) sb.shared_root else sb.root_dir, "/");
+    const dir = if (root.len == 0 or (state_dir.len > 0 and state_dir[0] == '/'))
+        try std.fmt.allocPrint(sb.gpa, "{s}/locks", .{state_dir})
+    else
+        try std.fmt.allocPrint(sb.gpa, "{s}/{s}/locks", .{ root, state_dir });
     defer sb.gpa.free(dir);
+    const state_base = sb.state_base_dir orelse base;
     // ensureDir, not createDirPath: an isolated run's `state` is a symlink to
     // the checkout's, and createDirPath alone reports NotDir on that.
-    try ensure_dir.ensureDir(base, sb.io, dir);
+    try ensure_dir.ensureDir(state_base, sb.io, dir);
 
+    const key = try resolvedLockKey(sb, base, full);
+    defer sb.gpa.free(key);
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-    hasher.update(full);
+    hasher.update(key);
     const name = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     return std.fmt.allocPrint(sb.gpa, "{s}/{s}.lock", .{ dir, name });
+}
+
+/// The string a lock name is hashed from: `full` with its directory part
+/// resolved to a real absolute path.
+///
+/// It must be the *file* that names the lock, not the text that named the file.
+/// One target is spelled several ways -- `./state/goals.json` under the default
+/// `agent.sandbox_root`, `/abs/checkout/state/goals.json` under an isolated
+/// run's `shared_root`, and the guest's own path under an absolute
+/// `fs_prefixes` grant -- and hashing the spelling gave each of them a lock of
+/// its own, so two writers to one file excluded nothing and the earlier write
+/// was lost. The sidecar this replaced could not split that way: every spelling
+/// named one file, and the kernel resolved them to one inode.
+///
+/// The basename is appended rather than resolved. The target need not exist
+/// yet, and a lock keyed on a link's destination would be a different lock from
+/// the one a writer of the link's own name takes.
+fn resolvedLockKey(sb: *Sandbox, base: std.Io.Dir, full: []const u8) ![]u8 {
+    const cut = std.mem.findScalarLast(u8, full, '/');
+    const dir_part = if (cut) |i| (if (i == 0) full[0..1] else full[0..i]) else ".";
+    const leaf = if (cut) |i| full[i + 1 ..] else full;
+
+    // A first write into a missing directory has nothing below it to resolve,
+    // so walk up to the nearest ancestor that does exist and keep the rest as
+    // written. An absolute path floors at "/", a relative one at the base dir.
+    const floor: usize = if (dir_part[0] == '/') 1 else 0;
+    var end = dir_part.len;
+    while (true) {
+        const head = dir_part[0..end];
+        if (base.realPathFileAlloc(sb.io, if (head.len == 0) "." else head, sb.gpa)) |abs| {
+            defer sb.gpa.free(abs);
+            const tail = std.mem.trim(u8, dir_part[end..], "/");
+            const stem = std.mem.trimEnd(u8, abs, "/");
+            if (tail.len == 0) return std.fmt.allocPrint(sb.gpa, "{s}/{s}", .{ stem, leaf });
+            return std.fmt.allocPrint(sb.gpa, "{s}/{s}/{s}", .{ stem, tail, leaf });
+        } else |_| {
+            // Unresolvable all the way up: keep the path as written rather than
+            // fail the write. A lock keyed on the raw string is what this
+            // function replaced, so the fallback is never worse than that.
+            if (end <= floor) return sb.gpa.dupe(u8, full);
+            end = std.mem.findScalarLast(u8, dir_part[0..end], '/') orelse floor;
+            if (end < floor) end = floor;
+        }
+    }
 }
 
 /// ck_getenv(name), alias of ck_env, kept for modules linked against the
@@ -7056,6 +7113,92 @@ test "fsWriteIfImpl leaves no lock sidecar beside the target and no dirs on mism
         fsWriteIfImpl(&sb, tmp.dir, "never/written/here.md", stale, "nope"),
     );
     try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "never", .{}));
+}
+
+test "a CAS lock is keyed by the resolved target, so two spellings share one lock" {
+    // The lock name used to be the SHA-256 of the joined path *string*, and the
+    // same file is spelled two ways in production: `./state/goals.json` in an
+    // ordinary run (agent.sandbox_root defaults to ".") and
+    // `/abs/checkout/state/goals.json` in an isolated one, whose shared_root is
+    // std.process.currentPathAlloc. Two names meant two lock inodes on one
+    // file, so neither writer excluded the other and the earlier write was lost
+    // (docs/reports/bugs/2026-08-17-cas-lock-name-hashes-an-unresolved-path.md).
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "notes");
+
+    var abs_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const abs = abs_buf[0..try tmp.dir.realPath(io, &abs_buf)];
+
+    var relative = Sandbox{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = undefined,
+    };
+    var absolute = Sandbox{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = abs,
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = undefined,
+    };
+
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&relative, tmp.dir, "notes/x.md", "", "one"));
+    // The second sandbox addresses the same file, so an empty expected hash is
+    // now a mismatch rather than a create. That is what makes the count below
+    // meaningful: one file, reached twice.
+    try std.testing.expectEqual(Err.mismatch, fsWriteIfImpl(&absolute, tmp.dir, "notes/x.md", "", "two"));
+
+    var locks = try tmp.dir.openDir(io, "state/locks", .{ .iterate = true });
+    defer locks.close(io);
+    var it = locks.iterate();
+    var lock_count: usize = 0;
+    while (try it.next(io)) |_| lock_count += 1;
+    try std.testing.expectEqual(@as(usize, 1), lock_count);
+}
+
+test "CAS locks live under the sandbox root, not beside the process cwd" {
+    // The lock directory was resolved against the process cwd while the target
+    // was resolved against the sandbox root, so a sandbox rooted in a test's
+    // tmp tree wrote permanent lock files into the operator's real state/locks:
+    // 328 of the 387 files there on 2026-08-17 named a .zig-cache/tmp target.
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "proj/docs");
+
+    var sb = Sandbox{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = "proj",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = undefined,
+    };
+
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, tmp.dir, "docs/note.md", "", "hi"));
+    const lock_dir = try tmp.dir.statFile(io, "proj/state/locks", .{});
+    try std.testing.expectEqual(std.Io.File.Kind.directory, lock_dir.kind);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "state", .{}));
 }
 
 test "a tool may run only the commands its manifest names" {

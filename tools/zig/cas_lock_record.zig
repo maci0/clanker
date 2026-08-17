@@ -79,6 +79,20 @@ pub fn acquiredMs(record: []const u8) ?i64 {
     return std.fmt.parseInt(i64, raw, 10) catch null;
 }
 
+/// Whether the janitor may sweep the lock file this record came from: nothing
+/// has re-acquired it for `keep_ms`.
+///
+/// This is a retention rule for the *file*, never a liveness verdict on the
+/// lock -- see the module doc for why an `flock` can never be stale. Two
+/// records are deliberately not old: one that cannot be parsed, which would
+/// otherwise date to 1970 and take the whole directory with it, and one stamped
+/// in the future, which is a clock that moved rather than a lock that aged.
+pub fn agedOut(record: []const u8, now_ms: i64, keep_ms: i64) bool {
+    const acquired = acquiredMs(record) orelse return false;
+    if (now_ms < acquired) return false;
+    return now_ms - acquired >= keep_ms;
+}
+
 /// The target path this lock guards, or null if unreadable. Truncated for a
 /// very long path, so it is a diagnostic aid and not a path to open.
 pub fn targetPath(record: []const u8) ?[]const u8 {
@@ -130,6 +144,24 @@ test "an empty or malformed record reads as unknown rather than as old" {
     try std.testing.expectEqual(@as(?i64, null), acquiredMs("pid=1 tool=x target=y\n"));
     try std.testing.expectEqual(@as(?i64, null), acquiredMs("acquired_ms=notanumber\n"));
     try std.testing.expectEqual(@as(?[]const u8, null), targetPath("pid=1\n"));
+}
+
+test "the sweep keeps a fresh lock, an unreadable one, and one stamped ahead" {
+    const twelve_h: i64 = 12 * 60 * 60 * 1000;
+    var buf: [record_len]u8 = undefined;
+
+    render(&buf, 1, 1_000_000_000_000, "reports", "docs/reports/README.md");
+    // Exactly at the window is old enough; a minute short of it is not.
+    try std.testing.expect(agedOut(&buf, 1_000_000_000_000 + twelve_h, twelve_h));
+    try std.testing.expect(!agedOut(&buf, 1_000_000_000_000 + twelve_h - 60_000, twelve_h));
+
+    // A record nothing can parse is unknown, not old: sweeping on it would date
+    // every unreadable lock to 1970 and delete live locks with the dead ones.
+    try std.testing.expect(!agedOut("", 1_000_000_000_000, twelve_h));
+    try std.testing.expect(!agedOut("pid=1 tool=x target=y\n", 1_000_000_000_000, twelve_h));
+
+    // A clock that moved backwards is not an aged lock.
+    try std.testing.expect(!agedOut(&buf, 999_999_000_000, twelve_h));
 }
 
 test "a target containing a field name does not confuse the parser" {

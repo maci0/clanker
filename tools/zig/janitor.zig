@@ -271,8 +271,10 @@ fn collectAgedLocks(a: std.mem.Allocator, state_dir: []const u8, out: *std.Array
         if (!std.mem.endsWith(u8, name, ".lock")) continue;
         const path = std.fmt.allocPrint(a, "{s}/{s}", .{ rel, name }) catch continue;
         const record = lib.fsRead(path) catch continue;
-        const acquired = cas_lock_record.acquiredMs(record) orelse continue;
-        if (now_ms - acquired < keep_lock_ms) continue;
+        // The rule itself is in the shared record module, where `zig build
+        // test` can reach it: a guest carries no test block, and this decision
+        // deletes files.
+        if (!cas_lock_record.agedOut(record, now_ms, keep_lock_ms)) continue;
         out.append(a, .{
             .path = path,
             .bytes = record.len,
