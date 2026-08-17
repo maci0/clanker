@@ -111,6 +111,27 @@ printed the same message in its preview and its result, and
 
 ## Follow-up
 
+What the "not in this diff" refusal covers, and what it does not.
+`unstagedPlanFile` compares **path names** against the staged file list, so it
+catches a plan naming a path this run's diff does not hold --- a file unstaged
+or committed by someone else between the preview and the write.
+
+It does not notice a path that is still staged but whose staged *content*
+changed in that window: another session re-staging the same file makes the
+write commit the newer staged content under the confirmed message, with no
+refusal. Nothing is lost (the content is that session's own, and it is
+committed rather than dropped), but the message was agreed against the older
+content.
+
+Closing that would mean carrying the preview's `git write-tree` id into the
+write and refusing on a mismatch. Not done here: the window is the seconds
+between the preview and the answer to `Proceed?`, and the tree id would have to
+be part of the tool's contract, which is worth its own decision rather than
+being added on the way past.
+
+A file staged *after* the preview is in no group, so it is simply not committed
+and stays staged.
+
 ## References
 
 - Investigation: none yet
