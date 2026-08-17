@@ -141,8 +141,21 @@ fn fromStored(arena: std.mem.Allocator, stored: []const StoredWorkspace) ![]Work
 }
 
 /// Reads the registry. A missing or unparseable file is an empty list.
+///
+/// A file that is *there* and cannot be read is not: `add`, `remove` and
+/// `setRoots` all load, mutate and then `save` the whole list, so answering
+/// "empty" for an unreadable registry makes the next mutation write a one-entry
+/// file over every workspace the operator had, and report success. `FileNotFound`
+/// is the only error that means empty; every other one is surfaced so those
+/// callers refuse to mutate instead.
 pub fn load(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]Workspace {
-    const raw = base.readFileAlloc(io, store_path, arena, .limited(max_store_bytes)) catch return &.{};
+    const raw = base.readFileAlloc(io, store_path, arena, .limited(max_store_bytes)) catch |err| switch (err) {
+        error.FileNotFound => return &.{},
+        else => {
+            log.log(.warn, "workspaces: could not read {s}: {s}", .{ store_path, @errorName(err) });
+            return err;
+        },
+    };
     const trimmed = std.mem.trim(u8, raw, " \t\r\n");
     if (trimmed.len == 0) return &.{};
     const stored = std.json.parseFromSliceLeaky([]StoredWorkspace, arena, trimmed, .{ .ignore_unknown_fields = true }) catch {
@@ -511,4 +524,37 @@ test "an arbitrary number of workspaces can be registered" {
         _ = try add(io, gpa, arena, tmp.dir, name, root, "", i);
     }
     try std.testing.expectEqual(@as(usize, 32), (try load(io, arena, tmp.dir)).len);
+}
+
+test "an unreadable registry refuses the mutation instead of wiping it" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try tmp.dir.createDirPath(io, "root");
+    const root = try tmp.dir.realPathFileAlloc(io, "root", arena);
+    _ = try add(io, gpa, arena, tmp.dir, "keep", root, "", 1);
+
+    // A registry larger than the read cap: on disk, holding real entries, and
+    // refused by `readFileAlloc`. Treating that as an empty list is what let
+    // the `save` below write one entry over the whole file.
+    const oversized = try arena.alloc(u8, max_store_bytes + 1);
+    @memset(oversized, ' ');
+    @memcpy(oversized[0..2], "[]");
+    try tmp.dir.writeFile(io, .{ .sub_path = store_path, .data = oversized });
+
+    try std.testing.expectError(error.StreamTooLong, load(io, arena, tmp.dir));
+    try std.testing.expectError(error.StreamTooLong, add(io, gpa, arena, tmp.dir, "second", root, "", 2));
+
+    // Still the file that was there, byte for byte: nothing was written through.
+    const after = try tmp.dir.readFileAlloc(io, store_path, arena, .limited(4 * max_store_bytes));
+    try std.testing.expectEqual(oversized.len, after.len);
 }

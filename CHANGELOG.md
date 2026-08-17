@@ -612,6 +612,27 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The Vertex access-token exchange now runs under a wall-clock ceiling (10s).
+  `std.http.Client` has no read timeout of its own, so a token endpoint that
+  resolved, accepted the connection and then said nothing blocked forever, and
+  this call is made *holding* the token cache's mutex via `lockUncancelable`:
+  one wedged connection parked every Vertex caller in the process behind it,
+  uncancellably. The chat call's own `request_timeout_ms` never got a chance to
+  fire, because minting happens before the request it guards.
+- `clanker schedule` no longer replaces the whole run ledger with a single
+  record when it cannot read the existing one. `state/schedule/log.jsonl` was
+  read with a limit equal to its own trim cap and every read error was treated
+  as "no ledger yet", so a ledger that had grown past the cap was refused on
+  read and then overwritten with the one new line, silently discarding the
+  entire audit trail and reporting success. The read now allows headroom so the
+  trim can bring an over-cap file back under it, and only `FileNotFound` counts
+  as empty: any other error costs that one record, never the file.
+- Workspace mutations (`add`, `remove`, root changes) no longer wipe the
+  registry when `state/workspaces.json` is present but unreadable. Every read
+  error read as an empty list, and those calls load, mutate and save the whole
+  list, so the next mutation wrote a one-entry file over every registered
+  workspace. Only `FileNotFound` is empty now; anything else is logged and
+  surfaced, so the mutation refuses instead.
 - Every HTTP fetch of a models listing now runs under a wall-clock ceiling, so
   a host that resolves, accepts the connection and then says nothing can no
   longer wedge the caller forever. `std.http.Client` has no read timeout of its

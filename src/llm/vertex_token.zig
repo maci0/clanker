@@ -19,6 +19,7 @@
 const std = @import("std");
 const log = @import("../util/log.zig");
 const gcp_jwt = @import("gcp_jwt.zig");
+const client = @import("client.zig");
 const build_options = @import("build_options");
 
 const scope = "https://www.googleapis.com/auth/cloud-platform";
@@ -212,6 +213,121 @@ fn mintAuthorizedUser(
     return postToken(io, gpa, arena, url, body.items);
 }
 
+/// What one token exchange did. Kept apart from `error.VertexTokenFailed` only
+/// so `postToken` can log a timeout, a transport failure and a rejecting
+/// endpoint distinctly; the error the caller sees is unchanged.
+const PostOutcome = union(enum) {
+    /// Bytes written into the caller's response buffer.
+    ok: usize,
+    /// Response arrived with a >= 400 status. Never carries the body.
+    status: struct { status: u16, len: usize },
+    /// Transport failure, carrying `@errorName` of the cause.
+    transport: []const u8,
+};
+
+/// The arguments `postTokenTask` needs, bundled so it can be handed to
+/// `io.concurrent` as a single value.
+const PostArgs = struct {
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    url: []const u8,
+    body: []const u8,
+    /// Caller-owned; stays alive until the task is joined or cancelled.
+    out: []u8,
+};
+
+/// The fetch half of `postToken`, as a concurrent task so the caller can put a
+/// deadline on it. Every exit sets `done`, or the waiter is never woken.
+///
+/// The client is created *here* rather than passed in: `abort` has to point at
+/// a live client for the whole blocking read and at nothing once it is torn
+/// down, and owning both in one scope is what makes that pairing checkable.
+fn postTokenTask(args: PostArgs, abort: *client.Abort, done: *std.Io.Event) PostOutcome {
+    defer done.set(args.io);
+
+    var http: std.http.Client = .{ .allocator = args.gpa, .io = args.io };
+    defer http.deinit();
+    abort.arm(args.io, &http);
+    defer abort.disarm(args.io);
+
+    var w: std.Io.Writer = .fixed(args.out);
+    const res = http.fetch(.{
+        .location = .{ .url = args.url },
+        .method = .POST,
+        .payload = args.body,
+        .headers = .{
+            .content_type = .{ .override = "application/x-www-form-urlencoded" },
+            .user_agent = .{ .override = "clanker/" ++ build_options.version },
+        },
+        .response_writer = &w,
+    }) catch |err| return .{ .transport = @errorName(err) };
+
+    const status = @intFromEnum(res.status);
+    if (status >= 400) return .{ .status = .{ .status = status, .len = w.end } };
+    return .{ .ok = w.end };
+}
+
+/// Runs `postTokenTask` under a wall-clock ceiling, returning null when the
+/// budget is spent. On timeout the armed connections are shut down *before* the
+/// task is cancelled: `Io.Future.cancel` cannot rescue a thread parked in a
+/// blocking read on an established connection and would wedge the canceller
+/// alongside it, whereas `shutdown(2)` makes that read return end-of-stream so
+/// the task unwinds on its own (see `client.Abort`).
+///
+/// A missing worker is reported as a transport failure rather than falling back
+/// to an unbounded call: an ungoverned wait under `cache_mutex` is the failure
+/// being prevented.
+fn postWithTimeout(io: std.Io, args: PostArgs, timeout_ms: u32) ?PostOutcome {
+    var abort: client.Abort = .{};
+    var done: std.Io.Event = .unset;
+
+    if (timeout_ms == 0) return postTokenTask(args, &abort, &done);
+
+    var future = io.concurrent(postTokenTask, .{ args, &abort, &done }) catch |err|
+        return .{ .transport = @errorName(err) };
+    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
+    });
+    while (!done.isSet()) {
+        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
+            // Spurious wakeups report Timeout too, so the deadline decides
+            // whether the budget is really spent, not this return.
+            error.Timeout => {
+                if (done.isSet()) break;
+                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
+                abort.trigger(io);
+                // cancel() joins the task, so nothing is left writing into the
+                // caller's response buffer after this returns.
+                _ = future.cancel(io);
+                return null;
+            },
+            error.Canceled => {
+                abort.trigger(io);
+                _ = future.cancel(io);
+                return null;
+            },
+        };
+    }
+    return future.await(io);
+}
+
+/// Wall-clock ceiling for one token exchange.
+///
+/// `std.http.Client` has no read timeout of its own (`ConnectTcpOptions.timeout`
+/// is declared and never referenced -- see `client.Abort`), so a token endpoint
+/// that resolves, accepts the connection and then says nothing blocks the
+/// calling thread forever. Unbounded here it is worse than an unbounded chat:
+/// `get` holds `cache_mutex` across the whole exchange, so one wedged
+/// connection parks *every* Vertex caller in the process behind it, and
+/// `lockUncancelable` means none of them can be cancelled out of it either.
+/// The chat call's own `request_timeout_ms` never gets a chance to fire,
+/// because minting happens before the request it guards.
+///
+/// Ten seconds is well past a healthy OAuth exchange (the body is a few hundred
+/// bytes) and well short of "never".
+const token_timeout_ms: u32 = 10_000;
+
 fn postToken(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -219,32 +335,32 @@ fn postToken(
     url: []const u8,
     body: []const u8,
 ) !TokenReply {
-    var client: std.http.Client = .{ .allocator = gpa, .io = io };
-    defer client.deinit();
-    var buf: [16 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    const res = client.fetch(.{
-        .location = .{ .url = url },
-        .method = .POST,
-        .payload = body,
-        .headers = .{
-            .content_type = .{ .override = "application/x-www-form-urlencoded" },
-            .user_agent = .{ .override = "clanker/" ++ build_options.version },
-        },
-        .response_writer = &w,
-    }) catch |err| {
-        log.log(.error_, "vertex: token request failed: {s}", .{@errorName(err)});
+    var response_buf: [16 * 1024]u8 = undefined;
+    const outcome = postWithTimeout(io, .{
+        .io = io,
+        .gpa = gpa,
+        .url = url,
+        .body = body,
+        .out = &response_buf,
+    }, token_timeout_ms) orelse {
+        log.log(.error_, "vertex: token request to '{s}' timed out after {d}ms", .{ url, token_timeout_ms });
         return error.VertexTokenFailed;
     };
-    const response = buf[0..w.end];
-    if (@intFromEnum(res.status) >= 400) {
-        // The raw body from the token endpoint may mirror or include sensitive
-        // credential material on some error paths.  Log the status and length
-        // only, never the response body, so logs cannot leak secrets.
-        log.log(.error_, "vertex: token endpoint returned {d} ({d} bytes)", .{ @intFromEnum(res.status), response.len });
-        return error.VertexTokenFailed;
-    }
-
+    const response = switch (outcome) {
+        .transport => |name| {
+            log.log(.error_, "vertex: token request failed: {s}", .{name});
+            return error.VertexTokenFailed;
+        },
+        .status => |code| {
+            // The raw body from the token endpoint may mirror or include
+            // sensitive credential material on some error paths. Log the status
+            // and length only, never the response body, so logs cannot leak
+            // secrets.
+            log.log(.error_, "vertex: token endpoint returned {d} ({d} bytes)", .{ code.status, code.len });
+            return error.VertexTokenFailed;
+        },
+        .ok => |n| response_buf[0..n],
+    };
     const reply = std.json.parseFromSliceLeaky(TokenReply, arena, response, .{ .ignore_unknown_fields = true }) catch {
         log.log(.error_, "vertex: token endpoint returned no JSON", .{});
         return error.VertexTokenFailed;
@@ -390,4 +506,41 @@ test "appendFormValue percent-encodes reserved bytes and keeps unreserved" {
         "grant_type=refresh_token&client_id=123.apps.googleusercontent.com&refresh_token=1%2F%2Fabc%2Bdef%3Dghi",
         list.items,
     );
+}
+
+test "postWithTimeout gives up on a token endpoint that accepts and never answers" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // The failure this exists to prevent: a token endpoint that resolves,
+    // completes the TCP handshake, and then sends nothing. The kernel's backlog
+    // accepts for us, so `fetch` gets a live connection and blocks in a read
+    // that no amount of `Io.Future.cancel` can rescue. Unbounded, this call is
+    // made under `cache_mutex` via `lockUncancelable`, so it parks every other
+    // Vertex caller in the process behind it for good.
+    var addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var server = try std.Io.net.IpAddress.listen(&addr, io, .{});
+    defer server.deinit(io);
+    const port = server.socket.address.getPort();
+
+    var url_buf: [64]u8 = undefined;
+    const url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/token", .{port});
+
+    var out: [1024]u8 = undefined;
+    const started = std.Io.Timestamp.now(io, .awake);
+    const outcome = postWithTimeout(io, .{
+        .io = io,
+        .gpa = allocator,
+        .url = url,
+        .body = "grant_type=refresh_token",
+        .out = &out,
+    }, 300);
+    const elapsed_ms = @divTrunc(started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms);
+
+    // Null is the timeout, and it has to arrive on the budget rather than on
+    // the OS connect timeout (~75s) an unbounded caller waits out.
+    try std.testing.expect(outcome == null);
+    try std.testing.expect(elapsed_ms < 30_000);
 }
