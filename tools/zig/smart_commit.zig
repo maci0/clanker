@@ -46,33 +46,47 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return writeEmpty(out, excluded.items);
     }
 
-    const diff_args: []const []const u8 = if (std.mem.eql(u8, scope, "all"))
-        &.{"diff"}
-    else
-        &.{ "diff", "--staged" };
-    const diff = gitOut(diff_args) catch "";
-    const plan = try groupViaLlm(files.items, diff, max_commits);
-    const groups = plan.groups;
-    for (groups) |g| {
+    // A `commits` array in the input is a plan that has already been made and
+    // shown to whoever is about to have it written. Replaying it is the only
+    // way the write can be the plan that was confirmed: asking a sampling model
+    // for the grouping a second time answers a second time.
+    const given = planFromInput(obj) catch
+        return lib.fail(out, "commits must be a list of {message, files: [path, ...]}");
+    var note: []const u8 = "";
+    var ordered: []logic.Group = undefined;
+    if (given) |g| {
+        if (unstagedPlanFile(g, files.items)) |path| {
+            return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "the plan names {s}, which is not in this diff; re-run the preview", .{path}));
+        }
+        // Ordering is not redone: the plan carries the order it was shown in.
+        ordered = g;
+    } else {
+        const diff_args: []const []const u8 = if (std.mem.eql(u8, scope, "all"))
+            &.{"diff"}
+        else
+            &.{ "diff", "--staged" };
+        const diff = gitOut(diff_args) catch "";
+        const plan = try groupViaLlm(files.items, diff, max_commits);
+        const groups = plan.groups;
+        note = plan.note;
+        ordered = groups;
+        if (orderGroups(groups)) |ord| {
+            var rearranged = try lib.alloc.alloc(logic.Group, groups.len);
+            for (ord, 0..) |idx, i| rearranged[i] = groups[idx];
+            ordered = rearranged;
+        } else |err| switch (err) {
+            error.DegenerateCycle => {
+                note = "dependency cycle spanned every group; merged into one commit";
+                ordered = try mergeAll(groups);
+            },
+            error.PartialCycle => return lib.fail(out, "dependency cycle between some groups; revise the grouping"),
+            else => return err,
+        }
+    }
+    for (ordered) |g| {
         if (!logic.validMessage(g.message)) {
             return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "invalid conventional commit message: {s}", .{g.message}));
         }
-    }
-
-    const order_or = orderGroups(groups);
-    var note: []const u8 = plan.note;
-    var ordered = groups;
-    if (order_or) |ord| {
-        var rearranged = try lib.alloc.alloc(logic.Group, groups.len);
-        for (ord, 0..) |idx, i| rearranged[i] = groups[idx];
-        ordered = rearranged;
-    } else |err| switch (err) {
-        error.DegenerateCycle => {
-            note = "dependency cycle spanned every group; merged into one commit";
-            ordered = try mergeAll(groups);
-        },
-        error.PartialCycle => return lib.fail(out, "dependency cycle between some groups; revise the grouping"),
-        else => return err,
     }
     for (ordered) |*g| {
         const copy = try lib.alloc.dupe([]const u8, g.files);
@@ -185,6 +199,57 @@ fn gitRun(args: []const []const u8, detail: *[]const u8) !void {
         else => "",
     };
     detail.* = if (stderr.len > 0) stderr else try std.fmt.allocPrint(lib.alloc, "exited {d}", .{code});
+}
+
+/// The plan carried in the input, if there is one. Absent or empty means
+/// "group this diff yourself"; anything else present but malformed is an error
+/// rather than a silent fallback to a second grouping call.
+fn planFromInput(obj: std.json.ObjectMap) !?[]logic.Group {
+    const v = obj.get("commits") orelse return null;
+    if (v != .array) return error.InvalidArg;
+    if (v.array.items.len == 0) return null;
+    var out: std.ArrayList(logic.Group) = .empty;
+    for (v.array.items) |item| {
+        if (item != .object) return error.InvalidArg;
+        const message = switch (item.object.get("message") orelse return error.InvalidArg) {
+            .string => |s| s,
+            else => return error.InvalidArg,
+        };
+        const raw_files = switch (item.object.get("files") orelse return error.InvalidArg) {
+            .array => |a| a,
+            else => return error.InvalidArg,
+        };
+        var files: std.ArrayList([]const u8) = .empty;
+        for (raw_files.items) |p| {
+            switch (p) {
+                .string => |s| try files.append(lib.alloc, s),
+                else => return error.InvalidArg,
+            }
+        }
+        if (files.items.len == 0) return error.InvalidArg;
+        try out.append(lib.alloc, .{ .message = message, .files = files.items });
+    }
+    return out.items;
+}
+
+/// The first file a replayed plan names that this diff does not hold, if any.
+/// The tree can move between the plan and the write -- another session stages
+/// something, or the operator does -- and committing a path this run never
+/// looked at is exactly the widening this tool is supposed to avoid.
+fn unstagedPlanFile(groups: []const logic.Group, staged: []const []const u8) ?[]const u8 {
+    for (groups) |g| {
+        for (g.files) |f| {
+            var found = false;
+            for (staged) |s| {
+                if (std.mem.eql(u8, s, f)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return f;
+        }
+    }
+    return null;
 }
 
 /// Commits each group in scope "staged" from the index, so the content that

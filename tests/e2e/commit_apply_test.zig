@@ -50,6 +50,60 @@ fn countLines(s: []const u8) usize {
     return n;
 }
 
+test "clanker commit writes the plan it previewed, without asking the model twice" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Two scripted answers over the same diff. If the apply path asks again it
+    // gets the second one, which is what a truncated or differently-sampled
+    // reply looks like in the field.
+    const previewed =
+        "{\"commits\":[" ++
+        "{\"message\":\"docs: add the alpha note\",\"files\":[\"alpha.md\"]}," ++
+        "{\"message\":\"docs: add the beta note\",\"files\":[\"beta.md\"]}]}";
+    const resampled =
+        "{\"commits\":[" ++
+        "{\"message\":\"chore: update working tree\",\"files\":[\"alpha.md\",\"beta.md\"]}]}";
+    const first = try mock_llm.jsonTurn(gpa, previewed);
+    defer gpa.free(first);
+    const second = try mock_llm.jsonTurn(gpa, resampled);
+    defer gpa.free(second);
+    const mock = try mock_llm.Server.start(io, gpa, &.{ first, second });
+    defer mock.stop();
+
+    try harness.writeMockConfig(io, tmp.dir, gpa, mock.port);
+    try harness.linkZigOut(io, tmp.dir);
+    try harness.initGitRepo(gpa, io, tmp.dir);
+    gpa.free(try git(gpa, io, tmp.dir, &.{ "git", "config", "user.name", "e2e" }));
+    gpa.free(try git(gpa, io, tmp.dir, &.{ "git", "config", "user.email", "e2e@example.invalid" }));
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "alpha.md", .data = "alpha\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "beta.md", .data = "beta\n" });
+    gpa.free(try git(gpa, io, tmp.dir, &.{ "git", "add", "alpha.md", "beta.md" }));
+
+    var result = try harness.run(gpa, io, tmp.dir, &.{ "commit", "--yes" });
+    defer result.deinit(gpa);
+    if (!result.ok()) std.debug.print("clanker commit failed.\nstdout: {s}\nstderr: {s}\n", .{ result.stdout, result.stderr });
+    try std.testing.expect(result.ok());
+
+    // The confirmed plan is what landed.
+    const messages = try git(gpa, io, tmp.dir, &.{ "git", "log", "--format=%s", "-2" });
+    defer gpa.free(messages);
+    if (std.mem.find(u8, messages, "chore: update working tree") != null)
+        std.debug.print("the apply path recomputed the plan:\n{s}\n", .{messages});
+    try std.testing.expect(std.mem.find(u8, messages, "chore: update working tree") == null);
+    try std.testing.expect(std.mem.find(u8, messages, "docs: add the alpha note") != null);
+    try std.testing.expect(std.mem.find(u8, messages, "docs: add the beta note") != null);
+
+    // And the grouping call was made once, not once per smart_commit call.
+    try std.testing.expectEqual(@as(usize, 1), mock.requestCount());
+}
+
 test "clanker commit in scope staged commits the index, not the worktree" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});

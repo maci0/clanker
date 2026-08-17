@@ -5968,9 +5968,11 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
     // defaults -- dry_run true. The write below was a second dry run
     // reporting success. toolText also demands a `text` field, which
     // smart_commit does not emit, so the verb could not succeed at all.
-    const preview = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, true);
-    try writeStdOut(io, preview);
+    const preview = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, true, null);
+    try writeStdOut(io, preview.text);
     if (dry) return;
+    // Nothing to write, and nothing to confirm: the preview already said so.
+    if (preview.commits.len == 0) return;
     if (!opts.apply) {
         try writeStdOut(io, "Proceed? [y/N] ");
         var buf: [8]u8 = undefined;
@@ -5982,15 +5984,29 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
             return;
         }
     }
-    const done = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, false);
-    try writeStdOut(io, done);
+    // The confirmed plan is handed back to the write, not recomputed: the guest
+    // groups with a model call, and a second call over the same diff is a
+    // second answer -- a truncated reply turned an approved
+    // `fix(smart_commit): ...` plan into one `chore: update working tree`
+    // commit (docs/reports/bugs/2026-08-17-commit-applies-an-unconfirmed-plan.md).
+    const done = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, false, preview.commits);
+    try writeStdOut(io, done.text);
 }
+
+/// One `smart_commit` call: the rendered plan, and the plan itself so a later
+/// call can be handed exactly what was shown.
+const CommitPlan = struct {
+    text: []const u8,
+    commits: []const commit_logic.Commit,
+};
 
 /// One `smart_commit` call, rendered for a terminal.
 ///
 /// The guest answers structured JSON; `commit_logic.renderPlan` is the single
 /// place that turns it into prose, so the CLI and any other surface show the
 /// same thing and the guest keeps a reply the web UI and the model can read.
+///
+/// `plan` non-null replays it instead of asking the guest to group again.
 fn smartCommitPlan(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -5998,8 +6014,11 @@ fn smartCommitPlan(
     cfg: *const config.Config,
     environ_map: *std.process.Environ.Map,
     dry_run: bool,
-) ![]const u8 {
-    const body = if (dry_run)
+    plan: ?[]const commit_logic.Commit,
+) !CommitPlan {
+    const body = if (plan) |p|
+        try commitBody(arena, dry_run, p)
+    else if (dry_run)
         "{\"dry_run\":true,\"scope\":\"staged\"}"
     else
         "{\"dry_run\":false,\"scope\":\"staged\"}";
@@ -6048,13 +6067,41 @@ fn smartCommitPlan(
     // request is what makes "committed" in the output mean a write happened.
     const echoed = if (parsed.object.get("dry_run")) |d| (d == .bool and d.bool) else dry_run;
 
-    return commit_logic.renderPlan(arena, .{
-        .dry_run = echoed,
-        .note = json_util.strFieldOrEmpty(parsed.object, "note"),
-        .excluded = excluded.items,
+    return .{
+        .text = try commit_logic.renderPlan(arena, .{
+            .dry_run = echoed,
+            .note = json_util.strFieldOrEmpty(parsed.object, "note"),
+            .excluded = excluded.items,
+            .commits = commits.items,
+            .message = json_util.strFieldOrEmpty(parsed.object, "message"),
+        }),
         .commits = commits.items,
-        .message = json_util.strFieldOrEmpty(parsed.object, "message"),
-    });
+    };
+}
+
+/// A `smart_commit` request body carrying a plan to write as-is.
+fn commitBody(arena: std.mem.Allocator, dry_run: bool, plan: []const commit_logic.Commit) ![]const u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    var w = std.Io.Writer.Allocating.fromArrayList(arena, &buf);
+    var s: std.json.Stringify = .{ .writer = &w.writer };
+    try s.beginObject();
+    try s.objectField("dry_run");
+    try s.write(dry_run);
+    try s.objectField("scope");
+    try s.write("staged");
+    try s.objectField("commits");
+    try s.beginArray();
+    for (plan) |c| {
+        try s.beginObject();
+        try s.objectField("message");
+        try s.write(c.message);
+        try s.objectField("files");
+        try s.write(c.files);
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.endObject();
+    return w.written();
 }
 
 fn cmdGit(init: std.process.Init, opts: Options) !void {
