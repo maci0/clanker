@@ -64,6 +64,25 @@ pub const max_emoji_len = 64;
 const last_text_preview_bytes = 120;
 /// Newest messages injected into the agent inbox per run.
 pub const inbox_limit = 5;
+/// One line's JSON envelope beyond the text: room, from, id, ts, thread,
+/// reactions, and framing. Text is capped at `max_text_len` and the JSON
+/// escaping can double it, so a worst-case line is `max_text_len * 2` plus
+/// this. A name or reaction pile-up larger than this is operator-controlled
+/// input, the same trust level as `max_history` itself.
+const max_envelope_bytes: usize = 2048;
+
+/// The most a trimmed log can occupy: `max_history` entries at the worst-case
+/// line size. The read in `append` (and the rewrite mutations) must cover the
+/// whole retained window; a fixed 1 MiB cap silently truncated a log whose
+/// window exceeded it — ~250 messages at the 4 KiB text cap cross 1 MiB
+/// inside the default 500-entry history. Everything downstream that trusted
+/// the read as the whole log then misfired: the line count under-counted so
+/// the trim never ran and the log grew without bound past `max_history`, and
+/// the redelivery dedup walked the tail of the truncated prefix (the middle
+/// of the file) instead of the newest lines, so a retried message duplicated.
+fn logReadCap(max_history: u32) usize {
+    return @as(usize, max_history) * (max_text_len * 2 + max_envelope_bytes);
+}
 
 pub const Reaction = struct {
     emoji: []const u8,
@@ -302,7 +321,7 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
 
-    const maybe_existing = base.readFileAlloc(io, path, gpa, .limited(1 << 20)) catch |err| switch (err) {
+    const maybe_existing = base.readFileAlloc(io, path, gpa, .limited(logReadCap(cfg.chatrooms.max_history))) catch |err| switch (err) {
         error.FileNotFound => null,
         else => return err,
     };
@@ -481,12 +500,11 @@ pub fn toggleReaction(
     emoji: []const u8,
     from: []const u8,
 ) !bool {
-    _ = cfg;
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
-    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return error.NotFound;
+    const raw = base.readFileAlloc(io, path, arena, .limited(logReadCap(cfg.chatrooms.max_history))) catch return error.NotFound;
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
@@ -530,12 +548,11 @@ pub fn editMessage(
     new_text: []const u8,
     from: []const u8,
 ) !Message {
-    _ = cfg;
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
-    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return error.NotFound;
+    const raw = base.readFileAlloc(io, path, arena, .limited(logReadCap(cfg.chatrooms.max_history))) catch return error.NotFound;
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
@@ -565,12 +582,11 @@ pub fn deleteMessage(
     msg_id: []const u8,
     from: []const u8,
 ) !void {
-    _ = cfg;
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
-    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return error.NotFound;
+    const raw = base.readFileAlloc(io, path, arena, .limited(logReadCap(cfg.chatrooms.max_history))) catch return error.NotFound;
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
@@ -1161,6 +1177,71 @@ test "append trims to max_history and keeps the newest lines" {
     const rooms = try listRooms(tmp.dir, io, std.testing.allocator, arena, "");
     try std.testing.expectEqual(@as(usize, 1), rooms.len);
     try std.testing.expectEqual(@as(usize, 3), rooms[0].messages);
+}
+
+test "append still trims and dedups when the retained window exceeds 1 MiB" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"dev"};
+    cfg.chatrooms.max_history = 256;
+
+    // 4 KiB texts (the send cap) are the worst the system writes: 256 of
+    // them already exceed the old fixed 1 MiB read cap, so the append read
+    // truncated, the line count under-counted, the trim never ran, and the
+    // log grew without bound past max_history.
+    const text = "x" ** 4096;
+    var i: usize = 0;
+    while (i < 300) : (i += 1) {
+        try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+            .room = "dev",
+            .from = "test-clanker",
+            .text = text,
+            .ts = @as(i64, @intCast(i + 1)),
+            .id = try std.fmt.allocPrint(arena, "m{d}", .{i}),
+        });
+    }
+
+    // Only the newest 256 of 300 survive, and the oldest surviving line is
+    // m44 (m0..m43 were trimmed). The log is ~1.1 MiB, past the old cap, so
+    // verify against the file rather than readHistory (whose display read is
+    // separately capped at 1 MiB).
+    const raw = try tmp.dir.readFileAlloc(io, log_path, std.testing.allocator, .limited(4 * 1024 * 1024));
+    defer std.testing.allocator.free(raw);
+    var lines: std.ArrayList([]const u8) = .empty;
+    defer lines.deinit(std.testing.allocator);
+    var it = std.mem.splitScalar(u8, raw, '\n');
+    while (it.next()) |ln| {
+        if (ln.len == 0) continue;
+        try lines.append(std.testing.allocator, ln);
+    }
+    try std.testing.expectEqual(@as(usize, 256), lines.items.len);
+    try std.testing.expect(std.mem.find(u8, lines.items[0], "\"id\":\"m299\"") != null);
+    try std.testing.expect(std.mem.find(u8, lines.items[255], "\"id\":\"m44\"") != null);
+
+    // A redelivery of the newest message (a retry of a just-appended one)
+    // must dedup even though its line sits at the end of a > 1 MiB log. The
+    // old scan walked the tail of the truncated 1 MiB prefix -- the middle
+    // of the file -- and appended a duplicate.
+    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        .room = "dev",
+        .from = "test-clanker",
+        .text = text,
+        .ts = 999,
+        .id = "m299",
+    });
+    const raw2 = try tmp.dir.readFileAlloc(io, log_path, std.testing.allocator, .limited(4 * 1024 * 1024));
+    defer std.testing.allocator.free(raw2);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, raw2, "\"id\":\"m299\""));
 }
 
 test "readHistoryAsc pages oldest-first and extends through a shared boundary timestamp" {
