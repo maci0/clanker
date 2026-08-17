@@ -122,6 +122,12 @@ pub const Ctx = struct {
     /// a wedged read (see `Abort`). Null everywhere else, which leaves the
     /// behaviour of every other call site exactly as it was.
     abort: ?*Abort = null,
+    /// Liveness counter for `chatStreamWithTimeout`: `chatStream` bumps it
+    /// once per read that returned bytes, and the watchdog on the other side
+    /// samples it to tell "still arriving" from "gone quiet". A count, not a
+    /// clock, so the streaming thread never has to read one. Null everywhere
+    /// else, which leaves every other call site exactly as it was.
+    stream_progress: ?*std.atomic.Value(u64) = null,
     /// Optional metadata attached by auto-thinking to the next main-model
     /// completion record. Side-channel clients leave both null.
     thinking_level: ?[]const u8 = null,
@@ -383,6 +389,226 @@ pub fn chatWithTimeout(
         };
     }
     return future.await(ctx.io);
+}
+
+/// How often the watchdog wakes to compare the liveness counter against its
+/// deadline. Small enough that a lapsed deadline is acted on promptly, large
+/// enough that a long stream costs a few thousand wakeups rather than a busy
+/// loop. Not added latency: the request thread sets `done` on its way out and
+/// that wakes the wait immediately.
+const deadline_watch_tick_ms: u64 = 250;
+
+/// A deadline enforced from *another* thread while the request stays on the
+/// caller's.
+///
+/// Which thread runs the request is not an implementation detail here.
+/// `chatWithTimeout` moves `chat` onto a worker, which is fine for the
+/// side-channel callers that use it (a classifier ping has no callback), but
+/// the agent's own streaming turn drives `on_delta` through three threadlocals
+/// — `stream_tally` and `ttsr_guard` in the agent loop, `run_stream_socket` in
+/// the HTTP layer — and a threadlocal read on a worker thread is a different
+/// variable. Streaming from a worker would silently stop rendering tokens,
+/// blind the time-to-stop-rule guard, and leave the fallback chain believing
+/// no content had arrived. Log context (`util/log.zig`) is threadlocal too.
+///
+/// So the watchdog goes to the worker instead. All it needs is a clock, a
+/// counter and `Abort.trigger`, which is cross-thread by construction. This
+/// also sidesteps the `Io.Future.cancel` wedge described on `Abort`: nothing
+/// cancels a blocked thread here, the socket shutdown simply makes its read
+/// return and the request unwinds itself.
+const DeadlineWatch = struct {
+    io: std.Io,
+    abort: *Abort,
+    /// Liveness counter, or null when the whole call is one deadline.
+    progress: ?*std.atomic.Value(u64),
+    /// Budget before anything has arrived.
+    first_ms: u32,
+    /// Budget between arrivals. Unused while `progress` is null.
+    idle_ms: u32,
+    provider_name: []const u8,
+    streaming: bool,
+    done: std.Io.Event = .unset,
+    fired: std.atomic.Value(bool) = .init(false),
+
+    fn watch(self: *DeadlineWatch) void {
+        var seen: u64 = 0;
+        var since = std.Io.Timestamp.now(self.io, .awake);
+        while (!self.done.isSet()) {
+            const tick: std.Io.Clock.Timestamp = .fromNow(self.io, .{
+                .clock = .awake,
+                .raw = .{ .nanoseconds = @as(i96, deadline_watch_tick_ms) * std.time.ns_per_ms },
+            });
+            self.done.waitTimeout(self.io, .{ .deadline = tick }) catch |err| switch (err) {
+                error.Timeout => {},
+                error.Canceled => return,
+            };
+            if (self.done.isSet()) return;
+
+            if (self.progress) |counter| {
+                const now = counter.load(.acquire);
+                if (now != seen) {
+                    seen = now;
+                    since = std.Io.Timestamp.now(self.io, .awake);
+                    continue;
+                }
+            }
+            // Which clock applies is decided by whether anything has arrived
+            // yet, not by how long the call has been running.
+            const budget_ms: u64 = if (seen == 0) self.first_ms else self.idle_ms;
+            if (budget_ms == 0) continue;
+            if (elapsedMs(self.io, since) < budget_ms) continue;
+
+            if (self.streaming) {
+                log.log(.error_, "provider '{s}' {s} for {d}ms; abandoning the stream", .{
+                    self.provider_name,
+                    if (seen == 0) "sent nothing" else "went quiet mid-stream",
+                    budget_ms,
+                });
+            } else {
+                log.log(.error_, "provider '{s}' did not answer within {d}ms; abandoning the request", .{ self.provider_name, budget_ms });
+            }
+            // Order matters: record the verdict before unblocking the reader,
+            // so the request thread cannot finish and read `fired` as false.
+            self.fired.store(true, .release);
+            self.abort.trigger(self.io);
+            return;
+        }
+    }
+};
+
+/// `chatStream` under two deadlines, because a stream has two ways to hang and
+/// one clock cannot describe both.
+///
+/// `first_byte_ms` bounds the silence *before* the response starts — connect,
+/// request, response head, first SSE bytes. That is the failure a whole-call
+/// ceiling would also catch, and the one an agent run actually hit: a provider
+/// that accepted the connection and then said nothing, with no error to retry
+/// because a call that never returns never produces one.
+///
+/// `idle_ms` bounds the gap *between* reads once bytes are flowing. It has to
+/// be separate: a legitimate answer can stream for far longer than any sensible
+/// whole-call ceiling, so bounding total duration would abandon healthy work.
+/// What a healthy stream does not do is fall silent mid-answer.
+///
+/// The two are not interchangeable, and arming only `idle_ms` leaves a real
+/// hole. `chatStream` reads with `readSliceShort`, which returns only once its
+/// buffer is full or the stream ends, so "a read completed" is a coarse signal:
+/// a provider that emits less than one buffer and then falls silent never
+/// completes one, and to this watchdog looks exactly like a provider that never
+/// answered at all. That case is the *first-byte* clock's, which is why it has
+/// to stay armed even when a stream is expected.
+///
+/// Either at 0 disables that clock; both at 0 is plain `chatStream`.
+pub fn chatStreamWithTimeout(
+    ctx: *Ctx,
+    arena: std.mem.Allocator,
+    params: providers.RequestParams,
+    err_detail: *?[]const u8,
+    on_delta: *const fn ([]const u8) void,
+    stop_flag: ?*std.atomic.Value(bool),
+    first_byte_ms: u32,
+    idle_ms: u32,
+) anyerror!types.ChatResponse {
+    if (first_byte_ms == 0 and idle_ms == 0) {
+        return chatStream(ctx, arena, params, err_detail, on_delta, stop_flag);
+    }
+
+    var progress = std.atomic.Value(u64).init(0);
+    const previous_progress = ctx.stream_progress;
+    ctx.stream_progress = &progress;
+    defer ctx.stream_progress = previous_progress;
+
+    return underDeadline(ctx, .{
+        .progress = &progress,
+        .first_ms = first_byte_ms,
+        .idle_ms = idle_ms,
+        .provider_name = params.provider.name,
+        .streaming = true,
+    }, struct {
+        fn call(c: *Ctx, a: std.mem.Allocator, p: providers.RequestParams, d: *?[]const u8, cb: *const fn ([]const u8) void, sf: ?*std.atomic.Value(bool)) anyerror!types.ChatResponse {
+            return chatStream(c, a, p, d, cb, sf);
+        }
+    }.call, .{ ctx, arena, params, err_detail, on_delta, stop_flag });
+}
+
+/// `chat` under a whole-call ceiling, with the request left on the caller's
+/// thread. Same clock `chatWithTimeout` applies, opposite arrangement: this is
+/// the one the agent loop uses, because moving its request to a worker would
+/// take the run's log context (`util/log.zig` `context` is threadlocal) off
+/// every provider line the call emits. `chatWithTimeout` stays as it is for the
+/// side-channel callers already built on it.
+///
+/// 0 is unbounded, which is plain `chat`.
+pub fn chatWithDeadline(
+    ctx: *Ctx,
+    arena: std.mem.Allocator,
+    params: providers.RequestParams,
+    err_detail: *?[]const u8,
+    timeout_ms: u32,
+) anyerror!types.ChatResponse {
+    if (timeout_ms == 0) return chat(ctx, arena, params, err_detail);
+    // No progress counter: a non-streaming call has exactly one event to wait
+    // for, so `first_ms` is the whole budget and the idle clock never applies.
+    return underDeadline(ctx, .{
+        .progress = null,
+        .first_ms = timeout_ms,
+        .idle_ms = 0,
+        .provider_name = params.provider.name,
+        .streaming = false,
+    }, struct {
+        fn call(c: *Ctx, a: std.mem.Allocator, p: providers.RequestParams, d: *?[]const u8) anyerror!types.ChatResponse {
+            return chat(c, a, p, d);
+        }
+    }.call, .{ ctx, arena, params, err_detail });
+}
+
+/// What a `DeadlineWatch` needs that is not the request itself.
+const DeadlineSpec = struct {
+    progress: ?*std.atomic.Value(u64),
+    first_ms: u32,
+    idle_ms: u32,
+    provider_name: []const u8,
+    streaming: bool,
+};
+
+/// Runs `request` on this thread with a watchdog beside it, and reports a
+/// lapsed deadline as `error.Timeout`.
+///
+/// The watchdog's abort makes the blocked read return, so `request` fails with
+/// whatever transport error that produces; `fired` is what distinguishes "the
+/// connection dropped" from "we dropped it", and it is checked before the
+/// request's own result because that result is a consequence of the abort.
+fn underDeadline(
+    ctx: *Ctx,
+    spec: DeadlineSpec,
+    comptime request: anytype,
+    args: anytype,
+) anyerror!types.ChatResponse {
+    var abort: Abort = .{};
+    const previous_abort = ctx.abort;
+    ctx.abort = &abort;
+    defer ctx.abort = previous_abort;
+
+    var watch: DeadlineWatch = .{
+        .io = ctx.io,
+        .abort = &abort,
+        .progress = spec.progress,
+        .first_ms = spec.first_ms,
+        .idle_ms = spec.idle_ms,
+        .provider_name = spec.provider_name,
+        .streaming = spec.streaming,
+    };
+    var future = ctx.io.concurrent(DeadlineWatch.watch, .{&watch}) catch return error.SystemResources;
+
+    const result = @call(.auto, request, args);
+
+    // Wake the watchdog before awaiting it, or this joins a thread that is
+    // still sleeping out its tick.
+    watch.done.set(ctx.io);
+    future.await(ctx.io);
+
+    if (watch.fired.load(.acquire)) return error.Timeout;
+    return result;
 }
 
 /// Input-token cost, discounting the prefix served from the prompt cache: a
@@ -846,7 +1072,14 @@ pub fn chatStream(
             if (sse.items.len == 0) break;
             try appendResponseBytes(&sse, ctx.gpa, "\n\n", resp_cap);
             at_eof = true;
-        } else try appendResponseBytes(&sse, ctx.gpa, buf[0..n], resp_cap);
+        } else {
+            // Bytes arrived, so the stream is alive: tell any watchdog before
+            // parsing them. Every read counts, not every content delta — a
+            // provider sending SSE keepalives is answering, and killing it for
+            // producing no text would abandon a healthy slow stream.
+            if (ctx.stream_progress) |counter| _ = counter.fetchAdd(1, .release);
+            try appendResponseBytes(&sse, ctx.gpa, buf[0..n], resp_cap);
+        }
         // Process complete frames (data: ... blank line), starting the search
         // at the parse cursor so consumed bytes are never rescanned.
         var frame_start = sse_consumed;
@@ -1393,6 +1626,129 @@ test "bounded chat aborts a provider that never sends a response" {
         .messages = &messages,
         .max_tokens = 1,
     }, &err_detail, 30));
+    try std.testing.expect(ctx.abort == null);
+}
+
+test "bounded stream aborts a provider that sends nothing at all" {
+    const mock_server = @import("mock_server.zig");
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, std.testing.allocator, .stall);
+    defer mock.stop();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("MOCK_API_KEY", "test-key");
+
+    const base_url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}", .{mock.port});
+    defer std.testing.allocator.free(base_url);
+    var provider_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer provider_arena.deinit();
+    var provider = try config.Provider.single(provider_arena.allocator(), "mock-stream-stall", base_url, .openai_compat, "mock", .{});
+    provider.api_key_env = "MOCK_API_KEY";
+
+    var ctx = Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var response_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer response_arena.deinit();
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    const Noop = struct {
+        fn cb(_: []const u8) void {}
+    };
+    var err_detail: ?[]const u8 = null;
+    // Only the first-byte clock is armed: nothing ever arrives, so the idle
+    // clock never applies and an unbounded idle setting must not rescue it.
+    try std.testing.expectError(error.Timeout, chatStreamWithTimeout(&ctx, response_arena.allocator(), .{
+        .provider = &provider,
+        .messages = &messages,
+        .max_tokens = 1,
+    }, &err_detail, Noop.cb, null, 300, 0));
+    try std.testing.expect(ctx.abort == null);
+    try std.testing.expect(ctx.stream_progress == null);
+}
+
+test "bounded stream abandons a stream that starts and then goes quiet" {
+    const mock_server = @import("mock_server.zig");
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, std.testing.allocator, .stream_then_stall);
+    defer mock.stop();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("MOCK_API_KEY", "test-key");
+
+    const base_url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}", .{mock.port});
+    defer std.testing.allocator.free(base_url);
+    var provider_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer provider_arena.deinit();
+    var provider = try config.Provider.single(provider_arena.allocator(), "mock-stream-quiet", base_url, .openai_compat, "mock", .{});
+    provider.api_key_env = "MOCK_API_KEY";
+
+    var ctx = Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var response_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer response_arena.deinit();
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    const Seen = struct {
+        var count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+        // The agent's real callback reads threadlocals (`stream_tally`,
+        // `ttsr_guard`, `run_stream_socket`), so a delta delivered on any
+        // thread but the caller's would read a different variable and silently
+        // stop rendering tokens. Recording the thread is how that stays true.
+        var thread: std.atomic.Value(usize) = std.atomic.Value(usize).init(0);
+        fn cb(_: []const u8) void {
+            _ = count.fetchAdd(1, .monotonic);
+            thread.store(std.Thread.getCurrentId(), .release);
+        }
+    };
+    Seen.count.store(0, .monotonic);
+    Seen.thread.store(0, .monotonic);
+    var err_detail: ?[]const u8 = null;
+    // No first-byte clock at all: the mock delivers more than one read buffer
+    // before going quiet, so reads complete, the stream counts as started, and
+    // only the idle clock can end this. A whole-call ceiling would be
+    // indistinguishable from cutting off a slow but healthy answer.
+    try std.testing.expectError(error.Timeout, chatStreamWithTimeout(&ctx, response_arena.allocator(), .{
+        .provider = &provider,
+        .messages = &messages,
+        .max_tokens = 1,
+    }, &err_detail, Seen.cb, null, 0, 300));
+    try std.testing.expect(Seen.count.load(.monotonic) > 0);
+    try std.testing.expectEqual(std.Thread.getCurrentId(), Seen.thread.load(.acquire));
+    try std.testing.expect(ctx.abort == null);
+    try std.testing.expect(ctx.stream_progress == null);
+}
+
+test "a deadlined non-streaming call keeps the request on the calling thread" {
+    const mock_server = @import("mock_server.zig");
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, std.testing.allocator, .stall);
+    defer mock.stop();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("MOCK_API_KEY", "test-key");
+
+    const base_url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}", .{mock.port});
+    defer std.testing.allocator.free(base_url);
+    var provider_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer provider_arena.deinit();
+    var provider = try config.Provider.single(provider_arena.allocator(), "mock-deadline", base_url, .openai_compat, "mock", .{});
+    provider.api_key_env = "MOCK_API_KEY";
+
+    var ctx = Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var response_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer response_arena.deinit();
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    var err_detail: ?[]const u8 = null;
+    try std.testing.expectError(error.Timeout, chatWithDeadline(&ctx, response_arena.allocator(), .{
+        .provider = &provider,
+        .messages = &messages,
+        .max_tokens = 1,
+    }, &err_detail, 300));
     try std.testing.expect(ctx.abort == null);
 }
 

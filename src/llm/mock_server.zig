@@ -5,6 +5,12 @@
 const std = @import("std");
 const raw_http = @import("../util/raw_http.zig");
 
+/// Mirror of `client.http_scratch_buf_bytes`, kept here so this test-only
+/// server does not import the module under test. Only `.stream_then_stall`
+/// needs it: the client's reads complete on a full buffer, so a stream that
+/// starts has to deliver at least that much before it can go quiet.
+const client_read_buffer_bytes: usize = 8192;
+
 pub const Mode = enum {
     openai_stream,
     anthropic_text,
@@ -21,6 +27,10 @@ pub const Mode = enum {
     /// Reads the request and deliberately never sends a response. Timeout
     /// tests stop the server after the client has aborted its socket.
     stall,
+    /// Sends the SSE head and one content frame, then goes quiet forever
+    /// without the terminating `[DONE]`. This is the failure a whole-call
+    /// ceiling cannot tell from a slow answer: bytes did arrive.
+    stream_then_stall,
 };
 
 pub const Captured = struct {
@@ -155,6 +165,34 @@ pub const MockServer = struct {
             }
             return;
         }
+        if (self.mode == .stream_then_stall) {
+            const frame =
+                \\data: {"id":"chatcmpl-mock3","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello "},"finish_reason":null}]}
+                \\
+                \\
+            ;
+            // The client reads with `readSliceShort`, which returns only when
+            // its buffer is full or the stream ends -- so a handful of frames
+            // would leave that call blocked and look identical to a provider
+            // that never said anything. Sending more than one read buffer's
+            // worth is what makes this "the stream started" rather than "the
+            // stream never began", which is the distinction under test.
+            const reps = (2 * client_read_buffer_bytes) / frame.len + 1;
+            var hbuf: [4096]u8 = undefined;
+            const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n", .{}) catch return;
+            raw_http.writeAllFd(stream.socket.handle, hdr);
+            var cbuf: [32]u8 = undefined;
+            const chunk_size = std.fmt.bufPrint(&cbuf, "{x}\r\n", .{frame.len * reps}) catch return;
+            raw_http.writeAllFd(stream.socket.handle, chunk_size);
+            for (0..reps) |_| raw_http.writeAllFd(stream.socket.handle, frame);
+            raw_http.writeAllFd(stream.socket.handle, "\r\n");
+            // No terminating chunk and no [DONE]: the connection stays open
+            // and silent, which is the failure only an idle clock can name.
+            while (!self.stop_flag.load(.acquire)) {
+                std.Io.sleep(self.io, .fromNanoseconds(5 * std.time.ns_per_ms), .awake) catch return;
+            }
+            return;
+        }
         const n = self.served.fetchAdd(1, .monotonic);
         if (self.mode == .openai_stream_after_429 and n == 0) {
             const limited =
@@ -212,7 +250,7 @@ pub const MockServer = struct {
                 @as([]const u8, "Service Unavailable"),
                 @as([]const u8, "application/json"),
             },
-            .stall => unreachable,
+            .stall, .stream_then_stall => unreachable,
         };
         const body = pair[0];
         const status = pair[1];
