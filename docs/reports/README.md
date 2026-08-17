@@ -80,6 +80,10 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [origin/main did not compile: an if mixed the optional catch-null form with an error-union else clause](bugs/2026-08-17-pushed-main-mixed-optional-and-error-else.md) — Resolved
+
+- [clanker commit applies a plan it computes a second time, not the one it previewed](bugs/2026-08-17-commit-applies-an-unconfirmed-plan.md) — Resolved
+
 - [Activity view shows only 'log' actions, so a board being worked on looks idle](bugs/2026-08-17-activity-view-shows-only-log-actions.md) — Resolved
 
 - [clanker commit writes one commit and reports the whole multi-commit plan as written](bugs/2026-08-17-smart-commit-sweeps-the-whole-index.md) — Resolved
