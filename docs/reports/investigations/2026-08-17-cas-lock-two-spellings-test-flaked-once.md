@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **Question:** One zig build test run failed 'two spellings share one lock' at expectEqual(1, lock_count); the same tree passed twice right after, no src/sandbox/ change between runs. tmpDir-scoped test, so the suspect is path resolution against process state, not lock litter. One occurrence; filed for the next gate that hits it.
-- **Finding:** Investigating.
-- **Resolution:** Pending.
+- **Finding:** Resolved on 2026-08-17. Failing run compiled a peer session's mid-edit host.zig (test present, keying fix incomplete); consistent trees pass. Tree-moving-under-build, not a lock race
+- **Resolution:** Resolved on 2026-08-17. Failing run compiled a peer session's mid-edit host.zig (test present, keying fix incomplete); consistent trees pass. Tree-moving-under-build, not a lock race
 
 ## Status
 
-Investigating.
+Resolved on 2026-08-17. Failing run compiled a peer session's mid-edit host.zig (test present, keying fix incomplete); consistent trees pass. Tree-moving-under-build, not a lock race
 
 ## Trigger and scope
 
@@ -32,3 +32,6 @@ Investigating.
 ## Next step when it recurs
 
 Capture the two lock file names (each embeds target=) from the failing run before cleanup; they name the two resolutions directly.
+## Root cause
+
+Not a race in the lock code: the test itself was another session's in-flight work. Session claude-20260817-133119-bf577103de46 was editing src/sandbox/host.zig at the time, adding resolvedLockKey and this very test (fix for docs/reports/bugs/2026-08-17-cas-lock-name-hashes-an-unresolved-path.md); the failing suite run compiled a mid-edit copy where the test existed but the keying fix was incomplete, and the two runs after compiled a consistent tree. This is the documented tree-moving-under-build shape from AGENTS.md, landing as an assertion failure rather than a build error because the mid-edit tree still compiled.

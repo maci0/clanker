@@ -80,7 +80,7 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
-- [A CAS lock name hashes the path string, so one target can have two locks](bugs/2026-08-17-cas-lock-name-hashes-an-unresolved-path.md) — Open
+- [A CAS lock name hashes the path string, so one target can have two locks](bugs/2026-08-17-cas-lock-name-hashes-an-unresolved-path.md) — Resolved
 
 - [An agent run hangs forever when a provider accepts the connection and goes quiet](bugs/2026-08-17-agent-llm-call-has-no-deadline.md) — Resolved
 
@@ -161,7 +161,7 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
-- [The two-spellings CAS-lock test failed one run in three with lock_count 2](investigations/2026-08-17-cas-lock-two-spellings-test-flaked-once.md) — Investigating
+- [The two-spellings CAS-lock test failed one run in three with lock_count 2](investigations/2026-08-17-cas-lock-two-spellings-test-flaked-once.md) — Resolved
 
 - [Record search matches one exact substring, so multi-word queries miss existing records](investigations/2026-08-17-missing-clanker-tool-record-search-has-no-multi-word-semantics.md) — Investigating
 
