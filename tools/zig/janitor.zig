@@ -1,8 +1,8 @@
 //! janitor: sweep up what old runs left behind.
 //!
-//! Scans state/ for orphaned staging directories, excess run graphs, and
-//! excess improve logs. Returns a summary (scan) or deletes and reports
-//! (prune).
+//! Scans state/ for orphaned staging directories, excess run graphs, excess
+//! improve logs, and compare-and-swap lock files nothing has re-acquired in
+//! half a day. Returns a summary (scan) or deletes and reports (prune).
 //!
 //! Input:  {"op": "scan"|"prune", "state_dir": "state"}
 //! Output: {"ok": true, "text": "...", "items": N, "bytes": N}
@@ -13,6 +13,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const graph_listing = @import("graph_listing.zig");
+const cas_lock_record = @import("cas_lock_record.zig");
 
 const keep_runs: usize = 200;
 const keep_logs: usize = 20;
@@ -73,7 +74,23 @@ fn removable(state_dir: []const u8, path: []const u8) bool {
     var buf3: [512]u8 = undefined;
     const logs_prefix = std.fmt.bufPrint(&buf3, "{s}/logs/", .{state_dir}) catch return false;
     if (std.mem.startsWith(u8, path, logs_prefix)) return isImproveLog(path[logs_prefix.len..]);
+    var buf4: [512]u8 = undefined;
+    const locks_prefix = std.fmt.bufPrint(&buf4, "{s}/locks/", .{state_dir}) catch return false;
+    if (std.mem.startsWith(u8, path, locks_prefix)) return isCasLock(path[locks_prefix.len..]);
     return false;
+}
+
+/// A lock file name is the hex SHA-256 of its target path. Checking the shape
+/// rather than just the suffix keeps the delete path from following anything
+/// else that happens to land in the directory.
+fn isCasLock(name: []const u8) bool {
+    if (!std.mem.endsWith(u8, name, ".lock")) return false;
+    const stem = name[0 .. name.len - ".lock".len];
+    if (stem.len != 64) return false;
+    for (stem) |c| {
+        if (!std.ascii.isHex(c)) return false;
+    }
+    return true;
 }
 
 /// Oldest first: `collectOldest` deletes the front of this order, so a graph
@@ -162,7 +179,43 @@ fn scan(a: std.mem.Allocator, state_dir: []const u8) []const Candidate {
 
     collectOldest(a, state_dir, "runs", isRunGraph, keep_runs, .run, &out);
     collectOldest(a, state_dir, "logs", isImproveLog, keep_logs, .improve_log, &out);
+    collectAgedLocks(a, state_dir, &out);
     return out.items;
+}
+
+/// Compare-and-swap lock files whose last acquisition is older than
+/// `keep_lock_ms`.
+///
+/// The lock is keyed by a hash of its target path, so a target that recurs
+/// keeps re-acquiring the same lock and its record keeps moving forward; only
+/// a target that will never be written again -- a test's tmp tree, an improve
+/// staging copy -- leaves a record that ages out. The timestamp is therefore
+/// the reuse signal, not a liveness timeout: see `keep_lock_ms` for why an
+/// `flock` never needs reclaiming in the first place.
+///
+/// A record that cannot be read is left alone. Treating it as timestamp zero
+/// would date it to 1970 and sweep the whole directory, live locks included.
+fn collectAgedLocks(a: std.mem.Allocator, state_dir: []const u8, out: *std.ArrayList(Candidate)) void {
+    const rel = std.fmt.allocPrint(a, "{s}/locks", .{state_dir}) catch return;
+    const raw = lib.fsList(rel) catch return;
+    const names = std.json.parseFromSliceLeaky(std.json.Value, a, raw, .{}) catch return;
+    if (names != .array) return;
+
+    const now_ms: i64 = @intFromFloat(lib.nowSeconds() * 1000.0);
+    for (names.array.items) |item| {
+        if (item != .string) continue;
+        const name = item.string;
+        if (!std.mem.endsWith(u8, name, ".lock")) continue;
+        const path = std.fmt.allocPrint(a, "{s}/{s}", .{ rel, name }) catch continue;
+        const record = lib.fsRead(path) catch continue;
+        const acquired = cas_lock_record.acquiredMs(record) orelse continue;
+        if (now_ms - acquired < keep_lock_ms) continue;
+        out.append(a, .{
+            .path = path,
+            .bytes = record.len,
+            .kind = .cas_lock,
+        }) catch continue;
+    }
 }
 
 fn collectOldest(
@@ -249,12 +302,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var staging_n: usize = 0;
     var runs_n: usize = 0;
     var logs_n: usize = 0;
+    var locks_n: usize = 0;
     for (candidates) |c| {
         total += c.bytes;
         switch (c.kind) {
             .staging => staging_n += 1,
             .run => runs_n += 1,
             .improve_log => logs_n += 1,
+            .cas_lock => locks_n += 1,
         }
     }
 
@@ -279,6 +334,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (staging_n > 0) try text.appendSlice(a, try std.fmt.allocPrint(a, "  {d} orphaned staging director{s} (a killed improve run leaves its copy behind)\n", .{ staging_n, if (staging_n == 1) @as([]const u8, "y") else "ies" }));
     if (runs_n > 0) try text.appendSlice(a, try std.fmt.allocPrint(a, "  {d} run graphs beyond the newest {d}\n", .{ runs_n, keep_runs }));
     if (logs_n > 0) try text.appendSlice(a, try std.fmt.allocPrint(a, "  {d} improve logs beyond the newest {d}\n", .{ logs_n, keep_logs }));
+    if (locks_n > 0) try text.appendSlice(a, try std.fmt.allocPrint(a, "  {d} compare-and-swap lock files unused for {d}h\n", .{ locks_n, @divTrunc(keep_lock_ms, 60 * 60 * 1000) }));
 
     if (!apply) {
         try text.appendSlice(a, "\nNothing was deleted. Re-run with --yes to remove it.\n");
@@ -294,7 +350,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
         switch (c.kind) {
             .staging => lib.fsDeleteTree(a, c.path),
-            .run, .improve_log => lib.fsDelete(c.path) catch {
+            .run, .improve_log, .cas_lock => lib.fsDelete(c.path) catch {
                 failed += 1;
                 continue;
             },

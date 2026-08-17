@@ -30,6 +30,7 @@ const kernel_mod = @import("../agent/kernel.zig");
 const dap = @import("../debug/dap.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
 const live_mod = @import("../serve/live.zig");
+const cas_lock_record = @import("cas_lock_record");
 
 /// Model access for tools whose descriptor sets `"llm": true` (a translate or
 /// summarize transform needs one). The harness hands over the same provider
@@ -3332,52 +3333,22 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
 /// run reaches the checkout's lock directory through its `state` symlink and
 /// maps a given target to the same lock inode the checkout does — which is the
 /// property mutual exclusion actually needs.
-/// Width of the lock-holder record, including its trailing newline.
-const lock_holder_record_len = 256;
-
-/// Records who most recently took this lock, and when, inside the lock file.
+/// Records who most recently took this lock, and when, inside the lock file,
+/// so a write that hangs is attributable to a run and a moment rather than
+/// being a zero-byte name. Format and rationale: `tools/zig/cas_lock_record.zig`,
+/// shared with the `janitor` guest that reads it back.
 ///
-/// This is diagnostics, never correctness. The lock is a `flock` (see
-/// `std.Io.Threaded` `have_flock`), and the kernel releases a `flock` when the
-/// last descriptor on it closes — on a clean return, on a panic, on SIGKILL,
-/// on the machine losing power. A `flock` is therefore never stale, no holder
-/// has to prove liveness, and nothing may ever refuse or steal a lock on the
-/// strength of what is written here. `src/util/run_lock.zig` is the opposite
-/// case and shows the difference: it is a *pid file*, which a dead owner does
-/// leave behind, so it reclaims one by probing the owner with signal 0 — a
-/// liveness question, still not a clock.
-///
-/// What the record answers is the question a hung write raises and a zero-byte
-/// name cannot: which run is inside `fs_write_if` on which file, and since
-/// when. It describes the *last acquisition*, not a live hold — releasing is a
-/// close, and a close cannot write, so the record outlives it. Whether the
-/// lock is held right now is only ever answered by trying to take it:
-/// `flock -n state/locks/<name>.lock true`.
-///
-/// Fixed width at offset 0 because `std.Io.File` exposes no truncate: a
-/// shorter record would leave the tail of a longer previous one behind, and
-/// the line would then read as a lie.
+/// Best effort: this is a diagnostic line, and failing to write one is never a
+/// reason to fail the compare-and-swap it accompanies.
 fn writeLockHolder(sb: *Sandbox, file: std.Io.File, target: []const u8) void {
-    var buf: [lock_holder_record_len]u8 = @splat(' ');
-    buf[lock_holder_record_len - 1] = '\n';
-
-    const tool = if (sb.tool_self_name.len > 0) sb.tool_self_name else "host";
-    var head: [128]u8 = undefined;
-    const prefix = std.fmt.bufPrint(&head, "pid={d} acquired_ms={d} tool={s} target=", .{
+    var buf: [cas_lock_record.record_len]u8 = undefined;
+    cas_lock_record.render(
+        &buf,
         @as(u32, @intCast(std.c.getpid())),
-        log.unixMilliseconds(),
-        tool[0..@min(tool.len, 32)],
-    }) catch return;
-
-    const room = lock_holder_record_len - 1;
-    const n = @min(prefix.len, room);
-    @memcpy(buf[0..n], prefix[0..n]);
-    // Keep the *tail* of the path when it does not fit: the basename is what
-    // identifies the target, and the leading checkout root is the same for
-    // every record in the directory.
-    const t = @min(target.len, room - n);
-    @memcpy(buf[n..][0..t], target[target.len - t ..]);
-
+        @as(i64, @intCast(log.unixMilliseconds())),
+        sb.tool_self_name,
+        target,
+    );
     file.writePositionalAll(sb.io, &buf, 0) catch |err| {
         log.log(.warn, "[fs_write_if] could not record the lock holder: {s}", .{@errorName(err)});
     };
@@ -7003,7 +6974,7 @@ test "fsWriteIfImpl leaves no lock sidecar beside the target and no dirs on mism
     const entry = (try it2.next(io)).?;
     const rec = try locks.readFileAlloc(io, entry.name, gpa, .limited(1 << 12));
     defer gpa.free(rec);
-    try std.testing.expectEqual(@as(usize, lock_holder_record_len), rec.len);
+    try std.testing.expectEqual(@as(usize, cas_lock_record.record_len), rec.len);
     try std.testing.expectEqual(@as(u8, '\n'), rec[rec.len - 1]);
     try std.testing.expect(std.mem.startsWith(u8, rec, "pid="));
     try std.testing.expect(std.mem.indexOf(u8, rec, " acquired_ms=") != null);
