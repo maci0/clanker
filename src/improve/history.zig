@@ -1146,7 +1146,7 @@ test "an unreadable log is an error from markReverted, not zero flips" {
     try std.testing.expectEqual(@as(usize, 0), try hist.markReverted(&.{.{ .id = "imp-none", .reason = "r" }}));
 
     // A directory where the log file belongs makes every read of it fail.
-    try tmp.dir.createDirPath(io, "state/improvements.jsonl");
+    try ensure_dir.ensureDir(tmp.dir, io, "state/improvements.jsonl");
     _ = hist.markReverted(&.{.{ .id = "imp-none", .reason = "r" }}) catch return;
     return error.TestUnexpectedResult;
 }
