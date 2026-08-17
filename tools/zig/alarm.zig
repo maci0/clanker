@@ -108,7 +108,7 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
             return out.writeAll(reply);
         }
     }
-    return lib.fail(out, "alarms file kept changing underneath; try again");
+    return lib.fail(out, "state/alarms.json changed concurrently; re-read and retry");
 }
 
 fn doList(out: *lib.Out) !void {
@@ -186,7 +186,7 @@ fn doDone(obj: std.json.ObjectMap, out: *lib.Out) !void {
             return out.writeAll("{\"ok\":true}");
         }
     }
-    return lib.fail(out, "alarms file kept changing underneath; try again");
+    return lib.fail(out, "state/alarms.json changed concurrently; re-read and retry");
 }
 
 fn doCancel(obj: std.json.ObjectMap, out: *lib.Out) !void {
@@ -208,7 +208,7 @@ fn doCancel(obj: std.json.ObjectMap, out: *lib.Out) !void {
         if (!found) return lib.fail(out, "no alarm with that id");
         if (try store(loaded)) return out.writeAll("{\"ok\":true}");
     }
-    return lib.fail(out, "alarms file kept changing underneath; try again");
+    return lib.fail(out, "state/alarms.json changed concurrently; re-read and retry");
 }
 
 const Loaded = struct {
