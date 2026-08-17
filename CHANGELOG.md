@@ -498,6 +498,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   and 64-connection ceilings; a browser that reloads often could be answered
   `503 too many live subscribers`.
 
+- The web UI's Activity view shows every action the board recorded, not only
+  the `log` ones. A card's `log` array is written by exactly one action —
+  `log` — so adding, moving, claiming, closing or archiving a card produced
+  no row, and a board being actively worked on read as idle; the view's own
+  empty state told the reader to move a card, which was one of the actions it
+  could not show. The timeline is now merged from the card logs and the board
+  room's action messages, because neither feed is complete alone: the logs
+  outlive the room's history window, and the room is the only record of every
+  other action. On one board this went from 23 entries ending 2026-08-14 to
+  65 ending 2026-08-16
+  (docs/reports/bugs/2026-08-17-activity-view-shows-only-log-actions.md).
 - `clanker janitor` now sweeps the graphs of nested runs. Its predicate
   matched only `run-*.json`, while a sub-agent run writes
   `sub-<unix nanoseconds>.json` to the same directory, so those graphs were

@@ -1,6 +1,7 @@
 // Vanilla, no bundler. Web UI plugin host — view registration + asset loading.
 import { T, state, add, effect, showLoadError, upgradePfButton, uiConfirm, uiPrompt, toast } from "./ui.js";
 import { renderMarkdownWithFences, buildCodeBlock, renderMermaidBlocks } from "../lib/markdown.js";
+import { boardTimeline } from "../lib/board.js";
 import { onLive } from "./stream.js";
 import { icon } from "./icons.js";
 import { searchFoldFind } from "./utils.js";
@@ -99,6 +100,12 @@ export function pluginApi(spec) {
     html: window.html,
     signals: window.signals,
     showView: function (id) { _showView(id, false); },
+    // What the board recorded happening, as one dated timeline over the card
+    // logs and the board room's action messages (`lib/board.js`). Here rather
+    // than in the plugin because reading either feed alone is wrong in a way
+    // that is not obvious: only the `log` action writes a card's log, so that
+    // feed on its own shows nothing while the board is being worked on.
+    boardTimeline: boardTimeline,
     // The same markdown/code/mermaid renderers the chat transcript uses
     // (`lib/markdown.js`), so a plugin showing a whole document (markdown,
     // source, a diagram fence) does not grow a second implementation of any

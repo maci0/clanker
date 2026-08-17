@@ -279,6 +279,10 @@ pub fn build(b: *std.Build) void {
     const runs_list_js_test = b.addSystemCommand(&.{ "node", "--test" });
     runs_list_js_test.addFileArg(b.path("ui/app/lib/runs-list.test.mjs"));
     test_step.dependOn(&runs_list_js_test.step);
+    // The Activity timeline merges two feeds that are each incomplete alone.
+    const board_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    board_js_test.addFileArg(b.path("ui/app/lib/board.test.mjs"));
+    test_step.dependOn(&board_js_test.step);
     const labels_js_test = b.addSystemCommand(&.{ "node", "--test" });
     labels_js_test.addFileArg(b.path("ui/app/core/labels.test.mjs"));
     test_step.dependOn(&labels_js_test.step);

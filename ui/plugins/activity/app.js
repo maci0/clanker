@@ -1,8 +1,14 @@
-/* activity: every log entry the board holds, merged into one timeline.
+/* activity: everything the board records happening, merged into one timeline.
 
    The board answers "what is the state of this card". This answers "what has
    been happening", which is the question you ask when you come back to a board
-   several clankers have been working on and want to know what moved. */
+   several clankers have been working on and want to know what moved.
+
+   Two feeds, because neither is complete. A card's `log` array is written by
+   one action only -- `log` -- so reading it alone showed nothing while cards
+   were being added, moved and archived. The board room's messages carry every
+   action, but only as far back as its history window. api.boardTimeline merges
+   and dedupes them. */
 
 clanker.registerView({
   id: "activity",
@@ -41,7 +47,7 @@ clanker.registerView({
     function draw(entries) {
       list.textContent = "";
       if (!entries.length) {
-        var empty = api.el("p", "run-empty", "Nothing recorded yet. Move a card, or write a line in a card's activity box. ");
+        var empty = api.el("p", "run-empty", "Nothing recorded yet. Add or move a card, and it appears here. ");
         var go = api.el("button", "primary", "Open kanban");
         go.type = "button";
         go.addEventListener("click", function () { api.showView("kanban"); });
@@ -80,17 +86,17 @@ clanker.registerView({
 
     function load() {
       refresh.disabled = true;
-      return api.getJSON("/api/board")
-        .then(function (d) {
-          var entries = [];
-          ((d.board && d.board.cards) || []).forEach(function (c) {
-            (c.log || []).forEach(function (e) {
-              entries.push({ ts: e.ts, who: e.who, what: e.what, card: c.title, id: c.id });
-            });
-          });
-          // Newest first: coming back to a board, the last thing that happened
-          // is the thing you are looking for.
-          entries.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+      // The room is the feed that can be absent -- a fresh checkout has no
+      // board room yet -- so a failure there degrades to the card logs rather
+      // than emptying the view. Only the board failing is a failure.
+      return Promise.all([
+        api.getJSON("/api/board"),
+        api.getJSON("/api/chat/messages?room=board&limit=500").catch(function () { return null; }),
+      ])
+        .then(function (both) {
+          var d = both[0];
+          var room = both[1];
+          var entries = api.boardTimeline((d.board && d.board.cards) || [], (room && room.messages) || []);
           draw(entries);
           api.status(entries.length + (entries.length === 1 ? " entry." : " entries."));
         })

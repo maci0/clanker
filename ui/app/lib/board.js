@@ -82,3 +82,62 @@ export function dueState(card) {
   if (left < 2 * 24 * 60 * 60) return "soon";
   return "ok";
 }
+
+
+/* One dated timeline of everything the board knows happened, newest first.
+
+   Two feeds, because neither is complete on its own. A card's `log` array is
+   written by exactly one action — `log` — so a board where cards were added,
+   moved, claimed and archived recorded nothing at all in it; that is what made
+   the Activity view read as idle while the board was being worked on. The room
+   messages carry every action, but only as far back as the room's history
+   window reaches, and a card's log survives past it.
+
+   `cards` is `/api/board`'s `board.cards`, `messages` is
+   `/api/chat/messages?room=board`. Either may be missing; a view that has one
+   feed should show that feed rather than nothing. */
+export function boardTimeline(cards, messages) {
+  var list = Array.isArray(cards) ? cards : [];
+  var titles = Object.create(null);
+  var rows = [];
+
+  list.forEach(function (c) {
+    if (!c) return;
+    if (c.id) titles[c.id] = c.title || "";
+    (c.log || []).forEach(function (e) {
+      if (!e) return;
+      rows.push({ ts: e.ts || 0, who: e.who || "", what: e.what || "", card: c.title || "", id: c.id || "", kind: "log" });
+    });
+  });
+
+  (Array.isArray(messages) ? messages : []).forEach(function (m) {
+    if (!m) return;
+    var action = boardAction(m.text);
+    if (!action) return;
+    // A `log` action reaches us on both feeds. The card's copy is the one to
+    // keep: it outlives the room's history window, and it reads as the note
+    // itself rather than through boardActionLine's "noted: " prefix.
+    if (action.action === "log") return;
+    var what = boardActionLine(m.text);
+    if (!what) return;
+    var id = action.todo || "";
+    rows.push({ ts: m.ts || 0, who: m.from || "", what: what, card: titles[id] || "", id: id, kind: "action" });
+  });
+
+  // Newest first: coming back to a board, the last thing that happened is the
+  // thing you are looking for.
+  rows.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+  return rows;
+}
+
+/* The parsed action behind a `@todo` line, or null. boardActionLine renders
+   one; the timeline also needs the action name and the card it names. */
+function boardAction(raw) {
+  if (typeof raw !== "string" || raw.slice(0, 6) !== "@todo ") return null;
+  try {
+    var a = JSON.parse(raw.slice(6));
+    return a && typeof a === "object" ? a : null;
+  } catch (e) {
+    return null;
+  }
+}
