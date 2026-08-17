@@ -2959,8 +2959,12 @@ fn fsGrepFile(
 
 /// ck_fs_stat(path), stat a path under the sandbox root.
 /// Returns a JSON object in the host arena:
-///   {"exists":true,"kind":"file","size":1234}
+///   {"exists":true,"kind":"file","size":1234,"mtime_ms":1786960145685}
 /// kind is one of "file", "directory", or "other".
+/// `mtime_ms` is the last-modification time in unix milliseconds. It is what
+/// lets a guest age a directory out by recency (`janitor`'s spill sweep) when
+/// the file names carry no order of their own — a spill id is a content hash,
+/// so nothing but the timestamp says which ones a live run just wrote.
 /// Returns Err.not_found when the path does not exist (no arena write).
 /// Enforces the same fs_prefixes policy as ck_fs_read / ck_fs_write.
 pub fn ckFsStat(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
@@ -2994,6 +2998,8 @@ pub fn ckFsStat(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     s.write(kind_str) catch return Err.too_large;
     s.objectField("size") catch return Err.too_large;
     s.print("{d}", .{size}) catch return Err.too_large;
+    s.objectField("mtime_ms") catch return Err.too_large;
+    s.print("{d}", .{@divTrunc(stat.mtime.nanoseconds, std.time.ns_per_ms)}) catch return Err.too_large;
     s.endObject() catch return Err.too_large;
     return h.writeResult(bytes, buf[0..w.end]);
 }
