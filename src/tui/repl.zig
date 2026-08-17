@@ -579,8 +579,9 @@ const Line = struct {
     user: bool = false,
 };
 
-/// A foldable region: one long assistant reply, collapsed behind a `>` header
-/// row until the user clicks it open. `start`/`count` name the reply's
+/// A foldable region: one long assistant reply, collapsed behind a `▸` header
+/// row. The header persists (as `▾`) while the reply is open and is the
+/// toggle in both directions. `start`/`count` name the reply's
 /// contiguous run in `Model.lines` (lines are only ever appended, so the range
 /// is stable once created). `expanded` is the user's intent; the animation
 /// drives `anim` toward it, and rendering reads `anim`, so a fold round-trips
@@ -1407,6 +1408,7 @@ const keys_help =
     \\                    pointer is over the input box
     \\  mouse drag        select text, transcript or input box (copies on
     \\                    release)
+    \\  click ▸/▾ reply   fold a long reply out or back in
     \\  Shift+drag        the terminal's own selection (bypasses clanker)
 ;
 
@@ -4720,14 +4722,21 @@ const Model = struct {
             if (self.foldIndexAtStart(i)) |fk| {
                 const f = self.folds.items[fk];
                 const shown = foldShownLines(f);
+                // The header is the toggle, so it is drawn (and its hit
+                // registered) in every state — `▸` collapsed, `▾` open. It
+                // used to disappear once the fold was fully expanded, which
+                // left the reply with no way back to collapsed, and made the
+                // draw disagree with `tailWindow`, which counts the header
+                // row unconditionally.
+                //
+                // `self.arena`, not `ctx.arena`: the hit list outlives the
+                // frame (a click arrives after the draw that built it) and
+                // `clearRetainingCapacity` would otherwise keep appending
+                // into a buffer the previous frame's arena already freed.
+                self.fold_hits.append(self.arena, .{ .row = row, .fold = fk }) catch {};
+                writeWrapped(surface, &row, bottom, text_width, self.foldHeader(ctx.arena, f), tool_style);
+                row += 1;
                 if (shown < f.count) {
-                    // `self.arena`, not `ctx.arena`: the hit list outlives the
-                    // frame (a click arrives after the draw that built it) and
-                    // `clearRetainingCapacity` would otherwise keep appending
-                    // into a buffer the previous frame's arena already freed.
-                    self.fold_hits.append(self.arena, .{ .row = row, .fold = fk }) catch {};
-                    writeWrapped(surface, &row, bottom, text_width, self.foldHeader(ctx.arena, f), tool_style);
-                    row += 1;
                     // In scrollback the fold may straddle the anchored `view_end`
                     // (start < view_end < start+count); only its body lines inside
                     // the visible window may be drawn, else rows past the anchor
@@ -4744,6 +4753,9 @@ const Model = struct {
                     i = f.start + f.count - 1;
                     continue;
                 }
+                // Fully open: fall through so the body lines keep their rich
+                // rendering (markdown, fences, tool cards) — only the
+                // partially-revealed animation frames draw plain.
             }
             const l = self.lines.items[i];
             // Each Line is one logical row (finishTurn/printHelp store the

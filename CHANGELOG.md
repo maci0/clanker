@@ -485,6 +485,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A long reply in `clanker repl` can be folded back in after being expanded.
+  The `▸ reply, N more lines` header is the fold's only toggle, and the draw
+  loop stopped drawing it (and registering its click target) once the reply
+  was fully open, so expansion was a one-way door. The header now persists as
+  `▾ reply` while open and clicking it collapses the reply again; this also
+  removes a one-row bottom-alignment error on expanded replies, whose header
+  row the layout counted but the draw never drew
+  (docs/reports/bugs/2026-08-17-fold-header-vanishes-when-expanded.md).
 - `clanker commit` now writes the plan it previewed. It called `smart_commit`
   twice — a dry run for the preview, then an independent apply — and each call
   asked the model to group the diff again, so the messages and the grouping

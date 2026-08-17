@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [TUI reply fold can be opened but never closed again](bugs/2026-08-17-fold-header-vanishes-when-expanded.md) — Resolved
+
 - [origin/main did not compile: an if mixed the optional catch-null form with an error-union else clause](bugs/2026-08-17-pushed-main-mixed-optional-and-error-else.md) — Resolved
 
 - [clanker commit applies a plan it computes a second time, not the one it previewed](bugs/2026-08-17-commit-applies-an-unconfirmed-plan.md) — Resolved
