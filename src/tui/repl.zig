@@ -850,7 +850,9 @@ fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config, env
         var mit = pentry.value_ptr.models.iterator();
         while (mit.next()) |mentry| {
             const display = mentry.value_ptr.display orelse mentry.key_ptr.*;
-            const label = if (mentry.value_ptr.cost_per_1m_input != null or mentry.value_ptr.cost_per_1m_output != null)
+            // The row label carries the whole spec inline (the picker has no
+            // separate detail line for models); category joins it when set.
+            const base = if (mentry.value_ptr.cost_per_1m_input != null or mentry.value_ptr.cost_per_1m_output != null)
                 try std.fmt.allocPrint(arena, "{s}/{s}  {d} ctx  ${d}/${d} per 1M", .{
                     pentry.key_ptr.*,
                     display,
@@ -860,6 +862,10 @@ fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config, env
                 })
             else
                 try std.fmt.allocPrint(arena, "{s}/{s}  {d} ctx", .{ pentry.key_ptr.*, display, mentry.value_ptr.context_window });
+            const label = if (mentry.value_ptr.category.len > 0)
+                try std.fmt.allocPrint(arena, "{s}  {s}", .{ base, mentry.value_ptr.category })
+            else
+                base;
             try out.append(arena, .{
                 .provider = pentry.key_ptr.*,
                 .model = mentry.key_ptr.*,
@@ -5442,9 +5448,11 @@ const Model = struct {
         };
         const max_rows: u16 = 8;
         const rows_shown: u16 = @intCast(@min(count, max_rows));
-        // Model and effort get one extra row above the guide: the highlighted
-        // model's spec line, or where the effective effort comes from.
-        const detail_extra: u16 = if (count > 0 and (self.picker_kind == .model or self.picker_kind == .effort)) 1 else 0;
+        // Effort gets one extra row above the guide: where the effective
+        // effort comes from, which no row shows. Model rows already carry
+        // their whole spec inline, so a detail row there would repeat the
+        // highlighted row in grey and read as a second highlight.
+        const detail_extra: u16 = if (count > 0 and self.picker_kind == .effort) 1 else 0;
         // The picker commits on Enter, so teach its controls at the decision
         // point instead of expecting the user to remember the /help prose.
         const h = pickerHeight(count, max_rows) + detail_extra; // border + query + rows/empty + [detail] + guide + border
@@ -5529,26 +5537,11 @@ const Model = struct {
             }
         }
         if (detail_extra == 1) {
-            const detail: []const u8 = switch (self.picker_kind) {
-                .model => blk: {
-                    const c = model_matches[@min(self.picker_selected, count - 1)];
-                    break :blk std.fmt.bufPrint(&self.picker_detail_buf, "  {s}/{s} · ctx {d} · ${d}/${d} per 1M{s}{s}", .{
-                        c.provider,
-                        c.display,
-                        c.context_window,
-                        c.cost_in orelse 0,
-                        c.cost_out orelse 0,
-                        if (c.category.len > 0) " · " else "",
-                        c.category,
-                    }) catch "";
-                },
-                .effort => blk: {
-                    const res = resolveEffort(&self.cfg, &self.provider);
-                    const level: []const u8 = if (res.level) |l| @tagName(l) else if (res.source == .classifier) "auto (per turn)" else "provider default";
-                    break :blk std.fmt.bufPrint(&self.picker_detail_buf, "  current: {s} — {s}", .{ level, effortSourceLabel(res.source) }) catch "";
-                },
-                else => "",
-            };
+            // Only the source: the level itself is already the row wearing
+            // the (current) marker, and repeating it here in grey was the
+            // same double-highlight confusion the /model detail row had.
+            const res = resolveEffort(&self.cfg, &self.provider);
+            const detail = std.fmt.bufPrint(&self.picker_detail_buf, "  source: {s}", .{effortSourceLabel(res.source)}) catch "";
             if (detail.len > 0) writeRow(surface, y + h - 3, detail, .{ .dim = true });
         }
         const sel = if (count > 0) @min(self.picker_selected, count - 1) else 0;

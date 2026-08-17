@@ -69,8 +69,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   effective level and shows where it comes from (pin, `auto_thinking`
   classifier, per-model config, or sampling profile); Enter pins
   `agent.reasoning_effort` for the session and `default` clears the pin.
-  `/model` marks the active provider/model, shows a spec detail line for
-  the highlighted row (context window, cost per 1M in/out, category), and
+  `/model` marks the active provider/model, carries each row's spec
+  inline (context window, cost per 1M in/out, category), and
   lists only models whose provider passes the offline credential gate
   `providers check` uses — an entry whose `api_key_env` is unset no longer
   appears. A keyless loopback provider (vllm, ollama) is additionally
