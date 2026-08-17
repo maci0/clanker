@@ -93,6 +93,8 @@ projects, and the strongest case against the recommendation.
 ## Inventory
 
 <!-- inventory:rfc:start -->
+- [RFC 0009 — REPL block-level markdown in the vaxis transcript](0009-repl-block-level-markdown-in-the-vaxis-transcript.md) — Decided
+- [RFC 0009 — REPL block-level markdown rendering](0009-repl-block-level-markdown-rendering.md) — Draft
 - [RFC 0008 — How an agent claims a shared resource before writing it](0008-claims-on-shared-resources.md) — Discussion
 - [RFC 0007 — HTTP surface for the five record-store tools](0007-records-http-surface.md) — Decided
 - [RFC 0006 — Where ck_cas lock sidecars live](0006-where-ck-cas-lock-sidecars-live.md) — Discussion

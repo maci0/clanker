@@ -5642,6 +5642,42 @@ test "inline markdown splits into styled segments and leaves plain text whole" {
     try mdLineSegments(&theme, arena, "just text with a * star", &plain);
     try std.testing.expectEqual(@as(usize, 1), plain.items.len);
     try std.testing.expectEqualStrings("just text with a * star", plain.items[0].text);
+
+    // Block quote renders a left rule segment then inline body
+    var quote: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "> quoted **bold**", &quote);
+    try std.testing.expect(quote.items.len >= 2);
+    try std.testing.expectEqualStrings("▎ ", quote.items[0].text);
+    var qbold = false;
+    for (quote.items) |s| {
+        if (std.mem.eql(u8, s.text, "bold")) qbold = s.style.bold;
+    }
+    try std.testing.expect(qbold);
+
+    // Nested quote depth 2 renders two rules
+    var q2: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, ">> deep", &q2);
+    try std.testing.expectEqualStrings("▎ ", q2.items[0].text);
+    try std.testing.expectEqualStrings("▎ ", q2.items[1].text);
+
+    // Table row splits into cells with separator
+    var tbl: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "| a | b |", &tbl);
+    var has_sep = false;
+    for (tbl.items) |s| {
+        if (std.mem.eql(u8, s.text, " │ ")) has_sep = true;
+    }
+    try std.testing.expect(has_sep);
+
+    // Ordered list renders marker then body
+    var ol: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "1. first", &ol);
+    try std.testing.expectEqualStrings("1. ", ol.items[0].text);
+
+    // Nested bullet indents and uses bullet marker
+    var nest: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "  - nested", &nest);
+    try std.testing.expectEqualStrings("• ", nest.items[1].text);
 }
 
 test "a collapsed fold reserves exactly the rows the draw loop will use" {
@@ -5946,6 +5982,7 @@ const MdStyles = struct {
     code: vaxis.Style,
     heading: vaxis.Style,
     bullet: vaxis.Style,
+    quote: vaxis.Style,
     plain: vaxis.Style,
 };
 
@@ -5956,6 +5993,7 @@ fn mdStyles(active: *const theme_mod.Theme) MdStyles {
         .code = .{ .fg = .{ .rgb = c.builtin } },
         .heading = .{ .bold = true, .fg = .{ .rgb = c.accent } },
         .bullet = .{ .fg = .{ .rgb = c.accent } },
+        .quote = .{ .fg = .{ .rgb = c.accent }, .dim = true },
         .plain = .{},
     };
     const on = active.reset.len > 0;
@@ -5965,6 +6003,7 @@ fn mdStyles(active: *const theme_mod.Theme) MdStyles {
         .code = if (on) .{ .fg = .{ .index = 6 } } else .{},
         .heading = .{ .bold = true },
         .bullet = if (on) .{ .fg = .{ .index = 2 } } else .{},
+        .quote = .{ .dim = true },
         .plain = .{},
     };
 }
@@ -6017,13 +6056,77 @@ fn appendInline(arena: std.mem.Allocator, text: []const u8, st: MdStyles, out: *
     try flush(arena, out, text[seg_start..], st.plain);
 }
 
+fn quoteDepthAndRest(line: []const u8) struct { depth: usize, rest: []const u8 } {
+    var i: usize = 0;
+    while (i < line.len and line[i] == ' ') i += 1;
+    var depth: usize = 0;
+    while (i < line.len and line[i] == '>') {
+        depth += 1;
+        i += 1;
+        if (i < line.len and line[i] == ' ') i += 1;
+    }
+    if (depth == 0) return .{ .depth = 0, .rest = line };
+    return .{ .depth = depth, .rest = line[i..] };
+}
+
+fn isTableRow(line: []const u8) bool {
+    const t = std.mem.trim(u8, line, " \t");
+    if (t.len < 2) return false;
+    if (t[0] != '|' or t[t.len - 1] != '|') return false;
+    return std.mem.findScalar(u8, t[1 .. t.len - 1], '|') != null or std.mem.count(u8, t, "|") >= 2;
+}
+
+fn orderedMarkerLen(s: []const u8) usize {
+    var n: usize = 0;
+    while (n < s.len and s[n] >= '0' and s[n] <= '9') n += 1;
+    if (n == 0 or n > 4) return 0;
+    if (n + 1 >= s.len) return 0;
+    if (s[n] != '.' and s[n] != ')') return 0;
+    if (s[n + 1] != ' ') return 0;
+    return n + 2;
+}
+
 /// Renders one transcript line as inline markdown segments: a `# heading`
 /// becomes bold-accent, a `-`/`*`/`+` bullet gets an accent dot then inline
-/// body, everything else is inline-parsed prose. Line-level only (no
-/// multi-line constructs); a line that is not markdown comes back as one plain
-/// segment, so the caller can always render the result.
+/// body, `> quote` gets a left rule, `| a | b |` renders as aligned table
+/// cells (when part of a table block the caller should pre-detect), ordered
+/// lists (`1. `) and nested bullets (indent depth) get nesting-aware markers.
+/// Line-level only; the block callers detect multi-line constructs by
+/// peeking at neighbours.
 fn mdLineSegments(active: *const theme_mod.Theme, arena: std.mem.Allocator, text: []const u8, out: *std.ArrayList(vaxis.Segment)) !void {
     const st = mdStyles(active);
+    // Block quote: `> ` / `>> ` with nesting → left rule per depth
+    const q = quoteDepthAndRest(text);
+    if (q.depth > 0) {
+        for (0..q.depth) |_| try out.append(arena, .{ .text = "▎ ", .style = st.quote });
+        try appendInline(arena, q.rest, st, out);
+        return;
+    }
+    // Table row: render cells inline, header row in heading style when caller
+    // flagged it; line-level fallback just joins cells with ` │ `.
+    if (isTableRow(text)) {
+        // Split on `|` and inline-parse each cell; header handled by `mdTableRow` when whole block is known.
+        // Here keep the raw `|` separators with quote-dim style so a lone row still reads as a table.
+        const trimmed = std.mem.trim(u8, text, " \t");
+        var first = true;
+        var it = std.mem.splitScalar(u8, trimmed, '|');
+        while (it.next()) |cell| {
+            const c = std.mem.trim(u8, cell, " \t");
+            if (c.len == 0 and first) {
+                first = false;
+                continue;
+            }
+            if (c.len == 0 and it.peek() == null) break;
+            if (!first) try out.append(arena, .{ .text = " │ ", .style = st.quote });
+            first = false;
+            if (isTableSeparator(c)) {
+                try out.append(arena, .{ .text = "───", .style = st.quote });
+            } else {
+                try appendInline(arena, c, st, out);
+            }
+        }
+        return;
+    }
     var h: usize = 0;
     while (h < text.len and text[h] == '#') h += 1;
     if (h >= 1 and h <= 6 and h < text.len and text[h] == ' ') {
@@ -6032,13 +6135,35 @@ fn mdLineSegments(active: *const theme_mod.Theme, arena: std.mem.Allocator, text
     }
     var indent: usize = 0;
     while (indent < text.len and text[indent] == ' ') indent += 1;
-    if (indent + 1 < text.len and (text[indent] == '-' or text[indent] == '*' or text[indent] == '+') and text[indent + 1] == ' ') {
+    // Ordered list: `1. ` / `1) ` with nesting via indent
+    const mlen = orderedMarkerLen(text[indent..]);
+    if (mlen != 0) {
         if (indent > 0) try out.append(arena, .{ .text = text[0..indent], .style = st.plain });
-        try out.append(arena, .{ .text = "\xe2\x80\xa2 ", .style = st.bullet }); // "• "
+        const level = indent / 2;
+        for (0..level) |_| try out.append(arena, .{ .text = "  ", .style = st.plain });
+        const marker = text[indent .. indent + mlen];
+        try out.append(arena, .{ .text = marker, .style = st.bullet });
+        try appendInline(arena, text[indent + mlen ..], st, out);
+        return;
+    }
+    if (indent + 1 < text.len and (text[indent] == '-' or text[indent] == '*' or text[indent] == '+') and text[indent + 1] == ' ') {
+        const level = indent / 2;
+        if (level > 0) {
+            for (0..level) |_| try out.append(arena, .{ .text = "  ", .style = st.plain });
+        } else if (indent > 0) {
+            try out.append(arena, .{ .text = text[0..indent], .style = st.plain });
+        }
+        try out.append(arena, .{ .text = "• ", .style = st.bullet });
         try appendInline(arena, text[indent + 2 ..], st, out);
         return;
     }
     try appendInline(arena, text, st, out);
+}
+
+fn isTableSeparator(cell: []const u8) bool {
+    if (cell.len < 3) return false;
+    for (cell) |ch| if (ch != '-' and ch != ':' and ch != ' ') return false;
+    return std.mem.findScalar(u8, cell, '-') != null;
 }
 
 /// Writes styled segments with grapheme-accurate widths, wrapping at the
