@@ -103,9 +103,12 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
 fn doList(out: *lib.Out) !void {
     const loaded = try load();
     const now: i64 = @trunc(lib.nowSeconds());
-    var jbuf: [65536]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&jbuf);
-    var s: std.json.Stringify = .{ .writer = &w, .options = .{} };
+    // The fixed 64 KiB buffer could not hold the legal worst case: 50 alarms
+    // at 500 bytes each, with JSON escaping potentially tripling the message
+    // bytes, and a fixed writer panics on overflow. An arena-backed writer
+    // grows instead of crashing the guest on a full list.
+    var aw: std.Io.Writer.Allocating = .init(lib.alloc);
+    var s: std.json.Stringify = .{ .writer = &aw.writer, .options = .{} };
     try s.beginObject();
     try s.objectField("ok");
     try s.write(true);
@@ -129,7 +132,7 @@ fn doList(out: *lib.Out) !void {
     }
     try s.endArray();
     try s.endObject();
-    return out.writeAll(jbuf[0..w.end]);
+    return out.writeAll(aw.written());
 }
 
 /// Mark an alarm handled. A one-shot is removed (same as cancel); a
@@ -219,11 +222,13 @@ fn load() !Loaded {
 /// True when the write landed; false on a CAS mismatch (caller re-reads and
 /// retries). Any other failure is a real error.
 fn store(loaded: Loaded) !bool {
-    var jbuf: [65536]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&jbuf);
-    var s: std.json.Stringify = .{ .writer = &w, .options = .{ .whitespace = .indent_2 } };
+    // Same growth reason as doList: the worst-case alarm list (50 x 500-byte
+    // messages with JSON escaping) exceeds any fixed stack buffer worth
+    // having, and an overflow would abort the write with no retry.
+    var aw: std.Io.Writer.Allocating = .init(lib.alloc);
+    var s: std.json.Stringify = .{ .writer = &aw.writer, .options = .{ .whitespace = .indent_2 } };
     try s.write(loaded.alarms.items);
-    lib.fsWriteIf(path, loaded.seen_hash, jbuf[0..w.end]) catch |err| switch (err) {
+    lib.fsWriteIf(path, loaded.seen_hash, aw.written()) catch |err| switch (err) {
         error.Mismatch => return false,
         else => return err,
     };
