@@ -82,17 +82,12 @@ fn search(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         return Error.MissingArg;
     };
 
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("search");
-    try s.objectField("query");
-    try s.write(query);
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "search" } },
+        .{ .name = "query", .value = .{ .text = query } },
+    });
 
-    const result = try common.callTool(arena, "rfc", tool, input.written());
+    const result = try common.callTool(arena, "rfc", tool, input);
     return renderSearch(arena, query, common.arrayField(result, "rfcs"), common.arrayField(result, "adrs"));
 }
 
@@ -102,17 +97,12 @@ fn open(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         return Error.MissingArg;
     };
 
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("open");
-    try s.objectField("path");
-    try s.write(path);
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "open" } },
+        .{ .name = "path", .value = .{ .text = path } },
+    });
 
-    const result = try common.callTool(arena, "rfc", tool, input.written());
+    const result = try common.callTool(arena, "rfc", tool, input);
     // The RFC is markdown that was written to be read; return it as it is.
     const text = json_util.strFieldOrEmpty(result.object, "text");
     if (text.len > 0 and text[text.len - 1] != '\n') return std.fmt.allocPrint(arena, "{s}\n", .{text});
@@ -122,19 +112,12 @@ fn open(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 /// What an RFC has to pin down, and the question to put to whoever asked for
 /// it. This is the answer to "the request is too vague to draft from".
 fn checklist(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("checklist");
-    if (opts.arg1) |topic| {
-        try s.objectField("topic");
-        try s.write(topic);
-    }
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "checklist" } },
+        .{ .name = "topic", .value = common.Field.optional(opts.arg1) },
+    });
 
-    const result = try common.callTool(arena, "rfc", tool, input.written());
+    const result = try common.callTool(arena, "rfc", tool, input);
     return renderChecklist(arena, json_util.strFieldOrEmpty(result.object, "topic"), common.arrayField(result, "requirements"));
 }
 
@@ -144,23 +127,14 @@ fn create(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const title = opts.arg1 orelse return missingCreateArg("a title naming the decision");
     const overview = opts.arg2 orelse return missingCreateArg("an overview of what has to be decided and why now");
 
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("create");
-    try s.objectField("title");
-    try s.write(title);
-    try s.objectField("overview");
-    try s.write(overview);
-    if (opts.arg3) |slug| {
-        try s.objectField("slug");
-        try s.write(slug);
-    }
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "create" } },
+        .{ .name = "title", .value = .{ .text = title } },
+        .{ .name = "overview", .value = .{ .text = overview } },
+        .{ .name = "slug", .value = common.Field.optional(opts.arg3) },
+    });
 
-    const result = try common.callTool(arena, "rfc", tool, input.written());
+    const result = try common.callTool(arena, "rfc", tool, input);
     const path = json_util.strFieldOrEmpty(result.object, "path");
     var w: std.Io.Writer.Allocating = .init(arena);
     errdefer w.deinit();
@@ -192,19 +166,13 @@ fn append(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         return Error.MissingArg;
     };
 
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("append");
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("content");
-    try s.write(content);
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "append" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "content", .value = .{ .text = content } },
+    });
 
-    const result = try common.callTool(arena, "rfc", tool, input.written());
+    const result = try common.callTool(arena, "rfc", tool, input);
     return std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
 }
 
@@ -224,21 +192,14 @@ fn update(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         return Error.MissingArg;
     };
 
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("update");
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("old");
-    try s.write(old);
-    try s.objectField("new");
-    try s.write(new);
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "update" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "old", .value = .{ .text = old } },
+        .{ .name = "new", .value = .{ .text = new } },
+    });
 
-    const result = try common.callTool(arena, "rfc", tool, input.written());
+    const result = try common.callTool(arena, "rfc", tool, input);
     return std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
 }
 
@@ -259,23 +220,15 @@ fn recommend(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         return Error.MissingArg;
     }
 
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("recommend");
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("recommendation");
-    try s.write(text);
-    try s.objectField("confidence");
-    try s.write(confidence);
-    try s.objectField("rationale");
-    try s.write(rationale);
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "recommend" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "recommendation", .value = .{ .text = text } },
+        .{ .name = "confidence", .value = .{ .number = confidence } },
+        .{ .name = "rationale", .value = .{ .text = rationale } },
+    });
 
-    const result = try common.callTool(arena, "rfc", tool, input.written());
+    const result = try common.callTool(arena, "rfc", tool, input);
     return std.fmt.allocPrint(arena, "recommended on {s} at confidence {d}/10\n", .{
         json_util.strFieldOrEmpty(result.object, "path"),
         common.unsignedField(result, "confidence"),
@@ -292,21 +245,14 @@ fn setStatus(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const wanted = opts.arg2 orelse return missingStatusArg("a status: draft, discussion, decided, deferred, withdrawn or superseded");
     const note = opts.arg3 orelse "";
 
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("status");
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("status");
-    try s.write(wanted);
-    try s.objectField("note");
-    try s.write(note);
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "status" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "status", .value = .{ .text = wanted } },
+        .{ .name = "note", .value = .{ .text = note } },
+    });
 
-    const result = try common.callTool(arena, "rfc", tool, input.written());
+    const result = try common.callTool(arena, "rfc", tool, input);
     var w: std.Io.Writer.Allocating = .init(arena);
     errdefer w.deinit();
     try w.writer.print("{s} is now {s}\n", .{

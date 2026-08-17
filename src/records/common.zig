@@ -45,6 +45,54 @@ pub const match_column_bytes: usize = 68;
 /// surrounding context instead of a uniform column.
 pub const match_lines_per_file_max: usize = 50;
 
+/// One field of a tool request. `absent` is what an optional argument becomes
+/// when it was not given: the field is left out of the object entirely, which
+/// is what every one of these tools reads as "not supplied". Writing it as a
+/// null would make each tool decide again whether null and missing differ.
+pub const Field = struct {
+    name: []const u8,
+    value: Value,
+
+    pub const Value = union(enum) {
+        text: []const u8,
+        number: u64,
+        absent,
+    };
+
+    /// An argument the caller may or may not have: `.{ .name = "slug", .value
+    /// = Field.optional(opts.arg3) }`.
+    pub fn optional(s: ?[]const u8) Value {
+        return if (s) |v| .{ .text = v } else .absent;
+    }
+};
+
+/// Builds a record tool's request object. Every store spells its requests the
+/// same way — an `action` plus a handful of flat scalars — and each used to
+/// hand-roll the same eight lines of `std.json.Stringify` per subcommand, five
+/// stores deep. One builder, so a field cannot be written with a stray
+/// `objectField` and no value in one store only.
+pub fn request(arena: std.mem.Allocator, fields: []const Field) ![]const u8 {
+    var w: std.Io.Writer.Allocating = .init(arena);
+    errdefer w.deinit();
+    var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+    try s.beginObject();
+    for (fields) |f| {
+        switch (f.value) {
+            .text => |t| {
+                try s.objectField(f.name);
+                try s.write(t);
+            },
+            .number => |n| {
+                try s.objectField(f.name);
+                try s.write(n);
+            },
+            .absent => {},
+        }
+    }
+    try s.endObject();
+    return w.written();
+}
+
 /// Runs the store's tool and returns its parsed answer, or `ToolFailed` with
 /// the reason already logged. `store` is the command's own name, which is what
 /// prefixes the log line.
@@ -70,17 +118,29 @@ pub fn callTool(arena: std.mem.Allocator, store: []const u8, tool: Tool, input: 
     return parsed;
 }
 
+// The three readers take a whole `std.json.Value` rather than its `.object`,
+// so they are the ones a caller reaches for on a *nested* row of a tool answer
+// as well as on the answer itself. A row is whatever the tool put in the array
+// and need not be an object at all, so each checks the tag rather than
+// unwrapping it: `.object` on a non-object is a panic, not a missing field.
+
 pub fn boolField(obj: std.json.Value, name: []const u8) bool {
+    if (obj != .object) return false;
     const v = obj.object.get(name) orelse return false;
     return v == .bool and v.bool;
 }
 
 pub fn arrayField(obj: std.json.Value, name: []const u8) []const std.json.Value {
+    if (obj != .object) return &.{};
     const v = obj.object.get(name) orelse return &.{};
     return if (v == .array) v.array.items else &.{};
 }
 
+/// A count read unsigned: `{d}` on an i64 carries an explicit `+`, which reads
+/// as a diff marker in a column of numbers. A negative count is not one, so it
+/// reads as zero rather than wrapping through `@intCast`.
 pub fn unsignedField(obj: std.json.Value, name: []const u8) u64 {
+    if (obj != .object) return 0;
     const v = obj.object.get(name) orelse return 0;
     if (v != .integer or v.integer < 0) return 0;
     return @intCast(v.integer);

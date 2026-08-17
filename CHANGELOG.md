@@ -612,6 +612,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker stats` and `GET /api/stats` no longer stop working once enough
+  models have been used. The response was assembled in a fixed 64 KiB buffer
+  while the list it holds has one row per (provider, model) pair ever
+  recorded, so past roughly 150 pairs the write overflowed and `ck_stats`
+  answered `too_large` -- the whole surface went from working to erroring on
+  a threshold nothing announced. The body now grows to fit.
+- `clanker stats` no longer reports zero usage when the log is over its cap.
+  The cap is enforced by the *next* append, so `state/token_stats.jsonl`
+  legitimately sits above it between the write that crosses it and the write
+  that trims it; the reader allowed no such headroom, failed on that file,
+  and answered "no records", which reads as a fresh install. Readers now
+  allow the same slack the trimmer already did, and a read that fails for any
+  reason other than a missing file is logged instead of being reported as no
+  usage.
 - A sandboxed tool's HTTP request (`ck_http`, so `web_fetch` and every other
   network-granted tool) now runs under a 60s wall-clock ceiling instead of
   waiting forever. `std.http.Client` has no read timeout, so an allowlisted

@@ -89,9 +89,9 @@ fn search(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         return Error.MissingArg;
     };
 
-    const input = try request(arena, &.{
-        .{ "action", "search" },
-        .{ "query", query },
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "search" } },
+        .{ .name = "query", .value = .{ .text = query } },
     });
     const result = try common.callTool(arena, "research", tool, input);
     return renderSearch(arena, query, common.arrayField(result, "matches"));
@@ -103,9 +103,9 @@ fn open(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         return Error.MissingArg;
     };
 
-    const input = try request(arena, &.{
-        .{ "action", "open" },
-        .{ "path", path },
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "open" } },
+        .{ .name = "path", .value = .{ .text = path } },
     });
     const result = try common.callTool(arena, "research", tool, input);
     // The note is markdown that was written to be read; return it as it is.
@@ -121,11 +121,11 @@ fn plan(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         log.log(.error_, "research plan needs a topic: clanker research plan \"embedded key-value stores\" \"which one fits a single-writer sidecar?\"", .{});
         return Error.MissingArg;
     };
-    const input = try request(arena, &.{
-        .{ "action", "plan" },
-        .{ "topic", topic },
-        .{ "question", opts.arg2 orelse "" },
-        .{ "depth", opts.arg3 orelse "standard" },
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "plan" } },
+        .{ .name = "topic", .value = .{ .text = topic } },
+        .{ .name = "question", .value = .{ .text = opts.arg2 orelse "" } },
+        .{ .name = "depth", .value = .{ .text = opts.arg3 orelse "standard" } },
     });
     const result = try common.callTool(arena, "research", tool, input);
     return renderPlan(arena, result);
@@ -136,10 +136,10 @@ fn sweep(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         log.log(.error_, "research sweep needs a topic: clanker research sweep \"embedded key-value stores\" deep", .{});
         return Error.MissingArg;
     };
-    const input = try request(arena, &.{
-        .{ "action", "sweep" },
-        .{ "topic", topic },
-        .{ "depth", opts.arg2 orelse "standard" },
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "sweep" } },
+        .{ .name = "topic", .value = .{ .text = topic } },
+        .{ .name = "depth", .value = .{ .text = opts.arg2 orelse "standard" } },
     });
     const result = try common.callTool(arena, "research", tool, input);
     return renderSweep(arena, result);
@@ -152,11 +152,11 @@ fn create(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const title = opts.arg2 orelse return missingCreateArg("a title");
     const question = opts.arg3 orelse return missingCreateArg("the question the note answers");
 
-    const input = try request(arena, &.{
-        .{ "action", "create" },
-        .{ "slug", slug },
-        .{ "title", title },
-        .{ "question", question },
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "create" } },
+        .{ .name = "slug", .value = .{ .text = slug } },
+        .{ .name = "title", .value = .{ .text = title } },
+        .{ .name = "question", .value = .{ .text = question } },
     });
     const result = try common.callTool(arena, "research", tool, input);
     const path = json_util.strFieldOrEmpty(result.object, "path");
@@ -189,10 +189,10 @@ fn append(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         return Error.MissingArg;
     };
 
-    const input = try request(arena, &.{
-        .{ "action", "append" },
-        .{ "path", path },
-        .{ "content", content },
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "append" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "content", .value = .{ .text = content } },
     });
     const result = try common.callTool(arena, "research", tool, input);
     return std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
@@ -214,11 +214,11 @@ fn update(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         return Error.MissingArg;
     };
 
-    const input = try request(arena, &.{
-        .{ "action", "update" },
-        .{ "path", path },
-        .{ "old", old },
-        .{ "new", new },
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "update" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "old", .value = .{ .text = old } },
+        .{ .name = "new", .value = .{ .text = new } },
     });
     const result = try common.callTool(arena, "research", tool, input);
     return std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
@@ -228,11 +228,11 @@ fn setStatus(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const path = opts.arg1 orelse return missingStatusArg("a note path");
     const wanted = opts.arg2 orelse return missingStatusArg("a state: draft, current, stale or superseded");
 
-    const input = try request(arena, &.{
-        .{ "action", "status" },
-        .{ "path", path },
-        .{ "status", wanted },
-        .{ "note", opts.arg3 orelse "" },
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "status" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "status", .value = .{ .text = wanted } },
+        .{ .name = "note", .value = .{ .text = opts.arg3 orelse "" } },
     });
     const result = try common.callTool(arena, "research", tool, input);
 
@@ -255,35 +255,9 @@ fn missingStatusArg(what: []const u8) Error {
 
 // ----------------------------------------------------------------- the tool --
 
-/// Builds a flat `{"key":"value"}` request. Every field the research tool takes
-/// from this command is a string, so one builder covers all nine subcommands
-/// and each of them stays a list of pairs rather than twelve lines of
-/// stringifier calls.
-fn request(arena: std.mem.Allocator, fields: []const [2][]const u8) ![]const u8 {
-    var w: std.Io.Writer.Allocating = .init(arena);
-    errdefer w.deinit();
-    var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
-    try s.beginObject();
-    for (fields) |f| {
-        try s.objectField(f[0]);
-        try s.write(f[1]);
-    }
-    try s.endObject();
-    return w.written();
-}
-
 fn strOf(v: std.json.Value, name: []const u8) []const u8 {
     if (v != .object) return "";
     return json_util.strFieldOrEmpty(v.object, name);
-}
-
-/// A count printed unsigned: `{d}` on an i64 carries an explicit `+`, which
-/// reads as a diff marker in a column of numbers.
-fn intOf(v: std.json.Value, name: []const u8) u64 {
-    if (v != .object) return 0;
-    const n = v.object.get(name) orelse return 0;
-    if (n != .integer or n.integer < 0) return 0;
-    return @intCast(n.integer);
 }
 
 // --------------------------------------------------------------- the listing --
@@ -307,7 +281,7 @@ pub fn renderList(arena: std.mem.Allocator, index_md: []const u8) ![]const u8 {
     }
 
     try w.writer.writeAll("NOTES\n\n");
-    const width = statusWidth(entries);
+    const width = reports_cmd.statusWidth(entries);
     for (entries) |e| {
         const status = if (e.note.len > 0 and e.note.len <= status_column_max) e.note else "";
         try w.writer.splatByteAll(' ', 2);
@@ -330,18 +304,6 @@ pub fn renderList(arena: std.mem.Allocator, index_md: []const u8) ![]const u8 {
     try w.writer.writeAll("  clanker research search \"<text>\"     search every note\n");
     try w.writer.writeAll("  clanker research sweep \"<topic>\"     gather sources for a new one\n");
     return w.written();
-}
-
-/// Widest status that earned the column, so titles line up without the column
-/// stretching to fit a sentence that is not a status.
-fn statusWidth(entries: []const reports_cmd.Entry) usize {
-    var widest: usize = 0;
-    for (entries) |e| {
-        if (e.note.len == 0 or e.note.len > status_column_max) continue;
-        if (e.note.len + 1 > widest) widest = e.note.len + 1;
-    }
-    if (widest == 0) return 0;
-    return @max(widest, status_column_min);
 }
 
 // ---------------------------------------------------------------- the search --
@@ -457,8 +419,8 @@ pub fn renderSweep(arena: std.mem.Allocator, result: std.json.Value) ![]const u8
     try w.writer.print("sweep: {s}\n", .{json_util.strFieldOrEmpty(result.object, "topic")});
     try w.writer.print("depth {s} · {d} fetches · {d} duplicate(s) dropped\n", .{
         json_util.strFieldOrEmpty(result.object, "depth"),
-        intOf(result, "fetches"),
-        intOf(result, "duplicates_dropped"),
+        common.unsignedField(result, "fetches"),
+        common.unsignedField(result, "duplicates_dropped"),
     });
     if (result.object.get("warning")) |v| {
         if (v == .string) try w.writer.print("\nwarning: {s}\n", .{v.string});
@@ -492,11 +454,11 @@ pub fn renderSweep(arena: std.mem.Allocator, result: std.json.Value) ![]const u8
             // Stars alone flatter an abandoned repository; the last push and
             // the archived flag are what make the number mean anything.
             try w.writer.print("    {d} stars · {s} · {s} · pushed {s}{s}\n\n", .{
-                intOf(repo, "stars"),
+                common.unsignedField(repo, "stars"),
                 orDash(strOf(repo, "language")),
                 orDash(strOf(repo, "license")),
                 orDash(strOf(repo, "pushed_at")),
-                if (boolOf(repo, "archived")) " · ARCHIVED" else "",
+                if (common.boolField(repo, "archived")) " · ARCHIVED" else "",
             });
         }
     }
@@ -508,8 +470,8 @@ pub fn renderSweep(arena: std.mem.Allocator, result: std.json.Value) ![]const u8
             const url = strOf(story, "url");
             if (url.len > 0) try w.writer.print("    {s}\n", .{url});
             try w.writer.print("    {d} points · {d} comments · {s}\n\n", .{
-                intOf(story, "points"),
-                intOf(story, "comments"),
+                common.unsignedField(story, "points"),
+                common.unsignedField(story, "comments"),
                 strOf(story, "discussion_url"),
             });
         }
@@ -545,12 +507,6 @@ pub fn renderSweep(arena: std.mem.Allocator, result: std.json.Value) ![]const u8
     try w.writer.writeAll("NEXT\n\n");
     try w.writer.writeAll("  clanker research create <slug> \"<title>\" \"<question>\"   record what survives\n");
     return w.written();
-}
-
-fn boolOf(v: std.json.Value, name: []const u8) bool {
-    if (v != .object) return false;
-    const b = v.object.get(name) orelse return false;
-    return b == .bool and b.bool;
 }
 
 /// An empty field prints as a dash rather than as a gap, so a row of metadata
@@ -709,9 +665,9 @@ test "a refused tool call fails with the tool's own sentence, not a generic erro
 test "request builds a flat object with every field escaped" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    const json = try request(arena.allocator(), &.{
-        .{ "action", "update" },
-        .{ "old", "a \"quoted\" line\n" },
+    const json = try common.request(arena.allocator(), &.{
+        .{ .name = "action", .value = .{ .text = "update" } },
+        .{ .name = "old", .value = .{ .text = "a \"quoted\" line\n" } },
     });
     try std.testing.expectEqualStrings("{\"action\":\"update\",\"old\":\"a \\\"quoted\\\" line\\n\"}", json);
 }

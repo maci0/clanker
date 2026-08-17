@@ -4,8 +4,9 @@
 //! Support is that package plus a reachable base URL (catalog `api`, or a
 //! default we know for the official host) and an auth strategy we already
 //! implement. A new vendor on `@ai-sdk/openai-compatible` with an `api` URL
-//! is supported without a new row. Gemini-native, Bedrock, Azure, and
-//! Bedrock needs a new `ProviderKind` before it belongs here.
+//! is supported without a new row. Gemini-native, Vertex, and Azure each have
+//! a kind and a row below; Bedrock needs a new `ProviderKind` before it
+//! belongs here.
 
 const std = @import("std");
 const config = @import("../config.zig");

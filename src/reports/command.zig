@@ -84,19 +84,13 @@ fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     };
     const kind = opts.kind orelse "all";
 
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("search");
-    try s.objectField("query");
-    try s.write(query);
-    try s.objectField("kind");
-    try s.write(kind);
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "search" } },
+        .{ .name = "query", .value = .{ .text = query } },
+        .{ .name = "kind", .value = .{ .text = kind } },
+    });
 
-    const result = try common.callTool(arena, "reports", tool, input.written());
+    const result = try common.callTool(arena, "reports", tool, input);
     try common.out(io, try renderSearch(arena, query, kind, common.arrayField(result, "reports"), common.arrayField(result, "runbooks")));
 }
 
@@ -106,17 +100,12 @@ fn open(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
         return Error.MissingArg;
     };
 
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("open");
-    try s.objectField("path");
-    try s.write(path);
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "open" } },
+        .{ .name = "path", .value = .{ .text = path } },
+    });
 
-    const result = try common.callTool(arena, "reports", tool, input.written());
+    const result = try common.callTool(arena, "reports", tool, input);
     // The record is markdown that was written to be read; print it as it is
     // rather than reflowing someone's report in a pager-less terminal.
     const text = json_util.strFieldOrEmpty(result.object, "text");
@@ -132,23 +121,15 @@ fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     const title = opts.arg3 orelse return missingCreateArg("a title");
     const summary = opts.arg4 orelse return missingCreateArg("a TL;DR summary");
 
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("create");
-    try s.objectField("kind");
-    try s.write(kind);
-    try s.objectField("slug");
-    try s.write(slug);
-    try s.objectField("title");
-    try s.write(title);
-    try s.objectField("summary");
-    try s.write(summary);
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "create" } },
+        .{ .name = "kind", .value = .{ .text = kind } },
+        .{ .name = "slug", .value = .{ .text = slug } },
+        .{ .name = "title", .value = .{ .text = title } },
+        .{ .name = "summary", .value = .{ .text = summary } },
+    });
 
-    const result = try common.callTool(arena, "reports", tool, input.written());
+    const result = try common.callTool(arena, "reports", tool, input);
     const path = json_util.strFieldOrEmpty(result.object, "path");
     var w: std.Io.Writer.Allocating = .init(arena);
     defer w.deinit();
@@ -172,19 +153,13 @@ fn rename(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
         return Error.MissingArg;
     };
 
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("rename");
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("slug");
-    try s.write(slug);
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "rename" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "slug", .value = .{ .text = slug } },
+    });
 
-    const result = try common.callTool(arena, "reports", tool, input.written());
+    const result = try common.callTool(arena, "reports", tool, input);
     const to = json_util.strFieldOrEmpty(result.object, "to");
     var w: std.Io.Writer.Allocating = .init(arena);
     defer w.deinit();
@@ -219,19 +194,13 @@ fn append(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
         return Error.MissingArg;
     };
 
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("append");
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("content");
-    try s.write(content);
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "append" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "content", .value = .{ .text = content } },
+    });
 
-    const result = try common.callTool(arena, "reports", tool, input.written());
+    const result = try common.callTool(arena, "reports", tool, input);
     try common.out(io, try std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
 }
 
@@ -251,21 +220,14 @@ fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
         return Error.MissingArg;
     };
 
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("update");
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("old");
-    try s.write(old);
-    try s.objectField("new");
-    try s.write(new);
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "update" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "old", .value = .{ .text = old } },
+        .{ .name = "new", .value = .{ .text = new } },
+    });
 
-    const result = try common.callTool(arena, "reports", tool, input.written());
+    const result = try common.callTool(arena, "reports", tool, input);
     try common.out(io, try std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
 }
 
@@ -277,21 +239,14 @@ fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !v
     // spending a tool call to be told.
     const note = opts.arg3 orelse "";
 
-    var input: std.Io.Writer.Allocating = .init(arena);
-    defer input.deinit();
-    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
-    try s.beginObject();
-    try s.objectField("action");
-    try s.write("status");
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("status");
-    try s.write(wanted);
-    try s.objectField("note");
-    try s.write(note);
-    try s.endObject();
+    const input = try common.request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "status" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "status", .value = .{ .text = wanted } },
+        .{ .name = "note", .value = .{ .text = note } },
+    });
 
-    const result = try common.callTool(arena, "reports", tool, input.written());
+    const result = try common.callTool(arena, "reports", tool, input);
     var w: std.Io.Writer.Allocating = .init(arena);
     defer w.deinit();
     try w.writer.print("{s} is now {s}\n", .{
@@ -398,7 +353,11 @@ pub fn renderList(arena: std.mem.Allocator, reports_index: []const u8, runbooks_
 /// stretching to fit a sentence that is not a status. Zero when no entry in
 /// the section has one at all: an empty column is 10 spaces of nothing in
 /// front of every title.
-fn statusWidth(entries: []const Entry) usize {
+///
+/// Shared with `research/command.zig`, which lists the same inventory
+/// entries in the same two columns: a second copy is how one listing gets a
+/// wider gutter than the other.
+pub fn statusWidth(entries: []const Entry) usize {
     var widest: usize = 0;
     for (entries) |e| {
         if (e.note.len == 0 or e.note.len > status_column_max) continue;
