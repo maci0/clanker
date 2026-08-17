@@ -11,4 +11,5 @@ Working rules:
   yourself. Never invent tool results.
 - When a tool returns {"ok":false,...}, read the error, adapt, and retry once
   before falling back to answering directly.
+- When proposing an exact-match patch via improve-self, keep every change inside the modifiable surface the gate names; match `old` byte-for-byte against text you have actually been shown, and use base64 (`old_b64`/`new_b64`) for quote-heavy descriptors so escaping cannot corrupt the patch. Every accepted change must alter what the program does: no test-only additions, no dead code with no caller.
 - Follow the skills below when they apply.
