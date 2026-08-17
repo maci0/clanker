@@ -2804,7 +2804,9 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
 
     if (std.mem.eql(u8, provider_name, "openrouter")) {
         // Pull OpenRouter's public model database.
-        const body = try httpGet(io, gpa, arena, "https://openrouter.ai/api/v1/models", null);
+        // Bounded like every other listing fetch: a public model database over
+        // a CDN, so it shares the catalog ceiling rather than growing a knob.
+        const body = try httpGetDeadline(io, gpa, arena, "https://openrouter.ai/api/v1/models", null, models_dev_timeout_ms);
         const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
         try out.writeStreamingAll(io, "id\tctx\tin $/1M\tout $/1M\n");
         const families = [_][]const u8{ "kimi", "moonshot", "deepseek", "muse" };
@@ -2867,7 +2869,10 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
         const key = init.environ_map.get(env_name) orelse break :blk null;
         break :blk try std.fmt.allocPrint(arena, "Bearer {s}", .{key});
     } else null;
-    const body = try httpGet(io, gpa, arena, url, bearer);
+    // Same fetch and same budget as `GET /api/providers/models`: one provider's
+    // `/models` is one operation however it was asked for.
+    const budget_s = provider.check_timeout_seconds orelse cfg.agent.provider_check_timeout_seconds;
+    const body = try httpGetDeadline(io, gpa, arena, url, bearer, @as(i64, budget_s) * std.time.ms_per_s);
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
     try out.writeStreamingAll(io, "id\tctx\n");
     if (parsed == .object) {

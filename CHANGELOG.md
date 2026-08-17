@@ -612,6 +612,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Every HTTP fetch of a models listing now runs under a wall-clock ceiling, so
+  a host that resolves, accepts the connection and then says nothing can no
+  longer wedge the caller forever. `std.http.Client` has no read timeout of its
+  own, and three call sites still went out unbounded: the models.dev catalog
+  fetch (`clanker providers refresh`, `POST /api/catalog/refresh`, and the
+  first-populate path of `GET /api/catalog`, which reached it *holding*
+  `catalog_cache_mutex` and so took the catalog away from every later request
+  in the process, not just its own) and `GET /api/providers/models`. The
+  catalog fetch gets 30s; `GET /api/providers/models` gets the same
+  `check_timeout_seconds` / `agent.provider_check_timeout_seconds` budget the
+  Models view's live listing already used. Failures now name their cause
+  (`Timeout` rather than a collapsed "did not answer"), so
+  `clanker providers refresh` and the serve log say which one it was.
 - Record search matches every word of a multi-word query instead of the query
   as one exact substring, so `clanker reports search "concurrent sessions"`
   now finds
