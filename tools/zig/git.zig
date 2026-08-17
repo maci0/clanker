@@ -6,6 +6,10 @@
 //! a clear in-tool message naming the verb and the allowed set, instead of the
 //! generic "refused by this tool's sandbox policy" the host would produce.
 //! The host still enforces the deny; this list never widens it.
+//! `allowed_verbs` is also enforced as the in-tool permit list: a verb
+//! outside it (git init, git config, git mv, git apply, ...) is refused
+//! before exec unless a git-naming exec_pattern_allow grants the exact argv
+//! or git_remote_ops lifts push/merge/checkout.
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -130,6 +134,19 @@ fn deniedVerb(args: []const []const u8, git_remote_ops: bool) ?[]const u8 {
 
 fn isGitRemoteOpToken(t: []const u8) bool {
     return std.mem.eql(u8, t, "push") or std.mem.eql(u8, t, "merge") or std.mem.eql(u8, t, "checkout");
+}
+
+/// Whether a verb may run without a git-naming exec_pattern_allow grant. A
+/// verb is permitted when it is on the allow list, or, with git_remote_ops
+/// set, when it is one of the verbs that setting lifts (push/merge/checkout,
+/// none of which appear on the allow list). It never widens the host's
+/// sandbox: the deny list and the host are still the final word.
+fn verbPermitted(verb: []const u8, git_remote_ops: bool) bool {
+    for (allowed_verbs) |v| {
+        if (std.mem.eql(u8, v, verb)) return true;
+    }
+    if (git_remote_ops and isGitRemoteOpToken(verb)) return true;
+    return false;
 }
 
 /// Classic `*` glob, mirroring src/sandbox/host.zig's globMatch so the guest
@@ -275,7 +292,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             }
             return lib.fail(out, msg_buf[0..mw.end]);
         }
-        // allowed: skip the deny-list; the matching pattern grants the argv.
+        // allowed: skip the deny-list and the allow list; a matching
+        // git-naming pattern grants the exact argv.
     } else if (deniedVerb(args.items, policy.git_remote_ops)) |denied| {
         const verb = gitVerb(args.items);
         var msg_buf: [512]u8 = undefined;
@@ -291,6 +309,26 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
         w.writeAll(". Remote/history-rewriting verbs need a human at a real terminal.") catch {};
         return lib.fail(out, msg_buf[0..w.end]);
+    } else if (gitVerb(args.items)) |verb| {
+        // The allow list is a real gate, not just the text of the deny
+        // message: a verb that is neither denied nor allowed (git init,
+        // git config, git mv, git apply, ...) is refused here rather than
+        // passed to the sandbox. git_remote_ops lifts push/merge/checkout,
+        // which are not on the allow list; the host's deny list is still the
+        // final word either way.
+        if (!verbPermitted(verb, policy.git_remote_ops)) {
+            var msg_buf: [512]u8 = undefined;
+            var tw: std.Io.Writer = .fixed(&msg_buf);
+            tw.writeAll("git '") catch {};
+            tw.writeAll(verb) catch {};
+            tw.writeAll("' is not on git's allowed list. Allowed: ") catch {};
+            for (allowed_verbs, 0..) |v, i| {
+                if (i > 0) tw.writeAll(", ") catch {};
+                tw.writeAll(v) catch {};
+            }
+            tw.writeAll(". Reading and local staging only; other verbs need a human at a real terminal.") catch {};
+            return lib.fail(out, msg_buf[0..tw.end]);
+        }
     }
 
     const result = lib.exec("git", args.items) catch |err| {
