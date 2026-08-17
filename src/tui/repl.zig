@@ -624,6 +624,9 @@ const Fold = struct {
     anim: f32,
 };
 
+/// The "› " turn arrow marking where a completed reply's prose begins.
+const turn_arrow = "\xe2\x80\xba ";
+
 /// A reply at least this many wrapped terminal rows tall is worth folding.
 const FOLD_MIN_ROWS: usize = 8;
 /// Steps a fold takes to travel from collapsed to open. At `fold_tick_ms` a
@@ -793,7 +796,7 @@ fn appendAnswerLines(arena: std.mem.Allocator, out: *std.ArrayList(Line), answer
         }
         const lang: ?[]const u8 = if (in_fence) fence_lang else null;
         const prefixed = if (first)
-            std.fmt.allocPrint(arena, "\xe2\x80\xba {s}", .{src_line}) catch src_line
+            std.fmt.allocPrint(arena, turn_arrow ++ "{s}", .{src_line}) catch src_line
         else
             src_line;
         first = false;
@@ -2323,21 +2326,9 @@ const Model = struct {
     /// worker thread (`finishTurn`); the draw/tick loop reads the same list
     /// under the same lock.
     fn maybeFoldReply(self: *Model, reply_start: usize) void {
-        const count = self.lines.items.len - reply_start;
-        if (count == 0) return;
         const width = if (self.last_text_width > 0) self.last_text_width else 80;
-        var rows: usize = 0;
-        for (self.lines.items[reply_start .. reply_start + count]) |l| {
-            rows += lineRows(l.text, width);
-            if (rows > FOLD_MIN_ROWS) break;
-        }
-        if (rows <= FOLD_MIN_ROWS) return;
-        self.folds.append(self.arena, .{
-            .start = reply_start,
-            .count = count,
-            .expanded = false,
-            .anim = 0,
-        }) catch {};
+        const fold = foldForReply(self.lines.items, reply_start, width) orelse return;
+        self.folds.append(self.arena, fold) catch {};
     }
 
     /// Index into `self.folds` of the fold whose region begins at `line_idx`,
@@ -5275,13 +5266,26 @@ fn tailWindow(
         var block_start = i;
         for (folds) |f| {
             if (i >= f.start and i < f.start + f.count) {
-                // Header row plus exactly the lines the draw loop will render,
-                // counted the same way it counts them (`foldShownLines`, clamped
-                // to the visible window). `f.start < view_end` here because
-                // `i == start - 1 >= f.start` and `start <= view_end`, so the
-                // clamped range never starts past `lines.len`.
+                const shown = foldShownLines(f);
+                // A fully open fold renders per-line (the draw loop falls
+                // through to rich rendering), so it must scroll per-line
+                // too: only the header row is extra, on the fold's first
+                // line. Treating it as a block pinned the window at the
+                // header for every anchor inside the fold, so a
+                // screen-taller reply could not be scrolled through.
+                if (shown >= f.count) {
+                    if (i == f.start) rows += 1;
+                    break;
+                }
+                // Collapsed or animating, drawn rows differ from line rows,
+                // so the block stays atomic: header row plus exactly the
+                // lines the draw loop will render, counted the same way it
+                // counts them (`foldShownLines`, clamped to the visible
+                // window). `f.start < view_end` here because
+                // `i == start - 1 >= f.start` and `start <= view_end`, so
+                // the clamped range never starts past `lines.len`.
                 rows = 1;
-                const body_end = @min(f.start + foldShownLines(f), view_end);
+                const body_end = @min(f.start + shown, view_end);
                 for (lines[f.start..body_end]) |l| {
                     rows += lineRows(l.text, width);
                 }
@@ -5295,6 +5299,29 @@ fn tailWindow(
         if (used >= avail_rows) break;
     }
     return .{ .start = start, .used_rows = @intCast(@min(used, avail_rows)) };
+}
+
+/// Decide whether the reply occupying `lines[reply_start..]` is tall enough
+/// to fold, judged on wrapped rows at `width` so short replies never fold.
+/// Pure over its arguments so the decision is testable without a Model.
+///
+/// A reply that folds loses the `turn_arrow` from its first line: the fold
+/// header row is the turn marker from then on, and keeping both rendered
+/// the arrow as a stray prompt glyph on the first body line of an expanded
+/// fold. An unfolded reply keeps the arrow — it is its only marker.
+fn foldForReply(lines: []Line, reply_start: usize, width: u16) ?Fold {
+    const count = lines.len - reply_start;
+    if (count == 0) return null;
+    var rows: usize = 0;
+    for (lines[reply_start..]) |l| {
+        rows += lineRows(l.text, width);
+        if (rows > FOLD_MIN_ROWS) break;
+    }
+    if (rows <= FOLD_MIN_ROWS) return null;
+    const first = &lines[reply_start];
+    if (std.mem.startsWith(u8, first.text, turn_arrow))
+        first.text = first.text[turn_arrow.len..];
+    return .{ .start = reply_start, .count = count, .expanded = false, .anim = 0 };
 }
 
 /// How many of a fold's lines are currently revealed. Quantised to whole
@@ -5952,6 +5979,70 @@ test "tailWindow clamps a fold that straddles the anchored view_end" {
     const win_c = tailWindow(lines[0..3], &collapsed, 3, 1, 80);
     try std.testing.expectEqual(@as(usize, 1), win_c.start);
     try std.testing.expectEqual(@as(u16, 1), win_c.used_rows);
+}
+
+test "tailWindow scrolls line-by-line through a fully expanded fold" {
+    // Regression: the atomic-block jump is right for a collapsed or
+    // animating fold, where drawn rows differ from line rows — but a fully
+    // open fold renders per-line (the draw loop falls through to rich
+    // rendering), and treating it as a block pinned the window at the
+    // header for every anchor inside the fold. Wheel and PgDn then
+    // repeated the identical frame until the anchor passed the whole
+    // reply, and the view jumped past it in one step.
+    const lines = [_]Line{
+        .{ .text = "clanker> ask" },
+        .{ .text = "L1" },
+        .{ .text = "L2" },
+        .{ .text = "L3" },
+        .{ .text = "L4" },
+        .{ .text = "L5" },
+        .{ .text = "L6" },
+        .{ .text = "L7" },
+        .{ .text = "L8" },
+        .{ .text = "L9" },
+        .{ .text = "L10" },
+        .{ .text = "receipt" },
+    };
+    const open = [_]Fold{.{ .start = 1, .count = 10, .expanded = true, .anim = 1 }};
+    // Anchor mid-fold with a 4-row window: the window ends at the anchor
+    // (start = view_end - rows), it does not snap back to the fold header.
+    const win = tailWindow(lines[0..8], &open, 8, 4, 80);
+    try std.testing.expectEqual(@as(usize, 4), win.start);
+    try std.testing.expectEqual(@as(u16, 4), win.used_rows);
+    // The header still costs its row when the window reaches the fold's
+    // first line: anchor at 3 fits header + L1 + L2 plus the ask line.
+    const at_start = tailWindow(lines[0..3], &open, 3, 4, 80);
+    try std.testing.expectEqual(@as(usize, 0), at_start.start);
+    try std.testing.expectEqual(@as(u16, 4), at_start.used_rows);
+}
+
+test "a reply that folds drops its turn arrow: the header is the turn marker" {
+    // Regression: appendAnswerLines arrows the first line of every reply,
+    // and folding the same range kept it, so an expanded fold showed the
+    // `▾ reply` header and a `› ` first body line — two turn markers, the
+    // second reading as a stray prompt glyph.
+    var lines = [_]Line{
+        .{ .text = turn_arrow ++ "Line 1" },
+        .{ .text = "Line 2" },
+        .{ .text = "Line 3" },
+        .{ .text = "Line 4" },
+        .{ .text = "Line 5" },
+        .{ .text = "Line 6" },
+        .{ .text = "Line 7" },
+        .{ .text = "Line 8" },
+        .{ .text = "Line 9" },
+        .{ .text = "Line 10" },
+    };
+    const fold = foldForReply(&lines, 0, 80) orelse return error.TestExpectedFold;
+    try std.testing.expectEqual(@as(usize, 0), fold.start);
+    try std.testing.expectEqual(@as(usize, 10), fold.count);
+    try std.testing.expectEqualStrings("Line 1", lines[0].text);
+
+    // A short reply never folds, so the arrow stays: it is then the only
+    // turn marker the reply has.
+    var short = [_]Line{.{ .text = turn_arrow ++ "hi" }};
+    try std.testing.expect(foldForReply(&short, 0, 80) == null);
+    try std.testing.expectEqualStrings(turn_arrow ++ "hi", short[0].text);
 }
 
 fn writeRow(surface: vxfw.Surface, row: u16, text: []const u8, style: vaxis.Style) void {

@@ -80,6 +80,10 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [TUI scrolling never advances through a fully expanded fold](bugs/2026-08-17-expanded-fold-cannot-be-scrolled-through.md) — Resolved
+
+- [TUI expanded reply fold shows a stray › on its first body line](bugs/2026-08-17-fold-first-line-keeps-turn-arrow.md) — Resolved
+
 - [Peer cooldown table is never freed, so any command that reaches a down peer ends in a leak trace](bugs/2026-08-17-peer-cooldown-table-leaks-at-exit.md) — Open
 
 - [TUI reply fold can be opened but never closed again](bugs/2026-08-17-fold-header-vanishes-when-expanded.md) — Resolved
@@ -141,7 +145,7 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
-- [TUI fold shows a stray turn arrow and cannot be scrolled through](investigations/2026-08-17-tui-fold-arrow-and-scroll.md) — Investigating
+- [TUI fold shows a stray turn arrow and cannot be scrolled through](investigations/2026-08-17-tui-fold-arrow-and-scroll.md) — Resolved
 
 - [ck_cas.lock sidecars still accumulating in the source tree](investigations/2026-08-17-ck-cas-lock-sidecars-still-accumulating.md) — Resolved
 

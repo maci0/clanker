@@ -505,6 +505,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- An expanded reply fold in `clanker repl` no longer shows a stray `›` on
+  its first body line. The turn arrow marks where a reply's prose begins,
+  but a folded reply's `▾ reply` header already does that, so the arrow
+  under it read as a prompt marker; a reply now drops the arrow when it
+  folds and keeps it when it stays unfolded
+  (docs/reports/bugs/2026-08-17-fold-first-line-keeps-turn-arrow.md).
+- Scrolling in `clanker repl` now advances through a fully expanded fold.
+  The layout treated a fold as an atomic block in every state, so with the
+  anchor anywhere inside an expanded reply taller than the screen, every
+  wheel notch or PgDn re-rendered the same frame (pinned at the header)
+  until the anchor passed the whole reply, then jumped past it. An open
+  fold is now measured per-line, exactly as it is drawn; the block remains
+  atomic only while collapsed or animating
+  (docs/reports/bugs/2026-08-17-expanded-fold-cannot-be-scrolled-through.md).
 - `ck_fs_write_if` no longer creates the target's parent directories on a
   hash mismatch. The lock used to live inside that directory, so the
   directories had to exist before the compare; an ordinary contention
