@@ -1,7 +1,8 @@
 //! spill: persist and read back a tool result the request pruner omitted.
 //! Input: {"write":{"session","id","content"}} (host-internal) |
 //!         {"id":"<8hex>"} | {"id":"...","session":"..."} | {"list":true}
-//! Output: {"ok":true,"id":"...","text":"..."} | {"ok":true,"bytes":N} | a listing.
+//! Output: {"ok":true,"id":"...","text":"..."} | {"ok":true,"bytes":N} |
+//!         {"ok":true,"spills":["<session>/<id>.txt", ...]}.
 //!
 //! `write` is what the agent loop calls when the request-only pruner drops a
 //! tool result's middle: the content lands under state/spills/<session>/ so
@@ -72,9 +73,16 @@ fn writeOne(out: *lib.Out, w: std.json.Value) !void {
 }
 
 fn listSpills(out: *lib.Out) !void {
+    // Structured JSON so callers can machine-consume the listing. An empty
+    // spills dir (state/spills/ missing) is a valid empty list, not an error:
+    // {"ok":true,"spills":[]}.
     const raw = lib.fsList("state/spills") catch |err| switch (err) {
-        error.NotFound => return lib.okText(out, "no spilled tool results"),
+        error.NotFound => null,
         else => return lib.failErr(out, err, "listing state/spills"),
     };
-    return lib.okText(out, raw);
+    var w = lib.writer(out);
+    try w.writeAll("{\"ok\":true,\"spills\":");
+    try w.writeAll(raw orelse "[]");
+    try w.writeAll("}");
+    lib.commit(out, &w);
 }

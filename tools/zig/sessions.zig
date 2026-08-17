@@ -19,7 +19,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const q = lib.optStr(req, "q") orelse lib.optStr(req, "args");
     if (q) |query| {
         const trimmed = std.mem.trim(u8, query, " \t\r\n");
-        if (trimmed.len >= 3) return searchSessions(out, trimmed);
+        if (trimmed.len < 3) return lib.fail(out, "query must be at least 3 characters");
+        return searchSessions(out, trimmed);
     }
     const as_json = if (lib.optStr(req, "format")) |fmt| std.mem.eql(u8, fmt, "json") else false;
 
@@ -80,15 +81,18 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 }
 
 fn searchSessions(out: *lib.Out, query: []const u8) !void {
+    // Always a structured {"ok":true,"query":...,"hits":[...]} so callers can
+    // machine-consume the result. An empty store (state/sessions/ missing or
+    // no match) is a valid empty hit list, not a failure.
     const raw = lib.fsGrep("state/sessions", query) catch |err| switch (err) {
-        error.NotFound => return lib.okText(out, "no saved conversations"),
+        error.NotFound => null,
         else => return lib.failErr(out, err, "searching sessions"),
     };
     var w = lib.writer(out);
     try w.writeAll("{\"ok\":true,\"query\":");
     try std.json.Stringify.value(query, .{}, &w);
     try w.writeAll(",\"hits\":");
-    try w.writeAll(raw);
+    try w.writeAll(raw orelse "[]");
     try w.writeAll("}");
     lib.commit(out, &w);
 }
